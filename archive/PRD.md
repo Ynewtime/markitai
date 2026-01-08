@@ -2,9 +2,71 @@
 
 ## 产品需求文档 (PRD)
 
-**版本**: 1.0.0  
-**日期**: 2026-01-06  
-**状态**: Draft  
+**版本**: 1.0.3  
+**日期**: 2026-01-08  
+**状态**: Active
+
+---
+
+## 更新日志
+
+### v1.0.3 (2026-01-08)
+
+**New Features:**
+- 新增 `--analyze-image-with-md` 参数（`convert` 和 `batch` 命令）
+  - 在图片分析的基础上，为每张图片生成详细的 `.md` 描述文件
+  - 描述文件包含：YAML frontmatter、alt 文本、详细描述、检测到的文字
+  - 每张图片仅调用一次 LLM（不会产生额外 API 请求）
+- 新增 `pymupdf-layout` 依赖，改进 PDF 页面布局分析
+
+**Bug Fixes:**
+- 修复 Gemini API `Part.from_text()` 参数错误
+  - 问题：`Part.from_text() takes 1 positional argument but 2 were given`
+  - 解决：改用关键字参数 `types.Part.from_text(text=prompt)`
+- 修复日志文件不写入的问题
+  - 问题：配置 `log_file` 后文件为空
+  - 解决：重写 `logging.py`，使用 `structlog.stdlib` 集成标准 logging handlers
+- 修复 AsyncIterator 导入警告（ruff UP035）
+  - 从 `typing.AsyncIterator` 改为 `collections.abc.AsyncIterator`
+- 修复进度条与 structlog 输出冲突的问题
+- 修复测试隔离问题（`markit.toml` 影响默认值测试）
+
+**Improvements:**
+- 更新默认并发数：file 4, image 8, llm 5
+
+### v1.0.2 (2026-01-08)
+
+**Bug Fixes:**
+- 修复 OpenAI/OpenRouter API 调用时 `max_tokens=None` 导致的 400 错误
+  - 问题：OpenAI API 不再接受 `max_tokens=null`，导致图片分析和 Markdown 增强失败
+  - 解决：在构建请求参数时过滤掉 `None` 值
+
+**New Features:**
+- 新增 `markit provider` 命令组
+  - `markit provider test`: 测试所有已配置 LLM Provider 的连接性（不消耗 token）
+  - `markit provider models`: 列出所有 Provider 的可用模型，自动缓存到 `~/.cache/markit/models.json`
+- 优化 Ollama 连接测试
+  - 新增 `/api/tags` 响应状态码检查
+  - 连接失败时提供友好提示：`"Connection refused - Is Ollama running? (ollama serve)"`
+
+**Improvements:**
+- Models 列表默认自动保存到本地缓存（`~/.cache/markit/`）
+- Provider test 集成到 `--dry-run` 模式
+
+### v1.0.1 (2026-01-07)
+
+**Bug Fixes:**
+- 修复图片压缩 `_compress_png()` 方法参数错误
+- 修复 ProviderManager 并发初始化竞态条件
+
+**Performance:**
+- 提升默认并发数：file 4→8, image 8→16, llm 5→10
+- 优化 Provider validate() 方法，避免不必要的 API 调用
+- 图片分析改用 `batch_analyze()` 并行处理
+
+### v1.0.0 (2026-01-06)
+
+- 初始版本发布  
 
 ---
 
@@ -76,7 +138,7 @@ MarkIt 是一个高效、健壮的命令行工具，用于将各种格式的办�
 | **配置管理** | pydantic-settings | python-dotenv | 类型验证，环境变量支持，嵌套配置 |
 | **主转换引擎** | MarkItDown (fork) | - | 微软出品，质量高，可二次开发 |
 | **回退转换** | Pandoc | - | 格式支持广泛，社区成熟 |
-| **PDF 处理** | PyMuPDF + pdfplumber | pdf2image | PyMuPDF 速度快，pdfplumber 表格友好 |
+| **PDF 处理** | PyMuPDF4LLM + PyMuPDF + pdfplumber | pdf2image | PyMuPDF4LLM 适合 LLM/RAG，表格标题检测好；PyMuPDF 速度快；pdfplumber 表格友好 |
 | **图片处理** | Pillow | - | 12.x 版本已内置 SIMD 优化 |
 | **图片压缩** | oxipng + mozjpeg | pngquant | 压缩率高，质量好 |
 | **异步框架** | anyio | asyncio 原生 | 后端无关，便于测试 |
@@ -120,6 +182,7 @@ markit/
 │   │   ├── pdf/
 │   │   │   ├── __init__.py
 │   │   │   ├── pymupdf.py      # PyMuPDF 实现
+│   │   │   ├── pymupdf4llm.py  # PyMuPDF4LLM 实现 (默认)
 │   │   │   └── pdfplumber.py   # pdfplumber 实现
 │   │   └── office.py           # LibreOffice 转换
 │   ├── image/
@@ -428,7 +491,7 @@ class BaseLLMProvider(ABC):
 from openai import AsyncOpenAI
 
 class OpenAIProvider(BaseLLMProvider):
-    def __init__(self, api_key: str, model: str = "gpt-4o"):
+    def __init__(self, api_key: str, model: str = "gpt-5.2"):
         self.client = AsyncOpenAI(api_key=api_key)
         self.model = model
     
@@ -452,7 +515,7 @@ class OpenAIProvider(BaseLLMProvider):
 from anthropic import AsyncAnthropic
 
 class AnthropicProvider(BaseLLMProvider):
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-5"):
         self.client = AsyncAnthropic(api_key=api_key)
         self.model = model
     
@@ -483,7 +546,7 @@ class AnthropicProvider(BaseLLMProvider):
 from google import genai
 
 class GeminiProvider(BaseLLMProvider):
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-3-flash-preview"):
         self.client = genai.Client(api_key=api_key)
         self.model = model
     
@@ -533,22 +596,33 @@ class ProviderManager:
         self.configs = configs
         self._providers: dict[str, BaseLLMProvider] = {}
         self._valid_providers: list[str] = []
+        self._initialized = False
+        self._init_lock = asyncio.Lock()  # 防止并发初始化的竞态条件
     
     async def initialize(self):
-        """初始化并验证所有 Provider"""
-        for config in self.configs:
-            try:
-                provider = self._create_provider(config)
-                # 验证 Provider 是否有效 (检查 API Key、连接等)
-                await self._validate_provider(provider, config)
-                self._providers[config.provider] = provider
-                self._valid_providers.append(config.provider)
-                log.info(f"Provider {config.provider} 初始化成功")
-            except Exception as e:
-                log.warning(f"Provider {config.provider} 初始化失败: {e}")
+        """初始化并验证所有 Provider（线程安全）"""
+        if self._initialized:
+            return
         
-        if not self._valid_providers:
-            raise LLMError("没有可用的 LLM Provider")
+        async with self._init_lock:
+            if self._initialized:  # 双重检查锁定
+                return
+            
+            for config in self.configs:
+                try:
+                    provider = self._create_provider(config)
+                    # 验证 Provider 是否有效 (检查 API Key、连接等)
+                    await self._validate_provider(provider, config)
+                    self._providers[config.provider] = provider
+                    self._valid_providers.append(config.provider)
+                    log.info(f"Provider {config.provider} 初始化成功")
+                except Exception as e:
+                    log.warning(f"Provider {config.provider} 初始化失败: {e}")
+            
+            if not self._valid_providers:
+                raise LLMError("没有可用的 LLM Provider")
+            
+            self._initialized = True
     
     def get_default(self) -> BaseLLMProvider:
         """获取默认 Provider (第一个有效的)"""
@@ -770,7 +844,7 @@ import tiktoken
 class ChunkConfig:
     max_tokens: int = 4000
     overlap_tokens: int = 200
-    model: str = "gpt-4o"  # 用于计算 token
+    model: str = "gpt-5.2"  # 用于计算 token
 
 class MarkdownChunker:
     """基于 LangChain 的大文档切块器"""
@@ -834,9 +908,9 @@ class FastMarkdownChunker:
     """高性能切块器 (Rust 实现)"""
     
     def __init__(self, max_tokens: int = 4000):
-        tokenizer = tiktoken.encoding_for_model("gpt-4o")
+        tokenizer = tiktoken.encoding_for_model("gpt-5.2")
         self.splitter = MarkdownSplitter.from_tiktoken_model(
-            "gpt-4o", 
+            "gpt-5.2", 
             capacity=max_tokens
         )
     
@@ -872,10 +946,11 @@ Arguments:
 Options:
   -o, --output PATH           输出目录 [default: ./output]
   --llm                       启用 LLM Markdown 格式优化 (默认不启用)
-  --analyze-image             启用图片 LLM 分析 (默认不启用)
+  --analyze-image             启用图片 LLM 分析，生成 alt 文本 (默认不启用)
+  --analyze-image-with-md     启用图片 LLM 分析，同时生成详细 .md 描述文件
   --no-compress               禁用图片压缩
-  --pdf-engine [pymupdf|pdfplumber|markitdown]
-                              PDF 处理引擎 [default: pymupdf]
+  --pdf-engine [pymupdf4llm|pymupdf|pdfplumber|markitdown]
+                              PDF 处理引擎 [default: pymupdf4llm]
   --llm-provider [openai|anthropic|gemini|ollama|openrouter]
                               LLM 提供商 (默认使用配置中第一个有效的)
   --llm-model TEXT            LLM 模型名称
@@ -888,9 +963,16 @@ Options:
 | 参数 | 作用 | 默认 |
 |------|------|------|
 | `--llm` | 启用 Markdown 格式优化：插入 Frontmatter、清洗垃圾内容、标题层级修复、空行规范化、遵循 GFM 规范等 | 不启用 |
-| `--analyze-image` | 启用图片智能分析：生成 alt 文本和详细描述文档 | 不启用 |
+| `--analyze-image` | 启用图片智能分析：仅生成 alt 文本嵌入 Markdown | 不启用 |
+| `--analyze-image-with-md` | 启用图片智能分析：生成 alt 文本 + 详细 `.md` 描述文件 | 不启用 |
 | `--llm-provider` | 指定 LLM 提供商，覆盖配置文件 | 配置中第一个有效的 |
 | `--llm-model` | 指定模型名称，覆盖配置文件 | Provider 默认模型 |
+
+**图片分析说明：**
+- `--analyze-image`: 每张图片调用一次 LLM，生成简洁的 alt 文本
+- `--analyze-image-with-md`: 每张图片调用一次 LLM（不会额外调用），同时：
+  - 生成 alt 文本嵌入 Markdown
+  - 在 `assets/` 目录生成 `<image>.md` 详细描述文件
 
 #### LLM Provider 选择逻辑
 
@@ -944,17 +1026,20 @@ markit convert document.docx -o ./output
 # 转换并启用 LLM 格式优化 (Frontmatter、清洗、GFM规范等)
 markit convert document.docx --llm -o ./output
 
-# 转换并启用图片智能分析
+# 转换并启用图片智能分析（仅 alt 文本）
 markit convert document.docx --analyze-image -o ./output
 
+# 转换并启用图片智能分析（含详细描述文件）
+markit convert document.docx --analyze-image-with-md -o ./output
+
 # 同时启用 LLM 格式优化和图片分析
-markit convert document.docx --llm --analyze-image -o ./output
+markit convert document.docx --llm --analyze-image-with-md -o ./output
 
 # 批量转换目录
 markit batch ./documents -o ./markdown --recursive
 
 # 使用指定的 LLM Provider
-markit convert doc.pdf --llm --llm-provider anthropic --llm-model claude-sonnet-4-20250514
+markit convert doc.pdf --llm --llm-provider anthropic --llm-model claude-sonnet-4-5
 
 # 使用本地 Ollama
 markit convert doc.pdf --llm --llm-provider ollama --llm-model llama3.2-vision
@@ -1013,7 +1098,7 @@ class ConcurrencyConfig(BaseModel):
 
 class PDFConfig(BaseModel):
     """PDF 处理配置"""
-    engine: str = "pymupdf"  # pymupdf, pdfplumber, markitdown
+    engine: str = "pymupdf4llm"  # pymupdf4llm, pymupdf, pdfplumber, markitdown
     extract_images: bool = True
     ocr_enabled: bool = False
 
@@ -1066,19 +1151,19 @@ state_file = ".markit-state.json"
 # 有效 = 配置完整且可连接
 [[llm.providers]]
 provider = "openai"
-model = "gpt-4o"
+model = "gpt-5.2"
 timeout = 60
 max_retries = 3
 # api_key 通过环境变量 OPENAI_API_KEY 设置
 
 [[llm.providers]]
 provider = "anthropic"
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-5"
 # api_key 通过环境变量 ANTHROPIC_API_KEY 设置
 
 [[llm.providers]]
 provider = "gemini"
-model = "gemini-2.0-flash"
+model = "gemini-3-flash-preview"
 # api_key 通过环境变量 GOOGLE_API_KEY 设置
 
 [[llm.providers]]
@@ -1100,7 +1185,7 @@ image_workers = 8
 llm_workers = 5
 
 [pdf]
-engine = "pymupdf"
+engine = "pymupdf4llm"
 extract_images = true
 ocr_enabled = false
 
@@ -1125,7 +1210,7 @@ generate_image_descriptions = true
 # LLM API Keys
 export MARKIT_LLM__API_KEY="sk-..."
 export MARKIT_LLM__PROVIDER="openai"
-export MARKIT_LLM__MODEL="gpt-4o"
+export MARKIT_LLM__MODEL="gpt-5.2"
 
 # OpenRouter
 export MARKIT_LLM__PROVIDER="openrouter"
@@ -1139,10 +1224,10 @@ export MARKIT_LLM__BASE_URL="http://localhost:11434"
 export MARKIT_LLM__PROVIDER="gemini"
 export GOOGLE_API_KEY="..."
 
-# 并发控制
-export MARKIT_CONCURRENCY__FILE_WORKERS=4
-export MARKIT_CONCURRENCY__IMAGE_WORKERS=8
-export MARKIT_CONCURRENCY__LLM_WORKERS=5
+# 并发控制（覆盖默认值）
+export MARKIT_CONCURRENCY__FILE_WORKERS=8
+export MARKIT_CONCURRENCY__IMAGE_WORKERS=16
+export MARKIT_CONCURRENCY__LLM_WORKERS=10
 ```
 
 ---
@@ -1165,7 +1250,7 @@ export MARKIT_CONCURRENCY__LLM_WORKERS=5
 │  │                                                                │  │
 │  │  ┌─────────────────────────────────────────────────────────┐   │  │
 │  │  │              Task Semaphores                            │   │  │
-│  │  │  file_sem(4)  │  image_sem(8)  │  llm_sem(5)            │   │  │
+│  │  │  file_sem(8)  │  image_sem(16)  │  llm_sem(10)          │   │  │
 │  │  └─────────────────────────────────────────────────────────┘   │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
@@ -1937,6 +2022,7 @@ dependencies = [
     "pypandoc>=1.15",             # Pandoc Python 封装
     
     # PDF 处理
+    "pymupdf4llm>=0.2.0",         # PDF 处理 (LLM/RAG 优化，默认引擎)
     "pymupdf>=1.26.0",            # PDF 处理 (速度优先)
     "pdfplumber>=0.11.4",         # PDF 处理 (表格优先)
     
@@ -2193,7 +2279,7 @@ def mock_llm():
         mock.return_value.complete.return_value = LLMResponse(
             content="Mocked response",
             usage=TokenUsage(prompt=100, completion=50),
-            model="gpt-4o",
+            model="gpt-5.2",
             finish_reason="stop"
         )
         yield mock
@@ -2307,3 +2393,145 @@ def mock_llm():
 | 1.0.1 | 2026-01-06 | 优化：旧格式转换优先用 MS Office；LLM 使用官方 SDK；简化 Frontmatter；添加成熟切块库；CLI 默认不启用 LLM；多平台依赖说明 |
 | 1.0.2 | 2026-01-06 | 优化：LLM Provider fallback 机制；新增 Anthropic Provider；明确 --llm 用于 Markdown 格式优化；详细描述格式优化内容；更新依赖版本 |
 | 1.0.3 | 2026-01-06 | 依赖更新：google-genai 替代旧 google-generativeai；Pillow 12.x 内置 SIMD 优化移除 pillow-simd；全部依赖更新到最新版本 |
+| 1.0.4 | 2026-01-07 | 修复：LibreOffice 并发锁冲突；输出文件命名保留原格式；CLI 支持 -h；新增配置示例；新增中文文档 |
+| 1.0.5 | 2026-01-07 | 新增：pymupdf4llm PDF 引擎（设为默认）；修复 PDF 图片位置不正确问题；修复 verbose 模式日志混乱；重构 verbose 模式行为（verbose 显示日志，非 verbose 显示进度条） |
+
+---
+
+## 18. 问题记录与踩坑点
+
+本章节记录开发和使用过程中遇到的问题、解决方案和用户反馈需求。
+
+### 18.1 已知问题与解决方案
+
+#### LibreOffice 并发转换不稳定
+
+- **问题描述**: 批量转换 .xls/.ppt/.doc 等旧格式文件时，相同文件多次运行结果不一致。第一次可能 .ppt 失败 .xls 成功，第二次则相反。
+- **根本原因**: LibreOffice headless 模式使用共享的用户配置目录，多进程同时调用时会产生锁冲突，导致部分进程失败。
+- **解决方案**: 使用 `-env:UserInstallation=file:///path/to/temp/profile` 参数为每次转换创建独立的用户配置目录，避免锁冲突。
+- **跨平台兼容**:
+  - Windows: `file:///C:/temp/profile`
+  - Linux/macOS: `file:///tmp/profile`
+- **清理策略**: 使用 `tempfile.TemporaryDirectory()` 上下文管理器，确保临时配置目录在转换完成后自动清理。
+- **修复版本**: v1.0.4
+- **相关代码**: `markit/converters/office.py:LibreOfficeConverter.convert()`
+
+#### 输出文件命名冲突
+
+- **问题描述**: `file.xls` 和 `file.xlsx` 转换后都生成 `file.md`，导致文件覆盖或冲突。
+- **根本原因**: 原命名策略只使用文件的 stem（去除扩展名后的名称）。
+- **解决方案**: 修改命名格式为 `{filename}.md`，保留原始扩展名。
+  - 示例: `report.docx` -> `report.docx.md`
+  - 示例: `data.xlsx` -> `data.xlsx.md`
+- **优点**: 
+  - 可以区分同名但不同格式的文件
+  - 一眼能看出原始文件格式
+- **修复版本**: v1.0.4
+- **相关代码**: `markit/core/pipeline.py:_write_output()`
+
+#### CLI 帮助参数不便
+
+- **问题描述**: 只能使用 `--help` 查看帮助，不支持常见的 `-h` 短参数。
+- **根本原因**: Typer 默认不启用 `-h` 短参数。
+- **解决方案**: 在 Typer app 初始化时添加 `context_settings={"help_option_names": ["-h", "--help"]}`
+- **修复版本**: v1.0.4
+- **相关代码**: `markit/cli/main.py`
+
+### 18.2 用户反馈需求记录
+
+| 日期 | 需求描述 | 状态 | 实现版本 | 备注 |
+|------|----------|------|----------|------|
+| 2026-01-07 | 输出文件命名保留原格式后缀 | 已实现 | v1.0.4 | `file.docx` -> `file.docx.md` |
+| 2026-01-07 | 添加 .gitignore 文件 | 已实现 | v1.0.4 | 排除 output/、__pycache__/ 等 |
+| 2026-01-07 | CLI 支持 -h 短参数 | 已实现 | v1.0.4 | 与 --help 效果相同 |
+| 2026-01-07 | 提供全量配置示例文件 | 已实现 | v1.0.4 | markit.example.toml |
+| 2026-01-07 | 提供中文版 README | 已实现 | v1.0.4 | README_CN.md |
+| 2026-01-07 | 日志行为提示 | 已实现 | v1.0.4 | 启动时提示日志输出位置 |
+| 2026-01-07 | markit.toml 是否必须 | 已说明 | v1.0.4 | 非必须，所有配置有默认值 |
+| 2026-01-07 | pymupdf4llm 作为默认 PDF 引擎 | 已实现 | v1.0.5 | 更好的表格/标题检测，适合 LLM/RAG |
+| 2026-01-07 | 修复 PDF 图片位置不正确 | 已实现 | v1.0.5 | 只提取实际渲染的图片 |
+| 2026-01-07 | 重构 verbose 模式行为 | 已实现 | v1.0.5 | verbose：详细日志无进度条；非 verbose：进度条无日志 |
+
+### 18.3 测试验证记录
+
+#### 测试文件集
+
+位置: `./input/`
+
+| 文件名 | 格式 | 大小 | 测试用途 |
+|--------|------|------|----------|
+| file_example_XLS_100.xls | Excel 97-2003 | 100KB | LibreOffice 并发稳定性测试 |
+| file_example_XLS_100.xlsx | Excel 2007+ | 100KB | MarkItDown 直接转换测试 |
+| file_example_XLSX_100.xlsx | Excel 2007+ | 100KB | 表格转换测试 |
+| file_example_PPT_250kB.ppt | PPT 97-2003 | 250KB | LibreOffice 并发稳定性测试 |
+| file_example_PPT_250kB.pptx | PPT 2007+ | 250KB | MarkItDown 直接转换测试 |
+| Free_Test_Data_500KB_PPTX.pptx | PPT 2007+ | 500KB | 图片提取验证 |
+| file-sample_100kB.doc | Word 97-2003 | 100KB | LibreOffice 转换测试 |
+| file-sample_100kB.docx | Word 2007+ | 100KB | MarkItDown 直接转换测试 |
+| file-example_PDF_500_kB.pdf | PDF | 500KB | PyMuPDF 图片提取测试 |
+
+#### 测试场景
+
+1. **并发稳定性测试**: 使用 `--file-concurrency 4` 连续运行 3 次批量转换，验证所有旧格式文件结果一致。
+2. **命名格式测试**: 验证同名不同格式文件（如 .xls 和 .xlsx）输出文件名不冲突。
+3. **清理测试**: 验证转换完成后无残留的临时文件或 LibreOffice 用户配置目录。
+
+### 18.4 配置相关说明
+
+#### markit.toml 是否必须？
+
+**不是必须的。** MarkIt 的所有配置项都有合理的默认值，无需配置文件即可正常运行。
+
+配置加载优先级（从高到低）:
+1. 命令行参数
+2. 环境变量（`MARKIT_*` 前缀）
+3. 配置文件（`markit.toml`）
+4. 默认值
+
+**建议**: 对于简单使用场景，无需创建配置文件。对于需要自定义 LLM 提供商、调整并发参数等场景，可复制 `markit.example.toml` 并按需修改。
+
+#### 日志文件默认位置
+
+默认情况下，`log_file` 配置为 `None`，日志仅输出到控制台（stderr）。
+
+如需保存日志到文件:
+
+```toml
+# 在 markit.toml 中
+log_file = "logs/markit.log"
+```
+
+或通过环境变量:
+
+```bash
+export MARKIT_LOG_FILE="logs/markit.log"
+```
+
+日志目录会自动创建（如果不存在）。
+
+### 18.5 踩坑点汇总
+
+| 类别 | 问题 | 解决方案 |
+|------|------|----------|
+| LibreOffice | 并发执行时锁冲突 | 使用 `-env:UserInstallation` 隔离用户配置 |
+| LibreOffice | Windows 路径格式 | 使用 `file:///C:/path` 格式，注意三斜杠 |
+| LibreOffice | 临时文件未清理 | 使用 TemporaryDirectory 上下文管理器 |
+| LibreOffice | 中间文件污染输入目录 | 将转换后的 .docx/.pptx/.xlsx 输出到 output/converted/ 目录 |
+| 文件命名 | 同名不同格式冲突 | 保留完整文件名作为输出前缀 |
+| Typer | 不支持 -h 短参数 | 添加 context_settings 配置 |
+| anyio | 类型检查报错 | 已知问题，不影响运行 |
+| MarkItDown | AutoShape/VML 图形无法转换 | 检测并在 MD 末尾添加提示，建议手动处理 |
+| MarkItDown | PPTX 页眉页脚被提取 | 基于 placeholder type 自动过滤，或使用 --llm 智能清理 |
+| PDF | 同一图片多页引用导致重复 | 按 xref 去重，避免重复提取相同图片 |
+| PDF | 图片位置不正确 | 改用 `page.get_image_info()` 只提取实际渲染在页面上的图片 |
+| PDF | 表格/标题识别不够好 | 新增 pymupdf4llm 引擎，专为 LLM/RAG 优化，表格和标题检测更好 |
+| convert | verbose 模式日志和 spinner 混乱 | verbose 模式下禁用 spinner；非 verbose 模式下抑制 console 日志 |
+| batch | verbose 和非 verbose 输出相同 | verbose 模式显示详细日志无进度条；非 verbose 模式显示进度条无日志 |
+
+### 18.6 已知限制
+
+| 格式 | 限制 | 说明 |
+|------|------|------|
+| Word/PowerPoint | AutoShape/VML/DrawingML 不支持 | MarkItDown 库限制，这些图形元素无法转换为 Markdown。MarkIt 会在转换后的文件末尾添加提示。 |
+| PowerPoint | 页眉页脚默认被提取 | MarkItDown 不区分内容类型。MarkIt 已实现自动过滤（基于 placeholder type），或可使用 `--llm` 进行智能清理。 |
+| PDF | 复杂表格可能丢失格式 | PyMuPDF 对复杂表格支持有限，建议使用 pdfplumber 引擎或 LLM 增强。 |
