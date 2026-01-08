@@ -1,0 +1,192 @@
+# MarkIt Configuration Example
+# ============================
+# Copy this file to markit.toml and modify as needed.
+# All settings shown here are optional - defaults will be used if not specified.
+#
+# Configuration priority (highest to lowest):
+#   1. Command line arguments
+#   2. Environment variables (MARKIT_*)
+#   3. Configuration file (markit.toml)
+#   4. Default values
+
+# ============================================================================
+# Global Settings
+# ============================================================================
+
+# Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level = "INFO"
+
+# Log file path (optional)
+# If not set, logs output to console (stderr) only.
+# Tip: Use absolute path or relative path from working directory.
+# log_file = "logs/markit.log"
+
+# State file for batch resume functionality
+# Used to track progress and enable --resume option
+state_file = ".markit-state.json"
+
+# ============================================================================
+# LLM Configuration
+# ============================================================================
+# Multiple providers can be configured. The first available provider will be used.
+# API keys can be set via environment variables:
+#   - OPENAI_API_KEY
+#   - ANTHROPIC_API_KEY
+#   - GOOGLE_API_KEY
+#   - OPENROUTER_API_KEY
+#
+# To use LLM features, run commands with --llm or --analyze-image flags.
+
+# Provider 1: OpenAI
+[[llm.providers]]
+provider = "openai"
+model = "gpt-5.2"
+timeout = 60
+max_retries = 3
+# api_key = "sk-..."  # Or use OPENAI_API_KEY env var
+
+# Provider 2: Anthropic Claude
+[[llm.providers]]
+provider = "anthropic"
+model = "claude-sonnet-4-5"
+timeout = 60
+max_retries = 3
+# api_key = "..."  # Or use ANTHROPIC_API_KEY env var
+
+# Provider 3: Google Gemini
+[[llm.providers]]
+provider = "gemini"
+model = "gemini-3-flash-preview"
+timeout = 60
+max_retries = 3
+# api_key = "..."  # Or use GOOGLE_API_KEY env var
+
+# Provider 4: Ollama (Local)
+[[llm.providers]]
+provider = "ollama"
+model = "llama3.2-vision"
+base_url = "http://localhost:11434"
+timeout = 120
+# No API key needed for local Ollama
+
+# Provider 5: OpenRouter (API aggregator)
+[[llm.providers]]
+provider = "openrouter"
+model = "google/gemini-3-flash-preview"
+base_url = "https://openrouter.ai/api/v1"
+timeout = 60
+max_retries = 3
+# api_key = "..."  # Or use OPENROUTER_API_KEY env var
+
+# ============================================================================
+# Image Processing
+# ============================================================================
+
+[image]
+# Enable image compression (PNG optimization, JPEG quality reduction)
+enable_compression = true
+
+# PNG optimization level (0-6, higher = more compression but slower)
+png_optimization_level = 2
+
+# JPEG quality (0-100, higher = better quality but larger file)
+jpeg_quality = 85
+
+# Maximum image dimension in pixels (larger images will be resized)
+max_dimension = 2048
+
+# Enable LLM-based image analysis (generates alt text and descriptions)
+# Requires --analyze-image flag or this setting to be true
+enable_analysis = false
+
+# Filter out small decorative images (icons, bullets, etc.)
+filter_small_images = true
+
+# Minimum image width or height in pixels to keep
+min_dimension = 100
+
+# Minimum image area in pixels squared (e.g., 200x200 = 40000)
+min_area = 40000
+
+# Minimum image file size in bytes to keep (e.g., 10KB = 10240)
+min_file_size = 10240
+
+# ============================================================================
+# Concurrency Settings
+# ============================================================================
+
+[concurrency]
+# Number of files to process concurrently in batch mode
+file_workers = 4
+
+# Number of images to process concurrently
+image_workers = 8
+
+# Number of concurrent LLM API requests
+llm_workers = 5
+
+# ============================================================================
+# PDF Processing
+# ============================================================================
+
+[pdf]
+# PDF processing engine:
+#   - pymupdf4llm: Best for LLM/RAG applications, good table/heading detection (default)
+#   - pymupdf: Fast, good for most PDFs
+#   - pdfplumber: Better table extraction
+#   - markitdown: Uses Microsoft's MarkItDown library
+engine = "pymupdf4llm"
+
+# Extract images from PDFs
+extract_images = true
+
+# Enable OCR for scanned PDFs (requires additional dependencies)
+ocr_enabled = false
+
+# ============================================================================
+# Markdown Enhancement (LLM-powered)
+# ============================================================================
+# These features are only active when --llm flag is used.
+
+[enhancement]
+# Enable LLM-based markdown enhancement by default
+# Can be overridden with --llm flag
+enabled = false
+
+# Remove headers and footers from converted content
+remove_headers_footers = true
+
+# Fix heading levels (ensure proper hierarchy starting from h2)
+fix_heading_levels = true
+
+# Add YAML frontmatter to output files
+add_frontmatter = true
+
+# Generate document summary in frontmatter
+generate_summary = true
+
+# Chunk size for processing large documents (in tokens)
+chunk_size = 4000
+
+# Overlap between chunks for context continuity (in tokens)
+chunk_overlap = 200
+
+# ============================================================================
+# Output Settings
+# ============================================================================
+
+[output]
+# Default output directory (relative to input directory in batch mode)
+default_dir = "output"
+
+# Conflict resolution strategy:
+#   - skip: Skip if output file exists
+#   - overwrite: Overwrite existing files
+#   - rename: Add numeric suffix (e.g., file_1.md, file_2.md)
+on_conflict = "rename"
+
+# Create assets subdirectory for extracted images
+create_assets_subdir = true
+
+# Generate markdown description files for images (image.png.md)
+generate_image_descriptions = true
