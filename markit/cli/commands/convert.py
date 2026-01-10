@@ -93,6 +93,13 @@ def convert(
             help="Enable verbose output.",
         ),
     ] = False,
+    fast: Annotated[
+        bool,
+        typer.Option(
+            "--fast",
+            help="Fast mode: skip validation, minimal retries.",
+        ),
+    ] = False,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -120,6 +127,7 @@ def convert(
         llm_provider=llm_provider,
         llm_model=llm_model,
         verbose=verbose,
+        fast=fast,
         dry_run=dry_run,
     )
 

@@ -8,7 +8,7 @@ from PIL import Image
 
 from markit.image.compressor import CompressedImage
 from markit.image.converter import is_llm_supported_format
-from markit.llm.base import LLMResponse
+from markit.llm.base import LLMResponse, LLMTaskResultWithStats
 from markit.llm.manager import ProviderManager
 from markit.utils.logging import get_logger
 
@@ -102,15 +102,19 @@ class ImageAnalyzer:
         self,
         image: CompressedImage,
         context: str | None = None,
-    ) -> ImageAnalysis:
+        return_stats: bool = False,
+    ) -> ImageAnalysis | LLMTaskResultWithStats:
         """Analyze an image using LLM vision.
 
         Args:
             image: Compressed image to analyze
             context: Optional context about the image (e.g., from surrounding document)
+            return_stats: If True, return LLMTaskResultWithStats containing both
+                         the ImageAnalysis and LLM statistics
 
         Returns:
-            ImageAnalysis with descriptions and metadata
+            ImageAnalysis with descriptions and metadata, or LLMTaskResultWithStats
+            if return_stats=True
         """
         # Changed to debug to reduce log noise when processing many images
         log.debug("Analyzing image with LLM", filename=image.filename)
@@ -140,17 +144,22 @@ class ImageAnalyzer:
                 image_type=analysis.image_type,
             )
 
+            if return_stats:
+                return LLMTaskResultWithStats.from_response(analysis, response)
             return analysis
 
         except Exception as e:
             log.error("Image analysis failed", filename=image.filename, error=str(e))
             # Return fallback analysis
-            return ImageAnalysis(
+            fallback = ImageAnalysis(
                 alt_text=f"Image: {image.filename}",
                 detailed_description="Image analysis failed.",
                 detected_text=None,
                 image_type="other",
             )
+            if return_stats:
+                return LLMTaskResultWithStats(result=fallback)
+            return fallback
 
     def _parse_response(self, response: LLMResponse) -> ImageAnalysis:
         """Parse the LLM response into ImageAnalysis."""

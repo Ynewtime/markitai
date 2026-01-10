@@ -1,6 +1,163 @@
 # ROADMAP
 
-## 任务批次 2026011003
+## 任务批次 2026011101 - v0.1.1
+
+### 角色
+请担任高级 Python 软件架构师和 DevOps 工程师。
+
+### 上下文
+你正在分析 `markit` 代码库，这是一个智能文档转 Markdown 的工具。该项目使用了 `typer`、`rich`、`pydantic`、`anyio` 以及多种 LLM SDK。目前的核心逻辑位于 `markit/core/pipeline.py` 中，该文件已演变成一个职责混乱的“上帝类（God Class）”。
+
+### 目标
+重构代码库以提高可维护性、性能和配置管理规范，深度优化 LLM 提示词以适配中文场景，同时确保不改变外部 CLI 的行为。
+
+### 任务
+
+#### 第一阶段：架构重构（简化与解耦）
+1.  **拆解 `ConversionPipeline`**：
+    *   分析 `markit/core/pipeline.py`。
+    *   将图像处理逻辑（约第 796-911 行）提取到新的服务 `markit/services/image_processor.py` 中，建立 `ImageProcessingService` 类。
+    *   将 LLM 协调逻辑（约第 512-635 行）提取到 `markit/services/llm_orchestrator.py` 中，建立 `LLMOrchestrator` 类。
+    *   将文件输出逻辑（约第 1084-1238 行）提取到 `markit/services/output_manager.py` 中，建立 `OutputManager` 类。
+    *   更新 `ConversionPipeline` 以注入并使用这些新服务，使其仅作为高层协调者存在。
+2.  **标准化接口**：
+    *   确保所有新服务都实现由抽象基类或 Protocol 定义的清晰异步接口。
+
+#### 第二阶段：配置管理（最佳实践）
+1.  **移除硬编码值**：
+    *   定位 `markit/core/pipeline.py` 中的 `_get_default_model` 方法。
+    *   将默认模型字典（如 OpenAI: "gpt-5.2" 等）移动到 `markit/config/constants.py` 或 `markit/config/defaults.py` 中。
+    *   更新 `markit/config/settings.py` 以引用这些常量，避免在业务逻辑中硬编码。
+    *   尽可能识别并提取其他硬编码值，尤其是配置相关的。
+
+#### 第三阶段：性能优化
+1.  **优化 LibreOffice 转换（配置池模式）** (`markit/converters/office.py`)：
+    *   **关键要求**：为了避免 LibreOffice 的并发锁文件冲突，必须实现**互斥访问**的配置池。
+    *   创建一个 `LibreOfficeProfilePool` 类，管理 N 个独立的配置目录（N = 最大并发数）。
+    *   使用 `asyncio.Queue` 或 `contextlib.asynccontextmanager` 来实现“借出/归还”机制。确保在同一时刻，**一个配置目录只能被一个转换任务占用**。
+    *   不要在每次转换后删除目录，而是保留复用。仅在连续失败或处理 X 次后进行重置（清理并重建）。
+2.  **并行图像处理**：
+    *   在新的 `ImageProcessingService` 中，将 CPU 密集型的图像压缩/转换任务（PIL 操作）从 `asyncio.to_thread`（多线程）切换为 `ProcessPoolExecutor`（多进程），以绕过 Python 的全局解释器锁（GIL）并提升性能。
+
+#### 第四阶段：大模型提示词工程（Prompt Engineering）
+1.  **优化文档增强提示词** (`markit/llm/enhancer.py`)：
+    *   **语言规则**：在 `ENHANCEMENT_PROMPT` 和 `SUMMARY_PROMPT` 中明确增加规则，**要求默认使用中文**输出摘要和处理说明（除非文档内容完全是其他语言）。
+    *   **细节完善**：
+        *   增加对技术文档中代码块（Code Blocks）保留的强调，防止误删。
+        *   增加对复杂表格（Tables）格式化的具体指令，确保 Markdown 表格对齐。
+        *   增加去除“扫描件水印”、“页眉页脚干扰字符”的具体示例。
+2.  **优化图像分析提示词** (`markit/image/analyzer.py`)：
+    *   **语言规则**：修改 `IMAGE_ANALYSIS_PROMPT`，明确要求返回的 JSON 字段中 `alt_text`（替代文本）和 `detailed_description`（详细描述）**必须使用中文**。
+    *   **细节完善**：
+        *   增强 `image_type` 的分类描述，使其更精准。
+        *   增加对 OCR 文本 (`detected_text`) 的处理指示：如果是乱码则忽略，如果是关键信息则提取。
+3.  **知识图谱支持**：
+    *   **元数据提取**：新增规则，尽可能提取有利于后续知识图谱改造相关的 meta 元属性信息。
+
+#### 第五阶段：测试与质量（覆盖率）
+1.  **更新测试**：
+    *   在 `tests/unit/services/` 中为新的 `ImageProcessingService`、`LLMOrchestrator` 和 `OutputManager` 创建单元测试。
+    *   重构 `tests/unit/test_pipeline.py`，通过 Mock 这些新服务来仅验证协调逻辑。
+2.  **类型安全**：
+    *   确保所有新代码都能通过 `mypy --strict` 检查。
+
+### 约束条件
+*   **严禁**破坏现有的 CLI 命令（`markit convert`, `markit batch`）及其参数行为。
+*   **严禁**移除现有的日志记录；确保 `structlog` 的上下文信息在新的服务中得以保留。
+*   **代码风格**：严格遵循现有的 `ruff` 和 `mypy` 配置。
+*   **文件操作**：继续使用 `anyio` 进行异步文件 I/O 操作。
+*   
+
+## 进展
+
+待启动
+
+
+---
+
+
+# 归档
+
+## 任务批次 2026010901
+
+### 新特性
+
+1. 特性一：任务级别的日志记录，每次任务生成对应时间戳的日志，同时在日志头部打印当此任务的详细配置，执行完成或者被打断时在该次任务日志尾部记录最终报告
+2. 特性二：大模型资源池，支持配置/使用多个 Provider/Models，形成一个可用的负载均衡资源池，从而大大提高 llm 相关任务的并发数支持
+
+### 可靠性
+
+1. 根据 git 未提交的最新修改，进一步提高单元测试覆盖率
+2. 审视 ruff 和单元测试，修复相关报错
+
+### 进展
+
+已完成
+
+## 任务批次 2026010902
+
+### 新特性
+
+1. 特性一：新增 `markit provider select` 命令行功能，支持用户从已配置的 provider 中选取模型直接写入 markit.toml 配置。细分功能点：
+   1. 需要优化当前的配置文件设计，区分 Provider 和 Model，`provider test` 和 `provider models` 命令应该针对 Provider 相关配置进行
+   2. 对于 select/models 命令，要支持获取模型的 capabilities（如是否支持 text/vision/推理 等）
+
+### 进展
+
+已完成
+
+## 任务批次 2026010903
+
+### 重构
+
+1. [x] 配置格式迁移：将配置文件格式从 TOML 迁移至 YAML
+   1. [x] 引入 PyYAML 依赖
+   2. [x] 更新配置加载逻辑 (YamlConfigSettingsSource)
+   3. [x] 转换配置文件模板 (markit.example.toml -> markit.example.yaml)
+   4. [x] 重构 CLI `provider select` 命令的配置写入逻辑
+      - [x] 引入 `ruamel.yaml` 解决配置写入时的缩进和注释保留问题，防止配置错乱
+      - [x] 修正 CLI 成功后的提示信息，更准确引导用户
+   5. [x] 更新相关文档和默认值
+   6. [x] 移除旧版 TOML 支持 (Hard Switch)
+
+### 进展
+
+已完成
+
+## 任务批次 2026011001
+
+### 新特性
+
+1. 特性一：新增 `markit provider add` 命令，支持用户添加新的 provider credential
+   1. 交互方式：无参数时启动交互式向导，有参数时直接使用参数值
+   2. 支持的 provider 类型：openai, anthropic, gemini, ollama, openrouter，以及 OpenAI Compatible（复用 openai 类型，但强制要求填写 base_url）
+   3. 添加成功后询问用户是否要立即运行 `provider select` 选择模型
+   4. 使用 ruamel.yaml 保持配置文件格式和注释
+
+### 进展
+
+已完成
+
+## 任务批次 2026011002
+
+### 新特性
+
+1. 特性一：优化 `markit provider` 命令
+  1. -h 帮助菜单中，`add` 移到 `test` 命令前面
+  2. 新增 `markit provider list` 命令，仅列出所有 Provider，不做测试
+  3. 将 `markit provider models` 重命名为 `markit provider fetch`，功能不变
+  4. 将 `markit provider select` 改为下方特性二中的 `markit model add`
+2. 特性二：新增 `markit model` 命令
+  1. 全部子命令为: `add` / `list`
+  2. `add`：同 `markit provider select`
+  3. `list`：仅列出所有 model
+3. 可靠性：补充对应单元测试，刷新已有单元测试，验证 ruff 和已有单元测试，刷新文档
+
+### 进展
+
+已完成
+
+## 任务批次 2026011003 - v0.1.0
 
 ### 背景
 
@@ -11,6 +168,10 @@
 3. **验证失败静默处理**：`_validate_provider` 验证异常时返回 `True`，导致无效模型被标记为可用
 4. **日志信息不完整**：缺少耗时统计、token 用量、成本估算等关键信息
 5. **缺少执行模式区分**：无法在速度和可靠性间灵活选择
+
+另外，当前系统缺少一次大批量文件输入的 batch 命令测试，以验证程序在超长处理时间、并发拉满、触发模型限额中断等场景的能力。
+
+结合工具当前的能力，对于工具的后续规划，你有什么建议吗？
 
 ### 改进计划
 
@@ -155,89 +316,6 @@ llm:
 1）`markit config show` 改名为 `markit config list`
 2）`markit config validate` 改名为 `markit config test`
 3）调整 `markit config` 命令顺序为 `init/test/list/locations`
-
-### 进展
-
-待开始
-
----
-
-# 归档
-
-## 任务批次 2026010901
-
-### 新特性
-
-1. 特性一：任务级别的日志记录，每次任务生成对应时间戳的日志，同时在日志头部打印当此任务的详细配置，执行完成或者被打断时在该次任务日志尾部记录最终报告
-2. 特性二：大模型资源池，支持配置/使用多个 Provider/Models，形成一个可用的负载均衡资源池，从而大大提高 llm 相关任务的并发数支持
-
-### 可靠性
-
-1. 根据 git 未提交的最新修改，进一步提高单元测试覆盖率
-2. 审视 ruff 和单元测试，修复相关报错
-
-### 进展
-
-已完成
-
-## 任务批次 2026010902
-
-### 新特性
-
-1. 特性一：新增 `markit provider select` 命令行功能，支持用户从已配置的 provider 中选取模型直接写入 markit.toml 配置。细分功能点：
-   1. 需要优化当前的配置文件设计，区分 Provider 和 Model，`provider test` 和 `provider models` 命令应该针对 Provider 相关配置进行
-   2. 对于 select/models 命令，要支持获取模型的 capabilities（如是否支持 text/vision/推理 等）
-
-### 进展
-
-已完成
-
-## 任务批次 2026010903
-
-### 重构
-
-1. [x] 配置格式迁移：将配置文件格式从 TOML 迁移至 YAML
-   1. [x] 引入 PyYAML 依赖
-   2. [x] 更新配置加载逻辑 (YamlConfigSettingsSource)
-   3. [x] 转换配置文件模板 (markit.example.toml -> markit.example.yaml)
-   4. [x] 重构 CLI `provider select` 命令的配置写入逻辑
-      - [x] 引入 `ruamel.yaml` 解决配置写入时的缩进和注释保留问题，防止配置错乱
-      - [x] 修正 CLI 成功后的提示信息，更准确引导用户
-   5. [x] 更新相关文档和默认值
-   6. [x] 移除旧版 TOML 支持 (Hard Switch)
-
-### 进展
-
-已完成
-
-## 任务批次 2026011001
-
-### 新特性
-
-1. 特性一：新增 `markit provider add` 命令，支持用户添加新的 provider credential
-   1. 交互方式：无参数时启动交互式向导，有参数时直接使用参数值
-   2. 支持的 provider 类型：openai, anthropic, gemini, ollama, openrouter，以及 OpenAI Compatible（复用 openai 类型，但强制要求填写 base_url）
-   3. 添加成功后询问用户是否要立即运行 `provider select` 选择模型
-   4. 使用 ruamel.yaml 保持配置文件格式和注释
-
-### 进展
-
-已完成
-
-## 任务批次 2026011002
-
-### 新特性
-
-1. 特性一：优化 `markit provider` 命令
-  1. -h 帮助菜单中，`add` 移到 `test` 命令前面
-  2. 新增 `markit provider list` 命令，仅列出所有 Provider，不做测试
-  3. 将 `markit provider models` 重命名为 `markit provider fetch`，功能不变
-  4. 将 `markit provider select` 改为下方特性二中的 `markit model add`
-2. 特性二：新增 `markit model` 命令
-  1. 全部子命令为: `add` / `list`
-  2. `add`：同 `markit provider select`
-  3. `list`：仅列出所有 model
-3. 可靠性：补充对应单元测试，刷新已有单元测试，验证 ruff 和已有单元测试，刷新文档
 
 ### 进展
 

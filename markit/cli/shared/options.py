@@ -32,6 +32,7 @@ class ConversionOptions:
 
     # Runtime settings
     verbose: bool = False
+    fast: bool = False  # Fast mode: skip validation, minimal retries
     dry_run: bool = False
 
     @property

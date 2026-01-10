@@ -37,12 +37,23 @@ class LLMTaskResult:
         success: Whether the task completed successfully
         result: The result if successful
         error: The error message if failed
+        model: Model name used for this task
+        prompt_tokens: Number of prompt tokens used
+        completion_tokens: Number of completion tokens used
+        estimated_cost: Estimated cost in USD
+        duration: Execution duration in seconds
     """
 
     task: LLMTask
     success: bool
     result: Any = None
     error: str | None = None
+    # LLM statistics
+    model: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    estimated_cost: float = 0.0
+    duration: float = 0.0
 
     @property
     def source_file(self) -> Path:
@@ -123,6 +134,10 @@ class LLMTaskQueue:
         Returns:
             The asyncio.Task wrapping the execution
         """
+        from time import time
+
+        from markit.llm.base import LLMTaskResultWithStats
+
         # Backpressure: wait if too many tasks pending
         pending_sem = self._get_pending_semaphore()
         await pending_sem.acquire()
@@ -130,6 +145,7 @@ class LLMTaskQueue:
         async def execute_task() -> LLMTaskResult:
             """Execute the task with semaphore protection."""
             semaphore = self._get_semaphore()
+            start_time = time()
             try:
                 async with semaphore:
                     log.debug(
@@ -139,12 +155,28 @@ class LLMTaskQueue:
                         source=str(task.source_file.name),
                     )
                     result = await task.coro
+                    duration = time() - start_time
+
+                    # Extract statistics if result is LLMTaskResultWithStats
+                    if isinstance(result, LLMTaskResultWithStats):
+                        return LLMTaskResult(
+                            task=task,
+                            success=True,
+                            result=result.result,  # Extract the actual result
+                            model=result.model,
+                            prompt_tokens=result.prompt_tokens,
+                            completion_tokens=result.completion_tokens,
+                            estimated_cost=result.estimated_cost,
+                            duration=duration,
+                        )
                     return LLMTaskResult(
                         task=task,
                         success=True,
                         result=result,
+                        duration=duration,
                     )
             except Exception as e:
+                duration = time() - start_time
                 log.warning(
                     "LLM task failed",
                     task_type=task.task_type,
@@ -156,6 +188,7 @@ class LLMTaskQueue:
                     task=task,
                     success=False,
                     error=str(e),
+                    duration=duration,
                 )
             finally:
                 # Release backpressure slot

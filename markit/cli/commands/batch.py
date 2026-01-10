@@ -2,6 +2,7 @@
 
 import asyncio
 from pathlib import Path
+from time import time
 from typing import Annotated, Any
 
 import typer
@@ -20,6 +21,7 @@ from markit.utils.logging import (
     set_log_output,
     setup_logging,
 )
+from markit.utils.stats import BatchStats
 
 console = get_console()
 log = get_logger(__name__)
@@ -169,6 +171,13 @@ def batch(
             help="Enable verbose output.",
         ),
     ] = False,
+    fast: Annotated[
+        bool,
+        typer.Option(
+            "--fast",
+            help="Fast mode: skip validation, minimal retries, reduced logging.",
+        ),
+    ] = False,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -196,6 +205,7 @@ def batch(
         llm_provider=llm_provider,
         llm_model=llm_model,
         verbose=verbose,
+        fast=fast,
         dry_run=dry_run,
     )
 
@@ -272,6 +282,10 @@ async def _execute_batch(
     ctx: ConversionContext,
 ) -> None:
     """Execute the batch conversion asynchronously."""
+    # Initialize batch statistics
+    stats = BatchStats()
+    init_start = time()
+
     # Initialize state manager
     state_manager = StateManager(state_path)
 
@@ -313,7 +327,9 @@ async def _execute_batch(
         )
 
     # Create pipeline and concurrency manager
-    pipeline = ctx.create_pipeline()
+    # Enable concurrent fallback in default mode (not fast mode) for better resilience
+    use_concurrent_fallback = not ctx.options.fast
+    pipeline = ctx.create_pipeline(use_concurrent_fallback=use_concurrent_fallback)
 
     concurrency = ConcurrencyManager(
         file_workers=file_concurrency,
@@ -324,7 +340,17 @@ async def _execute_batch(
     # Update conflict strategy in settings
     ctx.settings.output.on_conflict = on_conflict
 
+    # Warmup LLM providers if enabled (fail fast and avoid concurrency race)
+    if ctx.options.llm or ctx.options.effective_analyze_image:
+        with console.status("[cyan]Initializing LLM providers...[/cyan]"):
+            await pipeline.warmup()
+
+    # Track initialization time
+    stats.init_duration = time() - init_start
+    stats.total_files = len(files)
+
     # Choose processing mode based on LLM usage
+    convert_start = time()
     if ctx.options.use_phased_pipeline:
         if ctx.options.verbose:
             results = await _process_files_phased_verbose(
@@ -335,6 +361,7 @@ async def _execute_batch(
                 state_manager=state_manager,
                 input_dir=input_dir,
                 llm_concurrency=llm_concurrency,
+                stats=stats,
             )
         else:
             results = await _process_files_phased_with_progress(
@@ -345,6 +372,7 @@ async def _execute_batch(
                 state_manager=state_manager,
                 input_dir=input_dir,
                 llm_concurrency=llm_concurrency,
+                stats=stats,
             )
     else:
         if ctx.options.verbose:
@@ -355,6 +383,7 @@ async def _execute_batch(
                 output_dir=output_dir,
                 state_manager=state_manager,
                 input_dir=input_dir,
+                stats=stats,
             )
         else:
             results = await _process_files_with_progress(
@@ -364,13 +393,18 @@ async def _execute_batch(
                 output_dir=output_dir,
                 state_manager=state_manager,
                 input_dir=input_dir,
+                stats=stats,
             )
+
+    # Track conversion time and finalize stats
+    stats.convert_duration = time() - convert_start
+    stats.finish()
 
     # Mark batch complete
     state_manager.mark_batch_complete()
 
     # Display summary
-    _display_summary(results, state_manager)
+    _display_summary(results, state_manager, stats)
 
 
 def _discover_files(
@@ -405,6 +439,7 @@ async def _process_files_verbose(
     output_dir: Path,
     state_manager: StateManager,
     input_dir: Path,
+    stats: BatchStats | None = None,
 ) -> list[TaskResult[Path]]:
     """Process files with verbose logging (no progress bar)."""
     results: list[TaskResult[Path]] = []
@@ -428,14 +463,20 @@ async def _process_files_verbose(
                     output=str(result.output_path),
                     images=result.images_count,
                 )
+                if stats:
+                    stats.add_file_result(success=True)
             else:
                 state_manager.update_file_status(file_path, "failed", error=result.error)
                 log.error("File conversion failed", file=str(rel_path), error=result.error)
+                if stats:
+                    stats.add_file_result(success=False)
 
             return result
         except Exception as e:
             state_manager.update_file_status(file_path, "failed", error=str(e))
             log.error("File conversion error", file=str(rel_path), error=str(e))
+            if stats:
+                stats.add_file_result(success=False)
             raise
 
     def on_progress(
@@ -463,6 +504,7 @@ async def _process_files_with_progress(
     state_manager: StateManager,
     input_dir: Path,
     quiet: bool = False,
+    stats: BatchStats | None = None,
 ) -> list[TaskResult[Path]]:
     """Process files with Rich progress display."""
     results: list[TaskResult[Path]] = []
@@ -498,12 +540,18 @@ async def _process_files_with_progress(
                         state_manager.update_file_status(
                             file_path, "completed", output_path=result.output_path
                         )
+                        if stats:
+                            stats.add_file_result(success=True)
                     else:
                         state_manager.update_file_status(file_path, "failed", error=result.error)
+                        if stats:
+                            stats.add_file_result(success=False)
 
                     return result
                 except Exception as e:
                     state_manager.update_file_status(file_path, "failed", error=str(e))
+                    if stats:
+                        stats.add_file_result(success=False)
                     raise
 
             def on_progress(
@@ -551,6 +599,7 @@ async def _process_file_pipeline(
     input_dir: Path,  # noqa: ARG001
     state_manager: StateManager,
     callbacks: dict[str, Any],
+    stats: BatchStats | None = None,
 ) -> TaskResult[Path]:
     """Process a single file through the full pipeline (streaming)."""
     from markit.image.analyzer import ImageAnalysis
@@ -566,6 +615,8 @@ async def _process_file_pipeline(
         if not doc_result.success:
             callbacks.get("on_phase1_error", lambda _p, _e: None)(file_path, doc_result.error)
             state_manager.update_file_status(file_path, "failed", error=doc_result.error)
+            if stats:
+                stats.add_file_result(success=False)
             return TaskResult(file_path, False, error=doc_result.error)
 
         callbacks.get("on_phase1_complete", lambda _p, _r: None)(file_path, doc_result)
@@ -606,6 +657,16 @@ async def _process_file_pipeline(
         enhanced_markdown: str | None = None
 
         for llm_result in llm_results:
+            # Collect LLM statistics
+            if stats and llm_result.model:
+                stats.add_llm_call(
+                    model=llm_result.model,
+                    prompt_tokens=llm_result.prompt_tokens,
+                    completion_tokens=llm_result.completion_tokens,
+                    cost=llm_result.estimated_cost,
+                    duration=llm_result.duration,
+                )
+
             if llm_result.success:
                 if llm_result.task_type == "image_analysis":
                     image_analyses.append(llm_result.result)
@@ -623,15 +684,21 @@ async def _process_file_pipeline(
                 file_path, "completed", output_path=pipeline_result.output_path
             )
             callbacks.get("on_phase3_complete", lambda _p, _r: None)(file_path, pipeline_result)
+            if stats:
+                stats.add_file_result(success=True)
             return TaskResult(file_path, True, result=pipeline_result)
         else:
             state_manager.update_file_status(file_path, "failed", error=pipeline_result.error)
             callbacks.get("on_phase3_error", lambda _p, _e: None)(file_path, pipeline_result.error)
+            if stats:
+                stats.add_file_result(success=False)
             return TaskResult(file_path, False, error=pipeline_result.error)
 
     except Exception as e:
         callbacks.get("on_error", lambda _p, _e: None)(file_path, str(e))
         state_manager.update_file_status(file_path, "failed", error=str(e))
+        if stats:
+            stats.add_file_result(success=False)
         return TaskResult(file_path, False, error=str(e))
 
 
@@ -643,6 +710,7 @@ async def _process_files_phased_verbose(
     state_manager: StateManager,
     input_dir: Path,
     llm_concurrency: int = 10,
+    stats: BatchStats | None = None,
 ) -> list[TaskResult[Path]]:
     """Process files using phased pipeline with verbose logging (streaming)."""
     llm_queue = LLMTaskQueue(max_concurrent=llm_concurrency, max_pending=100)
@@ -700,7 +768,8 @@ async def _process_files_phased_verbose(
 
     tasks = [
         _process_file_pipeline(
-            f, pipeline, concurrency, llm_queue, output_dir, input_dir, state_manager, callbacks
+            f, pipeline, concurrency, llm_queue, output_dir, input_dir, state_manager, callbacks,
+            stats=stats,
         )
         for f in files
     ]
@@ -718,6 +787,7 @@ async def _process_files_phased_with_progress(
     state_manager: StateManager,
     input_dir: Path,
     llm_concurrency: int = 10,
+    stats: BatchStats | None = None,
 ) -> list[TaskResult[Path]]:
     """Process files using phased pipeline with progress display (streaming)."""
     llm_queue = LLMTaskQueue(max_concurrent=llm_concurrency, max_pending=100)
@@ -807,6 +877,7 @@ async def _process_files_phased_with_progress(
                     input_dir,
                     state_manager,
                     callbacks,
+                    stats=stats,
                 )
                 for f in files
             ]
@@ -822,6 +893,7 @@ async def _process_files_phased_with_progress(
 def _display_summary(
     _results: list[TaskResult[Path]],
     state_manager: StateManager,
+    stats: BatchStats | None = None,
 ) -> None:
     """Display batch processing summary."""
     state = state_manager.get_state()
@@ -830,20 +902,27 @@ def _display_summary(
 
     console.print()
 
-    table = Table(title="Batch Summary", show_header=False)
-    table.add_column("Metric", style="bold")
-    table.add_column("Value")
+    # Display enhanced stats if available
+    if stats:
+        console.print("[bold]Batch Statistics:[/bold]")
+        console.print(stats.format_summary())
+        console.print()
+    else:
+        # Fallback to basic display
+        table = Table(title="Batch Summary", show_header=False)
+        table.add_column("Metric", style="bold")
+        table.add_column("Value")
 
-    table.add_row("Total Files", str(state.total_files))
-    table.add_row("Completed", f"[green]{state.completed_files}[/green]")
-    table.add_row("Failed", f"[red]{state.failed_files}[/red]")
-    table.add_row("Skipped", f"[yellow]{state.skipped_files}[/yellow]")
+        table.add_row("Total Files", str(state.total_files))
+        table.add_row("Completed", f"[green]{state.completed_files}[/green]")
+        table.add_row("Failed", f"[red]{state.failed_files}[/red]")
+        table.add_row("Skipped", f"[yellow]{state.skipped_files}[/yellow]")
 
-    if state.completed_files > 0 and state.total_files > 0:
-        success_rate = (state.completed_files / state.total_files) * 100
-        table.add_row("Success Rate", f"{success_rate:.1f}%")
+        if state.completed_files > 0 and state.total_files > 0:
+            success_rate = (state.completed_files / state.total_files) * 100
+            table.add_row("Success Rate", f"{success_rate:.1f}%")
 
-    console.print(table)
+        console.print(table)
 
     failed_files = [(path, fs.error) for path, fs in state.files.items() if fs.status == "failed"]
 
