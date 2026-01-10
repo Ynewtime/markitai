@@ -70,7 +70,8 @@ class OpenAIProvider(BaseLLMProvider):
                 "temperature": temperature,
             }
             if max_tokens is not None:
-                request_params["max_tokens"] = max_tokens
+                # GPT-5.2+ models require max_completion_tokens instead of max_tokens
+                request_params["max_completion_tokens"] = max_tokens
 
             # Add any extra kwargs (excluding 'model' which is already handled)
             for k, v in kwargs.items():
@@ -139,7 +140,8 @@ class OpenAIProvider(BaseLLMProvider):
                 "stream": True,
             }
             if max_tokens is not None:
-                request_params["max_tokens"] = max_tokens
+                # GPT-5.2+ models require max_completion_tokens instead of max_tokens
+                request_params["max_completion_tokens"] = max_tokens
 
             # Add any extra kwargs (excluding 'model' which is already handled)
             for k, v in kwargs.items():

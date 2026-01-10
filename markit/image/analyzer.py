@@ -112,7 +112,8 @@ class ImageAnalyzer:
         Returns:
             ImageAnalysis with descriptions and metadata
         """
-        log.info("Analyzing image with LLM", filename=image.filename)
+        # Changed to debug to reduce log noise when processing many images
+        log.debug("Analyzing image with LLM", filename=image.filename)
 
         # Convert to LLM-supported format if needed (e.g., GIF -> PNG)
         image_data, image_format = self._convert_to_supported_format(image)

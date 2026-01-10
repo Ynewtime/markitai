@@ -23,7 +23,8 @@ class EnhancementConfig:
     follow_gfm: bool = True
     add_frontmatter: bool = True
     generate_summary: bool = True
-    chunk_size: int = 4000
+    # Optimized for large context models (Gemini 3 Flash: 1.05M context)
+    chunk_size: int = 32000
 
 
 @dataclass

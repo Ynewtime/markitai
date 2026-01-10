@@ -318,6 +318,7 @@ class MSOfficeConverter(_BaseOfficeConverter):
 
         # Try to import win32com
         try:
+            import pythoncom  # noqa: F401
             import win32com.client  # noqa: F401
         except ImportError as e:
             raise RuntimeError("pywin32 is required for MS Office conversion") from e
@@ -335,34 +336,43 @@ class MSOfficeConverter(_BaseOfficeConverter):
         Returns:
             Path to converted file
         """
+        import pythoncom
         from pywintypes import com_error
 
-        suffix = file_path.suffix.lower()
-
-        # Determine output location
-        if converted_dir:
-            converted_dir.mkdir(parents=True, exist_ok=True)
-            output_path = converted_dir / (file_path.stem + target_format)
-        else:
-            output_path = file_path.parent / (file_path.stem + target_format)
+        # Initialize COM for this thread - required when called from worker threads
+        # (e.g., via anyio.to_thread.run_sync)
+        pythoncom.CoInitialize()
 
         try:
-            if suffix == ".doc":
-                return self._convert_word(file_path, output_path)
-            elif suffix == ".xls":
-                return self._convert_excel(file_path, output_path)
-            elif suffix == ".ppt":
-                return self._convert_powerpoint(file_path, output_path)
+            suffix = file_path.suffix.lower()
+
+            # Determine output location
+            if converted_dir:
+                converted_dir.mkdir(parents=True, exist_ok=True)
+                output_path = converted_dir / (file_path.stem + target_format)
             else:
+                output_path = file_path.parent / (file_path.stem + target_format)
+
+            try:
+                if suffix == ".doc":
+                    return self._convert_word(file_path, output_path)
+                elif suffix == ".xls":
+                    return self._convert_excel(file_path, output_path)
+                elif suffix == ".ppt":
+                    return self._convert_powerpoint(file_path, output_path)
+                else:
+                    raise ConversionError(
+                        file_path,
+                        f"Unsupported format for MS Office conversion: {suffix}",
+                    )
+            except com_error as e:
                 raise ConversionError(
                     file_path,
-                    f"Unsupported format for MS Office conversion: {suffix}",
-                )
-        except com_error as e:
-            raise ConversionError(
-                file_path,
-                f"MS Office COM error: {e}",
-            ) from e
+                    f"MS Office COM error: {e}",
+                ) from e
+        finally:
+            # Always uninitialize COM when done
+            pythoncom.CoUninitialize()
 
     def _convert_word(self, input_path: Path, output_path: Path) -> Path:
         """Convert Word document."""

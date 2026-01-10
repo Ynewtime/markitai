@@ -3,6 +3,8 @@
 import logging
 import re
 import sys
+import uuid
+from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
@@ -12,6 +14,35 @@ if TYPE_CHECKING:
 
 import structlog
 from rich.console import Console
+
+
+class SafeStreamHandler(logging.StreamHandler):
+    """A StreamHandler that handles encoding errors gracefully.
+
+    On Windows, the console may use CP1252 encoding which cannot display
+    CJK characters. This handler catches encoding errors and replaces
+    problematic characters.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit a record, handling encoding errors gracefully."""
+        try:
+            msg = self.format(record)
+            stream = self.stream
+            try:
+                stream.write(msg + self.terminator)
+            except UnicodeEncodeError:
+                # Replace characters that can't be encoded
+                safe_msg = msg.encode(stream.encoding or "utf-8", errors="replace").decode(
+                    stream.encoding or "utf-8", errors="replace"
+                )
+                stream.write(safe_msg + self.terminator)
+            self.flush()
+        except RecursionError:
+            raise
+        except Exception:
+            self.handleError(record)
+
 
 # Global console instance for coordinated output
 _console: Console | None = None
@@ -30,6 +61,13 @@ _NOISY_LOGGERS = [
     "urllib3",
     "PIL",
     "asyncio",
+    # Google Gemini SDK loggers (suppress "AFC is enabled" spam)
+    "google.genai",
+    "google_genai",  # Actual logger name used in models.py
+    "google.ai",
+    "google.api_core",
+    "google.auth",
+    "grpc",
 ]
 
 
@@ -98,15 +136,19 @@ def setup_logging(
     log_file: str | None = None,
     json_format: bool = False,
     console: Console | None = None,
+    console_level: str | None = None,
+    file_level: str | None = None,
 ) -> None:
     """Configure structlog for the application.
 
     Args:
-        level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        level: Root Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         log_file: Optional file path for logging output (logs to both console and file)
                   Supports date-based rotation with 7-day retention.
         json_format: If True, output JSON format (for production)
         console: Optional Rich Console for coordinated output with Progress
+        console_level: Optional override for console handler level
+        file_level: Optional override for file handler level
     """
     global _console, _log_output
 
@@ -163,8 +205,13 @@ def setup_logging(
     )
 
     # Console handler - always output to stderr
-    console_handler = logging.StreamHandler(_log_output)
-    console_handler.setLevel(log_level)
+    # Use SafeStreamHandler to handle encoding errors gracefully on Windows
+    console_handler = SafeStreamHandler(_log_output)
+
+    # Determine console level
+    c_level = getattr(logging, console_level.upper(), log_level) if console_level else log_level
+    console_handler.setLevel(c_level)
+
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
 
@@ -208,7 +255,11 @@ def setup_logging(
         )
         # Set suffix to include date for rotated files
         file_handler.suffix = "%Y-%m-%d"
-        file_handler.setLevel(log_level)
+
+        # Determine file level
+        f_level = getattr(logging, file_level.upper(), log_level) if file_level else log_level
+        file_handler.setLevel(f_level)
+
         file_handler.setFormatter(file_formatter)
         root_logger.addHandler(file_handler)
 
@@ -235,3 +286,73 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
         A structlog bound logger
     """
     return structlog.get_logger(name)
+
+
+def create_task_log_path(log_dir: str | Path, prefix: str = "task") -> tuple[str, Path]:
+    """Create a unique task log file path with timestamp and UUID.
+
+    This function generates a unique log file path for task-level logging.
+    Each task (convert/batch) gets its own log file for easier debugging
+    and traceability.
+
+    Args:
+        log_dir: Directory to store log files
+        prefix: Prefix for the log file name (e.g., "task", "convert", "batch")
+
+    Returns:
+        Tuple of (task_id, log_file_path)
+
+    Example:
+        >>> task_id, log_path = create_task_log_path(".logs", "convert")
+        >>> print(log_path)  # .logs/convert_20260109_143052_a1b2c3d4.log
+    """
+    log_dir_path = Path(log_dir)
+    log_dir_path.mkdir(parents=True, exist_ok=True)
+
+    task_id = str(uuid.uuid4())[:8]
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir_path / f"{prefix}_{timestamp}_{task_id}.log"
+
+    return task_id, log_file
+
+
+def setup_task_logging(
+    log_dir: str | Path,
+    prefix: str = "task",
+    verbose: bool = False,
+) -> tuple[str, Path]:
+    """Setup logging for a task with unified behavior.
+
+    This is a convenience function that:
+    1. Creates a unique task log file
+    2. Configures logging with appropriate levels for console and file
+    3. Returns task_id and log_path for tracking
+
+    Console behavior:
+    - verbose=False: Only WARNING and above (keeps output clean for spinners/progress)
+    - verbose=True: DEBUG and above (full logging for debugging)
+
+    File behavior:
+    - Always logs DEBUG level for complete task history
+
+    Args:
+        log_dir: Directory to store log files
+        prefix: Prefix for the log file name
+        verbose: Enable verbose console output
+
+    Returns:
+        Tuple of (task_id, log_file_path)
+    """
+    task_id, log_path = create_task_log_path(log_dir, prefix)
+
+    # Console level based on verbose flag
+    console_level = "DEBUG" if verbose else "WARNING"
+
+    setup_logging(
+        level="DEBUG",  # Root level allows all logs to flow
+        log_file=str(log_path),
+        console_level=console_level,
+        file_level="DEBUG",  # Always capture full details in file
+    )
+
+    return task_id, log_path

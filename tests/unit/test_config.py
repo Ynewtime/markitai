@@ -29,7 +29,7 @@ class TestMarkitSettings:
         settings = MarkitSettings()
 
         assert settings.log_level == "INFO"
-        assert settings.log_file is None
+        assert settings.log_dir == ".logs"
         assert settings.state_file == ".markit-state.json"
 
     def test_output_settings(self):
@@ -138,6 +138,138 @@ class TestLLMConfig:
         assert config.api_key == "test-key"
         assert config.timeout == 30
         assert config.max_retries == 3  # default
+
+
+class TestConfigCommands:
+    """Tests for config CLI commands."""
+
+    def test_config_init_creates_file(self, tmp_path):
+        """Test that config init creates a configuration file."""
+        from typer.testing import CliRunner
+
+        from markit.cli.commands.config import config_app
+
+        runner = CliRunner()
+        config_file = tmp_path / "markit.toml"
+
+        result = runner.invoke(config_app, ["init", "--path", str(config_file)])
+
+        assert result.exit_code == 0
+        assert config_file.exists()
+        assert "Created config file at:" in result.stdout
+
+    def test_config_init_contains_required_sections(self, tmp_path):
+        """Test that generated config contains all required sections."""
+        from typer.testing import CliRunner
+
+        from markit.cli.commands.config import config_app
+
+        runner = CliRunner()
+        config_file = tmp_path / "markit.toml"
+
+        runner.invoke(config_app, ["init", "--path", str(config_file)])
+
+        content = config_file.read_text(encoding="utf-8")
+
+        # Check for global settings
+        assert 'log_level = "INFO"' in content
+        assert 'state_file = ".markit-state.json"' in content
+
+        # Check for new schema documentation
+        assert "[[llm.credentials]]" in content
+        assert "[[llm.models]]" in content
+        assert "credential_id" in content
+
+        # Check for all supported provider types in credentials
+        assert 'provider = "openai"' in content
+        assert 'provider = "anthropic"' in content
+        assert 'provider = "gemini"' in content
+        assert 'provider = "ollama"' in content
+        assert 'provider = "openrouter"' in content
+
+        # Check for supported provider types documentation
+        assert "Supported provider types: openai, anthropic, gemini, ollama, openrouter" in content
+
+        # Check for legacy schema documentation
+        assert "[[llm.providers]]" in content
+
+        # Check for image section
+        assert "[image]" in content
+        assert "enable_compression = true" in content
+        assert "max_dimension = 2048" in content
+
+        # Check for concurrency section
+        assert "[concurrency]" in content
+        assert "file_workers = 4" in content
+        assert "image_workers = 8" in content
+        assert "llm_workers = 5" in content
+
+        # Check for pdf section
+        assert "[pdf]" in content
+        assert 'engine = "pymupdf4llm"' in content
+
+        # Check for enhancement section
+        assert "[enhancement]" in content
+        assert "chunk_size = 32000" in content
+
+        # Check for output section
+        assert "[output]" in content
+        assert 'default_dir = "output"' in content
+        assert 'on_conflict = "rename"' in content
+
+    def test_config_init_refuses_overwrite_without_force(self, tmp_path):
+        """Test that config init refuses to overwrite existing file."""
+        from typer.testing import CliRunner
+
+        from markit.cli.commands.config import config_app
+
+        runner = CliRunner()
+        config_file = tmp_path / "markit.toml"
+        config_file.write_text("existing content", encoding="utf-8")
+
+        result = runner.invoke(config_app, ["init", "--path", str(config_file)])
+
+        assert result.exit_code == 1
+        assert "already exists" in result.stdout
+        assert config_file.read_text(encoding="utf-8") == "existing content"
+
+    def test_config_init_force_overwrites(self, tmp_path):
+        """Test that config init with --force overwrites existing file."""
+        from typer.testing import CliRunner
+
+        from markit.cli.commands.config import config_app
+
+        runner = CliRunner()
+        config_file = tmp_path / "markit.toml"
+        config_file.write_text("existing content", encoding="utf-8")
+
+        result = runner.invoke(config_app, ["init", "--path", str(config_file), "--force"])
+
+        assert result.exit_code == 0
+        assert "Created config file at:" in result.stdout
+        assert config_file.read_text(encoding="utf-8") != "existing content"
+        assert "[image]" in config_file.read_text(encoding="utf-8")
+
+    def test_default_config_template_matches_example(self, tmp_path):
+        """Test that generated config aligns with markit.example.toml structure."""
+        from typer.testing import CliRunner
+
+        from markit.cli.commands.config import DEFAULT_CONFIG_TEMPLATE, config_app
+
+        runner = CliRunner()
+        config_file = tmp_path / "markit.toml"
+
+        runner.invoke(config_app, ["init", "--path", str(config_file)])
+
+        content = config_file.read_text(encoding="utf-8")
+
+        # Verify content matches the template
+        assert content == DEFAULT_CONFIG_TEMPLATE
+
+        # Key structural elements from markit.example.toml
+        assert "Configuration priority (highest to lowest):" in content
+        assert "New Schema: Credentials + Models (Recommended)" in content
+        assert "Legacy Schema: Combined Provider Config" in content
 
 
 class TestConstants:

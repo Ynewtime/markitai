@@ -2,35 +2,46 @@
 
 import asyncio
 import os
-from typing import Literal
 
-from markit.config.settings import LLMProviderConfig
+from markit.config.settings import (
+    LLMConfig,
+    LLMProviderConfig,
+)
 from markit.exceptions import LLMError, ProviderNotFoundError
 from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse
 from markit.utils.logging import get_logger
 
 log = get_logger(__name__)
 
-ProviderType = Literal["openai", "anthropic", "gemini", "ollama", "openrouter"]
-
 
 class ProviderManager:
-    """Manages multiple LLM providers with fallback support."""
+    """Manages multiple LLM providers with fallback and load balancing."""
 
-    def __init__(self, configs: list[LLMProviderConfig] | None = None) -> None:
-        """Initialize the provider manager.
+    def __init__(self, llm_config: LLMConfig | list[LLMProviderConfig] | None = None):
+        """Initialize provider manager.
 
         Args:
-            configs: List of provider configurations (in priority order)
+            llm_config: LLM configuration object or legacy list of provider configs
         """
-        self.configs = configs or []
+        self.config = llm_config or LLMConfig()
+        # Support legacy list of configs if passed directly (for tests backward compat)
+        if isinstance(llm_config, list):
+            self.config = LLMConfig(providers=llm_config)
+
+        # Ensure self.config is LLMConfig (handle None case above where it becomes LLMConfig())
+        if not isinstance(self.config, LLMConfig):
+            # Should be handled by logic above but for type checker:
+            self.config = LLMConfig()
+
         self._providers: dict[str, BaseLLMProvider] = {}
         self._valid_providers: list[str] = []
+        self._provider_capabilities: dict[str, list[str]] = {}
         self._initialized = False
         self._init_lock = asyncio.Lock()
+        self._current_index = 0
 
     async def initialize(self) -> None:
-        """Initialize and validate all configured providers."""
+        """Initialize all configured providers."""
         if self._initialized:
             return
 
@@ -38,25 +49,90 @@ class ProviderManager:
             if self._initialized:
                 return
 
-            for config in self.configs:
+            # 1. Process Legacy Providers
+            for config in self.config.providers:
                 try:
+                    # Use name as key if provided, else provider_model
+                    provider_key = config.name or f"{config.provider}_{config.model}"
                     provider = self._create_provider(config)
                     if await self._validate_provider(provider, config):
-                        self._providers[config.provider] = provider
-                        self._valid_providers.append(config.provider)
-                        log.info(f"Provider {config.provider} initialized successfully")
+                        self._providers[provider_key] = provider
+                        self._valid_providers.append(provider_key)
+
+                        # Optimistic default
+                        caps = (
+                            config.capabilities
+                            if config.capabilities is not None
+                            else ["text", "vision"]
+                        )
+                        self._provider_capabilities[provider_key] = caps
+
+                        log.info(
+                            f"Provider {provider_key} initialized successfully", capabilities=caps
+                        )
                 except Exception as e:
-                    log.warning(f"Provider {config.provider} initialization failed: {e}")
+                    log.warning(f"Failed to initialize provider {config.provider}: {e}")
+
+            # 2. Process New Model Configs
+            cred_map = {c.id: c for c in self.config.credentials}
+
+            for model_config in self.config.models:
+                try:
+                    cred = cred_map.get(model_config.credential_id)
+                    if not cred:
+                        log.warning(
+                            f"Credential '{model_config.credential_id}' not found for model '{model_config.name}'"
+                        )
+                        continue
+
+                    # Synthesize a ProviderConfig from Credential + Model
+                    # This allows reusing _create_provider logic
+                    synthetic_config = LLMProviderConfig(
+                        provider=cred.provider,
+                        model=model_config.model,
+                        name=model_config.name,
+                        api_key=cred.api_key,
+                        api_key_env=cred.api_key_env,
+                        base_url=cred.base_url,
+                        timeout=model_config.timeout,
+                        max_retries=model_config.max_retries,
+                        capabilities=model_config.capabilities,
+                    )
+
+                    provider_key = model_config.name  # Unique name required
+                    provider = self._create_provider(synthetic_config)
+
+                    if await self._validate_provider(provider, synthetic_config):
+                        self._providers[provider_key] = provider
+                        self._valid_providers.append(provider_key)
+
+                        caps = (
+                            model_config.capabilities
+                            if model_config.capabilities is not None
+                            else ["text", "vision"]
+                        )
+                        self._provider_capabilities[provider_key] = caps
+
+                        log.info(
+                            f"Model {provider_key} initialized successfully", capabilities=caps
+                        )
+
+                except Exception as e:
+                    log.warning(f"Failed to initialize model {model_config.name}: {e}")
 
             if not self._valid_providers:
-                log.warning("No valid LLM providers available")
+                log.warning("No valid LLM providers available. LLM features will be disabled.")
 
             self._initialized = True
 
     def _create_provider(self, config: LLMProviderConfig) -> BaseLLMProvider:
         """Create a provider instance from configuration."""
-        # Get API key from config or environment
-        api_key = config.api_key or self._get_api_key_from_env(config.provider)
+        # Get API key: explicit > env var from config > default env var
+        api_key = config.api_key
+        if not api_key and config.api_key_env:
+            api_key = os.environ.get(config.api_key_env)
+        if not api_key:
+            api_key = self._get_api_key_from_env(config.provider)
 
         if config.provider == "openai":
             from markit.llm.openai import OpenAIProvider
@@ -123,15 +199,20 @@ class ProviderManager:
         self, provider: BaseLLMProvider, config: LLMProviderConfig
     ) -> bool:
         """Validate that a provider is properly configured."""
+        # Helper to get effective API key
+        api_key = config.api_key
+        if not api_key and config.api_key_env:
+            api_key = os.environ.get(config.api_key_env)
+        if not api_key:
+            api_key = self._get_api_key_from_env(config.provider)
+
         # Check for required API key
         if config.provider in ("openai", "anthropic", "openrouter"):
-            api_key = config.api_key or self._get_api_key_from_env(config.provider)
             if not api_key:
                 log.warning(f"{config.provider} requires an API key")
                 return False
 
         if config.provider == "gemini":
-            api_key = config.api_key or self._get_api_key_from_env(config.provider)
             if not api_key:
                 log.warning("Gemini requires GOOGLE_API_KEY")
                 return False
@@ -172,6 +253,21 @@ class ProviderManager:
             raise ProviderNotFoundError(f"Provider '{name}' is not available")
         return self._providers[name]
 
+    def has_capability(self, capability: str) -> bool:
+        """Check if any initialized provider has the specified capability.
+
+        Args:
+            capability: Capability to check (e.g. "vision", "text")
+
+        Returns:
+            True if at least one provider supports the capability
+        """
+        for provider_name in self._valid_providers:
+            caps = self._provider_capabilities.get(provider_name, [])
+            if capability in caps:
+                return True
+        return False
+
     async def complete_with_fallback(
         self,
         messages: list[LLMMessage],
@@ -198,11 +294,22 @@ class ProviderManager:
             raise ProviderNotFoundError("No valid LLM provider available")
 
         errors = []
+        provider_count = len(self._valid_providers)
 
-        for provider_name in self._valid_providers:
+        # Feature 2: Round Robin Load Balancing
+        # Start from current index and rotate
+        start_index = self._current_index
+        # Move index for next request to ensure distribution
+        self._current_index = (self._current_index + 1) % provider_count
+
+        for i in range(provider_count):
+            idx = (start_index + i) % provider_count
+            provider_name = self._valid_providers[idx]
             provider = self._providers[provider_name]
             try:
-                log.debug(f"Trying provider: {provider_name}")
+                # Only log when retrying (not first attempt) or multiple providers
+                if i > 0:
+                    log.debug(f"Retrying with provider: {provider_name}")
                 return await provider.complete(messages, **kwargs)
             except Exception as e:
                 log.warning(f"Provider {provider_name} failed: {e}")
@@ -240,16 +347,42 @@ class ProviderManager:
         if not self._valid_providers:
             raise ProviderNotFoundError("No valid LLM provider available")
 
-        errors = []
+        # Filter providers that support vision
+        vision_providers = [
+            p for p in self._valid_providers if "vision" in self._provider_capabilities.get(p, [])
+        ]
 
-        for provider_name in self._valid_providers:
+        if not vision_providers:
+            raise LLMError("No provider with 'vision' capability available for image analysis")
+
+        errors = []
+        provider_count = len(vision_providers)
+
+        # Feature 2: Round Robin Load Balancing (across vision-capable providers)
+        start_index = self._current_index
+        # Move index for next request
+        self._current_index = (self._current_index + 1) % provider_count
+
+        for i in range(provider_count):
+            idx = (start_index + i) % provider_count
+            provider_name = vision_providers[idx]
             provider = self._providers[provider_name]
             try:
-                log.debug(f"Trying image analysis with provider: {provider_name}")
+                # Only log when retrying (not first attempt)
+                if i > 0:
+                    log.debug(f"Retrying image analysis with provider: {provider_name}")
                 return await provider.analyze_image(image_data, prompt, image_format, **kwargs)
             except Exception as e:
                 log.warning(f"Provider {provider_name} image analysis failed: {e}")
-                errors.append((provider_name, e))
+
+                # Diagnostic warning for configuration guidance
+                warning_msg = (
+                    f"If provider '{provider_name}' is text-only, please explicitly set "
+                    f"capabilities=['text'] in markit.toml to skip it for image tasks."
+                )
+                log.warning(warning_msg)
+
+                errors.append((provider_name, f"{e}. Hint: {warning_msg}"))
                 continue
 
         error_details = "; ".join(f"{name}: {err}" for name, err in errors)

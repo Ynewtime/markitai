@@ -103,11 +103,20 @@ default_dir = "output"
 [image]
 enable_compression = true
 
-[[llm.providers]]
+# New Schema (recommended for multiple models)
+# Define credentials separately from models
+[[llm.credentials]]
+id = "openai-main"
 provider = "openai"
-model = "gpt-5.2"
-# Set OPENAI_API_KEY env var
+# api_key = "sk-..."  # Or use OPENAI_API_KEY env var
 
+[[llm.models]]
+name = "GPT-4o"
+model = "gpt-4o"
+credential_id = "openai-main"
+capabilities = ["text", "vision"]
+
+# Legacy Schema (simpler, still supported)
 [[llm.providers]]
 provider = "ollama"
 model = "llama3.2-vision"

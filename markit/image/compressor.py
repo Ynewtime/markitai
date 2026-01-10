@@ -109,7 +109,8 @@ class ImageCompressor:
             compressed_data = self._save_image(img, fmt)
 
         compressed_size = len(compressed_data)
-        log.info(
+        # Changed to debug to reduce log noise when processing many images
+        log.debug(
             "Image compressed",
             filename=image.filename,
             original_size=original_size,
@@ -159,12 +160,26 @@ class ImageCompressor:
             return self._compress_png_pillow(img)
 
     def _compress_png_oxipng(self, img: Image.Image) -> bytes:
-        """Compress PNG using oxipng."""
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
+        """Compress PNG using oxipng.
 
-            # Save potentially resized image
-            img.save(tmp_path, format="PNG")
+        On Windows, special care is taken to ensure temporary files are properly
+        closed before oxipng processes them, avoiding WinError 32 (file in use).
+        """
+        import sys
+        import time
+
+        # Create a temporary directory instead of a file
+        # This avoids issues with file handle retention on Windows
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp_path = Path(temp_dir) / "image.png"
+
+            # Save image to temporary file
+            # Use explicit close to ensure file handle is released
+            img.save(str(tmp_path), format="PNG")
+
+            # On Windows, add a small delay to ensure file handle is released
+            if sys.platform == "win32":
+                time.sleep(0.01)  # 10ms delay
 
             # Run oxipng
             try:
@@ -184,8 +199,10 @@ class ImageCompressor:
             except subprocess.CalledProcessError as e:
                 log.warning("oxipng failed, using Pillow", error=str(e))
                 compressed_data = self._compress_png_pillow(img)
-            finally:
-                tmp_path.unlink(missing_ok=True)
+            except FileNotFoundError:
+                # oxipng not found
+                log.debug("oxipng not available, using Pillow")
+                compressed_data = self._compress_png_pillow(img)
 
             return compressed_data
 

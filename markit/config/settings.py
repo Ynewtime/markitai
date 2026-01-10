@@ -15,6 +15,7 @@ from markit.config.constants import (
     DEFAULT_JPEG_QUALITY,
     DEFAULT_LLM_TIMEOUT,
     DEFAULT_LLM_WORKERS,
+    DEFAULT_LOG_DIR,
     DEFAULT_MAX_IMAGE_DIMENSION,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MIN_IMAGE_AREA,
@@ -27,12 +28,36 @@ from markit.config.constants import (
 
 
 class LLMProviderConfig(BaseModel):
-    """Configuration for a single LLM provider."""
+    """Configuration for a single LLM provider (Legacy mode)."""
 
     provider: Literal["openai", "anthropic", "gemini", "ollama", "openrouter"]
     model: str
+    name: str | None = None  # User-defined name for display
     api_key: str | None = None
+    api_key_env: str | None = None
     base_url: str | None = None
+    timeout: int = DEFAULT_LLM_TIMEOUT
+    max_retries: int = DEFAULT_MAX_RETRIES
+    capabilities: list[str] | None = None  # None implies ["text", "vision"] (optimistic)
+
+
+class LLMCredentialConfig(BaseModel):
+    """Configuration for an LLM provider credential."""
+
+    id: str  # Unique identifier (e.g. "openai-main", "deepseek")
+    provider: Literal["openai", "anthropic", "gemini", "ollama", "openrouter"]
+    api_key: str | None = None
+    api_key_env: str | None = None
+    base_url: str | None = None
+
+
+class LLMModelConfig(BaseModel):
+    """Configuration for a specific LLM model instance."""
+
+    name: str  # Display name (e.g. "GPT-4o")
+    model: str  # Model ID (e.g. "gpt-4o")
+    credential_id: str  # Reference to LLMCredentialConfig.id
+    capabilities: list[str] | None = None
     timeout: int = DEFAULT_LLM_TIMEOUT
     max_retries: int = DEFAULT_MAX_RETRIES
 
@@ -40,7 +65,13 @@ class LLMProviderConfig(BaseModel):
 class LLMConfig(BaseModel):
     """LLM configuration - supports multiple providers."""
 
+    # Legacy: Mix of credentials and model info
     providers: list[LLMProviderConfig] = Field(default_factory=list)
+
+    # New: Decoupled credentials and models
+    credentials: list[LLMCredentialConfig] = Field(default_factory=list)
+    models: list[LLMModelConfig] = Field(default_factory=list)
+
     default_provider: str | None = None
 
 
@@ -129,7 +160,7 @@ class MarkitSettings(BaseSettings):
 
     # Global settings
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    log_file: str | None = None
+    log_dir: str = DEFAULT_LOG_DIR
     state_file: str = DEFAULT_STATE_FILE
 
     def get_output_dir(self, base_path: Path | None = None) -> Path:

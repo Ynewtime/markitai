@@ -9,7 +9,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from markit.config import MarkitSettings, get_settings
 from markit.config.constants import LLM_PROVIDERS, PDF_ENGINES
-from markit.utils.logging import get_logger, setup_logging
+from markit.utils.logging import get_logger, setup_task_logging
 
 # Use a simple Typer instance - the command will be registered in main.py
 console = Console()
@@ -112,25 +112,29 @@ def convert(
         markit convert document.docx --llm --analyze-image
         markit convert report.pdf --pdf-engine pdfplumber
     """
-    # Setup logging
-    # In non-verbose mode, only show warnings/errors on console to avoid clutter with spinner
-    # In verbose mode, show all logs (DEBUG level)
     settings = get_settings()
-    if verbose:
-        log_level = "DEBUG"
-    else:
-        # Non-verbose: suppress console logs below WARNING, but file logs use configured level
-        log_level = "WARNING"
-    setup_logging(level=log_level, log_file=settings.log_file)
+
+    # Setup task-level logging with unified behavior
+    # Priority: user config (settings.log_dir) > default (.logs)
+    task_id, log_path = setup_task_logging(
+        log_dir=settings.log_dir,
+        prefix="convert",
+        verbose=verbose,
+    )
 
     # Log file behavior hint (only in verbose mode)
     if verbose:
-        if settings.log_file:
-            log.info("Logs will be saved to", log_file=settings.log_file)
-        else:
-            log.info(
-                "Logs output to console only. Set log_file in markit.toml to save logs to file."
-            )
+        log.info("Logs will be saved to", log_file=str(log_path))
+
+    # Feature 1: Log detailed configuration at the beginning
+    # Mask API keys before logging
+    config_dump = settings.model_dump()
+    if "llm" in config_dump and "providers" in config_dump["llm"]:
+        for provider in config_dump["llm"]["providers"]:
+            if "api_key" in provider and provider["api_key"]:
+                provider["api_key"] = "***"
+
+    log.info("Task Configuration", task_id=task_id, config=config_dump)
 
     # Validate PDF engine if specified
     if pdf_engine and pdf_engine not in PDF_ENGINES:
@@ -178,7 +182,36 @@ def convert(
         )
         return
 
-    # Execute conversion
+    # Execute conversion with signal handling for interrupts
+    import signal
+    import sys
+    from datetime import datetime as dt
+
+    interrupted = False
+
+    def signal_handler(signum: int, frame) -> None:  # noqa: ARG001
+        """Handle interrupt signals and log before exit."""
+        nonlocal interrupted
+        if interrupted:
+            # Force exit on second interrupt
+            sys.exit(130)
+        interrupted = True
+        sig_name = signal.Signals(signum).name
+        log.warning(
+            "Task Interrupted",
+            signal=sig_name,
+            input_file=str(input_file),
+            interrupted_at=dt.now().isoformat(),
+        )
+        console.print(f"\n[yellow]Interrupted by {sig_name}. Exiting...[/yellow]")
+        raise typer.Exit(130)
+
+    # Register signal handlers
+    original_sigint = signal.signal(signal.SIGINT, signal_handler)
+    original_sigterm = None
+    if hasattr(signal, "SIGTERM"):
+        original_sigterm = signal.signal(signal.SIGTERM, signal_handler)
+
     try:
         _execute_conversion(
             input_file=input_file,
@@ -193,10 +226,23 @@ def convert(
             settings=settings,
             verbose=verbose,
         )
+    except KeyboardInterrupt:
+        log.warning(
+            "Task Interrupted by KeyboardInterrupt",
+            input_file=str(input_file),
+            interrupted_at=dt.now().isoformat(),
+        )
+        console.print("\n[yellow]Interrupted. Exiting...[/yellow]")
+        raise typer.Exit(130) from None
     except Exception as e:
         log.error("Conversion failed", error=str(e), exc_info=True)
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1) from e
+    finally:
+        # Restore original signal handlers
+        signal.signal(signal.SIGINT, original_sigint)
+        if original_sigterm is not None:
+            signal.signal(signal.SIGTERM, original_sigterm)
 
 
 def _show_dry_run(
@@ -313,11 +359,18 @@ def _execute_conversion(
 
     # Display results
     if result.success:
+        log.info(
+            "Task Completed Successfully",
+            output_path=str(result.output_path),
+            images_count=result.images_count,
+            metadata=result.metadata,
+        )
         console.print("[bold green]Conversion completed![/bold green]")
         console.print(f"  Output: {result.output_path}")
         if result.images_count > 0:
             console.print(f"  Images: {result.images_count}")
     else:
+        log.error("Task Failed", error=result.error)
         console.print()
         console.print(f"[bold red]Conversion failed:[/bold red] {result.error}")
         raise typer.Exit(1)
