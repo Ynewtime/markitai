@@ -153,7 +153,7 @@ markit provider models    # List available models
 
 ```toml
 log_level = "INFO"
-log_file = "logs/markit.log"
+log_dir = ".logs"
 
 [output]
 default_dir = "output"
@@ -171,15 +171,26 @@ llm_workers = 5
 [pdf]
 engine = "pymupdf4llm"
 
-[[llm.providers]]
+# New Schema (recommended for multiple models)
+# Define credentials separately from models
+[[llm.credentials]]
+id = "openai-main"
 provider = "openai"
-model = "gpt-5.2"
+# api_key = "sk-..."  # Or use OPENAI_API_KEY env var
+
+[[llm.models]]
+name = "GPT-4o"
+model = "gpt-4o"
+credential_id = "openai-main"
+capabilities = ["text", "vision"]
 timeout = 60
 
+# Legacy Schema (simpler, still supported)
 [[llm.providers]]
 provider = "ollama"
 model = "llama3.2-vision"
 base_url = "http://localhost:11434"
+timeout = 120
 ```
 
 ### Environment Variables

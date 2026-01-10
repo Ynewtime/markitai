@@ -166,12 +166,8 @@ class LLMTaskQueue:
         self._tasks.append(async_task)
         self._submitted_count += 1
 
-        log.debug(
-            "LLM task submitted",
-            task_type=task.task_type,
-            task_id=task.task_id,
-            pending=self._submitted_count - self._completed_count,
-        )
+        # Note: Individual task submission logs removed to reduce log noise
+        # Use submit_batch() for batch logging or check pending_count property
 
         return async_task
 
@@ -184,6 +180,16 @@ class LLMTaskQueue:
         Returns:
             List of asyncio.Tasks
         """
+        if tasks:
+            # Log batch submission summary instead of individual tasks
+            task_types = {}
+            for t in tasks:
+                task_types[t.task_type] = task_types.get(t.task_type, 0) + 1
+            log.debug(
+                "Submitting LLM task batch",
+                count=len(tasks),
+                types=task_types,
+            )
         return [await self.submit(task) for task in tasks]
 
     async def wait_all(self) -> list[LLMTaskResult]:

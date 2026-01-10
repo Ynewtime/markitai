@@ -106,11 +106,20 @@ default_dir = "output"
 [image]
 enable_compression = true
 
-[[llm.providers]]
+# 新配置结构（推荐用于多模型场景）
+# 将凭证和模型分开定义
+[[llm.credentials]]
+id = "openai-main"
 provider = "openai"
-model = "gpt-5.2"
-# 设置 OPENAI_API_KEY 环境变量
+# api_key = "sk-..."  # 或使用 OPENAI_API_KEY 环境变量
 
+[[llm.models]]
+name = "GPT-4o"
+model = "gpt-4o"
+credential_id = "openai-main"
+capabilities = ["text", "vision"]
+
+# 旧配置结构（更简单，仍然支持）
 [[llm.providers]]
 provider = "ollama"
 model = "llama3.2-vision"

@@ -24,45 +24,40 @@ dependencies = [
     # CLI
     "typer>=0.21.0",
     "rich>=14.2.0",
-
     # Configuration
     "pydantic>=2.12.0",
     "pydantic-settings>=2.12.0",
-
     # Conversion engines
     "markitdown[all]>=0.1.4",      # Microsoft conversion library (with all format support)
     "pypandoc>=1.15",              # Pandoc Python wrapper
-
     # PDF processing
     "pymupdf>=1.26.0",             # PDF processing (speed priority)
     "pdfplumber>=0.11.4",          # PDF processing (table friendly)
     "pymupdf4llm>=0.2.0",          # PDF to Markdown for LLM (tables, headings, images)
     "pymupdf-layout>=0.1.0",       # Improved page layout analysis for pymupdf4llm
-
     # Image processing
     "pillow>=12.0.0",              # Image processing (12.x has built-in SIMD optimization)
-
     # Async & HTTP
     "anyio>=4.12.0",
     "httpx>=0.28.0",
-
     # LLM SDK - Official libraries
     "openai>=2.14.0",              # OpenAI official SDK
     "google-genai>=1.56.0",        # Google new unified SDK
     "ollama>=0.6.1",               # Ollama official library
     "anthropic>=0.75.0",           # Anthropic official SDK
-
     # Text chunking
     "langchain-text-splitters>=1.1.0",  # Mature chunking library
     "tiktoken>=0.12.0",            # OpenAI tokenizer
-
     # Logging
     "structlog>=25.5.0",
-
     # Utilities
     "tenacity>=9.1.0",             # Retry
     "python-magic>=0.4.27;sys_platform!='win32'",      # File type detection (Linux/macOS)
     "python-magic-bin>=0.4.14;sys_platform=='win32'",  # Windows compatible
+    # Windows-specific: MS Office COM automation
+    "pywin32>=310;sys_platform=='win32'",
+    "tomlkit>=0.13.3",
+    "questionary>=2.1.1",
 ]
 
 [project.optional-dependencies]

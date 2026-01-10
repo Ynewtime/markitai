@@ -11,8 +11,9 @@ log = get_logger(__name__)
 class ChunkConfig:
     """Configuration for text chunking."""
 
-    max_tokens: int = 4000
-    overlap_tokens: int = 200
+    max_tokens: int = 32000  # Optimized for large context models like Gemini 3 Flash
+    overlap_tokens: int = 500
+    min_chunk_tokens: int = 1000  # Minimum tokens before merging with adjacent chunk
     encoding: str = "cl100k_base"  # tiktoken encoding (cl100k_base for GPT-4 class models)
 
 
@@ -97,6 +98,7 @@ class MarkdownChunker:
         Strategy:
         1. First split by Markdown headers to preserve structure
         2. For any chunks that are still too long, use recursive splitting
+        3. Merge small adjacent chunks to reduce total chunk count
 
         Args:
             markdown: Markdown content to chunk
@@ -111,17 +113,18 @@ class MarkdownChunker:
             log.debug("Document small enough, no chunking needed")
             return [markdown]
 
+        total_tokens = self.count_tokens(markdown)
         log.info(
             "Chunking document",
-            total_tokens=self.count_tokens(markdown),
+            total_tokens=total_tokens,
             max_tokens=self.config.max_tokens,
         )
 
         # First, split by headers
         header_chunks = self._header_splitter.split_text(markdown)
 
-        # Process each chunk
-        final_chunks = []
+        # Process each chunk - split long ones
+        intermediate_chunks = []
         for chunk in header_chunks:
             content = chunk.page_content if hasattr(chunk, "page_content") else str(chunk)
             token_count = self.count_tokens(content)
@@ -133,16 +136,68 @@ class MarkdownChunker:
                     tokens=token_count,
                 )
                 sub_chunks = self._text_splitter.split_text(content)
-                final_chunks.extend(sub_chunks)
+                intermediate_chunks.extend(sub_chunks)
             else:
-                final_chunks.append(content)
+                intermediate_chunks.append(content)
+
+        # Merge small adjacent chunks to reduce LLM calls
+        final_chunks = self._merge_small_chunks(intermediate_chunks)
 
         log.info(
             "Document chunked",
             num_chunks=len(final_chunks),
+            before_merge=len(intermediate_chunks),
         )
 
         return final_chunks
+
+    def _merge_small_chunks(self, chunks: list[str]) -> list[str]:
+        """Merge small adjacent chunks to reduce total chunk count.
+
+        This prevents excessive LLM calls when documents have many small sections.
+
+        Args:
+            chunks: List of chunks to potentially merge
+
+        Returns:
+            List of merged chunks
+        """
+        if not chunks:
+            return chunks
+
+        min_tokens = self.config.min_chunk_tokens
+        max_tokens = self.config.max_tokens
+        merged = []
+        current = chunks[0]
+        current_tokens = self.count_tokens(current)
+
+        for i in range(1, len(chunks)):
+            next_chunk = chunks[i]
+            next_tokens = self.count_tokens(next_chunk)
+
+            # Try to merge if current chunk is small and combined size is within limit
+            combined_tokens = current_tokens + next_tokens
+            if current_tokens < min_tokens and combined_tokens <= max_tokens:
+                # Merge chunks
+                current = current + "\n\n" + next_chunk
+                current_tokens = combined_tokens
+            else:
+                # Save current and start new
+                merged.append(current)
+                current = next_chunk
+                current_tokens = next_tokens
+
+        # Don't forget the last chunk
+        merged.append(current)
+
+        if len(merged) < len(chunks):
+            log.debug(
+                "Merged small chunks",
+                original=len(chunks),
+                merged=len(merged),
+            )
+
+        return merged
 
     def merge(self, chunks: list[str]) -> str:
         """Merge processed chunks back together.

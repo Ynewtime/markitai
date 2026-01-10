@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -14,7 +14,13 @@ from markit.core.pipeline import ConversionPipeline, DocumentConversionResult, P
 from markit.core.state import StateManager
 from markit.llm.queue import LLMTask, LLMTaskQueue
 from markit.utils.concurrency import ConcurrencyManager, TaskResult
-from markit.utils.logging import get_console, get_logger, setup_logging
+from markit.utils.logging import (
+    get_console,
+    get_logger,
+    set_log_output,
+    setup_logging,
+    setup_task_logging,
+)
 
 console = get_console()
 log = get_logger(__name__)
@@ -180,25 +186,29 @@ def batch(
         markit batch ./documents --include "*.docx" --llm
         markit batch ./documents --resume --state-file ./state.json
     """
-    # Setup logging
-    # In non-verbose mode, only show warnings/errors on console to avoid clutter with progress bar
-    # In verbose mode, show all logs (DEBUG level) and no progress bar
     settings = get_settings()
-    if verbose:
-        log_level = "DEBUG"
-    else:
-        # Non-verbose: suppress console logs below WARNING, but file logs use configured level
-        log_level = "WARNING"
-    setup_logging(level=log_level, log_file=settings.log_file)
+
+    # Setup task-level logging with unified behavior
+    # Priority: user config (settings.log_dir) > default (.logs)
+    task_id, log_path = setup_task_logging(
+        log_dir=settings.log_dir,
+        prefix="batch",
+        verbose=verbose,
+    )
 
     # Log file behavior hint (only in verbose mode)
     if verbose:
-        if settings.log_file:
-            log.info("Logs will be saved to", log_file=settings.log_file)
-        else:
-            log.info(
-                "Logs output to console only. Set log_file in markit.toml to save logs to file."
-            )
+        log.info("Logs will be saved to", log_file=str(log_path))
+
+    # Log detailed configuration at the beginning
+    # Mask API keys before logging
+    config_dump = settings.model_dump()
+    if "llm" in config_dump and "providers" in config_dump["llm"]:
+        for provider in config_dump["llm"]["providers"]:
+            if "api_key" in provider and provider["api_key"]:
+                provider["api_key"] = "***"
+
+    log.info("Task Configuration", task_id=task_id, config=config_dump)
 
     # Validate options
     if on_conflict not in ("skip", "overwrite", "rename"):
@@ -578,7 +588,6 @@ async def _process_files_with_progress(
 
         # Suppress console logs during progress (they interfere with the display)
         original_stderr = sys.stderr
-        settings = get_settings()
 
         # Use context manager for devnull to ensure proper cleanup
         with open(os.devnull, "w") as devnull:
@@ -586,7 +595,7 @@ async def _process_files_with_progress(
             # Set log level to WARNING to reduce noise
             setup_logging(level="WARNING", console=progress.console)
 
-            task_id = progress.add_task(
+            progress_task_id = progress.add_task(
                 "[cyan]Converting files...",
                 total=len(files),
             )
@@ -627,7 +636,7 @@ async def _process_files_with_progress(
                 error: Exception | None,
             ) -> None:
                 """Progress callback."""
-                progress.advance(task_id)
+                progress.advance(progress_task_id)
 
                 # In quiet mode, only show progress bar (no per-file output)
                 # But always show errors even in quiet mode
@@ -659,7 +668,8 @@ async def _process_files_with_progress(
         # Restore normal log output (keep WARNING level for non-verbose mode)
         set_log_output(original_stderr)
         # Keep WARNING level to avoid log clutter after progress bar
-        setup_logging(level="WARNING", log_file=settings.log_file)
+        # Note: File handler is already set up from initial setup_task_logging
+        setup_logging(level="WARNING")
 
     return results
 
@@ -667,6 +677,109 @@ async def _process_files_with_progress(
 # ============================================================================
 # Phased Pipeline Processing Functions (for LLM-enabled batch processing)
 # ============================================================================
+
+
+async def _process_file_pipeline(
+    file_path: Path,
+    pipeline: ConversionPipeline,
+    concurrency: ConcurrencyManager,
+    llm_queue: LLMTaskQueue,
+    output_dir: Path,
+    input_dir: Path,
+    state_manager: StateManager,
+    callbacks: dict[str, Any],
+) -> TaskResult[Path]:
+    """Process a single file through the full pipeline (streaming)."""
+    from markit.image.analyzer import ImageAnalysis
+
+    # Phase 1: Document Conversion (Semaphore controlled)
+    callbacks.get("on_phase1_start", lambda x: None)(file_path)
+    state_manager.update_file_status(file_path, "processing")
+
+    try:
+        # Run conversion with file worker limit
+        doc_result = await concurrency.run_file_task(
+            pipeline.convert_document_only(file_path, output_dir)
+        )
+
+        if not doc_result.success:
+            callbacks.get("on_phase1_error", lambda x, y: None)(file_path, doc_result.error)
+            state_manager.update_file_status(file_path, "failed", error=doc_result.error)
+            return TaskResult(file_path, False, error=doc_result.error)
+
+        callbacks.get("on_phase1_complete", lambda x, y: None)(file_path, doc_result)
+
+        # Phase 2: LLM Tasks
+        llm_tasks = await pipeline.create_llm_tasks(doc_result)
+        submitted_tasks = []
+
+        # Only proceed to Phase 2 if there are tasks or if we just need to finalize
+        if llm_tasks:
+            callbacks.get("on_phase2_start", lambda x, y: None)(file_path, len(llm_tasks))
+
+            for i, coro in enumerate(llm_tasks):
+                # Determine task metadata
+                num_images = len(doc_result.images_for_analysis)
+                if i < num_images:
+                    task_type = "image_analysis"
+                    task_id = doc_result.images_for_analysis[i].filename
+                else:
+                    task_type = "chunk_enhancement"
+                    task_id = "markdown"
+
+                # Submit to global queue (returns Task object)
+                # We await submit() which handles rate limiting (backpressure)
+                task_obj = await llm_queue.submit(
+                    LLMTask(
+                        source_file=file_path,
+                        task_type=task_type,  # type: ignore[arg-type]
+                        task_id=task_id,
+                        coro=coro,
+                    )
+                )
+                submitted_tasks.append(task_obj)
+
+            # Wait for THIS file's tasks to complete
+            llm_results = await asyncio.gather(*submitted_tasks)
+            callbacks.get("on_phase2_complete", lambda x, y: None)(file_path, llm_results)
+        else:
+            llm_results = []
+
+        # Phase 3: Finalize
+        callbacks.get("on_phase3_start", lambda x: None)(file_path)
+
+        # Extract results
+        image_analyses: list[ImageAnalysis] = []
+        enhanced_markdown: str | None = None
+
+        for llm_result in llm_results:
+            if llm_result.success:
+                if llm_result.task_type == "image_analysis":
+                    image_analyses.append(llm_result.result)
+                elif llm_result.task_type == "chunk_enhancement":
+                    enhanced_markdown = llm_result.result
+
+        pipeline_result = await pipeline.finalize_output(
+            doc_result,
+            image_analyses=image_analyses if image_analyses else None,
+            enhanced_markdown=enhanced_markdown,
+        )
+
+        if pipeline_result.success:
+            state_manager.update_file_status(
+                file_path, "completed", output_path=pipeline_result.output_path
+            )
+            callbacks.get("on_phase3_complete", lambda x, y: None)(file_path, pipeline_result)
+            return TaskResult(file_path, True, result=pipeline_result)
+        else:
+            state_manager.update_file_status(file_path, "failed", error=pipeline_result.error)
+            callbacks.get("on_phase3_error", lambda x, y: None)(file_path, pipeline_result.error)
+            return TaskResult(file_path, False, error=pipeline_result.error)
+
+    except Exception as e:
+        callbacks.get("on_error", lambda x, y: None)(file_path, str(e))
+        state_manager.update_file_status(file_path, "failed", error=str(e))
+        return TaskResult(file_path, False, error=str(e))
 
 
 async def _process_files_phased_verbose(
@@ -678,207 +791,71 @@ async def _process_files_phased_verbose(
     input_dir: Path,
     llm_concurrency: int = 10,
 ) -> list[TaskResult[Path]]:
-    """Process files using phased pipeline with verbose logging.
-
-    Three-phase processing for maximum parallelism:
-    - Phase 1: Document conversion (file_semaphore, releases early)
-    - Phase 2: LLM processing (global queue with llm_semaphore)
-    - Phase 3: Output finalization
-
-    Args:
-        files: List of files to process
-        pipeline: Conversion pipeline
-        concurrency: Concurrency manager
-        output_dir: Output directory
-        state_manager: State manager
-        input_dir: Input directory for relative path display
-        llm_concurrency: Maximum concurrent LLM requests
-    """
-    from markit.image.analyzer import ImageAnalysis
-
-    results: list[TaskResult[Path]] = []
+    """Process files using phased pipeline with verbose logging (streaming)."""
     llm_queue = LLMTaskQueue(max_concurrent=llm_concurrency, max_pending=100)
+    log.info(
+        "Starting streaming batch processing", total=len(files), llm_concurrency=llm_concurrency
+    )
 
-    log.info("Starting phased batch processing", total=len(files), llm_concurrency=llm_concurrency)
-
-    # ========================================================================
-    # Phase 1: Document Conversion (parallel with file_semaphore)
-    # ========================================================================
-    log.info("Phase 1: Document conversion")
-
-    doc_results: dict[Path, DocumentConversionResult] = {}
-    conversion_errors: dict[Path, str] = {}
-
-    async def convert_document(file_path: Path) -> DocumentConversionResult:
-        """Convert a single document (Phase 1)."""
+    # Define callbacks for verbose logging
+    def on_phase1_start(file_path: Path) -> None:
         rel_path = file_path.relative_to(input_dir)
         log.info("Converting document", file=str(rel_path))
-        state_manager.update_file_status(file_path, "processing")
 
-        try:
-            result = await pipeline.convert_document_only(file_path, output_dir)
-            if result.success:
-                log.info(
-                    "Document converted",
-                    file=str(rel_path),
-                    images=len(result.processed_images),
-                )
-            else:
-                log.error("Document conversion failed", file=str(rel_path), error=result.error)
-            return result
-        except Exception as e:
-            log.error("Document conversion error", file=str(rel_path), error=str(e))
-            raise
-
-    # Run document conversions with file concurrency limit
-    conversion_task_results = await concurrency.map_file_tasks(
-        items=files,
-        func=convert_document,
-    )
-
-    # Collect results
-    for task_result in conversion_task_results:
-        file_path = task_result.item
-        if task_result.success and task_result.result:
-            doc_results[file_path] = task_result.result
-        else:
-            conversion_errors[file_path] = task_result.error or "Unknown error"
-            state_manager.update_file_status(file_path, "failed", error=task_result.error)
-
-    log.info(
-        "Phase 1 complete",
-        succeeded=len(doc_results),
-        failed=len(conversion_errors),
-    )
-
-    # ========================================================================
-    # Phase 2: LLM Processing (global queue with rate limiting)
-    # ========================================================================
-    if doc_results:
-        log.info("Phase 2: LLM processing")
-
-        # Submit all LLM tasks to the global queue
-        for file_path, doc_result in doc_results.items():
-            if not doc_result.success:
-                continue
-
-            # Create LLM tasks for this file
-            llm_tasks = pipeline.create_llm_tasks(doc_result)
-
-            # Submit image analysis tasks
-            for i, coro in enumerate(llm_tasks):
-                # Determine task type based on position
-                # Image analysis tasks come first, then enhancement task
-                num_images = len(doc_result.images_for_analysis)
-                if i < num_images:
-                    task_type = "image_analysis"
-                    task_id = doc_result.images_for_analysis[i].filename
-                else:
-                    task_type = "chunk_enhancement"
-                    task_id = "markdown"
-
-                await llm_queue.submit(
-                    LLMTask(
-                        source_file=file_path,
-                        task_type=task_type,  # type: ignore[arg-type]
-                        task_id=task_id,
-                        coro=coro,
-                    )
-                )
-
-        # Wait for all LLM tasks to complete
-        llm_results = await llm_queue.wait_all()
-
-        log.info(
-            "Phase 2 complete",
-            total_tasks=len(llm_results),
-            succeeded=sum(1 for r in llm_results if r.success),
-        )
-
-    else:
-        llm_results = []
-
-    # ========================================================================
-    # Phase 3: Output Finalization
-    # ========================================================================
-    log.info("Phase 3: Output finalization")
-
-    for file_path, doc_result in doc_results.items():
+    def on_phase1_complete(file_path: Path, result: DocumentConversionResult) -> None:
         rel_path = file_path.relative_to(input_dir)
+        log.info("Document converted", file=str(rel_path), images=len(result.processed_images))
 
-        try:
-            # Gather LLM results for this file
-            file_llm_results = llm_queue.get_results_for_file(llm_results, file_path)
+    def on_phase1_error(file_path: Path, error: str) -> None:
+        rel_path = file_path.relative_to(input_dir)
+        log.error("Document conversion failed", file=str(rel_path), error=error)
 
-            # Separate image analyses and enhancement result
-            image_analyses: list[ImageAnalysis] = []
-            enhanced_markdown: str | None = None
+    def on_phase2_start(file_path: Path, count: int) -> None:
+        rel_path = file_path.relative_to(input_dir)
+        log.info("Submitting LLM tasks", file=str(rel_path), count=count)
 
-            for llm_result in file_llm_results:
-                if llm_result.success:
-                    if llm_result.task_type == "image_analysis":
-                        image_analyses.append(llm_result.result)
-                    elif llm_result.task_type == "chunk_enhancement":
-                        enhanced_markdown = llm_result.result
+    def on_phase2_complete(file_path: Path, results: list[Any]) -> None:
+        rel_path = file_path.relative_to(input_dir)
+        log.info("LLM tasks completed", file=str(rel_path), count=len(results))
 
-            # Finalize output
-            pipeline_result = await pipeline.finalize_output(
-                doc_result,
-                image_analyses=image_analyses if image_analyses else None,
-                enhanced_markdown=enhanced_markdown,
-            )
-
-            if pipeline_result.success:
-                state_manager.update_file_status(
-                    file_path,
-                    "completed",
-                    output_path=pipeline_result.output_path,
-                )
-                log.info(
-                    "File completed",
-                    file=str(rel_path),
-                    output=str(pipeline_result.output_path),
-                    images=pipeline_result.images_count,
-                )
-            else:
-                state_manager.update_file_status(
-                    file_path,
-                    "failed",
-                    error=pipeline_result.error,
-                )
-                log.error("Finalization failed", file=str(rel_path), error=pipeline_result.error)
-
-            results.append(
-                TaskResult(
-                    item=file_path,
-                    success=pipeline_result.success,
-                    result=pipeline_result,
-                    error=pipeline_result.error,
-                )
-            )
-
-        except Exception as e:
-            state_manager.update_file_status(file_path, "failed", error=str(e))
-            log.error("Finalization error", file=str(rel_path), error=str(e))
-            results.append(
-                TaskResult(
-                    item=file_path,
-                    success=False,
-                    error=str(e),
-                )
-            )
-
-    # Add failed conversions to results
-    for file_path, error in conversion_errors.items():
-        results.append(
-            TaskResult(
-                item=file_path,
-                success=False,
-                error=error,
-            )
+    def on_phase3_complete(file_path: Path, result: PipelineResult) -> None:
+        rel_path = file_path.relative_to(input_dir)
+        log.info(
+            "File completed",
+            file=str(rel_path),
+            output=str(result.output_path),
+            images=result.images_count,
         )
 
-    log.info("Phased batch processing complete", total=len(results))
+    def on_phase3_error(file_path: Path, error: str) -> None:
+        rel_path = file_path.relative_to(input_dir)
+        log.error("Finalization failed", file=str(rel_path), error=error)
+
+    def on_error(file_path: Path, error: str) -> None:
+        rel_path = file_path.relative_to(input_dir)
+        log.error("Processing error", file=str(rel_path), error=error)
+
+    callbacks = {
+        "on_phase1_start": on_phase1_start,
+        "on_phase1_complete": on_phase1_complete,
+        "on_phase1_error": on_phase1_error,
+        "on_phase2_start": on_phase2_start,
+        "on_phase2_complete": on_phase2_complete,
+        "on_phase3_complete": on_phase3_complete,
+        "on_phase3_error": on_phase3_error,
+        "on_error": on_error,
+    }
+
+    # Start all pipelines concurrently
+    tasks = [
+        _process_file_pipeline(
+            f, pipeline, concurrency, llm_queue, output_dir, input_dir, state_manager, callbacks
+        )
+        for f in files
+    ]
+
+    results = await asyncio.gather(*tasks)
+    log.info("Batch processing complete", total=len(results))
     return results
 
 
@@ -891,23 +868,7 @@ async def _process_files_phased_with_progress(
     input_dir: Path,
     llm_concurrency: int = 10,
 ) -> list[TaskResult[Path]]:
-    """Process files using phased pipeline with progress display.
-
-    Three-phase processing for maximum parallelism with Rich progress bar.
-
-    Args:
-        files: List of files to process
-        pipeline: Conversion pipeline
-        concurrency: Concurrency manager
-        output_dir: Output directory
-        state_manager: State manager
-        input_dir: Input directory for relative path display
-        llm_concurrency: Maximum concurrent LLM requests
-    """
-    from markit.image.analyzer import ImageAnalysis
-    from markit.utils.logging import set_log_output, setup_logging
-
-    results: list[TaskResult[Path]] = []
+    """Process files using phased pipeline with progress display (streaming)."""
     llm_queue = LLMTaskQueue(max_concurrent=llm_concurrency, max_pending=100)
 
     with Progress(
@@ -924,199 +885,108 @@ async def _process_files_phased_with_progress(
         import sys
 
         original_stderr = sys.stderr
-        settings = get_settings()
 
         with open(os.devnull, "w") as devnull:
             set_log_output(devnull)
             setup_logging(level="WARNING", console=progress.console)
 
-            # ================================================================
-            # Phase 1: Document Conversion
-            # ================================================================
-            phase1_task = progress.add_task(
-                "[cyan]Phase 1: Converting documents...",
+            # Define tasks
+            # 1. Document Conversion (Files)
+            task_docs = progress.add_task(
+                "[cyan]Converting documents...",
                 total=len(files),
             )
 
-            doc_results: dict[Path, DocumentConversionResult] = {}
-            conversion_errors: dict[Path, str] = {}
-
-            async def convert_document(file_path: Path) -> DocumentConversionResult:
-                """Convert a single document."""
-                state_manager.update_file_status(file_path, "processing")
-                result = await pipeline.convert_document_only(file_path, output_dir)
-                return result
-
-            def on_conversion_progress(
-                item: Path,
-                result: DocumentConversionResult | None,
-                error: Exception | None,
-            ) -> None:
-                """Progress callback for Phase 1."""
-                progress.advance(phase1_task)
-                rel_path = item.relative_to(input_dir)
-
-                if error or result and not result.success:
-                    progress.console.print(f"  [red]x[/red] {rel_path} (conversion failed)")
-
-            conversion_task_results = await concurrency.map_file_tasks(
-                items=files,
-                func=convert_document,
-                on_progress=on_conversion_progress,
+            # 2. LLM Processing (Dynamic total)
+            # Initial total 1 to show 0/1 instead of 0/0, or 0 is fine
+            task_llm = progress.add_task(
+                "[cyan]LLM Processing...",
+                total=0,
+                visible=False,  # Hide until tasks are added
             )
 
-            for task_result in conversion_task_results:
-                file_path = task_result.item
-                if task_result.success and task_result.result and task_result.result.success:
-                    doc_results[file_path] = task_result.result
-                else:
-                    error_msg = task_result.error or (
-                        task_result.result.error if task_result.result else "Unknown error"
-                    )
-                    conversion_errors[file_path] = error_msg
-                    state_manager.update_file_status(file_path, "failed", error=error_msg)
-
-            progress.update(phase1_task, description="[green]Phase 1: Documents converted")
-
-            # ================================================================
-            # Phase 2: LLM Processing
-            # ================================================================
-            total_llm_tasks = 0
-            if doc_results:
-                # Count total LLM tasks
-                for doc_result in doc_results.values():
-                    if doc_result.success:
-                        total_llm_tasks += len(doc_result.images_for_analysis)
-                        if pipeline.llm_enabled:
-                            total_llm_tasks += 1  # Enhancement task
-
-            if total_llm_tasks > 0:
-                phase2_task = progress.add_task(
-                    "[cyan]Phase 2: LLM processing...",
-                    total=total_llm_tasks,
-                )
-
-                # Submit all LLM tasks
-                for file_path, doc_result in doc_results.items():
-                    if not doc_result.success:
-                        continue
-
-                    llm_tasks = pipeline.create_llm_tasks(doc_result)
-                    num_images = len(doc_result.images_for_analysis)
-
-                    for i, coro in enumerate(llm_tasks):
-                        if i < num_images:
-                            task_type = "image_analysis"
-                            task_id = doc_result.images_for_analysis[i].filename
-                        else:
-                            task_type = "chunk_enhancement"
-                            task_id = "markdown"
-
-                        await llm_queue.submit(
-                            LLMTask(
-                                source_file=file_path,
-                                task_type=task_type,  # type: ignore[arg-type]
-                                task_id=task_id,
-                                coro=coro,
-                            )
-                        )
-
-                # Wait for LLM tasks with progress updates
-                llm_results = await llm_queue.wait_all()
-
-                # Update progress (all at once since we waited)
-                progress.update(phase2_task, completed=total_llm_tasks)
-                progress.update(phase2_task, description="[green]Phase 2: LLM processing done")
-            else:
-                llm_results = []
-
-            # ================================================================
-            # Phase 3: Output Finalization
-            # ================================================================
-            phase3_task = progress.add_task(
-                "[cyan]Phase 3: Finalizing outputs...",
-                total=len(doc_results),
+            # 3. Finalization (Files)
+            task_final = progress.add_task(
+                "[cyan]Finalizing...",
+                total=len(files),
             )
 
-            for file_path, doc_result in doc_results.items():
+            # Callbacks for progress updates
+            def on_phase1_start(file_path: Path) -> None:
+                pass  # Already counted in total
+
+            def on_phase1_complete(file_path: Path, result: DocumentConversionResult) -> None:
+                progress.advance(task_docs)
+
+            def on_phase1_error(file_path: Path, error: str) -> None:
+                progress.advance(task_docs)
                 rel_path = file_path.relative_to(input_dir)
+                progress.console.print(f"  [red]x[/red] {rel_path} (conversion failed)")
 
-                try:
-                    file_llm_results = llm_queue.get_results_for_file(llm_results, file_path)
+            def on_phase2_start(file_path: Path, count: int) -> None:
+                # Make LLM task visible if not already
+                if not progress.tasks[task_llm].visible:
+                    progress.update(task_llm, visible=True)
 
-                    image_analyses: list[ImageAnalysis] = []
-                    enhanced_markdown: str | None = None
+                # Add new tasks to total
+                new_total = (progress.tasks[task_llm].total or 0) + count
+                progress.update(task_llm, total=new_total)
 
-                    for llm_result in file_llm_results:
-                        if llm_result.success:
-                            if llm_result.task_type == "image_analysis":
-                                image_analyses.append(llm_result.result)
-                            elif llm_result.task_type == "chunk_enhancement":
-                                enhanced_markdown = llm_result.result
+            def on_phase2_complete(file_path: Path, results: list[Any]) -> None:
+                progress.advance(task_llm, advance=len(results))
 
-                    pipeline_result = await pipeline.finalize_output(
-                        doc_result,
-                        image_analyses=image_analyses if image_analyses else None,
-                        enhanced_markdown=enhanced_markdown,
-                    )
+            def on_phase3_complete(file_path: Path, result: PipelineResult) -> None:
+                progress.advance(task_final)
+                rel_path = file_path.relative_to(input_dir)
+                images_info = ""
+                if result.images_count > 0:
+                    images_info = f" [dim]({result.images_count} images)[/dim]"
+                progress.console.print(f"  [green]✓[/green] {rel_path}{images_info}")
 
-                    progress.advance(phase3_task)
+            def on_phase3_error(file_path: Path, error: str) -> None:
+                progress.advance(task_final)
+                rel_path = file_path.relative_to(input_dir)
+                error_msg = _simplify_error(error)
+                progress.console.print(f"  [red]x[/red] {rel_path}")
+                progress.console.print(f"    [dim]{error_msg}[/dim]")
 
-                    if pipeline_result.success:
-                        state_manager.update_file_status(
-                            file_path,
-                            "completed",
-                            output_path=pipeline_result.output_path,
-                        )
-                        images_info = ""
-                        if pipeline_result.images_count > 0:
-                            images_info = f" [dim]({pipeline_result.images_count} images)[/dim]"
-                        progress.console.print(f"  [green]✓[/green] {rel_path}{images_info}")
-                    else:
-                        state_manager.update_file_status(
-                            file_path, "failed", error=pipeline_result.error
-                        )
-                        error_msg = _simplify_error(pipeline_result.error or "Unknown error")
-                        progress.console.print(f"  [red]x[/red] {rel_path}")
-                        progress.console.print(f"    [dim]{error_msg}[/dim]")
+            def on_error(file_path: Path, error: str) -> None:
+                # If total failure, ensure we advance all bars to not hang
+                # (though strict accounting is hard here, mainly need to ensure completion)
+                pass
 
-                    results.append(
-                        TaskResult(
-                            item=file_path,
-                            success=pipeline_result.success,
-                            result=pipeline_result,
-                            error=pipeline_result.error,
-                        )
-                    )
+            callbacks = {
+                "on_phase1_start": on_phase1_start,
+                "on_phase1_complete": on_phase1_complete,
+                "on_phase1_error": on_phase1_error,
+                "on_phase2_start": on_phase2_start,
+                "on_phase2_complete": on_phase2_complete,
+                "on_phase3_complete": on_phase3_complete,
+                "on_phase3_error": on_phase3_error,
+                "on_error": on_error,
+            }
 
-                except Exception as e:
-                    progress.advance(phase3_task)
-                    state_manager.update_file_status(file_path, "failed", error=str(e))
-                    error_msg = _simplify_error(str(e))
-                    progress.console.print(f"  [red]x[/red] {rel_path}")
-                    progress.console.print(f"    [dim]{error_msg}[/dim]")
-                    results.append(
-                        TaskResult(
-                            item=file_path,
-                            success=False,
-                            error=str(e),
-                        )
-                    )
-
-            progress.update(phase3_task, description="[green]Phase 3: Outputs finalized")
-
-            # Add failed conversions to results
-            for file_path, error in conversion_errors.items():
-                results.append(
-                    TaskResult(
-                        item=file_path,
-                        success=False,
-                        error=error,
-                    )
+            # Start all pipelines concurrently
+            tasks = [
+                _process_file_pipeline(
+                    f,
+                    pipeline,
+                    concurrency,
+                    llm_queue,
+                    output_dir,
+                    input_dir,
+                    state_manager,
+                    callbacks,
                 )
+                for f in files
+            ]
+
+            results = await asyncio.gather(*tasks)
 
         set_log_output(original_stderr)
-        setup_logging(level="WARNING", log_file=settings.log_file)
+        # Restore WARNING level to avoid log clutter after progress bar
+        # Note: File handler is already set up from initial setup_task_logging
+        setup_logging(level="WARNING")
 
     return results
 
@@ -1154,15 +1024,39 @@ def _display_summary(
     if failed_files:
         console.print()
         console.print("[bold red]Failed Files:[/bold red]")
+
+        config_suggestions = []
+
         for path, error in failed_files[:10]:
             # Extract just the filename from path
             filename = Path(path).name
             # Simplify error message - extract the core reason
-            error_summary = _simplify_error(error or "Unknown error")
+            error_msg = error or "Unknown error"
+            error_summary = _simplify_error(error_msg)
+
+            # Check for configuration hints in error
+            if "capabilities=['text']" in error_msg:
+                # Extract provider name if possible or just generic hint
+                suggestion = "  - Image analysis failed. Suggestion: Check 'capabilities' in markit.toml. Add capabilities=['text'] for text-only models."
+                if suggestion not in config_suggestions:
+                    config_suggestions.append(suggestion)
+
             console.print(f"  [dim]-[/dim] {filename}")
             console.print(f"    [dim]{error_summary}[/dim]")
         if len(failed_files) > 10:
             console.print(f"  [dim]... and {len(failed_files) - 10} more[/dim]")
+
+    # Display configuration suggestions if any
+    if failed_files and any("capabilities=['text']" in (f[1] or "") for f in failed_files):
+        console.print()
+        console.print("[bold yellow]Configuration Suggestions:[/bold yellow]")
+        console.print(
+            "  - Some image analysis tasks failed. If using text-only models (like DeepSeek),"
+        )
+        console.print(
+            "    please explicitly set [bold]capabilities=['text'][/bold] in your markit.toml"
+        )
+        console.print("    to skip image analysis for those providers.")
 
     console.print()
 

@@ -9,6 +9,7 @@ APP_VERSION = "1.0.0"
 # Default paths
 DEFAULT_OUTPUT_DIR = "output"
 DEFAULT_ASSETS_DIR = "assets"
+DEFAULT_LOG_DIR = ".logs"
 DEFAULT_STATE_FILE = ".markit-state.json"
 DEFAULT_CONFIG_FILE = "markit.toml"
 
@@ -112,5 +113,8 @@ DEFAULT_LLM_TIMEOUT = 60
 DEFAULT_CONVERSION_TIMEOUT = 300  # 5 minutes
 
 # Chunk settings
-DEFAULT_CHUNK_SIZE = 4000  # tokens
-DEFAULT_CHUNK_OVERLAP = 200  # tokens
+# Optimized for Gemini 3 Flash (1.05M context, 65.5K output)
+# 32K tokens per chunk allows ~3 chunks for a 100K token document
+# This dramatically reduces LLM calls while staying well within limits
+DEFAULT_CHUNK_SIZE = 32000  # tokens (was 4000)
+DEFAULT_CHUNK_OVERLAP = 500  # tokens (increased for better context continuity)

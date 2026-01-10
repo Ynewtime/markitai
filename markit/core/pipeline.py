@@ -1,6 +1,7 @@
 """Core conversion pipeline."""
 
 import asyncio
+import hashlib
 import re
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from markit.exceptions import ConversionError
 from markit.utils.logging import get_logger
 
 if TYPE_CHECKING:
+    from markit.converters.base import ExtractedImage
     from markit.image.analyzer import ImageAnalysis, ImageAnalyzer
     from markit.image.compressor import CompressedImage, ImageCompressor
     from markit.llm.enhancer import MarkdownEnhancer
@@ -81,6 +83,7 @@ class PipelineResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     success: bool = True
     error: str | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -173,22 +176,24 @@ class ConversionPipeline:
 
     def _create_provider_manager(self) -> "ProviderManager":
         """Create a new ProviderManager instance (not initialized)."""
+        from markit.config.settings import LLMProviderConfig
         from markit.llm.manager import ProviderManager
 
-        # Build configs list, optionally overriding with preferred provider/model
-        configs = list(self.settings.llm.providers)
+        # Start with the base configuration from settings
+        llm_config = self.settings.llm.model_copy()
 
-        # If preferred provider/model specified, prepend it to the list
+        # If preferred provider/model specified via CLI, prepend it to legacy providers list
+        # This ensures it gets priority
         if self.llm_provider:
-            from markit.config.settings import LLMProviderConfig
-
             preferred_config = LLMProviderConfig(
                 provider=self.llm_provider,  # type: ignore[arg-type]
                 model=self.llm_model or self._get_default_model(self.llm_provider),
             )
-            configs.insert(0, preferred_config)
+            # Insert at beginning of providers list
+            new_providers = [preferred_config] + list(llm_config.providers)
+            llm_config.providers = new_providers
 
-        return ProviderManager(configs=configs)
+        return ProviderManager(llm_config=llm_config)
 
     async def _get_provider_manager_async(self) -> "ProviderManager":
         """Get or create the LLM provider manager (async).
@@ -338,9 +343,7 @@ class ConversionPipeline:
         Returns:
             DocumentConversionResult with conversion data for further processing
         """
-        from markit.converters.base import ExtractedImage
         from markit.image.compressor import CompressedImage
-        from markit.image.converter import ImageFormatConverter
 
         log.info(
             "Phase 1: Document conversion",
@@ -368,119 +371,45 @@ class ConversionPipeline:
             # 3. Convert to Markdown
             conversion_result = await self._convert_with_fallback(current_file, plan)
 
-            # 4. Process images (format conversion and compression only, no LLM)
-            processed_images: list[ExtractedImage] = []
-            images_for_analysis: list[CompressedImage] = []
+            # 4. Process images (format conversion, deduplication, compression only, no LLM)
+            processed_images = []
+            images_for_analysis = []
             markdown = conversion_result.markdown
 
             if conversion_result.images:
                 log.info("Processing images (format/compress)", count=len(conversion_result.images))
 
-                format_converter = ImageFormatConverter()
-                compressor = self._get_image_compressor()
-                image_index = 0  # Counter for generating new filenames
+                # Use parallel optimization
+                processed_images, filename_map = await self._optimize_images_parallel(
+                    conversion_result.images, input_file
+                )
 
-                for image in conversion_result.images:
-                    current_image = image
-                    old_filename = image.filename
-                    original_size = len(image.data)
-
-                    # Step 1: Convert format if needed (WMF -> PNG, etc.)
-                    if format_converter.needs_conversion(image.format):
-                        try:
-                            converted = format_converter.convert(image)
-                            if converted is None:
-                                log.info(
-                                    "Image conversion not possible, removing",
-                                    filename=image.filename,
-                                )
-                                markdown = markdown.replace(f"![](assets/{old_filename})", "")
-                                markdown = markdown.replace(
-                                    f"![{old_filename}](assets/{old_filename})", ""
-                                )
-                                continue
-
-                            current_image = ExtractedImage(
-                                data=converted.data,
-                                format=converted.format,
-                                filename=converted.filename,
-                                source_document=image.source_document,
-                                position=image.position,
-                                width=converted.width,
-                                height=converted.height,
-                            )
-                        except Exception as e:
-                            log.warning(
-                                "Image format conversion failed",
-                                filename=image.filename,
-                                error=str(e),
-                            )
-                            markdown = markdown.replace(f"![](assets/{old_filename})", "")
-                            markdown = markdown.replace(
-                                f"![{old_filename}](assets/{old_filename})", ""
-                            )
-                            continue
-
-                    # Step 2: Compress image if enabled
-                    if self.compress_images:
-                        try:
-                            compressed = compressor.compress(current_image)
-                            current_image = ExtractedImage(
-                                data=compressed.data,
-                                format=compressed.format,
-                                filename=compressed.filename,
-                                source_document=current_image.source_document,
-                                position=current_image.position,
-                                width=compressed.width,
-                                height=compressed.height,
-                            )
-                        except Exception as e:
-                            log.warning(
-                                "Image compression failed",
-                                filename=current_image.filename,
-                                error=str(e),
-                            )
-
-                    # Step 3: Rename image using original input filename
-                    image_index += 1
-                    new_filename = _generate_image_filename(
-                        input_file, image_index, current_image.format
-                    )
-                    # Update markdown references
-                    markdown = markdown.replace(
-                        f"assets/{old_filename}",
-                        f"assets/{new_filename}",
-                    )
-                    # Also try to replace converted filename if different
-                    if current_image.filename != old_filename:
+                # Update markdown references
+                for old_filename, new_filename in filename_map.items():
+                    if new_filename:
                         markdown = markdown.replace(
-                            f"assets/{current_image.filename}",
-                            f"assets/{new_filename}",
+                            f"assets/{old_filename}", f"assets/{new_filename}"
                         )
+                        markdown = markdown.replace(f"({old_filename})", f"({new_filename})")
+                    else:
+                        # Image processing failed, remove references
+                        markdown = markdown.replace(f"![](assets/{old_filename})", "")
+                        markdown = markdown.replace(f"![{old_filename}](assets/{old_filename})", "")
+                        markdown = markdown.replace(f"![]({old_filename})", "")
+                        markdown = markdown.replace(f"![{old_filename}]({old_filename})", "")
 
-                    processed_image = ExtractedImage(
-                        data=current_image.data,
-                        format=current_image.format,
-                        filename=new_filename,
-                        source_document=current_image.source_document,
-                        position=current_image.position,
-                        width=current_image.width,
-                        height=current_image.height,
-                    )
-
-                    processed_images.append(processed_image)
-
-                    # Prepare for LLM analysis if enabled
-                    if self.analyze_image:
+                # Prepare for LLM analysis if enabled
+                if self.analyze_image:
+                    for img in processed_images:
                         images_for_analysis.append(
                             CompressedImage(
-                                data=processed_image.data,
-                                format=processed_image.format,
-                                filename=processed_image.filename,
-                                original_size=original_size,
-                                compressed_size=len(processed_image.data),
-                                width=processed_image.width or 0,
-                                height=processed_image.height or 0,
+                                data=img.data,
+                                format=img.format,
+                                filename=img.filename,
+                                original_size=len(img.data),
+                                compressed_size=len(img.data),
+                                width=img.width or 0,
+                                height=img.height or 0,
                             )
                         )
 
@@ -525,7 +454,7 @@ class ConversionPipeline:
                 error=f"Unexpected error: {e}",
             )
 
-    def create_llm_tasks(
+    async def create_llm_tasks(
         self, doc_result: DocumentConversionResult
     ) -> list[Coroutine[Any, Any, Any]]:
         """Phase 2: Create LLM task coroutines without executing them.
@@ -546,9 +475,18 @@ class ConversionPipeline:
 
         # Image analysis tasks
         if self.analyze_image and doc_result.images_for_analysis:
-            for img in doc_result.images_for_analysis:
-                # Create analysis coroutine (will be awaited by caller)
-                tasks.append(self._create_image_analysis_task(img))
+            # Check vision capability
+            # Note: _get_provider_manager_async() initializes the manager if needed
+            manager = await self._get_provider_manager_async()
+            if not manager.has_capability("vision"):
+                log.warning(
+                    "Image analysis enabled but no vision-capable model configured. "
+                    "Skipping image analysis tasks."
+                )
+            else:
+                for img in doc_result.images_for_analysis:
+                    # Create analysis coroutine (will be awaited by caller)
+                    tasks.append(self._create_image_analysis_task(img))
 
         # Markdown enhancement task
         if self.llm_enabled:
@@ -754,6 +692,122 @@ class ConversionPipeline:
                 error=f"Unexpected error: {e}",
             )
 
+    async def _optimize_images_parallel(
+        self, images: list["ExtractedImage"], input_file: Path
+    ) -> tuple[list["ExtractedImage"], dict[str, str]]:
+        """Process images in parallel: format convert, deduplicate, compress.
+
+        Returns:
+            Tuple of (processed_unique_images, filename_map)
+        """
+        from markit.converters.base import ExtractedImage
+        from markit.image.converter import ImageFormatConverter
+
+        if not images:
+            return [], {}
+
+        format_converter = ImageFormatConverter()
+        compressor = self._get_image_compressor()
+
+        # 1. Identification & Deduplication
+        unique_images_map: dict[str, ExtractedImage] = {}  # hash -> image
+        unique_hashes_order: list[str] = []  # to preserve order of first appearance
+
+        for img in images:
+            img_hash = hashlib.md5(img.data).hexdigest()
+
+            if img_hash not in unique_images_map:
+                unique_images_map[img_hash] = img
+                unique_hashes_order.append(img_hash)
+
+        # 2. Process Unique Images in Parallel
+        def process_single(img: ExtractedImage, index: int) -> ExtractedImage | None:
+            # Format conversion
+            current_img = img
+            if format_converter.needs_conversion(img.format):
+                try:
+                    converted = format_converter.convert(img)
+                    if converted is None:
+                        return None
+                    current_img = ExtractedImage(
+                        data=converted.data,
+                        format=converted.format,
+                        filename=converted.filename,
+                        source_document=img.source_document,
+                        position=img.position,
+                        width=converted.width,
+                        height=converted.height,
+                    )
+                except Exception as e:
+                    log.warning("Format conversion failed", filename=img.filename, error=str(e))
+                    return None
+
+            # Compression
+            if self.compress_images:
+                try:
+                    compressed = compressor.compress(current_img)
+                    current_img = ExtractedImage(
+                        data=compressed.data,
+                        format=compressed.format,
+                        filename=compressed.filename,
+                        source_document=current_img.source_document,
+                        position=current_img.position,
+                        width=compressed.width,
+                        height=compressed.height,
+                    )
+                except Exception as e:
+                    log.warning("Compression failed", filename=current_img.filename, error=str(e))
+
+            # Generate final filename
+            new_filename = _generate_image_filename(input_file, index, current_img.format)
+
+            return ExtractedImage(
+                data=current_img.data,
+                format=current_img.format,
+                filename=new_filename,
+                source_document=current_img.source_document,
+                position=current_img.position,
+                width=current_img.width,
+                height=current_img.height,
+            )
+
+        # Create tasks
+        tasks = []
+        for i, h in enumerate(unique_hashes_order):
+            img = unique_images_map[h]
+            # index is i+1
+            tasks.append(asyncio.to_thread(process_single, img, i + 1))
+
+        # Run tasks
+        results = []
+        if tasks:
+            log.info(
+                "Processing unique images in parallel",
+                count=len(tasks),
+                total_extracted=len(images),
+            )
+            results = await asyncio.gather(*tasks)
+
+        # 3. Rebuild Maps and Results
+        final_images = []
+        hash_to_filename = {}
+
+        for h, result in zip(unique_hashes_order, results, strict=True):
+            if result is not None:
+                final_images.append(result)
+                hash_to_filename[h] = result.filename
+            else:
+                hash_to_filename[h] = None
+
+        # Build filename map (old -> new)
+        filename_map = {}
+        for img in images:
+            img_hash = hashlib.md5(img.data).hexdigest()
+            if img_hash in hash_to_filename:
+                filename_map[img.filename] = hash_to_filename[img_hash]
+
+        return final_images, filename_map
+
     async def _process_images(
         self, result: ConversionResult, input_file: Path
     ) -> tuple[ConversionResult, list[ProcessedImageInfo]]:
@@ -771,133 +825,45 @@ class ConversionPipeline:
         if not result.images:
             return result, []
 
-        from markit.converters.base import ExtractedImage
         from markit.image.compressor import CompressedImage
-        from markit.image.converter import ImageFormatConverter
 
-        processed_images: list[ExtractedImage] = []
-        images_for_analysis: list[CompressedImage] = []
-        original_sizes: list[int] = []  # Track original sizes for CompressedImage
-        format_converter = ImageFormatConverter()
-        compressor = self._get_image_compressor()
+        # Phase 1: Format conversion, deduplication, and compression (Parallel)
+        processed_images, filename_map = await self._optimize_images_parallel(
+            result.images, input_file
+        )
+
+        # Update markdown references
         markdown = result.markdown
-        image_index = 0  # Counter for generating new filenames
+        for old_filename, new_filename in filename_map.items():
+            if new_filename:
+                # Update all references (both standard and assets/)
+                markdown = markdown.replace(f"assets/{old_filename}", f"assets/{new_filename}")
+                # Handle cases where markdown might reference old filename without assets/
+                markdown = markdown.replace(f"({old_filename})", f"({new_filename})")
+            else:
+                # Image processing failed, remove references
+                markdown = markdown.replace(f"![](assets/{old_filename})", "")
+                markdown = markdown.replace(f"![{old_filename}](assets/{old_filename})", "")
+                markdown = markdown.replace(f"![]({old_filename})", "")
+                markdown = markdown.replace(f"![{old_filename}]({old_filename})", "")
 
-        # Phase 1: Format conversion and compression (CPU-bound, fast)
-        for image in result.images:
-            current_image = image
-            old_filename = image.filename
-            original_size = len(image.data)
-
-            # Step 1: Convert format if needed (WMF -> PNG, etc.)
-            if format_converter.needs_conversion(image.format):
-                try:
-                    converted = format_converter.convert(image)
-                    # If conversion returned None, skip this image
-                    if converted is None:
-                        log.info(
-                            "Image conversion not possible, removing from output",
-                            filename=image.filename,
-                        )
-                        # Remove image reference from markdown
-                        markdown = markdown.replace(f"![](assets/{old_filename})", "")
-                        markdown = markdown.replace(f"![{old_filename}](assets/{old_filename})", "")
-                        continue
-
-                    current_image = ExtractedImage(
-                        data=converted.data,
-                        format=converted.format,
-                        filename=converted.filename,
-                        source_document=image.source_document,
-                        position=image.position,
-                        width=converted.width,
-                        height=converted.height,
-                    )
-                    log.debug(
-                        "Image format converted",
-                        filename=image.filename,
-                        from_format=image.format,
-                        to_format=converted.format,
-                    )
-                except Exception as e:
-                    log.warning(
-                        "Image format conversion failed, skipping image",
-                        filename=image.filename,
-                        error=str(e),
-                    )
-                    # Remove image reference from markdown
-                    markdown = markdown.replace(f"![](assets/{old_filename})", "")
-                    markdown = markdown.replace(f"![{old_filename}](assets/{old_filename})", "")
-                    continue
-
-            # Step 2: Compress image if enabled
-            if self.compress_images:
-                try:
-                    compressed = compressor.compress(current_image)
-                    current_image = ExtractedImage(
-                        data=compressed.data,
-                        format=compressed.format,
-                        filename=compressed.filename,
-                        source_document=current_image.source_document,
-                        position=current_image.position,
-                        width=compressed.width,
-                        height=compressed.height,
-                    )
-                    log.debug(
-                        "Image compressed",
-                        filename=current_image.filename,
-                        savings=f"{compressed.savings_percent:.1f}%",
-                    )
-                except Exception as e:
-                    log.warning(
-                        "Image compression failed, using original",
-                        filename=current_image.filename,
-                        error=str(e),
-                    )
-
-            # Step 3: Rename image using original input filename
-            image_index += 1
-            new_filename = _generate_image_filename(input_file, image_index, current_image.format)
-            # Update markdown references
-            markdown = markdown.replace(
-                f"assets/{old_filename}",
-                f"assets/{new_filename}",
-            )
-            # Also try to replace converted filename if different
-            if current_image.filename != old_filename:
-                markdown = markdown.replace(
-                    f"assets/{current_image.filename}",
-                    f"assets/{new_filename}",
-                )
-
-            processed_image = ExtractedImage(
-                data=current_image.data,
-                format=current_image.format,
-                filename=new_filename,
-                source_document=current_image.source_document,
-                position=current_image.position,
-                width=current_image.width,
-                height=current_image.height,
-            )
-
-            processed_images.append(processed_image)
-            original_sizes.append(original_size)
-
-            # Prepare for analysis if enabled
-            if self.analyze_image:
+        # Prepare for analysis
+        images_for_analysis: list[CompressedImage] = []
+        if self.analyze_image:
+            for img in processed_images:
                 images_for_analysis.append(
                     CompressedImage(
-                        data=processed_image.data,
-                        format=processed_image.format,
-                        filename=processed_image.filename,
-                        original_size=original_size,
-                        compressed_size=len(processed_image.data),
-                        width=processed_image.width or 0,
-                        height=processed_image.height or 0,
+                        data=img.data,
+                        format=img.format,
+                        filename=img.filename,
+                        original_size=len(img.data),  # Approximate
+                        compressed_size=len(img.data),
+                        width=img.width or 0,
+                        height=img.height or 0,
                     )
                 )
 
-        # Phase 2: Parallel LLM analysis (I/O-bound, main bottleneck)
+        # Phase 2: Parallel LLM analysis
         analyses: list[ImageAnalysis | None] = [None] * len(processed_images)
         if self.analyze_image and images_for_analysis:
             analyzer = await self._get_image_analyzer_async()
@@ -921,6 +887,7 @@ class ConversionPipeline:
                     )
 
                     # Update markdown with alt text
+                    # Note: Markdown already points to processed_image.filename
                     old_ref = f"![]({processed_image.filename})"
                     new_ref = f"![{analysis.alt_text}]({processed_image.filename})"
                     markdown = markdown.replace(old_ref, new_ref)
@@ -1061,11 +1028,13 @@ class ConversionPipeline:
                 for info in image_info_list:
                     analysis_lookup[info.filename] = info.analysis
 
+            images_written = 0
+            descriptions_written = 0
             for image in result.images:
                 image_path = assets_dir / image.filename
                 async with await anyio.open_file(image_path, "wb") as f:
                     await f.write(image.data)
-                log.debug("Image written", path=str(image_path))
+                images_written += 1
 
                 # Write image description .md file if analyze_image_with_md is enabled
                 if self.analyze_image_with_md:
@@ -1077,7 +1046,16 @@ class ConversionPipeline:
                         md_path = assets_dir / f"{image.filename}.md"
                         async with await anyio.open_file(md_path, "w", encoding="utf-8") as f:
                             await f.write(md_content)
-                        log.debug("Image description written", path=str(md_path))
+                        descriptions_written += 1
+
+            # Log summary instead of individual files
+            if images_written > 0:
+                log.debug(
+                    "Assets written",
+                    images=images_written,
+                    descriptions=descriptions_written,
+                    output_dir=str(assets_dir),
+                )
 
         return output_file
 

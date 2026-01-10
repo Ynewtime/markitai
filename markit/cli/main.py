@@ -3,6 +3,7 @@
 from typing import Annotated
 
 import typer
+from dotenv import load_dotenv
 from rich.console import Console
 
 from markit import __version__
@@ -10,6 +11,9 @@ from markit.cli.commands.batch import batch
 from markit.cli.commands.config import config_app
 from markit.cli.commands.convert import convert
 from markit.cli.commands.provider import provider_app
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Create main Typer app
 app = typer.Typer(

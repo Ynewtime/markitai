@@ -134,7 +134,8 @@ class ImageFormatConverter:
                 height=image.height or 0,
             )
 
-        log.info(
+        # Changed to debug to reduce log noise when processing many images
+        log.debug(
             "Converting image format",
             filename=image.filename,
             from_format=format_lower,
@@ -184,23 +185,41 @@ class ImageFormatConverter:
             )
 
         except Exception as e:
+            # Use ASCII-safe filename for logging to avoid encoding issues
+            safe_filename = image.filename.encode("ascii", errors="replace").decode("ascii")
             log.error(
                 "Pillow conversion failed",
-                filename=image.filename,
+                filename=safe_filename,
                 error=str(e),
             )
             raise
 
     def _convert_metafile(self, image: ExtractedImage) -> ConvertedImage | None:
-        """Convert EMF/WMF metafile to PNG."""
-        # Try Pillow first (may work on Windows)
+        """Convert EMF/WMF metafile to PNG.
+
+        Tries multiple conversion methods in order:
+        1. Pillow (if WMF support is available)
+        2. Inkscape (if installed)
+        3. Returns None if all methods fail (image will be skipped)
+
+        Args:
+            image: The metafile image to convert
+
+        Returns:
+            ConvertedImage if successful, None if conversion failed
+        """
+        # Use ASCII-safe filename for logging to avoid encoding issues on Windows
+        safe_filename = image.filename.encode("ascii", errors="replace").decode("ascii")
+
+        # Try Pillow first (may work on Windows with pyemf or similar)
         if self._pillow_wmf_support:
             try:
                 return self._convert_with_pillow(image)
             except Exception as e:
+                error_msg = str(e).encode("ascii", errors="replace").decode("ascii")
                 log.warning(
                     "Pillow WMF conversion failed, trying Inkscape",
-                    error=str(e),
+                    error=error_msg,
                 )
 
         # Try Inkscape
@@ -208,15 +227,18 @@ class ImageFormatConverter:
             try:
                 return self._convert_with_inkscape(image)
             except Exception as e:
+                error_msg = str(e).encode("ascii", errors="replace").decode("ascii")
                 log.warning(
                     "Inkscape conversion failed",
-                    error=str(e),
+                    error=error_msg,
                 )
 
-        # Cannot convert - return None to signal skip
+        # All conversion methods failed - return None to signal skip
+        # The calling code should handle None by removing the image reference from markdown
         log.warning(
-            "Cannot convert metafile, skipping image",
-            filename=image.filename,
+            "Cannot convert metafile, image will be skipped",
+            filename=safe_filename,
+            format=image.format,
         )
         return None
 
