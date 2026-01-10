@@ -64,7 +64,12 @@ markit batch ./docs -o ./output -r
 | `markit convert <file>` | Convert single file |
 | `markit batch <dir>` | Batch convert directory |
 | `markit config show` | Show current config |
+| `markit provider add` | Add LLM provider credential |
 | `markit provider test` | Test LLM connectivity |
+| `markit provider list` | List configured credentials |
+| `markit provider fetch` | Fetch available models from providers |
+| `markit model add` | Add a model to config |
+| `markit model list` | List configured models |
 
 ## Key Options
 
@@ -92,35 +97,30 @@ markit batch ./docs -o ./output -r
 
 ## Configuration
 
-Create `markit.toml` with `markit config init`:
+Create `markit.yaml` with `markit config init`:
 
-```toml
-log_level = "INFO"
+```yaml
+log_level: "INFO"
 
-[output]
-default_dir = "output"
+output:
+  default_dir: "output"
 
-[image]
-enable_compression = true
+image:
+  enable_compression: true
 
 # New Schema (recommended for multiple models)
 # Define credentials separately from models
-[[llm.credentials]]
-id = "openai-main"
-provider = "openai"
-# api_key = "sk-..."  # Or use OPENAI_API_KEY env var
+llm:
+  credentials:
+    - id: "openai-main"
+      provider: "openai"
+      # api_key: "sk-..."  # Or use OPENAI_API_KEY env var
 
-[[llm.models]]
-name = "GPT-4o"
-model = "gpt-4o"
-credential_id = "openai-main"
-capabilities = ["text", "vision"]
-
-# Legacy Schema (simpler, still supported)
-[[llm.providers]]
-provider = "ollama"
-model = "llama3.2-vision"
-base_url = "http://localhost:11434"
+  models:
+    - name: "GPT-4o"
+      model: "gpt-4o"
+      credential_id: "openai-main"
+      capabilities: ["text", "vision"]
 ```
 
 **Environment variables:**

@@ -5,7 +5,6 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from markit.exceptions import LLMError, RateLimitError
 from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, TokenUsage
 from markit.utils.logging import get_logger
 
@@ -17,12 +16,16 @@ class OpenAIProvider(BaseLLMProvider):
 
     name = "openai"
 
+    # GPT-5.2+ models require max_completion_tokens instead of max_tokens
+    # Subclasses can override this for OpenAI-compatible APIs that use max_tokens
+    _use_max_completion_tokens = True
+
     def __init__(
         self,
         api_key: str | None = None,
         model: str = "gpt-5.2",
         base_url: str | None = None,
-        timeout: int = 60,
+        timeout: int = 120,
         max_retries: int = 3,
     ) -> None:
         """Initialize OpenAI provider.
@@ -71,7 +74,9 @@ class OpenAIProvider(BaseLLMProvider):
             }
             if max_tokens is not None:
                 # GPT-5.2+ models require max_completion_tokens instead of max_tokens
-                request_params["max_completion_tokens"] = max_tokens
+                # OpenAI-compatible APIs (like OpenRouter) use standard max_tokens
+                token_key = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
+                request_params[token_key] = max_tokens
 
             # Add any extra kwargs (excluding 'model' which is already handled)
             for k, v in kwargs.items():
@@ -105,11 +110,7 @@ class OpenAIProvider(BaseLLMProvider):
             )
 
         except Exception as e:
-            error_str = str(e).lower()
-            if "rate_limit" in error_str or "rate limit" in error_str:
-                raise RateLimitError() from e
-            log.error("OpenAI API error", error=str(e))
-            raise LLMError(f"OpenAI API error: {e}") from e
+            self._handle_api_error(e, "API", log)
 
     async def stream(
         self,
@@ -141,7 +142,9 @@ class OpenAIProvider(BaseLLMProvider):
             }
             if max_tokens is not None:
                 # GPT-5.2+ models require max_completion_tokens instead of max_tokens
-                request_params["max_completion_tokens"] = max_tokens
+                # OpenAI-compatible APIs (like OpenRouter) use standard max_tokens
+                token_key = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
+                request_params[token_key] = max_tokens
 
             # Add any extra kwargs (excluding 'model' which is already handled)
             for k, v in kwargs.items():
@@ -157,11 +160,7 @@ class OpenAIProvider(BaseLLMProvider):
                     yield chunk.choices[0].delta.content
 
         except Exception as e:
-            error_str = str(e).lower()
-            if "rate_limit" in error_str or "rate limit" in error_str:
-                raise RateLimitError() from e
-            log.error("OpenAI streaming error", error=str(e))
-            raise LLMError(f"OpenAI streaming error: {e}") from e
+            self._handle_api_error(e, "streaming", log)
 
     async def analyze_image(
         self,

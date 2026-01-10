@@ -141,56 +141,59 @@ markit batch [选项] INPUT_DIR
 ### provider
 
 ```bash
+markit provider add       # 添加 LLM 提供商凭证
 markit provider test      # 测试 LLM 连接
-markit provider models    # 列出可用模型
+markit provider list      # 列出已配置的凭证
+markit provider fetch     # 获取提供商可用模型列表
+```
+
+### model
+
+```bash
+markit model add          # 交互式添加模型到配置
+markit model list         # 列出已配置的模型
 ```
 
 ## 配置
 
-**优先级**：命令行参数 > 环境变量 > markit.toml > 默认值
+**优先级**：命令行参数 > 环境变量 > markit.yaml > 默认值
 
-### markit.toml
+### markit.yaml
 
-```toml
-log_level = "INFO"
-log_dir = ".logs"
+```yaml
+log_level: "INFO"
+log_dir: ".logs"
 
-[output]
-default_dir = "output"
-on_conflict = "rename"
+output:
+  default_dir: "output"
+  on_conflict: "rename"
 
-[image]
-enable_compression = true
-filter_small_images = true
+image:
+  enable_compression: true
+  filter_small_images: true
 
-[concurrency]
-file_workers = 4
-image_workers = 8
-llm_workers = 5
+concurrency:
+  file_workers: 4
+  image_workers: 8
+  llm_workers: 5
 
-[pdf]
-engine = "pymupdf4llm"
+pdf:
+  engine: "pymupdf4llm"
 
 # 新配置结构（推荐用于多模型场景）
 # 将凭证和模型分开定义
-[[llm.credentials]]
-id = "openai-main"
-provider = "openai"
-# api_key = "sk-..."  # 或使用 OPENAI_API_KEY 环境变量
+llm:
+  credentials:
+    - id: "openai-main"
+      provider: "openai"
+      # api_key: "sk-..."  # 或使用 OPENAI_API_KEY 环境变量
 
-[[llm.models]]
-name = "GPT-4o"
-model = "gpt-4o"
-credential_id = "openai-main"
-capabilities = ["text", "vision"]
-timeout = 60
-
-# 旧配置结构（更简单，仍然支持）
-[[llm.providers]]
-provider = "ollama"
-model = "llama3.2-vision"
-base_url = "http://localhost:11434"
-timeout = 120
+  models:
+    - name: "GPT-4o"
+      model: "gpt-4o"
+      credential_id: "openai-main"
+      capabilities: ["text", "vision"]
+      timeout: 120
 ```
 
 ### 环境变量

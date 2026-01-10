@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict, TomlConfigSettingsSource
+from pydantic_settings import BaseSettings, SettingsConfigDict, YamlConfigSettingsSource
 
 from markit.config.constants import (
     DEFAULT_CHUNK_OVERLAP,
@@ -141,12 +141,12 @@ class MarkitSettings(BaseSettings):
     def settings_customise_sources(
         cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings
     ):
-        """Customize settings sources to include TOML file."""
+        """Customize settings sources to include YAML file."""
         return (
             init_settings,
             env_settings,
             dotenv_settings,
-            TomlConfigSettingsSource(settings_cls, toml_file="markit.toml"),
+            YamlConfigSettingsSource(settings_cls, yaml_file="markit.yaml"),
             file_secret_settings,
         )
 

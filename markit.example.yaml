@@ -1,0 +1,61 @@
+# MarkIt Configuration
+# Run `markit provider add` to configure LLM providers interactively.
+
+log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+state_file: ".markit-state.json"  # State file for batch resume
+
+image:
+  enable_compression: true  # PNG/JPEG compression
+  png_optimization_level: 2  # 0-6, higher = slower
+  jpeg_quality: 85  # 0-100
+  max_dimension: 2048  # Max image size in pixels
+  enable_analysis: false  # LLM-based image analysis
+  filter_small_images: true  # Filter decorative images
+  min_dimension: 100  # Min width/height to keep
+  min_area: 40000  # Min area (e.g., 200x200)
+  min_file_size: 10240  # Min file size in bytes
+
+concurrency:
+  file_workers: 4  # Concurrent files in batch mode
+  image_workers: 8  # Concurrent image processing
+  llm_workers: 5  # Concurrent LLM requests
+
+pdf:
+  engine: "pymupdf4llm"  # pymupdf4llm, pymupdf, pdfplumber, markitdown
+  extract_images: true
+  ocr_enabled: false
+
+enhancement:  # LLM-powered features (requires --llm flag)
+  enabled: false
+  remove_headers_footers: true
+  fix_heading_levels: true
+  add_frontmatter: true
+  generate_summary: true
+  chunk_size: 32000  # Tokens per chunk
+  chunk_overlap: 500
+
+output:
+  default_dir: "output"
+  on_conflict: "rename"  # skip, overwrite, rename
+  create_assets_subdir: true
+  generate_image_descriptions: true
+
+# LLM Configuration - Use `markit provider add` to add credentials
+# llm:
+#   credentials:
+#     - id: "deepseek"
+#       provider: "openai"  # openai, anthropic, gemini, ollama, openrouter
+#       base_url: "https://api.deepseek.com"
+#       api_key_env: "DEEPSEEK_API_KEY"
+#     - id: "openai-main"
+#       provider: "openai"
+#     - id: "anthropic-main"
+#       provider: "anthropic"
+#   models:
+#     - name: "deepseek-chat"
+#       model: "deepseek-chat"
+#       credential_id: "deepseek"
+#     - name: "GPT-4o"
+#       model: "gpt-4o"
+#       credential_id: "openai-main"
+#       capabilities: ["text", "vision"]

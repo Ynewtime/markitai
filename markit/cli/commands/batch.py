@@ -8,7 +8,7 @@ import typer
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from markit.config import get_settings
+from markit.cli.shared import ConversionContext, ConversionOptions
 from markit.config.constants import LLM_PROVIDERS, PDF_ENGINES, SUPPORTED_EXTENSIONS
 from markit.core.pipeline import ConversionPipeline, DocumentConversionResult, PipelineResult
 from markit.core.state import StateManager
@@ -19,7 +19,6 @@ from markit.utils.logging import (
     get_logger,
     set_log_output,
     setup_logging,
-    setup_task_logging,
 )
 
 console = get_console()
@@ -186,31 +185,26 @@ def batch(
         markit batch ./documents --include "*.docx" --llm
         markit batch ./documents --resume --state-file ./state.json
     """
-    settings = get_settings()
-
-    # Setup task-level logging with unified behavior
-    # Priority: user config (settings.log_dir) > default (.logs)
-    task_id, log_path = setup_task_logging(
-        log_dir=settings.log_dir,
-        prefix="batch",
+    # Pack shared options into dataclass
+    options = ConversionOptions(
+        output_dir=output,
+        llm=llm,
+        analyze_image=analyze_image,
+        analyze_image_with_md=analyze_image_with_md,
+        no_compress=no_compress,
+        pdf_engine=pdf_engine,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
         verbose=verbose,
+        dry_run=dry_run,
     )
 
-    # Log file behavior hint (only in verbose mode)
-    if verbose:
-        log.info("Logs will be saved to", log_file=str(log_path))
+    # Create context with shared initialization (use cwd as base for relative output)
+    ctx = ConversionContext.create(
+        options, command_prefix="batch", console=console, base_path=Path.cwd()
+    )
 
-    # Log detailed configuration at the beginning
-    # Mask API keys before logging
-    config_dump = settings.model_dump()
-    if "llm" in config_dump and "providers" in config_dump["llm"]:
-        for provider in config_dump["llm"]["providers"]:
-            if "api_key" in provider and provider["api_key"]:
-                provider["api_key"] = "***"
-
-    log.info("Task Configuration", task_id=task_id, config=config_dump)
-
-    # Validate options
+    # Batch-specific validation
     if on_conflict not in ("skip", "overwrite", "rename"):
         console.print(
             f"[red]Error:[/red] Invalid conflict strategy '{on_conflict}'. "
@@ -218,44 +212,18 @@ def batch(
         )
         raise typer.Exit(1)
 
-    if pdf_engine and pdf_engine not in PDF_ENGINES:
-        console.print(
-            f"[red]Error:[/red] Invalid PDF engine '{pdf_engine}'. "
-            f"Options: {', '.join(PDF_ENGINES)}"
-        )
-        raise typer.Exit(1)
-
-    if llm_provider and llm_provider not in LLM_PROVIDERS:
-        console.print(
-            f"[red]Error:[/red] Invalid LLM provider '{llm_provider}'. "
-            f"Options: {', '.join(LLM_PROVIDERS)}"
-        )
-        raise typer.Exit(1)
-
-    # Determine output directory (use cwd to be consistent with convert command)
-    output_dir = output or Path.cwd() / settings.output.default_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     # Determine state file
-    state_path = state_file or Path(settings.state_file)
+    state_path = state_file or Path(ctx.settings.state_file)
 
-    # Effective analyze_image: either flag enables analysis, with_md adds description files
-    effective_analyze_image = analyze_image or analyze_image_with_md
-
-    log.info(
-        "Starting batch conversion",
+    ctx.log_start(
         input_dir=str(input_dir),
-        output_dir=str(output_dir),
         recursive=recursive,
-        llm_enabled=llm,
-        analyze_image=effective_analyze_image,
-        analyze_image_with_md=analyze_image_with_md,
     )
 
     if dry_run:
         _show_dry_run(
             input_dir=input_dir,
-            output_dir=output_dir,
+            output_dir=ctx.output_dir,
             recursive=recursive,
             include=include,
             exclude=exclude,
@@ -267,7 +235,7 @@ def batch(
         asyncio.run(
             _execute_batch(
                 input_dir=input_dir,
-                output_dir=output_dir,
+                output_dir=ctx.output_dir,
                 recursive=recursive,
                 include=include,
                 exclude=exclude,
@@ -277,15 +245,7 @@ def batch(
                 on_conflict=on_conflict,
                 resume=resume,
                 state_path=state_path,
-                llm_enabled=llm,
-                analyze_image=effective_analyze_image,
-                analyze_image_with_md=analyze_image_with_md,
-                compress_images=not no_compress,
-                pdf_engine=pdf_engine,
-                llm_provider=llm_provider,
-                llm_model=llm_model,
-                settings=settings,
-                verbose=verbose,
+                ctx=ctx,
             )
         )
     except KeyboardInterrupt:
@@ -309,15 +269,7 @@ async def _execute_batch(
     on_conflict: str,
     resume: bool,
     state_path: Path,
-    llm_enabled: bool,
-    analyze_image: bool,
-    analyze_image_with_md: bool,
-    compress_images: bool,
-    pdf_engine: str | None,
-    llm_provider: str | None,
-    llm_model: str | None,
-    settings,
-    verbose: bool = False,
+    ctx: ConversionContext,
 ) -> None:
     """Execute the batch conversion asynchronously."""
     # Initialize state manager
@@ -337,7 +289,7 @@ async def _execute_batch(
             )
     else:
         files = _discover_files(input_dir, recursive, include, exclude)
-        state_manager.clear()  # Clear any previous state
+        state_manager.clear()
 
     if not files:
         console.print("[yellow]No files to process.[/yellow]")
@@ -353,24 +305,15 @@ async def _execute_batch(
                 "recursive": recursive,
                 "include": include,
                 "exclude": exclude,
-                "llm_enabled": llm_enabled,
-                "analyze_image": analyze_image,
-                "compress_images": compress_images,
+                "llm_enabled": ctx.options.llm,
+                "analyze_image": ctx.options.effective_analyze_image,
+                "compress_images": ctx.options.compress_images,
                 "on_conflict": on_conflict,
             },
         )
 
     # Create pipeline and concurrency manager
-    pipeline = ConversionPipeline(
-        settings=settings,
-        llm_enabled=llm_enabled,
-        analyze_image=analyze_image,
-        analyze_image_with_md=analyze_image_with_md,
-        compress_images=compress_images,
-        pdf_engine=pdf_engine,
-        llm_provider=llm_provider,
-        llm_model=llm_model,
-    )
+    pipeline = ctx.create_pipeline()
 
     concurrency = ConcurrencyManager(
         file_workers=file_concurrency,
@@ -379,16 +322,11 @@ async def _execute_batch(
     )
 
     # Update conflict strategy in settings
-    settings.output.on_conflict = on_conflict
+    ctx.settings.output.on_conflict = on_conflict
 
     # Choose processing mode based on LLM usage
-    # When LLM is enabled, use phased pipeline for better parallelism
-    # When LLM is disabled, use original pipeline (faster for simple conversions)
-    use_phased_pipeline = llm_enabled or analyze_image
-
-    if use_phased_pipeline:
-        # Phased pipeline: maximize parallelism for LLM-heavy workloads
-        if verbose:
+    if ctx.options.use_phased_pipeline:
+        if ctx.options.verbose:
             results = await _process_files_phased_verbose(
                 files=files,
                 pipeline=pipeline,
@@ -409,8 +347,7 @@ async def _execute_batch(
                 llm_concurrency=llm_concurrency,
             )
     else:
-        # Original pipeline: simpler flow when no LLM processing needed
-        if verbose:
+        if ctx.options.verbose:
             results = await _process_files_verbose(
                 files=files,
                 pipeline=pipeline,
@@ -448,20 +385,16 @@ def _discover_files(
 
     for ext in SUPPORTED_EXTENSIONS:
         if include:
-            # Use custom include pattern
             for f in input_dir.glob(f"{pattern}{ext}"):
                 if Path(f.name).match(include):
                     files.append(f)
         else:
             files.extend(input_dir.glob(f"{pattern}{ext}"))
 
-    # Apply exclude pattern
     if exclude:
         files = [f for f in files if not Path(f.name).match(exclude)]
 
-    # Sort by name for consistent ordering
     files.sort(key=lambda p: str(p))
-
     return files
 
 
@@ -473,26 +406,13 @@ async def _process_files_verbose(
     state_manager: StateManager,
     input_dir: Path,
 ) -> list[TaskResult[Path]]:
-    """Process files with verbose logging (no progress bar).
-
-    Args:
-        files: List of files to process
-        pipeline: Conversion pipeline
-        concurrency: Concurrency manager
-        output_dir: Output directory
-        state_manager: State manager
-        input_dir: Input directory for relative path display
-    """
+    """Process files with verbose logging (no progress bar)."""
     results: list[TaskResult[Path]] = []
-
     log.info("Processing files", total=len(files))
 
     async def process_file(file_path: Path) -> PipelineResult:
-        """Process a single file."""
         rel_path = file_path.relative_to(input_dir)
         log.info("Converting file", file=str(rel_path))
-
-        # Update state to processing
         state_manager.update_file_status(file_path, "processing")
 
         try:
@@ -500,9 +420,7 @@ async def _process_files_verbose(
 
             if result.success:
                 state_manager.update_file_status(
-                    file_path,
-                    "completed",
-                    output_path=result.output_path,
+                    file_path, "completed", output_path=result.output_path
                 )
                 log.info(
                     "File converted successfully",
@@ -511,32 +429,22 @@ async def _process_files_verbose(
                     images=result.images_count,
                 )
             else:
-                state_manager.update_file_status(
-                    file_path,
-                    "failed",
-                    error=result.error,
-                )
+                state_manager.update_file_status(file_path, "failed", error=result.error)
                 log.error("File conversion failed", file=str(rel_path), error=result.error)
 
             return result
         except Exception as e:
-            state_manager.update_file_status(
-                file_path,
-                "failed",
-                error=str(e),
-            )
+            state_manager.update_file_status(file_path, "failed", error=str(e))
             log.error("File conversion error", file=str(rel_path), error=str(e))
             raise
 
     def on_progress(
-        item: Path,
-        result: PipelineResult | None,
-        error: Exception | None,
+        item: Path,  # noqa: ARG001
+        result: PipelineResult | None,  # noqa: ARG001
+        error: Exception | None,  # noqa: ARG001
     ) -> None:
-        """Progress callback - just for tracking, no console output."""
-        pass  # Logging is done in process_file
+        pass
 
-    # Process with concurrency
     task_results = await concurrency.map_file_tasks(
         items=files,
         func=process_file,
@@ -556,19 +464,7 @@ async def _process_files_with_progress(
     input_dir: Path,
     quiet: bool = False,
 ) -> list[TaskResult[Path]]:
-    """Process files with Rich progress display.
-
-    Args:
-        files: List of files to process
-        pipeline: Conversion pipeline
-        concurrency: Concurrency manager
-        output_dir: Output directory
-        state_manager: State manager
-        input_dir: Input directory for relative path display
-        quiet: If True, suppress per-file status output (only show progress bar)
-    """
-    from markit.utils.logging import set_log_output, setup_logging
-
+    """Process files with Rich progress display."""
     results: list[TaskResult[Path]] = []
 
     with Progress(
@@ -581,28 +477,18 @@ async def _process_files_with_progress(
         console=console,
         transient=False,
     ) as progress:
-        # Suppress structlog output during progress to avoid visual clutter
-        # Logs will still go to file if configured
         import os
         import sys
 
-        # Suppress console logs during progress (they interfere with the display)
         original_stderr = sys.stderr
 
-        # Use context manager for devnull to ensure proper cleanup
         with open(os.devnull, "w") as devnull:
             set_log_output(devnull)
-            # Set log level to WARNING to reduce noise
             setup_logging(level="WARNING", console=progress.console)
 
-            progress_task_id = progress.add_task(
-                "[cyan]Converting files...",
-                total=len(files),
-            )
+            progress_task_id = progress.add_task("[cyan]Converting files...", total=len(files))
 
             async def process_file(file_path: Path) -> PipelineResult:
-                """Process a single file."""
-                # Update state to processing
                 state_manager.update_file_status(file_path, "processing")
 
                 try:
@@ -610,24 +496,14 @@ async def _process_files_with_progress(
 
                     if result.success:
                         state_manager.update_file_status(
-                            file_path,
-                            "completed",
-                            output_path=result.output_path,
+                            file_path, "completed", output_path=result.output_path
                         )
                     else:
-                        state_manager.update_file_status(
-                            file_path,
-                            "failed",
-                            error=result.error,
-                        )
+                        state_manager.update_file_status(file_path, "failed", error=result.error)
 
                     return result
                 except Exception as e:
-                    state_manager.update_file_status(
-                        file_path,
-                        "failed",
-                        error=str(e),
-                    )
+                    state_manager.update_file_status(file_path, "failed", error=str(e))
                     raise
 
             def on_progress(
@@ -635,12 +511,9 @@ async def _process_files_with_progress(
                 result: PipelineResult | None,
                 error: Exception | None,
             ) -> None:
-                """Progress callback."""
                 progress.advance(progress_task_id)
-
-                # In quiet mode, only show progress bar (no per-file output)
-                # But always show errors even in quiet mode
                 rel_path = item.relative_to(input_dir)
+
                 if error:
                     error_msg = _simplify_error(str(error))
                     progress.console.print(f"  [red]x[/red] {rel_path}")
@@ -650,13 +523,11 @@ async def _process_files_with_progress(
                     progress.console.print(f"  [red]x[/red] {rel_path}")
                     progress.console.print(f"    [dim]{error_msg}[/dim]")
                 elif result and result.success and not quiet:
-                    # Only show success messages when not in quiet mode
                     images_info = ""
                     if result.images_count > 0:
                         images_info = f" [dim]({result.images_count} images)[/dim]"
                     progress.console.print(f"  [green]✓[/green] {rel_path}{images_info}")
 
-            # Process with concurrency
             task_results = await concurrency.map_file_tasks(
                 items=files,
                 func=process_file,
@@ -665,18 +536,10 @@ async def _process_files_with_progress(
 
             results.extend(task_results)
 
-        # Restore normal log output (keep WARNING level for non-verbose mode)
         set_log_output(original_stderr)
-        # Keep WARNING level to avoid log clutter after progress bar
-        # Note: File handler is already set up from initial setup_task_logging
         setup_logging(level="WARNING")
 
     return results
-
-
-# ============================================================================
-# Phased Pipeline Processing Functions (for LLM-enabled batch processing)
-# ============================================================================
 
 
 async def _process_file_pipeline(
@@ -685,40 +548,35 @@ async def _process_file_pipeline(
     concurrency: ConcurrencyManager,
     llm_queue: LLMTaskQueue,
     output_dir: Path,
-    input_dir: Path,
+    input_dir: Path,  # noqa: ARG001
     state_manager: StateManager,
     callbacks: dict[str, Any],
 ) -> TaskResult[Path]:
     """Process a single file through the full pipeline (streaming)."""
     from markit.image.analyzer import ImageAnalysis
 
-    # Phase 1: Document Conversion (Semaphore controlled)
-    callbacks.get("on_phase1_start", lambda x: None)(file_path)
+    callbacks.get("on_phase1_start", lambda _: None)(file_path)
     state_manager.update_file_status(file_path, "processing")
 
     try:
-        # Run conversion with file worker limit
         doc_result = await concurrency.run_file_task(
             pipeline.convert_document_only(file_path, output_dir)
         )
 
         if not doc_result.success:
-            callbacks.get("on_phase1_error", lambda x, y: None)(file_path, doc_result.error)
+            callbacks.get("on_phase1_error", lambda _p, _e: None)(file_path, doc_result.error)
             state_manager.update_file_status(file_path, "failed", error=doc_result.error)
             return TaskResult(file_path, False, error=doc_result.error)
 
-        callbacks.get("on_phase1_complete", lambda x, y: None)(file_path, doc_result)
+        callbacks.get("on_phase1_complete", lambda _p, _r: None)(file_path, doc_result)
 
-        # Phase 2: LLM Tasks
         llm_tasks = await pipeline.create_llm_tasks(doc_result)
         submitted_tasks = []
 
-        # Only proceed to Phase 2 if there are tasks or if we just need to finalize
         if llm_tasks:
-            callbacks.get("on_phase2_start", lambda x, y: None)(file_path, len(llm_tasks))
+            callbacks.get("on_phase2_start", lambda _p, _c: None)(file_path, len(llm_tasks))
 
             for i, coro in enumerate(llm_tasks):
-                # Determine task metadata
                 num_images = len(doc_result.images_for_analysis)
                 if i < num_images:
                     task_type = "image_analysis"
@@ -727,8 +585,6 @@ async def _process_file_pipeline(
                     task_type = "chunk_enhancement"
                     task_id = "markdown"
 
-                # Submit to global queue (returns Task object)
-                # We await submit() which handles rate limiting (backpressure)
                 task_obj = await llm_queue.submit(
                     LLMTask(
                         source_file=file_path,
@@ -739,16 +595,13 @@ async def _process_file_pipeline(
                 )
                 submitted_tasks.append(task_obj)
 
-            # Wait for THIS file's tasks to complete
             llm_results = await asyncio.gather(*submitted_tasks)
-            callbacks.get("on_phase2_complete", lambda x, y: None)(file_path, llm_results)
+            callbacks.get("on_phase2_complete", lambda _p, _r: None)(file_path, llm_results)
         else:
             llm_results = []
 
-        # Phase 3: Finalize
-        callbacks.get("on_phase3_start", lambda x: None)(file_path)
+        callbacks.get("on_phase3_start", lambda _: None)(file_path)
 
-        # Extract results
         image_analyses: list[ImageAnalysis] = []
         enhanced_markdown: str | None = None
 
@@ -769,15 +622,15 @@ async def _process_file_pipeline(
             state_manager.update_file_status(
                 file_path, "completed", output_path=pipeline_result.output_path
             )
-            callbacks.get("on_phase3_complete", lambda x, y: None)(file_path, pipeline_result)
+            callbacks.get("on_phase3_complete", lambda _p, _r: None)(file_path, pipeline_result)
             return TaskResult(file_path, True, result=pipeline_result)
         else:
             state_manager.update_file_status(file_path, "failed", error=pipeline_result.error)
-            callbacks.get("on_phase3_error", lambda x, y: None)(file_path, pipeline_result.error)
+            callbacks.get("on_phase3_error", lambda _p, _e: None)(file_path, pipeline_result.error)
             return TaskResult(file_path, False, error=pipeline_result.error)
 
     except Exception as e:
-        callbacks.get("on_error", lambda x, y: None)(file_path, str(e))
+        callbacks.get("on_error", lambda _p, _e: None)(file_path, str(e))
         state_manager.update_file_status(file_path, "failed", error=str(e))
         return TaskResult(file_path, False, error=str(e))
 
@@ -797,7 +650,6 @@ async def _process_files_phased_verbose(
         "Starting streaming batch processing", total=len(files), llm_concurrency=llm_concurrency
     )
 
-    # Define callbacks for verbose logging
     def on_phase1_start(file_path: Path) -> None:
         rel_path = file_path.relative_to(input_dir)
         log.info("Converting document", file=str(rel_path))
@@ -846,7 +698,6 @@ async def _process_files_phased_verbose(
         "on_error": on_error,
     }
 
-    # Start all pipelines concurrently
     tasks = [
         _process_file_pipeline(
             f, pipeline, concurrency, llm_queue, output_dir, input_dir, state_manager, callbacks
@@ -890,49 +741,31 @@ async def _process_files_phased_with_progress(
             set_log_output(devnull)
             setup_logging(level="WARNING", console=progress.console)
 
-            # Define tasks
-            # 1. Document Conversion (Files)
-            task_docs = progress.add_task(
-                "[cyan]Converting documents...",
-                total=len(files),
-            )
+            task_docs = progress.add_task("[cyan]Converting documents...", total=len(files))
+            task_llm = progress.add_task("[cyan]LLM Processing...", total=0, visible=False)
+            task_final = progress.add_task("[cyan]Finalizing...", total=len(files))
 
-            # 2. LLM Processing (Dynamic total)
-            # Initial total 1 to show 0/1 instead of 0/0, or 0 is fine
-            task_llm = progress.add_task(
-                "[cyan]LLM Processing...",
-                total=0,
-                visible=False,  # Hide until tasks are added
-            )
+            def on_phase1_start(_file_path: Path) -> None:
+                pass
 
-            # 3. Finalization (Files)
-            task_final = progress.add_task(
-                "[cyan]Finalizing...",
-                total=len(files),
-            )
-
-            # Callbacks for progress updates
-            def on_phase1_start(file_path: Path) -> None:
-                pass  # Already counted in total
-
-            def on_phase1_complete(file_path: Path, result: DocumentConversionResult) -> None:
+            def on_phase1_complete(
+                _file_path: Path,
+                _result: DocumentConversionResult,  # noqa: ARG001
+            ) -> None:
                 progress.advance(task_docs)
 
-            def on_phase1_error(file_path: Path, error: str) -> None:
+            def on_phase1_error(file_path: Path, _error: str) -> None:  # noqa: ARG001
                 progress.advance(task_docs)
                 rel_path = file_path.relative_to(input_dir)
                 progress.console.print(f"  [red]x[/red] {rel_path} (conversion failed)")
 
-            def on_phase2_start(file_path: Path, count: int) -> None:
-                # Make LLM task visible if not already
+            def on_phase2_start(_file_path: Path, count: int) -> None:  # noqa: ARG001
                 if not progress.tasks[task_llm].visible:
                     progress.update(task_llm, visible=True)
-
-                # Add new tasks to total
                 new_total = (progress.tasks[task_llm].total or 0) + count
                 progress.update(task_llm, total=new_total)
 
-            def on_phase2_complete(file_path: Path, results: list[Any]) -> None:
+            def on_phase2_complete(_file_path: Path, results: list[Any]) -> None:  # noqa: ARG001
                 progress.advance(task_llm, advance=len(results))
 
             def on_phase3_complete(file_path: Path, result: PipelineResult) -> None:
@@ -950,9 +783,7 @@ async def _process_files_phased_with_progress(
                 progress.console.print(f"  [red]x[/red] {rel_path}")
                 progress.console.print(f"    [dim]{error_msg}[/dim]")
 
-            def on_error(file_path: Path, error: str) -> None:
-                # If total failure, ensure we advance all bars to not hang
-                # (though strict accounting is hard here, mainly need to ensure completion)
+            def on_error(file_path: Path, error: str) -> None:  # noqa: ARG001
                 pass
 
             callbacks = {
@@ -966,7 +797,6 @@ async def _process_files_phased_with_progress(
                 "on_error": on_error,
             }
 
-            # Start all pipelines concurrently
             tasks = [
                 _process_file_pipeline(
                     f,
@@ -984,15 +814,13 @@ async def _process_files_phased_with_progress(
             results = await asyncio.gather(*tasks)
 
         set_log_output(original_stderr)
-        # Restore WARNING level to avoid log clutter after progress bar
-        # Note: File handler is already set up from initial setup_task_logging
         setup_logging(level="WARNING")
 
     return results
 
 
 def _display_summary(
-    _results: list[TaskResult[Path]],  # Reserved for future detailed result analysis
+    _results: list[TaskResult[Path]],
     state_manager: StateManager,
 ) -> None:
     """Display batch processing summary."""
@@ -1002,7 +830,6 @@ def _display_summary(
 
     console.print()
 
-    # Create summary table
     table = Table(title="Batch Summary", show_header=False)
     table.add_column("Metric", style="bold")
     table.add_column("Value")
@@ -1018,35 +845,23 @@ def _display_summary(
 
     console.print(table)
 
-    # Show failed files with simplified error messages
     failed_files = [(path, fs.error) for path, fs in state.files.items() if fs.status == "failed"]
 
     if failed_files:
         console.print()
         console.print("[bold red]Failed Files:[/bold red]")
 
-        config_suggestions = []
-
         for path, error in failed_files[:10]:
-            # Extract just the filename from path
             filename = Path(path).name
-            # Simplify error message - extract the core reason
             error_msg = error or "Unknown error"
             error_summary = _simplify_error(error_msg)
 
-            # Check for configuration hints in error
-            if "capabilities=['text']" in error_msg:
-                # Extract provider name if possible or just generic hint
-                suggestion = "  - Image analysis failed. Suggestion: Check 'capabilities' in markit.toml. Add capabilities=['text'] for text-only models."
-                if suggestion not in config_suggestions:
-                    config_suggestions.append(suggestion)
-
             console.print(f"  [dim]-[/dim] {filename}")
             console.print(f"    [dim]{error_summary}[/dim]")
+
         if len(failed_files) > 10:
             console.print(f"  [dim]... and {len(failed_files) - 10} more[/dim]")
 
-    # Display configuration suggestions if any
     if failed_files and any("capabilities=['text']" in (f[1] or "") for f in failed_files):
         console.print()
         console.print("[bold yellow]Configuration Suggestions:[/bold yellow]")
@@ -1054,7 +869,7 @@ def _display_summary(
             "  - Some image analysis tasks failed. If using text-only models (like DeepSeek),"
         )
         console.print(
-            "    please explicitly set [bold]capabilities=['text'][/bold] in your markit.toml"
+            "    please explicitly set [bold]capabilities=['text'][/bold] in your markit.yaml"
         )
         console.print("    to skip image analysis for those providers.")
 
@@ -1063,9 +878,7 @@ def _display_summary(
 
 def _simplify_error(error: str) -> str:
     """Simplify error message for display."""
-    # Common patterns to simplify
     if "MissingDependencyException" in error:
-        # Extract the dependency hint
         if "docx" in error.lower():
             return "Missing docx support - run: pip install markitdown[docx]"
         elif "xlsx" in error.lower():
@@ -1087,7 +900,6 @@ def _simplify_error(error: str) -> str:
             return "Unsupported format for Pandoc fallback"
         return "Pandoc conversion failed"
 
-    # Truncate long messages
     if len(error) > 100:
         return error[:97] + "..."
 
@@ -1111,14 +923,12 @@ def _show_dry_run(
     if exclude:
         console.print(f"  [bold]Exclude Pattern:[/bold] {exclude}")
 
-    # Scan for files
     files = _discover_files(input_dir, recursive, include, exclude)
 
     console.print()
     console.print(f"[bold]Files Found:[/bold] {len(files)}")
 
     if files:
-        # Group by extension
         by_ext: dict[str, list[Path]] = {}
         for f in files:
             ext = f.suffix.lower()

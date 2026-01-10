@@ -5,9 +5,12 @@ import re
 # Known vision-capable model patterns (lowercase)
 VISION_PATTERNS = [
     r"gpt-4.*vision",
-    r"gpt-4o",
-    r"claude-3",
-    r"gemini",
+    r"gpt-4o",  # GPT-4o series
+    r"gpt-4\.?5",  # GPT-4.5 series
+    r"gpt-5",  # GPT-5 series
+    r"claude-3",  # Claude 3 series
+    r"claude-.*-4",  # Claude 4 series (claude-sonnet-4, claude-opus-4, etc.)
+    r"gemini",  # Gemini series (embedding excluded separately)
     r"vision",
     r"llava",
     r"bakllava",
@@ -49,4 +52,4 @@ def infer_capabilities(model_id: str) -> list[str]:
             capabilities.append("embedding")
             break
 
-    return sorted(list(set(capabilities)))
+    return sorted(set(capabilities))

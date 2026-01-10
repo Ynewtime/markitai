@@ -10,6 +10,7 @@ from markit import __version__
 from markit.cli.commands.batch import batch
 from markit.cli.commands.config import config_app
 from markit.cli.commands.convert import convert
+from markit.cli.commands.model import model_app
 from markit.cli.commands.provider import provider_app
 
 # Load environment variables from .env file
@@ -32,6 +33,7 @@ console = Console()
 app.command(name="convert", help="Convert a single document to Markdown.")(convert)
 app.command(name="batch", help="Batch convert documents in a directory.")(batch)
 app.add_typer(config_app, name="config")
+app.add_typer(model_app, name="model")
 app.add_typer(provider_app, name="provider")
 
 

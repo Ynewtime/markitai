@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 from anthropic import AsyncAnthropic
 
-from markit.exceptions import LLMError, RateLimitError
+from markit.exceptions import LLMError
 from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, TokenUsage
 from markit.utils.logging import get_logger
 
@@ -21,7 +21,8 @@ class AnthropicProvider(BaseLLMProvider):
         self,
         api_key: str | None = None,
         model: str = "claude-sonnet-4-5",
-        timeout: int = 60,
+        base_url: str | None = None,
+        timeout: int = 120,
         max_retries: int = 3,
     ) -> None:
         """Initialize Anthropic provider.
@@ -29,12 +30,14 @@ class AnthropicProvider(BaseLLMProvider):
         Args:
             api_key: Anthropic API key (defaults to ANTHROPIC_API_KEY env var)
             model: Model to use (default: claude-sonnet-4-5)
+            base_url: Optional custom base URL (for proxies)
             timeout: Request timeout in seconds
             max_retries: Maximum number of retries
         """
         self.model = model
         self.client = AsyncAnthropic(
             api_key=api_key,
+            base_url=base_url,
             timeout=timeout,
             max_retries=max_retries,
         )
@@ -109,11 +112,7 @@ class AnthropicProvider(BaseLLMProvider):
             )
 
         except Exception as e:
-            error_str = str(e).lower()
-            if "rate_limit" in error_str or "rate limit" in error_str:
-                raise RateLimitError() from e
-            log.error("Anthropic API error", error=str(e))
-            raise LLMError(f"Anthropic API error: {e}") from e
+            self._handle_api_error(e, "API", log)
 
     async def stream(
         self,
@@ -165,11 +164,7 @@ class AnthropicProvider(BaseLLMProvider):
                     yield text
 
         except Exception as e:
-            error_str = str(e).lower()
-            if "rate_limit" in error_str or "rate limit" in error_str:
-                raise RateLimitError() from e
-            log.error("Anthropic streaming error", error=str(e))
-            raise LLMError(f"Anthropic streaming error: {e}") from e
+            self._handle_api_error(e, "streaming", log)
 
     async def analyze_image(
         self,

@@ -108,15 +108,3 @@ class BaseProcessor(ABC):
             Path to the processed file (may be the same or a new file)
         """
         pass
-
-
-class SyncConverterMixin:
-    """Mixin for converters that use synchronous libraries."""
-
-    def _run_sync(self, func, *args, **kwargs):
-        """Run a synchronous function.
-
-        This is a placeholder for running sync code.
-        In actual usage, use anyio.to_thread.run_sync for blocking operations.
-        """
-        return func(*args, **kwargs)
