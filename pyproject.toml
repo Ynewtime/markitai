@@ -1,6 +1,6 @@
 [project]
 name = "markit"
-version = "0.0.2"
+version = "0.1.0"
 description = "Intelligent document to Markdown conversion tool with LLM enhancement"
 readme = "README.md"
 requires-python = ">=3.12"

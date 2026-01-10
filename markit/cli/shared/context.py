@@ -63,6 +63,11 @@ class ConversionContext:
         settings = get_settings()
         console = console or Console()
 
+        # Apply fast mode settings
+        if options.fast:
+            settings.llm.validation.enabled = False
+            settings.execution.mode = "fast"
+
         # Setup task-level logging
         task_id, log_path = setup_task_logging(
             log_dir=settings.log_dir,
@@ -94,8 +99,14 @@ class ConversionContext:
             console=console,
         )
 
-    def create_pipeline(self) -> "ConversionPipeline":
-        """Create a ConversionPipeline with the current context settings."""
+    def create_pipeline(self, use_concurrent_fallback: bool = False) -> "ConversionPipeline":
+        """Create a ConversionPipeline with the current context settings.
+
+        Args:
+            use_concurrent_fallback: Enable concurrent fallback for LLM calls.
+                                     When True, if primary model exceeds timeout,
+                                     a backup model is started concurrently.
+        """
         from markit.core.pipeline import ConversionPipeline
 
         return ConversionPipeline(
@@ -107,6 +118,7 @@ class ConversionContext:
             pdf_engine=self.options.pdf_engine,
             llm_provider=self.options.llm_provider,
             llm_model=self.options.llm_model,
+            use_concurrent_fallback=use_concurrent_fallback,
         )
 
     def log_start(self, **kwargs) -> None:

@@ -15,66 +15,6 @@ config_app = typer.Typer(help="Configuration management.")
 console = Console()
 
 
-@config_app.command("show")
-def show() -> None:
-    """Show current configuration."""
-    settings = get_settings()
-
-    console.print("\n[bold blue]Current Configuration[/bold blue]\n")
-
-    # Create table for settings
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("Setting", style="cyan")
-    table.add_column("Value")
-
-    # Global settings
-    table.add_row("Log Level", settings.log_level)
-    table.add_row("Log Directory", settings.log_dir)
-    table.add_row("State File", settings.state_file)
-
-    # Output settings
-    table.add_row("Output Directory", settings.output.default_dir)
-    table.add_row("On Conflict", settings.output.on_conflict)
-    table.add_row("Create Assets Subdir", str(settings.output.create_assets_subdir))
-
-    # Image settings
-    table.add_row("Image Compression", str(settings.image.enable_compression))
-    table.add_row("Image Analysis", str(settings.image.enable_analysis))
-    table.add_row("Max Image Dimension", str(settings.image.max_dimension))
-
-    # PDF settings
-    table.add_row("PDF Engine", settings.pdf.engine)
-    table.add_row("Extract Images", str(settings.pdf.extract_images))
-
-    # Enhancement settings
-    table.add_row("LLM Enhancement", str(settings.enhancement.enabled))
-    table.add_row("Add Frontmatter", str(settings.enhancement.add_frontmatter))
-
-    # Concurrency settings
-    table.add_row("File Workers", str(settings.concurrency.file_workers))
-    table.add_row("Image Workers", str(settings.concurrency.image_workers))
-    table.add_row("LLM Workers", str(settings.concurrency.llm_workers))
-
-    # LLM providers
-    if settings.llm.credentials:
-        creds = ", ".join(f"{c.id} ({c.provider})" for c in settings.llm.credentials)
-        table.add_row("LLM Credentials", creds)
-
-    if settings.llm.models:
-        models = ", ".join(f"{m.name}" for m in settings.llm.models)
-        table.add_row("LLM Models", models)
-
-    if settings.llm.providers:
-        providers = ", ".join(p.provider for p in settings.llm.providers)
-        table.add_row("LLM Providers (Legacy)", providers)
-
-    if not (settings.llm.credentials or settings.llm.providers):
-        table.add_row("LLM Config", "None configured")
-
-    console.print(table)
-    console.print()
-
-
 # Default configuration template - kept in sync with markit.example.yaml
 DEFAULT_CONFIG_TEMPLATE = """# MarkIt Configuration
 # Run `markit provider add` to configure LLM providers interactively.
@@ -140,6 +80,9 @@ output:
 """
 
 
+# Command order: init -> test -> list -> locations
+
+
 @config_app.command("init")
 def init(
     path: Annotated[
@@ -171,9 +114,9 @@ def init(
     console.print(f"[green]Created config file at:[/green] {config_path}")
 
 
-@config_app.command("validate")
-def validate() -> None:
-    """Validate current configuration."""
+@config_app.command("test")
+def test_config() -> None:
+    """Test current configuration."""
     try:
         settings = get_settings()
 
@@ -211,6 +154,66 @@ def validate() -> None:
         raise typer.Exit(1) from e
 
 
+@config_app.command("list")
+def list_config() -> None:
+    """List current configuration."""
+    settings = get_settings()
+
+    console.print("\n[bold blue]Current Configuration[/bold blue]\n")
+
+    # Create table for settings
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value")
+
+    # Global settings
+    table.add_row("Log Level", settings.log_level)
+    table.add_row("Log Directory", settings.log_dir)
+    table.add_row("State File", settings.state_file)
+
+    # Output settings
+    table.add_row("Output Directory", settings.output.default_dir)
+    table.add_row("On Conflict", settings.output.on_conflict)
+    table.add_row("Create Assets Subdir", str(settings.output.create_assets_subdir))
+
+    # Image settings
+    table.add_row("Image Compression", str(settings.image.enable_compression))
+    table.add_row("Image Analysis", str(settings.image.enable_analysis))
+    table.add_row("Max Image Dimension", str(settings.image.max_dimension))
+
+    # PDF settings
+    table.add_row("PDF Engine", settings.pdf.engine)
+    table.add_row("Extract Images", str(settings.pdf.extract_images))
+
+    # Enhancement settings
+    table.add_row("LLM Enhancement", str(settings.enhancement.enabled))
+    table.add_row("Add Frontmatter", str(settings.enhancement.add_frontmatter))
+
+    # Concurrency settings
+    table.add_row("File Workers", str(settings.concurrency.file_workers))
+    table.add_row("Image Workers", str(settings.concurrency.image_workers))
+    table.add_row("LLM Workers", str(settings.concurrency.llm_workers))
+
+    # LLM providers
+    if settings.llm.credentials:
+        creds = ", ".join(f"{c.id} ({c.provider})" for c in settings.llm.credentials)
+        table.add_row("LLM Credentials", creds)
+
+    if settings.llm.models:
+        models = ", ".join(f"{m.name}" for m in settings.llm.models)
+        table.add_row("LLM Models", models)
+
+    if settings.llm.providers:
+        providers = ", ".join(p.provider for p in settings.llm.providers)
+        table.add_row("LLM Providers (Legacy)", providers)
+
+    if not (settings.llm.credentials or settings.llm.providers):
+        table.add_row("LLM Config", "None configured")
+
+    console.print(table)
+    console.print()
+
+
 @config_app.command("locations")
 def locations() -> None:
     """Show configuration file search locations."""
@@ -224,3 +227,20 @@ def locations() -> None:
     console.print()
     console.print("[dim]Environment variables with MARKIT_ prefix are also supported.[/dim]")
     console.print()
+
+
+# Backward compatibility aliases (hidden from help)
+
+
+@config_app.command("show", hidden=True)
+def show() -> None:
+    """Alias for 'list' (deprecated)."""
+    console.print("[yellow]Note: 'show' is deprecated, use 'list' instead[/yellow]\n")
+    list_config()
+
+
+@config_app.command("validate", hidden=True)
+def validate() -> None:
+    """Alias for 'test' (deprecated)."""
+    console.print("[yellow]Note: 'validate' is deprecated, use 'test' instead[/yellow]\n")
+    test_config()

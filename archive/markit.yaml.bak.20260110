@@ -1,0 +1,137 @@
+# MarkIt Configuration
+# Run `markit provider add` to configure LLM providers interactively.
+
+log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+state_file: ".markit-state.json"  # State file for batch resume
+
+image:
+  enable_compression: true  # PNG/JPEG compression
+  png_optimization_level: 2  # 0-6, higher = slower
+  jpeg_quality: 85  # 0-100
+  max_dimension: 2048  # Max image size in pixels
+  enable_analysis: false  # LLM-based image analysis
+  filter_small_images: true  # Filter decorative images
+  min_dimension: 100  # Min width/height to keep
+  min_area: 40000  # Min area (e.g., 200x200)
+  min_file_size: 10240  # Min file size in bytes
+
+concurrency:
+  file_workers: 4  # Concurrent files in batch mode
+  image_workers: 8  # Concurrent image processing
+  llm_workers: 5  # Concurrent LLM requests
+
+pdf:
+  engine: "pymupdf4llm"  # pymupdf4llm, pymupdf, pdfplumber, markitdown
+  extract_images: true
+  ocr_enabled: false
+
+enhancement:  # LLM-powered features (requires --llm flag)
+  enabled: false
+  remove_headers_footers: true
+  fix_heading_levels: true
+  add_frontmatter: true
+  generate_summary: true
+  chunk_size: 32000  # Tokens per chunk
+  chunk_overlap: 500
+
+output:
+  default_dir: "output"
+  on_conflict: "rename"  # skip, overwrite, rename
+  create_assets_subdir: true
+  generate_image_descriptions: true
+
+# LLM Configuration - Use `markit provider add` to add credentials
+llm:
+  credentials:
+    - id: openai
+      provider: openai
+      api_key_env: OPENAI_API_KEY
+    - id: deepseek
+      provider: openai
+      base_url: https://api.deepseek.com
+      api_key_env: DEEPSEEK_API_KEY
+    - id: anthropic
+      provider: anthropic
+      api_key_env: ANTHROPIC_API_KEY
+    - id: gemini
+      provider: gemini
+      api_key_env: GOOGLE_API_KEY
+    - id: openrouter
+      provider: openrouter
+      base_url: https://openrouter.ai/api/v1
+      api_key_env: OPENROUTER_API_KEY
+  # Model Configuration - Use `markit model add` to add model
+  # Cost prices updated: 2026-01-10 (USD per 1M tokens)
+  models:
+    - name: xiaomi/mimo-v2-flash:free
+      model: xiaomi/mimo-v2-flash:free
+      credential_id: openrouter
+      capabilities:
+        - text
+      cost:
+        input_per_1m: 0.0   # Free tier (paid: $0.10)
+        output_per_1m: 0.0  # Free tier (paid: $0.30)
+    - name: deepseek-chat
+      model: deepseek-chat
+      credential_id: deepseek
+      capabilities:
+        - text
+      cost:
+        input_per_1m: 0.28
+        output_per_1m: 0.42
+        cached_input_per_1m: 0.028  # 90% cache discount
+    - name: gemini-3-flash-preview
+      model: models/gemini-3-flash-preview
+      credential_id: gemini
+      capabilities:
+        - text
+        - vision
+      cost:
+        input_per_1m: 0.50
+        output_per_1m: 3.00
+    - name: gpt-5.2
+      model: gpt-5.2
+      credential_id: openai
+      capabilities:
+        - text
+        - vision
+      cost:
+        input_per_1m: 1.75
+        output_per_1m: 14.00
+        cached_input_per_1m: 0.175  # 90% cache discount
+    - name: claude-sonnet-4-5-20250929
+      model: claude-sonnet-4-5-20250929
+      credential_id: anthropic
+      capabilities:
+        - text
+        - vision
+      cost:
+        input_per_1m: 3.00   # $6.00 for >200K context
+        output_per_1m: 15.00
+        cached_input_per_1m: 0.30  # 90% cache read discount
+    - name: z-ai/glm-4.7
+      model: z-ai/glm-4.7
+      credential_id: openrouter
+      capabilities:
+        - text
+      cost:
+        input_per_1m: 0.40
+        output_per_1m: 1.50
+    - name: minimax/minimax-m2.1
+      model: minimax/minimax-m2.1
+      credential_id: openrouter
+      capabilities:
+        - text
+      cost:
+        input_per_1m: 0.28
+        output_per_1m: 1.20
+    - name: claude-haiku-4-5-20251001
+      model: claude-haiku-4-5-20251001
+      credential_id: anthropic
+      capabilities:
+        - text
+        - vision
+      cost:
+        input_per_1m: 1.00
+        output_per_1m: 5.00
+        cached_input_per_1m: 0.10  # 90% cache read discount

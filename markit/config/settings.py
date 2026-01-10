@@ -51,6 +51,14 @@ class LLMCredentialConfig(BaseModel):
     base_url: str | None = None
 
 
+class ModelCostConfig(BaseModel):
+    """Model cost configuration (optional)."""
+
+    input_per_1m: float = 0.0  # USD per 1M input tokens
+    output_per_1m: float = 0.0  # USD per 1M output tokens
+    cached_input_per_1m: float | None = None  # USD per 1M cached input tokens
+
+
 class LLMModelConfig(BaseModel):
     """Configuration for a specific LLM model instance."""
 
@@ -60,6 +68,15 @@ class LLMModelConfig(BaseModel):
     capabilities: list[str] | None = None
     timeout: int = DEFAULT_LLM_TIMEOUT
     max_retries: int = DEFAULT_MAX_RETRIES
+    cost: ModelCostConfig | None = None  # Optional cost config for statistics
+
+
+class ValidationConfig(BaseModel):
+    """LLM validation configuration."""
+
+    enabled: bool = True  # Whether to validate providers
+    retry_count: int = 2  # Number of retries on validation failure
+    on_failure: Literal["warn", "skip", "fail"] = "warn"  # Action on failure
 
 
 class LLMConfig(BaseModel):
@@ -73,6 +90,12 @@ class LLMConfig(BaseModel):
     models: list[LLMModelConfig] = Field(default_factory=list)
 
     default_provider: str | None = None
+
+    # Validation settings
+    validation: ValidationConfig = Field(default_factory=ValidationConfig)
+
+    # Concurrent fallback timeout (seconds)
+    concurrent_fallback_timeout: int = 180
 
 
 class ImageConfig(BaseModel):
@@ -128,6 +151,14 @@ class OutputConfig(BaseModel):
     generate_image_descriptions: bool = True
 
 
+class ExecutionConfig(BaseModel):
+    """Execution mode configuration."""
+
+    mode: Literal["default", "fast"] = "default"
+    fast_max_fallback: int = 1  # Max fallback attempts in fast mode
+    fast_skip_validation: bool = True  # Skip provider validation in fast mode
+
+
 class MarkitSettings(BaseSettings):
     """Main configuration class for MarkIt."""
 
@@ -157,6 +188,7 @@ class MarkitSettings(BaseSettings):
     pdf: PDFConfig = Field(default_factory=PDFConfig)
     enhancement: EnhancementConfig = Field(default_factory=EnhancementConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
 
     # Global settings
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

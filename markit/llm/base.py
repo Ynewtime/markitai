@@ -81,6 +81,41 @@ class LLMResponse:
     usage: TokenUsage | None
     model: str
     finish_reason: str
+    estimated_cost: float | None = None  # Estimated cost in USD (if cost config available)
+
+
+@dataclass
+class LLMTaskResultWithStats:
+    """Wrapper for LLM task results that carries statistics.
+
+    This allows pipeline components to return both their business result
+    and the LLM statistics for tracking.
+    """
+
+    result: Any  # The actual task result (ImageAnalysis, str, etc.)
+    model: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    estimated_cost: float = 0.0
+
+    @classmethod
+    def from_response(cls, result: Any, response: "LLMResponse") -> "LLMTaskResultWithStats":
+        """Create from an LLMResponse.
+
+        Args:
+            result: The business result (e.g., ImageAnalysis)
+            response: The LLM response containing stats
+
+        Returns:
+            LLMTaskResultWithStats with extracted statistics
+        """
+        return cls(
+            result=result,
+            model=response.model,
+            prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
+            completion_tokens=response.usage.completion_tokens if response.usage else 0,
+            estimated_cost=response.estimated_cost or 0.0,
+        )
 
 
 class BaseLLMProvider(ABC):

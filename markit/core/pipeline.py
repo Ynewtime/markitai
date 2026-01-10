@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from markit.converters.base import ExtractedImage
     from markit.image.analyzer import ImageAnalysis, ImageAnalyzer
     from markit.image.compressor import CompressedImage, ImageCompressor
+    from markit.llm.base import LLMTaskResultWithStats
     from markit.llm.enhancer import MarkdownEnhancer
     from markit.llm.manager import ProviderManager
 
@@ -131,6 +132,7 @@ class ConversionPipeline:
         pdf_engine: str | None = None,
         llm_provider: str | None = None,
         llm_model: str | None = None,
+        use_concurrent_fallback: bool = False,
     ) -> None:
         """Initialize the conversion pipeline.
 
@@ -143,6 +145,8 @@ class ConversionPipeline:
             pdf_engine: Override PDF engine from settings
             llm_provider: Override LLM provider
             llm_model: Override LLM model
+            use_concurrent_fallback: Enable concurrent fallback for LLM calls
+                                     (starts backup model if primary exceeds timeout)
         """
         self.settings = settings
         self.llm_enabled = llm_enabled
@@ -151,6 +155,7 @@ class ConversionPipeline:
         self.compress_images = compress_images
         self.pdf_engine = pdf_engine or settings.pdf.engine
         self.llm_provider = llm_provider
+        self.use_concurrent_fallback = use_concurrent_fallback
         self.llm_model = llm_model
 
         # Initialize router with image filtering settings
@@ -195,11 +200,37 @@ class ConversionPipeline:
 
         return ProviderManager(llm_config=llm_config)
 
-    async def _get_provider_manager_async(self) -> "ProviderManager":
+    def _get_required_capabilities(self) -> list[str]:
+        """Determine required LLM capabilities based on pipeline configuration.
+
+        Returns:
+            List of required capabilities (e.g., ["text"], ["text", "vision"])
+        """
+        capabilities = []
+        if self.llm_enabled:
+            capabilities.append("text")
+        if self.analyze_image or self.analyze_image_with_md:
+            if "text" not in capabilities:
+                capabilities.append("text")
+            capabilities.append("vision")
+        return capabilities if capabilities else ["text"]
+
+    async def _get_provider_manager_async(
+        self,
+        required_capabilities: list[str] | None = None,
+        lazy: bool = True,
+    ) -> "ProviderManager":
         """Get or create the LLM provider manager (async).
 
-        Creates the manager on first call and initializes it.
+        Creates the manager on first call and initializes it with required capabilities.
         Subsequent calls return the cached instance.
+
+        Args:
+            required_capabilities: Override auto-detected capabilities. If None,
+                                   capabilities are inferred from pipeline settings.
+            lazy: If True (default), only load configs without network validation.
+                  Providers will be validated on-demand when first used.
+                  Set to False in batch mode to validate upfront (fail fast).
         """
         # Double-checked locking pattern
         if self._provider_manager is not None and self._provider_manager_initialized:
@@ -210,7 +241,9 @@ class ConversionPipeline:
                 self._provider_manager = self._create_provider_manager()
 
             if not self._provider_manager_initialized:
-                await self._provider_manager.initialize()
+                # Use provided capabilities or infer from pipeline settings
+                caps = required_capabilities or self._get_required_capabilities()
+                await self._provider_manager.initialize(required_capabilities=caps, lazy=lazy)
                 self._provider_manager_initialized = True
 
         return self._provider_manager
@@ -224,6 +257,32 @@ class ConversionPipeline:
         if self._provider_manager is None:
             self._provider_manager = self._create_provider_manager()
         return self._provider_manager
+
+    async def warmup(self) -> None:
+        """Warmup LLM providers by forcing network validation.
+
+        This method should be called before batch processing to:
+        1. Fail fast if providers are misconfigured
+        2. Avoid concurrent validation races during parallel processing
+
+        Only performs warmup if LLM features are enabled (llm_enabled or analyze_image).
+        """
+        if not (self.llm_enabled or self.analyze_image or self.analyze_image_with_md):
+            log.debug("LLM features not enabled, skipping warmup")
+            return
+
+        log.debug("Warming up LLM providers...")
+
+        # Force non-lazy initialization to validate providers upfront
+        manager = self._get_provider_manager()
+        caps = self._get_required_capabilities()
+        await manager.initialize(required_capabilities=caps, lazy=False)
+
+        log.debug(
+            "LLM providers warmed up",
+            valid_providers=manager.available_providers,
+            capabilities=caps,
+        )
 
     def _get_default_model(self, provider: str) -> str:
         """Get default model for a provider.
@@ -267,6 +326,7 @@ class ConversionPipeline:
                     config=EnhancementConfig(
                         chunk_size=self.settings.enhancement.chunk_size,
                     ),
+                    use_concurrent_fallback=self.use_concurrent_fallback,
                 )
         return self._enhancer
 
@@ -503,34 +563,80 @@ class ConversionPipeline:
 
         return tasks
 
-    async def _create_image_analysis_task(self, image: "CompressedImage") -> "ImageAnalysis":
-        """Create and execute an image analysis task."""
+    async def _create_image_analysis_task(
+        self, image: "CompressedImage", return_stats: bool = True
+    ) -> "ImageAnalysis | LLMTaskResultWithStats":
+        """Create and execute an image analysis task.
+
+        Args:
+            image: Compressed image to analyze
+            return_stats: If True, return LLMTaskResultWithStats with statistics
+
+        Returns:
+            ImageAnalysis or LLMTaskResultWithStats containing the analysis
+        """
         from markit.image.analyzer import ImageAnalysis
+        from markit.llm.base import LLMTaskResultWithStats
 
         analyzer = await self._get_image_analyzer_async()
         try:
-            return await analyzer.analyze(image)
+            return await analyzer.analyze(image, return_stats=return_stats)
         except Exception as e:
             log.warning("Image analysis failed", filename=image.filename, error=str(e))
-            return ImageAnalysis(
+            fallback = ImageAnalysis(
                 alt_text=f"Image: {image.filename}",
                 detailed_description="Image analysis failed.",
                 detected_text=None,
                 image_type="other",
             )
+            if return_stats:
+                return LLMTaskResultWithStats(result=fallback)
+            return fallback
 
-    async def _create_enhancement_task(self, markdown: str, source_file: Path) -> str:
-        """Create and execute a markdown enhancement task."""
+    async def _create_enhancement_task(
+        self, markdown: str, source_file: Path, return_stats: bool = True
+    ) -> "str | LLMTaskResultWithStats":
+        """Create and execute a markdown enhancement task.
+
+        Args:
+            markdown: Markdown content to enhance
+            source_file: Source file path for context
+            return_stats: If True, return LLMTaskResultWithStats with statistics
+
+        Returns:
+            Enhanced markdown string or LLMTaskResultWithStats containing the content
+        """
+        from markit.llm.base import LLMTaskResultWithStats
+
         enhancer = await self._get_enhancer_async()
         try:
-            enhanced = await enhancer.enhance(markdown, source_file)
-            return enhanced.content
+            result = await enhancer.enhance(markdown, source_file, return_stats=return_stats)
+            if return_stats:
+                # enhancer returns LLMTaskResultWithStats when return_stats=True
+                # but we need to extract content for the final result
+                if isinstance(result, LLMTaskResultWithStats):
+                    # Replace the EnhancedMarkdown result with just the content string
+                    return LLMTaskResultWithStats(
+                        result=result.result.content,
+                        model=result.model,
+                        prompt_tokens=result.prompt_tokens,
+                        completion_tokens=result.completion_tokens,
+                        estimated_cost=result.estimated_cost,
+                    )
+                return result
+            # When not returning stats, extract content from EnhancedMarkdown
+            if hasattr(result, "content"):
+                return result.content
+            return result
         except Exception as e:
             log.warning("LLM enhancement failed", error=str(e))
             from markit.llm.enhancer import SimpleMarkdownCleaner
 
             cleaner = SimpleMarkdownCleaner()
-            return cleaner.clean(markdown)
+            cleaned = cleaner.clean(markdown)
+            if return_stats:
+                return LLMTaskResultWithStats(result=cleaned)
+            return cleaned
 
     async def finalize_output(
         self,

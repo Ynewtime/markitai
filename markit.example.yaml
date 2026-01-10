@@ -55,7 +55,17 @@ output:
 #     - name: "deepseek-chat"
 #       model: "deepseek-chat"
 #       credential_id: "deepseek"
+#       capabilities: ["text"]  # text-only model
+#       # Optional cost config for statistics (USD per 1M tokens)
+#       cost:
+#         input_per_1m: 0.28
+#         output_per_1m: 0.42
+#         cached_input_per_1m: 0.028  # 90% cache discount
 #     - name: "GPT-4o"
 #       model: "gpt-4o"
 #       credential_id: "openai-main"
 #       capabilities: ["text", "vision"]
+#       cost:
+#         input_per_1m: 2.50
+#         output_per_1m: 10.00
+#         cached_input_per_1m: 1.25  # 50% cache discount

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from markit.llm.base import LLMMessage
+from markit.llm.base import LLMMessage, LLMTaskResultWithStats
 from markit.llm.manager import ProviderManager
 from markit.markdown.chunker import ChunkConfig, MarkdownChunker
 from markit.utils.logging import get_logger
@@ -33,6 +33,11 @@ class EnhancedMarkdown:
 
     content: str
     summary: str
+    # LLM statistics aggregated from all chunk processing
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_estimated_cost: float = 0.0
+    models_used: list[str] | None = None
 
 
 # Enhancement prompt
@@ -74,15 +79,19 @@ class MarkdownEnhancer:
         self,
         provider_manager: ProviderManager,
         config: EnhancementConfig | None = None,
+        use_concurrent_fallback: bool = False,
     ) -> None:
         """Initialize the enhancer.
 
         Args:
             provider_manager: LLM provider manager
             config: Enhancement configuration
+            use_concurrent_fallback: If True, use concurrent fallback for LLM calls
+                                     (starts backup model if primary exceeds timeout)
         """
         self.provider_manager = provider_manager
         self.config = config or EnhancementConfig()
+        self.use_concurrent_fallback = use_concurrent_fallback
         self.chunker = MarkdownChunker(ChunkConfig(max_tokens=self.config.chunk_size))
 
     async def enhance(
@@ -90,7 +99,8 @@ class MarkdownEnhancer:
         markdown: str,
         source_file: Path,
         semaphore: asyncio.Semaphore | None = None,
-    ) -> EnhancedMarkdown:
+        return_stats: bool = False,
+    ) -> EnhancedMarkdown | LLMTaskResultWithStats:
         """Enhance a Markdown document.
 
         Enhancement flow:
@@ -103,9 +113,10 @@ class MarkdownEnhancer:
             markdown: Raw Markdown content
             source_file: Original source file path
             semaphore: Optional semaphore for rate limiting LLM calls
+            return_stats: If True, return LLMTaskResultWithStats wrapping the result
 
         Returns:
-            Enhanced Markdown with metadata
+            Enhanced Markdown with metadata, or LLMTaskResultWithStats if return_stats=True
         """
         log.info("Enhancing Markdown", file=str(source_file))
 
@@ -113,14 +124,30 @@ class MarkdownEnhancer:
         chunks = self.chunker.chunk(markdown)
         log.debug("Document split into chunks", count=len(chunks))
 
+        # Track statistics
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_cost = 0.0
+        models_used: set[str] = set()
+
         # Process chunks concurrently (with optional rate limiting)
-        async def process_with_limit(chunk: str) -> str:
+        async def process_with_limit(chunk: str) -> tuple[str, dict]:
             if semaphore:
                 async with semaphore:
-                    return await self._process_chunk(chunk)
-            return await self._process_chunk(chunk)
+                    return await self._process_chunk_with_stats(chunk)
+            return await self._process_chunk_with_stats(chunk)
 
-        enhanced_chunks = await asyncio.gather(*[process_with_limit(chunk) for chunk in chunks])
+        chunk_results = await asyncio.gather(*[process_with_limit(chunk) for chunk in chunks])
+
+        # Collect results and stats
+        enhanced_chunks = []
+        for content, stats in chunk_results:
+            enhanced_chunks.append(content)
+            total_prompt_tokens += stats.get("prompt_tokens", 0)
+            total_completion_tokens += stats.get("completion_tokens", 0)
+            total_cost += stats.get("estimated_cost", 0.0)
+            if stats.get("model"):
+                models_used.add(stats["model"])
 
         # Merge chunks
         enhanced_markdown = self.chunker.merge(enhanced_chunks)
@@ -128,7 +155,12 @@ class MarkdownEnhancer:
         # Generate summary
         summary = ""
         if self.config.generate_summary:
-            summary = await self._generate_summary(enhanced_markdown)
+            summary, summary_stats = await self._generate_summary_with_stats(enhanced_markdown)
+            total_prompt_tokens += summary_stats.get("prompt_tokens", 0)
+            total_completion_tokens += summary_stats.get("completion_tokens", 0)
+            total_cost += summary_stats.get("estimated_cost", 0.0)
+            if summary_stats.get("model"):
+                models_used.add(summary_stats["model"])
 
         # Inject frontmatter
         if self.config.add_frontmatter:
@@ -136,13 +168,64 @@ class MarkdownEnhancer:
 
         log.info("Markdown enhancement complete", file=str(source_file))
 
-        return EnhancedMarkdown(
+        result = EnhancedMarkdown(
             content=enhanced_markdown,
             summary=summary,
+            total_prompt_tokens=total_prompt_tokens,
+            total_completion_tokens=total_completion_tokens,
+            total_estimated_cost=total_cost,
+            models_used=list(models_used) if models_used else None,
         )
 
+        if return_stats:
+            return LLMTaskResultWithStats(
+                result=result,
+                model=list(models_used)[0] if models_used else None,
+                prompt_tokens=total_prompt_tokens,
+                completion_tokens=total_completion_tokens,
+                estimated_cost=total_cost,
+            )
+        return result
+
+    async def _process_chunk_with_stats(self, chunk: str) -> tuple[str, dict]:
+        """Process a single chunk with LLM and return stats.
+
+        Args:
+            chunk: Markdown chunk to process
+
+        Returns:
+            Tuple of (enhanced_chunk, stats_dict)
+        """
+        prompt = ENHANCEMENT_PROMPT.format(content=chunk)
+        stats: dict = {}
+
+        try:
+            # Use concurrent fallback for potentially long-running chunk processing
+            if self.use_concurrent_fallback:
+                response = await self.provider_manager.complete_with_concurrent_fallback(
+                    messages=[LLMMessage.user(prompt)],
+                    temperature=0.3,  # Lower temperature for more consistent formatting
+                    required_capability="text",  # Text-only task
+                )
+            else:
+                response = await self.provider_manager.complete_with_fallback(
+                    messages=[LLMMessage.user(prompt)],
+                    temperature=0.3,  # Lower temperature for more consistent formatting
+                    required_capability="text",  # Text-only task
+                )
+            stats = {
+                "model": response.model,
+                "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                "estimated_cost": response.estimated_cost or 0.0,
+            }
+            return response.content.strip(), stats
+        except Exception as e:
+            log.warning("Chunk enhancement failed, returning original", error=str(e))
+            return chunk, stats
+
     async def _process_chunk(self, chunk: str) -> str:
-        """Process a single chunk with LLM.
+        """Process a single chunk with LLM (legacy method for backward compatibility).
 
         Args:
             chunk: Markdown chunk to process
@@ -150,20 +233,52 @@ class MarkdownEnhancer:
         Returns:
             Enhanced chunk
         """
-        prompt = ENHANCEMENT_PROMPT.format(content=chunk)
+        content, _ = await self._process_chunk_with_stats(chunk)
+        return content
+
+    async def _generate_summary_with_stats(self, markdown: str) -> tuple[str, dict]:
+        """Generate a one-sentence summary with stats.
+
+        Args:
+            markdown: Full Markdown content
+
+        Returns:
+            Tuple of (summary_string, stats_dict)
+        """
+        # Use first 2000 characters for summary
+        preview = markdown[:2000]
+        prompt = SUMMARY_PROMPT.format(content=preview)
+        stats: dict = {}
 
         try:
-            response = await self.provider_manager.complete_with_fallback(
-                messages=[LLMMessage.user(prompt)],
-                temperature=0.3,  # Lower temperature for more consistent formatting
-            )
-            return response.content.strip()
+            # Use concurrent fallback if enabled
+            if self.use_concurrent_fallback:
+                response = await self.provider_manager.complete_with_concurrent_fallback(
+                    messages=[LLMMessage.user(prompt)],
+                    temperature=0.5,
+                    max_tokens=150,
+                    required_capability="text",  # Text-only task
+                )
+            else:
+                response = await self.provider_manager.complete_with_fallback(
+                    messages=[LLMMessage.user(prompt)],
+                    temperature=0.5,
+                    max_tokens=150,
+                    required_capability="text",  # Text-only task
+                )
+            stats = {
+                "model": response.model,
+                "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                "estimated_cost": response.estimated_cost or 0.0,
+            }
+            return response.content.strip()[:100], stats
         except Exception as e:
-            log.warning("Chunk enhancement failed, returning original", error=str(e))
-            return chunk
+            log.warning("Summary generation failed", error=str(e))
+            return "", stats
 
     async def _generate_summary(self, markdown: str) -> str:
-        """Generate a one-sentence summary.
+        """Generate a one-sentence summary (legacy method for backward compatibility).
 
         Args:
             markdown: Full Markdown content
@@ -171,20 +286,8 @@ class MarkdownEnhancer:
         Returns:
             Summary string
         """
-        # Use first 2000 characters for summary
-        preview = markdown[:2000]
-        prompt = SUMMARY_PROMPT.format(content=preview)
-
-        try:
-            response = await self.provider_manager.complete_with_fallback(
-                messages=[LLMMessage.user(prompt)],
-                temperature=0.5,
-                max_tokens=150,
-            )
-            return response.content.strip()[:100]  # Limit to 100 chars
-        except Exception as e:
-            log.warning("Summary generation failed", error=str(e))
-            return ""
+        summary, _ = await self._generate_summary_with_stats(markdown)
+        return summary
 
     def _inject_frontmatter(
         self,

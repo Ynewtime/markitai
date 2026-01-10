@@ -4,16 +4,22 @@ import pytest
 
 from markit.config.settings import LLMProviderConfig
 from markit.exceptions import LLMError
-from markit.llm.manager import ProviderManager
+from markit.llm.base import LLMResponse, TokenUsage
+from markit.llm.manager import ProviderManager, ProviderState
 
 
 @pytest.fixture
 def mock_providers():
     p1 = AsyncMock()  # Vision capable
-    p1.analyze_image.return_value = "vision_result"
+    p1.analyze_image.return_value = LLMResponse(
+        content="vision_result",
+        usage=TokenUsage(prompt_tokens=100, completion_tokens=50),
+        model="gpt-4",
+        finish_reason="stop",
+    )
     p2 = AsyncMock()  # Text only
     p2.analyze_image.side_effect = Exception("Not supported")
-    return {"gpt-4": p1, "deepseek": p2}
+    return {"openai_gpt-4": p1, "openai_deepseek": p2}
 
 
 @pytest.fixture
@@ -28,13 +34,34 @@ def provider_manager(mock_providers):
     ]
     pm = ProviderManager(configs)
 
-    # Manually inject providers and capabilities
-    pm._providers = {"gpt-4": mock_providers["gpt-4"], "deepseek": mock_providers["deepseek"]}
-    pm._valid_providers = ["gpt-4", "deepseek"]
-    pm._provider_capabilities = {
-        "gpt-4": ["text", "vision"],
-        "deepseek": ["text"],
+    # Manually set up provider states to bypass initialization logic
+    pm._provider_states = {
+        "openai_gpt-4": ProviderState(
+            config=configs[0],
+            capabilities=["text", "vision"],
+            provider=mock_providers["openai_gpt-4"],
+            initialized=True,
+            valid=True,
+        ),
+        "openai_deepseek": ProviderState(
+            config=configs[1],
+            capabilities=["text"],
+            provider=mock_providers["openai_deepseek"],
+            initialized=True,
+            valid=True,
+        ),
     }
+    # Also populate _providers dict (used by complete_with_fallback and analyze_image_with_fallback)
+    pm._providers = {
+        "openai_gpt-4": mock_providers["openai_gpt-4"],
+        "openai_deepseek": mock_providers["openai_deepseek"],
+    }
+    pm._valid_providers = ["openai_gpt-4", "openai_deepseek"]
+    pm._provider_capabilities = {
+        "openai_gpt-4": ["text", "vision"],
+        "openai_deepseek": ["text"],
+    }
+    pm._config_loaded = True
     pm._initialized = True
     pm._current_index = 0
 
@@ -44,19 +71,19 @@ def provider_manager(mock_providers):
 @pytest.mark.asyncio
 async def test_analyze_image_skips_text_only(provider_manager, mock_providers):
     """Test that analyze_image skips providers without vision capability."""
-    # Should only call gpt-4, never deepseek
+    # Should only call openai_gpt-4, never openai_deepseek
 
-    # 1st call -> gpt-4
+    # 1st call -> openai_gpt-4
     await provider_manager.analyze_image_with_fallback(b"data", "prompt")
-    assert mock_providers["gpt-4"].analyze_image.called
-    assert not mock_providers["deepseek"].analyze_image.called
+    assert mock_providers["openai_gpt-4"].analyze_image.called
+    assert not mock_providers["openai_deepseek"].analyze_image.called
 
-    mock_providers["gpt-4"].analyze_image.reset_mock()
+    mock_providers["openai_gpt-4"].analyze_image.reset_mock()
 
-    # 2nd call -> gpt-4 (should NOT rotate to deepseek)
+    # 2nd call -> openai_gpt-4 (should NOT rotate to openai_deepseek)
     await provider_manager.analyze_image_with_fallback(b"data", "prompt")
-    assert mock_providers["gpt-4"].analyze_image.called
-    assert not mock_providers["deepseek"].analyze_image.called
+    assert mock_providers["openai_gpt-4"].analyze_image.called
+    assert not mock_providers["openai_deepseek"].analyze_image.called
 
 
 @pytest.mark.asyncio
@@ -68,9 +95,20 @@ async def test_no_vision_provider_raises_error(mock_providers):
         ),
     ]
     pm = ProviderManager(configs)
-    pm._providers = {"deepseek": mock_providers["deepseek"]}
-    pm._valid_providers = ["deepseek"]
-    pm._provider_capabilities = {"deepseek": ["text"]}
+    pm._provider_states = {
+        "openai_deepseek": ProviderState(
+            config=configs[0],
+            capabilities=["text"],
+            provider=mock_providers["openai_deepseek"],
+            initialized=True,
+            valid=True,
+        ),
+    }
+    # Also populate _providers dict
+    pm._providers = {"openai_deepseek": mock_providers["openai_deepseek"]}
+    pm._valid_providers = ["openai_deepseek"]
+    pm._provider_capabilities = {"openai_deepseek": ["text"]}
+    pm._config_loaded = True
     pm._initialized = True
 
     with pytest.raises(LLMError) as exc:

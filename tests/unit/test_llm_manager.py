@@ -9,16 +9,39 @@ from markit.config.settings import (
     LLMProviderConfig,
 )
 from markit.exceptions import LLMError, ProviderNotFoundError
-from markit.llm.manager import ProviderManager
+from markit.llm.base import LLMResponse, TokenUsage
+from markit.llm.manager import ProviderManager, ProviderState
 
 
 @pytest.fixture
 def mock_providers():
     p1 = AsyncMock()
-    p1.complete.return_value = "response1"
+    p1.complete.return_value = LLMResponse(
+        content="response1",
+        usage=TokenUsage(prompt_tokens=10, completion_tokens=20),
+        model="gpt-4",
+        finish_reason="stop",
+    )
+    p1.analyze_image.return_value = LLMResponse(
+        content="analysis1",
+        usage=TokenUsage(prompt_tokens=100, completion_tokens=50),
+        model="gpt-4",
+        finish_reason="stop",
+    )
     p2 = AsyncMock()
-    p2.complete.return_value = "response2"
-    return {"openai": p1, "anthropic": p2}
+    p2.complete.return_value = LLMResponse(
+        content="response2",
+        usage=TokenUsage(prompt_tokens=15, completion_tokens=25),
+        model="claude",
+        finish_reason="stop",
+    )
+    p2.analyze_image.return_value = LLMResponse(
+        content="analysis2",
+        usage=TokenUsage(prompt_tokens=120, completion_tokens=60),
+        model="claude",
+        finish_reason="stop",
+    )
+    return {"openai_gpt-4": p1, "anthropic_claude": p2}
 
 
 @pytest.fixture
@@ -29,14 +52,35 @@ def provider_manager(mock_providers):
     ]
     pm = ProviderManager(configs)
 
-    # Manually inject providers to bypass initialization logic
-    pm._providers = mock_providers
-    pm._valid_providers = ["openai", "anthropic"]
-    # Manually inject capabilities (simulating optimistic default)
-    pm._provider_capabilities = {
-        "openai": ["text", "vision"],
-        "anthropic": ["text", "vision"],
+    # Manually set up provider states to bypass initialization logic
+    # The new architecture uses _provider_states with ProviderState objects
+    pm._provider_states = {
+        "openai_gpt-4": ProviderState(
+            config=configs[0],
+            capabilities=["text", "vision"],
+            provider=mock_providers["openai_gpt-4"],
+            initialized=True,
+            valid=True,
+        ),
+        "anthropic_claude": ProviderState(
+            config=configs[1],
+            capabilities=["text", "vision"],
+            provider=mock_providers["anthropic_claude"],
+            initialized=True,
+            valid=True,
+        ),
     }
+    # Also populate _providers dict (used by complete_with_fallback)
+    pm._providers = {
+        "openai_gpt-4": mock_providers["openai_gpt-4"],
+        "anthropic_claude": mock_providers["anthropic_claude"],
+    }
+    pm._valid_providers = ["openai_gpt-4", "anthropic_claude"]
+    pm._provider_capabilities = {
+        "openai_gpt-4": ["text", "vision"],
+        "anthropic_claude": ["text", "vision"],
+    }
+    pm._config_loaded = True
     pm._initialized = True
     pm._current_index = 0
 
@@ -48,43 +92,43 @@ async def test_round_robin_load_balancing(provider_manager, mock_providers):
     """Test that requests rotate through providers."""
     # 1st call -> openai
     await provider_manager.complete_with_fallback([])
-    assert mock_providers["openai"].complete.called
-    assert not mock_providers["anthropic"].complete.called
+    assert mock_providers["openai_gpt-4"].complete.called
+    assert not mock_providers["anthropic_claude"].complete.called
 
-    mock_providers["openai"].complete.reset_mock()
+    mock_providers["openai_gpt-4"].complete.reset_mock()
 
     # 2nd call -> anthropic
     await provider_manager.complete_with_fallback([])
-    assert mock_providers["anthropic"].complete.called
-    assert not mock_providers["openai"].complete.called
+    assert mock_providers["anthropic_claude"].complete.called
+    assert not mock_providers["openai_gpt-4"].complete.called
 
-    mock_providers["anthropic"].complete.reset_mock()
+    mock_providers["anthropic_claude"].complete.reset_mock()
 
     # 3rd call -> openai (wrap around)
     await provider_manager.complete_with_fallback([])
-    assert mock_providers["openai"].complete.called
-    assert not mock_providers["anthropic"].complete.called
+    assert mock_providers["openai_gpt-4"].complete.called
+    assert not mock_providers["anthropic_claude"].complete.called
 
 
 @pytest.mark.asyncio
 async def test_fallback_logic(provider_manager, mock_providers):
     """Test fallback when primary provider fails."""
     # Make openai fail
-    mock_providers["openai"].complete.side_effect = Exception("OpenAI Error")
+    mock_providers["openai_gpt-4"].complete.side_effect = Exception("OpenAI Error")
 
     # Call (starts at index 0 -> openai)
     # OpenAI fails, should fallback to Anthropic
     await provider_manager.complete_with_fallback([])
 
-    assert mock_providers["openai"].complete.called
-    assert mock_providers["anthropic"].complete.called
+    assert mock_providers["openai_gpt-4"].complete.called
+    assert mock_providers["anthropic_claude"].complete.called
 
 
 @pytest.mark.asyncio
 async def test_all_providers_fail(provider_manager, mock_providers):
     """Test error raised when all providers fail."""
-    mock_providers["openai"].complete.side_effect = Exception("Error 1")
-    mock_providers["anthropic"].complete.side_effect = Exception("Error 2")
+    mock_providers["openai_gpt-4"].complete.side_effect = Exception("Error 1")
+    mock_providers["anthropic_claude"].complete.side_effect = Exception("Error 2")
 
     with pytest.raises(LLMError) as exc:
         await provider_manager.complete_with_fallback([])
@@ -100,20 +144,17 @@ async def test_image_analysis_round_robin(provider_manager, mock_providers):
     # Reset index manually for predictability
     provider_manager._current_index = 0
 
-    mock_providers["openai"].analyze_image.return_value = "analysis1"
-    mock_providers["anthropic"].analyze_image.return_value = "analysis2"
-
     # 1st call -> openai
     await provider_manager.analyze_image_with_fallback(b"data", "prompt")
-    assert mock_providers["openai"].analyze_image.called
-    assert not mock_providers["anthropic"].analyze_image.called
+    assert mock_providers["openai_gpt-4"].analyze_image.called
+    assert not mock_providers["anthropic_claude"].analyze_image.called
 
-    mock_providers["openai"].analyze_image.reset_mock()
+    mock_providers["openai_gpt-4"].analyze_image.reset_mock()
 
     # 2nd call -> anthropic
     await provider_manager.analyze_image_with_fallback(b"data", "prompt")
-    assert mock_providers["anthropic"].analyze_image.called
-    assert not mock_providers["openai"].analyze_image.called
+    assert mock_providers["anthropic_claude"].analyze_image.called
+    assert not mock_providers["openai_gpt-4"].analyze_image.called
 
 
 class TestProviderManagerInit:
@@ -306,10 +347,10 @@ class TestProviderManagerMethods:
         """Test available_providers returns copy of list."""
         providers = provider_manager.available_providers
 
-        assert providers == ["openai", "anthropic"]
+        assert providers == ["openai_gpt-4", "anthropic_claude"]
         # Ensure it's a copy
         providers.append("test")
-        assert provider_manager.available_providers == ["openai", "anthropic"]
+        assert provider_manager.available_providers == ["openai_gpt-4", "anthropic_claude"]
 
     def test_has_providers(self, provider_manager):
         """Test has_providers property."""
