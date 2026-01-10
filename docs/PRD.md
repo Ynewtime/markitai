@@ -141,56 +141,59 @@ markit batch [OPTIONS] INPUT_DIR
 ### provider
 
 ```bash
+markit provider add       # Add LLM provider credential
 markit provider test      # Test LLM connectivity
-markit provider models    # List available models
+markit provider list      # List configured credentials
+markit provider fetch     # Fetch available models from providers
+```
+
+### model
+
+```bash
+markit model add          # Interactive wizard to add a model
+markit model list         # List configured models
 ```
 
 ## Configuration
 
-**Priority**: CLI args > Environment vars > markit.toml > Defaults
+**Priority**: CLI args > Environment vars > markit.yaml > Defaults
 
-### markit.toml
+### markit.yaml
 
-```toml
-log_level = "INFO"
-log_dir = ".logs"
+```yaml
+log_level: "INFO"
+log_dir: ".logs"
 
-[output]
-default_dir = "output"
-on_conflict = "rename"
+output:
+  default_dir: "output"
+  on_conflict: "rename"
 
-[image]
-enable_compression = true
-filter_small_images = true
+image:
+  enable_compression: true
+  filter_small_images: true
 
-[concurrency]
-file_workers = 4
-image_workers = 8
-llm_workers = 5
+concurrency:
+  file_workers: 4
+  image_workers: 8
+  llm_workers: 5
 
-[pdf]
-engine = "pymupdf4llm"
+pdf:
+  engine: "pymupdf4llm"
 
 # New Schema (recommended for multiple models)
 # Define credentials separately from models
-[[llm.credentials]]
-id = "openai-main"
-provider = "openai"
-# api_key = "sk-..."  # Or use OPENAI_API_KEY env var
+llm:
+  credentials:
+    - id: "openai-main"
+      provider: "openai"
+      # api_key: "sk-..."  # Or use OPENAI_API_KEY env var
 
-[[llm.models]]
-name = "GPT-4o"
-model = "gpt-4o"
-credential_id = "openai-main"
-capabilities = ["text", "vision"]
-timeout = 60
-
-# Legacy Schema (simpler, still supported)
-[[llm.providers]]
-provider = "ollama"
-model = "llama3.2-vision"
-base_url = "http://localhost:11434"
-timeout = 120
+  models:
+    - name: "GPT-4o"
+      model: "gpt-4o"
+      credential_id: "openai-main"
+      capabilities: ["text", "vision"]
+      timeout: 120
 ```
 
 ### Environment Variables

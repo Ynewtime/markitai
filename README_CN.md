@@ -67,7 +67,12 @@ markit batch ./docs -o ./output -r
 | `markit convert <file>` | 转换单个文件 |
 | `markit batch <dir>` | 批量转换目录 |
 | `markit config show` | 显示当前配置 |
+| `markit provider add` | 添加 LLM 提供商凭证 |
 | `markit provider test` | 测试 LLM 连接 |
+| `markit provider list` | 列出已配置的凭证 |
+| `markit provider fetch` | 获取提供商可用模型列表 |
+| `markit model add` | 添加模型到配置 |
+| `markit model list` | 列出已配置的模型 |
 
 ## 主要选项
 
@@ -95,35 +100,30 @@ markit batch ./docs -o ./output -r
 
 ## 配置
 
-直接运行 `markit config init` 创建 `markit.toml`
+直接运行 `markit config init` 创建 `markit.yaml`
 
-```toml
-log_level = "INFO"
+```yaml
+log_level: "INFO"
 
-[output]
-default_dir = "output"
+output:
+  default_dir: "output"
 
-[image]
-enable_compression = true
+image:
+  enable_compression: true
 
 # 新配置结构（推荐用于多模型场景）
 # 将凭证和模型分开定义
-[[llm.credentials]]
-id = "openai-main"
-provider = "openai"
-# api_key = "sk-..."  # 或使用 OPENAI_API_KEY 环境变量
+llm:
+  credentials:
+    - id: "openai-main"
+      provider: "openai"
+      # api_key: "sk-..."  # 或使用 OPENAI_API_KEY 环境变量
 
-[[llm.models]]
-name = "GPT-4o"
-model = "gpt-4o"
-credential_id = "openai-main"
-capabilities = ["text", "vision"]
-
-# 旧配置结构（更简单，仍然支持）
-[[llm.providers]]
-provider = "ollama"
-model = "llama3.2-vision"
-base_url = "http://localhost:11434"
+  models:
+    - name: "GPT-4o"
+      model: "gpt-4o"
+      credential_id: "openai-main"
+      capabilities: ["text", "vision"]
 ```
 
 **环境变量：**

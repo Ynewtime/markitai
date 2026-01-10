@@ -21,15 +21,17 @@ class OllamaProvider(BaseLLMProvider):
         self,
         model: str = "llama3.2-vision",
         host: str = "http://localhost:11434",
+        timeout: int = 120,
     ) -> None:
         """Initialize Ollama provider.
 
         Args:
             model: Model to use (default: llama3.2-vision)
             host: Ollama server host URL
+            timeout: Request timeout in seconds
         """
         self.model = model
-        self.client = ollama.AsyncClient(host=host)
+        self.client = ollama.AsyncClient(host=host, timeout=float(timeout))
 
     async def complete(
         self,

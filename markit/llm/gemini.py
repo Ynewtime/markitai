@@ -6,7 +6,7 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from markit.exceptions import LLMError, RateLimitError
+from markit.exceptions import LLMError
 from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, TokenUsage
 from markit.utils.logging import get_logger
 
@@ -22,15 +22,24 @@ class GeminiProvider(BaseLLMProvider):
         self,
         api_key: str | None = None,
         model: str = "gemini-3-flash-preview",
+        timeout: int = 120,
+        max_retries: int = 3,  # noqa: ARG002
     ) -> None:
         """Initialize Gemini provider.
 
         Args:
             api_key: Google API key (defaults to GOOGLE_API_KEY env var)
             model: Model to use (default: gemini-3-flash-preview)
+            timeout: Request timeout in seconds
+            max_retries: Maximum number of retries (reserved for future use)
         """
         self.model = model
-        self.client = genai.Client(api_key=api_key)
+        self.client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(
+                timeout=timeout * 1000,  # Convert to milliseconds
+            ),
+        )
 
     async def complete(
         self,
@@ -93,11 +102,7 @@ class GeminiProvider(BaseLLMProvider):
             )
 
         except Exception as e:
-            error_str = str(e).lower()
-            if "rate" in error_str and "limit" in error_str:
-                raise RateLimitError() from e
-            log.error("Gemini API error", error=str(e))
-            raise LLMError(f"Gemini API error: {e}") from e
+            self._handle_api_error(e, "API", log)
 
     async def stream(
         self,
@@ -137,11 +142,7 @@ class GeminiProvider(BaseLLMProvider):
                     yield chunk.text
 
         except Exception as e:
-            error_str = str(e).lower()
-            if "rate" in error_str and "limit" in error_str:
-                raise RateLimitError() from e
-            log.error("Gemini streaming error", error=str(e))
-            raise LLMError(f"Gemini streaming error: {e}") from e
+            self._handle_api_error(e, "streaming", log)
 
     async def analyze_image(
         self,

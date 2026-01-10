@@ -61,5 +61,5 @@ Thumbs.db
 # uv.lock
 
 models.json
-markit.toml
+markit.yaml
 .claude

@@ -3,7 +3,10 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from markit.utils.logging import BoundLogger
 
 
 @dataclass
@@ -160,6 +163,34 @@ class BaseLLMProvider(ABC):
             True if the provider is properly configured
         """
         return True
+
+    def _handle_api_error(
+        self,
+        error: Exception,
+        operation: str,
+        log: "BoundLogger",
+    ) -> None:
+        """Handle API errors with consistent rate limit detection and logging.
+
+        This method checks for rate limit errors and raises the appropriate exception.
+        It should be called from exception handlers in provider implementations.
+
+        Args:
+            error: The caught exception
+            operation: Description of the operation that failed (e.g., "API", "streaming")
+            log: The logger instance to use for error logging
+
+        Raises:
+            RateLimitError: If the error indicates a rate limit
+            LLMError: For all other errors
+        """
+        from markit.exceptions import LLMError, RateLimitError
+
+        error_str = str(error).lower()
+        if "rate_limit" in error_str or "rate limit" in error_str:
+            raise RateLimitError() from error
+        log.error(f"{self.name} {operation} error", error=str(error))
+        raise LLMError(f"{self.name} {operation} error: {error}") from error
 
     def _convert_messages(self, messages: list[LLMMessage]) -> list[dict[str, Any]]:
         """Convert LLMMessage objects to provider-specific format.

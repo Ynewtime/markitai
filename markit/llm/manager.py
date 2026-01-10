@@ -151,6 +151,7 @@ class ProviderManager:
             return AnthropicProvider(
                 api_key=api_key,
                 model=config.model,
+                base_url=config.base_url,
                 timeout=config.timeout,
                 max_retries=config.max_retries,
             )
@@ -161,6 +162,8 @@ class ProviderManager:
             return GeminiProvider(
                 api_key=api_key,
                 model=config.model,
+                timeout=config.timeout,
+                max_retries=config.max_retries,
             )
 
         elif config.provider == "ollama":
@@ -169,6 +172,7 @@ class ProviderManager:
             return OllamaProvider(
                 model=config.model,
                 host=config.base_url or "http://localhost:11434",
+                timeout=config.timeout,
             )
 
         elif config.provider == "openrouter":
@@ -177,6 +181,7 @@ class ProviderManager:
             return OpenRouterProvider(
                 api_key=api_key,
                 model=config.model,
+                base_url=config.base_url,
                 timeout=config.timeout,
                 max_retries=config.max_retries,
             )
@@ -378,7 +383,7 @@ class ProviderManager:
                 # Diagnostic warning for configuration guidance
                 warning_msg = (
                     f"If provider '{provider_name}' is text-only, please explicitly set "
-                    f"capabilities=['text'] in markit.toml to skip it for image tasks."
+                    f"capabilities=['text'] in markit.yaml to skip it for image tasks."
                 )
                 log.warning(warning_msg)
 

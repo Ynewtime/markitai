@@ -6,7 +6,6 @@ from markit.converters.base import (
     ConversionPlan,
     ConversionResult,
     ExtractedImage,
-    SyncConverterMixin,
 )
 from markit.converters.markitdown import MarkItDownConverter
 from markit.converters.office import (
@@ -34,7 +33,6 @@ __all__ = [
     "ConversionPlan",
     "ConversionResult",
     "ExtractedImage",
-    "SyncConverterMixin",
     # Converters
     "MarkItDownConverter",
     "PandocConverter",

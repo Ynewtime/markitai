@@ -1,8 +1,7 @@
-"""Provider management commands for testing and listing models."""
+"""Provider management commands for testing and listing credentials."""
 
 import asyncio
 import json
-import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,8 +13,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from markit.cli.shared import get_unique_credentials
 from markit.config import get_settings
-from markit.utils.capabilities import infer_capabilities
 from markit.utils.logging import get_logger
 
 # Default cache directory for markit
@@ -36,7 +35,7 @@ def get_models_cache_path() -> Path:
 
 provider_app = typer.Typer(
     name="provider",
-    help="Manage and test LLM providers.",
+    help="Manage and test LLM provider credentials.",
     no_args_is_help=True,
 )
 
@@ -54,7 +53,357 @@ class ProviderTestResult:
     latency_ms: float | None = None
     models_count: int | None = None
     error: str | None = None
-    model_configured: str | None = None
+
+
+# Supported provider types with their default configurations
+PROVIDER_TYPES = {
+    "openai": {
+        "display": "OpenAI",
+        "default_api_key_env": "OPENAI_API_KEY",
+        "base_url": None,  # Uses SDK default
+        "requires_base_url": False,
+    },
+    "openai_compatible": {
+        "display": "OpenAI Compatible (DeepSeek, Groq, etc.)",
+        "default_api_key_env": None,  # User must specify
+        "base_url": None,
+        "requires_base_url": True,  # Must provide base_url
+        "actual_provider": "openai",  # Stored as openai in config
+    },
+    "anthropic": {
+        "display": "Anthropic",
+        "default_api_key_env": "ANTHROPIC_API_KEY",
+        "base_url": None,
+        "requires_base_url": False,
+    },
+    "gemini": {
+        "display": "Google Gemini",
+        "default_api_key_env": "GOOGLE_API_KEY",
+        "base_url": None,
+        "requires_base_url": False,
+    },
+    "openrouter": {
+        "display": "OpenRouter",
+        "default_api_key_env": "OPENROUTER_API_KEY",
+        "base_url": "https://openrouter.ai/api/v1",
+        "requires_base_url": False,
+    },
+    "ollama": {
+        "display": "Ollama (Local)",
+        "default_api_key_env": None,  # No API key needed
+        "base_url": "http://localhost:11434",
+        "requires_base_url": False,
+    },
+}
+
+
+def _write_credential_to_config(credential: dict[str, Any]) -> bool:
+    """Write a credential to markit.yaml using ruamel.yaml.
+
+    Args:
+        credential: Dict with id, provider, base_url, api_key_env fields
+
+    Returns:
+        True if successful, False otherwise
+    """
+    from ruamel.yaml import YAML
+    from ruamel.yaml.comments import CommentedMap, CommentedSeq
+
+    config_path = Path("markit.yaml")
+    if not config_path.exists():
+        console.print("[red]markit.yaml not found![/red]")
+        console.print("Run [bold]markit config init[/bold] to create one first.")
+        return False
+
+    try:
+        yaml = YAML()
+        yaml.preserve_quotes = True
+        yaml.indent(mapping=2, sequence=4, offset=2)
+
+        config_data = yaml.load(config_path)
+
+        # Ensure config_data is a valid map
+        if config_data is None:
+            config_data = CommentedMap()
+
+        # Check if llm section exists and is valid
+        llm_exists = "llm" in config_data and config_data["llm"] is not None
+
+        if not llm_exists:
+            # Need to create llm section
+            llm_section = CommentedMap()
+            llm_section["credentials"] = CommentedSeq()
+
+            # Insert llm at the end - it's the safest approach to preserve
+            # file structure and comments. The key order in YAML doesn't
+            # affect functionality.
+            config_data["llm"] = llm_section
+
+            # Add a blank line before llm section for readability
+            config_data.yaml_set_comment_before_after_key("llm", before="\n")
+        else:
+            llm_section = config_data["llm"]
+
+            # Ensure credentials list exists
+            if "credentials" not in llm_section or llm_section["credentials"] is None:
+                llm_section["credentials"] = CommentedSeq()
+
+        llm_section = config_data["llm"]
+
+        # Check for duplicate credential ID
+        for cred in llm_section["credentials"]:
+            if cred.get("id") == credential["id"]:
+                console.print(
+                    f"[yellow]Credential with id '{credential['id']}' already exists.[/yellow]"
+                )
+                return False
+
+        # Build the new credential entry
+        new_cred = CommentedMap()
+        new_cred["id"] = credential["id"]
+        new_cred["provider"] = credential["provider"]
+
+        if credential.get("base_url"):
+            new_cred["base_url"] = credential["base_url"]
+
+        if credential.get("api_key_env"):
+            new_cred["api_key_env"] = credential["api_key_env"]
+
+        # Append to credentials list
+        llm_section["credentials"].append(new_cred)
+
+        # Write back to file
+        yaml.dump(config_data, config_path)
+        return True
+
+    except Exception as e:
+        console.print(f"[red]Failed to write config: {e}[/red]")
+        return False
+
+
+def _interactive_add_credential() -> dict[str, Any] | None:
+    """Interactive wizard to collect credential information.
+
+    Returns:
+        Dict with credential info, or None if cancelled
+    """
+    # 1. Select provider type
+    provider_choices = [
+        questionary.Choice(title=info["display"], value=ptype)
+        for ptype, info in PROVIDER_TYPES.items()
+    ]
+
+    provider_type = questionary.select(
+        "Select provider type:",
+        choices=provider_choices,
+    ).ask()
+
+    if not provider_type:
+        return None
+
+    provider_info = PROVIDER_TYPES[provider_type]
+    actual_provider = provider_info.get("actual_provider", provider_type)
+
+    # 2. Enter credential ID
+    default_id = provider_type.replace("_compatible", "")
+    cred_id = questionary.text(
+        "Enter a unique ID for this credential:",
+        default=default_id,
+        validate=lambda x: True if x.strip() else "ID cannot be empty",
+    ).ask()
+
+    if cred_id is None:
+        return None
+
+    cred_id = cred_id.strip()
+
+    # 3. Base URL (required for openai_compatible, optional for others)
+    base_url = None
+    if provider_info["requires_base_url"]:
+        base_url = questionary.text(
+            "Enter the API base URL (required):",
+            validate=lambda x: True if x.strip() else "Base URL is required for this provider",
+        ).ask()
+        if base_url is None:
+            return None
+        base_url = base_url.strip()
+    elif provider_info.get("base_url"):
+        # Has a default, ask if they want to change it
+        use_default = questionary.confirm(
+            f"Use default base URL ({provider_info['base_url']})?",
+            default=True,
+        ).ask()
+        if use_default is None:
+            return None
+        if use_default:
+            base_url = provider_info["base_url"]
+        else:
+            base_url = questionary.text(
+                "Enter custom base URL:",
+                validate=lambda x: True if x.strip() else "Base URL cannot be empty",
+            ).ask()
+            if base_url is None:
+                return None
+            base_url = base_url.strip()
+    else:
+        # No default, ask if they want to set one (optional)
+        set_base_url = questionary.confirm(
+            "Set a custom base URL? (optional)",
+            default=False,
+        ).ask()
+        if set_base_url is None:
+            return None
+        if set_base_url:
+            base_url = questionary.text(
+                "Enter base URL:",
+            ).ask()
+            if base_url is None:
+                return None
+            base_url = base_url.strip() if base_url else None
+
+    # 4. API key environment variable (not needed for Ollama)
+    api_key_env = None
+    if provider_type != "ollama":
+        default_env = provider_info.get("default_api_key_env")
+        if default_env:
+            use_default_env = questionary.confirm(
+                f"Use default API key env var ({default_env})?",
+                default=True,
+            ).ask()
+            if use_default_env is None:
+                return None
+            if use_default_env:
+                api_key_env = default_env
+            else:
+                api_key_env = questionary.text(
+                    "Enter custom API key environment variable name:",
+                    validate=lambda x: True if x.strip() else "Env var name cannot be empty",
+                ).ask()
+                if api_key_env is None:
+                    return None
+                api_key_env = api_key_env.strip()
+        else:
+            # No default, must specify
+            api_key_env = questionary.text(
+                "Enter API key environment variable name:",
+                validate=lambda x: True if x.strip() else "Env var name is required",
+            ).ask()
+            if api_key_env is None:
+                return None
+            api_key_env = api_key_env.strip()
+
+    return {
+        "id": cred_id,
+        "provider": actual_provider,
+        "base_url": base_url,
+        "api_key_env": api_key_env,
+    }
+
+
+# =============================================================================
+# Commands - Order: add, test, list, fetch
+# =============================================================================
+
+
+@provider_app.command("add")
+def add_credential(
+    provider: Annotated[
+        str | None,
+        typer.Option(
+            "--provider",
+            "-p",
+            help="Provider type: openai, anthropic, gemini, ollama, openrouter",
+        ),
+    ] = None,
+    cred_id: Annotated[
+        str | None,
+        typer.Option(
+            "--id",
+            help="Unique identifier for this credential",
+        ),
+    ] = None,
+    base_url: Annotated[
+        str | None,
+        typer.Option(
+            "--base-url",
+            "-u",
+            help="API base URL (required for OpenAI-compatible providers)",
+        ),
+    ] = None,
+    api_key_env: Annotated[
+        str | None,
+        typer.Option(
+            "--api-key-env",
+            "-e",
+            help="Environment variable name for API key",
+        ),
+    ] = None,
+) -> None:
+    """Add a new provider credential to markit.yaml.
+
+    Run without arguments for interactive mode, or provide options directly.
+
+    Examples:
+        markit provider add
+        markit provider add --provider openai --id my-openai
+        markit provider add -p openai -u https://api.deepseek.com --id deepseek -e DEEPSEEK_API_KEY
+    """
+    from markit.cli.commands.model import add_model
+
+    credential: dict[str, Any] | None = None
+
+    # Check if running in interactive mode (no provider specified)
+    if provider is None:
+        credential = _interactive_add_credential()
+        if credential is None:
+            console.print("\n[yellow]Cancelled by user[/yellow]")
+            raise typer.Exit()
+    else:
+        # Validate provider type
+        valid_providers = ["openai", "anthropic", "gemini", "ollama", "openrouter"]
+        if provider not in valid_providers:
+            console.print(f"[red]Invalid provider type: {provider}[/red]")
+            console.print(f"Valid types: {', '.join(valid_providers)}")
+            raise typer.Exit(1)
+
+        # Validate required fields
+        if not cred_id:
+            console.print("[red]--id is required when using command line arguments[/red]")
+            raise typer.Exit(1)
+
+        # Get provider defaults
+        provider_info = PROVIDER_TYPES.get(provider, {})
+
+        # Use defaults if not specified
+        final_base_url = base_url or provider_info.get("base_url")
+        final_api_key_env = api_key_env or provider_info.get("default_api_key_env")
+
+        credential = {
+            "id": cred_id,
+            "provider": provider,
+            "base_url": final_base_url,
+            "api_key_env": final_api_key_env,
+        }
+
+    # Write to config
+    if _write_credential_to_config(credential):
+        console.print(
+            f"\n[green]Successfully added credential '{credential['id']}' to markit.yaml![/green]"
+        )
+
+        # Ask if user wants to add a model now
+        select_now = questionary.confirm(
+            "Would you like to add a model for this credential now?",
+            default=True,
+        ).ask()
+
+        if select_now:
+            console.print()
+            add_model()
+        else:
+            console.print("\nRun [bold]markit model add[/bold] later to add models.")
+    else:
+        raise typer.Exit(1)
 
 
 async def _test_openai(
@@ -212,60 +561,6 @@ async def _test_ollama(host: str = "http://localhost:11434") -> ProviderTestResu
         )
 
 
-def _get_effective_api_key(config: Any) -> str | None:
-    """Get API key from config, checking env vars if needed."""
-    api_key = getattr(config, "api_key", None)
-    if not api_key:
-        api_key_env = getattr(config, "api_key_env", None)
-        if api_key_env:
-            api_key = os.environ.get(api_key_env)
-
-    if not api_key:
-        provider_name = config.provider
-        env_vars = {
-            "openai": "OPENAI_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "gemini": "GOOGLE_API_KEY",
-            "openrouter": "OPENROUTER_API_KEY",
-        }
-        env_var = env_vars.get(provider_name)
-        if env_var:
-            api_key = os.environ.get(env_var)
-    return api_key
-
-
-def _get_unique_credentials(
-    settings,
-) -> list[tuple[str, str | None, str | None, str, str | None]]:
-    """Get unique credentials.
-
-    Returns:
-        List of (provider_name, api_key, base_url, display_name, credential_id)
-    """
-    creds = []
-    seen = set()
-
-    # 1. Process new credentials
-    for cred in settings.llm.credentials:
-        api_key = _get_effective_api_key(cred)
-        key = (cred.provider, api_key, cred.base_url)
-        if key not in seen:
-            seen.add(key)
-            creds.append((cred.provider, api_key, cred.base_url, cred.id, cred.id))
-
-    # 2. Process legacy providers (de-duplicate)
-    for config in settings.llm.providers:
-        api_key = _get_effective_api_key(config)
-        key = (config.provider, api_key, config.base_url)
-        if key not in seen:
-            seen.add(key)
-            display_name = config.name or config.provider
-            # Legacy providers don't have a credential ID
-            creds.append((config.provider, api_key, config.base_url, display_name, None))
-
-    return creds
-
-
 async def test_all_providers(
     settings=None,
     show_progress: bool = True,
@@ -283,7 +578,7 @@ async def test_all_providers(
         settings = get_settings()
 
     results: list[ProviderTestResult] = []
-    providers_to_test = _get_unique_credentials(settings)
+    providers_to_test = get_unique_credentials(settings)
 
     if show_progress:
         console.print(f"[cyan]Testing {len(providers_to_test)} unique credential(s)...[/cyan]")
@@ -347,7 +642,6 @@ async def test_all_providers(
             )
 
         result.name = display_name
-        # Note: model_configured is not applicable for credential testing
         results.append(result)
 
         if show_progress:
@@ -364,12 +658,11 @@ async def test_all_providers(
 def display_test_results(results: list[ProviderTestResult]) -> None:
     """Display test results in a table."""
     table = Table(title="Provider Test Results")
-    table.add_column("Name", style="cyan")  # Changed from "Provider" to "Name"
-    table.add_column("Type", style="dim")  # Added "Type" column
+    table.add_column("Name", style="cyan")
+    table.add_column("Type", style="dim")
     table.add_column("Status")
     table.add_column("Latency", justify="right")
     table.add_column("Models", justify="right")
-    table.add_column("Configured Model")
     table.add_column("Error")
 
     for result in results:
@@ -393,7 +686,6 @@ def display_test_results(results: list[ProviderTestResult]) -> None:
             status_style,
             latency,
             models,
-            result.model_configured or "-",
             error,
         )
 
@@ -413,7 +705,7 @@ def test_providers(
 ) -> None:
     """Test connectivity to all configured LLM providers.
 
-    Tests each provider configured in markit.toml by calling their
+    Tests each provider configured in markit.yaml by calling their
     models endpoint (no tokens consumed).
     """
     from markit.utils.logging import setup_logging
@@ -443,6 +735,36 @@ def test_providers(
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1) from e
+
+
+@provider_app.command("list")
+def list_credentials() -> None:
+    """List all configured provider credentials."""
+    settings = get_settings()
+    creds = settings.llm.credentials
+
+    if not creds:
+        console.print("[yellow]No credentials configured in markit.yaml[/yellow]")
+        console.print()
+        console.print("Run [bold]markit provider add[/bold] to add a credential.")
+        return
+
+    table = Table(title="Configured Credentials")
+    table.add_column("ID", style="cyan")
+    table.add_column("Provider", style="green")
+    table.add_column("Base URL", style="dim")
+    table.add_column("API Key Env")
+
+    for cred in creds:
+        table.add_row(
+            cred.id,
+            cred.provider,
+            cred.base_url or "-",
+            cred.api_key_env or "-",
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]Total: {len(creds)} credential(s)[/dim]")
 
 
 async def _get_openai_models(
@@ -537,8 +859,8 @@ async def _get_ollama_models(host: str) -> list[dict[str, Any]]:
         ]
 
 
-@provider_app.command("models")
-def list_models(
+@provider_app.command("fetch")
+def fetch_models(
     no_cache: Annotated[
         bool,
         typer.Option(
@@ -563,7 +885,7 @@ def list_models(
         ),
     ] = None,
 ) -> None:
-    """List available models from all configured providers.
+    """Fetch available models from all configured providers.
 
     Fetches the models list from each provider's API and saves
     to local cache (~/.cache/markit/models.json) by default.
@@ -572,7 +894,7 @@ def list_models(
     all_models: dict[str, list[dict[str, Any]]] = {}
 
     async def fetch_all_models() -> None:
-        creds = _get_unique_credentials(settings)
+        creds = get_unique_credentials(settings)
 
         for provider_name, api_key, base_url, display_name, _ in creds:
             if (
@@ -646,301 +968,3 @@ def list_models(
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         cache_file.write_text(json.dumps(cache_data, indent=2, default=str))
         console.print(f"\n[green]Models cached to {cache_file}[/green]")
-
-
-def _get_models_sync(
-    provider_name: str, api_key: str | None, base_url: str | None
-) -> list[dict[str, Any]]:
-    """Get models list using synchronous API calls to avoid event loop issues."""
-    models = []
-
-    if provider_name == "openai" and api_key:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
-        result = client.models.list()
-        models = [{"id": m.id, "created": m.created, "owned_by": m.owned_by} for m in result.data]
-
-    elif provider_name == "anthropic" and api_key:
-        from anthropic import Anthropic
-
-        client = Anthropic(api_key=api_key, timeout=30.0)
-        result = client.models.list()
-        models = [
-            {
-                "id": m.id,
-                "display_name": m.display_name,
-                "created_at": m.created_at.isoformat() if m.created_at else None,
-            }
-            for m in result.data
-        ]
-
-    elif provider_name == "gemini" and api_key:
-        from google import genai
-
-        client = genai.Client(api_key=api_key)
-        result = list(client.models.list())
-        models = [
-            {
-                "id": m.name,
-                "display_name": m.display_name,
-                "description": m.description[:100] if m.description else None,
-            }
-            for m in result
-        ]
-
-    elif provider_name == "openrouter" and api_key:
-        from openai import OpenAI
-
-        client = OpenAI(
-            base_url="https://openrouter.ai/api/v1", api_key=api_key, timeout=30.0
-        )
-        result = client.models.list()
-        models = [{"id": m.id, "created": m.created, "owned_by": m.owned_by} for m in result.data]
-
-    elif provider_name == "ollama":
-        import httpx
-
-        host = base_url or "http://localhost:11434"
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(f"{host}/api/tags")
-            data = response.json()
-            models = [
-                {"id": m.get("name"), "size": m.get("size"), "modified_at": m.get("modified_at")}
-                for m in data.get("models", [])
-            ]
-
-    return models
-
-
-@provider_app.command("select")
-def select_model() -> None:
-    """Interactive wizard to select and configure a model.
-
-    Allows you to:
-    1. Select an existing provider/credential
-    2. Browse available models (fetched live)
-    3. Add the selected model to your markit.toml
-    """
-    settings = get_settings()
-    creds = _get_unique_credentials(settings)
-
-    if not creds:
-        console.print("[red]No providers configured![/red]")
-        console.print("Please configure at least one provider in markit.toml first.")
-        raise typer.Exit(1)
-
-    # 1. Select Credential
-    choices = [
-        questionary.Choice(
-            title=f"{display_name} ({provider})",
-            value=(provider, api_key, base_url, credential_id),
-        )
-        for provider, api_key, base_url, display_name, credential_id in creds
-    ]
-
-    selected = questionary.select(
-        "Select a provider credential to use:",
-        choices=choices,
-    ).ask()
-
-    if not selected:
-        raise typer.Exit()
-
-    provider_name, api_key, base_url, credential_id = selected
-
-    # 2. Fetch Models using sync API to avoid event loop issues
-    display_name = credential_id or provider_name
-    console.print(f"Fetching models for [cyan]{display_name}[/cyan]...", end=" ")
-    try:
-        models = _get_models_sync(provider_name, api_key, base_url)
-
-        if not models:
-            console.print("[red]failed (no models found)[/red]")
-            raise typer.Exit(1)
-
-        console.print(f"[green]{len(models)} models found[/green]")
-
-    except Exception as e:
-        console.print(f"[red]failed ({e})[/red]")
-        raise typer.Exit(1) from None
-
-    # 3. Select Model with fuzzy search
-    # Build model ID to display mapping
-    model_id_to_display: dict[str, str] = {}
-    model_display_list: list[str] = []
-
-    for m in models:
-        mid = m.get("id")
-        if not mid:
-            continue
-
-        caps = infer_capabilities(mid)
-        cap_str = f" [{', '.join(caps)}]" if caps != ["text"] else ""
-        display = f"{mid}{cap_str}"
-        model_id_to_display[mid] = display
-        model_display_list.append(display)
-
-    # Sort for easier browsing
-    model_display_list.sort()
-
-    # Use autocomplete with fuzzy matching and validation
-    def validate_model(text: str) -> bool | str:
-        """Validate that input matches a model."""
-        if not text:
-            return "Please select a model"
-        # Check if it's a valid model ID or display string
-        if text in model_display_list:
-            return True
-        # Check if it matches a model ID directly
-        if text in model_id_to_display:
-            return True
-        return "Please select a model from the list"
-
-    selected_model_display = questionary.autocomplete(
-        "Select a model (type to search):",
-        choices=model_display_list,
-        match_middle=True,
-        validate=validate_model,
-    ).ask()
-
-    if not selected_model_display:
-        raise typer.Exit()
-
-    # Extract real model ID from display string
-    # Display format: "model-id [capabilities]" or just "model-id"
-    real_model_id = selected_model_display.split(" [")[0].strip()
-
-    if real_model_id not in model_id_to_display:
-        console.print("[red]Invalid model selection[/red]")
-        raise typer.Exit(1)
-
-    # 4. Configure Name
-    default_name = real_model_id
-    display_name = questionary.text(
-        "Enter a display name for this configuration:",
-        default=default_name,
-    ).ask()
-
-    if display_name is None:
-        # User cancelled with Ctrl+C
-        console.print("\n[yellow]Cancelled by user[/yellow]")
-        raise typer.Exit()
-
-    # 5. Write to Config using manual text insertion for precise placement
-    config_path = Path("markit.toml")
-    if not config_path.exists():
-        console.print("[red]markit.toml not found![/red]")
-        raise typer.Exit(1)
-
-    try:
-        config_content = config_path.read_text(encoding="utf-8")
-        caps = infer_capabilities(real_model_id)
-
-        # Prepare capabilities string
-        caps_line = ""
-        if caps != ["text"]:
-            caps_quoted = [f'"{c}"' for c in caps]
-            caps_line = f'capabilities = [{", ".join(caps_quoted)}]\n'
-
-        if credential_id:
-            # New Schema
-            section = "[[llm.models]]"
-            new_block = (
-                f"\n# Model: {display_name or real_model_id}\n"
-                f"[[llm.models]]\n"
-                f'name = "{display_name or real_model_id}"\n'
-                f'model = "{real_model_id}"\n'
-                f'credential_id = "{credential_id}"\n'
-                f"{caps_line}"
-            )
-            target_header = "[[llm.models]]"
-            section_marker = "# Models Configuration"
-        else:
-            # Legacy Schema
-            section = "[[llm.providers]]"
-            new_block = (
-                f"\n# Provider: {display_name or provider_name}\n"
-                f"[[llm.providers]]\n"
-                f'provider = "{provider_name}"\n'
-                f'model = "{real_model_id}"\n'
-            )
-            if display_name:
-                new_block += f'name = "{display_name}"\n'
-            if base_url:
-                new_block += f'base_url = "{base_url}"\n'
-
-            # API Key handling
-            matching_config = None
-            for conf in settings.llm.providers:
-                if conf.provider == provider_name and conf.base_url == base_url:
-                    matching_config = conf
-                    break
-
-            if matching_config:
-                if matching_config.api_key_env:
-                    new_block += f'api_key_env = "{matching_config.api_key_env}"\n'
-                elif matching_config.api_key:
-                    new_block += f'api_key = "{matching_config.api_key}"\n'
-
-            new_block += f"{caps_line}"
-
-            target_header = "[[llm.providers]]"
-            section_marker = "# Legacy Schema"
-
-        # Insertion Logic
-        import re
-
-        # 1. Try to find the last active entry of the target header
-        header_pattern = re.compile(f"^{re.escape(target_header)}", re.MULTILINE)
-        matches = list(header_pattern.finditer(config_content))
-
-        insert_pos = -1
-
-        if matches:
-            last_header = matches[-1]
-            # Find the start of the NEXT section or separator
-            remaining_text = config_content[last_header.end():]
-
-            # Look for next section header ([) or separator (# ===)
-            next_section = re.search(r"^(\[|# ===)", remaining_text, re.MULTILINE)
-
-            if next_section:
-                insert_pos = last_header.end() + next_section.start()
-            else:
-                insert_pos = len(config_content)
-
-        else:
-            # No existing active entries. Find section marker.
-            marker_match = re.search(re.escape(section_marker), config_content)
-            if marker_match:
-                # Find the end of the decorative block (usually followed by # ===)
-                # We start searching from the marker match
-                remaining = config_content[marker_match.end():]
-                # Look for the separator line
-                sep_match = re.search(r"^# =+", remaining, re.MULTILINE)
-
-                if sep_match:
-                    insert_pos = marker_match.end() + sep_match.end()
-                else:
-                    insert_pos = marker_match.end()
-            else:
-                # Fallback: Append to end
-                insert_pos = len(config_content)
-
-        # Perform insertion
-        if insert_pos == len(config_content):
-            config_content = config_content.rstrip() + "\n" + new_block
-        else:
-            # Insert and clean up newlines
-            before = config_content[:insert_pos].rstrip()
-            after = config_content[insert_pos:].lstrip("\n")
-            config_content = f"{before}\n{new_block}\n{after}"
-
-        config_path.write_text(config_content, encoding="utf-8")
-        console.print(f"\n[green]Successfully added {real_model_id} to {section}![/green]")
-        console.print("Run [bold]markit provider test[/bold] to verify.")
-
-    except Exception as e:
-        console.print(f"[red]Failed to update config: {e}[/red]")
-        raise typer.Exit(1) from None

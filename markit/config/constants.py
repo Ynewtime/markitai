@@ -2,21 +2,23 @@
 
 from pathlib import Path
 
+from markit import __version__
+
 # Application constants
 APP_NAME = "markit"
-APP_VERSION = "1.0.0"
+APP_VERSION = __version__
 
 # Default paths
 DEFAULT_OUTPUT_DIR = "output"
 DEFAULT_ASSETS_DIR = "assets"
 DEFAULT_LOG_DIR = ".logs"
 DEFAULT_STATE_FILE = ".markit-state.json"
-DEFAULT_CONFIG_FILE = "markit.toml"
+DEFAULT_CONFIG_FILE = "markit.yaml"
 
 # Config file locations (in order of priority)
 CONFIG_LOCATIONS = [
     Path.cwd() / DEFAULT_CONFIG_FILE,
-    Path.home() / ".config" / APP_NAME / "config.toml",
+    Path.home() / ".config" / APP_NAME / "config.yaml",
 ]
 
 # Supported file extensions
@@ -78,6 +80,14 @@ PDF_ENGINES = ["pymupdf4llm", "pymupdf", "pdfplumber", "markitdown"]
 # LLM Providers
 LLM_PROVIDERS = ["openai", "anthropic", "gemini", "ollama", "openrouter"]
 
+# Provider API key environment variable names
+PROVIDER_API_KEY_ENV_VARS = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "gemini": "GOOGLE_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
+
 # Default LLM models
 DEFAULT_LLM_MODELS = {
     "openai": "gpt-5.2",
@@ -109,7 +119,7 @@ DEFAULT_RETRY_MIN_WAIT = 1
 DEFAULT_RETRY_MAX_WAIT = 60
 
 # Timeout settings (seconds)
-DEFAULT_LLM_TIMEOUT = 60
+DEFAULT_LLM_TIMEOUT = 120
 DEFAULT_CONVERSION_TIMEOUT = 300  # 5 minutes
 
 # Chunk settings

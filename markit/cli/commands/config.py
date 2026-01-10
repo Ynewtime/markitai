@@ -56,334 +56,88 @@ def show() -> None:
     table.add_row("LLM Workers", str(settings.concurrency.llm_workers))
 
     # LLM providers
+    if settings.llm.credentials:
+        creds = ", ".join(f"{c.id} ({c.provider})" for c in settings.llm.credentials)
+        table.add_row("LLM Credentials", creds)
+
+    if settings.llm.models:
+        models = ", ".join(f"{m.name}" for m in settings.llm.models)
+        table.add_row("LLM Models", models)
+
     if settings.llm.providers:
         providers = ", ".join(p.provider for p in settings.llm.providers)
-        table.add_row("LLM Providers", providers)
-    else:
-        table.add_row("LLM Providers", "None configured")
+        table.add_row("LLM Providers (Legacy)", providers)
+
+    if not (settings.llm.credentials or settings.llm.providers):
+        table.add_row("LLM Config", "None configured")
 
     console.print(table)
     console.print()
 
 
-# Default configuration template - kept in sync with markit.example.toml
-DEFAULT_CONFIG_TEMPLATE = '''# MarkIt Configuration Example
-# ============================
-# Copy this file to markit.toml and modify as needed.
-# All settings shown here are optional - defaults will be used if not specified.
-#
-# Configuration priority (highest to lowest):
-#   1. Command line arguments
-#   2. Environment variables (MARKIT_*)
-#   3. Configuration file (markit.toml)
-#   4. Default values
+# Default configuration template - kept in sync with markit.example.yaml
+DEFAULT_CONFIG_TEMPLATE = """# MarkIt Configuration
+# Run `markit provider add` to configure LLM providers interactively.
 
-# ============================================================================
-# Global Settings
-# ============================================================================
+log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+state_file: ".markit-state.json"  # State file for batch resume
 
-# Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-log_level = "INFO"
+image:
+  enable_compression: true  # PNG/JPEG compression
+  png_optimization_level: 2  # 0-6, higher = slower
+  jpeg_quality: 85  # 0-100
+  max_dimension: 2048  # Max image size in pixels
+  enable_analysis: false  # LLM-based image analysis
+  filter_small_images: true  # Filter decorative images
+  min_dimension: 100  # Min width/height to keep
+  min_area: 40000  # Min area (e.g., 200x200)
+  min_file_size: 10240  # Min file size in bytes
 
-# Log directory for task-level log files
-# Each task (convert/batch) creates a unique timestamped log file.
-# Default: ".logs" (hidden folder to keep project directory clean)
-# log_dir = ".logs"
+concurrency:
+  file_workers: 4  # Concurrent files in batch mode
+  image_workers: 8  # Concurrent image processing
+  llm_workers: 5  # Concurrent LLM requests
 
-# State file for batch resume functionality
-# Used to track progress and enable --resume option
-state_file = ".markit-state.json"
+pdf:
+  engine: "pymupdf4llm"  # pymupdf4llm, pymupdf, pdfplumber, markitdown
+  extract_images: true
+  ocr_enabled: false
 
-# ============================================================================
-# LLM Configuration
-# ============================================================================
-# MarkIt supports two configuration schemas for LLM providers:
-#
-# 1. Legacy Schema (simpler): [[llm.providers]]
-#    - Each provider entry contains both credentials and model config
-#    - Good for simple setups with few models
-#
-# 2. New Schema (recommended for multiple models): [[llm.credentials]] + [[llm.models]]
-#    - Separate credential storage from model configuration
-#    - Allows multiple models to share the same credentials
-#    - Better for managing many models across providers
-#
-# Both schemas can be mixed in the same config file.
-#
-# API keys can be set via environment variables:
-#   - OPENAI_API_KEY
-#   - ANTHROPIC_API_KEY
-#   - GOOGLE_API_KEY
-#   - OPENROUTER_API_KEY
-#   - Or custom env var via api_key_env field
-#
-# To use LLM features, run commands with --llm or --analyze-image flags.
-# Use `markit provider select` to interactively add models to your config.
+enhancement:  # LLM-powered features (requires --llm flag)
+  enabled: false
+  remove_headers_footers: true
+  fix_heading_levels: true
+  add_frontmatter: true
+  generate_summary: true
+  chunk_size: 32000  # Tokens per chunk
+  chunk_overlap: 500
 
-# ============================================================================
-# New Schema: Credentials + Models (Recommended)
-# ============================================================================
-# Step 1: Define credentials (API keys and endpoints)
-# Step 2: Define models that reference those credentials
-#
-# Benefits:
-#   - Share one credential across multiple models
-#   - Easier to manage API keys in one place
-#   - Cleaner config when using many models
+output:
+  default_dir: "output"
+  on_conflict: "rename"  # skip, overwrite, rename
+  create_assets_subdir: true
+  generate_image_descriptions: true
 
-# Supported provider types: openai, anthropic, gemini, ollama, openrouter
-#
-# Note: "openai" provider type is compatible with any OpenAI-compatible API
-# (e.g., DeepSeek, Azure OpenAI, local LLM servers with OpenAI API)
-
-# Credential: OpenAI
-# [[llm.credentials]]
-# id = "openai-main"
-# provider = "openai"
-# # api_key = "sk-..."  # Or use OPENAI_API_KEY env var (default)
-
-# Credential: DeepSeek (OpenAI-compatible)
-# [[llm.credentials]]
-# id = "deepseek"
-# provider = "openai"
-# base_url = "https://api.deepseek.com"
-# api_key_env = "DEEPSEEK_API_KEY"  # Custom env var
-
-# Credential: Anthropic
-# [[llm.credentials]]
-# id = "anthropic-main"
-# provider = "anthropic"
-# # api_key = "..."  # Or use ANTHROPIC_API_KEY env var (default)
-
-# Credential: Google Gemini
-# [[llm.credentials]]
-# id = "gemini-main"
-# provider = "gemini"
-# # api_key = "..."  # Or use GOOGLE_API_KEY env var (default)
-
-# Credential: Ollama (Local)
-# [[llm.credentials]]
-# id = "ollama-local"
-# provider = "ollama"
-# base_url = "http://localhost:11434"
-# # No API key needed for local Ollama
-
-# Credential: OpenRouter (API aggregator)
-# [[llm.credentials]]
-# id = "openrouter-main"
-# provider = "openrouter"
-# base_url = "https://openrouter.ai/api/v1"
-# # api_key = "..."  # Or use OPENROUTER_API_KEY env var (default)
-
-# Model: GPT-4o (Vision capable)
-# [[llm.models]]
-# name = "GPT-4o"
-# model = "gpt-4o"
-# credential_id = "openai-main"
-# capabilities = ["text", "vision"]
-# timeout = 60
-# max_retries = 3
-
-# Model: GPT-4o-mini (Fast, cheaper)
-# [[llm.models]]
-# name = "GPT-4o Mini"
-# model = "gpt-4o-mini"
-# credential_id = "openai-main"
-# capabilities = ["text", "vision"]
-# timeout = 30
-
-# Model: DeepSeek Reasoner (Text only)
-# [[llm.models]]
-# name = "DeepSeek Reasoner"
-# model = "deepseek-reasoner"
-# credential_id = "deepseek"
-# capabilities = ["text"]
-# timeout = 120
-
-# Model: Claude Sonnet (Vision capable)
-# [[llm.models]]
-# name = "Claude Sonnet 4.5"
-# model = "claude-sonnet-4-5"
-# credential_id = "anthropic-main"
-# capabilities = ["text", "vision"]
-# timeout = 60
-# max_retries = 3
-
-# ============================================================================
-# Legacy Schema: Combined Provider Config
-# ============================================================================
-# Simpler but less flexible. Each entry contains both credentials and model.
-# Still fully supported for backward compatibility.
-
-# Provider: OpenAI
-# [[llm.providers]]
-# provider = "openai"
-# name = "OpenAI GPT-5.2"  # Custom display name
-# model = "gpt-5.2"
-# timeout = 60
-# max_retries = 3
-# capabilities = ["text", "vision"]  # Optional: Explicitly declare capabilities
-# api_key = "sk-..."  # Or use OPENAI_API_KEY env var
-
-# Provider: DeepSeek (Text Only, Custom API Key Env)
-# [[llm.providers]]
-# provider = "openai"
-# name = "DeepSeek Reasoner"
-# model = "deepseek-reasoner"
-# base_url = "https://api.deepseek.com"
-# api_key_env = "DEEPSEEK_API_KEY"  # Read from DEEPSEEK_API_KEY env var
-# capabilities = ["text"]           # Skip image analysis tasks
-# timeout = 120
-
-# Provider: Anthropic Claude
-# [[llm.providers]]
-# provider = "anthropic"
-# model = "claude-sonnet-4-5"
-# timeout = 60
-# max_retries = 3
-# api_key = "..."  # Or use ANTHROPIC_API_KEY env var
-
-# Provider: Google Gemini
-# [[llm.providers]]
-# provider = "gemini"
-# model = "gemini-3-flash-preview"
-# timeout = 60
-# max_retries = 3
-# # api_key = "..."  # Or use GOOGLE_API_KEY env var
-
-# Provider: Ollama (Local)
-# [[llm.providers]]
-# provider = "ollama"
-# model = "llama3.2-vision"
-# base_url = "http://localhost:11434"
-# timeout = 120
-# # No API key needed for local Ollama
-
-# Provider: OpenRouter (API aggregator)
-# [[llm.providers]]
-# provider = "openrouter"
-# model = "google/gemini-3-flash-preview"
-# base_url = "https://openrouter.ai/api/v1"
-# timeout = 60
-# max_retries = 3
-# # api_key = "..."  # Or use OPENROUTER_API_KEY env var
-
-# ============================================================================
-# Image Processing
-# ============================================================================
-
-[image]
-# Enable image compression (PNG optimization, JPEG quality reduction)
-enable_compression = true
-
-# PNG optimization level (0-6, higher = more compression but slower)
-png_optimization_level = 2
-
-# JPEG quality (0-100, higher = better quality but larger file)
-jpeg_quality = 85
-
-# Maximum image dimension in pixels (larger images will be resized)
-max_dimension = 2048
-
-# Enable LLM-based image analysis (generates alt text and descriptions)
-# Requires --analyze-image flag or this setting to be true
-enable_analysis = false
-
-# Filter out small decorative images (icons, bullets, etc.)
-filter_small_images = true
-
-# Minimum image width or height in pixels to keep
-min_dimension = 100
-
-# Minimum image area in pixels squared (e.g., 200x200 = 40000)
-min_area = 40000
-
-# Minimum image file size in bytes to keep (e.g., 10KB = 10240)
-min_file_size = 10240
-
-# ============================================================================
-# Concurrency Settings
-# ============================================================================
-
-[concurrency]
-# Number of files to process concurrently in batch mode
-file_workers = 4
-
-# Number of images to process concurrently
-image_workers = 8
-
-# Number of concurrent LLM API requests
-llm_workers = 5
-
-# ============================================================================
-# PDF Processing
-# ============================================================================
-
-[pdf]
-# PDF processing engine:
-#   - pymupdf4llm: Best for LLM/RAG applications, good table/heading detection (default)
-#   - pymupdf: Fast, good for most PDFs
-#   - pdfplumber: Better table extraction
-#   - markitdown: Uses Microsoft's MarkItDown library
-engine = "pymupdf4llm"
-
-# Extract images from PDFs
-extract_images = true
-
-# Enable OCR for scanned PDFs (requires additional dependencies)
-ocr_enabled = false
-
-# ============================================================================
-# Markdown Enhancement (LLM-powered)
-# ============================================================================
-# These features are only active when --llm flag is used.
-
-[enhancement]
-# Enable LLM-based markdown enhancement by default
-# Can be overridden with --llm flag
-enabled = false
-
-# Remove headers and footers from converted content
-remove_headers_footers = true
-
-# Fix heading levels (ensure proper hierarchy starting from h2)
-fix_heading_levels = true
-
-# Add YAML frontmatter to output files
-add_frontmatter = true
-
-# Generate document summary in frontmatter
-generate_summary = true
-
-# Chunk size for processing large documents (in tokens)
-# Optimized for large context models like Gemini 3 Flash (1.05M context)
-# Larger chunks = fewer LLM calls = faster processing
-# Example: 75K token doc with chunk_size=32000 → ~3 chunks instead of 19+
-chunk_size = 32000
-
-# Overlap between chunks for context continuity (in tokens)
-chunk_overlap = 500
-
-# ============================================================================
-# Output Settings
-# ============================================================================
-
-[output]
-# Default output directory (relative to input directory in batch mode)
-default_dir = "output"
-
-# Conflict resolution strategy:
-#   - skip: Skip if output file exists
-#   - overwrite: Overwrite existing files
-#   - rename: Add numeric suffix (e.g., file_1.md, file_2.md)
-on_conflict = "rename"
-
-# Create assets subdirectory for extracted images
-create_assets_subdir = true
-
-# Generate markdown description files for images (image.png.md)
-generate_image_descriptions = true
-'''
+# LLM Configuration - Use `markit provider add` to add credentials
+# llm:
+#   credentials:
+#     - id: "deepseek"
+#       provider: "openai"  # openai, anthropic, gemini, ollama, openrouter
+#       base_url: "https://api.deepseek.com"
+#       api_key_env: "DEEPSEEK_API_KEY"
+#     - id: "openai-main"
+#       provider: "openai"
+#     - id: "anthropic-main"
+#       provider: "anthropic"
+#   models:
+#     - name: "deepseek-chat"
+#       model: "deepseek-chat"
+#       credential_id: "deepseek"
+#     - name: "GPT-4o"
+#       model: "gpt-4o"
+#       credential_id: "openai-main"
+#       capabilities: ["text", "vision"]
+"""
 
 
 @config_app.command("init")
@@ -425,14 +179,27 @@ def validate() -> None:
 
         console.print("\n[bold blue]Configuration Validation[/bold blue]\n")
 
-        # Check LLM providers
+        # Check LLM configuration (new format: credentials + models)
+        if settings.llm.credentials:
+            console.print("[green]LLM Credentials:[/green]")
+            for cred in settings.llm.credentials:
+                console.print(f"  - {cred.id} ({cred.provider})")
+
+        if settings.llm.models:
+            console.print("[green]LLM Models:[/green]")
+            for model in settings.llm.models:
+                caps = ", ".join(model.capabilities) if model.capabilities else "text"
+                console.print(f"  - {model.name}: {model.model} [{caps}]")
+
+        # Check legacy LLM providers
         if settings.llm.providers:
-            console.print("[green]LLM Providers:[/green]")
+            console.print("[green]LLM Providers (Legacy):[/green]")
             for provider in settings.llm.providers:
                 has_key = provider.api_key or provider.provider == "ollama"
                 status = "[green]OK[/green]" if has_key else "[yellow]No API key[/yellow]"
                 console.print(f"  - {provider.provider}: {status}")
-        else:
+
+        if not (settings.llm.credentials or settings.llm.providers):
             console.print("[yellow]No LLM providers configured.[/yellow]")
             console.print("  LLM features will be disabled.")
 
