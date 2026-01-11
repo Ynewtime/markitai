@@ -57,6 +57,19 @@ class ProviderNotFoundError(LLMError):
         super().__init__(message)
 
 
+class LLMTimeoutError(LLMError):
+    """LLM request absolute timeout - force interrupted after max_request_timeout."""
+
+    def __init__(self, timeout: int, provider: str | None = None) -> None:
+        self.timeout = timeout
+        self.provider = provider
+        if provider:
+            message = f"LLM request timed out after {timeout}s (provider: {provider})"
+        else:
+            message = f"LLM request timed out after {timeout}s"
+        super().__init__(message)
+
+
 class ImageProcessingError(MarkitError):
     """Error during image processing."""
 

@@ -665,6 +665,8 @@ async def _process_file_pipeline(
                     completion_tokens=llm_result.completion_tokens,
                     cost=llm_result.estimated_cost,
                     duration=llm_result.duration,
+                    start_time=llm_result.start_time,
+                    end_time=llm_result.end_time,
                 )
 
             if llm_result.success:
@@ -768,7 +770,14 @@ async def _process_files_phased_verbose(
 
     tasks = [
         _process_file_pipeline(
-            f, pipeline, concurrency, llm_queue, output_dir, input_dir, state_manager, callbacks,
+            f,
+            pipeline,
+            concurrency,
+            llm_queue,
+            output_dir,
+            input_dir,
+            state_manager,
+            callbacks,
             stats=stats,
         )
         for f in files

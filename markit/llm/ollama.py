@@ -2,11 +2,12 @@
 
 import base64
 from collections.abc import AsyncIterator
+from typing import Any
 
 import ollama
 
 from markit.exceptions import LLMError
-from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, TokenUsage
+from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, ResponseFormat, TokenUsage
 from markit.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -134,7 +135,7 @@ class OllamaProvider(BaseLLMProvider):
         image_data: bytes,
         prompt: str,
         _image_format: str = "png",  # Ollama auto-detects format
-        **kwargs,
+        **kwargs: Any,
     ) -> LLMResponse:
         """Analyze an image using Ollama Vision model.
 
@@ -142,7 +143,8 @@ class OllamaProvider(BaseLLMProvider):
             image_data: Raw image bytes
             prompt: Prompt for image analysis
             _image_format: Format of the image (unused, Ollama auto-detects)
-            **kwargs: Additional arguments
+            **kwargs: Additional arguments including:
+                - response_format: ResponseFormat for structured output
 
         Returns:
             LLM response with image analysis
@@ -159,10 +161,18 @@ class OllamaProvider(BaseLLMProvider):
                 }
             ]
 
-            response = await self.client.chat(
-                model=kwargs.get("model", self.model),
-                messages=messages,
-            )
+            # Build request kwargs with optional JSON mode
+            response_format: ResponseFormat | None = kwargs.pop("response_format", None)
+            request_kwargs: dict[str, Any] = {
+                "model": kwargs.get("model", self.model),
+                "messages": messages,
+            }
+
+            # Add format parameter for JSON mode
+            if response_format:
+                request_kwargs["format"] = self._build_format(response_format)
+
+            response = await self.client.chat(**request_kwargs)
 
             content = response.get("message", {}).get("content", "")
 
@@ -183,6 +193,21 @@ class OllamaProvider(BaseLLMProvider):
         except Exception as e:
             log.error("Ollama image analysis error", error=str(e))
             raise LLMError(f"Ollama image analysis error: {e}") from e
+
+    def _build_format(self, response_format: ResponseFormat) -> str | dict[str, Any]:
+        """Build Ollama format parameter from ResponseFormat.
+
+        Args:
+            response_format: ResponseFormat configuration
+
+        Returns:
+            "json" or JSON schema dict
+        """
+        if response_format.type == "json_schema" and response_format.json_schema:
+            return response_format.json_schema
+        else:
+            # Use simple JSON mode
+            return "json"
 
     def _convert_messages_ollama(self, messages: list[LLMMessage]) -> list[dict]:
         """Convert LLMMessages to Ollama format."""

@@ -42,6 +42,8 @@ class LLMTaskResult:
         completion_tokens: Number of completion tokens used
         estimated_cost: Estimated cost in USD
         duration: Execution duration in seconds
+        start_time: When the task started (Unix timestamp)
+        end_time: When the task completed (Unix timestamp)
     """
 
     task: LLMTask
@@ -54,6 +56,9 @@ class LLMTaskResult:
     completion_tokens: int = 0
     estimated_cost: float = 0.0
     duration: float = 0.0
+    # Timing for wall-clock duration tracking
+    start_time: float = 0.0
+    end_time: float = 0.0
 
     @property
     def source_file(self) -> Path:
@@ -155,7 +160,8 @@ class LLMTaskQueue:
                         source=str(task.source_file.name),
                     )
                     result = await task.coro
-                    duration = time() - start_time
+                    end_time = time()
+                    duration = end_time - start_time
 
                     # Extract statistics if result is LLMTaskResultWithStats
                     if isinstance(result, LLMTaskResultWithStats):
@@ -168,15 +174,20 @@ class LLMTaskQueue:
                             completion_tokens=result.completion_tokens,
                             estimated_cost=result.estimated_cost,
                             duration=duration,
+                            start_time=start_time,
+                            end_time=end_time,
                         )
                     return LLMTaskResult(
                         task=task,
                         success=True,
                         result=result,
                         duration=duration,
+                        start_time=start_time,
+                        end_time=end_time,
                     )
             except Exception as e:
-                duration = time() - start_time
+                end_time = time()
+                duration = end_time - start_time
                 log.warning(
                     "LLM task failed",
                     task_type=task.task_type,
@@ -189,6 +200,8 @@ class LLMTaskQueue:
                     success=False,
                     error=str(e),
                     duration=duration,
+                    start_time=start_time,
+                    end_time=end_time,
                 )
             finally:
                 # Release backpressure slot

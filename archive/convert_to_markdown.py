@@ -62,6 +62,7 @@ LLM 配置（可选，用于格式优化和图片分析）:
 
 import base64
 import concurrent.futures
+import contextlib
 import datetime
 import io
 import json
@@ -339,9 +340,7 @@ def create_llm_client():
         model = os.environ.get("OPENAI_MODEL") or os.environ.get("LLM_MODEL", "gpt-4o")
         if api_key:
             client = OpenAI(api_key=api_key, base_url=api_base)
-            provider = (
-                "OpenRouter" if "openrouter" in api_base.lower() else "自定义接口"
-            )
+            provider = "OpenRouter" if "openrouter" in api_base.lower() else "自定义接口"
             logger.info(f"✅ 已启用 {provider} LLM: {model}")
             return client, model
 
@@ -460,10 +459,7 @@ def optimize_markdown_format(
                 if lines[0] == "---":
                     # 找到第一个非空行的索引
                     first_content_idx = 1
-                    while (
-                        first_content_idx < len(lines)
-                        and not lines[first_content_idx].strip()
-                    ):
+                    while first_content_idx < len(lines) and not lines[first_content_idx].strip():
                         first_content_idx += 1
                     # 重组: --- + 非空内容
                     if first_content_idx > 1:
@@ -517,9 +513,7 @@ def optimize_markdown_format(
                             new_frontmatter.append(line)
 
                         # 重组内容
-                        optimized = (
-                            "---\n" + "\n".join(new_frontmatter) + optimized[end_idx:]
-                        )
+                        optimized = "---\n" + "\n".join(new_frontmatter) + optimized[end_idx:]
             except Exception:
                 pass  # 如果解析失败，保持原样
 
@@ -530,8 +524,7 @@ def optimize_markdown_format(
 
             # 检查是否是速率限制错误
             is_rate_limit = any(
-                x in error_msg
-                for x in ["429", "rate", "quota", "RESOURCE_EXHAUSTED", "Too Many"]
+                x in error_msg for x in ["429", "rate", "quota", "RESOURCE_EXHAUSTED", "Too Many"]
             )
 
             if is_rate_limit and attempt < max_retries - 1:
@@ -617,9 +610,7 @@ def analyze_image_with_llm(
                             {"type": "text", "text": IMAGE_ANALYZE_PROMPT},
                             {
                                 "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime_type};base64,{base64_image}"
-                                },
+                                "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
                             },
                         ],
                     }
@@ -691,8 +682,7 @@ def analyze_image_with_llm(
             error_msg = str(e)
 
             is_rate_limit = any(
-                x in error_msg
-                for x in ["429", "rate", "quota", "RESOURCE_EXHAUSTED", "Too Many"]
+                x in error_msg for x in ["429", "rate", "quota", "RESOURCE_EXHAUSTED", "Too Many"]
             )
 
             if is_rate_limit and attempt < max_retries - 1:
@@ -772,10 +762,10 @@ def analyze_images_in_markdown(
         }
 
         # 获取结果
-        completed_count = 0
-        for future in concurrent.futures.as_completed(future_to_match):
+        for completed_count, future in enumerate(
+            concurrent.futures.as_completed(future_to_match), 1
+        ):
             match, img_path, img_path_str = future_to_match[future]
-            completed_count += 1
 
             try:
                 description = future.result()
@@ -955,9 +945,7 @@ try {{
         return None
 
 
-def convert_with_libreoffice(
-    input_file: Path, output_dir: Path, new_ext: str
-) -> Path | None:
+def convert_with_libreoffice(input_file: Path, output_dir: Path, new_ext: str) -> Path | None:
     """使用 LibreOffice 转换旧格式"""
     libreoffice = find_libreoffice()
     if not libreoffice:
@@ -983,9 +971,7 @@ def convert_with_libreoffice(
         return None
 
 
-def convert_old_format(
-    input_file: Path, temp_dir: Path, logger=logger.info
-) -> Path | None:
+def convert_old_format(input_file: Path, temp_dir: Path, logger=logger.info) -> Path | None:
     """转换旧格式文件（.ppt/.doc 等）"""
     suffix = input_file.suffix.lower()
     new_ext = OLD_FORMATS.get(suffix)
@@ -1150,10 +1136,8 @@ def extract_base64_images(
                         return png_data
 
                     # 清理失败的临时文件
-                    try:
+                    with contextlib.suppress(Exception):
                         temp_emf.unlink(missing_ok=True)
-                    except Exception:
-                        pass
 
                 except Exception as e2:
                     logger(f"        ⚠️ LibreOffice 转换失败: {e2}")
@@ -1264,14 +1248,10 @@ def extract_pptx_text_fallback(input_file: Path) -> str | None:
                     table = shape.table  # type: ignore
                     markdown_parts.append("\n")
                     for row_idx, row in enumerate(table.rows):
-                        cells = [
-                            cell.text.strip().replace("\n", " ") for cell in row.cells
-                        ]
+                        cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
                         markdown_parts.append("| " + " | ".join(cells) + " |\n")
                         if row_idx == 0:
-                            markdown_parts.append(
-                                "| " + " | ".join(["---"] * len(cells)) + " |\n"
-                            )
+                            markdown_parts.append("| " + " | ".join(["---"] * len(cells)) + " |\n")
                     markdown_parts.append("\n")
 
             markdown_parts.append("\n")
@@ -1323,10 +1303,7 @@ def convert_to_markdown(
         error_msg = str(e)
 
         # 检查是否是图片识别错误（常见于旧版 PPT 的 WMF/EMF 图片）
-        if (
-            "UnidentifiedImageError" in error_msg
-            or "cannot identify image file" in error_msg
-        ):
+        if "UnidentifiedImageError" in error_msg or "cannot identify image file" in error_msg:
             logger("  ⚠️ 包含无法识别的图片格式，使用纯文本提取...")
 
             # 对于 PPTX 文件，使用 python-pptx 备选方案
@@ -1448,9 +1425,7 @@ def _process_single_file(
     file_ext = working_file.suffix.lower()
     if file_ext in IMAGE_FORMATS and llm_client:
         # 图片文件且有 LLM，使用带 LLM 的实例
-        md = MarkItDown(
-            llm_client=llm_client, llm_model=llm_model, llm_prompt=llm_prompt
-        )
+        md = MarkItDown(llm_client=llm_client, llm_model=llm_model, llm_prompt=llm_prompt)
     else:
         # 其他情况使用普通实例
         md = MarkItDown()
@@ -1467,9 +1442,7 @@ def _process_single_file(
         output_file = current_output_dir / output_filename
         counter += 1
 
-    output_rel = (
-        rel_dir / output_filename if rel_dir != Path(".") else Path(output_filename)
-    )
+    output_rel = rel_dir / output_filename if rel_dir != Path(".") else Path(output_filename)
 
     success = convert_to_markdown(
         working_file,
@@ -1555,7 +1528,7 @@ def process_folder(
         return
 
     total_count = len(all_files)
-    subdirs = set(f.parent for f in all_files if f.parent != folder)
+    subdirs = {f.parent for f in all_files if f.parent != folder}
     image_files = [f for f in all_files if f.suffix.lower() in IMAGE_FORMATS]
 
     logger.info(f"📂 找到 {total_count} 个文件")
@@ -1734,14 +1707,10 @@ def process_file(
 
     # 根据文件类型选择 MarkItDown 实例
     file_ext = input_file.suffix.lower()
-    use_llm_for_markitdown = (
-        analyze_image_files and llm_client and file_ext in IMAGE_FORMATS
-    )
+    use_llm_for_markitdown = analyze_image_files and llm_client and file_ext in IMAGE_FORMATS
 
     if use_llm_for_markitdown:
-        md = MarkItDown(
-            llm_client=llm_client, llm_model=llm_model, llm_prompt=llm_prompt
-        )
+        md = MarkItDown(llm_client=llm_client, llm_model=llm_model, llm_prompt=llm_prompt)
     else:
         md = MarkItDown()
 
@@ -1786,10 +1755,8 @@ def process_file(
 def main():
     # 解决 Windows 下控制台编码问题（io 已在文件顶部导入）
     if sys.stdout.encoding != "utf-8":
-        try:
+        with contextlib.suppress(Exception):
             sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-        except Exception:
-            pass
 
     print("""
 +===================================================+

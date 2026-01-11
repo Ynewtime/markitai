@@ -10,19 +10,29 @@ from pydantic_settings import BaseSettings, SettingsConfigDict, YamlConfigSettin
 from markit.config.constants import (
     DEFAULT_CHUNK_OVERLAP,
     DEFAULT_CHUNK_SIZE,
+    DEFAULT_CONCURRENT_FALLBACK_ENABLED,
+    DEFAULT_CONCURRENT_FALLBACK_TIMEOUT,
     DEFAULT_FILE_WORKERS,
     DEFAULT_IMAGE_WORKERS,
     DEFAULT_JPEG_QUALITY,
+    DEFAULT_LIBREOFFICE_POOL_SIZE,
+    DEFAULT_LIBREOFFICE_PROFILE_DIR,
+    DEFAULT_LIBREOFFICE_RESET_AFTER_FAILURES,
+    DEFAULT_LIBREOFFICE_RESET_AFTER_USES,
     DEFAULT_LLM_TIMEOUT,
     DEFAULT_LLM_WORKERS,
     DEFAULT_LOG_DIR,
     DEFAULT_MAX_IMAGE_DIMENSION,
+    DEFAULT_MAX_REQUEST_TIMEOUT,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MIN_IMAGE_AREA,
     DEFAULT_MIN_IMAGE_DIMENSION,
     DEFAULT_MIN_IMAGE_SIZE,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_PNG_OPTIMIZATION_LEVEL,
+    DEFAULT_PROCESS_POOL_MAX_WORKERS,
+    DEFAULT_PROCESS_POOL_THRESHOLD,
+    DEFAULT_PROMPTS_DIR,
     DEFAULT_STATE_FILE,
 )
 
@@ -94,8 +104,10 @@ class LLMConfig(BaseModel):
     # Validation settings
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
 
-    # Concurrent fallback timeout (seconds)
-    concurrent_fallback_timeout: int = 180
+    # Concurrent fallback settings
+    concurrent_fallback_enabled: bool = DEFAULT_CONCURRENT_FALLBACK_ENABLED
+    concurrent_fallback_timeout: int = DEFAULT_CONCURRENT_FALLBACK_TIMEOUT
+    max_request_timeout: int = DEFAULT_MAX_REQUEST_TIMEOUT
 
 
 class ImageConfig(BaseModel):
@@ -112,6 +124,11 @@ class ImageConfig(BaseModel):
     min_dimension: int = Field(default=DEFAULT_MIN_IMAGE_DIMENSION, ge=0)
     min_area: int = Field(default=DEFAULT_MIN_IMAGE_AREA, ge=0)
     min_file_size: int = Field(default=DEFAULT_MIN_IMAGE_SIZE, ge=0)
+
+    # Process pool settings for parallel image processing
+    use_process_pool: bool = True
+    process_pool_threshold: int = Field(default=DEFAULT_PROCESS_POOL_THRESHOLD, ge=1)
+    process_pool_max_workers: int = Field(default=DEFAULT_PROCESS_POOL_MAX_WORKERS, ge=1)
 
 
 class ConcurrencyConfig(BaseModel):
@@ -159,6 +176,68 @@ class ExecutionConfig(BaseModel):
     fast_skip_validation: bool = True  # Skip provider validation in fast mode
 
 
+class LibreOfficeConfig(BaseModel):
+    """LibreOffice profile pool configuration for concurrent document conversion."""
+
+    pool_size: int = Field(default=DEFAULT_LIBREOFFICE_POOL_SIZE, ge=1, le=32)
+    profile_base_dir: str = DEFAULT_LIBREOFFICE_PROFILE_DIR
+    reset_after_failures: int = Field(default=DEFAULT_LIBREOFFICE_RESET_AFTER_FAILURES, ge=1)
+    reset_after_uses: int = Field(default=DEFAULT_LIBREOFFICE_RESET_AFTER_USES, ge=1)
+
+
+class PromptConfig(BaseModel):
+    """LLM prompt configuration for output language and customization."""
+
+    output_language: Literal["zh", "en", "auto"] = "zh"
+    extract_knowledge_graph_meta: bool = True
+
+    # Prompts directory for external prompt files
+    prompts_dir: str = DEFAULT_PROMPTS_DIR
+
+    # Custom prompt file paths (override prompts_dir)
+    image_analysis_prompt: str | None = None
+    enhancement_prompt: str | None = None
+    summary_prompt: str | None = None
+
+    # Legacy: inline custom prompts (deprecated, use file paths instead)
+    custom_enhancement_prompt: str | None = None
+    custom_summary_prompt: str | None = None
+    custom_image_analysis_prompt: str | None = None
+
+    def get_prompt(self, prompt_type: str) -> str | None:
+        """Get prompt content for the specified type.
+
+        Args:
+            prompt_type: One of "image_analysis", "enhancement", "summary"
+
+        Returns:
+            Prompt content string, or None if not found (use builtin default)
+        """
+        # 1. Check custom file path
+        custom_path_attr = f"{prompt_type}_prompt"
+        custom_path = getattr(self, custom_path_attr, None)
+        if custom_path:
+            path = Path(custom_path)
+            if path.exists():
+                return path.read_text(encoding="utf-8")
+
+        # 2. Check prompts directory with language suffix
+        lang = self.output_language if self.output_language != "auto" else "zh"
+        prompts_dir = Path(self.prompts_dir)
+        default_path = prompts_dir / f"{prompt_type}_{lang}.md"
+        if default_path.exists():
+            return default_path.read_text(encoding="utf-8")
+
+        # 3. Check legacy inline custom prompts
+        legacy_attr = f"custom_{prompt_type}_prompt"
+        legacy_prompt = getattr(self, legacy_attr, None)
+        if legacy_prompt:
+            return legacy_prompt
+
+        # 4. Return None to signal use of builtin default
+        return None
+
+
 class MarkitSettings(BaseSettings):
     """Main configuration class for MarkIt."""
 
@@ -189,6 +268,8 @@ class MarkitSettings(BaseSettings):
     enhancement: EnhancementConfig = Field(default_factory=EnhancementConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    libreoffice: LibreOfficeConfig = Field(default_factory=LibreOfficeConfig)
+    prompt: PromptConfig = Field(default_factory=PromptConfig)
 
     # Global settings
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -212,3 +293,73 @@ def reload_settings() -> MarkitSettings:
     """Force reload settings (clear cache)."""
     get_settings.cache_clear()
     return get_settings()
+
+
+class LLMConfigResolver:
+    """Resolve LLM configuration by merging config file and CLI arguments.
+
+    This class centralizes the logic for merging CLI-provided LLM options
+    (like --llm-provider and --llm-model) with the base configuration from
+    markit.yaml. CLI arguments take precedence over config file values.
+
+    Usage:
+        resolved = LLMConfigResolver.resolve(
+            base_config=settings.llm,
+            cli_provider="anthropic",
+            cli_model="claude-sonnet-4-5",
+        )
+    """
+
+    @staticmethod
+    def resolve(
+        base_config: LLMConfig,
+        cli_provider: str | None = None,
+        cli_model: str | None = None,
+    ) -> LLMConfig:
+        """Merge CLI arguments into base LLM configuration.
+
+        Priority: CLI arguments > config file
+
+        Args:
+            base_config: Base LLM configuration from settings
+            cli_provider: CLI-provided provider override (e.g., "anthropic")
+            cli_model: CLI-provided model override (e.g., "claude-sonnet-4-5")
+
+        Returns:
+            Resolved LLMConfig with CLI overrides applied
+        """
+        if not cli_provider and not cli_model:
+            return base_config
+
+        from markit.config.constants import DEFAULT_LLM_MODELS
+
+        # Deep copy to avoid modifying original
+        resolved = base_config.model_copy(deep=True)
+
+        if cli_provider:
+            # Look for existing provider config
+            existing_provider = next(
+                (p for p in resolved.providers if p.provider == cli_provider),
+                None,
+            )
+
+            if existing_provider:
+                # Update existing provider's model if specified
+                if cli_model:
+                    existing_provider.model = cli_model
+                # Move to front of list for priority
+                resolved.providers.remove(existing_provider)
+                resolved.providers.insert(0, existing_provider)
+            else:
+                # Create new provider config
+                new_provider = LLMProviderConfig(
+                    provider=cli_provider,  # type: ignore[arg-type]
+                    model=cli_model or DEFAULT_LLM_MODELS.get(cli_provider, ""),
+                )
+                resolved.providers.insert(0, new_provider)
+
+        elif cli_model and resolved.providers:
+            # Only model specified, update first provider's model
+            resolved.providers[0].model = cli_model
+
+        return resolved

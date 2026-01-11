@@ -3,10 +3,90 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from markit.utils.logging import BoundLogger
+
+
+@dataclass
+class ResponseFormat:
+    """Configuration for structured output format.
+
+    Supports:
+    - OpenAI: response_format={"type": "json_object"} or json_schema
+    - Gemini: response_mime_type="application/json" with response_schema
+    - Ollama: format="json" or format=schema
+    - Anthropic: Tool Use with tool_choice (forces structured output)
+    """
+
+    type: Literal["json_object", "json_schema", "text"] = "json_object"
+    json_schema: dict[str, Any] | None = None
+    # If True, use strict mode (OpenAI) - guarantees 100% schema match
+    strict: bool = False
+
+
+# Pre-defined JSON schema for image analysis
+IMAGE_ANALYSIS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "alt_text": {
+            "type": "string",
+            "description": "Short description for image alt text (max 50 chars)",
+        },
+        "detailed_description": {
+            "type": "string",
+            "description": "Detailed description of the image content",
+        },
+        "detected_text": {
+            "type": ["string", "null"],
+            "description": "Text visible in the image, null if none",
+        },
+        "image_type": {
+            "type": "string",
+            "enum": [
+                "diagram",
+                "chart",
+                "graph",
+                "table",
+                "screenshot",
+                "photo",
+                "illustration",
+                "logo",
+                "icon",
+                "formula",
+                "code",
+                "other",
+            ],
+            "description": "Type classification of the image",
+        },
+        "knowledge_meta": {
+            "type": ["object", "null"],
+            "properties": {
+                "entities": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Named entities in the image",
+                },
+                "relationships": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Entity relationships",
+                },
+                "topics": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Topic tags",
+                },
+                "domain": {
+                    "type": ["string", "null"],
+                    "description": "Domain classification",
+                },
+            },
+        },
+    },
+    "required": ["alt_text", "detailed_description", "image_type"],
+}
 
 
 @dataclass

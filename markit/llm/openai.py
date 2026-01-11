@@ -5,7 +5,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, TokenUsage
+from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, ResponseFormat, TokenUsage
 from markit.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -75,7 +75,9 @@ class OpenAIProvider(BaseLLMProvider):
             if max_tokens is not None:
                 # GPT-5.2+ models require max_completion_tokens instead of max_tokens
                 # OpenAI-compatible APIs (like OpenRouter) use standard max_tokens
-                token_key = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
+                token_key = (
+                    "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
+                )
                 request_params[token_key] = max_tokens
 
             # Add any extra kwargs (excluding 'model' which is already handled)
@@ -143,7 +145,9 @@ class OpenAIProvider(BaseLLMProvider):
             if max_tokens is not None:
                 # GPT-5.2+ models require max_completion_tokens instead of max_tokens
                 # OpenAI-compatible APIs (like OpenRouter) use standard max_tokens
-                token_key = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
+                token_key = (
+                    "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
+                )
                 request_params[token_key] = max_tokens
 
             # Add any extra kwargs (excluding 'model' which is already handled)
@@ -175,13 +179,43 @@ class OpenAIProvider(BaseLLMProvider):
             image_data: Raw image bytes
             prompt: Prompt for image analysis
             image_format: Format of the image
-            **kwargs: Additional arguments
+            **kwargs: Additional arguments including:
+                - response_format: ResponseFormat for structured output
 
         Returns:
             LLM response with image analysis
         """
         message = LLMMessage.user_with_image(prompt, image_data, image_format)
+
+        # Handle response_format for JSON mode
+        response_format: ResponseFormat | None = kwargs.pop("response_format", None)
+        if response_format:
+            kwargs["response_format"] = self._build_response_format(response_format)
+
         return await self.complete([message], **kwargs)
+
+    def _build_response_format(self, response_format: ResponseFormat) -> dict[str, Any]:
+        """Build OpenAI response_format parameter from ResponseFormat.
+
+        Args:
+            response_format: ResponseFormat configuration
+
+        Returns:
+            OpenAI API response_format dict
+        """
+        if response_format.type == "json_object":
+            return {"type": "json_object"}
+        elif response_format.type == "json_schema" and response_format.json_schema:
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "image_analysis",
+                    "strict": response_format.strict,
+                    "schema": response_format.json_schema,
+                },
+            }
+        else:
+            return {"type": "text"}
 
     async def validate(self) -> bool:
         """Validate the OpenAI provider configuration.

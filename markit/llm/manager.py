@@ -5,13 +5,14 @@ import contextlib
 import os
 from dataclasses import dataclass, field
 
+from markit.config.constants import MIN_VALID_RESPONSE_LENGTH
 from markit.config.settings import (
     LLMConfig,
     LLMProviderConfig,
     ModelCostConfig,
     ValidationConfig,
 )
-from markit.exceptions import LLMError, ProviderNotFoundError
+from markit.exceptions import LLMError, LLMTimeoutError, ProviderNotFoundError
 from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse
 from markit.utils.logging import get_logger
 
@@ -62,6 +63,9 @@ class ProviderManager:
         self._configs_loaded = False
         self._provider_init_locks: dict[str, asyncio.Lock] = {}
 
+        # Track last successful provider per capability for optimized routing
+        self._last_successful_provider: dict[str, str] = {}
+
     async def _load_configs(self) -> None:
         """Load configurations without initializing providers (lazy loading support)."""
         if self._configs_loaded:
@@ -74,7 +78,9 @@ class ProviderManager:
             # 1. Process Legacy Providers
             for config in self.config.providers:
                 provider_key = config.name or f"{config.provider}_{config.model}"
-                caps = config.capabilities if config.capabilities is not None else ["text", "vision"]
+                caps = (
+                    config.capabilities if config.capabilities is not None else ["text", "vision"]
+                )
 
                 self._provider_states[provider_key] = ProviderState(
                     config=config,
@@ -107,7 +113,11 @@ class ProviderManager:
                 )
 
                 provider_key = model_config.name
-                caps = model_config.capabilities if model_config.capabilities is not None else ["text", "vision"]
+                caps = (
+                    model_config.capabilities
+                    if model_config.capabilities is not None
+                    else ["text", "vision"]
+                )
 
                 self._provider_states[provider_key] = ProviderState(
                     config=synthetic_config,
@@ -154,7 +164,10 @@ class ProviderManager:
                     self._providers[provider_name] = provider
                     if provider_name not in self._valid_providers:
                         self._valid_providers.append(provider_name)
-                    log.info(f"Provider {provider_name} initialized on demand", capabilities=state.capabilities)
+                    log.info(
+                        f"Provider {provider_name} initialized on demand",
+                        capabilities=state.capabilities,
+                    )
                 else:
                     state.valid = False
                     log.warning(f"Provider {provider_name} validation failed")
@@ -409,7 +422,7 @@ class ProviderManager:
             True if at least one provider supports the capability
         """
         # Check configured providers (supports lazy loading)
-        for provider_name, state in self._provider_states.items():
+        for _provider_name, state in self._provider_states.items():
             # Skip providers that have explicitly failed validation
             if state.valid is False:
                 continue
@@ -477,11 +490,7 @@ class ProviderManager:
             return source
 
         # Filter providers that have the required capability
-        capable = [
-            p
-            for p in source
-            if required in self._provider_capabilities.get(p, [])
-        ]
+        capable = [p for p in source if required in self._provider_capabilities.get(p, [])]
 
         if not capable:
             return []
@@ -489,20 +498,14 @@ class ProviderManager:
         if not preferred:
             # Prioritize providers with only the required capability (cost optimization)
             exact_match = [
-                p
-                for p in capable
-                if self._provider_capabilities.get(p, []) == [required]
+                p for p in capable if self._provider_capabilities.get(p, []) == [required]
             ]
             if exact_match:
                 return exact_match + [p for p in capable if p not in exact_match]
             return capable
 
         # With preferred: prioritize providers that have the preferred capability
-        has_preferred = [
-            p
-            for p in capable
-            if preferred in self._provider_capabilities.get(p, [])
-        ]
+        has_preferred = [p for p in capable if preferred in self._provider_capabilities.get(p, [])]
         no_preferred = [p for p in capable if p not in has_preferred]
 
         return has_preferred + no_preferred
@@ -584,6 +587,9 @@ class ProviderManager:
     ) -> LLMResponse:
         """Analyze an image with automatic fallback. Supports lazy loading.
 
+        Optimizes provider selection by prioritizing last successful provider
+        to avoid unnecessary initialization of multiple providers.
+
         Args:
             image_data: Raw image bytes
             prompt: Prompt for analysis
@@ -607,16 +613,19 @@ class ProviderManager:
         if not vision_candidates:
             raise LLMError("No provider with 'vision' capability available for image analysis")
 
+        # Prioritize last successful provider to avoid unnecessary initialization
+        if "vision" in self._last_successful_provider:
+            preferred = self._last_successful_provider["vision"]
+            if preferred in vision_candidates:
+                vision_candidates.remove(preferred)
+                vision_candidates.insert(0, preferred)
+                log.debug(f"Prioritizing last successful vision provider: {preferred}")
+
         errors = []
         provider_count = len(vision_candidates)
 
-        # Round Robin Load Balancing (across vision-capable providers)
-        start_index = self._current_index % provider_count
-        self._current_index = (self._current_index + 1) % max(provider_count, 1)
-
         for i in range(provider_count):
-            idx = (start_index + i) % provider_count
-            provider_name = vision_candidates[idx]
+            provider_name = vision_candidates[i]
 
             # Lazy initialize the provider if needed
             if provider_name not in self._providers:
@@ -630,9 +639,17 @@ class ProviderManager:
                     log.debug(f"Retrying image analysis with provider: {provider_name}")
                 response = await provider.analyze_image(image_data, prompt, image_format, **kwargs)
                 response.estimated_cost = self.calculate_cost(provider_name, response)
+
+                # Track successful provider for future requests
+                self._last_successful_provider["vision"] = provider_name
                 return response
             except Exception as e:
-                log.warning(f"Provider {provider_name} image analysis failed: {e}")
+                log.warning(
+                    "Provider failed for image analysis, triggering fallback",
+                    provider=provider_name,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
 
                 warning_msg = (
                     f"If provider '{provider_name}' is text-only, please explicitly set "
@@ -655,13 +672,17 @@ class ProviderManager:
     ) -> LLMResponse:
         """Make a completion request with concurrent fallback on timeout.
 
-        Primary model is given `timeout` seconds. If it exceeds that time,
-        a fallback model is started concurrently without canceling the primary.
-        Whichever completes first is used.
+        Smart concurrent fallback mechanism:
+        1. Start primary model request
+        2. Wait concurrent_fallback_timeout seconds
+        3. If primary hasn't responded, start fallback model (don't cancel primary)
+        4. Primary and fallback race, first successful response wins
+        5. Cancel the other task after winner is determined
+        6. Absolute timeout (max_request_timeout) force interrupts all tasks
 
         Args:
             messages: List of messages
-            timeout: Timeout in seconds before starting concurrent fallback
+            timeout: Timeout in seconds before starting concurrent fallback (overrides config)
             required_capability: Required capability filter
             **kwargs: Additional arguments passed to the provider
 
@@ -670,13 +691,22 @@ class ProviderManager:
 
         Raises:
             LLMError: If all providers fail
+            LLMTimeoutError: If absolute timeout is reached
         """
         await self._load_configs()
 
-        # Get concurrent fallback timeout from config or parameter
+        # Get timeouts from config
         fallback_timeout = timeout
         if fallback_timeout is None:
-            fallback_timeout = getattr(self.config, "concurrent_fallback_timeout", 180)
+            fallback_timeout = self.config.concurrent_fallback_timeout
+        max_timeout = self.config.max_request_timeout
+
+        # Check if concurrent fallback is enabled
+        if not self.config.concurrent_fallback_enabled:
+            # Fall back to standard sequential fallback
+            return await self.complete_with_fallback(
+                messages, required_capability=required_capability, **kwargs
+            )
 
         candidates = self._filter_providers_by_capability(
             required_capability, None, include_uninitialized=True
@@ -686,11 +716,16 @@ class ProviderManager:
             cap_desc = required_capability or "any"
             raise ProviderNotFoundError(f"No provider with '{cap_desc}' capability available")
 
-        # Select primary model (round robin)
-        provider_count = len(candidates)
-        primary_idx = self._current_index % provider_count
-        self._current_index = (self._current_index + 1) % max(provider_count, 1)
-        primary_name = candidates[primary_idx]
+        # Prioritize last successful provider
+        capability_key = required_capability or "text"
+        if capability_key in self._last_successful_provider:
+            preferred = self._last_successful_provider[capability_key]
+            if preferred in candidates:
+                candidates.remove(preferred)
+                candidates.insert(0, preferred)
+                log.debug(f"Prioritizing last successful provider: {preferred}")
+
+        primary_name = candidates[0]
 
         # Ensure primary is initialized
         if primary_name not in self._providers:
@@ -700,17 +735,23 @@ class ProviderManager:
         primary_provider = self._providers[primary_name]
 
         # Create primary task
-        primary_task = asyncio.create_task(
-            primary_provider.complete(messages, **kwargs)
-        )
+        primary_task = asyncio.create_task(primary_provider.complete(messages, **kwargs))
 
         try:
             # Wait for primary with shield to prevent cancellation
             response = await asyncio.wait_for(
                 asyncio.shield(primary_task), timeout=fallback_timeout
             )
-            response.estimated_cost = self.calculate_cost(primary_name, response)
-            return response
+
+            # Validate response
+            if self._validate_response(response):
+                response.estimated_cost = self.calculate_cost(primary_name, response)
+                self._last_successful_provider[capability_key] = primary_name
+                return response
+            else:
+                log.warning(f"Primary model {primary_name} returned invalid response")
+                raise LLMError("Primary model returned invalid response")
+
         except TimeoutError:
             # Primary exceeded timeout, check for fallback
             fallback_candidates = [c for c in candidates if c != primary_name]
@@ -718,20 +759,38 @@ class ProviderManager:
             if not fallback_candidates:
                 log.warning(
                     f"Primary model {primary_name} exceeded {fallback_timeout}s, "
-                    "no fallback available, continuing to wait..."
+                    "no fallback available, waiting with absolute timeout..."
                 )
-                response = await primary_task
-                response.estimated_cost = self.calculate_cost(primary_name, response)
-                return response
+                try:
+                    remaining_timeout = max_timeout - fallback_timeout
+                    response = await asyncio.wait_for(primary_task, timeout=remaining_timeout)
+                    response.estimated_cost = self.calculate_cost(primary_name, response)
+                    self._last_successful_provider[capability_key] = primary_name
+                    return response
+                except TimeoutError:
+                    primary_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await primary_task
+                    raise LLMTimeoutError(max_timeout, primary_name) from None
 
             # Select and initialize fallback
             fallback_name = fallback_candidates[0]
             if fallback_name not in self._providers:
                 if not await self._ensure_provider_initialized(fallback_name):
-                    log.warning(f"Failed to initialize fallback {fallback_name}, waiting for primary")
-                    response = await primary_task
-                    response.estimated_cost = self.calculate_cost(primary_name, response)
-                    return response
+                    log.warning(
+                        f"Failed to initialize fallback {fallback_name}, waiting for primary"
+                    )
+                    try:
+                        remaining_timeout = max_timeout - fallback_timeout
+                        response = await asyncio.wait_for(primary_task, timeout=remaining_timeout)
+                        response.estimated_cost = self.calculate_cost(primary_name, response)
+                        self._last_successful_provider[capability_key] = primary_name
+                        return response
+                    except TimeoutError:
+                        primary_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await primary_task
+                        raise LLMTimeoutError(max_timeout, primary_name) from None
 
             fallback_provider = self._providers[fallback_name]
 
@@ -741,15 +800,32 @@ class ProviderManager:
             )
 
             # Start fallback task
-            fallback_task = asyncio.create_task(
-                fallback_provider.complete(messages, **kwargs)
-            )
+            fallback_task = asyncio.create_task(fallback_provider.complete(messages, **kwargs))
 
-            # Wait for either to complete
-            done, pending = await asyncio.wait(
-                [primary_task, fallback_task],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            # Wait for either to complete with absolute timeout
+            remaining_timeout = max_timeout - fallback_timeout
+            try:
+                done, pending = await asyncio.wait(
+                    [primary_task, fallback_task],
+                    timeout=remaining_timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            except Exception:
+                # Cleanup on unexpected error
+                for task in [primary_task, fallback_task]:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                raise
+
+            # Handle absolute timeout
+            if not done:
+                log.error(f"All models exceeded absolute timeout ({max_timeout}s)")
+                for task in pending:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                raise LLMTimeoutError(max_timeout) from None
 
             # Cancel pending tasks
             for task in pending:
@@ -765,20 +841,35 @@ class ProviderManager:
 
             try:
                 response = completed_task.result()
-                response.estimated_cost = self.calculate_cost(winner_name, response)
-                return response
+                if self._validate_response(response):
+                    response.estimated_cost = self.calculate_cost(winner_name, response)
+                    self._last_successful_provider[capability_key] = winner_name
+                    return response
+                else:
+                    raise LLMError("Winner returned invalid response")
             except Exception as e:
-                # If winner failed, try waiting for the other
-                if pending:
-                    other_task = list(pending)[0]
-                    try:
-                        response = await other_task
-                        other_name = fallback_name if winner == "primary" else primary_name
-                        response.estimated_cost = self.calculate_cost(other_name, response)
-                        return response
-                    except Exception:
-                        pass
+                log.warning(
+                    "Winner task failed, checking other task",
+                    winner=winner_name,
+                    error=str(e),
+                )
+                # Winner failed, but we already cancelled pending tasks
                 raise LLMError(f"Concurrent fallback failed: {e}") from e
+
+    def _validate_response(self, response: LLMResponse) -> bool:
+        """Validate that a response is valid and usable.
+
+        Args:
+            response: LLM response to validate
+
+        Returns:
+            True if response is valid
+        """
+        if not response:
+            return False
+        if not response.content:
+            return False
+        return len(response.content.strip()) >= MIN_VALID_RESPONSE_LENGTH
 
     @property
     def available_providers(self) -> list[str]:

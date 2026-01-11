@@ -7,7 +7,7 @@ from google import genai
 from google.genai import types
 
 from markit.exceptions import LLMError
-from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, TokenUsage
+from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, ResponseFormat, TokenUsage
 from markit.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -157,7 +157,8 @@ class GeminiProvider(BaseLLMProvider):
             image_data: Raw image bytes
             prompt: Prompt for image analysis
             image_format: Format of the image
-            **kwargs: Additional arguments
+            **kwargs: Additional arguments including:
+                - response_format: ResponseFormat for structured output
 
         Returns:
             LLM response with image analysis
@@ -175,9 +176,14 @@ class GeminiProvider(BaseLLMProvider):
             # Use list of Parts
             contents = [image_part, text_part]
 
+            # Build generation config with optional JSON mode
+            response_format: ResponseFormat | None = kwargs.pop("response_format", None)
+            config = self._build_generation_config(response_format)
+
             response = await self.client.aio.models.generate_content(
                 model=kwargs.get("model", self.model),
                 contents=contents,  # type: ignore[arg-type]
+                config=config,
             )
 
             content = ""
@@ -201,6 +207,28 @@ class GeminiProvider(BaseLLMProvider):
         except Exception as e:
             log.error("Gemini image analysis error", error=str(e))
             raise LLMError(f"Gemini image analysis error: {e}") from e
+
+    def _build_generation_config(
+        self, response_format: ResponseFormat | None = None
+    ) -> types.GenerateContentConfig:
+        """Build Gemini generation config with optional JSON mode.
+
+        Args:
+            response_format: Optional ResponseFormat for structured output
+
+        Returns:
+            Gemini GenerateContentConfig
+        """
+        if response_format and response_format.type in ("json_object", "json_schema"):
+            # Enable JSON mode with optional schema
+            config_kwargs: dict[str, Any] = {
+                "response_mime_type": "application/json",
+            }
+            if response_format.json_schema:
+                config_kwargs["response_schema"] = response_format.json_schema
+            return types.GenerateContentConfig(**config_kwargs)
+        else:
+            return types.GenerateContentConfig()
 
     def _convert_to_gemini_contents(self, messages: list[LLMMessage]) -> list[types.Part]:
         """Convert LLMMessages to Gemini Parts format.

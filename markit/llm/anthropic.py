@@ -1,15 +1,31 @@
 """Anthropic Claude LLM provider implementation."""
 
 import base64
+import json
 from collections.abc import AsyncIterator
+from typing import Any
 
 from anthropic import AsyncAnthropic
 
 from markit.exceptions import LLMError
-from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, TokenUsage
+from markit.llm.base import (
+    IMAGE_ANALYSIS_SCHEMA,
+    BaseLLMProvider,
+    LLMMessage,
+    LLMResponse,
+    ResponseFormat,
+    TokenUsage,
+)
 from markit.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+# Tool definition for image analysis structured output
+IMAGE_ANALYSIS_TOOL: dict[str, Any] = {
+    "name": "output_image_analysis",
+    "description": "Output structured image analysis results. Always use this tool to provide your analysis.",
+    "input_schema": IMAGE_ANALYSIS_SCHEMA,
+}
 
 
 class AnthropicProvider(BaseLLMProvider):
@@ -175,17 +191,27 @@ class AnthropicProvider(BaseLLMProvider):
     ) -> LLMResponse:
         """Analyze an image using Anthropic Vision API.
 
+        Uses Tool Use for structured JSON output when response_format is specified.
+        This provides reliable JSON output compared to prompt-based approaches.
+
         Args:
             image_data: Raw image bytes
             prompt: Prompt for image analysis
             image_format: Format of the image
-            **kwargs: Additional arguments
+            **kwargs: Additional arguments (including response_format)
 
         Returns:
             LLM response with image analysis
         """
         b64_image = base64.b64encode(image_data).decode("utf-8")
         media_type = f"image/{image_format}"
+
+        # Check if structured output is requested
+        response_format: ResponseFormat | None = kwargs.pop("response_format", None)
+        use_tool = response_format is not None and response_format.type in (
+            "json_object",
+            "json_schema",
+        )
 
         # Use the raw Anthropic format for images
         user_messages = [
@@ -206,31 +232,111 @@ class AnthropicProvider(BaseLLMProvider):
         ]
 
         try:
-            response = await self.client.messages.create(
-                model=kwargs.get("model", self.model),
-                messages=user_messages,
-                max_tokens=kwargs.get("max_tokens", 4096),
-            )
+            if use_tool:
+                # Use Tool Use for structured JSON output
+                response = await self._analyze_image_with_tool(
+                    user_messages,
+                    model=kwargs.get("model", self.model),
+                    max_tokens=kwargs.get("max_tokens", 4096),
+                    response_format=response_format,
+                )
+            else:
+                # Fallback to regular text response
+                response = await self.client.messages.create(
+                    model=kwargs.get("model", self.model),
+                    messages=user_messages,
+                    max_tokens=kwargs.get("max_tokens", 4096),
+                )
 
-            content = ""
-            if response.content:
-                content = response.content[0].text
+                content = ""
+                if response.content:
+                    content = response.content[0].text
 
-            usage = TokenUsage(
-                prompt_tokens=response.usage.input_tokens,
-                completion_tokens=response.usage.output_tokens,
-            )
+                usage = TokenUsage(
+                    prompt_tokens=response.usage.input_tokens,
+                    completion_tokens=response.usage.output_tokens,
+                )
 
-            return LLMResponse(
-                content=content,
-                usage=usage,
-                model=response.model,
-                finish_reason=response.stop_reason or "unknown",
-            )
+                response = LLMResponse(
+                    content=content,
+                    usage=usage,
+                    model=response.model,
+                    finish_reason=response.stop_reason or "unknown",
+                )
+
+            return response
 
         except Exception as e:
             log.error("Anthropic image analysis error", error=str(e))
             raise LLMError(f"Anthropic image analysis error: {e}") from e
+
+    async def _analyze_image_with_tool(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        max_tokens: int,
+        response_format: ResponseFormat,
+    ) -> LLMResponse:
+        """Analyze image using Tool Use for structured output.
+
+        Anthropic doesn't have native JSON mode, but Tool Use with tool_choice
+        forces the model to output structured data matching the tool's input_schema.
+
+        Args:
+            messages: Anthropic-format messages
+            model: Model to use
+            max_tokens: Max tokens for response
+            response_format: Format configuration (schema will be used if provided)
+
+        Returns:
+            LLMResponse with JSON content
+        """
+        # Use custom schema if provided, otherwise use the default image analysis tool
+        if response_format.json_schema:
+            tool = {
+                "name": "output_structured_data",
+                "description": "Output structured data. Always use this tool.",
+                "input_schema": response_format.json_schema,
+            }
+            tool_name = "output_structured_data"
+        else:
+            tool = IMAGE_ANALYSIS_TOOL
+            tool_name = IMAGE_ANALYSIS_TOOL["name"]
+
+        response = await self.client.messages.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            tools=[tool],
+            tool_choice={"type": "tool", "name": tool_name},
+        )
+
+        # Extract structured output from tool_use block
+        content = ""
+        for block in response.content:
+            if block.type == "tool_use":
+                # block.input is already a dict, convert to JSON string
+                content = json.dumps(block.input, ensure_ascii=False)
+                break
+
+        usage = TokenUsage(
+            prompt_tokens=response.usage.input_tokens,
+            completion_tokens=response.usage.output_tokens,
+        )
+
+        log.debug(
+            "Anthropic Tool Use image analysis",
+            model=response.model,
+            tool=tool_name,
+            tokens=usage.total_tokens,
+        )
+
+        return LLMResponse(
+            content=content,
+            usage=usage,
+            model=response.model,
+            finish_reason=response.stop_reason or "unknown",
+        )
 
     def _convert_anthropic_message(self, msg: LLMMessage) -> dict:
         """Convert LLMMessage to Anthropic format."""

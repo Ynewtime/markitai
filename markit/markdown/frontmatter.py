@@ -32,6 +32,10 @@ class Frontmatter:
     processed: str | None = None
     description: str | None = None
     source: str | None = None
+    # Knowledge graph metadata fields
+    entities: list[str] | None = None
+    topics: list[str] | None = None
+    domain: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +50,13 @@ class Frontmatter:
             result["description"] = self.description
         if self.source:
             result["source"] = self.source
+        # Knowledge graph fields
+        if self.entities:
+            result["entities"] = self.entities
+        if self.topics:
+            result["topics"] = self.topics
+        if self.domain:
+            result["domain"] = self.domain
 
         # Add extra fields
         result.update(self.extra)
@@ -55,7 +66,15 @@ class Frontmatter:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Frontmatter":
         """Create from dictionary."""
-        known_fields = {"title", "processed", "description", "source"}
+        known_fields = {
+            "title",
+            "processed",
+            "description",
+            "source",
+            "entities",
+            "topics",
+            "domain",
+        }
         extra = {k: v for k, v in data.items() if k not in known_fields}
 
         return cls(
@@ -63,6 +82,9 @@ class Frontmatter:
             processed=data.get("processed"),
             description=data.get("description"),
             source=data.get("source"),
+            entities=data.get("entities"),
+            topics=data.get("topics"),
+            domain=data.get("domain"),
             extra=extra,
         )
 
@@ -225,7 +247,7 @@ def create_frontmatter(
     """
     return Frontmatter(
         title=_escape_yaml_string(source_file.stem),
-        processed=datetime.now().isoformat(),
+        processed=datetime.now().strftime("%Y-%m-%d"),
         description=_escape_yaml_string(summary) if summary else None,
         source=source_file.name,
         extra=extra or {},
@@ -273,6 +295,29 @@ def _escape_yaml_string(value: str | None) -> str | None:
     return value
 
 
+@dataclass
+class KnowledgeGraphData:
+    """Knowledge graph metadata for image descriptions."""
+
+    entities: list[str] | None = None
+    relationships: list[str] | None = None
+    topics: list[str] | None = None
+    domain: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary, excluding None values."""
+        result = {}
+        if self.entities:
+            result["entities"] = self.entities
+        if self.relationships:
+            result["relationships"] = self.relationships
+        if self.topics:
+            result["topics"] = self.topics
+        if self.domain:
+            result["domain"] = self.domain
+        return result
+
+
 class ImageDescriptionFrontmatter:
     """Handle frontmatter for image description files."""
 
@@ -283,6 +328,7 @@ class ImageDescriptionFrontmatter:
         alt_text: str,
         detailed_description: str,
         detected_text: str | None = None,
+        knowledge_graph: KnowledgeGraphData | None = None,
     ) -> str:
         """Create frontmatter for image description markdown.
 
@@ -292,15 +338,21 @@ class ImageDescriptionFrontmatter:
             alt_text: Short alt text
             detailed_description: Detailed description
             detected_text: OCR-detected text
+            knowledge_graph: Knowledge graph metadata
 
         Returns:
             Complete markdown document for image description
         """
-        frontmatter_data = {
+        frontmatter_data: dict[str, Any] = {
             "source_image": image_filename,
             "image_type": image_type,
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now().strftime("%Y-%m-%d"),
         }
+
+        # Add knowledge graph metadata to frontmatter
+        if knowledge_graph:
+            kg_dict = knowledge_graph.to_dict()
+            frontmatter_data.update(kg_dict)
 
         yaml_str = yaml.dump(
             frontmatter_data,
@@ -324,5 +376,16 @@ class ImageDescriptionFrontmatter:
                     f"\n{detected_text}\n",
                 ]
             )
+
+        # Add knowledge graph section if available
+        if knowledge_graph and knowledge_graph.relationships:
+            content_parts.extend(
+                [
+                    "\n## Relationships\n",
+                    "\n",
+                ]
+            )
+            for rel in knowledge_graph.relationships:
+                content_parts.append(f"- {rel}\n")
 
         return "".join(content_parts)

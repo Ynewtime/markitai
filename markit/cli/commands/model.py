@@ -10,6 +10,10 @@ from rich.table import Table
 
 from markit.cli.shared import get_unique_credentials
 from markit.config import get_settings
+from markit.config.constants import (
+    DEFAULT_HTTP_CLIENT_TIMEOUT,
+    DEFAULT_MODEL_LIST_TIMEOUT,
+)
 from markit.utils.capabilities import infer_capabilities
 from markit.utils.logging import get_logger
 
@@ -32,14 +36,14 @@ def _get_models_sync(
     if provider_name == "openai" and api_key:
         from openai import OpenAI
 
-        client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
+        client = OpenAI(api_key=api_key, base_url=base_url, timeout=DEFAULT_MODEL_LIST_TIMEOUT)
         result = client.models.list()
         models = [{"id": m.id, "created": m.created, "owned_by": m.owned_by} for m in result.data]
 
     elif provider_name == "anthropic" and api_key:
         from anthropic import Anthropic
 
-        client = Anthropic(api_key=api_key, timeout=30.0)
+        client = Anthropic(api_key=api_key, timeout=DEFAULT_MODEL_LIST_TIMEOUT)
         result = client.models.list()
         models = [
             {
@@ -67,7 +71,11 @@ def _get_models_sync(
     elif provider_name == "openrouter" and api_key:
         from openai import OpenAI
 
-        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key, timeout=30.0)
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+            timeout=DEFAULT_MODEL_LIST_TIMEOUT,
+        )
         result = client.models.list()
         models = [{"id": m.id, "created": m.created, "owned_by": m.owned_by} for m in result.data]
 
@@ -75,7 +83,7 @@ def _get_models_sync(
         import httpx
 
         host = base_url or "http://localhost:11434"
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=DEFAULT_HTTP_CLIENT_TIMEOUT) as client:
             response = client.get(f"{host}/api/tags")
             data = response.json()
             models = [
@@ -105,7 +113,9 @@ def add_model() -> None:
             "To use this command, you need to configure at least one credential in markit.yaml."
         )
         console.print()
-        console.print("[bold]Quick fix:[/bold] Run [cyan]markit provider add[/cyan] to add a credential.")
+        console.print(
+            "[bold]Quick fix:[/bold] Run [cyan]markit provider add[/cyan] to add a credential."
+        )
         console.print()
         console.print("Or add a credential manually to your markit.yaml under the llm section:")
         console.print()

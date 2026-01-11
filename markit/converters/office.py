@@ -4,16 +4,22 @@ Converts legacy Office formats (.doc, .ppt, .xls) to modern formats
 (.docx, .pptx, .xlsx) using MS Office (Windows) or LibreOffice (cross-platform).
 """
 
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import anyio
 
 from markit.converters.base import BaseProcessor
+
+if TYPE_CHECKING:
+    from markit.converters.libreoffice_pool import LibreOfficeProfilePool
 from markit.exceptions import ConversionError
 from markit.utils.logging import get_logger
 
@@ -114,7 +120,7 @@ class OfficePreprocessor(BaseProcessor):
             )
             raise ConversionError(file_path, f"Office conversion failed: {e}", cause=e) from e
 
-    def _get_converter(self) -> "_BaseOfficeConverter":
+    def _get_converter(self) -> _BaseOfficeConverter:
         """Get the appropriate Office converter."""
         if self._converter is not None:
             return self._converter
@@ -163,15 +169,19 @@ class LibreOfficeConverter(_BaseOfficeConverter):
         self,
         soffice_path: str | None = None,
         timeout: int = 120,
+        profile_pool: LibreOfficeProfilePool | None = None,
     ) -> None:
         """Initialize LibreOffice converter.
 
         Args:
             soffice_path: Path to soffice executable
             timeout: Conversion timeout in seconds
+            profile_pool: Optional profile pool for concurrent conversions.
+                          If provided, use pooled profiles instead of temp directories.
         """
         self.soffice_path = soffice_path or self._find_soffice()
         self.timeout = timeout
+        self._profile_pool = profile_pool
 
         if not self.soffice_path:
             raise RuntimeError("LibreOffice not found")
@@ -306,6 +316,130 @@ class LibreOfficeConverter(_BaseOfficeConverter):
             ".html": "html",
         }
         return filters.get(target_format, target_format.lstrip("."))
+
+    async def convert_async(
+        self, file_path: Path, target_format: str, converted_dir: Path | None = None
+    ) -> Path:
+        """Convert file asynchronously, using profile pool if available.
+
+        This method uses the profile pool for concurrent conversions if one was
+        provided during initialization. Otherwise, it falls back to the sync
+        convert method wrapped in a thread.
+
+        Args:
+            file_path: Input file path
+            target_format: Target format extension (e.g., '.docx')
+            converted_dir: Optional directory for storing converted files
+
+        Returns:
+            Path to converted file
+        """
+        if self._profile_pool:
+            # Use profile pool for concurrent conversion
+            async with self._profile_pool.acquire() as profile_dir:
+                return await self._convert_with_profile(
+                    file_path, target_format, profile_dir, converted_dir
+                )
+        else:
+            # Fall back to sync conversion in thread
+            return await anyio.to_thread.run_sync(
+                lambda: self.convert(file_path, target_format, converted_dir)
+            )
+
+    async def _convert_with_profile(
+        self,
+        file_path: Path,
+        target_format: str,
+        profile_dir: Path,
+        converted_dir: Path | None = None,
+    ) -> Path:
+        """Convert file using a specific profile directory.
+
+        Args:
+            file_path: Input file path
+            target_format: Target format extension
+            profile_dir: Profile directory to use
+            converted_dir: Optional directory for storing converted files
+
+        Returns:
+            Path to converted file
+        """
+        # Create temp directory for output
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            # Build cross-platform file URI for user profile
+            if sys.platform == "win32":
+                profile_uri = f"file:///{str(profile_dir).replace(os.sep, '/')}"
+            else:
+                profile_uri = f"file://{profile_dir}"
+
+            # Determine output filter
+            filter_name = self._get_filter_name(target_format)
+
+            # Build command with pool profile
+            cmd = [
+                self.soffice_path,
+                "--headless",
+                f"-env:UserInstallation={profile_uri}",
+                "--convert-to",
+                filter_name,
+                "--outdir",
+                str(temp_path),
+                str(file_path),
+            ]
+
+            log.debug("Running LibreOffice (pooled)", command=" ".join(cmd))
+
+            # Run conversion in thread pool
+            try:
+                await anyio.to_thread.run_sync(
+                    lambda: subprocess.run(
+                        cmd,
+                        check=True,
+                        capture_output=True,
+                        timeout=self.timeout,
+                    )
+                )
+            except subprocess.TimeoutExpired as e:
+                raise ConversionError(
+                    file_path,
+                    f"LibreOffice conversion timed out after {self.timeout}s",
+                ) from e
+            except subprocess.CalledProcessError as e:
+                raise ConversionError(
+                    file_path,
+                    f"LibreOffice error: {e.stderr.decode() if e.stderr else 'Unknown error'}",
+                ) from e
+
+            # Find output file
+            output_name = file_path.stem + target_format
+            output_path = temp_path / output_name
+
+            if not output_path.exists():
+                # LibreOffice might use different naming
+                for f in temp_path.iterdir():
+                    if f.suffix.lower() == target_format:
+                        output_path = f
+                        break
+
+            if not output_path.exists():
+                raise ConversionError(
+                    file_path,
+                    "LibreOffice did not produce output file",
+                )
+
+            # Determine final output location
+            if converted_dir:
+                converted_dir.mkdir(parents=True, exist_ok=True)
+                final_path = converted_dir / output_name
+            else:
+                final_path = file_path.parent / output_name
+
+            # Copy converted file to final location
+            shutil.copy2(output_path, final_path)
+
+            return final_path
 
 
 class MSOfficeConverter(_BaseOfficeConverter):

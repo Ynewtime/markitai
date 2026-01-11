@@ -166,9 +166,7 @@ image:
         from markit.config.settings import MarkitSettings
 
         # Check that the settings_customise_sources method returns YamlConfigSettingsSource
-        sources = MarkitSettings.settings_customise_sources(
-            MarkitSettings, None, None, None, None
-        )
+        sources = MarkitSettings.settings_customise_sources(MarkitSettings, None, None, None, None)
 
         # Find YamlConfigSettingsSource in sources
         yaml_source_found = False
