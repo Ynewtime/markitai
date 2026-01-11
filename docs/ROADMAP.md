@@ -1,74 +1,69 @@
 # ROADMAP
 
-## 任务批次 2026011101 - v0.1.1
 
-### 角色
-请担任高级 Python 软件架构师和 DevOps 工程师。
+## 任务批次 2026011102
+
+### 日志优化
+
+参考 archive/batch_20260111_204643_44231f37.log.bak.1 日志，该日志为 `markit batch input/ --llm --analyze-image-with-md --verbose` 记录的文件日志，对应的终端输出参考 `archive/batch_20260111_204643_44231f37.log.bak.2`，请深度分析这两个日志文件的问题并做修复，包括但不限于：
+
+1. `Provider xiaomi/mimo-v2-flash:free initialized on demand` 应为 `Provider <provider-id> initialized on demand`，其中 <provider-id> 对应 `markit.yaml` 文件中的模型提供商 ID。注意这里不单单是做日志优化，业务逻辑也要优化，配置文件中一个 Provider 提供了多种模型，初始化应该验证 Provider，而非 model，我认为不需要对每个模型都做验证，而且从实际代码来看，仅仅是验证 `/models` API，跟模型也没啥关系，实际验证的是 Provider
+2. `2026-01-11T12:46:43.809949Z [debug] Request options:` 补充当前请求的模型 ID，如 `2026-01-11T12:46:43.809949Z [debug] provider=<provider-id> model=model-id> Request options: ...`，其中 <model-id> 对应配置文件中的 models.model 字段。类似的还有：`[debug] HTTP Response: GET`、`[debug] request_id: None`、`[debug] Sending HTTP Request: `、
+3.  `[debug] Conversion plan | fallback=pandoc primary=markitdown` 优化为 `[debug] Conversion plan | primary=markitdown fallback=pandoc file=<file>`，类似的还有 `[debug] Conversion plan | fallback=pymupdf primary=pymupdf4llm`
+4. `[debug] Trying primary converter | converter=markitdown` 优化为 `[debug] Trying primary converter | converter=markitdown file=<file>`，类似的还有 `[debug] Trying primary converter | converter=pymupdf4llm`
+5. `[debug] Running pre-processor | processor=office_preprocessor` 优化为 `[debug] Running pre-processor | processor=office_preprocessor file=<file>`
+6. `[info] Converting legacy Office format | file=/home/oy/Work/markit/input/file-sample_100kB.doc from_format=.doc to_format=.docx` 优化为 `[info] Converting legacy Office format | from_format=.doc to_format=.docx file=/home/oy/Work/markit/input/file-sample_100kB.doc`，类似的还有 `[debug] Calling pymupdf4llm.to_markdown | file=...`
+7. `[info] Using LibreOffice for conversion` 优化为 `[info] Using LibreOffice for conversion | file=<file>`
+8. `[info] Markdown enhancement complete | file=/home/oy/Work/markit/input/file_example_XLSX_100.xlsx` 优化为 `[info] Markdown enhancement complete | file=/home/oy/Work/markit/input/file_example_XLSX_100.xlsx provider=<provider-id> model=<model-id>`
+9. 参考上述规则，继续优化剩余日志信息，如 `[info] Processing images (format/compress) | count=2`、`[debug] Request options: {'method': 'post', 'url': '/chat/completions'...`、`[debug] Document split into chunks | count=1` 等等
+
+### 进展
+
+待启动
+
+
+## 任务批次 2026011103 - v0.1.2
 
 ### 上下文
-你正在分析 `markit` 代码库，这是一个智能文档转 Markdown 的工具。该项目使用了 `typer`、`rich`、`pydantic`、`anyio` 以及多种 LLM SDK。目前的核心逻辑位于 `markit/core/pipeline.py` 中，该文件已演变成一个职责混乱的“上帝类（God Class）”。
+
+当前系统在处理小批量文件时表现良好，但在数千个文件的超大规模批处理、高并发拉满、以及 API 频繁限流（429）等极端场景下的表现尚缺乏系统性验证。为了确保企业级生产环境的稳定性，需要建立专门的高压测试沙盒，并制定长期的架构演进路线。
 
 ### 目标
-重构代码库以提高可维护性、性能和配置管理规范，深度优化 LLM 提示词以适配中文场景，同时确保不改变外部 CLI 的行为。
+
+构建能够模拟极端工况的自动化测试框架，验证系统的极限承载能力和故障恢复机制；并基于测试结果规划自适应并发、优先级队列等高级特性。
 
 ### 任务
 
-#### 第一阶段：架构重构（简化与解耦）
-1.  **拆解 `ConversionPipeline`**：
-    *   分析 `markit/core/pipeline.py`。
-    *   将图像处理逻辑（约第 796-911 行）提取到新的服务 `markit/services/image_processor.py` 中，建立 `ImageProcessingService` 类。
-    *   将 LLM 协调逻辑（约第 512-635 行）提取到 `markit/services/llm_orchestrator.py` 中，建立 `LLMOrchestrator` 类。
-    *   将文件输出逻辑（约第 1084-1238 行）提取到 `markit/services/output_manager.py` 中，建立 `OutputManager` 类。
-    *   更新 `ConversionPipeline` 以注入并使用这些新服务，使其仅作为高层协调者存在。
-2.  **标准化接口**：
-    *   确保所有新服务都实现由抽象基类或 Protocol 定义的清晰异步接口。
+#### 高压沙盒测试（Resilience Testing）
 
-#### 第二阶段：配置管理（最佳实践）
-1.  **移除硬编码值**：
-    *   定位 `markit/core/pipeline.py` 中的 `_get_default_model` 方法。
-    *   将默认模型字典（如 OpenAI: "gpt-5.2" 等）移动到 `markit/config/constants.py` 或 `markit/config/defaults.py` 中。
-    *   更新 `markit/config/settings.py` 以引用这些常量，避免在业务逻辑中硬编码。
-    *   尽可能识别并提取其他硬编码值，尤其是配置相关的。
+1.  **构造测试固件**：
+    *   在 `tests/fixtures/heavy_load/` 下创建生成脚本，支持生成 1,000 ~ 10,000 个轻量级测试文件。
+    *   用于验证 `_discover_files` 的性能及 `state.json` 在大量条目下的读写稳定性。
+2.  **混沌模拟器（Chaos Mock Provider）**：
+    *   实现 `ChaosMockProvider`，不依赖真实 API，专门用于模拟故障。
+    *   **模拟高延迟**：随机 `sleep(30-120s)`，验证内存增长和超时处理。
+    *   **模拟高并发**：强制拉满信号量，验证 `LLMTaskQueue` 的背压（Backpressure）机制，防止 OOM。
+    *   **模拟限流**：随机返回 30%~50% 的 `429 Too Many Requests`，验证指数退避重试逻辑。
+3.  **中断恢复验证**：
+    *   自动化脚本：运行大批量任务 -> 中途发送 `SIGINT` -> 验证 `state.json` -> 使用 `--resume` 重启。
+    *   验证点：确保无缝衔接，无重复 Token 消耗。
 
-#### 第三阶段：性能优化
-1.  **优化 LibreOffice 转换（配置池模式）** (`markit/converters/office.py`)：
-    *   **关键要求**：为了避免 LibreOffice 的并发锁文件冲突，必须实现**互斥访问**的配置池。
-    *   创建一个 `LibreOfficeProfilePool` 类，管理 N 个独立的配置目录（N = 最大并发数）。
-    *   使用 `asyncio.Queue` 或 `contextlib.asynccontextmanager` 来实现“借出/归还”机制。确保在同一时刻，**一个配置目录只能被一个转换任务占用**。
-    *   不要在每次转换后删除目录，而是保留复用。仅在连续失败或处理 X 次后进行重置（清理并重建）。
-2.  **并行图像处理**：
-    *   在新的 `ImageProcessingService` 中，将 CPU 密集型的图像压缩/转换任务（PIL 操作）从 `asyncio.to_thread`（多线程）切换为 `ProcessPoolExecutor`（多进程），以绕过 Python 的全局解释器锁（GIL）并提升性能。
+##### 架构演进规划（Roadmap）
 
-#### 第四阶段：大模型提示词工程（Prompt Engineering）
-1.  **优化文档增强提示词** (`markit/llm/enhancer.py`)：
-    *   **语言规则**：在 `ENHANCEMENT_PROMPT` 和 `SUMMARY_PROMPT` 中明确增加规则，**要求默认使用中文**输出摘要和处理说明（除非文档内容完全是其他语言）。
-    *   **细节完善**：
-        *   增加对技术文档中代码块（Code Blocks）保留的强调，防止误删。
-        *   增加对复杂表格（Tables）格式化的具体指令，确保 Markdown 表格对齐。
-        *   增加去除“扫描件水印”、“页眉页脚干扰字符”的具体示例。
-2.  **优化图像分析提示词** (`markit/image/analyzer.py`)：
-    *   **语言规则**：修改 `IMAGE_ANALYSIS_PROMPT`，明确要求返回的 JSON 字段中 `alt_text`（替代文本）和 `detailed_description`（详细描述）**必须使用中文**。
-    *   **细节完善**：
-        *   增强 `image_type` 的分类描述，使其更精准。
-        *   增加对 OCR 文本 (`detected_text`) 的处理指示：如果是乱码则忽略，如果是关键信息则提取。
-3.  **知识图谱支持**：
-    *   **元数据提取**：新增规则，尽可能提取有利于后续知识图谱改造相关的 meta 元属性信息。
+1.  **自适应并发控制（Adaptive Concurrency）**：
+    *   设计 AIMD（加性增，乘性减）算法：遇 429 减半并发，成功则缓慢爬坡。
+    *   目标：无需用户手动调参即可最大化利用配额且不被封禁。
+2.  **优先级反压队列**：
+    *   重构队列逻辑，确立优先级：`Finalize Phase` (释放内存) > `LLM Analysis` > `File Loading`。
+    *   目标：防止“生产（读文件）”快于“消费（写结果）”导致的内存堆积。
+3.  **死信队列（Dead Letter Queue）**：
+    *   引入 `failed/` 隔离区或永久失败标记。
+    *   目标：防止“毒药文件”在每次 Resume 时反复卡死队列。
+4.  **可观测性增强**：
+    *   优化 `--dry-run` 模式预估 Token 和费用。
+    *   增加实时吞吐量（files/min）和错误率监控指标。
 
-#### 第五阶段：测试与质量（覆盖率）
-1.  **更新测试**：
-    *   在 `tests/unit/services/` 中为新的 `ImageProcessingService`、`LLMOrchestrator` 和 `OutputManager` 创建单元测试。
-    *   重构 `tests/unit/test_pipeline.py`，通过 Mock 这些新服务来仅验证协调逻辑。
-2.  **类型安全**：
-    *   确保所有新代码都能通过 `mypy --strict` 检查。
-
-### 约束条件
-*   **严禁**破坏现有的 CLI 命令（`markit convert`, `markit batch`）及其参数行为。
-*   **严禁**移除现有的日志记录；确保 `structlog` 的上下文信息在新的服务中得以保留。
-*   **代码风格**：严格遵循现有的 `ruff` 和 `mypy` 配置。
-*   **文件操作**：继续使用 `anyio` 进行异步文件 I/O 操作。
-*   
-
-## 进展
+### 进展
 
 待启动
 
@@ -169,9 +164,10 @@
 4. **日志信息不完整**：缺少耗时统计、token 用量、成本估算等关键信息
 5. **缺少执行模式区分**：无法在速度和可靠性间灵活选择
 
-另外，当前系统缺少一次大批量文件输入的 batch 命令测试，以验证程序在超长处理时间、并发拉满、触发模型限额中断等场景的能力。
+另外，
 
-结合工具当前的能力，对于工具的后续规划，你有什么建议吗？
+1）当前系统缺少一次大批量文件输入的 batch 命令测试，如何验证程序在超长处理时间、并发拉满、触发模型限额中断等场景的能力？
+2）结合工具当前的能力，对于工具的后续规划，你有什么建议吗？
 
 ### 改进计划
 
@@ -316,6 +312,78 @@ llm:
 1）`markit config show` 改名为 `markit config list`
 2）`markit config validate` 改名为 `markit config test`
 3）调整 `markit config` 命令顺序为 `init/test/list/locations`
+
+### 进展
+
+已完成
+
+
+## 任务批次 2026011101 - v0.1.1
+
+### 角色
+请担任高级 Python 软件架构师和 DevOps 工程师。
+
+### 上下文
+你正在分析 `markit` 代码库，这是一个智能文档转 Markdown 的工具。该项目使用了 `typer`、`rich`、`pydantic`、`anyio` 以及多种 LLM SDK。目前的核心逻辑位于 `markit/core/pipeline.py` 中，该文件已演变成一个职责混乱的“上帝类（God Class）”。
+
+### 目标
+重构代码库以提高可维护性、性能和配置管理规范，深度优化 LLM 提示词以适配中文场景，同时确保不改变外部 CLI 的行为。
+
+### 任务
+
+#### 第一阶段：架构重构（简化与解耦）
+1.  **拆解 `ConversionPipeline`**：
+    *   分析 `markit/core/pipeline.py`。
+    *   将图像处理逻辑（约第 796-911 行）提取到新的服务 `markit/services/image_processor.py` 中，建立 `ImageProcessingService` 类。
+    *   将 LLM 协调逻辑（约第 512-635 行）提取到 `markit/services/llm_orchestrator.py` 中，建立 `LLMOrchestrator` 类。
+    *   将文件输出逻辑（约第 1084-1238 行）提取到 `markit/services/output_manager.py` 中，建立 `OutputManager` 类。
+    *   更新 `ConversionPipeline` 以注入并使用这些新服务，使其仅作为高层协调者存在。
+2.  **标准化接口**：
+    *   确保所有新服务都实现由抽象基类或 Protocol 定义的清晰异步接口。
+
+#### 第二阶段：配置管理（最佳实践）
+1.  **移除硬编码值**：
+    *   定位 `markit/core/pipeline.py` 中的 `_get_default_model` 方法。
+    *   将默认模型字典（如 OpenAI: "gpt-5.2" 等）移动到 `markit/config/constants.py` 或 `markit/config/defaults.py` 中。
+    *   更新 `markit/config/settings.py` 以引用这些常量，避免在业务逻辑中硬编码。
+    *   尽可能识别并提取其他硬编码值，尤其是配置相关的。
+
+#### 第三阶段：性能优化
+1.  **优化 LibreOffice 转换（配置池模式）** (`markit/converters/office.py`)：
+    *   **关键要求**：为了避免 LibreOffice 的并发锁文件冲突，必须实现**互斥访问**的配置池。
+    *   创建一个 `LibreOfficeProfilePool` 类，管理 N 个独立的配置目录（N = 最大并发数）。
+    *   使用 `asyncio.Queue` 或 `contextlib.asynccontextmanager` 来实现“借出/归还”机制。确保在同一时刻，**一个配置目录只能被一个转换任务占用**。
+    *   不要在每次转换后删除目录，而是保留复用。仅在连续失败或处理 X 次后进行重置（清理并重建）。
+2.  **并行图像处理**：
+    *   在新的 `ImageProcessingService` 中，将 CPU 密集型的图像压缩/转换任务（PIL 操作）从 `asyncio.to_thread`（多线程）切换为 `ProcessPoolExecutor`（多进程），以绕过 Python 的全局解释器锁（GIL）并提升性能。
+
+#### 第四阶段：大模型提示词工程（Prompt Engineering）
+1.  **优化文档增强提示词** (`markit/llm/enhancer.py`)：
+    *   **语言规则**：在 `ENHANCEMENT_PROMPT` 和 `SUMMARY_PROMPT` 中明确增加规则，**要求默认使用中文**输出摘要和处理说明（除非文档内容完全是其他语言）。
+    *   **细节完善**：
+        *   增加对技术文档中代码块（Code Blocks）保留的强调，防止误删。
+        *   增加对复杂表格（Tables）格式化的具体指令，确保 Markdown 表格对齐。
+        *   增加去除“扫描件水印”、“页眉页脚干扰字符”的具体示例。
+2.  **优化图像分析提示词** (`markit/image/analyzer.py`)：
+    *   **语言规则**：修改 `IMAGE_ANALYSIS_PROMPT`，明确要求返回的 JSON 字段中 `alt_text`（替代文本）和 `detailed_description`（详细描述）**必须使用中文**。
+    *   **细节完善**：
+        *   增强 `image_type` 的分类描述，使其更精准。
+        *   增加对 OCR 文本 (`detected_text`) 的处理指示：如果是乱码则忽略，如果是关键信息则提取。
+3.  **知识图谱支持**：
+    *   **元数据提取**：新增规则，尽可能提取有利于后续知识图谱改造相关的 meta 元属性信息。
+
+#### 第五阶段：测试与质量（覆盖率）
+1.  **更新测试**：
+    *   在 `tests/unit/services/` 中为新的 `ImageProcessingService`、`LLMOrchestrator` 和 `OutputManager` 创建单元测试。
+    *   重构 `tests/unit/test_pipeline.py`，通过 Mock 这些新服务来仅验证协调逻辑。
+2.  **类型安全**：
+    *   确保所有新代码都能通过 `mypy --strict` 检查。
+
+### 约束条件
+*   **严禁**破坏现有的 CLI 命令（`markit convert`, `markit batch`）及其参数行为。
+*   **严禁**移除现有的日志记录；确保 `structlog` 的上下文信息在新的服务中得以保留。
+*   **代码风格**：严格遵循现有的 `ruff` 和 `mypy` 配置。
+*   **文件操作**：继续使用 `anyio` 进行异步文件 I/O 操作。
 
 ### 进展
 

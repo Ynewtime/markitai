@@ -122,9 +122,36 @@ DEFAULT_RETRY_MAX_WAIT = 60
 DEFAULT_LLM_TIMEOUT = 120
 DEFAULT_CONVERSION_TIMEOUT = 300  # 5 minutes
 
+# Concurrent fallback settings
+DEFAULT_CONCURRENT_FALLBACK_TIMEOUT = 60  # Trigger fallback after N seconds
+DEFAULT_MAX_REQUEST_TIMEOUT = 300  # Absolute timeout - force interrupt after 5 minutes
+DEFAULT_CONCURRENT_FALLBACK_ENABLED = True  # Enable concurrent fallback by default
+
+# CLI/Provider test timeouts
+DEFAULT_PROVIDER_TEST_TIMEOUT = 10.0  # Provider validation timeout
+DEFAULT_MODEL_LIST_TIMEOUT = 30.0  # Model listing API timeout
+DEFAULT_HTTP_CLIENT_TIMEOUT = 10.0  # General HTTP client timeout
+DEFAULT_OLLAMA_HEALTH_TIMEOUT = 5.0  # Ollama health check timeout
+
+# Response validation
+MIN_VALID_RESPONSE_LENGTH = 10  # Minimum length for valid LLM response
+
+# Prompts directory
+DEFAULT_PROMPTS_DIR = "prompts"
+
 # Chunk settings
 # Optimized for Gemini 3 Flash (1.05M context, 65.5K output)
 # 32K tokens per chunk allows ~3 chunks for a 100K token document
 # This dramatically reduces LLM calls while staying well within limits
 DEFAULT_CHUNK_SIZE = 32000  # tokens (was 4000)
 DEFAULT_CHUNK_OVERLAP = 500  # tokens (increased for better context continuity)
+
+# LibreOffice profile pool settings
+DEFAULT_LIBREOFFICE_POOL_SIZE = 8
+DEFAULT_LIBREOFFICE_PROFILE_DIR = ".markit-lo-profiles"
+DEFAULT_LIBREOFFICE_RESET_AFTER_FAILURES = 3
+DEFAULT_LIBREOFFICE_RESET_AFTER_USES = 100
+
+# Image processing pool settings
+DEFAULT_PROCESS_POOL_THRESHOLD = 5  # Use process pool when >= N images
+DEFAULT_PROCESS_POOL_MAX_WORKERS = 4

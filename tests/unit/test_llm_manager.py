@@ -139,22 +139,48 @@ async def test_all_providers_fail(provider_manager, mock_providers):
 
 
 @pytest.mark.asyncio
-async def test_image_analysis_round_robin(provider_manager, mock_providers):
-    """Test round robin for image analysis sharing same counter."""
-    # Reset index manually for predictability
-    provider_manager._current_index = 0
+async def test_image_analysis_prioritizes_last_successful(provider_manager, mock_providers):
+    """Test that image analysis prioritizes last successful provider for same capability.
 
-    # 1st call -> openai
+    This behavior was changed from round-robin to improve performance and reliability.
+    The first successful call sets the preferred provider for subsequent calls.
+    """
+    # Reset state for predictability
+    provider_manager._current_index = 0
+    provider_manager._last_successful_provider.clear()
+
+    # 1st call -> openai (round-robin starts with openai)
     await provider_manager.analyze_image_with_fallback(b"data", "prompt")
     assert mock_providers["openai_gpt-4"].analyze_image.called
     assert not mock_providers["anthropic_claude"].analyze_image.called
 
     mock_providers["openai_gpt-4"].analyze_image.reset_mock()
 
-    # 2nd call -> anthropic
+    # 2nd call -> still openai (prioritizes last successful provider)
     await provider_manager.analyze_image_with_fallback(b"data", "prompt")
-    assert mock_providers["anthropic_claude"].analyze_image.called
-    assert not mock_providers["openai_gpt-4"].analyze_image.called
+    assert mock_providers["openai_gpt-4"].analyze_image.called
+    assert not mock_providers["anthropic_claude"].analyze_image.called
+
+
+@pytest.mark.asyncio
+async def test_image_analysis_falls_back_on_failure(provider_manager, mock_providers):
+    """Test that image analysis falls back when preferred provider fails."""
+    # Reset state for predictability
+    provider_manager._current_index = 0
+    provider_manager._last_successful_provider.clear()
+
+    # 1st call -> openai succeeds, sets as preferred
+    await provider_manager.analyze_image_with_fallback(b"data", "prompt")
+    assert mock_providers["openai_gpt-4"].analyze_image.called
+
+    # Reset and make openai fail
+    mock_providers["openai_gpt-4"].analyze_image.reset_mock()
+    mock_providers["openai_gpt-4"].analyze_image.side_effect = Exception("Provider failed")
+
+    # 2nd call -> openai fails, falls back to anthropic
+    await provider_manager.analyze_image_with_fallback(b"data", "prompt")
+    assert mock_providers["openai_gpt-4"].analyze_image.called  # Tried first
+    assert mock_providers["anthropic_claude"].analyze_image.called  # Fallback succeeded
 
 
 class TestProviderManagerInit:

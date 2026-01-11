@@ -15,6 +15,12 @@ from rich.table import Table
 
 from markit.cli.shared import get_unique_credentials
 from markit.config import get_settings
+from markit.config.constants import (
+    DEFAULT_HTTP_CLIENT_TIMEOUT,
+    DEFAULT_MODEL_LIST_TIMEOUT,
+    DEFAULT_OLLAMA_HEALTH_TIMEOUT,
+    DEFAULT_PROVIDER_TEST_TIMEOUT,
+)
 from markit.utils.logging import get_logger
 
 # Default cache directory for markit
@@ -409,7 +415,7 @@ def add_credential(
 async def _test_openai(
     api_key: str,
     base_url: str | None = None,
-    timeout: float = 10.0,
+    timeout: float = DEFAULT_PROVIDER_TEST_TIMEOUT,
 ) -> ProviderTestResult:
     """Test OpenAI connectivity using models.list() endpoint."""
     from openai import AsyncOpenAI
@@ -439,7 +445,9 @@ async def _test_openai(
         )
 
 
-async def _test_anthropic(api_key: str, timeout: float = 10.0) -> ProviderTestResult:
+async def _test_anthropic(
+    api_key: str, timeout: float = DEFAULT_PROVIDER_TEST_TIMEOUT
+) -> ProviderTestResult:
     """Test Anthropic connectivity using models.list() endpoint."""
     from anthropic import AsyncAnthropic
 
@@ -490,7 +498,9 @@ async def _test_gemini(api_key: str) -> ProviderTestResult:
         )
 
 
-async def _test_openrouter(api_key: str, timeout: float = 10.0) -> ProviderTestResult:
+async def _test_openrouter(
+    api_key: str, timeout: float = DEFAULT_PROVIDER_TEST_TIMEOUT
+) -> ProviderTestResult:
     """Test OpenRouter connectivity using models endpoint."""
     from openai import AsyncOpenAI
 
@@ -525,7 +535,7 @@ async def _test_ollama(host: str = "http://localhost:11434") -> ProviderTestResu
 
     start = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=DEFAULT_OLLAMA_HEALTH_TIMEOUT) as client:
             # First check health endpoint
             response = await client.get(host)
             if response.status_code != 200 or "Ollama is running" not in response.text:
@@ -777,7 +787,7 @@ async def _get_openai_models(
     client = AsyncOpenAI(
         api_key=api_key,
         base_url=base_url,
-        timeout=30.0,
+        timeout=DEFAULT_MODEL_LIST_TIMEOUT,
     )
     models = await client.models.list()
     return [
@@ -794,7 +804,7 @@ async def _get_anthropic_models(api_key: str) -> list[dict[str, Any]]:
     """Get Anthropic models list."""
     from anthropic import AsyncAnthropic
 
-    client = AsyncAnthropic(api_key=api_key, timeout=30.0)
+    client = AsyncAnthropic(api_key=api_key, timeout=DEFAULT_MODEL_LIST_TIMEOUT)
     models = await client.models.list()
     return [
         {
@@ -829,7 +839,7 @@ async def _get_openrouter_models(api_key: str) -> list[dict[str, Any]]:
     client = AsyncOpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=api_key,
-        timeout=30.0,
+        timeout=DEFAULT_MODEL_LIST_TIMEOUT,
     )
     models = await client.models.list()
     return [
@@ -846,7 +856,7 @@ async def _get_ollama_models(host: str) -> list[dict[str, Any]]:
     """Get Ollama models list."""
     import httpx
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_HTTP_CLIENT_TIMEOUT) as client:
         response = await client.get(f"{host}/api/tags")
         data = response.json()
         return [

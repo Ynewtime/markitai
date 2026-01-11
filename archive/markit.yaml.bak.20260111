@@ -1,0 +1,228 @@
+# MarkIt Configuration
+# Run `markit provider add` to configure LLM providers interactively.
+
+log_level: "INFO" # DEBUG, INFO, WARNING, ERROR, CRITICAL
+state_file: ".markit-state.json" # State file for batch resume
+
+image:
+  enable_compression: true # PNG/JPEG compression
+  png_optimization_level: 2 # 0-6, higher = slower
+  jpeg_quality: 85 # 0-100
+  max_dimension: 2048 # Max image size in pixels
+  enable_analysis: false # LLM-based image analysis
+  filter_small_images: true # Filter decorative images
+  min_dimension: 100 # Min width/height to keep
+  min_area: 40000 # Min area (e.g., 200x200)
+  min_file_size: 10240 # Min file size in bytes
+
+concurrency:
+  file_workers: 4 # Concurrent files in batch mode
+  image_workers: 8 # Concurrent image processing
+  llm_workers: 5 # Concurrent LLM requests
+
+pdf:
+  engine: "pymupdf4llm" # pymupdf4llm, pymupdf, pdfplumber, markitdown
+  extract_images: true
+  ocr_enabled: false
+
+enhancement: # LLM-powered features (requires --llm flag)
+  enabled: false
+  remove_headers_footers: true
+  fix_heading_levels: true
+  add_frontmatter: true
+  generate_summary: true
+  chunk_size: 32000 # Tokens per chunk
+  chunk_overlap: 500
+
+output:
+  default_dir: "output"
+  on_conflict: "rename" # skip, overwrite, rename
+  create_assets_subdir: true
+  generate_image_descriptions: true
+
+prompt:
+  output_language: "zh" # zh, en, auto
+  prompts_dir: "prompts" # Default prompts directory
+  # Custom prompt file paths (override defaults in prompts/)
+  # image_analysis_prompt: "my_prompts/image_analysis.md"
+  # enhancement_prompt: "my_prompts/enhancement.md"
+  # summary_prompt: "my_prompts/summary.md"
+
+# LLM Configuration - Use `markit provider add` to add credentials
+llm:
+  # Concurrent fallback settings
+  concurrent_fallback_enabled: true # Enable smart concurrent fallback
+  concurrent_fallback_timeout: 60 # Seconds before starting backup model
+  max_request_timeout: 300 # Absolute timeout (5 min), force interrupt
+
+  credentials:
+    - id: openai
+      provider: openai
+      api_key_env: OPENAI_API_KEY
+    - id: deepseek
+      provider: openai
+      base_url: https://api.deepseek.com
+      api_key_env: DEEPSEEK_API_KEY
+    - id: anthropic
+      provider: anthropic
+      api_key_env: ANTHROPIC_API_KEY
+    - id: gemini
+      provider: gemini
+      api_key_env: GOOGLE_API_KEY
+    - id: openrouter
+      provider: openrouter
+      base_url: https://openrouter.ai/api/v1
+      api_key_env: OPENROUTER_API_KEY
+
+  # Model Configuration - Use `markit model add` to add model
+  # Cost prices updated: 2026-01-11 (USD per 1M tokens)
+  # Cost prices updated: 2026-01-11 (USD per 1M tokens)
+  models:
+    # === Free / Ultra Low Cost ===
+    - name: xiaomi/mimo-v2-flash:free
+      model: xiaomi/mimo-v2-flash:free
+      credential_id: openrouter
+      capabilities: [text]
+      cost:
+        input_per_1m: 0.0 # Free tier (paid: $0.10)
+        output_per_1m: 0.0 # Free tier (paid: $0.30)
+
+    # === DeepSeek (Best Value - Updated Jan 2026) ===
+    - name: deepseek-chat
+      model: deepseek-chat
+      credential_id: deepseek
+      capabilities: [text]
+      cost:
+        input_per_1m: 0.28 # Cache miss: $0.28, Cache hit: $0.028
+        output_per_1m: 0.42
+        cached_input_per_1m: 0.028 # 90% cache hit discount
+
+    - name: deepseek-reasoner
+      model: deepseek-reasoner
+      credential_id: deepseek
+      capabilities: [text]
+      cost:
+        input_per_1m: 0.28 # Cache miss: $0.28, Cache hit: $0.028
+        output_per_1m: 0.42
+        cached_input_per_1m: 0.028 # 90% cache hit discount
+
+    # === Google Gemini (Updated Jan 2026) ===
+    - name: gemini-2.5-flash
+      model: models/gemini-2.5-flash
+      credential_id: gemini
+      capabilities: [text, vision]
+      cost:
+        input_per_1m: 0.30 # Text/image/video
+        output_per_1m: 2.50
+        cached_input_per_1m: 0.03
+
+    - name: gemini-2.5-pro
+      model: models/gemini-2.5-pro
+      credential_id: gemini
+      capabilities: [text, vision]
+      cost:
+        input_per_1m: 1.25 # ≤200K context, $2.50 for >200K
+        output_per_1m: 10.00 # ≤200K context, $15.00 for >200K
+        cached_input_per_1m: 0.125 # ≤200K context, $0.25 for >200K
+
+    - name: gemini-3-flash-preview
+      model: models/gemini-3-flash-preview
+      credential_id: gemini
+      capabilities: [text, vision]
+      cost:
+        input_per_1m: 0.50
+        output_per_1m: 3.00
+        cached_input_per_1m: 0.05
+
+    - name: gemini-3-pro-preview
+      model: models/gemini-3-pro-preview
+      credential_id: gemini
+      capabilities: [text, vision]
+      cost:
+        input_per_1m: 2 # ≤200K context, $4 for >200K
+        output_per_1m: 12 # ≤200K context, $18 for >200K
+        cached_input_per_1m: 0.2 # ≤200K context, $0.4 for >200K
+
+    # === OpenAI (Updated Jan 2026) ===
+    - name: gpt-4o-mini
+      model: gpt-4o-mini
+      credential_id: openai
+      capabilities: [text, vision]
+      cost:
+        input_per_1m: 0.15
+        output_per_1m: 0.6
+        cached_input_per_1m: 0.075 # 50% cache discount
+
+    - name: gpt-4o
+      model: gpt-4o
+      credential_id: openai
+      capabilities: [text, vision]
+      cost:
+        input_per_1m: 2.5
+        output_per_1m: 10.00
+        cached_input_per_1m: 1.25 # 50% cache discount
+
+    - name: gpt-5.2
+      model: gpt-5.2
+      credential_id: openai
+      capabilities: [text, vision]
+      cost:
+        input_per_1m: 1.75
+        output_per_1m: 14.00
+        cached_input_per_1m: 0.175 # Cache discount
+
+    # === Anthropic Claude (Updated Jan 2026) ===
+    - name: claude-haiku-4-5
+      model: claude-haiku-4-5-20251001
+      credential_id: anthropic
+      capabilities: [text, vision]
+      cost:
+        input_per_1m: 1.00
+        output_per_1m: 5.00
+        cached_input_per_1m: 0.10 # 90% cache read discount
+
+    - name: claude-sonnet-4-5
+      model: claude-sonnet-4-5-20250929
+      credential_id: anthropic
+      capabilities: [text, vision]
+      cost:
+        input_per_1m: 3.00
+        output_per_1m: 15.00
+        cached_input_per_1m: 0.30 # 90% cache read discount
+
+    - name: claude-opus-4-5
+      model: claude-opus-4-5-20251101
+      credential_id: anthropic
+      capabilities: [text, vision]
+      cost:
+        input_per_1m: 5.00
+        output_per_1m: 25.00
+        cached_input_per_1m: 0.50  # 90% cache read discount
+
+    # === OpenRouter (Third-party) ===
+    - name: google/gemini-3-flash-preview
+      model: google/gemini-3-flash-preview
+      credential_id: openrouter
+      capabilities: [text, vision]
+      cost:
+        input_per_1m: 0.50
+        output_per_1m: 3.00
+        cached_input_per_1m: 0.05 # 90% cache read discount
+
+    - name: z-ai/glm-4.7
+      model: z-ai/glm-4.7
+      credential_id: openrouter
+      capabilities: [text]
+      cost:
+        input_per_1m: 0.45
+        output_per_1m: 2.10
+        cached_input_per_1m: 0.08
+
+    - name: minimax/minimax-m2.1
+      model: minimax/minimax-m2.1
+      credential_id: openrouter
+      capabilities: [text]
+      cost:
+        input_per_1m: 0.30
+        output_per_1m: 1.20
+        cached_input_per_1m: 0.03

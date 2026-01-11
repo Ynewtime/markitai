@@ -58,8 +58,21 @@ output:
   create_assets_subdir: true
   generate_image_descriptions: true
 
+prompt:
+  output_language: "zh"  # zh, en, auto
+  prompts_dir: "prompts"  # Default prompts directory
+  # Custom prompt file paths (override defaults in prompts/)
+  # image_analysis_prompt: "my_prompts/image_analysis.md"
+  # enhancement_prompt: "my_prompts/enhancement.md"
+  # summary_prompt: "my_prompts/summary.md"
+
 # LLM Configuration - Use `markit provider add` to add credentials
 # llm:
+#   # Concurrent fallback settings
+#   concurrent_fallback_enabled: true  # Enable smart concurrent fallback
+#   concurrent_fallback_timeout: 60  # Seconds before starting backup model
+#   max_request_timeout: 300  # Absolute timeout (5 min), force interrupt
+#
 #   credentials:
 #     - id: "deepseek"
 #       provider: "openai"  # openai, anthropic, gemini, ollama, openrouter
@@ -188,6 +201,10 @@ def list_config() -> None:
     # Enhancement settings
     table.add_row("LLM Enhancement", str(settings.enhancement.enabled))
     table.add_row("Add Frontmatter", str(settings.enhancement.add_frontmatter))
+
+    # Prompt settings
+    table.add_row("Output Language", settings.prompt.output_language)
+    table.add_row("Prompts Directory", settings.prompt.prompts_dir)
 
     # Concurrency settings
     table.add_row("File Workers", str(settings.concurrency.file_workers))

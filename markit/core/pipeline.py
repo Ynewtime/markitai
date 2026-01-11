@@ -1,11 +1,15 @@
-"""Core conversion pipeline."""
+"""Core conversion pipeline.
+
+This module provides the main ConversionPipeline class that orchestrates
+document conversion. It delegates to specialized services:
+- ImageProcessingService: Image format conversion, compression, deduplication
+- LLMOrchestrator: LLM provider management, enhancement, analysis
+- OutputManager: File writing, conflict resolution
+"""
 
 import asyncio
-import hashlib
-import re
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
-from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +17,15 @@ from markit.config.settings import MarkitSettings
 from markit.converters.base import ConversionPlan, ConversionResult
 from markit.core.router import FormatRouter
 from markit.exceptions import ConversionError
+from markit.services.image_processor import (
+    ImageProcessingConfig,
+    ImageProcessingService,
+    ProcessedImageInfo,
+    _generate_image_filename,
+    _sanitize_filename,
+)
+from markit.services.llm_orchestrator import LLMOrchestrator
+from markit.services.output_manager import OutputManager
 from markit.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -25,53 +38,15 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
-
-def _sanitize_filename(name: str) -> str:
-    """Sanitize a filename by removing/replacing problematic characters.
-
-    Args:
-        name: Original filename
-
-    Returns:
-        Sanitized filename safe for filesystem use
-    """
-    # Replace problematic characters with underscores
-    sanitized = re.sub(r'[<>:"/\\|?*]', "_", name)
-    # Replace multiple underscores/spaces with single underscore
-    sanitized = re.sub(r"[_\s]+", "_", sanitized)
-    # Remove leading/trailing underscores
-    sanitized = sanitized.strip("_")
-    return sanitized
-
-
-def _generate_image_filename(original_file: Path, image_index: int, image_format: str) -> str:
-    """Generate standardized image filename.
-
-    Format: <original_filename>.<original_extension>.<index>.<image_format>
-    Example: file-sample_100kB.doc.001.jpeg
-
-    Args:
-        original_file: Original input file path
-        image_index: 1-based index of the image
-        image_format: Image format extension (png, jpeg, etc.)
-
-    Returns:
-        Standardized image filename
-    """
-    # Get the full original filename (name + extension)
-    original_name = original_file.name
-    # Sanitize the filename
-    safe_name = _sanitize_filename(original_name)
-    # Generate filename: <name>.<ext>.<index>.<format>
-    return f"{safe_name}.{image_index:03d}.{image_format}"
-
-
-@dataclass
-class ProcessedImageInfo:
-    """Information about a processed image including analysis results."""
-
-    filename: str
-    analysis: "ImageAnalysis | None" = None
+# Re-export for backward compatibility
+__all__ = [
+    "ConversionPipeline",
+    "DocumentConversionResult",
+    "PipelineResult",
+    "ProcessedImageInfo",
+    "_generate_image_filename",
+    "_sanitize_filename",
+]
 
 
 @dataclass
@@ -113,13 +88,19 @@ class DocumentConversionResult:
 class ConversionPipeline:
     """Main conversion pipeline orchestrator.
 
-    Handles the complete conversion flow:
+    This class orchestrates the document conversion flow by delegating to
+    specialized services:
+    - ImageProcessingService: Image format conversion, compression, deduplication
+    - LLMOrchestrator: LLM provider management, enhancement, analysis
+    - OutputManager: File writing, conflict resolution
+
+    The conversion flow:
     1. Route file to appropriate converter
     2. Pre-process if needed (e.g., Office conversion)
     3. Convert to Markdown
-    4. Process images (extract, convert, compress)
-    5. Optionally enhance with LLM
-    6. Write output
+    4. Process images (extract, convert, compress) via ImageProcessingService
+    5. Optionally enhance with LLM via LLMOrchestrator
+    6. Write output via OutputManager
     """
 
     def __init__(
@@ -133,6 +114,10 @@ class ConversionPipeline:
         llm_provider: str | None = None,
         llm_model: str | None = None,
         use_concurrent_fallback: bool = False,
+        # Dependency injection (optional, for testing)
+        image_processor: ImageProcessingService | None = None,
+        llm_orchestrator: LLMOrchestrator | None = None,
+        output_manager: OutputManager | None = None,
     ) -> None:
         """Initialize the conversion pipeline.
 
@@ -147,6 +132,9 @@ class ConversionPipeline:
             llm_model: Override LLM model
             use_concurrent_fallback: Enable concurrent fallback for LLM calls
                                      (starts backup model if primary exceeds timeout)
+            image_processor: Optional ImageProcessingService instance (for DI/testing)
+            llm_orchestrator: Optional LLMOrchestrator instance (for DI/testing)
+            output_manager: Optional OutputManager instance (for DI/testing)
         """
         self.settings = settings
         self.llm_enabled = llm_enabled
@@ -167,7 +155,31 @@ class ConversionPipeline:
             min_image_size=settings.image.min_file_size,
         )
 
-        # Lazy-loaded components
+        # Initialize services (with DI support)
+        self._image_processor = image_processor or ImageProcessingService(
+            config=ImageProcessingConfig(
+                compress_images=compress_images,
+                png_optimization_level=settings.image.png_optimization_level,
+                jpeg_quality=settings.image.jpeg_quality,
+                max_dimension=settings.image.max_dimension,
+            ),
+        )
+
+        self._llm_orchestrator = llm_orchestrator or LLMOrchestrator(
+            llm_config=settings.llm,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            enhancement_chunk_size=settings.enhancement.chunk_size,
+            use_concurrent_fallback=use_concurrent_fallback,
+        )
+
+        self._output_manager = output_manager or OutputManager(
+            on_conflict=settings.output.on_conflict,
+            create_assets_subdir=settings.output.create_assets_subdir,
+            generate_image_descriptions=analyze_image_with_md,
+        )
+
+        # Legacy lazy-loaded components (for backward compatibility during transition)
         self._provider_manager: ProviderManager | None = None
         self._provider_manager_initialized = False
         self._enhancer: MarkdownEnhancer | None = None
@@ -267,25 +279,16 @@ class ConversionPipeline:
 
         Only performs warmup if LLM features are enabled (llm_enabled or analyze_image).
         """
-        if not (self.llm_enabled or self.analyze_image or self.analyze_image_with_md):
-            log.debug("LLM features not enabled, skipping warmup")
-            return
-
-        log.debug("Warming up LLM providers...")
-
-        # Force non-lazy initialization to validate providers upfront
-        manager = self._get_provider_manager()
-        caps = self._get_required_capabilities()
-        await manager.initialize(required_capabilities=caps, lazy=False)
-
-        log.debug(
-            "LLM providers warmed up",
-            valid_providers=manager.available_providers,
-            capabilities=caps,
+        # Delegate to LLMOrchestrator
+        await self._llm_orchestrator.warmup(
+            llm_enabled=self.llm_enabled,
+            analyze_image=self.analyze_image or self.analyze_image_with_md,
         )
 
     def _get_default_model(self, provider: str) -> str:
         """Get default model for a provider.
+
+        Delegates to LLMOrchestrator for consistency.
 
         Args:
             provider: LLM provider name
@@ -296,68 +299,28 @@ class ConversionPipeline:
         Raises:
             ValueError: If provider is not supported
         """
-        defaults = {
-            "openai": "gpt-5.2",
-            "anthropic": "claude-sonnet-4-5",
-            "gemini": "gemini-3-flash-preview",
-            "ollama": "llama3.2",
-            "openrouter": "google/gemini-3-flash-preview",
-        }
-        if provider not in defaults:
-            raise ValueError(
-                f"No default model configured for provider '{provider}'. "
-                f"Please specify a model explicitly using --llm-model. "
-                f"Supported providers: {', '.join(defaults.keys())}"
-            )
-        return defaults[provider]
+        return self._llm_orchestrator._get_default_model(provider)
 
     async def _get_enhancer_async(self) -> "MarkdownEnhancer":
-        """Get or create the Markdown enhancer (async, thread-safe)."""
-        if self._enhancer is not None:
-            return self._enhancer
+        """Get or create the Markdown enhancer (async, thread-safe).
 
-        async with self._enhancer_lock:
-            if self._enhancer is None:
-                from markit.llm.enhancer import EnhancementConfig, MarkdownEnhancer
-
-                provider_manager = await self._get_provider_manager_async()
-                self._enhancer = MarkdownEnhancer(
-                    provider_manager=provider_manager,
-                    config=EnhancementConfig(
-                        chunk_size=self.settings.enhancement.chunk_size,
-                    ),
-                    use_concurrent_fallback=self.use_concurrent_fallback,
-                )
-        return self._enhancer
+        Delegates to LLMOrchestrator.
+        """
+        return await self._llm_orchestrator.get_enhancer()
 
     def _get_image_compressor(self) -> "ImageCompressor":
-        """Get or create the image compressor."""
-        if self._image_compressor is None:
-            from markit.image.compressor import CompressionConfig, ImageCompressor
+        """Get or create the image compressor.
 
-            self._image_compressor = ImageCompressor(
-                config=CompressionConfig(
-                    png_optimization_level=self.settings.image.png_optimization_level,
-                    jpeg_quality=self.settings.image.jpeg_quality,
-                    max_dimension=self.settings.image.max_dimension,
-                ),
-            )
-        return self._image_compressor
+        Delegates to ImageProcessingService.
+        """
+        return self._image_processor._get_image_compressor()
 
     async def _get_image_analyzer_async(self) -> "ImageAnalyzer":
-        """Get or create the image analyzer (async, thread-safe)."""
-        if self._image_analyzer is not None:
-            return self._image_analyzer
+        """Get or create the image analyzer (async, thread-safe).
 
-        async with self._analyzer_lock:
-            if self._image_analyzer is None:
-                from markit.image.analyzer import ImageAnalyzer
-
-                provider_manager = await self._get_provider_manager_async()
-                self._image_analyzer = ImageAnalyzer(
-                    provider_manager=provider_manager,
-                )
-        return self._image_analyzer
+        Delegates to LLMOrchestrator.
+        """
+        return await self._llm_orchestrator.get_image_analyzer()
 
     def convert_file(self, input_file: Path, output_dir: Path) -> PipelineResult:
         """Convert a single file synchronously.
@@ -431,47 +394,30 @@ class ConversionPipeline:
             # 3. Convert to Markdown
             conversion_result = await self._convert_with_fallback(current_file, plan)
 
-            # 4. Process images (format conversion, deduplication, compression only, no LLM)
+            # 4. Process images via ImageProcessingService
             processed_images = []
-            images_for_analysis = []
+            images_for_analysis: list[CompressedImage] = []
             markdown = conversion_result.markdown
 
             if conversion_result.images:
                 log.info("Processing images (format/compress)", count=len(conversion_result.images))
 
-                # Use parallel optimization
-                processed_images, filename_map = await self._optimize_images_parallel(
+                # Delegate to ImageProcessingService
+                (
+                    processed_images,
+                    filename_map,
+                ) = await self._image_processor.optimize_images_parallel(
                     conversion_result.images, input_file
                 )
 
-                # Update markdown references
-                for old_filename, new_filename in filename_map.items():
-                    if new_filename:
-                        markdown = markdown.replace(
-                            f"assets/{old_filename}", f"assets/{new_filename}"
-                        )
-                        markdown = markdown.replace(f"({old_filename})", f"({new_filename})")
-                    else:
-                        # Image processing failed, remove references
-                        markdown = markdown.replace(f"![](assets/{old_filename})", "")
-                        markdown = markdown.replace(f"![{old_filename}](assets/{old_filename})", "")
-                        markdown = markdown.replace(f"![]({old_filename})", "")
-                        markdown = markdown.replace(f"![{old_filename}]({old_filename})", "")
+                # Update markdown references via service helper
+                markdown = self._image_processor.update_markdown_references(markdown, filename_map)
 
                 # Prepare for LLM analysis if enabled
                 if self.analyze_image:
-                    for img in processed_images:
-                        images_for_analysis.append(
-                            CompressedImage(
-                                data=img.data,
-                                format=img.format,
-                                filename=img.filename,
-                                original_size=len(img.data),
-                                compressed_size=len(img.data),
-                                width=img.width or 0,
-                                height=img.height or 0,
-                            )
-                        )
+                    images_for_analysis = self._image_processor.prepare_for_analysis(
+                        processed_images
+                    )
 
             # Update conversion result with processed images and markdown
             updated_result = ConversionResult(
@@ -528,45 +474,24 @@ class ConversionPipeline:
         Returns:
             List of coroutines (not awaited) for LLM tasks
         """
-        tasks: list[Coroutine[Any, Any, Any]] = []
-
         if not doc_result.success:
-            return tasks
+            return []
 
-        # Image analysis tasks
-        if self.analyze_image and doc_result.images_for_analysis:
-            # Check vision capability
-            # Note: _get_provider_manager_async() initializes the manager if needed
-            manager = await self._get_provider_manager_async()
-            if not manager.has_capability("vision"):
-                log.warning(
-                    "Image analysis enabled but no vision-capable model configured. "
-                    "Skipping image analysis tasks."
-                )
-            else:
-                for img in doc_result.images_for_analysis:
-                    # Create analysis coroutine (will be awaited by caller)
-                    tasks.append(self._create_image_analysis_task(img))
-
-        # Markdown enhancement task
-        if self.llm_enabled:
-            tasks.append(
-                self._create_enhancement_task(doc_result.markdown_content, doc_result.input_file)
-            )
-
-        log.debug(
-            "Created LLM tasks",
-            file=str(doc_result.input_file.name),
-            image_tasks=len(doc_result.images_for_analysis) if self.analyze_image else 0,
-            enhancement_task=1 if self.llm_enabled else 0,
+        # Delegate to LLMOrchestrator
+        return await self._llm_orchestrator.create_llm_tasks(
+            images_for_analysis=doc_result.images_for_analysis,
+            markdown_content=doc_result.markdown_content,
+            input_file=doc_result.input_file,
+            llm_enabled=self.llm_enabled,
+            analyze_image=self.analyze_image,
         )
-
-        return tasks
 
     async def _create_image_analysis_task(
         self, image: "CompressedImage", return_stats: bool = True
     ) -> "ImageAnalysis | LLMTaskResultWithStats":
         """Create and execute an image analysis task.
+
+        Delegates to LLMOrchestrator.
 
         Args:
             image: Compressed image to analyze
@@ -575,28 +500,14 @@ class ConversionPipeline:
         Returns:
             ImageAnalysis or LLMTaskResultWithStats containing the analysis
         """
-        from markit.image.analyzer import ImageAnalysis
-        from markit.llm.base import LLMTaskResultWithStats
-
-        analyzer = await self._get_image_analyzer_async()
-        try:
-            return await analyzer.analyze(image, return_stats=return_stats)
-        except Exception as e:
-            log.warning("Image analysis failed", filename=image.filename, error=str(e))
-            fallback = ImageAnalysis(
-                alt_text=f"Image: {image.filename}",
-                detailed_description="Image analysis failed.",
-                detected_text=None,
-                image_type="other",
-            )
-            if return_stats:
-                return LLMTaskResultWithStats(result=fallback)
-            return fallback
+        return await self._llm_orchestrator.create_image_analysis_task(image, return_stats)
 
     async def _create_enhancement_task(
         self, markdown: str, source_file: Path, return_stats: bool = True
     ) -> "str | LLMTaskResultWithStats":
         """Create and execute a markdown enhancement task.
+
+        Delegates to LLMOrchestrator.
 
         Args:
             markdown: Markdown content to enhance
@@ -606,37 +517,9 @@ class ConversionPipeline:
         Returns:
             Enhanced markdown string or LLMTaskResultWithStats containing the content
         """
-        from markit.llm.base import LLMTaskResultWithStats
-
-        enhancer = await self._get_enhancer_async()
-        try:
-            result = await enhancer.enhance(markdown, source_file, return_stats=return_stats)
-            if return_stats:
-                # enhancer returns LLMTaskResultWithStats when return_stats=True
-                # but we need to extract content for the final result
-                if isinstance(result, LLMTaskResultWithStats):
-                    # Replace the EnhancedMarkdown result with just the content string
-                    return LLMTaskResultWithStats(
-                        result=result.result.content,
-                        model=result.model,
-                        prompt_tokens=result.prompt_tokens,
-                        completion_tokens=result.completion_tokens,
-                        estimated_cost=result.estimated_cost,
-                    )
-                return result
-            # When not returning stats, extract content from EnhancedMarkdown
-            if hasattr(result, "content"):
-                return result.content
-            return result
-        except Exception as e:
-            log.warning("LLM enhancement failed", error=str(e))
-            from markit.llm.enhancer import SimpleMarkdownCleaner
-
-            cleaner = SimpleMarkdownCleaner()
-            cleaned = cleaner.clean(markdown)
-            if return_stats:
-                return LLMTaskResultWithStats(result=cleaned)
-            return cleaned
+        return await self._llm_orchestrator.create_enhancement_task(
+            markdown, source_file, return_stats
+        )
 
     async def finalize_output(
         self,
@@ -696,8 +579,8 @@ class ConversionPipeline:
             metadata=doc_result.conversion_result.metadata,
         )
 
-        # Write output
-        output_path = await self._write_output(
+        # Write output via OutputManager
+        output_path = await self._output_manager.write_output(
             doc_result.input_file, doc_result.output_dir, final_result, image_info_list
         )
 
@@ -753,14 +636,16 @@ class ConversionPipeline:
                     count=len(conversion_result.images),
                 )
                 conversion_result, image_info_list = await self._process_images(
-                    conversion_result, input_file
+                    conversion_result, input_file, output_dir
                 )
 
-            # 5. LLM Enhancement
+            # 5. LLM Enhancement via LLMOrchestrator
             markdown_content = conversion_result.markdown
             if self.llm_enabled:
                 log.info("Applying LLM enhancement")
-                markdown_content = await self._enhance_markdown(markdown_content, input_file)
+                markdown_content = await self._llm_orchestrator.enhance_markdown(
+                    markdown_content, input_file
+                )
                 # Update the result with enhanced content
                 conversion_result = ConversionResult(
                     markdown=markdown_content,
@@ -768,9 +653,15 @@ class ConversionPipeline:
                     metadata=conversion_result.metadata,
                 )
 
-            # 6. Write output (including image description .md files if enabled)
-            output_path = await self._write_output(
-                input_file, output_dir, conversion_result, image_info_list
+            # 6. Write output via OutputManager
+            # Skip images if they were already written during analysis (either mode)
+            images_written_immediately = self.analyze_image or self.analyze_image_with_md
+            output_path = await self._output_manager.write_output(
+                input_file,
+                output_dir,
+                conversion_result,
+                image_info_list,
+                skip_images=images_written_immediately,
             )
 
             return PipelineResult(
@@ -803,127 +694,26 @@ class ConversionPipeline:
     ) -> tuple[list["ExtractedImage"], dict[str, str]]:
         """Process images in parallel: format convert, deduplicate, compress.
 
+        Delegates to ImageProcessingService.
+
         Returns:
             Tuple of (processed_unique_images, filename_map)
         """
-        from markit.converters.base import ExtractedImage
-        from markit.image.converter import ImageFormatConverter
-
-        if not images:
-            return [], {}
-
-        format_converter = ImageFormatConverter()
-        compressor = self._get_image_compressor()
-
-        # 1. Identification & Deduplication
-        unique_images_map: dict[str, ExtractedImage] = {}  # hash -> image
-        unique_hashes_order: list[str] = []  # to preserve order of first appearance
-
-        for img in images:
-            img_hash = hashlib.md5(img.data).hexdigest()
-
-            if img_hash not in unique_images_map:
-                unique_images_map[img_hash] = img
-                unique_hashes_order.append(img_hash)
-
-        # 2. Process Unique Images in Parallel
-        def process_single(img: ExtractedImage, index: int) -> ExtractedImage | None:
-            # Format conversion
-            current_img = img
-            if format_converter.needs_conversion(img.format):
-                try:
-                    converted = format_converter.convert(img)
-                    if converted is None:
-                        return None
-                    current_img = ExtractedImage(
-                        data=converted.data,
-                        format=converted.format,
-                        filename=converted.filename,
-                        source_document=img.source_document,
-                        position=img.position,
-                        width=converted.width,
-                        height=converted.height,
-                    )
-                except Exception as e:
-                    log.warning("Format conversion failed", filename=img.filename, error=str(e))
-                    return None
-
-            # Compression
-            if self.compress_images:
-                try:
-                    compressed = compressor.compress(current_img)
-                    current_img = ExtractedImage(
-                        data=compressed.data,
-                        format=compressed.format,
-                        filename=compressed.filename,
-                        source_document=current_img.source_document,
-                        position=current_img.position,
-                        width=compressed.width,
-                        height=compressed.height,
-                    )
-                except Exception as e:
-                    log.warning("Compression failed", filename=current_img.filename, error=str(e))
-
-            # Generate final filename
-            new_filename = _generate_image_filename(input_file, index, current_img.format)
-
-            return ExtractedImage(
-                data=current_img.data,
-                format=current_img.format,
-                filename=new_filename,
-                source_document=current_img.source_document,
-                position=current_img.position,
-                width=current_img.width,
-                height=current_img.height,
-            )
-
-        # Create tasks
-        tasks = []
-        for i, h in enumerate(unique_hashes_order):
-            img = unique_images_map[h]
-            # index is i+1
-            tasks.append(asyncio.to_thread(process_single, img, i + 1))
-
-        # Run tasks
-        results = []
-        if tasks:
-            log.info(
-                "Processing unique images in parallel",
-                count=len(tasks),
-                total_extracted=len(images),
-            )
-            results = await asyncio.gather(*tasks)
-
-        # 3. Rebuild Maps and Results
-        final_images = []
-        hash_to_filename = {}
-
-        for h, result in zip(unique_hashes_order, results, strict=True):
-            if result is not None:
-                final_images.append(result)
-                hash_to_filename[h] = result.filename
-            else:
-                hash_to_filename[h] = None
-
-        # Build filename map (old -> new)
-        filename_map = {}
-        for img in images:
-            img_hash = hashlib.md5(img.data).hexdigest()
-            if img_hash in hash_to_filename:
-                filename_map[img.filename] = hash_to_filename[img_hash]
-
-        return final_images, filename_map
+        return await self._image_processor.optimize_images_parallel(images, input_file)
 
     async def _process_images(
-        self, result: ConversionResult, input_file: Path
+        self, result: ConversionResult, input_file: Path, output_dir: Path
     ) -> tuple[ConversionResult, list[ProcessedImageInfo]]:
         """Process images: convert format if needed, compress, and optionally analyze.
 
-        Uses parallel LLM analysis for better performance.
+        Uses parallel processing via ImageProcessingService and LLM analysis
+        via LLMOrchestrator. When output_dir is provided, images and their
+        analysis results are written immediately after analysis completes.
 
         Args:
             result: Conversion result with extracted images
             input_file: Original input file path (for generating standardized filenames)
+            output_dir: Output directory for writing images immediately
 
         Returns:
             Tuple of (updated conversion result, list of processed image info)
@@ -931,55 +721,35 @@ class ConversionPipeline:
         if not result.images:
             return result, []
 
-        from markit.image.compressor import CompressedImage
-
-        # Phase 1: Format conversion, deduplication, and compression (Parallel)
-        processed_images, filename_map = await self._optimize_images_parallel(
+        # Phase 1: Format conversion, deduplication, and compression via ImageProcessingService
+        processed_images, filename_map = await self._image_processor.optimize_images_parallel(
             result.images, input_file
         )
 
-        # Update markdown references
-        markdown = result.markdown
-        for old_filename, new_filename in filename_map.items():
-            if new_filename:
-                # Update all references (both standard and assets/)
-                markdown = markdown.replace(f"assets/{old_filename}", f"assets/{new_filename}")
-                # Handle cases where markdown might reference old filename without assets/
-                markdown = markdown.replace(f"({old_filename})", f"({new_filename})")
-            else:
-                # Image processing failed, remove references
-                markdown = markdown.replace(f"![](assets/{old_filename})", "")
-                markdown = markdown.replace(f"![{old_filename}](assets/{old_filename})", "")
-                markdown = markdown.replace(f"![]({old_filename})", "")
-                markdown = markdown.replace(f"![{old_filename}]({old_filename})", "")
+        # Update markdown references via service helper
+        markdown = self._image_processor.update_markdown_references(result.markdown, filename_map)
 
         # Prepare for analysis
-        images_for_analysis: list[CompressedImage] = []
-        if self.analyze_image:
-            for img in processed_images:
-                images_for_analysis.append(
-                    CompressedImage(
-                        data=img.data,
-                        format=img.format,
-                        filename=img.filename,
-                        original_size=len(img.data),  # Approximate
-                        compressed_size=len(img.data),
-                        width=img.width or 0,
-                        height=img.height or 0,
-                    )
-                )
+        # analyze_image: only generate alt text in markdown
+        # analyze_image_with_md: also generate description .md files
+        needs_analysis = self.analyze_image or self.analyze_image_with_md
+        images_for_analysis = []
+        if needs_analysis:
+            images_for_analysis = self._image_processor.prepare_for_analysis(processed_images)
 
-        # Phase 2: Parallel LLM analysis
+        # Phase 2: Parallel LLM analysis via LLMOrchestrator
         analyses: list[ImageAnalysis | None] = [None] * len(processed_images)
-        if self.analyze_image and images_for_analysis:
-            analyzer = await self._get_image_analyzer_async()
+        if needs_analysis and images_for_analysis:
+            analyzer = await self._llm_orchestrator.get_image_analyzer()
             log.info(
                 "Analyzing images in parallel",
                 count=len(images_for_analysis),
             )
 
             try:
-                analysis_results = await analyzer.batch_analyze(images_for_analysis)
+                analysis_results = await analyzer.batch_analyze(
+                    images_for_analysis, output_dir=output_dir
+                )
 
                 # Map results back and update markdown
                 for i, analysis in enumerate(analysis_results):
@@ -993,7 +763,6 @@ class ConversionPipeline:
                     )
 
                     # Update markdown with alt text
-                    # Note: Markdown already points to processed_image.filename
                     old_ref = f"![]({processed_image.filename})"
                     new_ref = f"![{analysis.alt_text}]({processed_image.filename})"
                     markdown = markdown.replace(old_ref, new_ref)
@@ -1026,6 +795,8 @@ class ConversionPipeline:
     async def _enhance_markdown(self, markdown: str, source_file: Path) -> str:
         """Enhance markdown content using LLM.
 
+        Delegates to LLMOrchestrator.
+
         Args:
             markdown: Raw markdown content
             source_file: Original source file path
@@ -1033,21 +804,7 @@ class ConversionPipeline:
         Returns:
             Enhanced markdown content
         """
-        enhancer = await self._get_enhancer_async()
-
-        try:
-            enhanced = await enhancer.enhance(markdown, source_file)
-            return enhanced.content
-        except Exception as e:
-            log.warning(
-                "LLM enhancement failed, returning original",
-                error=str(e),
-            )
-            # Fall back to simple cleaning
-            from markit.llm.enhancer import SimpleMarkdownCleaner
-
-            cleaner = SimpleMarkdownCleaner()
-            return cleaner.clean(markdown)
+        return await self._llm_orchestrator.enhance_markdown(markdown, source_file)
 
     async def _convert_with_fallback(self, file_path: Path, plan) -> ConversionResult:
         """Attempt conversion with fallback support."""
@@ -1095,6 +852,8 @@ class ConversionPipeline:
     ) -> Path:
         """Write conversion result to output directory.
 
+        Delegates to OutputManager.
+
         Args:
             input_file: Original input file
             output_dir: Output directory
@@ -1104,66 +863,9 @@ class ConversionPipeline:
         Returns:
             Path to the output markdown file
         """
-        from datetime import datetime
-
-        import anyio
-
-        # Determine output file path (preserve original extension for clarity)
-        output_file = output_dir / f"{input_file.name}.md"
-
-        # Handle conflicts
-        output_file = self._resolve_conflict(output_file)
-
-        # Ensure output directory exists
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Write markdown content
-        async with await anyio.open_file(output_file, "w", encoding="utf-8") as f:
-            await f.write(result.markdown)
-
-        log.info("Output written", path=str(output_file))
-
-        # Write images if any
-        if result.images and self.settings.output.create_assets_subdir:
-            assets_dir = output_dir / "assets"
-            assets_dir.mkdir(exist_ok=True)
-
-            # Build a lookup for image analysis
-            analysis_lookup: dict[str, ImageAnalysis | None] = {}
-            if image_info_list:
-                for info in image_info_list:
-                    analysis_lookup[info.filename] = info.analysis
-
-            images_written = 0
-            descriptions_written = 0
-            for image in result.images:
-                image_path = assets_dir / image.filename
-                async with await anyio.open_file(image_path, "wb") as f:
-                    await f.write(image.data)
-                images_written += 1
-
-                # Write image description .md file if analyze_image_with_md is enabled
-                if self.analyze_image_with_md:
-                    analysis = analysis_lookup.get(image.filename)
-                    if analysis:
-                        md_content = self._generate_image_description_md(
-                            image.filename, analysis, datetime.now(UTC)
-                        )
-                        md_path = assets_dir / f"{image.filename}.md"
-                        async with await anyio.open_file(md_path, "w", encoding="utf-8") as f:
-                            await f.write(md_content)
-                        descriptions_written += 1
-
-            # Log summary instead of individual files
-            if images_written > 0:
-                log.debug(
-                    "Assets written",
-                    images=images_written,
-                    descriptions=descriptions_written,
-                    output_dir=str(assets_dir),
-                )
-
-        return output_file
+        return await self._output_manager.write_output(
+            input_file, output_dir, result, image_info_list
+        )
 
     def _generate_image_description_md(
         self,
@@ -1173,6 +875,8 @@ class ConversionPipeline:
     ) -> str:
         """Generate markdown content for image description file.
 
+        Delegates to OutputManager.
+
         Args:
             filename: Image filename
             analysis: Image analysis result
@@ -1181,62 +885,11 @@ class ConversionPipeline:
         Returns:
             Markdown content for the image description file
         """
-
-        lines = [
-            "---",
-            f"source_image: {filename}",
-            f"image_type: {analysis.image_type}",
-            f"generated_at: {generated_at.isoformat()}",
-            "---",
-            "",
-            "# Image Description",
-            "",
-            "## Alt Text",
-            "",
-            analysis.alt_text,
-            "",
-            "## Detailed Description",
-            "",
-            analysis.detailed_description,
-        ]
-
-        # Add detected text if available
-        if analysis.detected_text:
-            lines.extend(
-                [
-                    "",
-                    "## Detected Text",
-                    "",
-                    analysis.detected_text,
-                ]
-            )
-
-        return "\n".join(lines) + "\n"
+        return self._output_manager.generate_image_description_md(filename, analysis, generated_at)
 
     def _resolve_conflict(self, output_path: Path) -> Path:
-        """Resolve output file conflicts based on settings."""
-        if not output_path.exists():
-            return output_path
+        """Resolve output file conflicts based on settings.
 
-        strategy = self.settings.output.on_conflict
-
-        if strategy == "overwrite":
-            return output_path
-        elif strategy == "skip":
-            raise ConversionError(
-                output_path,
-                f"Output file already exists: {output_path}",
-            )
-        elif strategy == "rename":
-            counter = 1
-            stem = output_path.stem
-            suffix = output_path.suffix
-            parent = output_path.parent
-
-            while True:
-                new_path = parent / f"{stem}_{counter}{suffix}"
-                if not new_path.exists():
-                    return new_path
-                counter += 1
-        else:
-            return output_path
+        Delegates to OutputManager.
+        """
+        return self._output_manager.resolve_conflict(output_path)

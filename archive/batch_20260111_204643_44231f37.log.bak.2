@@ -1,0 +1,253 @@
+2026-01-11T12:46:43.487966Z [info] Logs will be saved to | log_file=.logs/batch_20260111_204643_44231f37.log
+2026-01-11T12:46:43.488249Z [info] Task Configuration | config={'llm': {'providers': [], 'credentials': [{'id': 'openai', 'provider': 'openai', 'api_key': None, 'api_key_env': 'OPENAI_API_KEY', 'base_url': None}, {'id': 'deepseek', 'provider': 'openai', 'api_key': None, 'api_key_env': 'DEEPSEEK_API_KEY', 'base_url': 'https://api.deepseek.com'}, {'id': 'anthropic', 'provider': 'anthropic', 'api_key': None, 'api_key_env': 'ANTHROPIC_API_KEY', 'base_url': None}, {'id': 'gemini', 'provider': 'gemini', 'api_key': None, 'api_key_env': 'GOOGLE_API_KEY', 'base_url': None}, {'id': 'openrouter', 'provider': 'openrouter', 'api_key': None, 'api_key_env': 'OPENROUTER_API_KEY', 'base_url': 'https://openrouter.ai/api/v1'}], 'models': [{'name': 'xiaomi/mimo-v2-flash:free', 'model': 'xiaomi/mimo-v2-flash:free', 'credential_id': 'openrouter', 'capabilities': ['text'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 0.0, 'output_per_1m': 0.0, 'cached_input_per_1m': None}}, {'name': 'deepseek-chat', 'model': 'deepseek-chat', 'credential_id': 'deepseek', 'capabilities': ['text'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 0.28, 'output_per_1m': 0.42, 'cached_input_per_1m': 0.028}}, {'name': 'deepseek-reasoner', 'model': 'deepseek-reasoner', 'credential_id': 'deepseek', 'capabilities': ['text'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 0.28, 'output_per_1m': 0.42, 'cached_input_per_1m': 0.028}}, {'name': 'gemini-2.5-flash', 'model': 'models/gemini-2.5-flash', 'credential_id': 'gemini', 'capabilities': ['text', 'vision'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 0.3, 'output_per_1m': 2.5, 'cached_input_per_1m': 0.03}}, {'name': 'gemini-2.5-pro', 'model': 'models/gemini-2.5-pro', 'credential_id': 'gemini', 'capabilities': ['text', 'vision'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 1.25, 'output_per_1m': 10.0, 'cached_input_per_1m': 0.125}}, {'name': 'gemini-3-flash-preview', 'model': 'models/gemini-3-flash-preview', 'credential_id': 'gemini', 'capabilities': ['text', 'vision'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 0.5, 'output_per_1m': 3.0, 'cached_input_per_1m': 0.05}}, {'name': 'gemini-3-pro-preview', 'model': 'models/gemini-3-pro-preview', 'credential_id': 'gemini', 'capabilities': ['text', 'vision'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 2.0, 'output_per_1m': 12.0, 'cached_input_per_1m': 0.2}}, {'name': 'gpt-4o-mini', 'model': 'gpt-4o-mini', 'credential_id': 'openai', 'capabilities': ['text', 'vision'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 0.15, 'output_per_1m': 0.6, 'cached_input_per_1m': 0.075}}, {'name': 'gpt-4o', 'model': 'gpt-4o', 'credential_id': 'openai', 'capabilities': ['text', 'vision'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 2.5, 'output_per_1m': 10.0, 'cached_input_per_1m': 1.25}}, {'name': 'gpt-5.2', 'model': 'gpt-5.2', 'credential_id': 'openai', 'capabilities': ['text', 'vision'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 1.75, 'output_per_1m': 14.0, 'cached_input_per_1m': 0.175}}, {'name': 'claude-haiku-4-5', 'model': 'claude-haiku-4-5-20251001', 'credential_id': 'anthropic', 'capabilities': ['text', 'vision'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 1.0, 'output_per_1m': 5.0, 'cached_input_per_1m': 0.1}}, {'name': 'claude-sonnet-4-5', 'model': 'claude-sonnet-4-5-20250929', 'credential_id': 'anthropic', 'capabilities': ['text', 'vision'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 3.0, 'output_per_1m': 15.0, 'cached_input_per_1m': 0.3}}, {'name': 'claude-opus-4-5', 'model': 'claude-opus-4-5-20251101', 'credential_id': 'anthropic', 'capabilities': ['text', 'vision'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 5.0, 'output_per_1m': 25.0, 'cached_input_per_1m': 0.5}}, {'name': 'google/gemini-3-flash-preview', 'model': 'google/gemini-3-flash-preview', 'credential_id': 'openrouter', 'capabilities': ['text', 'vision'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 0.5, 'output_per_1m': 3.0, 'cached_input_per_1m': 0.05}}, {'name': 'z-ai/glm-4.7', 'model': 'z-ai/glm-4.7', 'credential_id': 'openrouter', 'capabilities': ['text'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 0.45, 'output_per_1m': 2.1, 'cached_input_per_1m': 0.08}}, {'name': 'minimax/minimax-m2.1', 'model': 'minimax/minimax-m2.1', 'credential_id': 'openrouter', 'capabilities': ['text'], 'timeout': 120, 'max_retries': 3, 'cost': {'input_per_1m': 0.3, 'output_per_1m': 1.2, 'cached_input_per_1m': 0.03}}], 'default_provider': None, 'validation': {'enabled': True, 'retry_count': 2, 'on_failure': 'warn'}, 'concurrent_fallback_enabled': True, 'concurrent_fallback_timeout': 60, 'max_request_timeout': 300}, 'image': {'enable_compression': True, 'png_optimization_level': 2, 'jpeg_quality': 85, 'max_dimension': 2048, 'enable_analysis': False, 'filter_small_images': True, 'min_dimension': 100, 'min_area': 40000, 'min_file_size': 10240, 'use_process_pool': True, 'process_pool_threshold': 5, 'process_pool_max_workers': 4}, 'concurrency': {'file_workers': 4, 'image_workers': 8, 'llm_workers': 5}, 'pdf': {'engine': 'pymupdf4llm', 'extract_images': True, 'ocr_enabled': False}, 'enhancement': {'enabled': False, 'remove_headers_footers': True, 'fix_heading_levels': True, 'add_frontmatter': True, 'generate_summary': True, 'chunk_size': 32000, 'chunk_overlap': 500}, 'output': {'default_dir': 'output', 'on_conflict': 'rename', 'create_assets_subdir': True, 'generate_image_descriptions': True}, 'execution': {'mode': 'default', 'fast_max_fallback': 1, 'fast_skip_validation': True}, 'libreoffice': {'pool_size': 8, 'profile_base_dir': '.markit-lo-profiles', 'reset_after_failures': 3, 'reset_after_uses': 100}, 'prompt': {'output_language': 'zh', 'extract_knowledge_graph_meta': True, 'prompts_dir': 'prompts', 'image_analysis_prompt': None, 'enhancement_prompt': None, 'summary_prompt': None, 'custom_enhancement_prompt': None, 'custom_summary_prompt': None, 'custom_image_analysis_prompt': None}, 'log_level': 'INFO', 'log_dir': '.logs', 'state_file': '.markit-state.json'} task_id=44231f37
+2026-01-11T12:46:43.488561Z [info] Starting conversion | analyze_image=True analyze_image_with_md=True input_dir=/home/oy/Work/markit/input llm_enabled=True output_dir=/home/oy/Work/markit/output recursive=False
+2026-01-11T12:46:43.489742Z [info] State file cleared
+2026-01-11T12:46:43.490154Z [info] Batch state created | batch_id=0b3e1d0bda6f total_files=6
+2026-01-11T12:46:43.490976Z [debug] Warming up LLM providers...
+⠙ Initializing LLM providers...2026-01-11T12:46:43.697897Z [info] Provider xiaomi/mimo-v2-flash:free initialized on demand | capabilities=['text']
+⠹ Initializing LLM providers...2026-01-11T12:46:43.809855Z [debug] Request options: {'method': 'get', 'url': '/models', 'post_parser': <function AsyncPaginator._get_page.<locals>._parser at 0x7f7c9f519760>, 'json_data': None}
+2026-01-11T12:46:43.810365Z [debug] Sending HTTP Request: GET https://api.deepseek.com/models
+⠧ Initializing LLM providers...2026-01-11T12:46:44.144552Z [debug] HTTP Response: GET https://api.deepseek.com/models "200 OK" Headers([('date', 'Sun, 11 Jan 2026 12:46:44 GMT'), ('content-type', 'application/json'), ('content-length', '154'), ('connection', 'keep-alive'), ('set-cookie', 'HWWAFSESTIME=1768135600654; path=/'), ('set-cookie', 'HWWAFSESID=6b2689107147e83031; path=/'), ('vary', 'origin, access-control-request-method, access-control-request-headers'), ('access-control-allow-credentials', 'true'), ('x-ds-trace-id', '825b3be21009a7cdc868d385b0b49efb')... [638 chars total]
+2026-01-11T12:46:44.145041Z [debug] request_id: None
+2026-01-11T12:46:44.147029Z [info] Provider deepseek-chat initialized on demand | capabilities=['text']
+2026-01-11T12:46:44.168696Z [debug] Request options: {'method': 'get', 'url': '/models', 'post_parser': <function AsyncPaginator._get_page.<locals>._parser at 0x7f7c9f5199e0>, 'json_data': None}
+2026-01-11T12:46:44.169059Z [debug] Sending HTTP Request: GET https://api.deepseek.com/models
+⠏ Initializing LLM providers...2026-01-11T12:46:44.371540Z [debug] HTTP Response: GET https://api.deepseek.com/models "200 OK" Headers([('date', 'Sun, 11 Jan 2026 12:46:44 GMT'), ('content-type', 'application/json'), ('content-length', '154'), ('connection', 'keep-alive'), ('set-cookie', 'HWWAFSESTIME=1768135600654; path=/'), ('set-cookie', 'HWWAFSESID=6b2689407147e83031; path=/'), ('vary', 'origin, access-control-request-method, access-control-request-headers'), ('access-control-allow-credentials', 'true'), ('x-ds-trace-id', '436845d7fe969d275980430a56436cea')... [638 chars total]
+2026-01-11T12:46:44.372109Z [debug] request_id: None
+2026-01-11T12:46:44.373111Z [info] Provider deepseek-reasoner initialized on demand | capabilities=['text']
+⠼ Initializing LLM providers...2026-01-11T12:46:44.783522Z [info] Provider gemini-2.5-flash initialized on demand | capabilities=['text', 'vision']
+2026-01-11T12:46:44.791182Z [info] Provider gemini-2.5-pro initialized on demand | capabilities=['text', 'vision']
+2026-01-11T12:46:44.798801Z [info] Provider gemini-3-flash-preview initialized on demand | capabilities=['text', 'vision']
+2026-01-11T12:46:44.807170Z [info] Provider gemini-3-pro-preview initialized on demand | capabilities=['text', 'vision']
+2026-01-11T12:46:44.825603Z [debug] Request options: {'method': 'get', 'url': '/models', 'post_parser': <function AsyncPaginator._get_page.<locals>._parser at 0x7f7c9c877920>, 'json_data': None}
+2026-01-11T12:46:44.826177Z [debug] Sending HTTP Request: GET https://api.openai.com/v1/models
+⠋ Initializing LLM providers...2026-01-11T12:46:50.035115Z [debug] HTTP Response: GET https://api.openai.com/v1/models "200 OK" Headers([('date', 'Sun, 11 Jan 2026 12:46:49 GMT'), ('content-type', 'application/json'), ('transfer-encoding', 'chunked'), ('connection', 'keep-alive'), ('openai-version', '2020-10-01'), ('x-request-id', '5ca5901ca02c457128488174718077f1'), ('openai-processing-ms', '3405'), ('x-envoy-upstream-service-time', '3412'), ('x-openai-proxy-wasm', 'v0.1'), ('strict-transport-security', 'max-age=31536000; includeSubDomains; preload'), ('cf-cac... [1159 chars total]
+2026-01-11T12:46:50.035901Z [debug] request_id: 5ca5901ca02c457128488174718077f1
+2026-01-11T12:46:50.040258Z [info] Provider gpt-4o-mini initialized on demand | capabilities=['text', 'vision']
+2026-01-11T12:46:50.056370Z [debug] Request options: {'method': 'get', 'url': '/models', 'post_parser': <function AsyncPaginator._get_page.<locals>._parser at 0x7f7c9c89c040>, 'json_data': None}
+2026-01-11T12:46:50.056911Z [debug] Sending HTTP Request: GET https://api.openai.com/v1/models
+⠦ Initializing LLM providers...2026-01-11T12:46:52.083592Z [debug] HTTP Response: GET https://api.openai.com/v1/models "200 OK" Headers([('date', 'Sun, 11 Jan 2026 12:46:51 GMT'), ('content-type', 'application/json'), ('transfer-encoding', 'chunked'), ('connection', 'keep-alive'), ('openai-version', '2020-10-01'), ('x-request-id', 'f0ba07ed809d724b4adb9968031abade'), ('openai-processing-ms', '595'), ('x-envoy-upstream-service-time', '597'), ('x-openai-proxy-wasm', 'v0.1'), ('strict-transport-security', 'max-age=31536000; includeSubDomains; preload'), ('cf-cache... [1157 chars total]
+2026-01-11T12:46:52.084778Z [debug] request_id: f0ba07ed809d724b4adb9968031abade
+2026-01-11T12:46:52.089974Z [info] Provider gpt-4o initialized on demand | capabilities=['text', 'vision']
+2026-01-11T12:46:52.109891Z [debug] Request options: {'method': 'get', 'url': '/models', 'post_parser': <function AsyncPaginator._get_page.<locals>._parser at 0x7f7c9c89c180>, 'json_data': None}
+2026-01-11T12:46:52.110761Z [debug] Sending HTTP Request: GET https://api.openai.com/v1/models
+⠙ Initializing LLM providers...2026-01-11T12:46:54.157716Z [debug] HTTP Response: GET https://api.openai.com/v1/models "200 OK" Headers([('date', 'Sun, 11 Jan 2026 12:46:53 GMT'), ('content-type', 'application/json'), ('transfer-encoding', 'chunked'), ('connection', 'keep-alive'), ('openai-version', '2020-10-01'), ('x-request-id', 'dfddeb7fc0dc33d41c0919e7f6381fd1'), ('openai-processing-ms', '398'), ('x-envoy-upstream-service-time', '399'), ('x-openai-proxy-wasm', 'v0.1'), ('strict-transport-security', 'max-age=31536000; includeSubDomains; preload'), ('cf-cache... [1157 chars total]
+2026-01-11T12:46:54.158337Z [debug] request_id: dfddeb7fc0dc33d41c0919e7f6381fd1
+2026-01-11T12:46:54.160051Z [info] Provider gpt-5.2 initialized on demand | capabilities=['text', 'vision']
+⠸ Initializing LLM providers...2026-01-11T12:46:54.278216Z [debug] Request options: {'method': 'post', 'url': '/v1/messages', 'files': None, 'idempotency_key': 'stainless-python-retry-0c39b85b-60cc-4953-8295-d62ea824372e', 'json_data': {'max_tokens': 1, 'messages': [{'role': 'user', 'content': 'test'}], 'model': 'claude-haiku-4-5-20251001'}}
+2026-01-11T12:46:54.279038Z [debug] Sending HTTP Request: POST https://api.anthropic.com/v1/messages
+⠼ Initializing LLM providers...2026-01-11T12:46:56.711404Z [debug] HTTP Response: POST https://api.anthropic.com/v1/messages "200 OK" Headers({'date': 'Sun, 11 Jan 2026 12:46:56 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'anthropic-ratelimit-input-tokens-limit': '450000', 'anthropic-ratelimit-input-tokens-remaining': '450000', 'anthropic-ratelimit-input-tokens-reset': '2026-01-11T12:46:56Z', 'anthropic-ratelimit-output-tokens-limit': '90000', 'anthropic-ratelimit-output-tokens-remaining': '90000', 'anth... [1247 chars total]
+2026-01-11T12:46:56.712040Z [debug] request_id: req_011CX1cdKae7vv2Q3UVGbXZ8
+2026-01-11T12:46:56.719218Z [info] Provider claude-haiku-4-5 initialized on demand | capabilities=['text', 'vision']
+2026-01-11T12:46:56.735032Z [debug] Request options: {'method': 'post', 'url': '/v1/messages', 'files': None, 'idempotency_key': 'stainless-python-retry-3c3ebfee-b5c8-49f4-8bf4-e6a30987bfa8', 'json_data': {'max_tokens': 1, 'messages': [{'role': 'user', 'content': 'test'}], 'model': 'claude-sonnet-4-5-20250929'}}
+2026-01-11T12:46:56.735551Z [debug] Sending HTTP Request: POST https://api.anthropic.com/v1/messages
+⠸ Initializing LLM providers...2026-01-11T12:46:59.948552Z [debug] HTTP Response: POST https://api.anthropic.com/v1/messages "200 OK" Headers({'date': 'Sun, 11 Jan 2026 12:46:59 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'anthropic-ratelimit-input-tokens-limit': '450000', 'anthropic-ratelimit-input-tokens-remaining': '450000', 'anthropic-ratelimit-input-tokens-reset': '2026-01-11T12:46:59Z', 'anthropic-ratelimit-output-tokens-limit': '90000', 'anthropic-ratelimit-output-tokens-remaining': '90000', 'anth... [1248 chars total]
+2026-01-11T12:46:59.949285Z [debug] request_id: req_011CX1cdW8tKz72xrnCf7P9x
+2026-01-11T12:46:59.950192Z [info] Provider claude-sonnet-4-5 initialized on demand | capabilities=['text', 'vision']
+⠼ Initializing LLM providers...2026-01-11T12:46:59.966312Z [debug] Request options: {'method': 'post', 'url': '/v1/messages', 'files': None, 'idempotency_key': 'stainless-python-retry-6058f866-1ef6-4656-86d1-1ecb608c3c6d', 'json_data': {'max_tokens': 1, 'messages': [{'role': 'user', 'content': 'test'}], 'model': 'claude-opus-4-5-20251101'}}
+2026-01-11T12:46:59.966964Z [debug] Sending HTTP Request: POST https://api.anthropic.com/v1/messages
+⠧ Initializing LLM providers...2026-01-11T12:47:03.394564Z [debug] HTTP Response: POST https://api.anthropic.com/v1/messages "200 OK" Headers({'date': 'Sun, 11 Jan 2026 12:47:03 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'anthropic-ratelimit-input-tokens-limit': '450000', 'anthropic-ratelimit-input-tokens-remaining': '450000', 'anthropic-ratelimit-input-tokens-reset': '2026-01-11T12:47:03Z', 'anthropic-ratelimit-output-tokens-limit': '90000', 'anthropic-ratelimit-output-tokens-remaining': '90000', 'anth... [1248 chars total]
+2026-01-11T12:47:03.394844Z [debug] request_id: req_011CX1cdjix9mWAnnTtZwjPx
+2026-01-11T12:47:03.395318Z [info] Provider claude-opus-4-5 initialized on demand | capabilities=['text', 'vision']
+2026-01-11T12:47:03.411480Z [info] Provider google/gemini-3-flash-preview initialized on demand | capabilities=['text', 'vision']
+2026-01-11T12:47:03.427407Z [info] Provider z-ai/glm-4.7 initialized on demand | capabilities=['text']
+2026-01-11T12:47:03.442801Z [info] Provider minimax/minimax-m2.1 initialized on demand | capabilities=['text']
+2026-01-11T12:47:03.443040Z [debug] LLM providers warmed up | capabilities=['text', 'vision'] valid_providers=['xiaomi/mimo-v2-flash:free', 'deepseek-chat', 'deepseek-reasoner', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-flash-preview', 'gemini-3-pro-preview', 'gpt-4o-mini', 'gpt-4o', 'gpt-5.2', 'claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5', 'google/gemini-3-flash-preview', 'z-ai/glm-4.7', 'minimax/minimax-m2.1']
+2026-01-11T12:47:03.443692Z [info] Starting streaming batch processing | llm_concurrency=10 total=6
+2026-01-11T12:47:03.446600Z [info] Converting document | file=Free_Test_Data_500KB_PPTX.pptx
+2026-01-11T12:47:03.447028Z [info] Phase 1: Document conversion | file=/home/oy/Work/markit/input/Free_Test_Data_500KB_PPTX.pptx
+2026-01-11T12:47:03.447161Z [debug] Routing file | extension=.pptx file=/home/oy/Work/markit/input/Free_Test_Data_500KB_PPTX.pptx
+2026-01-11T12:47:03.447250Z [debug] Conversion plan | fallback=pandoc primary=markitdown
+2026-01-11T12:47:03.447328Z [debug] Trying primary converter | converter=markitdown
+2026-01-11T12:47:03.447435Z [info] Converting with MarkItDown | file=/home/oy/Work/markit/input/Free_Test_Data_500KB_PPTX.pptx
+2026-01-11T12:47:03.447575Z [info] Converting document | file=file-example_PDF_500_kB.pdf
+2026-01-11T12:47:03.447822Z [info] Phase 1: Document conversion | file=/home/oy/Work/markit/input/file-example_PDF_500_kB.pdf
+2026-01-11T12:47:03.447906Z [debug] Routing file | extension=.pdf file=/home/oy/Work/markit/input/file-example_PDF_500_kB.pdf
+2026-01-11T12:47:03.448003Z [debug] Conversion plan | fallback=pymupdf primary=pymupdf4llm
+2026-01-11T12:47:03.448106Z [debug] Trying primary converter | converter=pymupdf4llm
+2026-01-11T12:47:03.448211Z [info] Converting PDF with PyMuPDF4LLM | file=/home/oy/Work/markit/input/file-example_PDF_500_kB.pdf
+2026-01-11T12:47:03.448339Z [info] Converting document | file=file-sample_100kB.doc
+2026-01-11T12:47:03.448628Z [info] Phase 1: Document conversion | file=/home/oy/Work/markit/input/file-sample_100kB.doc
+2026-01-11T12:47:03.448745Z [debug] Routing file | extension=.doc file=/home/oy/Work/markit/input/file-sample_100kB.doc
+2026-01-11T12:47:03.448847Z [debug] Using Office preprocessor for legacy format | extension=.doc file=/home/oy/Work/markit/input/file-sample_100kB.doc
+2026-01-11T12:47:03.448944Z [debug] Conversion plan | fallback=pandoc primary=markitdown
+2026-01-11T12:47:03.449043Z [debug] Running pre-processor | processor=office_preprocessor
+2026-01-11T12:47:03.449141Z [info] Converting legacy Office format | file=/home/oy/Work/markit/input/file-sample_100kB.doc from_format=.doc to_format=.docx
+2026-01-11T12:47:03.449408Z [info] Using LibreOffice for conversion
+2026-01-11T12:47:03.449631Z [info] Converting document | file=file_example_PPT_250kB.ppt
+2026-01-11T12:47:03.450141Z [info] Phase 1: Document conversion | file=/home/oy/Work/markit/input/file_example_PPT_250kB.ppt
+2026-01-11T12:47:03.450258Z [debug] Routing file | extension=.ppt file=/home/oy/Work/markit/input/file_example_PPT_250kB.ppt
+2026-01-11T12:47:03.450369Z [debug] Using Office preprocessor for legacy format | extension=.ppt file=/home/oy/Work/markit/input/file_example_PPT_250kB.ppt
+2026-01-11T12:47:03.450464Z [debug] Conversion plan | fallback=pandoc primary=markitdown
+2026-01-11T12:47:03.450569Z [debug] Running pre-processor | processor=office_preprocessor
+2026-01-11T12:47:03.450662Z [info] Converting legacy Office format | file=/home/oy/Work/markit/input/file_example_PPT_250kB.ppt from_format=.ppt to_format=.pptx
+2026-01-11T12:47:03.450843Z [info] Converting document | file=file_example_XLSX_100.xlsx
+2026-01-11T12:47:03.451199Z [info] Phase 1: Document conversion | file=/home/oy/Work/markit/input/file_example_XLSX_100.xlsx
+2026-01-11T12:47:03.451320Z [debug] Routing file | extension=.xlsx file=/home/oy/Work/markit/input/file_example_XLSX_100.xlsx
+2026-01-11T12:47:03.451437Z [debug] Conversion plan | fallback=pandoc primary=markitdown
+2026-01-11T12:47:03.451536Z [debug] Trying primary converter | converter=markitdown
+2026-01-11T12:47:03.451638Z [info] Converting with MarkItDown | file=/home/oy/Work/markit/input/file_example_XLSX_100.xlsx
+2026-01-11T12:47:03.451775Z [info] Converting document | file=file_example_XLS_100.xls
+2026-01-11T12:47:03.452092Z [info] Phase 1: Document conversion | file=/home/oy/Work/markit/input/file_example_XLS_100.xls
+2026-01-11T12:47:03.452203Z [debug] Routing file | extension=.xls file=/home/oy/Work/markit/input/file_example_XLS_100.xls
+2026-01-11T12:47:03.452301Z [debug] Using Office preprocessor for legacy format | extension=.xls file=/home/oy/Work/markit/input/file_example_XLS_100.xls
+2026-01-11T12:47:03.452398Z [debug] Conversion plan | fallback=pandoc primary=markitdown
+2026-01-11T12:47:03.452498Z [debug] Running pre-processor | processor=office_preprocessor
+2026-01-11T12:47:03.452587Z [info] Converting legacy Office format | file=/home/oy/Work/markit/input/file_example_XLS_100.xls from_format=.xls to_format=.xlsx
+2026-01-11T12:47:03.455402Z [debug] Running LibreOffice | command='/usr/bin/soffice --headless -env:UserInstallation=file:///tmp/tmp97tcc2c_ --convert-to docx --outdir /tmp/tmpyqrnbqrn /home/oy/Work/markit/input/file-sample_100kB.doc'
+2026-01-11T12:47:03.455881Z [debug] Running LibreOffice | command='/usr/bin/soffice --headless -env:UserInstallation=file:///tmp/tmp4avacpl9 --convert-to xlsx --outdir /tmp/tmpe4si874b /home/oy/Work/markit/input/file_example_XLS_100.xls'
+2026-01-11T12:47:03.456110Z [debug] Running LibreOffice | command='/usr/bin/soffice --headless -env:UserInstallation=file:///tmp/tmp6uq5lugd --convert-to pptx --outdir /tmp/tmpz4vtei7w /home/oy/Work/markit/input/file_example_PPT_250kB.ppt'
+2026-01-11T12:47:03.562213Z [debug] Calling pymupdf4llm.to_markdown | file=/home/oy/Work/markit/input/file-example_PDF_500_kB.pdf options={'dpi': 150, 'force_text': False, 'write_images': True, 'image_path': '/tmp/tmp_ou18t5f'}
+2026-01-11T12:47:04.259027Z [debug] Collected image | new_name=file-example_PDF_500_kB_001.png original=file-example_PDF_500_kB.pdf-0-0.png
+2026-01-11T12:47:04.259635Z [debug] Collected image | new_name=file-example_PDF_500_kB_002.png original=file-example_PDF_500_kB.pdf-3-0.png
+2026-01-11T12:47:04.261453Z [info] Processing images (format/compress) | count=2
+2026-01-11T12:47:04.267279Z [debug] Image deduplication | duplicates_removed=0 total=2 unique=2
+2026-01-11T12:47:04.267555Z [info] Processing unique images in parallel | count=2 executor=thread_pool total_extracted=2
+2026-01-11T12:47:04.269058Z [debug] Skipping compression for small image | filename=file-example_PDF_500_kB_001.png size=3355
+2026-01-11T12:47:04.687225Z [info] Legacy format converted | converted=/home/oy/Work/markit/output/converted/file_example_XLS_100.xlsx original=/home/oy/Work/markit/input/file_example_XLS_100.xls
+2026-01-11T12:47:04.687992Z [debug] Trying primary converter | converter=markitdown
+2026-01-11T12:47:04.688542Z [info] Converting with MarkItDown | file=/home/oy/Work/markit/output/converted/file_example_XLS_100.xlsx
+2026-01-11T12:47:04.811492Z [info] Legacy format converted | converted=/home/oy/Work/markit/output/converted/file-sample_100kB.docx original=/home/oy/Work/markit/input/file-sample_100kB.doc
+2026-01-11T12:47:04.811841Z [debug] Trying primary converter | converter=markitdown
+2026-01-11T12:47:04.812045Z [info] Converting with MarkItDown | file=/home/oy/Work/markit/output/converted/file-sample_100kB.docx
+2026-01-11T12:47:04.972659Z [info] Document converted | file=file_example_XLS_100.xls images=0
+2026-01-11T12:47:04.973209Z [debug] Created LLM tasks | enhancement_task=1 file=file_example_XLS_100.xls image_tasks=0
+2026-01-11T12:47:04.973729Z [info] Submitting LLM tasks | count=1 file=file_example_XLS_100.xls
+2026-01-11T12:47:04.973925Z [info] Document converted | file=file_example_XLSX_100.xlsx images=0
+2026-01-11T12:47:04.974016Z [debug] Created LLM tasks | enhancement_task=1 file=file_example_XLSX_100.xlsx image_tasks=0
+2026-01-11T12:47:04.974117Z [info] Submitting LLM tasks | count=1 file=file_example_XLSX_100.xlsx
+2026-01-11T12:47:04.974256Z [debug] Executing LLM task | source=file_example_XLS_100.xls task_id=markdown task_type=chunk_enhancement
+2026-01-11T12:47:04.974408Z [info] Enhancing Markdown | file=/home/oy/Work/markit/input/file_example_XLS_100.xls
+2026-01-11T12:47:05.296490Z [debug] Document small enough, no chunking needed
+2026-01-11T12:47:05.296712Z [debug] Document split into chunks | count=1
+2026-01-11T12:47:05.296866Z [debug] Executing LLM task | source=file_example_XLSX_100.xlsx task_id=markdown task_type=chunk_enhancement
+2026-01-11T12:47:05.296991Z [info] Enhancing Markdown | file=/home/oy/Work/markit/input/file_example_XLSX_100.xlsx
+2026-01-11T12:47:05.298600Z [debug] Document small enough, no chunking needed
+2026-01-11T12:47:05.298682Z [debug] Document split into chunks | count=1
+2026-01-11T12:47:05.298972Z [info] Processing images (format/compress) | count=1
+2026-01-11T12:47:05.299525Z [debug] Image deduplication | duplicates_removed=0 total=1 unique=1
+2026-01-11T12:47:05.299646Z [info] Processing unique images in parallel | count=1 executor=thread_pool total_extracted=1
+2026-01-11T12:47:05.302268Z [debug] Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-88fe6eec-7f62-4f27-84cc-76c29a05291d', 'json_data': {'messages': [{'role': 'user', 'content': '请按照以下规则优化 Markdown 文档的格式。\n\n## 核心原则：尊重原文\n\n**严禁修改原文档中的任何实际内容**，包括但不限于：\n- **表格列头/表头**: 必须保持原文，禁止翻译或改写（如 "First Name" 不能改为 "名字"）\n- **正文文本**: 所有段落、句子必须保持原样\n- **数据内容**: 表格数据、列表内容必须原样保留\n- **专有名词**: 人名、地名、产品名等保持原文\n\n**仅以下内容可以使用中文**：\n- YAML Frontmatter 中的 `description`、`topics`、`do... [9771 chars total]
+2026-01-11T12:47:05.303196Z [debug] Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+2026-01-11T12:47:05.303547Z [debug] Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-0ab07cdd-9cfc-4d9a-8451-c7a52eabc4e7', 'json_data': {'messages': [{'role': 'user', 'content': '请按照以下规则优化 Markdown 文档的格式。\n\n## 核心原则：尊重原文\n\n**严禁修改原文档中的任何实际内容**，包括但不限于：\n- **表格列头/表头**: 必须保持原文，禁止翻译或改写（如 "First Name" 不能改为 "名字"）\n- **正文文本**: 所有段落、句子必须保持原样\n- **数据内容**: 表格数据、列表内容必须原样保留\n- **专有名词**: 人名、地名、产品名等保持原文\n\n**仅以下内容可以使用中文**：\n- YAML Frontmatter 中的 `description`、`topics`、`do... [9771 chars total]
+2026-01-11T12:47:05.304368Z [debug] Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+2026-01-11T12:47:05.311938Z [debug] Image compressed | compressed_size=46239 filename=file-sample_100kB_001.jpeg original_size=63662 savings=27.4%
+2026-01-11T12:47:05.312645Z [info] Document converted | file=file-sample_100kB.doc images=1
+2026-01-11T12:47:05.313227Z [debug] Created LLM tasks | enhancement_task=1 file=file-sample_100kB.doc image_tasks=1
+2026-01-11T12:47:05.313449Z [info] Submitting LLM tasks | count=2 file=file-sample_100kB.doc
+2026-01-11T12:47:05.313668Z [debug] Executing LLM task | source=file-sample_100kB.doc task_id=file-sample_100kB.doc.001.jpeg task_type=image_analysis
+2026-01-11T12:47:05.313831Z [debug] Analyzing image with LLM | filename=file-sample_100kB.doc.001.jpeg
+2026-01-11T12:47:05.315406Z [debug] Executing LLM task | source=file-sample_100kB.doc task_id=markdown task_type=chunk_enhancement
+2026-01-11T12:47:05.315599Z [info] Enhancing Markdown | file=/home/oy/Work/markit/input/file-sample_100kB.doc
+2026-01-11T12:47:05.316492Z [debug] Document small enough, no chunking needed
+2026-01-11T12:47:05.316662Z [debug] Document split into chunks | count=1
+2026-01-11T12:47:05.317861Z [debug] Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-5cb186cb-33d5-4005-ab7d-0cedad156540', 'json_data': {'messages': [{'role': 'user', 'content': '请按照以下规则优化 Markdown 文档的格式。\n\n## 核心原则：尊重原文\n\n**严禁修改原文档中的任何实际内容**，包括但不限于：\n- **表格列头/表头**: 必须保持原文，禁止翻译或改写（如 "First Name" 不能改为 "名字"）\n- **正文文本**: 所有段落、句子必须保持原样\n- **数据内容**: 表格数据、列表内容必须原样保留\n- **专有名词**: 人名、地名、产品名等保持原文\n\n**仅以下内容可以使用中文**：\n- YAML Frontmatter 中的 `description`、`topics`、`do... [8683 chars total]
+2026-01-11T12:47:05.319069Z [debug] Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+2026-01-11T12:47:05.362956Z [info] Filtered PPTX footer patterns | file=/home/oy/Work/markit/input/Free_Test_Data_500KB_PPTX.pptx patterns=['Presentation Title', 'FTD', '4', '9/3/20XX', '5']
+2026-01-11T12:47:05.364780Z [info] Processing images (format/compress) | count=1
+2026-01-11T12:47:05.365756Z [debug] Image deduplication | duplicates_removed=0 total=1 unique=1
+2026-01-11T12:47:05.365919Z [info] Processing unique images in parallel | count=1 executor=thread_pool total_extracted=1
+2026-01-11T12:47:05.366246Z [debug] Converting image format | filename=Free_Test_Data_500KB_PPTX_001.gif from_format=gif
+2026-01-11T12:47:06.401166Z [debug] Image compressed | compressed_size=586013 filename=file-example_PDF_500_kB_002.png original_size=845089 savings=30.7%
+2026-01-11T12:47:06.402928Z [info] Document converted | file=file-example_PDF_500_kB.pdf images=2
+2026-01-11T12:47:06.403500Z [debug] Created LLM tasks | enhancement_task=1 file=file-example_PDF_500_kB.pdf image_tasks=2
+2026-01-11T12:47:06.403845Z [info] Submitting LLM tasks | count=3 file=file-example_PDF_500_kB.pdf
+2026-01-11T12:47:06.404145Z [debug] Executing LLM task | source=file-example_PDF_500_kB.pdf task_id=file-example_PDF_500_kB.pdf.001.png task_type=image_analysis
+2026-01-11T12:47:06.404333Z [debug] Analyzing image with LLM | filename=file-example_PDF_500_kB.pdf.001.png
+2026-01-11T12:47:06.406092Z [debug] Executing LLM task | source=file-example_PDF_500_kB.pdf task_id=file-example_PDF_500_kB.pdf.002.png task_type=image_analysis
+2026-01-11T12:47:06.406293Z [debug] Analyzing image with LLM | filename=file-example_PDF_500_kB.pdf.002.png
+2026-01-11T12:47:06.411931Z [debug] Executing LLM task | source=file-example_PDF_500_kB.pdf task_id=markdown task_type=chunk_enhancement
+2026-01-11T12:47:06.412145Z [info] Enhancing Markdown | file=/home/oy/Work/markit/input/file-example_PDF_500_kB.pdf
+2026-01-11T12:47:06.413247Z [debug] Document small enough, no chunking needed
+2026-01-11T12:47:06.413393Z [debug] Document split into chunks | count=1
+2026-01-11T12:47:06.414281Z [debug] Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-f3c37436-ad71-4685-bc3f-f7ced4ddb8f9', 'json_data': {'messages': [{'role': 'user', 'content': '请按照以下规则优化 Markdown 文档的格式。\n\n## 核心原则：尊重原文\n\n**严禁修改原文档中的任何实际内容**，包括但不限于：\n- **表格列头/表头**: 必须保持原文，禁止翻译或改写（如 "First Name" 不能改为 "名字"）\n- **正文文本**: 所有段落、句子必须保持原样\n- **数据内容**: 表格数据、列表内容必须原样保留\n- **专有名词**: 人名、地名、产品名等保持原文\n\n**仅以下内容可以使用中文**：\n- YAML Frontmatter 中的 `description`、`topics`、`do... [11132 chars total]
+2026-01-11T12:47:06.415738Z [debug] Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+2026-01-11T12:47:06.818656Z [info] Legacy format converted | converted=/home/oy/Work/markit/output/converted/file_example_PPT_250kB.pptx original=/home/oy/Work/markit/input/file_example_PPT_250kB.ppt
+2026-01-11T12:47:06.818909Z [debug] Trying primary converter | converter=markitdown
+2026-01-11T12:47:06.819094Z [info] Converting with MarkItDown | file=/home/oy/Work/markit/output/converted/file_example_PPT_250kB.pptx
+2026-01-11T12:47:06.845513Z [info] Filtered PPTX footer patterns | file=/home/oy/Work/markit/output/converted/file_example_PPT_250kB.pptx patterns=['<footer>', '<date/time>', '<number>']
+2026-01-11T12:47:06.846501Z [info] Document converted | file=file_example_PPT_250kB.ppt images=0
+2026-01-11T12:47:06.846681Z [debug] Created LLM tasks | enhancement_task=1 file=file_example_PPT_250kB.ppt image_tasks=0
+2026-01-11T12:47:06.846805Z [info] Submitting LLM tasks | count=1 file=file_example_PPT_250kB.ppt
+2026-01-11T12:47:06.846944Z [debug] Executing LLM task | source=file_example_PPT_250kB.ppt task_id=markdown task_type=chunk_enhancement
+2026-01-11T12:47:06.847130Z [info] Enhancing Markdown | file=/home/oy/Work/markit/input/file_example_PPT_250kB.ppt
+2026-01-11T12:47:06.847765Z [debug] Document small enough, no chunking needed
+2026-01-11T12:47:06.847902Z [debug] Document split into chunks | count=1
+2026-01-11T12:47:06.848592Z [debug] Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-49ac9ac1-2262-42d1-8b81-45cb978ffd5c', 'json_data': {'messages': [{'role': 'user', 'content': '请按照以下规则优化 Markdown 文档的格式。\n\n## 核心原则：尊重原文\n\n**严禁修改原文档中的任何实际内容**，包括但不限于：\n- **表格列头/表头**: 必须保持原文，禁止翻译或改写（如 "First Name" 不能改为 "名字"）\n- **正文文本**: 所有段落、句子必须保持原样\n- **数据内容**: 表格数据、列表内容必须原样保留\n- **专有名词**: 人名、地名、产品名等保持原文\n\n**仅以下内容可以使用中文**：\n- YAML Frontmatter 中的 `description`、`topics`、`do... [4022 chars total]
+2026-01-11T12:47:06.849230Z [debug] Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+2026-01-11T12:47:08.286147Z [debug] Image compressed | compressed_size=273343 filename=Free_Test_Data_500KB_PPTX_001.png original_size=499499 savings=45.3%
+2026-01-11T12:47:08.287471Z [info] Document converted | file=Free_Test_Data_500KB_PPTX.pptx images=1
+2026-01-11T12:47:08.287682Z [debug] Created LLM tasks | enhancement_task=1 file=Free_Test_Data_500KB_PPTX.pptx image_tasks=1
+2026-01-11T12:47:08.287878Z [info] Submitting LLM tasks | count=2 file=Free_Test_Data_500KB_PPTX.pptx
+2026-01-11T12:47:08.288097Z [debug] Executing LLM task | source=Free_Test_Data_500KB_PPTX.pptx task_id=Free_Test_Data_500KB_PPTX.pptx.001.png task_type=image_analysis
+2026-01-11T12:47:08.288262Z [debug] Analyzing image with LLM | filename=Free_Test_Data_500KB_PPTX.pptx.001.png
+2026-01-11T12:47:08.291341Z [debug] Executing LLM task | source=Free_Test_Data_500KB_PPTX.pptx task_id=markdown task_type=chunk_enhancement
+2026-01-11T12:47:08.291614Z [info] Enhancing Markdown | file=/home/oy/Work/markit/input/Free_Test_Data_500KB_PPTX.pptx
+2026-01-11T12:47:08.292499Z [debug] Document small enough, no chunking needed
+2026-01-11T12:47:08.292621Z [debug] Document split into chunks | count=1
+2026-01-11T12:47:08.293333Z [debug] Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-a5746f47-efa3-47a2-ae75-636a7b4bad5a', 'json_data': {'messages': [{'role': 'user', 'content': '请按照以下规则优化 Markdown 文档的格式。\n\n## 核心原则：尊重原文\n\n**严禁修改原文档中的任何实际内容**，包括但不限于：\n- **表格列头/表头**: 必须保持原文，禁止翻译或改写（如 "First Name" 不能改为 "名字"）\n- **正文文本**: 所有段落、句子必须保持原样\n- **数据内容**: 表格数据、列表内容必须原样保留\n- **专有名词**: 人名、地名、产品名等保持原文\n\n**仅以下内容可以使用中文**：\n- YAML Frontmatter 中的 `description`、`topics`、`do... [5364 chars total]
+2026-01-11T12:47:08.293961Z [debug] Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+2026-01-11T12:47:14.429586Z [debug] Image analysis complete | filename=file-example_PDF_500_kB.pdf.001.png image_type=chart
+2026-01-11T12:47:15.838427Z [debug] HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Sun, 11 Jan 2026 12:47:10 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer... [653 chars total]
+2026-01-11T12:47:15.838930Z [debug] request_id: None
+2026-01-11T12:47:15.847236Z [debug] OpenAI completion | model=xiaomi/mimo-v2-flash:free tokens=2446
+2026-01-11T12:47:15.849347Z [info] Markdown enhancement complete | file=/home/oy/Work/markit/input/file_example_PPT_250kB.ppt
+2026-01-11T12:47:15.849635Z [info] LLM tasks completed | count=1 file=file_example_PPT_250kB.ppt
+2026-01-11T12:47:15.849738Z [info] Phase 3: Finalizing output | file=file_example_PPT_250kB.ppt
+2026-01-11T12:47:15.851856Z [info] Output written | path=/home/oy/Work/markit/output/file_example_PPT_250kB.ppt_1.md
+2026-01-11T12:47:15.852296Z [info] File completed | file=file_example_PPT_250kB.ppt images=0 output=/home/oy/Work/markit/output/file_example_PPT_250kB.ppt_1.md
+2026-01-11T12:47:16.468771Z [debug] Image analysis complete | filename=Free_Test_Data_500KB_PPTX.pptx.001.png image_type=logo
+2026-01-11T12:47:20.480825Z [debug] HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Sun, 11 Jan 2026 12:47:07 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer... [653 chars total]
+2026-01-11T12:47:20.481510Z [debug] request_id: None
+2026-01-11T12:47:20.482449Z [debug] OpenAI completion | model=xiaomi/mimo-v2-flash:free tokens=5100
+2026-01-11T12:47:20.485361Z [info] Markdown enhancement complete | file=/home/oy/Work/markit/input/file-sample_100kB.doc
+2026-01-11T12:47:25.081664Z [debug] Image analysis complete | filename=file-sample_100kB.doc.001.jpeg image_type=photo
+2026-01-11T12:47:25.082375Z [info] LLM tasks completed | count=2 file=file-sample_100kB.doc
+2026-01-11T12:47:25.082822Z [info] Phase 3: Finalizing output | file=file-sample_100kB.doc
+2026-01-11T12:47:25.084032Z [info] Output written | path=/home/oy/Work/markit/output/file-sample_100kB.doc_1.md
+2026-01-11T12:47:25.085499Z [debug] Assets written | descriptions=1 images=1 output_dir=/home/oy/Work/markit/output/assets
+2026-01-11T12:47:25.086467Z [info] File completed | file=file-sample_100kB.doc images=1 output=/home/oy/Work/markit/output/file-sample_100kB.doc_1.md
+2026-01-11T12:47:25.689521Z [debug] HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Sun, 11 Jan 2026 12:47:18 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer... [653 chars total]
+2026-01-11T12:47:25.690000Z [debug] request_id: None
+2026-01-11T12:47:25.690770Z [debug] OpenAI completion | model=xiaomi/mimo-v2-flash:free tokens=3194
+2026-01-11T12:47:25.694938Z [info] Markdown enhancement complete | file=/home/oy/Work/markit/input/Free_Test_Data_500KB_PPTX.pptx
+2026-01-11T12:47:25.695517Z [info] LLM tasks completed | count=2 file=Free_Test_Data_500KB_PPTX.pptx
+2026-01-11T12:47:25.695761Z [info] Phase 3: Finalizing output | file=Free_Test_Data_500KB_PPTX.pptx
+2026-01-11T12:47:25.696692Z [info] Output written | path=/home/oy/Work/markit/output/Free_Test_Data_500KB_PPTX.pptx_1.md
+2026-01-11T12:47:25.698308Z [debug] Assets written | descriptions=1 images=1 output_dir=/home/oy/Work/markit/output/assets
+2026-01-11T12:47:25.698765Z [info] File completed | file=Free_Test_Data_500KB_PPTX.pptx images=1 output=/home/oy/Work/markit/output/Free_Test_Data_500KB_PPTX.pptx_1.md
+2026-01-11T12:47:27.640084Z [debug] HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Sun, 11 Jan 2026 12:47:10 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer... [653 chars total]
+2026-01-11T12:47:27.641057Z [debug] request_id: None
+2026-01-11T12:47:27.642463Z [debug] OpenAI completion | model=xiaomi/mimo-v2-flash:free tokens=6645
+2026-01-11T12:47:27.645445Z [info] Markdown enhancement complete | file=/home/oy/Work/markit/input/file-example_PDF_500_kB.pdf
+2026-01-11T12:47:32.430451Z [debug] HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Sun, 11 Jan 2026 12:47:07 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer... [653 chars total]
+2026-01-11T12:47:32.431078Z [debug] request_id: None
+2026-01-11T12:47:32.432333Z [debug] OpenAI completion | model=xiaomi/mimo-v2-flash:free tokens=8859
+2026-01-11T12:47:32.436757Z [info] Markdown enhancement complete | file=/home/oy/Work/markit/input/file_example_XLSX_100.xlsx
+2026-01-11T12:47:32.437319Z [info] LLM tasks completed | count=1 file=file_example_XLSX_100.xlsx
+2026-01-11T12:47:32.437642Z [info] Phase 3: Finalizing output | file=file_example_XLSX_100.xlsx
+2026-01-11T12:47:32.439144Z [info] Output written | path=/home/oy/Work/markit/output/file_example_XLSX_100.xlsx_1.md
+2026-01-11T12:47:32.439925Z [info] File completed | file=file_example_XLSX_100.xlsx images=0 output=/home/oy/Work/markit/output/file_example_XLSX_100.xlsx_1.md
+2026-01-11T12:47:32.630910Z [debug] HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Sun, 11 Jan 2026 12:47:07 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer... [653 chars total]
+2026-01-11T12:47:32.631537Z [debug] request_id: None
+2026-01-11T12:47:32.632446Z [debug] OpenAI completion | model=xiaomi/mimo-v2-flash:free tokens=9155
+2026-01-11T12:47:32.640079Z [info] Markdown enhancement complete | file=/home/oy/Work/markit/input/file_example_XLS_100.xls
+2026-01-11T12:47:32.640378Z [info] LLM tasks completed | count=1 file=file_example_XLS_100.xls
+2026-01-11T12:47:32.640542Z [info] Phase 3: Finalizing output | file=file_example_XLS_100.xls
+2026-01-11T12:47:32.641777Z [info] Output written | path=/home/oy/Work/markit/output/file_example_XLS_100.xls_1.md
+2026-01-11T12:47:32.642237Z [info] File completed | file=file_example_XLS_100.xls images=0 output=/home/oy/Work/markit/output/file_example_XLS_100.xls_1.md
+2026-01-11T12:48:10.013717Z [debug] Image analysis complete | filename=file-example_PDF_500_kB.pdf.002.png image_type=photo
+2026-01-11T12:48:10.014324Z [info] LLM tasks completed | count=3 file=file-example_PDF_500_kB.pdf
+2026-01-11T12:48:10.014658Z [info] Phase 3: Finalizing output | file=file-example_PDF_500_kB.pdf
+2026-01-11T12:48:10.016426Z [info] Output written | path=/home/oy/Work/markit/output/file-example_PDF_500_kB.pdf_2.md
+2026-01-11T12:48:10.021574Z [debug] Assets written | descriptions=2 images=2 output_dir=/home/oy/Work/markit/output/assets
+2026-01-11T12:48:10.022545Z [info] File completed | file=file-example_PDF_500_kB.pdf images=2 output=/home/oy/Work/markit/output/file-example_PDF_500_kB.pdf_2.md
+2026-01-11T12:48:10.022945Z [info] Batch processing complete | total=6
+2026-01-11T12:48:10.023652Z [info] Batch complete | batch_id=0b3e1d0bda6f completed=6 failed=0 skipped=0
+
+Batch Statistics:
+Complete: 6 success, 0 failed
+Total: 87s | Init: 20s | Process: 67s | LLM: 65s
+Tokens: 39,216 | Est. cost: $0.0035
+Models used: xiaomi/mimo-v2-flash:free(6), models/gemini-2.5-flash(4)
+

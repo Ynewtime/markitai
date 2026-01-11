@@ -2,6 +2,15 @@
 
 Convert documents to Markdown with optional LLM enhancement.
 
+## Features
+
+- **Multi-format Support**: Word (.docx/.doc), PowerPoint (.pptx/.ppt), Excel (.xlsx/.xls), PDF, HTML, Images
+- **LLM Enhancement**: Clean headers/footers, fix headings, add frontmatter, generate summaries
+- **Image Processing**: Auto compression, format conversion, deduplication, LLM-powered analysis
+- **Batch Processing**: Recursive directory conversion with resume capability
+- **Multi-Provider LLM**: OpenAI, Anthropic, Google Gemini, Ollama, OpenRouter with concurrent fallback
+- **Capability-Based Routing**: Automatically route text tasks to text models, vision tasks to vision models
+
 ## Install
 
 ```bash
@@ -47,14 +56,23 @@ scoop install pandoc oxipng
 # Basic conversion
 markit convert document.docx
 
-# With LLM enhancement (format cleanup, frontmatter)
+# With LLM enhancement (format cleanup, frontmatter, summary)
 markit convert document.docx --llm
 
-# With image analysis
+# With image analysis (generate alt text)
 markit convert document.pdf --analyze-image
 
-# Batch convert
+# With image description markdown files
+markit convert document.pdf --analyze-image-with-md
+
+# Batch convert directory
 markit batch ./docs -o ./output -r
+
+# Resume interrupted batch
+markit batch ./docs -o ./output --resume
+
+# Fast mode (skip validation, minimal retries)
+markit batch ./docs -o ./output --fast
 ```
 
 ## Commands
@@ -63,7 +81,10 @@ markit batch ./docs -o ./output -r
 |---------|-------------|
 | `markit convert <file>` | Convert single file |
 | `markit batch <dir>` | Batch convert directory |
-| `markit config show` | Show current config |
+| `markit config init` | Create config file |
+| `markit config test` | Validate configuration |
+| `markit config list` | Display current settings |
+| `markit config locations` | Show config file search paths |
 | `markit provider add` | Add LLM provider credential |
 | `markit provider test` | Test LLM connectivity |
 | `markit provider list` | List configured credentials |
@@ -79,10 +100,15 @@ markit batch ./docs -o ./output -r
 | `--llm` | Enable LLM Markdown enhancement |
 | `--analyze-image` | Generate image alt text via LLM |
 | `--analyze-image-with-md` | Also generate `.md` description files |
-| `--pdf-engine` | PDF engine: pymupdf4llm, pymupdf, pdfplumber |
-| `--llm-provider` | openai, anthropic, gemini, ollama, openrouter |
+| `--no-compress` | Disable image compression |
+| `--pdf-engine` | PDF engine: pymupdf4llm (default), pymupdf, pdfplumber |
+| `--llm-provider` | Override provider: openai, anthropic, gemini, ollama, openrouter |
+| `--llm-model` | Override model name |
 | `-r, --recursive` | Process subdirectories (batch) |
 | `--resume` | Resume interrupted batch |
+| `--fast` | Fast mode (skip validation, minimal retries) |
+| `--dry-run` | Show plan without executing |
+| `-v, --verbose` | Verbose logging |
 
 ## Supported Formats
 
@@ -93,7 +119,8 @@ markit batch ./docs -o ./output -r
 | Excel | .xlsx, .xls | MarkItDown (+ LibreOffice for .xls) |
 | PDF | .pdf | PyMuPDF4LLM / PyMuPDF / pdfplumber |
 | HTML | .html, .htm | MarkItDown |
-| Images | .png, .jpg, .gif, .webp | LLM analysis |
+| Text | .txt | MarkItDown |
+| Images | .png, .jpg, .gif, .webp, .bmp | LLM analysis |
 
 ## Configuration
 
@@ -101,26 +128,65 @@ Create `markit.yaml` with `markit config init`:
 
 ```yaml
 log_level: "INFO"
-
-output:
-  default_dir: "output"
+state_file: ".markit-state.json"
 
 image:
   enable_compression: true
+  png_optimization_level: 2  # 0-6, higher = slower
+  jpeg_quality: 85
+  max_dimension: 2048
+  filter_small_images: true
 
-# New Schema (recommended for multiple models)
-# Define credentials separately from models
+concurrency:
+  file_workers: 4      # Concurrent file conversions
+  image_workers: 8     # Concurrent image processing
+  llm_workers: 5       # Concurrent LLM requests
+
+pdf:
+  engine: "pymupdf4llm"  # pymupdf4llm, pymupdf, pdfplumber
+
+enhancement:
+  enabled: false
+  remove_headers_footers: true
+  fix_heading_levels: true
+  add_frontmatter: true
+  generate_summary: true
+
+output:
+  default_dir: "output"
+  on_conflict: "rename"  # skip, overwrite, rename
+
+prompt:
+  output_language: "zh"  # zh, en, auto
+
+# LLM Configuration
+# Credentials and models are defined separately for flexibility
 llm:
+  concurrent_fallback_enabled: true
+  concurrent_fallback_timeout: 60  # Seconds before starting backup model
+  max_request_timeout: 300
+
   credentials:
     - id: "openai-main"
       provider: "openai"
       # api_key: "sk-..."  # Or use OPENAI_API_KEY env var
+    - id: "deepseek"
+      provider: "openai"
+      base_url: "https://api.deepseek.com"
+      api_key_env: "DEEPSEEK_API_KEY"
 
   models:
     - name: "GPT-4o"
       model: "gpt-4o"
       credential_id: "openai-main"
       capabilities: ["text", "vision"]
+      cost:  # Optional: for cost tracking
+        input_per_1m: 2.50
+        output_per_1m: 10.00
+    - name: "deepseek-chat"
+      model: "deepseek-chat"
+      credential_id: "deepseek"
+      capabilities: ["text"]  # text-only model
 ```
 
 **Environment variables:**
@@ -130,17 +196,50 @@ export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="..."
 export GOOGLE_API_KEY="..."
 export OPENROUTER_API_KEY="..."
+export DEEPSEEK_API_KEY="..."
 ```
 
 ## Output Structure
 
 ```
 output/
-  document.docx.md
+  document.docx.md              # Converted markdown
   assets/
-    document.docx.001.png
-    document.docx.001.png.md    # with --analyze-image-with-md
+    document.docx.001.png       # Extracted images
+    document.docx.001.png.md    # Image description (with --analyze-image-with-md)
 ```
+
+## Architecture
+
+MarkIt uses a modular, service-oriented architecture:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           ConversionPipeline                                │
+│                                                                             │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────────────┐  │
+│  │ FormatRouter    │  │ ImageProcessing  │  │ LLMOrchestrator            │  │
+│  │                 │  │ Service          │  │                            │  │
+│  │ - Route files   │  │ - Compression    │  │ - ProviderManager          │  │
+│  │ - Select        │  │ - Deduplication  │  │ - MarkdownEnhancer         │  │
+│  │   converter     │  │ - Format convert │  │ - ImageAnalyzer            │  │
+│  └─────────────────┘  └──────────────────┘  └────────────────────────────┘  │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                         OutputManager                               │    │
+│  │                                                                     │    │
+│  │  - Conflict resolution (rename/overwrite/skip)                      │    │
+│  │  - Write markdown + assets                                          │    │
+│  │  - Generate image description .md files                             │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key Design:**
+- **Capability-based model routing**: Text tasks use text models, vision tasks use vision models
+- **Concurrent fallback**: Primary model timeout triggers backup model concurrently
+- **LibreOffice profile pool**: Isolated profiles for parallel .doc/.ppt/.xls conversion
+- **Process pool for images**: Heavy compression uses process pool to bypass GIL
 
 ## License
 
