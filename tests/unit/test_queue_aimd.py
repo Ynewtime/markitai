@@ -258,6 +258,7 @@ class TestLLMTaskQueueIntegration:
 
         assert len(results) == 5
         assert all(r.success for r in results)
+        assert queue.adaptive_stats is not None
         assert queue.adaptive_stats.total_successes == 5
 
     @pytest.mark.asyncio
@@ -305,5 +306,6 @@ class TestLLMTaskQueueIntegration:
 
         assert succeeded == 2
         assert failed == 1
+        assert queue.adaptive_stats is not None
         assert queue.adaptive_stats.total_successes == 2
         assert queue.adaptive_stats.total_failures == 1

@@ -59,7 +59,7 @@ class OllamaProvider(BaseLLMProvider):
 
         log.debug(
             "Sending LLM request",
-            provider="ollama",
+            provider=self.name,
             model=model_name,
             request_id=request_id,
         )
@@ -90,7 +90,7 @@ class OllamaProvider(BaseLLMProvider):
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             log.debug(
                 "LLM response received",
-                provider="ollama",
+                provider=self.name,
                 model=response.get("model", model_name),
                 request_id=request_id,
                 input_tokens=usage.prompt_tokens if usage else 0,
@@ -109,7 +109,7 @@ class OllamaProvider(BaseLLMProvider):
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             log.warning(
                 "LLM request failed",
-                provider="ollama",
+                provider=self.name,
                 model=model_name,
                 request_id=request_id,
                 duration_ms=duration_ms,

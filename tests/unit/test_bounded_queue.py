@@ -1,9 +1,7 @@
-"""E2E: Test BoundedQueue backpressure mechanism.
+"""Test BoundedQueue backpressure mechanism.
 
 BoundedQueue prevents memory exhaustion during high-volume batch
 processing by blocking producers when the queue is full.
-
-Run with: pytest -m e2e tests/e2e/test_bounded_queue.py
 """
 
 import asyncio
@@ -11,8 +9,6 @@ import asyncio
 import pytest
 
 from markit.utils.flow_control import BoundedQueue
-
-pytestmark = pytest.mark.e2e
 
 
 @pytest.mark.asyncio

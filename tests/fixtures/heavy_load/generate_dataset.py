@@ -187,17 +187,15 @@ def generate_dataset(
     files = []
 
     extension = ".md" if format_type == "markdown" else ".txt"
-    generator = generate_markdown_file if format_type == "markdown" else generate_text_file
-
     for i in range(count):
         filename = f"{prefix}_{i:05d}{extension}"
         file_path = output_dir / filename
         size_kb = random.randint(min_size_kb, max_size_kb)
 
         if format_type == "markdown":
-            generator(file_path, size_kb, include_code=True, include_tables=True)
+            generate_markdown_file(file_path, size_kb, include_code=True, include_tables=True)
         else:
-            generator(file_path, size_kb)
+            generate_text_file(file_path, size_kb)
 
         files.append(file_path)
 

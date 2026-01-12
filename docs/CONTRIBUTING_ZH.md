@@ -89,12 +89,12 @@ MarkIt 采用模块化、面向服务的架构，职责分离清晰。
 
 ### 核心组件
 
-1. **FormatRouter** (`markit/core/router.py`)：根据文件扩展名路由到对应转换器
+1. **FormatRouter** (`src/markit/core/router.py`)：根据文件扩展名路由到对应转换器
    - PDF：根据配置路由到 pymupdf4llm/pymupdf/pdfplumber
    - 旧格式 (.doc, .ppt, .xls)：添加 OfficePreprocessor 先通过 LibreOffice 转换
    - 现代 Office/HTML：使用 MarkItDown 转换器
 
-2. **ConversionPipeline** (`markit/core/pipeline.py`)：主协调器
+2. **ConversionPipeline** (`src/markit/core/pipeline.py`)：主协调器
    - 带回退支持的文档转换
    - 委托 ImageProcessingService 处理图片
    - 委托 LLMOrchestrator 处理 LLM 操作
@@ -102,19 +102,19 @@ MarkIt 采用模块化、面向服务的架构，职责分离清晰。
 
 ### 服务层
 
-- **ImageProcessingService** (`markit/services/image_processor.py`)：处理图片格式转换、压缩（通过 oxipng/Pillow）、去重，并准备图片供 LLM 分析
+- **ImageProcessingService** (`src/markit/services/image_processor.py`)：处理图片格式转换、压缩（通过 oxipng/Pillow）、去重，并准备图片供 LLM 分析
 
-- **LLMOrchestrator** (`markit/services/llm_orchestrator.py`)：集中所有 LLM 操作
+- **LLMOrchestrator** (`src/markit/services/llm_orchestrator.py`)：集中所有 LLM 操作
   - 管理 ProviderManager 支持多提供商
   - 创建 MarkdownEnhancer 进行文本清理
   - 创建 ImageAnalyzer 处理视觉任务
   - 实现基于能力的路由（文本模型 vs 视觉模型）
 
-- **OutputManager** (`markit/services/output_manager.py`)：处理文件写入、冲突解决，生成图片描述 markdown 文件
+- **OutputManager** (`src/markit/services/output_manager.py`)：处理文件写入、冲突解决，生成图片描述 markdown 文件
 
 ### LLM 提供商系统
 
-**ProviderManager** (`markit/llm/manager.py`)：管理多个 LLM 提供商
+**ProviderManager** (`src/markit/llm/manager.py`)：管理多个 LLM 提供商
 - 延迟初始化（按需验证提供商）
 - 基于能力的路由（文本 vs 视觉任务）
 - 失败时自动回退
@@ -122,11 +122,11 @@ MarkIt 采用模块化、面向服务的架构，职责分离清晰。
 - 轮询负载均衡
 - 按模型成本追踪
 
-支持的提供商：OpenAI、Anthropic、Gemini、Ollama、OpenRouter（均在 `markit/llm/` 模块中）
+支持的提供商：OpenAI、Anthropic、Gemini、Ollama、OpenRouter（均在 `src/markit/llm/` 模块中）
 
 ### 配置系统
 
-设置定义在 `markit/config/settings.py`，使用 pydantic-settings：
+设置定义在 `src/markit/config/settings.py`，使用 pydantic-settings：
 - **LLMConfig**：支持旧版单提供商和新版凭证/模型分离两种模式
 - **LLMCredentialConfig**：提供商凭证（可引用环境变量）
 - **LLMModelConfig**：引用凭证的模型实例，带能力声明
@@ -162,7 +162,7 @@ MarkIt 采用模块化、面向服务的架构，职责分离清晰。
 
 ### 5. LibreOffice 配置文件池
 
-`markit/converters/libreoffice_pool.py`：并行转换 .doc/.ppt/.xls 时，使用隔离的 LibreOffice 配置文件目录避免冲突。
+`src/markit/converters/libreoffice_pool.py`：并行转换 .doc/.ppt/.xls 时，使用隔离的 LibreOffice 配置文件目录避免冲突。
 
 ### 6. 进程池图像处理
 

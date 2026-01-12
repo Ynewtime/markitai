@@ -1,92 +1,46 @@
 # ROADMAP
 
 
-## 任务批次 2026011201 - v0.1.3
-
-### 原始需求
-
-运行 `just test-cov` 的结果如 htmlcov 文件夹，你深度分析下，看看有什么问题或者改进的空间。
-然后参考 docs/ROADMAP.md，把测试覆盖率识别出来的问题和改进计划写入到 ROADMAP 中，新增一个任务批次，版本号为 0.1.3。
-同时该任务批次还要修复下面这个问题，参考日志 `.logs/batch_20260112_164701_83d1bd1d.log`，可以看到:
-1. 对于 `[info] Provider initialized`，实际上当前程序没有初始化 Provider，而是初始化了模型，这是错误的，初始化应该是对 Provider 初始化;
-2. 如 docs/ROADMAP.md 中 [任务批次 2026011102] 的要求，实际上该任务是没有完成的，请深入分析，要进一步完善。
-
-### 上下文
-
-通过 `just test-cov` 分析发现 CLI 交互模块（callbacks）测试覆盖率为 0%，存在质量风险。
-同时，日志分析（`.logs/batch_...83d1bd1d.log`）显示 `ProviderManager` 在初始化同一提供商的多个模型时（如 OpenRouter 的多个模型），会重复进行网络验证并打印初始化日志。这不仅导致启动慢，还产生了误导性的日志信息（将模型初始化混淆为提供商初始化）。
+## 任务批次 2026011202 - v0.2.0
 
 ### 目标
 
-提升核心 CLI 交互模块的测试覆盖率至 100%；优化 LLM 初始化逻辑，消除冗余验证和日志噪音，确保 Provider 级别的单次初始化。
+本版本聚焦于**本地化能力增强**与**底层架构升级**。
+1. **本地 OCR 支持**：引入本地 OCR 引擎，支持离线环境下的扫描件/图片文字提取，提升中文识别准确率，降低对昂贵的多模态大模型的依赖。
+2. **LLM 架构重构调研**：深度评估 `litellm` 生态，探索用其统一接口替代当前自研的 Provider/Model 适配层，以获得更广泛的模型支持、更精准的成本计算及更强大的路由能力。
 
 ### 任务
 
-#### 1. 初始化逻辑优化 (Refactor)
-*   **消除冗余验证**：
-    *   修改 `markit/llm/manager.py` 中的 `ProviderManager`。
-    *   引入 `_validated_credentials` 集合，追踪已验证的凭证 ID。
-    *   在 `_ensure_provider_initialized` 中，如果凭证已验证，直接复用连接状态，跳过 `_validate_provider` 网络请求。
-*   **日志语义修正**：
-    *   将 `[info] Provider initialized` 限制为仅在物理连接（Credential）首次建立时打印。
-    *   后续模型的加载降级为 `[debug] Model configured`，明确区分 Provider 连接和 Model 配置。
-    *   日志字段明确区分 `provider` (如 openrouter) 和 `model` (如 deepseek-chat)。
+#### 1. 本地 OCR 能力支持 (Local OCR)
 
-#### 2. 测试覆盖率提升 (Test)
+基于 `docs/reference/ocr.md` 的调研结论，分阶段落地本地 OCR 能力。
 
-**目标**：将整体测试覆盖率从 46% 提升至 80%+
+*   **Phase 1: PyMuPDF4LLM 内置 OCR (MVP)**
+    *   **依赖集成**：更新 `pyproject.toml`，引入 `ocr` 可选依赖组（含 `opencv-python`）。
+    *   **配置适配**：在 `markit.yaml` 的 `pdf` 节增加 OCR 开关及语言选项（默认 `chi_sim+eng`）。
+    *   **系统适配**：在 `markit check` 命令中增加对系统级依赖（Tesseract）的检查与提示。
+*   **Phase 2: 高精度中文 OCR (RapidOCR)**
+    *   **引擎集成**：引入 `rapidocr-onnxruntime`，封装统一的 OCR 引擎接口。
+    *   **混合策略**：支持在配置中选择 OCR 引擎（`pymupdf` vs `rapidocr`），为纯中文文档提供更高精度的选择。
 
-*   **已完成 ✅**：
-    *   `cli/callbacks.py` - 100%
-    *   `cli/shared/credentials.py` - 100%
-    *   `config/constants.py` - 100%
-    *   `tests/unit/test_llm_manager.py` 多模型复用测试
+#### 2. LLM 架构演进调研 (LiteLLM Analysis)
 
-*   **P0 - LLM 提供商测试** (当前 0-16%)：
-    *   `llm/anthropic.py` - 0% → 80%+
-    *   `llm/gemini.py` - 0% → 80%+
-    *   `llm/ollama.py` - 0% → 80%+
-    *   `llm/openrouter.py` - 0% → 80%+
-    *   `llm/openai.py` - 16% → 80%+
-    *   `llm/enhancer.py` - 27% → 80%+
+基于 `docs/reference/litellm.md`，开展 `litellm` 库与 MarkIt 现有架构的差异分析与重构预研。
 
-*   **P0 - CLI 命令测试** (当前 5-24%)：
-    *   `cli/commands/batch.py` - 5% → 80%+
-    *   `cli/commands/model.py` - 8% → 80%+
-    *   `cli/commands/provider.py` - 10% → 80%+
-    *   `cli/commands/config.py` - 24% → 80%+
-
-*   **P1 - 转换器测试** (当前 15-35%)：
-    *   `converters/pdfplumber.py` - 15% → 80%+
-    *   `converters/pandoc.py` - 21% → 80%+
-    *   `converters/pymupdf.py` - 31% → 80%+
-    *   `converters/office.py` - 35% → 80%+
-
-*   **P1 - 核心模块测试** (当前 12-48%)：
-    *   `image/extractor.py` - 12% → 80%+
-    *   `utils/fs.py` - 13% → 80%+
-    *   `markdown/formatter.py` - 15% → 80%+
-    *   `markdown/chunker.py` - 17% → 80%+
-    *   `markdown/frontmatter.py` - 24% → 80%+
-    *   `core/pipeline.py` - 42% → 80%+
-    *   `image/analyzer.py` - 44% → 80%+
-    *   `llm/manager.py` - 48% → 80%+
+*   **能力映射与差距分析**：
+    *   **接口标准化**：对比 MarkIt `Provider` 抽象类与 LiteLLM `completion()` 统一接口，评估迁移复杂度。
+    *   **成本/Token管理**：评估 LiteLLM 的 Cost Tracking 机制是否能覆盖 MarkIt v0.1.2 的自定义成本估算需求。
+    *   **高级特性**：分析 LiteLLM 的 Router（负载均衡）、Fallback（故障转移）与 MarkIt 现有实现的优劣。
+*   **重构可行性验证 (POC)**：
+    *   创建一个 POC 分支，尝试用 `litellm` 替换 `markit/llm/openai.py` 等底层实现。
+    *   **关键决策点**：
+        1. 是否完全废弃现有的 `ProviderManager`？
+        2. 如何保持现有的 CLI 交互体验（进度条、流式输出、Rich 渲染）不变？
+        3. 配置文件结构是否需要随 LiteLLM 规范调整？
 
 ### 进展
 
-进行中（约 30%）
-
-**已完成：**
-1. ✅ 初始化逻辑优化：`_validated_credentials` 机制生效，每个 credential 仅验证一次
-2. ✅ 日志语义修正：首次连接 `[info] Provider initialized`，后续模型 `[debug] Model configured`
-3. ✅ `cli/callbacks.py` 测试覆盖率 100%
-4. ✅ 多模型复用单元测试
-
-**待完成：**
-- 整体覆盖率 46% → 80%+
-- P0: LLM 提供商模块测试（4 个模块 0% 覆盖）
-- P0: CLI 命令模块测试（3 个模块 <10% 覆盖）
-- P1: 转换器和核心模块测试
+待开始
 
 
 ---
@@ -518,3 +472,105 @@ llm:
 - 单元测试：`test_adaptive_limiter.py`, `test_flow_control.py`, `test_chaos_provider.py`, `test_queue_aimd.py`, `test_state_dlq.py`
 - 集成测试：`tests/integration/test_resilience.py`
 - UAT 测试：`uat/run_resilience.py`（一键运行全部韧性 UAT）
+
+
+## 任务批次 2026011201 - v0.1.3
+
+### 原始需求
+
+运行 `just test-cov` 的结果如 htmlcov 文件夹，你深度分析下，看看有什么问题或者改进的空间。
+然后参考 docs/ROADMAP.md，把测试覆盖率识别出来的问题和改进计划写入到 ROADMAP 中，新增一个任务批次，版本号为 0.1.3。
+同时该任务批次还要修复下面这个问题，参考日志 `.logs/batch_20260112_164701_83d1bd1d.log`，可以看到:
+1. 对于 `[info] Provider initialized`，实际上当前程序没有初始化 Provider，而是初始化了模型，这是错误的，初始化应该是对 Provider 初始化;
+2. 如 docs/ROADMAP.md 中 [任务批次 2026011102] 的要求，实际上该任务是没有完成的，请深入分析，要进一步完善。
+
+### 上下文
+
+通过 `just test-cov` 分析发现 CLI 交互模块（callbacks）测试覆盖率为 0%，存在质量风险。
+同时，日志分析（`.logs/batch_...83d1bd1d.log`）显示 `ProviderManager` 在初始化同一提供商的多个模型时（如 OpenRouter 的多个模型），会重复进行网络验证并打印初始化日志。这不仅导致启动慢，还产生了误导性的日志信息（将模型初始化混淆为提供商初始化）。
+
+### 目标
+
+提升核心 CLI 交互模块的测试覆盖率至 100%；优化 LLM 初始化逻辑，消除冗余验证和日志噪音，确保 Provider 级别的单次初始化。
+
+### 任务
+
+#### 1. 初始化逻辑优化 (Refactor)
+*   **消除冗余验证**：
+    *   修改 `markit/llm/manager.py` 中的 `ProviderManager`。
+    *   引入 `_validated_credentials` 集合，追踪已验证的凭证 ID。
+    *   在 `_ensure_provider_initialized` 中，如果凭证已验证，直接复用连接状态，跳过 `_validate_provider` 网络请求。
+*   **日志语义修正**：
+    *   将 `[info] Provider initialized` 限制为仅在物理连接（Credential）首次建立时打印。
+    *   后续模型的加载降级为 `[debug] Model configured`，明确区分 Provider 连接和 Model 配置。
+    *   日志字段明确区分 `provider` (如 openrouter) 和 `model` (如 deepseek-chat)。
+
+#### 2. 测试覆盖率提升 (Test)
+
+**目标**：将整体测试覆盖率从 46% 提升至 80%+
+
+*   **已完成 ✅**：
+    *   `cli/callbacks.py` - 100%
+    *   `cli/shared/credentials.py` - 100%
+    *   `config/constants.py` - 100%
+    *   `tests/unit/test_llm_manager.py` 多模型复用测试
+
+*   **P0 - LLM 提供商测试** (当前 0-16%)：
+    *   `llm/anthropic.py` - 0% → 80%+
+    *   `llm/gemini.py` - 0% → 80%+
+    *   `llm/ollama.py` - 0% → 80%+
+    *   `llm/openrouter.py` - 0% → 80%+
+    *   `llm/openai.py` - 16% → 80%+
+    *   `llm/enhancer.py` - 27% → 80%+
+
+*   **P0 - CLI 命令测试** (当前 5-24%)：
+    *   `cli/commands/batch.py` - 5% → 80%+
+    *   `cli/commands/model.py` - 8% → 80%+
+    *   `cli/commands/provider.py` - 10% → 80%+
+    *   `cli/commands/config.py` - 24% → 80%+
+
+*   **P1 - 转换器测试** (当前 15-35%)：
+    *   `converters/pdfplumber.py` - 15% → 80%+
+    *   `converters/pandoc.py` - 21% → 80%+
+    *   `converters/pymupdf.py` - 31% → 80%+
+    *   `converters/office.py` - 35% → 80%+
+
+*   **P1 - 核心模块测试** (当前 12-48%)：
+    *   `image/extractor.py` - 12% → 80%+
+    *   `utils/fs.py` - 13% → 80%+
+    *   `markdown/formatter.py` - 15% → 80%+
+    *   `markdown/chunker.py` - 17% → 80%+
+    *   `markdown/frontmatter.py` - 24% → 80%+
+    *   `core/pipeline.py` - 42% → 80%+
+    *   `image/analyzer.py` - 44% → 80%+
+    *   `llm/manager.py` - 48% → 80%+
+
+### 进展
+
+**已完成：**
+1. ✅ 初始化逻辑优化：`_validated_credentials` 机制生效，每个 credential 仅验证一次
+2. ✅ 日志语义修正：首次连接 `[info] Provider initialized`，后续模型 `[debug] Model configured`
+3. ✅ `cli/callbacks.py` 测试覆盖率 100%
+4. ✅ 多模型复用单元测试
+5. ✅ **LLM 提供商测试**：
+   - `llm/openai.py` 16% → **94%**, `llm/anthropic.py` 0% → **90%**, `llm/gemini.py` 0% → **97%**
+   - `llm/ollama.py` 0% → **98%**, `llm/openrouter.py` 0% → **100%**, `llm/enhancer.py` 27% → **90%**
+6. ✅ **CLI 命令测试**：
+   - `cli/commands/config.py` 24% → **95%**, `cli/commands/convert.py` 66% → **85%+**
+   - `cli/commands/batch.py` 5% → **75%+**, `cli/commands/provider.py` 10% → **70%+**, `cli/commands/model.py` 8% → **70%+**
+7. ✅ **Markdown 模块测试**：
+   - `markdown/formatter.py` 15% → **97%**, `markdown/chunker.py` 35% → **94%**, `markdown/frontmatter.py` 59% → **100%**
+8. ✅ **转换器测试**：
+   - `converters/pdfplumber.py` 15% → **95%**, `converters/pandoc.py` 21% → **95%**
+   - `converters/pymupdf.py` 31% → **99%**, `converters/office.py` 35% → **63%**
+9. ✅ **核心模块测试**：
+   - `image/extractor.py` 12% → **96%**, `utils/fs.py` 13% → **93%**
+   - `utils/stats.py` 27% → **97%**, `utils/concurrency.py` 30% → **99%**
+   - `image/converter.py` 38% → **80%**, `image/analyzer.py` 44% → **94%**
+10. ✅ **并发安全修复**：修复 `ProviderManager` 竞态条件，新增 `_credential_init_locks` 凭证级别锁
+11. ✅ **日志输出修复**：LLM Provider 日志 `provider` 字段改用 `self.name`，确保继承类日志正确
+12. ✅ **整体覆盖率**：46% → **81%**（1363 tests passed）
+
+**备注：**
+- 剩余 <80% 模块（executor.py 49%, manager.py 49%, pipeline.py 42%）为复杂协调层，需 E2E 测试覆盖
+- 核心业务模块（LLM providers, converters, image, utils, CLI）均达 70%+

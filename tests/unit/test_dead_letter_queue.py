@@ -1,19 +1,13 @@
-"""E2E: Test Dead Letter Queue (DLQ) for failure tracking.
+"""Test Dead Letter Queue (DLQ) for failure tracking.
 
 DLQ tracks failed items with retry count, metadata, and automatic
 cleanup on success. Items become "permanent failures" after max retries.
-
-Run with: pytest -m e2e tests/e2e/test_dead_letter_queue.py
 """
 
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from markit.utils.flow_control import DeadLetterQueue
-
-pytestmark = pytest.mark.e2e
 
 
 def test_dlq_retry_tracking() -> None:
@@ -127,6 +121,7 @@ def test_state_manager_integration() -> None:
         manager.record_failure(test_file, "Error 2")
 
         state = manager.get_state()
+        assert state is not None
         file_state = state.files["test.txt"]
         assert file_state.failure_count == 2
 
@@ -134,6 +129,7 @@ def test_state_manager_integration() -> None:
         manager.record_success(test_file)
 
         state = manager.get_state()
+        assert state is not None
         file_state = state.files["test.txt"]
         assert file_state.failure_count == 0
         assert file_state.last_error is None

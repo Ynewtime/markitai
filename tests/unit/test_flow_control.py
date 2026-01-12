@@ -120,11 +120,15 @@ class TestDeadLetterQueue:
 
         result = dlq.record_failure("item1", "error1")
         assert result is True  # Should retry
-        assert dlq.get_entry("item1").failure_count == 1
+        entry1 = dlq.get_entry("item1")
+        assert entry1 is not None
+        assert entry1.failure_count == 1
 
         result = dlq.record_failure("item1", "error2")
         assert result is True  # Should still retry
-        assert dlq.get_entry("item1").failure_count == 2
+        entry2 = dlq.get_entry("item1")
+        assert entry2 is not None
+        assert entry2.failure_count == 2
 
     def test_permanent_failure_after_max_retries(self) -> None:
         """Test that item becomes permanent failure after max retries."""
@@ -163,6 +167,7 @@ class TestDeadLetterQueue:
         dlq.record_failure("item1", "error2", {"model": "gpt-4"})
 
         entry = dlq.get_entry("item1")
+        assert entry is not None
         assert entry.metadata["provider"] == "openai"
         assert entry.metadata["model"] == "gpt-4"
 
@@ -209,8 +214,10 @@ class TestDeadLetterQueue:
             dlq2 = DeadLetterQueue(storage_path=storage_path, max_retries=3)
 
             assert len(dlq2) == 2
-            assert dlq2.get_entry("item1").failure_count == 1
-            assert dlq2.get_entry("item1").metadata["key"] == "value"
+            entry = dlq2.get_entry("item1")
+            assert entry is not None
+            assert entry.failure_count == 1
+            assert entry.metadata["key"] == "value"
 
     def test_export_report(self) -> None:
         """Test exporting report to file."""
@@ -314,6 +321,7 @@ class TestStateManagerRecordSuccess:
         manager.record_failure(test_file, "error2")
 
         state = manager.get_state()
+        assert state is not None
         file_state = state.files["test.txt"]
         assert file_state.failure_count == 2
 
@@ -346,6 +354,7 @@ class TestStateManagerRecordSuccess:
         manager.record_success(test_file)
 
         state = manager.get_state()
+        assert state is not None
         file_state = state.files["test.txt"]
         assert file_state.failure_count == 0
 

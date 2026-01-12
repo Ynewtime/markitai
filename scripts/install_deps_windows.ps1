@@ -206,6 +206,17 @@ Write-Host "[INFO] For JPEG compression, optionally download mozjpeg:"
 Write-Host "  - https://mozjpeg.codelove.de/binaries.html"
 Write-Host ""
 
+# TODO (v0.2.0): Tesseract OCR for scanned PDF support
+# Write-Host "=== Tesseract OCR (optional) ===" -ForegroundColor Cyan
+# if ($hasScoop) {
+#     Install-WithScoop "tesseract" "Tesseract OCR"
+# } elseif ($hasWinget) {
+#     Install-WithWinget "UB-Mannheim.TesseractOCR" "Tesseract OCR"
+# }
+# Write-Host "[INFO] For Chinese language support, download chi_sim.traineddata and chi_tra.traineddata"
+# Write-Host "  - https://github.com/tesseract-ocr/tessdata"
+# Write-Host ""
+
 # Verify installations
 Write-Host "=== Verification ===" -ForegroundColor Cyan
 Write-Host ""

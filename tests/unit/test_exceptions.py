@@ -50,7 +50,7 @@ class TestExceptions:
         from markit.exceptions import ConversionError, FallbackExhaustedError
 
         file_path = Path("/test/file.docx")
-        errors = [
+        errors: list[Exception] = [
             ConversionError(file_path, "Primary failed"),
             ConversionError(file_path, "Fallback failed"),
         ]

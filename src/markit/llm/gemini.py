@@ -66,7 +66,7 @@ class GeminiProvider(BaseLLMProvider):
 
         log.debug(
             "Sending LLM request",
-            provider="gemini",
+            provider=self.name,
             model=model_name,
             request_id=request_id,
         )
@@ -103,7 +103,7 @@ class GeminiProvider(BaseLLMProvider):
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             log.debug(
                 "LLM response received",
-                provider="gemini",
+                provider=self.name,
                 model=model_name,
                 request_id=request_id,
                 input_tokens=usage.prompt_tokens if usage else 0,
@@ -122,7 +122,7 @@ class GeminiProvider(BaseLLMProvider):
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             log.warning(
                 "LLM request failed",
-                provider="gemini",
+                provider=self.name,
                 model=model_name,
                 request_id=request_id,
                 duration_ms=duration_ms,
