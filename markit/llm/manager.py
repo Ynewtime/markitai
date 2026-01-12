@@ -14,7 +14,7 @@ from markit.config.settings import (
 )
 from markit.exceptions import LLMError, LLMTimeoutError, ProviderNotFoundError
 from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse
-from markit.utils.logging import get_logger
+from markit.utils.logging import get_logger, set_request_context
 
 log = get_logger(__name__)
 
@@ -26,6 +26,7 @@ class ProviderState:
     config: LLMProviderConfig
     capabilities: list[str] = field(default_factory=list)
     cost: ModelCostConfig | None = None
+    credential_id: str | None = None  # Track credential ID for logging
     provider: BaseLLMProvider | None = None
     initialized: bool = False
     valid: bool | None = None  # None = not yet validated
@@ -95,7 +96,9 @@ class ProviderManager:
                 cred = cred_map.get(model_config.credential_id)
                 if not cred:
                     log.warning(
-                        f"Credential '{model_config.credential_id}' not found for model '{model_config.name}'"
+                        "Credential not found for model",
+                        credential_id=model_config.credential_id,
+                        model_name=model_config.name,
                     )
                     continue
 
@@ -123,6 +126,7 @@ class ProviderManager:
                     config=synthetic_config,
                     capabilities=caps,
                     cost=model_config.cost,
+                    credential_id=model_config.credential_id,
                 )
                 self._provider_capabilities[provider_key] = caps
 
@@ -165,15 +169,28 @@ class ProviderManager:
                     if provider_name not in self._valid_providers:
                         self._valid_providers.append(provider_name)
                     log.info(
-                        f"Provider {provider_name} initialized on demand",
+                        "Provider initialized",
+                        credential=state.credential_id or state.config.provider,
+                        model=state.config.model,
+                        provider_id=provider_name,
+                        base_url=state.config.base_url or "default",
                         capabilities=state.capabilities,
                     )
                 else:
                     state.valid = False
-                    log.warning(f"Provider {provider_name} validation failed")
+                    log.warning(
+                        "Provider validation failed",
+                        provider_id=provider_name,
+                        type=state.config.provider,
+                    )
             except Exception as e:
                 state.valid = False
-                log.warning(f"Failed to initialize provider {provider_name}: {e}")
+                log.warning(
+                    "Provider initialization failed",
+                    provider_id=provider_name,
+                    type=state.config.provider,
+                    error=str(e),
+                )
 
             state.initialized = True
             return state.valid is True
@@ -317,10 +334,10 @@ class ProviderManager:
         if action == "fail":
             raise LLMError(f"Provider validation failed: {message}")
         elif action == "skip":
-            log.warning(f"Skipping provider: {message}")
+            log.warning("Skipping provider", reason=message)
             return False
         else:  # warn
-            log.warning(f"Provider validation warning: {message}")
+            log.warning("Provider validation warning", reason=message)
             return True
 
     async def _validate_provider(
@@ -334,7 +351,11 @@ class ProviderManager:
 
         # Skip validation if disabled
         if not validation_config.enabled:
-            log.debug(f"Validation disabled, assuming {config.name or config.model} is valid")
+            log.debug(
+                "Validation disabled",
+                provider_id=config.name or config.model,
+                type=config.provider,
+            )
             return True
 
         # Helper to get effective API key
@@ -366,7 +387,12 @@ class ProviderManager:
                     return True
             except Exception as e:
                 if attempt < validation_config.retry_count:
-                    log.debug(f"Validation attempt {attempt + 1} failed, retrying...")
+                    log.debug(
+                        "Validation attempt failed, retrying",
+                        attempt=attempt + 1,
+                        max_attempts=validation_config.retry_count + 1,
+                        error=str(e),
+                    )
                     await asyncio.sleep(1)
                 else:
                     return self._handle_validation_failure(
@@ -563,14 +589,32 @@ class ProviderManager:
                     continue
 
             provider = self._providers[provider_name]
+            state = self._provider_states.get(provider_name)
             try:
                 if i > 0:
-                    log.debug(f"Retrying with provider: {provider_name}")
+                    log.debug(
+                        "Retrying with provider",
+                        provider_id=provider_name,
+                        attempt=i + 1,
+                        max_attempts=provider_count,
+                    )
+                # Set provider/model context for HTTP logs
+                set_request_context(
+                    provider=state.credential_id or state.config.provider
+                    if state
+                    else provider_name,
+                    model=state.config.model if state else None,
+                )
                 response = await provider.complete(messages, **kwargs)
                 response.estimated_cost = self.calculate_cost(provider_name, response)
                 return response
             except Exception as e:
-                log.warning(f"Provider {provider_name} failed: {e}")
+                log.warning(
+                    "Provider failed",
+                    provider_id=provider_name,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
                 errors.append((provider_name, e))
                 continue
 
@@ -619,7 +663,11 @@ class ProviderManager:
             if preferred in vision_candidates:
                 vision_candidates.remove(preferred)
                 vision_candidates.insert(0, preferred)
-                log.debug(f"Prioritizing last successful vision provider: {preferred}")
+                log.debug(
+                    "Prioritizing last successful provider",
+                    provider_id=preferred,
+                    capability="vision",
+                )
 
         errors = []
         provider_count = len(vision_candidates)
@@ -634,9 +682,22 @@ class ProviderManager:
                     continue
 
             provider = self._providers[provider_name]
+            state = self._provider_states.get(provider_name)
             try:
                 if i > 0:
-                    log.debug(f"Retrying image analysis with provider: {provider_name}")
+                    log.debug(
+                        "Retrying image analysis with provider",
+                        provider_id=provider_name,
+                        attempt=i + 1,
+                        max_attempts=provider_count,
+                    )
+                # Set provider/model context for HTTP logs
+                set_request_context(
+                    provider=state.credential_id or state.config.provider
+                    if state
+                    else provider_name,
+                    model=state.config.model if state else None,
+                )
                 response = await provider.analyze_image(image_data, prompt, image_format, **kwargs)
                 response.estimated_cost = self.calculate_cost(provider_name, response)
 
@@ -645,19 +706,18 @@ class ProviderManager:
                 return response
             except Exception as e:
                 log.warning(
-                    "Provider failed for image analysis, triggering fallback",
-                    provider=provider_name,
+                    "Provider failed for image analysis",
+                    provider_id=provider_name,
                     error=str(e),
                     error_type=type(e).__name__,
                 )
 
-                warning_msg = (
-                    f"If provider '{provider_name}' is text-only, please explicitly set "
-                    f"capabilities=['text'] in markit.yaml to skip it for image tasks."
+                log.warning(
+                    "Hint: If provider is text-only, set capabilities=['text'] in config",
+                    provider_id=provider_name,
                 )
-                log.warning(warning_msg)
 
-                errors.append((provider_name, f"{e}. Hint: {warning_msg}"))
+                errors.append((provider_name, str(e)))
                 continue
 
         error_details = "; ".join(f"{name}: {err}" for name, err in errors)
@@ -723,7 +783,11 @@ class ProviderManager:
             if preferred in candidates:
                 candidates.remove(preferred)
                 candidates.insert(0, preferred)
-                log.debug(f"Prioritizing last successful provider: {preferred}")
+                log.debug(
+                    "Prioritizing last successful provider",
+                    provider_id=preferred,
+                    capability=capability_key,
+                )
 
         primary_name = candidates[0]
 
@@ -733,6 +797,15 @@ class ProviderManager:
                 raise LLMError(f"Failed to initialize primary provider: {primary_name}")
 
         primary_provider = self._providers[primary_name]
+        primary_state = self._provider_states.get(primary_name)
+
+        # Set provider/model context for HTTP logs
+        set_request_context(
+            provider=primary_state.credential_id or primary_state.config.provider
+            if primary_state
+            else primary_name,
+            model=primary_state.config.model if primary_state else None,
+        )
 
         # Create primary task
         primary_task = asyncio.create_task(primary_provider.complete(messages, **kwargs))
@@ -749,7 +822,10 @@ class ProviderManager:
                 self._last_successful_provider[capability_key] = primary_name
                 return response
             else:
-                log.warning(f"Primary model {primary_name} returned invalid response")
+                log.warning(
+                    "Primary model returned invalid response",
+                    provider_id=primary_name,
+                )
                 raise LLMError("Primary model returned invalid response")
 
         except TimeoutError:
@@ -758,8 +834,10 @@ class ProviderManager:
 
             if not fallback_candidates:
                 log.warning(
-                    f"Primary model {primary_name} exceeded {fallback_timeout}s, "
-                    "no fallback available, waiting with absolute timeout..."
+                    "Primary model exceeded timeout, no fallback available",
+                    provider_id=primary_name,
+                    timeout_seconds=fallback_timeout,
+                    max_timeout_seconds=max_timeout,
                 )
                 try:
                     remaining_timeout = max_timeout - fallback_timeout
@@ -778,7 +856,9 @@ class ProviderManager:
             if fallback_name not in self._providers:
                 if not await self._ensure_provider_initialized(fallback_name):
                     log.warning(
-                        f"Failed to initialize fallback {fallback_name}, waiting for primary"
+                        "Failed to initialize fallback, waiting for primary",
+                        fallback_id=fallback_name,
+                        primary_id=primary_name,
                     )
                     try:
                         remaining_timeout = max_timeout - fallback_timeout
@@ -795,8 +875,10 @@ class ProviderManager:
             fallback_provider = self._providers[fallback_name]
 
             log.warning(
-                f"Primary model {primary_name} exceeded {fallback_timeout}s, "
-                f"starting fallback {fallback_name} concurrently"
+                "Primary model exceeded timeout, starting concurrent fallback",
+                primary_id=primary_name,
+                fallback_id=fallback_name,
+                timeout_seconds=fallback_timeout,
             )
 
             # Start fallback task
@@ -820,7 +902,12 @@ class ProviderManager:
 
             # Handle absolute timeout
             if not done:
-                log.error(f"All models exceeded absolute timeout ({max_timeout}s)")
+                log.error(
+                    "All models exceeded absolute timeout",
+                    max_timeout_seconds=max_timeout,
+                    primary_id=primary_name,
+                    fallback_id=fallback_name,
+                )
                 for task in pending:
                     task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
@@ -837,7 +924,13 @@ class ProviderManager:
             completed_task = done.pop()
             winner = "primary" if completed_task is primary_task else "fallback"
             winner_name = primary_name if winner == "primary" else fallback_name
-            log.info(f"Concurrent fallback completed, winner: {winner} ({winner_name})")
+            log.info(
+                "Concurrent fallback completed",
+                winner=winner,
+                winner_id=winner_name,
+                primary_id=primary_name,
+                fallback_id=fallback_name,
+            )
 
             try:
                 response = completed_task.result()

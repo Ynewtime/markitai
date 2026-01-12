@@ -90,14 +90,14 @@ class OfficePreprocessor(BaseProcessor):
 
         log.info(
             "Converting legacy Office format",
-            file=str(file_path),
             from_format=suffix,
             to_format=LEGACY_TO_MODERN[suffix],
+            file=str(file_path),
         )
 
         try:
             # Get appropriate converter
-            converter = self._get_converter()
+            converter = self._get_converter(file_path)
 
             # Convert file
             result = await anyio.to_thread.run_sync(
@@ -120,8 +120,12 @@ class OfficePreprocessor(BaseProcessor):
             )
             raise ConversionError(file_path, f"Office conversion failed: {e}", cause=e) from e
 
-    def _get_converter(self) -> _BaseOfficeConverter:
-        """Get the appropriate Office converter."""
+    def _get_converter(self, file_path: Path | None = None) -> _BaseOfficeConverter:
+        """Get the appropriate Office converter.
+
+        Args:
+            file_path: Optional file path for logging context (first file being converted)
+        """
         if self._converter is not None:
             return self._converter
 
@@ -129,7 +133,9 @@ class OfficePreprocessor(BaseProcessor):
         if sys.platform == "win32" and self.prefer_ms_office:
             try:
                 self._converter = MSOfficeConverter()
-                log.info("Using MS Office for conversion")
+                log.info(
+                    "Using MS Office for conversion", file=str(file_path) if file_path else None
+                )
                 return self._converter
             except Exception as e:
                 log.warning("MS Office not available", error=str(e))
@@ -139,7 +145,7 @@ class OfficePreprocessor(BaseProcessor):
             soffice_path=self.libreoffice_path,
             timeout=self.timeout,
         )
-        log.info("Using LibreOffice for conversion")
+        log.info("Using LibreOffice for conversion", file=str(file_path) if file_path else None)
         return self._converter
 
 

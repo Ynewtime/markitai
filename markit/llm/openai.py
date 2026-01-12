@@ -1,12 +1,13 @@
 """OpenAI LLM provider implementation."""
 
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
 from openai import AsyncOpenAI
 
 from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, ResponseFormat, TokenUsage
-from markit.utils.logging import get_logger
+from markit.utils.logging import generate_request_id, get_logger
 
 log = get_logger(__name__)
 
@@ -63,12 +64,23 @@ class OpenAIProvider(BaseLLMProvider):
         Returns:
             LLM response
         """
+        request_id = generate_request_id()
+        model_name = kwargs.get("model", self.model)
+        start_time = time.perf_counter()
+
+        log.debug(
+            "Sending LLM request",
+            provider="openai",
+            model=model_name,
+            request_id=request_id,
+        )
+
         try:
             converted_messages = self._convert_messages(messages)
 
             # Build request params, excluding None values (OpenAI API rejects null)
             request_params: dict[str, Any] = {
-                "model": kwargs.get("model", self.model),
+                "model": model_name,
                 "messages": converted_messages,
                 "temperature": temperature,
             }
@@ -98,10 +110,15 @@ class OpenAIProvider(BaseLLMProvider):
                     completion_tokens=response.usage.completion_tokens,
                 )
 
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
             log.debug(
-                "OpenAI completion",
+                "LLM response received",
+                provider="openai",
                 model=response.model,
-                tokens=usage.total_tokens if usage else 0,
+                request_id=request_id,
+                input_tokens=usage.prompt_tokens if usage else 0,
+                output_tokens=usage.completion_tokens if usage else 0,
+                duration_ms=duration_ms,
             )
 
             return LLMResponse(
@@ -112,6 +129,16 @@ class OpenAIProvider(BaseLLMProvider):
             )
 
         except Exception as e:
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
+            log.warning(
+                "LLM request failed",
+                provider="openai",
+                model=model_name,
+                request_id=request_id,
+                duration_ms=duration_ms,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             self._handle_api_error(e, "API", log)
 
     async def stream(

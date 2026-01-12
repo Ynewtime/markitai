@@ -1,27 +1,6 @@
 # ROADMAP
 
 
-## 任务批次 2026011102
-
-### 日志优化
-
-参考 archive/batch_20260111_204643_44231f37.log.bak.1 日志，该日志为 `markit batch input/ --llm --analyze-image-with-md --verbose` 记录的文件日志，对应的终端输出参考 `archive/batch_20260111_204643_44231f37.log.bak.2`，请深度分析这两个日志文件的问题并做修复，包括但不限于：
-
-1. `Provider xiaomi/mimo-v2-flash:free initialized on demand` 应为 `Provider <provider-id> initialized on demand`，其中 <provider-id> 对应 `markit.yaml` 文件中的模型提供商 ID。注意这里不单单是做日志优化，业务逻辑也要优化，配置文件中一个 Provider 提供了多种模型，初始化应该验证 Provider，而非 model，我认为不需要对每个模型都做验证，而且从实际代码来看，仅仅是验证 `/models` API，跟模型也没啥关系，实际验证的是 Provider
-2. `2026-01-11T12:46:43.809949Z [debug] Request options:` 补充当前请求的模型 ID，如 `2026-01-11T12:46:43.809949Z [debug] provider=<provider-id> model=model-id> Request options: ...`，其中 <model-id> 对应配置文件中的 models.model 字段。类似的还有：`[debug] HTTP Response: GET`、`[debug] request_id: None`、`[debug] Sending HTTP Request: `、
-3.  `[debug] Conversion plan | fallback=pandoc primary=markitdown` 优化为 `[debug] Conversion plan | primary=markitdown fallback=pandoc file=<file>`，类似的还有 `[debug] Conversion plan | fallback=pymupdf primary=pymupdf4llm`
-4. `[debug] Trying primary converter | converter=markitdown` 优化为 `[debug] Trying primary converter | converter=markitdown file=<file>`，类似的还有 `[debug] Trying primary converter | converter=pymupdf4llm`
-5. `[debug] Running pre-processor | processor=office_preprocessor` 优化为 `[debug] Running pre-processor | processor=office_preprocessor file=<file>`
-6. `[info] Converting legacy Office format | file=/home/oy/Work/markit/input/file-sample_100kB.doc from_format=.doc to_format=.docx` 优化为 `[info] Converting legacy Office format | from_format=.doc to_format=.docx file=/home/oy/Work/markit/input/file-sample_100kB.doc`，类似的还有 `[debug] Calling pymupdf4llm.to_markdown | file=...`
-7. `[info] Using LibreOffice for conversion` 优化为 `[info] Using LibreOffice for conversion | file=<file>`
-8. `[info] Markdown enhancement complete | file=/home/oy/Work/markit/input/file_example_XLSX_100.xlsx` 优化为 `[info] Markdown enhancement complete | file=/home/oy/Work/markit/input/file_example_XLSX_100.xlsx provider=<provider-id> model=<model-id>`
-9. 参考上述规则，继续优化剩余日志信息，如 `[info] Processing images (format/compress) | count=2`、`[debug] Request options: {'method': 'post', 'url': '/chat/completions'...`、`[debug] Document split into chunks | count=1` 等等
-
-### 进展
-
-待启动
-
-
 ## 任务批次 2026011103 - v0.1.2
 
 ### 上下文
@@ -65,7 +44,7 @@
 
 ### 进展
 
-待启动
+待验证
 
 
 ---
@@ -388,3 +367,35 @@ llm:
 ### 进展
 
 已完成
+
+
+## 任务批次 2026011102
+
+### 日志优化
+
+参考 archive/batch_20260111_204643_44231f37.log.bak.1 日志，该日志为 `markit batch input/ --llm --analyze-image-with-md --verbose` 记录的文件日志，对应的终端输出参考 `archive/batch_20260111_204643_44231f37.log.bak.2`，请深度分析这两个日志文件的问题并做修复，包括但不限于：
+
+1. `Provider xiaomi/mimo-v2-flash:free initialized on demand` 应为 `Provider <provider-id> initialized on demand`，其中 <provider-id> 对应 `markit.yaml` 文件中的模型提供商 ID。注意这里不单单是做日志优化，业务逻辑也要优化，配置文件中一个 Provider 提供了多种模型，初始化应该验证 Provider，而非 model，我认为不需要对每个模型都做验证，而且从实际代码来看，仅仅是验证 `/models` API，跟模型也没啥关系，实际验证的是 Provider
+2. `2026-01-11T12:46:43.809949Z [debug] Request options:` 补充当前请求的模型 ID，如 `2026-01-11T12:46:43.809949Z [debug] provider=<provider-id> model=model-id> Request options: ...`，其中 <model-id> 对应配置文件中的 models.model 字段。类似的还有：`[debug] HTTP Response: GET`、`[debug] request_id: None`、`[debug] Sending HTTP Request: `、
+3.  `[debug] Conversion plan | fallback=pandoc primary=markitdown` 优化为 `[debug] Conversion plan | primary=markitdown fallback=pandoc file=<file>`，类似的还有 `[debug] Conversion plan | fallback=pymupdf primary=pymupdf4llm`
+4. `[debug] Trying primary converter | converter=markitdown` 优化为 `[debug] Trying primary converter | converter=markitdown file=<file>`，类似的还有 `[debug] Trying primary converter | converter=pymupdf4llm`
+5. `[debug] Running pre-processor | processor=office_preprocessor` 优化为 `[debug] Running pre-processor | processor=office_preprocessor file=<file>`
+6. `[info] Converting legacy Office format | file=/home/oy/Work/markit/input/file-sample_100kB.doc from_format=.doc to_format=.docx` 优化为 `[info] Converting legacy Office format | from_format=.doc to_format=.docx file=/home/oy/Work/markit/input/file-sample_100kB.doc`，类似的还有 `[debug] Calling pymupdf4llm.to_markdown | file=...`
+7. `[info] Using LibreOffice for conversion` 优化为 `[info] Using LibreOffice for conversion | file=<file>`
+8. `[info] Markdown enhancement complete | file=/home/oy/Work/markit/input/file_example_XLSX_100.xlsx` 优化为 `[info] Markdown enhancement complete | file=/home/oy/Work/markit/input/file_example_XLSX_100.xlsx provider=<provider-id> model=<model-id>`
+9. 参考上述规则，继续优化剩余日志信息，如 `[info] Processing images (format/compress) | count=2`、`[debug] Request options: {'method': 'post', 'url': '/chat/completions'...`、`[debug] Document split into chunks | count=1` 等等
+
+### 进展
+
+✅ 已完成 (2026-01-12)
+
+修复内容：
+1. ✅ 日志字段排序：`ConsoleRenderer` 添加 `sort_keys=False` 保持字段顺序
+2. ✅ Provider 初始化日志：显示 `credential=<credential_id>` 而非仅 provider_id
+3. ✅ HTTP 请求日志上下文：在 `complete_with_fallback` 等方法添加 `set_request_context()` 注入 provider/model
+4. ✅ Conversion plan 日志：字段顺序优化为 primary → fallback → file
+5. ✅ 转换器日志：converter → file 顺序优化
+6. ✅ Legacy Office 格式日志：from_format → to_format → file 顺序优化
+7. ✅ LibreOffice 日志：添加 file 参数
+8. ✅ Markdown enhancement 日志：添加 model 字段
+9. ✅ 其他日志优化：Document split into chunks、Processing images 等添加 file 上下文

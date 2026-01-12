@@ -1,5 +1,6 @@
 """Google Gemini LLM provider implementation."""
 
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -8,7 +9,7 @@ from google.genai import types
 
 from markit.exceptions import LLMError
 from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, ResponseFormat, TokenUsage
-from markit.utils.logging import get_logger
+from markit.utils.logging import generate_request_id, get_logger
 
 log = get_logger(__name__)
 
@@ -59,6 +60,17 @@ class GeminiProvider(BaseLLMProvider):
         Returns:
             LLM response
         """
+        request_id = generate_request_id()
+        model_name = kwargs.get("model", self.model)
+        start_time = time.perf_counter()
+
+        log.debug(
+            "Sending LLM request",
+            provider="gemini",
+            model=model_name,
+            request_id=request_id,
+        )
+
         try:
             # Convert messages to Gemini format
             contents = self._convert_to_gemini_contents(messages)
@@ -71,7 +83,7 @@ class GeminiProvider(BaseLLMProvider):
 
             # Note: SDK accepts list[Part] at runtime despite type hints
             response = await self.client.aio.models.generate_content(
-                model=kwargs.get("model", self.model),
+                model=model_name,
                 contents=contents,  # type: ignore[arg-type]
                 config=config,
             )
@@ -88,20 +100,35 @@ class GeminiProvider(BaseLLMProvider):
                     completion_tokens=response.usage_metadata.candidates_token_count or 0,
                 )
 
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
             log.debug(
-                "Gemini completion",
-                model=self.model,
-                tokens=usage.total_tokens if usage else 0,
+                "LLM response received",
+                provider="gemini",
+                model=model_name,
+                request_id=request_id,
+                input_tokens=usage.prompt_tokens if usage else 0,
+                output_tokens=usage.completion_tokens if usage else 0,
+                duration_ms=duration_ms,
             )
 
             return LLMResponse(
                 content=content,
                 usage=usage,
-                model=self.model,
+                model=model_name,
                 finish_reason="stop",
             )
 
         except Exception as e:
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
+            log.warning(
+                "LLM request failed",
+                provider="gemini",
+                model=model_name,
+                request_id=request_id,
+                duration_ms=duration_ms,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             self._handle_api_error(e, "API", log)
 
     async def stream(

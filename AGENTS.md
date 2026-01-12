@@ -119,3 +119,21 @@ def convert_document(file_path: Path, output_dir: Path) -> Path:
     """
     ...
 ```
+
+---
+
+## 3. 文档同步规则
+
+**重要**：更新文档时必须同步更新关联文档：
+
+| 主文档 | 关联文档 | 说明 |
+|--------|----------|------|
+| `README.md` | `README_CN.md` | 中英文内容保持同步 |
+| `CLAUDE.md` | `AGENTS.md` | 开发规范保持一致 |
+| `docs/ROADMAP.md` | - | 任务进展及时更新 |
+
+**操作要求**：
+- 更新 README 后，同步更新 README_CN
+- 新增开发规范时，同步更新 CLAUDE.md 和 AGENTS.md
+- 完成任务后，更新 ROADMAP.md 中对应任务批次的进展
+```
