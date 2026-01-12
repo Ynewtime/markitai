@@ -494,3 +494,146 @@ class TestProviderManagerRedundantValidation:
             # Both models should be valid
             assert "Model-A" in pm._valid_providers
             assert "Model-B" in pm._valid_providers
+
+
+class TestProviderManagerConcurrentCredentialValidation:
+    """Tests for concurrent credential validation (credential-level locking)."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_init_same_credential_validates_once(self):
+        """Test that concurrent initialization with same credential validates only once.
+
+        This test verifies the credential-level locking fix: when multiple models
+        sharing the same credential are initialized concurrently (via asyncio.gather),
+        the validation should happen exactly once, not multiple times.
+        """
+        import asyncio
+
+        llm_config = LLMConfig(
+            credentials=[
+                LLMCredentialConfig(id="shared-openai", provider="openai", api_key="sk-test"),
+            ],
+            models=[
+                LLMModelConfig(
+                    name="GPT-4o",
+                    model="gpt-4o",
+                    credential_id="shared-openai",
+                ),
+                LLMModelConfig(
+                    name="GPT-4o-mini",
+                    model="gpt-4o-mini",
+                    credential_id="shared-openai",
+                ),
+                LLMModelConfig(
+                    name="GPT-5",
+                    model="gpt-5",
+                    credential_id="shared-openai",
+                ),
+            ],
+        )
+        pm = ProviderManager(llm_config)
+
+        # Track validation calls
+        validation_call_count = 0
+        validation_lock = asyncio.Lock()
+
+        async def mock_validate(_provider, _config):
+            nonlocal validation_call_count
+            # Add small delay to increase chance of race conditions
+            await asyncio.sleep(0.01)
+            async with validation_lock:
+                validation_call_count += 1
+            return True
+
+        mock_provider = AsyncMock()
+        mock_provider.validate.return_value = True
+
+        with (
+            patch.object(pm, "_create_provider", return_value=mock_provider),
+            patch.object(pm, "_validate_provider", side_effect=mock_validate),
+        ):
+            # Load configs first
+            await pm._load_configs()
+
+            # Concurrently initialize all three models
+            results = await asyncio.gather(
+                pm._ensure_provider_initialized("GPT-4o"),
+                pm._ensure_provider_initialized("GPT-4o-mini"),
+                pm._ensure_provider_initialized("GPT-5"),
+            )
+
+            # All should succeed
+            assert all(results), "All models should initialize successfully"
+
+            # Validation should be called exactly ONCE (credential-level lock ensures this)
+            assert validation_call_count == 1, (
+                f"Expected 1 validation call, got {validation_call_count}. "
+                "Credential-level locking may not be working."
+            )
+
+            # All models should be valid
+            assert "GPT-4o" in pm._valid_providers
+            assert "GPT-4o-mini" in pm._valid_providers
+            assert "GPT-5" in pm._valid_providers
+
+    @pytest.mark.asyncio
+    async def test_concurrent_init_different_credentials_validates_each(self):
+        """Test that different credentials are validated separately.
+
+        When models use different credentials, each credential should be
+        validated independently.
+        """
+        import asyncio
+
+        llm_config = LLMConfig(
+            credentials=[
+                LLMCredentialConfig(id="openai-cred", provider="openai", api_key="sk-openai"),
+                LLMCredentialConfig(
+                    id="anthropic-cred", provider="anthropic", api_key="sk-anthropic"
+                ),
+            ],
+            models=[
+                LLMModelConfig(
+                    name="GPT-4o",
+                    model="gpt-4o",
+                    credential_id="openai-cred",
+                ),
+                LLMModelConfig(
+                    name="Claude-Sonnet",
+                    model="claude-sonnet",
+                    credential_id="anthropic-cred",
+                ),
+            ],
+        )
+        pm = ProviderManager(llm_config)
+
+        # Track validation calls per credential
+        validation_calls: dict[str, int] = {}
+        validation_lock = asyncio.Lock()
+
+        async def mock_validate(_provider, config):
+            await asyncio.sleep(0.01)
+            async with validation_lock:
+                cred_type = config.provider
+                validation_calls[cred_type] = validation_calls.get(cred_type, 0) + 1
+            return True
+
+        mock_provider = AsyncMock()
+
+        with (
+            patch.object(pm, "_create_provider", return_value=mock_provider),
+            patch.object(pm, "_validate_provider", side_effect=mock_validate),
+        ):
+            await pm._load_configs()
+
+            # Concurrently initialize both models
+            results = await asyncio.gather(
+                pm._ensure_provider_initialized("GPT-4o"),
+                pm._ensure_provider_initialized("Claude-Sonnet"),
+            )
+
+            assert all(results)
+
+            # Each credential should be validated once
+            assert validation_calls.get("openai", 0) == 1
+            assert validation_calls.get("anthropic", 0) == 1

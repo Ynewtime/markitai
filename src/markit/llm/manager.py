@@ -62,6 +62,7 @@ class ProviderManager:
         self._provider_states: dict[str, ProviderState] = {}
         self._configs_loaded = False
         self._provider_init_locks: dict[str, asyncio.Lock] = {}
+        self._credential_init_locks: dict[str, asyncio.Lock] = {}
 
         # Track last successful provider per capability for optimized routing
         self._last_successful_provider: dict[str, str] = {}
@@ -150,7 +151,7 @@ class ProviderManager:
         if state.initialized:
             return state.valid is True
 
-        # Get or create lock for this provider
+        # Get or create lock for this provider (model-level)
         if provider_name not in self._provider_init_locks:
             self._provider_init_locks[provider_name] = asyncio.Lock()
 
@@ -162,15 +163,23 @@ class ProviderManager:
             try:
                 provider = self._create_provider(state.config)
 
-                # Check if credential already validated
+                # Get credential ID for validation tracking
                 cred_id = state.credential_id or state.config.provider
-                should_validate = cred_id not in self._validated_credentials
 
-                is_valid = True
-                if should_validate:
-                    is_valid = await self._validate_provider(provider, state.config)
-                    if is_valid:
-                        self._validated_credentials.add(cred_id)
+                # Acquire credential-level lock to prevent duplicate validation
+                # when multiple models share the same credential
+                if cred_id not in self._credential_init_locks:
+                    self._credential_init_locks[cred_id] = asyncio.Lock()
+
+                async with self._credential_init_locks[cred_id]:
+                    # Double-check if credential already validated (after acquiring lock)
+                    should_validate = cred_id not in self._validated_credentials
+
+                    is_valid = True
+                    if should_validate:
+                        is_valid = await self._validate_provider(provider, state.config)
+                        if is_valid:
+                            self._validated_credentials.add(cred_id)
 
                 if is_valid:
                     state.provider = provider

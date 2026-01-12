@@ -1,9 +1,7 @@
-"""E2E: Test AIMD adaptive rate limiter under simulated load.
+"""Test AIMD adaptive rate limiter under simulated load.
 
 AIMD (Additive Increase Multiplicative Decrease) dynamically adjusts
 concurrency based on success/rate-limit responses.
-
-Run with: pytest -m e2e tests/e2e/test_aimd_limiter.py
 """
 
 import asyncio
@@ -11,8 +9,6 @@ import asyncio
 import pytest
 
 from markit.utils.adaptive_limiter import AdaptiveRateLimiter, AIMDConfig
-
-pytestmark = pytest.mark.e2e
 
 
 @pytest.mark.asyncio

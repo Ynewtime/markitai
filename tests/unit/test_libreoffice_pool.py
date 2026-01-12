@@ -1,6 +1,7 @@
 """Tests for LibreOfficeProfilePool."""
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -162,12 +163,14 @@ class TestAcquire:
     async def test_resets_failure_count_on_success(self, pool):
         """Failure count is reset on successful use."""
         # First, cause a failure
+        profile_dir: Path | None = None
         try:
             async with pool.acquire() as profile_dir:
                 raise RuntimeError("Test error")
         except RuntimeError:
             pass
 
+        assert profile_dir is not None
         assert pool._failure_count[profile_dir] == 1
 
         # Now succeed with the same profile
@@ -176,17 +179,20 @@ class TestAcquire:
                 pass  # Success resets the counter
 
         # If we got the same profile, its count should be reset
+        assert profile_dir2 is not None
         if profile_dir2 == profile_dir:
             assert pool._failure_count[profile_dir] == 0
 
     async def test_increments_failure_count(self, pool):
         """Failure count is incremented on exception."""
+        profile_dir: Path | None = None
         try:
             async with pool.acquire() as profile_dir:
                 raise RuntimeError("Test error")
         except RuntimeError:
             pass
 
+        assert profile_dir is not None
         assert pool._failure_count[profile_dir] == 1
 
     async def test_auto_initializes(self, temp_dir):

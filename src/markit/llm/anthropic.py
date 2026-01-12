@@ -83,7 +83,7 @@ class AnthropicProvider(BaseLLMProvider):
 
         log.debug(
             "Sending LLM request",
-            provider="anthropic",
+            provider=self.name,
             model=model_name,
             request_id=request_id,
         )
@@ -129,7 +129,7 @@ class AnthropicProvider(BaseLLMProvider):
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             log.debug(
                 "LLM response received",
-                provider="anthropic",
+                provider=self.name,
                 model=response.model,
                 request_id=request_id,
                 input_tokens=usage.prompt_tokens,
@@ -148,7 +148,7 @@ class AnthropicProvider(BaseLLMProvider):
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             log.warning(
                 "LLM request failed",
-                provider="anthropic",
+                provider=self.name,
                 model=model_name,
                 request_id=request_id,
                 duration_ms=duration_ms,

@@ -87,6 +87,7 @@ class TestOutputNaming:
         result = pipeline.convert_file(test_file, integration_output_dir)
 
         if result.success:
+            assert result.output_path is not None
             expected_name = f"{test_file.name}.md"
             assert result.output_path.name == expected_name, (
                 f"Expected {expected_name}, got {result.output_path.name}"
@@ -110,7 +111,7 @@ class TestOutputNaming:
         outputs = []
         for f in [xls_files[0], xlsx_files[0]]:
             result = pipeline.convert_file(f, integration_output_dir)
-            if result.success:
+            if result.success and result.output_path is not None:
                 outputs.append(result.output_path.name)
 
         # Verify no duplicates
@@ -139,6 +140,7 @@ class TestFormatConversion:
 
         # Modern formats should convert successfully
         assert result.success, f"Conversion failed for {test_file.name}: {result.error}"
+        assert result.output_path is not None
         assert result.output_path.exists(), f"Output file not created: {result.output_path}"
         assert result.output_path.suffix == ".md"
 
@@ -168,6 +170,7 @@ class TestFormatConversion:
             # Log error but don't fail - LibreOffice may have issues
             print(f"Warning: Legacy format conversion failed for {test_file.name}: {result.error}")
         else:
+            assert result.output_path is not None
             assert result.output_path.exists()
 
 
@@ -266,6 +269,7 @@ class TestCleanup:
 
         if result.success:
             # Check markdown file exists
+            assert result.output_path is not None
             assert result.output_path.exists()
 
             # If images were extracted, check assets directory

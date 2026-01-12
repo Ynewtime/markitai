@@ -480,3 +480,263 @@ class TestHasCapability:
 
         assert result is True
         mock_manager.has_capability.assert_called_once_with("vision")
+
+
+class TestEnhanceMarkdown:
+    """Tests for enhance_markdown convenience method."""
+
+    @pytest.fixture
+    def orchestrator(self):
+        """Create orchestrator with mock config."""
+        config = Mock()
+        config.providers = []
+        config.model_copy = Mock(return_value=config)
+        return LLMOrchestrator(llm_config=config)
+
+    async def test_returns_enhanced_content(self, orchestrator):
+        """Returns enhanced markdown content."""
+        from markit.llm.enhancer import EnhancedMarkdown
+
+        mock_enhancer = AsyncMock()
+        mock_enhancer.enhance = AsyncMock(
+            return_value=EnhancedMarkdown(content="# Enhanced Content", summary="Summary")
+        )
+
+        with patch.object(orchestrator, "get_enhancer", return_value=mock_enhancer):
+            result = await orchestrator.enhance_markdown(
+                markdown="# Original",
+                source_file=Path("test.pdf"),
+            )
+
+            assert result == "# Enhanced Content"
+
+    async def test_returns_string_result(self, orchestrator):
+        """Handles string result from enhancer."""
+        mock_enhancer = AsyncMock()
+        mock_enhancer.enhance = AsyncMock(return_value="# String Result")
+
+        with patch.object(orchestrator, "get_enhancer", return_value=mock_enhancer):
+            result = await orchestrator.enhance_markdown(
+                markdown="# Original",
+                source_file=Path("test.pdf"),
+            )
+
+            assert result == "# String Result"
+
+    async def test_fallback_on_error(self, orchestrator):
+        """Falls back to simple cleaning on error."""
+        mock_enhancer = AsyncMock()
+        mock_enhancer.enhance = AsyncMock(side_effect=Exception("LLM Error"))
+
+        with patch.object(orchestrator, "get_enhancer", return_value=mock_enhancer):
+            result = await orchestrator.enhance_markdown(
+                markdown="# Original\n\n\n\nContent",
+                source_file=Path("test.pdf"),
+            )
+
+            # Should return cleaned content
+            assert isinstance(result, str)
+            assert "Original" in result
+
+
+class TestGetProviderManagerSync:
+    """Tests for synchronous provider manager retrieval."""
+
+    @pytest.fixture
+    def orchestrator(self):
+        """Create orchestrator with mock config."""
+        config = Mock()
+        config.providers = []
+        config.model_copy = Mock(return_value=config)
+        return LLMOrchestrator(llm_config=config)
+
+    def test_creates_manager_on_first_call(self, orchestrator):
+        """Creates provider manager on first call."""
+        with patch.object(orchestrator, "_create_provider_manager") as mock_create:
+            mock_manager = Mock()
+            mock_create.return_value = mock_manager
+
+            result = orchestrator._get_provider_manager_sync()
+
+            assert result is mock_manager
+            mock_create.assert_called_once()
+
+    def test_returns_cached_manager(self, orchestrator):
+        """Returns cached manager on subsequent calls."""
+        mock_manager = Mock()
+        orchestrator._provider_manager = mock_manager
+
+        result = orchestrator._get_provider_manager_sync()
+
+        assert result is mock_manager
+
+
+class TestCreateEnhancementTaskEdgeCases:
+    """Additional tests for enhancement task edge cases."""
+
+    @pytest.fixture
+    def orchestrator(self):
+        """Create orchestrator with mock config."""
+        config = Mock()
+        config.providers = []
+        config.model_copy = Mock(return_value=config)
+        return LLMOrchestrator(llm_config=config)
+
+    async def test_wraps_enhanced_markdown_result(self, orchestrator):
+        """Wraps EnhancedMarkdown result in stats when requested."""
+        from markit.llm.enhancer import EnhancedMarkdown
+
+        mock_enhancer = AsyncMock()
+        # Return EnhancedMarkdown directly (not wrapped in LLMTaskResultWithStats)
+        mock_enhancer.enhance = AsyncMock(
+            return_value=EnhancedMarkdown(content="# Enhanced", summary="Test")
+        )
+
+        with patch.object(orchestrator, "get_enhancer", return_value=mock_enhancer):
+            result = await orchestrator.create_enhancement_task(
+                markdown="# Original",
+                source_file=Path("test.pdf"),
+                return_stats=True,
+            )
+
+            from markit.llm.base import LLMTaskResultWithStats
+
+            assert isinstance(result, LLMTaskResultWithStats)
+            assert result.result == "# Enhanced"
+
+    async def test_wraps_string_result_in_stats(self, orchestrator):
+        """Wraps string result in stats when requested."""
+        mock_enhancer = AsyncMock()
+        # Return plain string (edge case)
+        mock_enhancer.enhance = AsyncMock(return_value="# String Result")
+
+        with patch.object(orchestrator, "get_enhancer", return_value=mock_enhancer):
+            result = await orchestrator.create_enhancement_task(
+                markdown="# Original",
+                source_file=Path("test.pdf"),
+                return_stats=True,
+            )
+
+            from markit.llm.base import LLMTaskResultWithStats
+
+            assert isinstance(result, LLMTaskResultWithStats)
+            assert result.result == "# String Result"
+
+    async def test_error_fallback_with_stats(self, orchestrator):
+        """Returns stats wrapper on error when requested."""
+        mock_enhancer = AsyncMock()
+        mock_enhancer.enhance = AsyncMock(side_effect=Exception("LLM Error"))
+
+        with patch.object(orchestrator, "get_enhancer", return_value=mock_enhancer):
+            result = await orchestrator.create_enhancement_task(
+                markdown="# Original",
+                source_file=Path("test.pdf"),
+                return_stats=True,
+            )
+
+            from markit.llm.base import LLMTaskResultWithStats
+
+            assert isinstance(result, LLMTaskResultWithStats)
+            assert isinstance(result.result, str)
+
+
+class TestCreateImageAnalysisTaskEdgeCases:
+    """Additional tests for image analysis task edge cases."""
+
+    @pytest.fixture
+    def orchestrator(self):
+        """Create orchestrator with mock config."""
+        config = Mock()
+        config.providers = []
+        config.model_copy = Mock(return_value=config)
+        return LLMOrchestrator(llm_config=config)
+
+    @pytest.fixture
+    def mock_image(self):
+        """Create a mock compressed image."""
+        return Mock(filename="test.png", data=b"image_data")
+
+    async def test_uses_output_dir_from_init(self, orchestrator, mock_image):
+        """Uses output_dir from initialization."""
+        orchestrator.output_dir = Path("/output")
+
+        mock_analyzer = AsyncMock()
+        mock_analyzer.analyze = AsyncMock(return_value=Mock())
+
+        with patch.object(orchestrator, "get_image_analyzer", return_value=mock_analyzer):
+            await orchestrator.create_image_analysis_task(
+                image=mock_image,
+                return_stats=False,
+            )
+
+            # Verify output_dir was passed
+            call_kwargs = mock_analyzer.analyze.call_args[1]
+            assert call_kwargs["output_dir"] == Path("/output")
+
+    async def test_overrides_output_dir(self, orchestrator, mock_image):
+        """Parameter output_dir overrides init output_dir."""
+        orchestrator.output_dir = Path("/default")
+
+        mock_analyzer = AsyncMock()
+        mock_analyzer.analyze = AsyncMock(return_value=Mock())
+
+        with patch.object(orchestrator, "get_image_analyzer", return_value=mock_analyzer):
+            await orchestrator.create_image_analysis_task(
+                image=mock_image,
+                output_dir=Path("/override"),
+                return_stats=False,
+            )
+
+            # Verify override was used
+            call_kwargs = mock_analyzer.analyze.call_args[1]
+            assert call_kwargs["output_dir"] == Path("/override")
+
+    async def test_error_fallback_with_stats(self, orchestrator, mock_image):
+        """Returns stats wrapper on error when requested."""
+        mock_analyzer = AsyncMock()
+        mock_analyzer.analyze = AsyncMock(side_effect=Exception("Analysis Error"))
+
+        with patch.object(orchestrator, "get_image_analyzer", return_value=mock_analyzer):
+            result = await orchestrator.create_image_analysis_task(
+                image=mock_image,
+                return_stats=True,
+            )
+
+            from markit.llm.base import LLMTaskResultWithStats
+
+            assert isinstance(result, LLMTaskResultWithStats)
+            assert "test.png" in result.result.alt_text
+
+
+class TestWarmupWithCapabilities:
+    """Additional warmup tests."""
+
+    @pytest.fixture
+    def orchestrator(self):
+        """Create orchestrator with mock config."""
+        config = Mock()
+        config.providers = []
+        config.model_copy = Mock(return_value=config)
+        return LLMOrchestrator(llm_config=config)
+
+    async def test_warmup_with_vision(self, orchestrator):
+        """Warmup with vision capability."""
+        mock_manager = AsyncMock()
+        mock_manager.available_providers = ["gemini"]
+
+        with patch.object(orchestrator, "_get_provider_manager_sync", return_value=mock_manager):
+            await orchestrator.warmup(llm_enabled=False, analyze_image=True)
+
+            call_kwargs = mock_manager.initialize.call_args[1]
+            assert "vision" in call_kwargs["required_capabilities"]
+            assert "text" in call_kwargs["required_capabilities"]
+
+    async def test_warmup_sets_initialized_flag(self, orchestrator):
+        """Warmup sets provider_manager_initialized flag."""
+        mock_manager = AsyncMock()
+        mock_manager.available_providers = ["gemini"]
+
+        with patch.object(orchestrator, "_get_provider_manager_sync", return_value=mock_manager):
+            assert orchestrator._provider_manager_initialized is False
+            await orchestrator.warmup(llm_enabled=True, analyze_image=False)
+            assert orchestrator._provider_manager_initialized is True

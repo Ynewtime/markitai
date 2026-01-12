@@ -242,6 +242,7 @@ class TestStateManagerDLQ:
         sm2.load_batch()
 
         state = sm2.get_state()
+        assert state is not None
         assert state.files["file1.md"].failure_count == 2
 
     def test_failed_files_count_updated(self, populated_state):

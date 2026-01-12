@@ -89,12 +89,12 @@ Input File → FormatRouter → Preprocessor → Converter → ImageProcessingSe
 
 ### Key Components
 
-1. **FormatRouter** (`markit/core/router.py`): Routes files to appropriate converters
+1. **FormatRouter** (`src/markit/core/router.py`): Routes files to appropriate converters
    - PDF: Routes to pymupdf4llm/pymupdf/pdfplumber based on config
    - Legacy formats (.doc, .ppt, .xls): Adds OfficePreprocessor for LibreOffice conversion
    - Modern Office/HTML: Uses MarkItDown converter
 
-2. **ConversionPipeline** (`markit/core/pipeline.py`): Main orchestrator
+2. **ConversionPipeline** (`src/markit/core/pipeline.py`): Main orchestrator
    - Document conversion with fallback support
    - Delegates image processing to ImageProcessingService
    - Delegates LLM operations to LLMOrchestrator
@@ -102,19 +102,19 @@ Input File → FormatRouter → Preprocessor → Converter → ImageProcessingSe
 
 ### Service Layer
 
-- **ImageProcessingService** (`markit/services/image_processor.py`): Handles image format conversion, compression (via oxipng/Pillow), deduplication, and prepares images for LLM analysis
+- **ImageProcessingService** (`src/markit/services/image_processor.py`): Handles image format conversion, compression (via oxipng/Pillow), deduplication, and prepares images for LLM analysis
 
-- **LLMOrchestrator** (`markit/services/llm_orchestrator.py`): Centralizes all LLM operations:
+- **LLMOrchestrator** (`src/markit/services/llm_orchestrator.py`): Centralizes all LLM operations:
   - Manages ProviderManager for multi-provider support
   - Creates MarkdownEnhancer for text cleanup
   - Creates ImageAnalyzer for vision tasks
   - Implements capability-based routing (text models vs vision models)
 
-- **OutputManager** (`markit/services/output_manager.py`): Handles file writing, conflict resolution, generates image description markdown files
+- **OutputManager** (`src/markit/services/output_manager.py`): Handles file writing, conflict resolution, generates image description markdown files
 
 ### LLM Provider System
 
-**ProviderManager** (`markit/llm/manager.py`): Manages multiple LLM providers:
+**ProviderManager** (`src/markit/llm/manager.py`): Manages multiple LLM providers:
 - Lazy initialization (validates providers on demand)
 - Capability-based routing (text vs vision tasks)
 - Automatic fallback on failure
@@ -122,11 +122,11 @@ Input File → FormatRouter → Preprocessor → Converter → ImageProcessingSe
 - Round-robin load balancing
 - Per-model cost tracking
 
-Supported providers: OpenAI, Anthropic, Gemini, Ollama, OpenRouter (all in `markit/llm/`)
+Supported providers: OpenAI, Anthropic, Gemini, Ollama, OpenRouter (all in `src/markit/llm/`)
 
 ### Configuration System
 
-Settings defined in `markit/config/settings.py` using pydantic-settings:
+Settings defined in `src/markit/config/settings.py` using pydantic-settings:
 - **LLMConfig**: Supports both legacy single-provider and new credential/model separation
 - **LLMCredentialConfig**: Provider credentials (can reference environment variables)
 - **LLMModelConfig**: Model instances referencing credentials, with capability declarations
@@ -162,7 +162,7 @@ Tracks failures per file:
 
 ### 5. LibreOffice Profile Pool
 
-`markit/converters/libreoffice_pool.py`: Uses isolated LibreOffice profile directories to avoid conflicts during parallel .doc/.ppt/.xls conversion.
+`src/markit/converters/libreoffice_pool.py`: Uses isolated LibreOffice profile directories to avoid conflicts during parallel .doc/.ppt/.xls conversion.
 
 ### 6. Process Pool for Images
 

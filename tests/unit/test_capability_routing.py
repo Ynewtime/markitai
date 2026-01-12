@@ -61,7 +61,7 @@ def provider_manager(mock_providers):
         "openai_gpt-4": ["text", "vision"],
         "openai_deepseek": ["text"],
     }
-    pm._config_loaded = True
+    pm._configs_loaded = True
     pm._initialized = True
     pm._current_index = 0
 
@@ -108,7 +108,7 @@ async def test_no_vision_provider_raises_error(mock_providers):
     pm._providers = {"openai_deepseek": mock_providers["openai_deepseek"]}
     pm._valid_providers = ["openai_deepseek"]
     pm._provider_capabilities = {"openai_deepseek": ["text"]}
-    pm._config_loaded = True
+    pm._configs_loaded = True
     pm._initialized = True
 
     with pytest.raises(LLMError) as exc:

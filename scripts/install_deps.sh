@@ -74,7 +74,11 @@ install_debian() {
     log_info "Installing EMF/WMF support (optional)..."
     sudo apt-get install -y libwmf-bin || log_warn "libwmf-bin not available"
     sudo apt-get install -y inkscape || log_warn "inkscape not available"
-    
+
+    # TODO (v0.2.0): Tesseract OCR for scanned PDF support
+    # log_info "Installing Tesseract OCR (optional)..."
+    # sudo apt-get install -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-chi-tra tesseract-ocr-eng
+
     log_info "Debian/Ubuntu dependencies installed successfully!"
 }
 
@@ -104,10 +108,14 @@ install_redhat() {
     # Image tools (optional)
     log_info "Installing image tools (optional)..."
     sudo $PKG_MGR install -y libjpeg-turbo-utils || log_warn "libjpeg-turbo-utils not available"
-    
+
     # oxipng - not in dnf/yum, use brew or cargo
     install_oxipng
-    
+
+    # TODO (v0.2.0): Tesseract OCR for scanned PDF support
+    # log_info "Installing Tesseract OCR (optional)..."
+    # sudo $PKG_MGR install -y tesseract tesseract-langpack-chi-sim tesseract-langpack-chi-tra tesseract-langpack-eng
+
     log_info "Red Hat/CentOS/Fedora dependencies installed successfully!"
 }
 
@@ -137,7 +145,11 @@ install_arch() {
     log_info "Installing EMF/WMF support (optional)..."
     sudo pacman -S --needed --noconfirm libwmf || log_warn "libwmf not available"
     sudo pacman -S --needed --noconfirm inkscape || log_warn "inkscape not available"
-    
+
+    # TODO (v0.2.0): Tesseract OCR for scanned PDF support
+    # log_info "Installing Tesseract OCR (optional)..."
+    # sudo pacman -S --needed --noconfirm tesseract tesseract-data-chi_sim tesseract-data-chi_tra tesseract-data-eng
+
     log_info "Arch Linux dependencies installed successfully!"
 }
 
@@ -173,7 +185,11 @@ install_macos() {
     log_info "Installing EMF/WMF support (optional)..."
     brew install libwmf || log_warn "libwmf not available"
     brew install --cask inkscape || log_warn "inkscape not available"
-    
+
+    # TODO (v0.2.0): Tesseract OCR for scanned PDF support
+    # log_info "Installing Tesseract OCR (optional)..."
+    # brew install tesseract tesseract-lang
+
     log_info "macOS dependencies installed successfully!"
 }
 

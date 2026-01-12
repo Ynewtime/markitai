@@ -166,7 +166,7 @@ image:
         from markit.config.settings import MarkitSettings
 
         # Check that the settings_customise_sources method returns YamlConfigSettingsSource
-        sources = MarkitSettings.settings_customise_sources(MarkitSettings, None, None, None, None)
+        sources = MarkitSettings.settings_customise_sources(MarkitSettings, None, None, None, None)  # type: ignore[arg-type]
 
         # Find YamlConfigSettingsSource in sources
         yaml_source_found = False
@@ -335,7 +335,7 @@ class TestLLMConfig:
 
         providers = ["openai", "anthropic", "gemini", "ollama", "openrouter"]
         for provider in providers:
-            config = LLMProviderConfig(provider=provider, model="test-model")
+            config = LLMProviderConfig(provider=provider, model="test-model")  # type: ignore[arg-type]
             assert config.provider == provider
 
     def test_credential_config_all_providers(self):
@@ -344,7 +344,7 @@ class TestLLMConfig:
 
         providers = ["openai", "anthropic", "gemini", "ollama", "openrouter"]
         for provider in providers:
-            config = LLMCredentialConfig(id=f"{provider}-cred", provider=provider)
+            config = LLMCredentialConfig(id=f"{provider}-cred", provider=provider)  # type: ignore[arg-type]
             assert config.provider == provider
 
 
@@ -471,6 +471,386 @@ class TestConfigCommands:
         # Key structural elements
         assert "# MarkIt Configuration" in content
         assert "markit provider add" in content  # Instructions for adding providers
+
+
+class TestPromptConfig:
+    """Tests for PromptConfig.get_prompt method."""
+
+    def test_get_prompt_from_custom_file(self, tmp_path):
+        """Test get_prompt loads from custom file path."""
+        from markit.config.settings import PromptConfig
+
+        # Create custom prompt file
+        custom_file = tmp_path / "my_prompt.md"
+        custom_file.write_text("Custom image prompt", encoding="utf-8")
+
+        config = PromptConfig(image_analysis_prompt=str(custom_file))
+        result = config.get_prompt("image_analysis")
+
+        assert result == "Custom image prompt"
+
+    def test_get_prompt_from_user_prompts_dir(self, tmp_path):
+        """Test get_prompt loads from user prompts directory."""
+        from markit.config.settings import PromptConfig
+
+        # Create prompts dir with language-suffixed file
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "enhancement_zh.md").write_text("用户增强提示", encoding="utf-8")
+
+        config = PromptConfig(prompts_dir=str(prompts_dir), output_language="zh")
+        result = config.get_prompt("enhancement")
+
+        assert result == "用户增强提示"
+
+    def test_get_prompt_from_legacy_inline(self, tmp_path):
+        """Test get_prompt uses legacy inline custom prompt."""
+        from markit.config.settings import PromptConfig
+
+        # Use empty prompts_dir so custom file doesn't exist
+        config = PromptConfig(
+            prompts_dir=str(tmp_path / "nonexistent"),
+            custom_summary_prompt="Legacy summary prompt",
+        )
+        result = config.get_prompt("summary")
+
+        assert result == "Legacy summary prompt"
+
+    def test_get_prompt_from_package_builtin(self):
+        """Test get_prompt falls back to package built-in."""
+        from markit.config.settings import PromptConfig
+
+        config = PromptConfig(output_language="en")
+        result = config.get_prompt("image_analysis")
+
+        assert result is not None
+        assert len(result) > 0
+
+    def test_get_prompt_auto_language_defaults_to_zh(self, tmp_path):
+        """Test get_prompt with auto language defaults to zh."""
+        from markit.config.settings import PromptConfig
+
+        # Create zh prompt file
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "summary_zh.md").write_text("中文摘要提示", encoding="utf-8")
+
+        config = PromptConfig(prompts_dir=str(prompts_dir), output_language="auto")
+        result = config.get_prompt("summary")
+
+        assert result == "中文摘要提示"
+
+    def test_get_prompt_nonexistent_type_returns_none(self, tmp_path):
+        """Test get_prompt returns None for nonexistent prompt type."""
+        from markit.config.settings import PromptConfig
+
+        config = PromptConfig(prompts_dir=str(tmp_path / "nonexistent"))
+        result = config.get_prompt("nonexistent_type")
+
+        assert result is None
+
+    def test_get_prompt_custom_file_not_exists_fallback(self, tmp_path):
+        """Test get_prompt falls back when custom file doesn't exist."""
+        from markit.config.settings import PromptConfig
+
+        config = PromptConfig(
+            image_analysis_prompt=str(tmp_path / "nonexistent.md"),
+            output_language="en",
+        )
+        result = config.get_prompt("image_analysis")
+
+        # Should fall back to package built-in
+        assert result is not None
+
+
+class TestLLMConfigResolver:
+    """Tests for LLMConfigResolver class."""
+
+    def test_resolve_no_cli_args(self):
+        """Test resolve returns base config when no CLI args."""
+        from markit.config.settings import LLMConfig, LLMConfigResolver
+
+        base_config = LLMConfig()
+        result = LLMConfigResolver.resolve(base_config)
+
+        assert result is base_config
+
+    def test_resolve_cli_provider_creates_new(self):
+        """Test resolve creates new provider when CLI provider specified."""
+        from markit.config.settings import LLMConfig, LLMConfigResolver
+
+        base_config = LLMConfig()
+        result = LLMConfigResolver.resolve(base_config, cli_provider="anthropic")
+
+        assert len(result.providers) == 1
+        assert result.providers[0].provider == "anthropic"
+
+    def test_resolve_cli_provider_with_model(self):
+        """Test resolve creates provider with custom model."""
+        from markit.config.settings import LLMConfig, LLMConfigResolver
+
+        base_config = LLMConfig()
+        result = LLMConfigResolver.resolve(
+            base_config, cli_provider="openai", cli_model="gpt-4o-mini"
+        )
+
+        assert len(result.providers) == 1
+        assert result.providers[0].provider == "openai"
+        assert result.providers[0].model == "gpt-4o-mini"
+
+    def test_resolve_updates_existing_provider(self):
+        """Test resolve updates existing provider's model."""
+        from markit.config.settings import LLMConfig, LLMConfigResolver, LLMProviderConfig
+
+        base_config = LLMConfig(
+            providers=[
+                LLMProviderConfig(provider="openai", model="gpt-4"),
+                LLMProviderConfig(provider="anthropic", model="claude-sonnet-4"),
+            ]
+        )
+        result = LLMConfigResolver.resolve(
+            base_config, cli_provider="anthropic", cli_model="claude-opus-4"
+        )
+
+        # anthropic should be moved to front with new model
+        assert len(result.providers) == 2
+        assert result.providers[0].provider == "anthropic"
+        assert result.providers[0].model == "claude-opus-4"
+
+    def test_resolve_model_only_updates_first_provider(self):
+        """Test resolve updates first provider's model when only model specified."""
+        from markit.config.settings import LLMConfig, LLMConfigResolver, LLMProviderConfig
+
+        base_config = LLMConfig(
+            providers=[
+                LLMProviderConfig(provider="openai", model="gpt-4"),
+            ]
+        )
+        result = LLMConfigResolver.resolve(base_config, cli_model="gpt-4o")
+
+        assert result.providers[0].model == "gpt-4o"
+
+    def test_resolve_model_only_no_providers(self):
+        """Test resolve with model only but no providers does nothing."""
+        from markit.config.settings import LLMConfig, LLMConfigResolver
+
+        base_config = LLMConfig()
+        result = LLMConfigResolver.resolve(base_config, cli_model="gpt-4o")
+
+        assert len(result.providers) == 0
+
+    def test_resolve_uses_default_model(self):
+        """Test resolve uses default model for provider."""
+        from markit.config.settings import LLMConfig, LLMConfigResolver
+
+        base_config = LLMConfig()
+        result = LLMConfigResolver.resolve(base_config, cli_provider="gemini")
+
+        assert result.providers[0].provider == "gemini"
+        # Should use default model from constants
+        assert result.providers[0].model != ""
+
+
+class TestValidationConfig:
+    """Tests for ValidationConfig class."""
+
+    def test_default_values(self):
+        """Test default validation config values."""
+        from markit.config.settings import ValidationConfig
+
+        config = ValidationConfig()
+
+        assert config.enabled is True
+        assert config.retry_count == 2
+        assert config.on_failure == "warn"
+
+    def test_custom_values(self):
+        """Test custom validation config values."""
+        from markit.config.settings import ValidationConfig
+
+        config = ValidationConfig(
+            enabled=False,
+            retry_count=5,
+            on_failure="fail",
+        )
+
+        assert config.enabled is False
+        assert config.retry_count == 5
+        assert config.on_failure == "fail"
+
+    def test_on_failure_options(self):
+        """Test all on_failure options."""
+        from markit.config.settings import ValidationConfig
+
+        for option in ["warn", "skip", "fail"]:
+            config = ValidationConfig(on_failure=option)  # type: ignore[arg-type]
+            assert config.on_failure == option
+
+
+class TestModelCostConfig:
+    """Tests for ModelCostConfig class."""
+
+    def test_default_values(self):
+        """Test default model cost values."""
+        from markit.config.settings import ModelCostConfig
+
+        config = ModelCostConfig()
+
+        assert config.input_per_1m == 0.0
+        assert config.output_per_1m == 0.0
+        assert config.cached_input_per_1m is None
+
+    def test_custom_values(self):
+        """Test custom model cost values."""
+        from markit.config.settings import ModelCostConfig
+
+        config = ModelCostConfig(
+            input_per_1m=2.5,
+            output_per_1m=10.0,
+            cached_input_per_1m=1.25,
+        )
+
+        assert config.input_per_1m == 2.5
+        assert config.output_per_1m == 10.0
+        assert config.cached_input_per_1m == 1.25
+
+
+class TestExecutionConfig:
+    """Tests for ExecutionConfig class."""
+
+    def test_default_values(self):
+        """Test default execution config values."""
+        from markit.config.settings import ExecutionConfig
+
+        config = ExecutionConfig()
+
+        assert config.mode == "default"
+        assert config.fast_max_fallback == 1
+        assert config.fast_skip_validation is True
+
+    def test_fast_mode(self):
+        """Test fast mode configuration."""
+        from markit.config.settings import ExecutionConfig
+
+        config = ExecutionConfig(
+            mode="fast",
+            fast_max_fallback=3,
+            fast_skip_validation=False,
+        )
+
+        assert config.mode == "fast"
+        assert config.fast_max_fallback == 3
+        assert config.fast_skip_validation is False
+
+
+class TestLibreOfficeConfig:
+    """Tests for LibreOfficeConfig class."""
+
+    def test_default_values(self):
+        """Test default LibreOffice config values."""
+        from markit.config.settings import LibreOfficeConfig
+
+        config = LibreOfficeConfig()
+
+        assert config.pool_size == 8
+        assert config.profile_base_dir == ".markit-lo-profiles"
+        assert config.reset_after_failures == 3
+        assert config.reset_after_uses == 100
+
+    def test_custom_values(self):
+        """Test custom LibreOffice config values."""
+        from markit.config.settings import LibreOfficeConfig
+
+        config = LibreOfficeConfig(
+            pool_size=8,
+            profile_base_dir="/custom/profiles",
+            reset_after_failures=5,
+            reset_after_uses=50,
+        )
+
+        assert config.pool_size == 8
+        assert config.profile_base_dir == "/custom/profiles"
+        assert config.reset_after_failures == 5
+        assert config.reset_after_uses == 50
+
+    def test_pool_size_constraints(self):
+        """Test pool size constraints."""
+        from pydantic import ValidationError
+
+        from markit.config.settings import LibreOfficeConfig
+
+        # Valid range
+        config = LibreOfficeConfig(pool_size=32)
+        assert config.pool_size == 32
+
+        # Below minimum
+        with pytest.raises(ValidationError):
+            LibreOfficeConfig(pool_size=0)
+
+        # Above maximum
+        with pytest.raises(ValidationError):
+            LibreOfficeConfig(pool_size=33)
+
+
+class TestLLMConfigAdvanced:
+    """Advanced tests for LLMConfig settings."""
+
+    def test_concurrent_fallback_settings(self):
+        """Test concurrent fallback settings."""
+        from markit.config.settings import LLMConfig
+
+        config = LLMConfig(
+            concurrent_fallback_enabled=True,
+            concurrent_fallback_timeout=10,
+            max_request_timeout=300,
+        )
+
+        assert config.concurrent_fallback_enabled is True
+        assert config.concurrent_fallback_timeout == 10
+        assert config.max_request_timeout == 300
+
+    def test_validation_settings(self):
+        """Test validation settings in LLMConfig."""
+        from markit.config.settings import LLMConfig, ValidationConfig
+
+        config = LLMConfig(validation=ValidationConfig(enabled=False, on_failure="skip"))
+
+        assert config.validation.enabled is False
+        assert config.validation.on_failure == "skip"
+
+
+class TestModelConfigWithCost:
+    """Tests for LLMModelConfig with cost configuration."""
+
+    def test_model_with_cost(self):
+        """Test model config with cost information."""
+        from markit.config.settings import LLMModelConfig, ModelCostConfig
+
+        model = LLMModelConfig(
+            name="GPT-4o",
+            model="gpt-4o",
+            credential_id="openai-1",
+            cost=ModelCostConfig(
+                input_per_1m=5.0,
+                output_per_1m=15.0,
+            ),
+        )
+
+        assert model.cost is not None
+        assert model.cost.input_per_1m == 5.0
+        assert model.cost.output_per_1m == 15.0
+
+    def test_model_without_cost(self):
+        """Test model config without cost is None."""
+        from markit.config.settings import LLMModelConfig
+
+        model = LLMModelConfig(
+            name="Test",
+            model="test",
+            credential_id="test-cred",
+        )
+
+        assert model.cost is None
 
 
 class TestConstants:
