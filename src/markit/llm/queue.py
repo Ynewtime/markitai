@@ -1,0 +1,460 @@
+"""Global LLM task queue for batch processing with rate limiting.
+
+This module provides:
+- LLMTaskQueue: Rate-limited queue for LLM API calls
+- Adaptive concurrency control via AIMD algorithm (optional)
+- Backpressure mechanism to prevent memory exhaustion
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Coroutine
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
+
+from markit.exceptions import RateLimitError
+from markit.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from markit.utils.adaptive_limiter import AdaptiveRateLimiter, AIMDConfig, AIMDStats
+
+log = get_logger(__name__)
+
+
+@dataclass
+class LLMTask:
+    """Represents an LLM task with source tracking for error correlation.
+
+    Attributes:
+        source_file: The file that originated this task
+        task_type: Type of LLM task
+        task_id: Unique identifier for this task (e.g., image filename)
+        coro: The coroutine to execute
+    """
+
+    source_file: Path
+    task_type: Literal["image_analysis", "chunk_enhancement", "summary"]
+    task_id: str
+    coro: Coroutine[Any, Any, Any]
+
+
+@dataclass
+class LLMTaskResult:
+    """Result of an LLM task execution.
+
+    Attributes:
+        task: The original task
+        success: Whether the task completed successfully
+        result: The result if successful
+        error: The error message if failed
+        model: Model name used for this task
+        prompt_tokens: Number of prompt tokens used
+        completion_tokens: Number of completion tokens used
+        estimated_cost: Estimated cost in USD
+        duration: Execution duration in seconds
+        start_time: When the task started (Unix timestamp)
+        end_time: When the task completed (Unix timestamp)
+    """
+
+    task: LLMTask
+    success: bool
+    result: Any = None
+    error: str | None = None
+    # LLM statistics
+    model: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    estimated_cost: float = 0.0
+    duration: float = 0.0
+    # Timing for wall-clock duration tracking
+    start_time: float = 0.0
+    end_time: float = 0.0
+
+    @property
+    def source_file(self) -> Path:
+        """Convenience accessor for source file."""
+        return self.task.source_file
+
+    @property
+    def task_type(self) -> str:
+        """Convenience accessor for task type."""
+        return self.task.task_type
+
+    @property
+    def task_id(self) -> str:
+        """Convenience accessor for task ID."""
+        return self.task.task_id
+
+
+class LLMTaskQueue:
+    """Global queue for all LLM tasks across files with rate limiting.
+
+    This queue provides:
+    - Concurrent execution with configurable limit (semaphore or AIMD)
+    - Backpressure to prevent memory exhaustion (pending limit)
+    - Task tracking for error correlation back to source files
+    - Optional AIMD adaptive rate limiting for dynamic concurrency adjustment
+
+    Usage:
+        # Static concurrency
+        queue = LLMTaskQueue(max_concurrent=10, max_pending=100)
+
+        # Adaptive concurrency (AIMD)
+        from markit.utils.adaptive_limiter import AIMDConfig
+        queue = LLMTaskQueue(
+            max_pending=100,
+            use_adaptive=True,
+            aimd_config=AIMDConfig(initial_concurrency=5, max_concurrency=50),
+        )
+
+        # Submit tasks
+        await queue.submit(LLMTask(...))
+        await queue.submit(LLMTask(...))
+
+        # Wait for all to complete
+        results = await queue.wait_all()
+    """
+
+    def __init__(
+        self,
+        max_concurrent: int = 10,
+        max_pending: int = 100,
+        use_adaptive: bool = False,
+        aimd_config: AIMDConfig | None = None,
+    ) -> None:
+        """Initialize the LLM task queue.
+
+        Args:
+            max_concurrent: Maximum number of concurrent LLM API calls
+                           (ignored if use_adaptive=True)
+            max_pending: Maximum number of pending tasks (backpressure)
+            use_adaptive: Enable AIMD adaptive rate limiting
+            aimd_config: Configuration for AIMD limiter (uses defaults if None)
+        """
+        self.max_concurrent = max_concurrent
+        self.max_pending = max_pending
+        self.use_adaptive = use_adaptive
+
+        self._semaphore: asyncio.Semaphore | None = None
+        self._pending_semaphore: asyncio.Semaphore | None = None
+        self._adaptive_limiter: AdaptiveRateLimiter | None = None
+        self._tasks: list[asyncio.Task[LLMTaskResult]] = []
+        self._submitted_count = 0
+        self._completed_count = 0
+
+        # Initialize adaptive limiter if enabled
+        if use_adaptive:
+            from markit.utils.adaptive_limiter import AdaptiveRateLimiter
+
+            self._adaptive_limiter = AdaptiveRateLimiter(config=aimd_config)
+            log.info(
+                "AIMD adaptive rate limiting enabled",
+                initial_concurrency=self._adaptive_limiter.current_concurrency,
+                max_concurrency=self._adaptive_limiter.config.max_concurrency,
+            )
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        """Get or create the concurrency semaphore."""
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(self.max_concurrent)
+        return self._semaphore
+
+    def _get_pending_semaphore(self) -> asyncio.Semaphore:
+        """Get or create the backpressure semaphore."""
+        if self._pending_semaphore is None:
+            self._pending_semaphore = asyncio.Semaphore(self.max_pending)
+        return self._pending_semaphore
+
+    async def submit(self, task: LLMTask) -> asyncio.Task[LLMTaskResult]:
+        """Submit an LLM task for execution with rate limiting.
+
+        This method will block if max_pending tasks are already queued
+        (backpressure mechanism).
+
+        Args:
+            task: The LLM task to submit
+
+        Returns:
+            The asyncio.Task wrapping the execution
+        """
+        from time import time
+
+        from markit.llm.base import LLMTaskResultWithStats
+
+        # Backpressure: wait if too many tasks pending
+        pending_sem = self._get_pending_semaphore()
+        await pending_sem.acquire()
+
+        # Capture adaptive limiter reference for the closure
+        adaptive_limiter = self._adaptive_limiter
+
+        async def execute_task() -> LLMTaskResult:
+            """Execute the task with rate limiting (semaphore or AIMD)."""
+            start_time = time()
+
+            # Acquire concurrency slot (adaptive or static)
+            if adaptive_limiter is not None:
+                await adaptive_limiter.acquire()
+            else:
+                semaphore = self._get_semaphore()
+                await semaphore.acquire()
+
+            try:
+                log.debug(
+                    "Executing LLM task",
+                    task_type=task.task_type,
+                    task_id=task.task_id,
+                    source=str(task.source_file.name),
+                    concurrency=adaptive_limiter.current_concurrency
+                    if adaptive_limiter
+                    else self.max_concurrent,
+                )
+                result = await task.coro
+                end_time = time()
+                duration = end_time - start_time
+
+                # Record success for AIMD
+                if adaptive_limiter is not None:
+                    await adaptive_limiter.record_success()
+
+                # Extract statistics if result is LLMTaskResultWithStats
+                if isinstance(result, LLMTaskResultWithStats):
+                    return LLMTaskResult(
+                        task=task,
+                        success=True,
+                        result=result.result,  # Extract the actual result
+                        model=result.model,
+                        prompt_tokens=result.prompt_tokens,
+                        completion_tokens=result.completion_tokens,
+                        estimated_cost=result.estimated_cost,
+                        duration=duration,
+                        start_time=start_time,
+                        end_time=end_time,
+                    )
+                return LLMTaskResult(
+                    task=task,
+                    success=True,
+                    result=result,
+                    duration=duration,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            except RateLimitError as e:
+                # Rate limit error (429) - trigger AIMD decrease
+                end_time = time()
+                duration = end_time - start_time
+                if adaptive_limiter is not None:
+                    await adaptive_limiter.record_rate_limit()
+                log.warning(
+                    "LLM task rate limited",
+                    task_type=task.task_type,
+                    task_id=task.task_id,
+                    source=str(task.source_file.name),
+                    retry_after=e.retry_after,
+                )
+                return LLMTaskResult(
+                    task=task,
+                    success=False,
+                    error=f"Rate limited: {e}",
+                    duration=duration,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            except Exception as e:
+                end_time = time()
+                duration = end_time - start_time
+                # Record failure for AIMD (resets success streak but no decrease)
+                if adaptive_limiter is not None:
+                    await adaptive_limiter.record_failure()
+                log.warning(
+                    "LLM task failed",
+                    task_type=task.task_type,
+                    task_id=task.task_id,
+                    source=str(task.source_file.name),
+                    error=str(e),
+                )
+                return LLMTaskResult(
+                    task=task,
+                    success=False,
+                    error=str(e),
+                    duration=duration,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            finally:
+                # Release concurrency slot
+                if adaptive_limiter is not None:
+                    adaptive_limiter.release()
+                else:
+                    self._get_semaphore().release()
+                # Release backpressure slot
+                pending_sem.release()
+                self._completed_count += 1
+
+        async_task = asyncio.create_task(execute_task())
+        self._tasks.append(async_task)
+        self._submitted_count += 1
+
+        # Note: Individual task submission logs removed to reduce log noise
+        # Use submit_batch() for batch logging or check pending_count property
+
+        return async_task
+
+    async def submit_batch(self, tasks: list[LLMTask]) -> list[asyncio.Task[LLMTaskResult]]:
+        """Submit multiple tasks at once.
+
+        Args:
+            tasks: List of LLM tasks to submit
+
+        Returns:
+            List of asyncio.Tasks
+        """
+        if tasks:
+            # Log batch submission summary instead of individual tasks
+            task_types = {}
+            for t in tasks:
+                task_types[t.task_type] = task_types.get(t.task_type, 0) + 1
+            log.debug(
+                "Submitting LLM task batch",
+                count=len(tasks),
+                types=task_types,
+            )
+        return [await self.submit(task) for task in tasks]
+
+    async def wait_all(self) -> list[LLMTaskResult]:
+        """Wait for all submitted tasks to complete.
+
+        Returns:
+            List of LLMTaskResult objects (preserves submission order)
+        """
+        if not self._tasks:
+            return []
+
+        log.info(
+            "Waiting for LLM tasks to complete",
+            total=len(self._tasks),
+        )
+
+        results = await asyncio.gather(*self._tasks, return_exceptions=True)
+
+        # Convert any unexpected exceptions to LLMTaskResult
+        final_results: list[LLMTaskResult] = []
+        for i, result in enumerate(results):
+            if isinstance(result, LLMTaskResult):
+                final_results.append(result)
+            elif isinstance(result, BaseException):
+                # This shouldn't happen as execute_task catches exceptions,
+                # but handle it gracefully just in case
+                log.error(
+                    "Unexpected exception in LLM task",
+                    error=str(result),
+                )
+                # We don't have the original task here, so create a minimal result
+                final_results.append(
+                    LLMTaskResult(
+                        task=LLMTask(
+                            source_file=Path("unknown"),
+                            task_type="chunk_enhancement",
+                            task_id=f"unknown_{i}",
+                            coro=asyncio.sleep(0),  # Dummy coro
+                        ),
+                        success=False,
+                        error=f"Unexpected error: {result}",
+                    )
+                )
+            else:
+                # Should be unreachable, but keep for type exhaustiveness
+                final_results.append(result)  # type: ignore[arg-type]
+
+        succeeded = sum(1 for r in final_results if r.success)
+        failed = len(final_results) - succeeded
+
+        log.info(
+            "LLM tasks completed",
+            total=len(final_results),
+            succeeded=succeeded,
+            failed=failed,
+        )
+
+        return final_results
+
+    def get_results_for_file(
+        self,
+        results: list[LLMTaskResult],
+        source_file: Path,
+    ) -> list[LLMTaskResult]:
+        """Filter results for a specific source file.
+
+        Args:
+            results: List of all results
+            source_file: The source file to filter by
+
+        Returns:
+            Results belonging to the specified file
+        """
+        return [r for r in results if r.source_file == source_file]
+
+    def get_results_by_type(
+        self,
+        results: list[LLMTaskResult],
+        task_type: str,
+    ) -> list[LLMTaskResult]:
+        """Filter results by task type.
+
+        Args:
+            results: List of all results
+            task_type: The task type to filter by
+
+        Returns:
+            Results of the specified type
+        """
+        return [r for r in results if r.task_type == task_type]
+
+    @property
+    def pending_count(self) -> int:
+        """Number of tasks pending (submitted but not completed)."""
+        return self._submitted_count - self._completed_count
+
+    @property
+    def submitted_count(self) -> int:
+        """Total number of tasks submitted."""
+        return self._submitted_count
+
+    @property
+    def completed_count(self) -> int:
+        """Number of tasks completed."""
+        return self._completed_count
+
+    @property
+    def current_concurrency(self) -> int:
+        """Current concurrency level (static or adaptive)."""
+        if self._adaptive_limiter is not None:
+            return self._adaptive_limiter.current_concurrency
+        return self.max_concurrent
+
+    @property
+    def adaptive_stats(self) -> AIMDStats | None:
+        """Get AIMD statistics if adaptive mode is enabled."""
+        if self._adaptive_limiter is not None:
+            return self._adaptive_limiter.stats
+        return None
+
+    def reset(self) -> None:
+        """Reset the queue state for reuse.
+
+        Note: Only call this after wait_all() has completed.
+        """
+        self._tasks.clear()
+        self._submitted_count = 0
+        self._completed_count = 0
+        # Keep semaphores - they can be reused
+
+        # Reset adaptive limiter if enabled
+        if self._adaptive_limiter is not None:
+            self._adaptive_limiter.reset()
+            log.debug(
+                "AIMD limiter reset",
+                concurrency=self._adaptive_limiter.current_concurrency,
+            )

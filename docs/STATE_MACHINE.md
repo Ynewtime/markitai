@@ -10,8 +10,8 @@ MarkIt implements a multi-phase pipeline architecture for converting documents t
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           ConversionPipeline                                 │
-│                                                                              │
+│                           ConversionPipeline                                │
+│                                                                             │
 │  ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────────────┐  │
 │  │ FormatRouter    │  │ ImageProcessing  │  │ LLMOrchestrator            │  │
 │  │                 │  │ Service          │  │                            │  │
@@ -19,13 +19,13 @@ MarkIt implements a multi-phase pipeline architecture for converting documents t
 │  │ - Select        │  │ - Deduplication  │  │ - MarkdownEnhancer         │  │
 │  │   converter     │  │ - Format convert │  │ - ImageAnalyzer            │  │
 │  └─────────────────┘  └──────────────────┘  └────────────────────────────┘  │
-│                                                                              │
+│                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                         OutputManager                                │    │
-│  │                                                                      │    │
-│  │  - Conflict resolution (rename/overwrite/skip)                       │    │
-│  │  - Write markdown + assets                                           │    │
-│  │  - Generate image description .md files                              │    │
+│  │                         OutputManager                               │    │
+│  │                                                                     │    │
+│  │  - Conflict resolution (rename/overwrite/skip)                      │    │
+│  │  - Write markdown + assets                                          │    │
+│  │  - Generate image description .md files                             │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -119,7 +119,7 @@ MarkIt implements a multi-phase pipeline architecture for converting documents t
                         ◄──────────────┘
                         │
                         ▼
-             ┌──────────────────────────┐
+             ┌───────────────────────────┐
              │   OUTPUT                  │
              │   (via OutputManager)     │
              │                           │
@@ -155,45 +155,45 @@ MarkIt implements a multi-phase pipeline architecture for converting documents t
               ┌───────────────────────────────────────────┐
               │            PARALLEL PROCESSING            │
               │                                           │
-              │   ┌─────────────────────────────────┐    │
-              │   │  Phase 1: Document Conversion   │    │
-              │   │  (file semaphore controlled)    │    │
-              │   │                                 │    │
-              │   │  ┌───┐  ┌───┐  ┌───┐  ┌───┐    │    │
-              │   │  │F1 │  │F2 │  │F3 │  │F4 │    │    │
-              │   │  └─┬─┘  └─┬─┘  └─┬─┘  └─┬─┘    │    │
-              │   │    │      │      │      │      │    │
-              │   │    ▼      ▼      ▼      ▼      │    │
-              │   │   DocumentConversionResult     │    │
-              │   └─────────────────────────────────┘    │
-              │                   │                      │
-              │                   ▼                      │
-              │   ┌─────────────────────────────────┐    │
-              │   │  Phase 2: LLM Task Collection   │    │
-              │   │                                 │    │
-              │   │  Collect all LLM tasks from     │    │
-              │   │  DocumentConversionResults      │    │
-              │   └─────────────────────────────────┘    │
-              │                   │                      │
-              │                   ▼                      │
-              │   ┌─────────────────────────────────┐    │
-              │   │  Phase 3: LLM Execution         │    │
-              │   │  (LLM semaphore controlled)     │    │
-              │   │                                 │    │
-              │   │  ┌──────┐  ┌──────┐  ┌──────┐  │    │
-              │   │  │Enhnc │  │ImgAn │  │ImgAn │  │    │
-              │   │  │Task1 │  │Task1 │  │Task2 │  │    │
-              │   │  └──────┘  └──────┘  └──────┘  │    │
-              │   └─────────────────────────────────┘    │
-              │                   │                      │
-              │                   ▼                      │
-              │   ┌─────────────────────────────────┐    │
-              │   │  Phase 4: Finalization          │    │
-              │   │  (per file)                     │    │
-              │   │                                 │    │
-              │   │  - Apply LLM results            │    │
-              │   │  - Write output files           │    │
-              │   └─────────────────────────────────┘    │
+              │   ┌─────────────────────────────────┐     │
+              │   │  Phase 1: Document Conversion   │     │
+              │   │  (file semaphore controlled)    │     │
+              │   │                                 │     │
+              │   │  ┌───┐  ┌───┐  ┌───┐  ┌───┐     │     │
+              │   │  │F1 │  │F2 │  │F3 │  │F4 │     │     │
+              │   │  └─┬─┘  └─┬─┘  └─┬─┘  └─┬─┘     │     │
+              │   │    │      │      │      │       │     │
+              │   │    ▼      ▼      ▼      ▼       │     │
+              │   │   DocumentConversionResult      │     │
+              │   └─────────────────────────────────┘     │
+              │                   │                       │
+              │                   ▼                       │
+              │   ┌─────────────────────────────────┐     │
+              │   │  Phase 2: LLM Task Collection   │     │
+              │   │                                 │     │
+              │   │  Collect all LLM tasks from     │     │
+              │   │  DocumentConversionResults      │     │
+              │   └─────────────────────────────────┘     │
+              │                   │                       │
+              │                   ▼                       │
+              │   ┌─────────────────────────────────┐     │
+              │   │  Phase 3: LLM Execution         │     │
+              │   │  (LLM semaphore controlled)     │     │
+              │   │                                 │     │
+              │   │  ┌──────┐  ┌──────┐  ┌──────┐   │     │
+              │   │  │Enhnc │  │ImgAn │  │ImgAn │   │     │
+              │   │  │Task1 │  │Task1 │  │Task2 │   │     │
+              │   │  └──────┘  └──────┘  └──────┘   │     │
+              │   └─────────────────────────────────┘     │
+              │                   │                       │
+              │                   ▼                       │
+              │   ┌─────────────────────────────────┐     │
+              │   │  Phase 4: Finalization          │     │
+              │   │  (per file)                     │     │
+              │   │                                 │     │
+              │   │  - Apply LLM results            │     │
+              │   │  - Write output files           │     │
+              │   └─────────────────────────────────┘     │
               │                                           │
               └───────────────────────────────────────────┘
                                       │
@@ -265,10 +265,10 @@ Counters per profile:
 ## LLM Provider State Machine
 
 ```
-                    ┌──────────────────────┐
-                    │     NOT LOADED       │
+                    ┌───────────────────────┐
+                    │     NOT LOADED        │
                     │  (lazy initialization)│
-                    └──────────┬───────────┘
+                    └──────────┬────────────┘
                                │
                     get_provider_manager()
                                │
@@ -380,32 +380,121 @@ ExtractedImage → [DEDUP] → [CONVERT] → [COMPRESS] → [RENAME] → Process
 ┌─────────────────────────────────────────────────────────────────┐
 │                      ERROR RECOVERY FLOW                        │
 │                                                                 │
-│   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐    │
-│   │ CONVERSION  │      │ LLM         │      │ OUTPUT      │    │
-│   │ ERROR       │      │ ERROR       │      │ ERROR       │    │
-│   └──────┬──────┘      └──────┬──────┘      └──────┬──────┘    │
+│   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐     │
+│   │ CONVERSION  │      │ LLM         │      │ OUTPUT      │     │
+│   │ ERROR       │      │ ERROR       │      │ ERROR       │     │
+│   └──────┬──────┘      └──────┬──────┘      └──────┬──────┘     │
 │          │                    │                    │            │
 │          ▼                    ▼                    ▼            │
-│   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐    │
-│   │ Try fallback│      │ Try fallback│      │ Skip/Rename │    │
-│   │ converter   │      │ provider    │      │ per config  │    │
-│   └──────┬──────┘      └──────┬──────┘      └──────┬──────┘    │
+│   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐     │
+│   │ Try fallback│      │ Try fallback│      │ Skip/Rename │     │
+│   │ converter   │      │ provider    │      │ per config  │     │
+│   └──────┬──────┘      └──────┬──────┘      └──────┬──────┘     │
 │          │                    │                    │            │
 │          ▼                    ▼                    ▼            │
-│   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐    │
-│   │ Success?    │      │ Success?    │      │ Success?    │    │
-│   └──────┬──────┘      └──────┬──────┘      └──────┬──────┘    │
-│       Y  │  N            Y   │  N            Y   │  N          │
-│       │  │               │   │               │   │             │
-│       ▼  ▼               ▼   ▼               ▼   ▼             │
-│    [OK][FAIL]         [OK][SimpleClean]   [OK][FAIL]           │
+│   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐     │
+│   │ Success?    │      │ Success?    │      │ Success?    │     │
+│   └──────┬──────┘      └──────┬──────┘      └──────┬──────┘     │
+│       Y  │  N            Y    │  N            Y    │  N         │
+│       │  │               │    │               │    │            │
+│       ▼  ▼               ▼    ▼               ▼    ▼            │
+│     [OK]  [FAIL]       [OK]   [SimpleClean]  [OK]  [FAIL]       │
 │                                                                 │
 │   Fallback Strategies:                                          │
-│   - Conversion: primary → fallback → MarkItDown                │
-│   - LLM: primary → [fallback chain] → SimpleMarkdownCleaner    │
-│   - Output: rename (add _N suffix) / overwrite / skip          │
+│   - Conversion: primary → fallback → MarkItDown                 │
+│   - LLM: primary → [fallback chain] → SimpleMarkdownCleaner     │
+│   - Output: rename (add _N suffix) / overwrite / skip           │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+## AIMD Adaptive Rate Limiter
+
+The `AdaptiveRateLimiter` implements Additive Increase Multiplicative Decrease for dynamic concurrency control:
+
+```
+                    ┌──────────────────────┐
+                    │   INITIAL STATE      │
+                    │   concurrency = 5    │
+                    └──────────┬───────────┘
+                               │
+                     ┌─────────┴─────────┐
+                     │                   │
+               success                  failure/429
+                     │                   │
+                     ▼                   ▼
+           ┌─────────────────┐  ┌─────────────────┐
+           │ ADDITIVE        │  │ MULTIPLICATIVE  │
+           │ INCREASE        │  │ DECREASE        │
+           │                 │  │                 │
+           │ streak++        │  │ concurrency     │
+           │ if streak >=    │  │   *= 0.5        │
+           │   threshold:    │  │ (min = 1)       │
+           │   concurrency++ │  │                 │
+           │ (max = 20)      │  │ streak = 0      │
+           └────────┬────────┘  └────────┬────────┘
+                    │                    │
+                    └────────┬───────────┘
+                             │
+                             ▼
+                    ┌──────────────────────┐
+                    │   COOLDOWN CHECK     │
+                    │   (prevent rapid     │
+                    │    oscillation)      │
+                    └──────────────────────┘
+
+Key Parameters:
+- initial_concurrency: 5 (starting point)
+- max_concurrency: 20 (upper limit)
+- min_concurrency: 1 (lower floor)
+- increase_threshold: 10 (successes before increase)
+- decrease_factor: 0.5 (multiplier on 429)
+- cooldown_seconds: 30 (min time between decreases)
+```
+
+## Dead Letter Queue (DLQ)
+
+Tracks failures per request to prevent infinite retries:
+
+```
+                    ┌──────────────────────┐
+                    │      NEW REQUEST     │
+                    │      (not in DLQ)    │
+                    └──────────┬───────────┘
+                               │
+                         record_failure()
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │   DLQ ENTRY CREATED  │
+                    │   failure_count = 1  │
+                    │   last_error = "..." │
+                    └──────────┬───────────┘
+                               │
+              ┌────────────────┴────────────────┐
+              │                                 │
+        retry succeeds                    retry fails
+              │                                 │
+              ▼                                 ▼
+     ┌─────────────────┐               ┌─────────────────┐
+     │  CLEAR ENTRY    │               │  INCREMENT      │
+     │  (removed from  │               │  failure_count++│
+     │   DLQ)          │               └────────┬────────┘
+     └─────────────────┘                        │
+                               ┌────────────────┴────────────────┐
+                               │                                 │
+                         count < max_retries            count >= max_retries
+                               │                                 │
+                               ▼                                 ▼
+                      ┌─────────────────┐               ┌─────────────────┐
+                      │  RETRY ALLOWED  │               │  PERMANENT FAIL │
+                      │  is_permanent   │               │  is_permanent   │
+                      │   = false       │               │   = true        │
+                      └─────────────────┘               └─────────────────┘
+
+Key Parameters:
+- max_retries: 3 (default)
+- metadata: preserved for debugging (provider, model, error type)
 ```
 
 ## Configuration State

@@ -1,50 +1,92 @@
 # ROADMAP
 
 
-## 任务批次 2026011103 - v0.1.2
+## 任务批次 2026011201 - v0.1.3
+
+### 原始需求
+
+运行 `just test-cov` 的结果如 htmlcov 文件夹，你深度分析下，看看有什么问题或者改进的空间。
+然后参考 docs/ROADMAP.md，把测试覆盖率识别出来的问题和改进计划写入到 ROADMAP 中，新增一个任务批次，版本号为 0.1.3。
+同时该任务批次还要修复下面这个问题，参考日志 `.logs/batch_20260112_164701_83d1bd1d.log`，可以看到:
+1. 对于 `[info] Provider initialized`，实际上当前程序没有初始化 Provider，而是初始化了模型，这是错误的，初始化应该是对 Provider 初始化;
+2. 如 docs/ROADMAP.md 中 [任务批次 2026011102] 的要求，实际上该任务是没有完成的，请深入分析，要进一步完善。
 
 ### 上下文
 
-当前系统在处理小批量文件时表现良好，但在数千个文件的超大规模批处理、高并发拉满、以及 API 频繁限流（429）等极端场景下的表现尚缺乏系统性验证。为了确保企业级生产环境的稳定性，需要建立专门的高压测试沙盒，并制定长期的架构演进路线。
+通过 `just test-cov` 分析发现 CLI 交互模块（callbacks）测试覆盖率为 0%，存在质量风险。
+同时，日志分析（`.logs/batch_...83d1bd1d.log`）显示 `ProviderManager` 在初始化同一提供商的多个模型时（如 OpenRouter 的多个模型），会重复进行网络验证并打印初始化日志。这不仅导致启动慢，还产生了误导性的日志信息（将模型初始化混淆为提供商初始化）。
 
 ### 目标
 
-构建能够模拟极端工况的自动化测试框架，验证系统的极限承载能力和故障恢复机制；并基于测试结果规划自适应并发、优先级队列等高级特性。
+提升核心 CLI 交互模块的测试覆盖率至 100%；优化 LLM 初始化逻辑，消除冗余验证和日志噪音，确保 Provider 级别的单次初始化。
 
 ### 任务
 
-#### 高压沙盒测试（Resilience Testing）
+#### 1. 初始化逻辑优化 (Refactor)
+*   **消除冗余验证**：
+    *   修改 `markit/llm/manager.py` 中的 `ProviderManager`。
+    *   引入 `_validated_credentials` 集合，追踪已验证的凭证 ID。
+    *   在 `_ensure_provider_initialized` 中，如果凭证已验证，直接复用连接状态，跳过 `_validate_provider` 网络请求。
+*   **日志语义修正**：
+    *   将 `[info] Provider initialized` 限制为仅在物理连接（Credential）首次建立时打印。
+    *   后续模型的加载降级为 `[debug] Model configured`，明确区分 Provider 连接和 Model 配置。
+    *   日志字段明确区分 `provider` (如 openrouter) 和 `model` (如 deepseek-chat)。
 
-1.  **构造测试固件**：
-    *   在 `tests/fixtures/heavy_load/` 下创建生成脚本，支持生成 1,000 ~ 10,000 个轻量级测试文件。
-    *   用于验证 `_discover_files` 的性能及 `state.json` 在大量条目下的读写稳定性。
-2.  **混沌模拟器（Chaos Mock Provider）**：
-    *   实现 `ChaosMockProvider`，不依赖真实 API，专门用于模拟故障。
-    *   **模拟高延迟**：随机 `sleep(30-120s)`，验证内存增长和超时处理。
-    *   **模拟高并发**：强制拉满信号量，验证 `LLMTaskQueue` 的背压（Backpressure）机制，防止 OOM。
-    *   **模拟限流**：随机返回 30%~50% 的 `429 Too Many Requests`，验证指数退避重试逻辑。
-3.  **中断恢复验证**：
-    *   自动化脚本：运行大批量任务 -> 中途发送 `SIGINT` -> 验证 `state.json` -> 使用 `--resume` 重启。
-    *   验证点：确保无缝衔接，无重复 Token 消耗。
+#### 2. 测试覆盖率提升 (Test)
 
-##### 架构演进规划（Roadmap）
+**目标**：将整体测试覆盖率从 46% 提升至 80%+
 
-1.  **自适应并发控制（Adaptive Concurrency）**：
-    *   设计 AIMD（加性增，乘性减）算法：遇 429 减半并发，成功则缓慢爬坡。
-    *   目标：无需用户手动调参即可最大化利用配额且不被封禁。
-2.  **优先级反压队列**：
-    *   重构队列逻辑，确立优先级：`Finalize Phase` (释放内存) > `LLM Analysis` > `File Loading`。
-    *   目标：防止“生产（读文件）”快于“消费（写结果）”导致的内存堆积。
-3.  **死信队列（Dead Letter Queue）**：
-    *   引入 `failed/` 隔离区或永久失败标记。
-    *   目标：防止“毒药文件”在每次 Resume 时反复卡死队列。
-4.  **可观测性增强**：
-    *   优化 `--dry-run` 模式预估 Token 和费用。
-    *   增加实时吞吐量（files/min）和错误率监控指标。
+*   **已完成 ✅**：
+    *   `cli/callbacks.py` - 100%
+    *   `cli/shared/credentials.py` - 100%
+    *   `config/constants.py` - 100%
+    *   `tests/unit/test_llm_manager.py` 多模型复用测试
+
+*   **P0 - LLM 提供商测试** (当前 0-16%)：
+    *   `llm/anthropic.py` - 0% → 80%+
+    *   `llm/gemini.py` - 0% → 80%+
+    *   `llm/ollama.py` - 0% → 80%+
+    *   `llm/openrouter.py` - 0% → 80%+
+    *   `llm/openai.py` - 16% → 80%+
+    *   `llm/enhancer.py` - 27% → 80%+
+
+*   **P0 - CLI 命令测试** (当前 5-24%)：
+    *   `cli/commands/batch.py` - 5% → 80%+
+    *   `cli/commands/model.py` - 8% → 80%+
+    *   `cli/commands/provider.py` - 10% → 80%+
+    *   `cli/commands/config.py` - 24% → 80%+
+
+*   **P1 - 转换器测试** (当前 15-35%)：
+    *   `converters/pdfplumber.py` - 15% → 80%+
+    *   `converters/pandoc.py` - 21% → 80%+
+    *   `converters/pymupdf.py` - 31% → 80%+
+    *   `converters/office.py` - 35% → 80%+
+
+*   **P1 - 核心模块测试** (当前 12-48%)：
+    *   `image/extractor.py` - 12% → 80%+
+    *   `utils/fs.py` - 13% → 80%+
+    *   `markdown/formatter.py` - 15% → 80%+
+    *   `markdown/chunker.py` - 17% → 80%+
+    *   `markdown/frontmatter.py` - 24% → 80%+
+    *   `core/pipeline.py` - 42% → 80%+
+    *   `image/analyzer.py` - 44% → 80%+
+    *   `llm/manager.py` - 48% → 80%+
 
 ### 进展
 
-待验证
+进行中（约 30%）
+
+**已完成：**
+1. ✅ 初始化逻辑优化：`_validated_credentials` 机制生效，每个 credential 仅验证一次
+2. ✅ 日志语义修正：首次连接 `[info] Provider initialized`，后续模型 `[debug] Model configured`
+3. ✅ `cli/callbacks.py` 测试覆盖率 100%
+4. ✅ 多模型复用单元测试
+
+**待完成：**
+- 整体覆盖率 46% → 80%+
+- P0: LLM 提供商模块测试（4 个模块 0% 覆盖）
+- P0: CLI 命令模块测试（3 个模块 <10% 覆盖）
+- P1: 转换器和核心模块测试
 
 
 ---
@@ -191,7 +233,7 @@ models:
 **实现要点**：
 - 成本配置完全可选，不配置不影响任何功能
 - 配置后用于：日志统计中的成本估算、未来的成本优化路由
-- 在 `markit.example.yaml` 注释中说明配置方式
+- 在 `markit config init` 生成的配置模板中说明配置方式
 
 #### 4. 执行模式支持（P1）
 
@@ -399,3 +441,80 @@ llm:
 7. ✅ LibreOffice 日志：添加 file 参数
 8. ✅ Markdown enhancement 日志：添加 model 字段
 9. ✅ 其他日志优化：Document split into chunks、Processing images 等添加 file 上下文
+
+
+## 任务批次 2026011103 - v0.1.2
+
+### 上下文
+
+当前系统在处理小批量文件时表现良好，但在数千个文件的超大规模批处理、高并发拉满、以及 API 频繁限流（429）等极端场景下的表现尚缺乏系统性验证。为了确保企业级生产环境的稳定性，需要建立专门的高压测试沙盒，并制定长期的架构演进路线。
+
+### 目标
+
+构建能够模拟极端工况的自动化测试框架，验证系统的极限承载能力和故障恢复机制；并基于测试结果规划自适应并发、优先级队列等高级特性。
+
+### 任务
+
+#### 高压沙盒测试（Resilience Testing）
+
+1.  **构造测试固件**：
+    *   在 `tests/fixtures/heavy_load/` 下创建生成脚本，支持生成 1,000 ~ 10,000 个轻量级测试文件。
+    *   用于验证 `_discover_files` 的性能及 `state.json` 在大量条目下的读写稳定性。
+2.  **混沌模拟器（Chaos Mock Provider）**：
+    *   实现 `ChaosMockProvider`，不依赖真实 API，专门用于模拟故障。
+    *   **模拟高延迟**：随机 `sleep(30-120s)`，验证内存增长和超时处理。
+    *   **模拟高并发**：强制拉满信号量，验证 `LLMTaskQueue` 的背压（Backpressure）机制，防止 OOM。
+    *   **模拟限流**：随机返回 30%~50% 的 `429 Too Many Requests`，验证指数退避重试逻辑。
+3.  **中断恢复验证**：
+    *   自动化脚本：运行大批量任务 -> 中途发送 `SIGINT` -> 验证 `state.json` -> 使用 `--resume` 重启。
+    *   验证点：确保无缝衔接，无重复 Token 消耗。
+
+##### 架构演进规划（Roadmap）
+
+1.  **自适应并发控制（Adaptive Concurrency）**：
+    *   设计 AIMD（加性增，乘性减）算法：遇 429 减半并发，成功则缓慢爬坡。
+    *   目标：无需用户手动调参即可最大化利用配额且不被封禁。
+2.  **优先级反压队列**：
+    *   重构队列逻辑，确立优先级：`Finalize Phase` (释放内存) > `LLM Analysis` > `File Loading`。
+    *   目标：防止“生产（读文件）”快于“消费（写结果）”导致的内存堆积。
+3.  **死信队列（Dead Letter Queue）**：
+    *   引入 `failed/` 隔离区或永久失败标记。
+    *   目标：防止“毒药文件”在每次 Resume 时反复卡死队列。
+4.  **可观测性增强**：
+    *   优化 `--dry-run` 模式预估 Token 和费用。
+    *   增加实时吞吐量（files/min）和错误率监控指标。
+
+### 进展
+
+已完成 (v0.1.2 发布)
+
+**实现内容：**
+
+1. **高压沙盒测试（Resilience Testing）** ✅
+   - 测试固件生成器：`tests/fixtures/heavy_load/generate_dataset.py`（支持 1k/10k/嵌套预设）
+   - 混沌模拟器：`markit/llm/chaos.py`（ChaosMockProvider，模拟延迟/限流/失败/超时）
+   - 中断恢复验证：`tests/integration/test_resilience.py`（SIGINT + state.json + --resume）
+
+2. **架构演进 - 自适应并发控制（AIMD）** ✅
+   - 核心实现：`markit/utils/adaptive_limiter.py`（加性增/乘性减/冷却期）
+   - 队列集成：`markit/llm/queue.py`（use_adaptive=True 启用）
+   - **Bug 修复**：修复高并发场景下信号量替换导致的死锁问题
+     - 增加并发：在现有信号量上调用 `release()` 增加槽位
+     - 减少并发：惰性收缩，通过 `_pending_reductions` 计数器"吞掉"后续 release
+
+3. **架构演进 - 优先级反压队列** ✅
+   - 背压机制：`markit/utils/flow_control.py` → BoundedQueue
+   - 队列集成：`markit/llm/queue.py`（max_pending 限制）
+
+4. **架构演进 - 死信队列（DLQ）** ✅
+   - 通用 DLQ：`markit/utils/flow_control.py` → DeadLetterQueue
+   - 状态集成：`markit/core/state.py`（failure_count/permanent_failure 字段）
+
+5. **可观测性增强** ✅
+   - Dry-run Token/费用预估：`markit/cli/commands/batch.py`（_estimate_tokens_and_cost）
+   - 三场景预估：仅转换 / LLM 增强 / 完整分析（含图片）
+
+**测试覆盖：**
+- 单元测试：`test_adaptive_limiter.py`, `test_flow_control.py`, `test_chaos_provider.py`, `test_queue_aimd.py`, `test_state_dlq.py`
+- 集成测试：`tests/integration/test_resilience.py`
+- UAT 测试：`uat/run_resilience.py`（一键运行全部韧性 UAT）

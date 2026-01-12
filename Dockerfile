@@ -71,7 +71,7 @@ COPY --from=python-builder /usr/local/bin /usr/local/bin
 WORKDIR /app
 
 # Copy application code
-COPY markit/ ./markit/
+COPY src/markit/ ./src/markit/
 COPY pyproject.toml README.md ./
 
 # Install the application

@@ -80,7 +80,7 @@ def provider_manager(mock_providers):
         "openai_gpt-4": ["text", "vision"],
         "anthropic_claude": ["text", "vision"],
     }
-    pm._config_loaded = True
+    pm._configs_loaded = True
     pm._initialized = True
     pm._current_index = 0
 
@@ -447,3 +447,50 @@ class TestProviderManagerApiKeyResolution:
         key = pm._get_api_key_from_env("unknown")
 
         assert key is None
+
+
+class TestProviderManagerRedundantValidation:
+    """Tests for preventing redundant validation of shared credentials."""
+
+    @pytest.mark.asyncio
+    async def test_initialize_shared_credential_validates_once(self):
+        """Test that validation happens only once per credential."""
+        llm_config = LLMConfig(
+            credentials=[
+                LLMCredentialConfig(id="shared-cred", provider="openai", api_key="sk-test"),
+            ],
+            models=[
+                LLMModelConfig(
+                    name="Model-A",
+                    model="gpt-4o",
+                    credential_id="shared-cred",
+                ),
+                LLMModelConfig(
+                    name="Model-B",
+                    model="gpt-4o-mini",
+                    credential_id="shared-cred",
+                ),
+            ],
+        )
+        pm = ProviderManager(llm_config)
+
+        # Mock create_provider and validate_provider
+        mock_provider = AsyncMock()
+        mock_provider.validate.return_value = True
+
+        # We need to mock _create_provider to return our mock
+        with (
+            patch.object(pm, "_create_provider", return_value=mock_provider) as mock_create,
+            patch.object(pm, "_validate_provider", return_value=True) as mock_validate,
+        ):
+            await pm.initialize()
+
+            # Verify providers created (should be 2, one for each model)
+            assert mock_create.call_count == 2
+
+            # Verify validation called only ONCE (for the first model that used the credential)
+            assert mock_validate.call_count == 1
+
+            # Both models should be valid
+            assert "Model-A" in pm._valid_providers
+            assert "Model-B" in pm._valid_providers
