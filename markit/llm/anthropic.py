@@ -2,6 +2,7 @@
 
 import base64
 import json
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -16,7 +17,7 @@ from markit.llm.base import (
     ResponseFormat,
     TokenUsage,
 )
-from markit.utils.logging import get_logger
+from markit.utils.logging import generate_request_id, get_logger
 
 log = get_logger(__name__)
 
@@ -76,6 +77,17 @@ class AnthropicProvider(BaseLLMProvider):
         Returns:
             LLM response
         """
+        request_id = generate_request_id()
+        model_name = kwargs.get("model", self.model)
+        start_time = time.perf_counter()
+
+        log.debug(
+            "Sending LLM request",
+            provider="anthropic",
+            model=model_name,
+            request_id=request_id,
+        )
+
         try:
             # Separate system message from others (Anthropic handles system differently)
             system_message = None
@@ -91,7 +103,7 @@ class AnthropicProvider(BaseLLMProvider):
 
             # Build create params, filtering out None values (Anthropic API doesn't accept None)
             create_params = {
-                "model": kwargs.get("model", self.model),
+                "model": model_name,
                 "messages": user_messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens or 4096,
@@ -114,10 +126,15 @@ class AnthropicProvider(BaseLLMProvider):
                 completion_tokens=response.usage.output_tokens,
             )
 
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
             log.debug(
-                "Anthropic completion",
+                "LLM response received",
+                provider="anthropic",
                 model=response.model,
-                tokens=usage.total_tokens,
+                request_id=request_id,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                duration_ms=duration_ms,
             )
 
             return LLMResponse(
@@ -128,6 +145,16 @@ class AnthropicProvider(BaseLLMProvider):
             )
 
         except Exception as e:
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
+            log.warning(
+                "LLM request failed",
+                provider="anthropic",
+                model=model_name,
+                request_id=request_id,
+                duration_ms=duration_ms,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             self._handle_api_error(e, "API", log)
 
     async def stream(

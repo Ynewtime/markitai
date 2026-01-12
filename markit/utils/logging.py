@@ -4,16 +4,182 @@ import logging
 import re
 import sys
 import uuid
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
+import structlog
+from rich.console import Console
+
 if TYPE_CHECKING:
     from structlog.typing import EventDict, WrappedLogger
 
-import structlog
-from rich.console import Console
+
+# =============================================================================
+# Request Context Infrastructure
+# =============================================================================
+
+# Context variables for request tracking (thread-safe via contextvars)
+_request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
+_file_context_var: ContextVar[str | None] = ContextVar("file_context", default=None)
+_provider_context_var: ContextVar[str | None] = ContextVar("provider_context", default=None)
+_model_context_var: ContextVar[str | None] = ContextVar("model_context", default=None)
+
+
+def generate_request_id() -> str:
+    """Generate a unique 8-character request ID for tracing.
+
+    Returns:
+        A short UUID string (8 characters) for request correlation.
+
+    Example:
+        >>> request_id = generate_request_id()
+        >>> print(request_id)  # e.g., "a1b2c3d4"
+    """
+    return str(uuid.uuid4())[:8]
+
+
+def set_request_context(
+    request_id: str | None = None,
+    file_path: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> None:
+    """Set request context variables for logging.
+
+    These context variables are automatically injected into all log messages
+    via the _inject_request_context processor.
+
+    Args:
+        request_id: Unique identifier for this request/operation
+        file_path: File being processed
+        provider: LLM provider being used
+        model: LLM model being used
+    """
+    if request_id is not None:
+        _request_id_var.set(request_id)
+    if file_path is not None:
+        _file_context_var.set(file_path)
+    if provider is not None:
+        _provider_context_var.set(provider)
+    if model is not None:
+        _model_context_var.set(model)
+
+
+def clear_request_context() -> None:
+    """Clear all request context variables."""
+    _request_id_var.set(None)
+    _file_context_var.set(None)
+    _provider_context_var.set(None)
+    _model_context_var.set(None)
+
+
+def get_request_id() -> str | None:
+    """Get the current request ID from context.
+
+    Returns:
+        Current request ID or None if not set.
+    """
+    return _request_id_var.get()
+
+
+@contextmanager
+def request_context(
+    request_id: str | None = None,
+    file_path: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> Generator[str, None, None]:
+    """Context manager for request tracing.
+
+    Automatically sets and clears request context. If no request_id is provided,
+    generates a new one.
+
+    Args:
+        request_id: Optional request ID (generated if not provided)
+        file_path: Optional file path being processed
+        provider: Optional LLM provider
+        model: Optional LLM model
+
+    Yields:
+        The request ID being used
+
+    Example:
+        >>> with request_context(file_path="/path/to/doc.pdf") as req_id:
+        ...     log.info("Processing started")  # Auto-includes file=/path/to/doc.pdf
+    """
+    # Save current context
+    old_request_id = _request_id_var.get()
+    old_file = _file_context_var.get()
+    old_provider = _provider_context_var.get()
+    old_model = _model_context_var.get()
+
+    # Set new context
+    new_request_id = request_id or generate_request_id()
+    set_request_context(
+        request_id=new_request_id,
+        file_path=file_path,
+        provider=provider,
+        model=model,
+    )
+
+    try:
+        yield new_request_id
+    finally:
+        # Restore previous context
+        _request_id_var.set(old_request_id)
+        _file_context_var.set(old_file)
+        _provider_context_var.set(old_provider)
+        _model_context_var.set(old_model)
+
+
+def _inject_request_context(
+    _logger: "WrappedLogger", _method_name: str, event_dict: "EventDict"
+) -> "EventDict":
+    """Inject request context variables into log messages.
+
+    This processor automatically adds request_id, file, provider, and model
+    to log messages if they are set in the context and not already present
+    in the event dict.
+
+    Args:
+        _logger: The wrapped logger (unused)
+        _method_name: The log method name (unused)
+        event_dict: The event dictionary to modify
+
+    Returns:
+        Modified event dictionary with context variables injected
+    """
+    # Inject request_id if set and not already in event
+    request_id = _request_id_var.get()
+    if request_id and "request_id" not in event_dict:
+        event_dict["request_id"] = request_id
+
+    # Inject file context if set and not already in event
+    file_ctx = _file_context_var.get()
+    if file_ctx and "file" not in event_dict:
+        event_dict["file"] = file_ctx
+
+    # Inject provider context if set and not already in event
+    provider_ctx = _provider_context_var.get()
+    if provider_ctx and "provider" not in event_dict:
+        event_dict["provider"] = provider_ctx
+
+    # Inject model context if set and not already in event
+    model_ctx = _model_context_var.get()
+    if model_ctx and "model" not in event_dict:
+        event_dict["model"] = model_ctx
+
+    return event_dict
+
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
 
 
 class SafeStreamHandler(logging.StreamHandler):
@@ -170,7 +336,7 @@ def setup_logging(
         # Only show WARNING+ from these loggers unless explicitly debugging
         third_party_logger.setLevel(max(log_level, logging.WARNING))
 
-    # Shared processors for structlog (includes base64 truncation)
+    # Shared processors for structlog (includes base64 truncation and context injection)
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
@@ -178,6 +344,7 @@ def setup_logging(
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.UnicodeDecoder(),
+        _inject_request_context,  # Inject request_id, file, provider, model from context
         _truncate_base64,  # Truncate base64 data before logging
         _filter_event_dict,  # Filter overly long values
         _add_separator,  # Add visual separator between message and context
@@ -192,6 +359,7 @@ def setup_logging(
             exception_formatter=structlog.dev.plain_traceback,
             pad_event_to=0,  # Don't pad event string (removes ugly spaces)
             pad_level=False,  # Don't pad level (removes [info     ] -> [info])
+            sort_keys=False,  # Preserve insertion order of log fields
         )
 
     # Create formatter for standard logging handlers
@@ -240,6 +408,7 @@ def setup_logging(
                         exception_formatter=structlog.dev.plain_traceback,
                         pad_event_to=0,  # Don't pad event string
                         pad_level=False,  # Don't pad level
+                        sort_keys=False,  # Preserve insertion order of log fields
                     ),
                 ],
             )

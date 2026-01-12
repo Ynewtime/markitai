@@ -342,8 +342,12 @@ async def _execute_batch(
 
     # Warmup LLM providers if enabled (fail fast and avoid concurrency race)
     if ctx.options.llm or ctx.options.effective_analyze_image:
-        with console.status("[cyan]Initializing LLM providers...[/cyan]"):
+        if ctx.options.verbose:
+            # In verbose mode, skip spinner to avoid mixing with log output
             await pipeline.warmup()
+        else:
+            with console.status("[cyan]Initializing LLM providers...[/cyan]"):
+                await pipeline.warmup()
 
     # Track initialization time
     stats.init_duration = time() - init_start

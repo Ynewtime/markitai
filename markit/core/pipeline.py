@@ -380,6 +380,7 @@ class ConversionPipeline:
                 "Conversion plan",
                 primary=plan.primary_converter.name,
                 fallback=plan.fallback_converter.name if plan.fallback_converter else None,
+                file=str(input_file),
             )
 
             # 2. Run pre-processors if any
@@ -388,7 +389,7 @@ class ConversionPipeline:
             for processor in plan.pre_processors:
                 if hasattr(processor, "set_converted_dir"):
                     processor.set_converted_dir(converted_dir)
-                log.debug("Running pre-processor", processor=processor.name)
+                log.debug("Running pre-processor", processor=processor.name, file=str(input_file))
                 current_file = await processor.process(current_file)
 
             # 3. Convert to Markdown
@@ -400,7 +401,11 @@ class ConversionPipeline:
             markdown = conversion_result.markdown
 
             if conversion_result.images:
-                log.info("Processing images (format/compress)", count=len(conversion_result.images))
+                log.info(
+                    "Processing images (format/compress)",
+                    count=len(conversion_result.images),
+                    file=str(input_file),
+                )
 
                 # Delegate to ImageProcessingService
                 (
@@ -437,7 +442,7 @@ class ConversionPipeline:
             )
 
         except ConversionError as e:
-            log.error("Document conversion failed", error=str(e))
+            log.error("Document conversion failed", file=str(input_file), error=str(e))
             # Return error result
             empty_plan = self.router.route(input_file)  # Get plan for structure
             return DocumentConversionResult(
@@ -448,7 +453,12 @@ class ConversionPipeline:
                 error=str(e),
             )
         except Exception as e:
-            log.error("Unexpected error in document conversion", error=str(e), exc_info=True)
+            log.error(
+                "Unexpected error in document conversion",
+                file=str(input_file),
+                error=str(e),
+                exc_info=True,
+            )
             empty_plan = self.router.route(input_file)
             return DocumentConversionResult(
                 input_file=input_file,
@@ -611,6 +621,7 @@ class ConversionPipeline:
                 "Conversion plan",
                 primary=plan.primary_converter.name,
                 fallback=plan.fallback_converter.name if plan.fallback_converter else None,
+                file=str(input_file),
             )
 
             # 2. Run pre-processors if any
@@ -622,7 +633,7 @@ class ConversionPipeline:
                 # Set converted directory for Office preprocessor
                 if hasattr(processor, "set_converted_dir"):
                     processor.set_converted_dir(converted_dir)
-                log.debug("Running pre-processor", processor=processor.name)
+                log.debug("Running pre-processor", processor=processor.name, file=str(input_file))
                 current_file = await processor.process(current_file)
 
             # 3. Convert to Markdown
@@ -634,6 +645,7 @@ class ConversionPipeline:
                 log.info(
                     "Processing images",
                     count=len(conversion_result.images),
+                    file=str(input_file),
                 )
                 conversion_result, image_info_list = await self._process_images(
                     conversion_result, input_file, output_dir
@@ -642,7 +654,7 @@ class ConversionPipeline:
             # 5. LLM Enhancement via LLMOrchestrator
             markdown_content = conversion_result.markdown
             if self.llm_enabled:
-                log.info("Applying LLM enhancement")
+                log.info("Applying LLM enhancement", file=str(input_file))
                 markdown_content = await self._llm_orchestrator.enhance_markdown(
                     markdown_content, input_file
                 )
@@ -673,7 +685,7 @@ class ConversionPipeline:
             )
 
         except ConversionError as e:
-            log.error("Conversion failed", error=str(e))
+            log.error("Conversion failed", file=str(input_file), error=str(e))
             return PipelineResult(
                 output_path=output_dir / f"{input_file.name}.md",
                 markdown_content="",
@@ -681,7 +693,7 @@ class ConversionPipeline:
                 error=str(e),
             )
         except Exception as e:
-            log.error("Unexpected error", error=str(e), exc_info=True)
+            log.error("Unexpected error", file=str(input_file), error=str(e), exc_info=True)
             return PipelineResult(
                 output_path=output_dir / f"{input_file.name}.md",
                 markdown_content="",
@@ -743,6 +755,7 @@ class ConversionPipeline:
             analyzer = await self._llm_orchestrator.get_image_analyzer()
             log.info(
                 "Analyzing images in parallel",
+                file=str(input_file),
                 count=len(images_for_analysis),
             )
 
@@ -758,6 +771,7 @@ class ConversionPipeline:
 
                     log.debug(
                         "Image analyzed",
+                        file=str(input_file),
                         filename=processed_image.filename,
                         type=analysis.image_type,
                     )
@@ -774,6 +788,7 @@ class ConversionPipeline:
             except Exception as e:
                 log.warning(
                     "Batch image analysis failed",
+                    file=str(input_file),
                     error=str(e),
                 )
 
@@ -812,13 +827,18 @@ class ConversionPipeline:
 
         # Try primary converter
         try:
-            log.debug("Trying primary converter", converter=plan.primary_converter.name)
+            log.debug(
+                "Trying primary converter",
+                converter=plan.primary_converter.name,
+                file=str(file_path),
+            )
             return await plan.primary_converter.convert(file_path)
         except ConversionError as e:
             log.warning(
                 "Primary converter failed",
                 converter=plan.primary_converter.name,
                 error=str(e),
+                file=str(file_path),
             )
             errors.append(e)
 
@@ -828,6 +848,7 @@ class ConversionPipeline:
                 log.debug(
                     "Trying fallback converter",
                     converter=plan.fallback_converter.name,
+                    file=str(file_path),
                 )
                 return await plan.fallback_converter.convert(file_path)
             except ConversionError as e:
@@ -835,6 +856,7 @@ class ConversionPipeline:
                     "Fallback converter failed",
                     converter=plan.fallback_converter.name,
                     error=str(e),
+                    file=str(file_path),
                 )
                 errors.append(e)
 

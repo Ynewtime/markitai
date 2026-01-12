@@ -120,6 +120,13 @@ MarkIt 是一个文档转 Markdown 工具，支持可选的 LLM 增强。代码�
 
 4. **图片处理进程池**: 重度图片压缩使用进程池绕过 Python GIL。
 
+### 文档同步规则
+
+**重要**：更新文档时必须同步更新关联文档：
+- `README.md` ↔ `README_CN.md`：内容保持同步
+- `CLAUDE.md` ↔ `AGENTS.md`：开发规范保持一致
+- `docs/ROADMAP.md`：任务进展及时更新
+
 ### 文件结构
 
 ```

@@ -1,6 +1,7 @@
 """Ollama LLM provider implementation."""
 
 import base64
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -8,7 +9,7 @@ import ollama
 
 from markit.exceptions import LLMError
 from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse, ResponseFormat, TokenUsage
-from markit.utils.logging import get_logger
+from markit.utils.logging import generate_request_id, get_logger
 
 log = get_logger(__name__)
 
@@ -52,6 +53,17 @@ class OllamaProvider(BaseLLMProvider):
         Returns:
             LLM response
         """
+        request_id = generate_request_id()
+        model_name = kwargs.get("model", self.model)
+        start_time = time.perf_counter()
+
+        log.debug(
+            "Sending LLM request",
+            provider="ollama",
+            model=model_name,
+            request_id=request_id,
+        )
+
         try:
             converted_messages = self._convert_messages_ollama(messages)
 
@@ -60,7 +72,7 @@ class OllamaProvider(BaseLLMProvider):
                 options["num_predict"] = max_tokens
 
             response = await self.client.chat(
-                model=kwargs.get("model", self.model),
+                model=model_name,
                 messages=converted_messages,
                 options=options,
             )
@@ -75,21 +87,35 @@ class OllamaProvider(BaseLLMProvider):
                     completion_tokens=response.get("eval_count", 0),
                 )
 
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
             log.debug(
-                "Ollama completion",
-                model=self.model,
-                tokens=usage.total_tokens if usage else 0,
+                "LLM response received",
+                provider="ollama",
+                model=response.get("model", model_name),
+                request_id=request_id,
+                input_tokens=usage.prompt_tokens if usage else 0,
+                output_tokens=usage.completion_tokens if usage else 0,
+                duration_ms=duration_ms,
             )
 
             return LLMResponse(
                 content=content,
                 usage=usage,
-                model=response.get("model", self.model),
+                model=response.get("model", model_name),
                 finish_reason=response.get("done_reason", "stop"),
             )
 
         except Exception as e:
-            log.error("Ollama API error", error=str(e))
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
+            log.warning(
+                "LLM request failed",
+                provider="ollama",
+                model=model_name,
+                request_id=request_id,
+                duration_ms=duration_ms,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             raise LLMError(f"Ollama API error: {e}") from e
 
     async def stream(

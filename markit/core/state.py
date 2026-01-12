@@ -13,7 +13,7 @@ from markit.utils.logging import get_logger
 log = get_logger(__name__)
 
 
-FileStatus = Literal["pending", "processing", "completed", "failed", "skipped"]
+FileStatus = Literal["pending", "processing", "completed", "failed", "skipped", "permanent_failure"]
 
 
 @dataclass
@@ -27,6 +27,10 @@ class FileState:
     started_at: str | None = None
     completed_at: str | None = None
     file_hash: str | None = None  # For detecting changes
+    # DLQ (Dead Letter Queue) fields
+    failure_count: int = 0
+    last_error: str | None = None
+    permanent_failure: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -34,7 +38,15 @@ class FileState:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "FileState":
-        """Create from dictionary."""
+        """Create from dictionary.
+
+        Handles backward compatibility for older state files
+        that don't have DLQ fields.
+        """
+        # Ensure DLQ fields have defaults for older state files
+        data.setdefault("failure_count", 0)
+        data.setdefault("last_error", None)
+        data.setdefault("permanent_failure", False)
         return cls(**data)
 
 
@@ -109,15 +121,24 @@ class StateManager:
 
     State is persisted to a JSON file and updated incrementally.
     This allows resuming interrupted batch operations.
+
+    DLQ (Dead Letter Queue) Support:
+    - Tracks failure counts per file
+    - Marks files as permanent failures after max_retries
+    - Exports failure reports for debugging
     """
 
-    def __init__(self, state_file: Path | str) -> None:
+    DEFAULT_MAX_RETRIES = 3
+
+    def __init__(self, state_file: Path | str, max_retries: int = 3) -> None:
         """Initialize the state manager.
 
         Args:
             state_file: Path to the state file
+            max_retries: Maximum retries before permanent failure (default: 3)
         """
         self.state_file = Path(state_file)
+        self.max_retries = max_retries
         self._state: BatchState | None = None
 
     def create_batch(
@@ -327,3 +348,218 @@ class StateManager:
         stat = file_path.stat()
         data = f"{stat.st_size}:{stat.st_mtime}"
         return hashlib.md5(data.encode()).hexdigest()
+
+    # =========================================================================
+    # DLQ (Dead Letter Queue) Methods
+    # =========================================================================
+
+    def record_failure(self, file_path: Path | str, error: str) -> bool:
+        """Record a file failure and check if it should be marked permanent.
+
+        This method increments the failure count for a file and marks it as
+        a permanent failure if it exceeds max_retries.
+
+        Args:
+            file_path: Path to the file
+            error: Error message
+
+        Returns:
+            True if file was marked as permanent failure, False if still retriable
+
+        Raises:
+            StateError: If no batch state is loaded or file not found
+        """
+        if self._state is None:
+            raise StateError("No batch state loaded")
+
+        file_key = self._find_file_key(file_path)
+        if file_key is None:
+            raise StateError(f"File not found in batch: {file_path}")
+
+        file_state = self._state.files[file_key]
+        file_state.failure_count += 1
+        file_state.last_error = error
+        now = datetime.now().isoformat()
+
+        if file_state.failure_count >= self.max_retries:
+            file_state.status = "permanent_failure"
+            file_state.permanent_failure = True
+            file_state.completed_at = now
+            file_state.error = (
+                f"Permanent failure after {file_state.failure_count} attempts: {error}"
+            )
+            self._state.failed_files += 1
+
+            log.warning(
+                "File marked as permanent failure",
+                file=str(file_path),
+                failure_count=file_state.failure_count,
+                max_retries=self.max_retries,
+                error=error,
+            )
+            self._state.updated_at = now
+            self._save()
+            return True
+
+        log.debug(
+            "File failure recorded",
+            file=str(file_path),
+            failure_count=file_state.failure_count,
+            max_retries=self.max_retries,
+        )
+        self._state.updated_at = now
+        self._save()
+        return False
+
+    def get_permanent_failures(self) -> list[tuple[str, str]]:
+        """Get list of permanently failed files with their errors.
+
+        Returns:
+            List of (file_path, error_message) tuples for all permanent failures
+        """
+        if self._state is None:
+            return []
+
+        return [
+            (state.path, state.last_error or state.error or "Unknown error")
+            for state in self._state.files.values()
+            if state.permanent_failure
+        ]
+
+    def get_retriable_failures(self) -> list[Path]:
+        """Get list of files that failed but can still be retried.
+
+        Returns:
+            List of Path objects for files with failures under max_retries
+        """
+        if self._state is None:
+            return []
+
+        return [
+            Path(state.path)
+            for state in self._state.files.values()
+            if state.failure_count > 0
+            and not state.permanent_failure
+            and state.status not in ("completed", "skipped")
+        ]
+
+    def export_dlq_report(self, output_path: Path) -> int:
+        """Export permanent failures to a DLQ report file.
+
+        The report is a JSON file containing:
+        - batch_id: ID of the batch
+        - exported_at: Timestamp of export
+        - total_permanent_failures: Count of permanent failures
+        - permanent_failures: List of {file, error, failure_count} objects
+
+        Args:
+            output_path: Path for the JSON report file
+
+        Returns:
+            Number of permanent failures exported
+        """
+        failures = self.get_permanent_failures()
+
+        report = {
+            "batch_id": self._state.batch_id if self._state else "unknown",
+            "exported_at": datetime.now().isoformat(),
+            "total_permanent_failures": len(failures),
+            "permanent_failures": [
+                {
+                    "file": path,
+                    "error": error,
+                    "failure_count": self._get_failure_count(path),
+                }
+                for path, error in failures
+            ],
+        }
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2)
+
+        log.info(
+            "DLQ report exported",
+            path=str(output_path),
+            permanent_failures=len(failures),
+        )
+
+        return len(failures)
+
+    def _get_failure_count(self, file_path: str) -> int:
+        """Get failure count for a file by path."""
+        if self._state is None:
+            return 0
+
+        for state in self._state.files.values():
+            if state.path == file_path:
+                return state.failure_count
+        return 0
+
+    def reset_file_failures(self, file_path: Path | str) -> None:
+        """Reset failure count for a file (for manual retry).
+
+        Args:
+            file_path: Path to the file
+
+        Raises:
+            StateError: If no batch state is loaded or file not found
+        """
+        if self._state is None:
+            raise StateError("No batch state loaded")
+
+        file_key = self._find_file_key(file_path)
+        if file_key is None:
+            raise StateError(f"File not found in batch: {file_path}")
+
+        file_state = self._state.files[file_key]
+        file_state.failure_count = 0
+        file_state.last_error = None
+        file_state.permanent_failure = False
+        file_state.status = "pending"
+        file_state.error = None
+
+        self._state.updated_at = datetime.now().isoformat()
+        self._save()
+
+        log.info(
+            "File failures reset",
+            file=str(file_path),
+        )
+
+    def record_success(self, file_path: Path | str) -> None:
+        """Record a successful file processing and clear any failure state.
+
+        This method should be called when a file that previously failed
+        is successfully processed on retry. It clears the failure count
+        and error state, removing the file from the DLQ.
+
+        Args:
+            file_path: Path to the file
+
+        Raises:
+            StateError: If no batch state is loaded or file not found
+        """
+        if self._state is None:
+            raise StateError("No batch state loaded")
+
+        file_key = self._find_file_key(file_path)
+        if file_key is None:
+            # File might not be in batch (e.g., single file conversion)
+            return
+
+        file_state = self._state.files[file_key]
+
+        # Only clear if there was a previous failure
+        if file_state.failure_count > 0:
+            log.debug(
+                "Clearing failure state after success",
+                file=str(file_path),
+                previous_failures=file_state.failure_count,
+            )
+            file_state.failure_count = 0
+            file_state.last_error = None
+            # Note: permanent_failure and status are handled by update_file_status()
+
+            self._state.updated_at = datetime.now().isoformat()
+            self._save()

@@ -238,6 +238,9 @@ MarkIt uses a modular, service-oriented architecture:
 **Key Design:**
 - **Capability-based model routing**: Text tasks use text models, vision tasks use vision models
 - **Concurrent fallback**: Primary model timeout triggers backup model concurrently
+- **AIMD adaptive concurrency**: Auto-adjusts LLM concurrency based on 429 rate limits
+- **Dead Letter Queue**: Tracks failures per file, isolates permanently failed files after max retries
+- **Backpressure queue**: Prevents memory exhaustion during high-volume batch processing
 - **LibreOffice profile pool**: Isolated profiles for parallel .doc/.ppt/.xls conversion
 - **Process pool for images**: Heavy compression uses process pool to bypass GIL
 

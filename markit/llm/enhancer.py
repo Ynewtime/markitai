@@ -361,7 +361,7 @@ class MarkdownEnhancer:
 
         # Chunk if needed
         chunks = self.chunker.chunk(markdown)
-        log.debug("Document split into chunks", count=len(chunks))
+        log.debug("Document split into chunks", count=len(chunks), file=str(source_file))
 
         # Track statistics
         total_prompt_tokens = 0
@@ -399,7 +399,11 @@ class MarkdownEnhancer:
         if self.config.add_frontmatter:
             enhanced_markdown = self._inject_frontmatter(enhanced_markdown, source_file, summary)
 
-        log.info("Markdown enhancement complete", file=str(source_file))
+        log.info(
+            "Markdown enhancement complete",
+            model=", ".join(sorted(models_used)) if models_used else None,
+            file=str(source_file),
+        )
 
         result = EnhancedMarkdown(
             content=enhanced_markdown,
