@@ -18,14 +18,14 @@ def temp_dir():
 
 
 @pytest.fixture(autouse=True)
-def cleanup_input_output():
-    """Auto-cleanup output directories in input folder after each test."""
+def cleanup_test_outputs():
+    """Auto-cleanup output directories in test fixtures after each test."""
     yield
 
-    # Clean up any output directories created in input folder
-    input_output = PROJECT_ROOT / "input" / "output"
-    if input_output.exists():
-        shutil.rmtree(input_output, ignore_errors=True)
+    # Clean up any output directories created in fixtures folder
+    fixtures_output = PROJECT_ROOT / "tests" / "fixtures" / "documents" / "output"
+    if fixtures_output.exists():
+        shutil.rmtree(fixtures_output, ignore_errors=True)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -35,21 +35,21 @@ def cleanup_after_all_tests():
 
     # Final cleanup
 
-    # Remove input/output if exists
-    input_output = PROJECT_ROOT / "input" / "output"
-    if input_output.exists():
-        shutil.rmtree(input_output, ignore_errors=True)
+    # Remove output in fixtures if exists
+    fixtures_output = PROJECT_ROOT / "tests" / "fixtures" / "documents" / "output"
+    if fixtures_output.exists():
+        shutil.rmtree(fixtures_output, ignore_errors=True)
 
     # Remove any .markit-state.json files in project root
     state_file = PROJECT_ROOT / ".markit-state.json"
     if state_file.exists():
         state_file.unlink(missing_ok=True)
 
-    # Clean up converted legacy files in input directory
+    # Clean up converted legacy files in fixtures/documents directory
     # (LibreOffice creates .docx/.pptx/.xlsx from .doc/.ppt/.xls)
-    input_dir = PROJECT_ROOT / "input"
-    if input_dir.exists():
-        for f in input_dir.iterdir():
+    documents_dir = PROJECT_ROOT / "tests" / "fixtures" / "documents"
+    if documents_dir.exists():
+        for f in documents_dir.iterdir():
             # Check for pairs: if we have both .doc and .docx with same stem,
             # the .docx might be a converted file
             if f.suffix.lower() in {".docx", ".pptx", ".xlsx"}:

@@ -1,15 +1,15 @@
-"""Integration tests using real test files from ./input directory.
+"""Integration tests using real test files from tests/fixtures/documents.
 
 These tests verify the actual conversion functionality with real document files.
-Test files should be placed in the ./input directory at project root.
+Test files should be placed in the tests/fixtures/documents directory.
 """
 
 from pathlib import Path
 
 import pytest
 
-# Test input directory (project root / input)
-INPUT_DIR = Path(__file__).parent.parent.parent / "input"
+# Test input directory (tests/fixtures/documents)
+INPUT_DIR = Path(__file__).parent.parent / "fixtures" / "documents"
 
 
 @pytest.fixture

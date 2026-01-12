@@ -221,6 +221,9 @@ class TestLLMTaskQueueBackpressure:
         # Wait for tasks to complete
         await asyncio.gather(*submitted)
 
+        # Clean up unawaited coroutine in task3
+        task3.coro.close()
+
         assert blocked is True
 
 

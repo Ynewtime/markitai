@@ -27,7 +27,6 @@ venv/
 ENV/
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -40,7 +39,12 @@ htmlcov/
 .tox/
 .nox/
 
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+
 # Logs & State
+.logs/
 logs/
 *.log
 .markit-state.json

@@ -263,6 +263,10 @@ class TestCreateLLMTasks:
             # Should have 1 enhancement task
             assert len(tasks) == 1
 
+            # Clean up unawaited coroutines
+            for task in tasks:
+                task.close()
+
     async def test_creates_analysis_tasks_when_enabled(self, orchestrator, mock_images):
         """Image analysis tasks are created when vision is enabled."""
         mock_manager = AsyncMock()
@@ -280,6 +284,10 @@ class TestCreateLLMTasks:
             # Should have 2 analysis tasks (one per image)
             assert len(tasks) == 2
 
+            # Clean up unawaited coroutines
+            for task in tasks:
+                task.close()
+
     async def test_creates_both_task_types(self, orchestrator, mock_images):
         """Both task types are created when both features are enabled."""
         mock_manager = AsyncMock()
@@ -296,6 +304,10 @@ class TestCreateLLMTasks:
 
             # Should have 3 tasks: 2 analysis + 1 enhancement
             assert len(tasks) == 3
+
+            # Clean up unawaited coroutines
+            for task in tasks:
+                task.close()
 
     async def test_skips_analysis_without_vision_capability(self, orchestrator, mock_images):
         """Image analysis is skipped when vision capability is unavailable."""

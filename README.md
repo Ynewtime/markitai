@@ -1,5 +1,7 @@
 # MarkIt
 
+[中文文档](docs/README_ZH.md)
+
 Convert documents to Markdown with optional LLM enhancement.
 
 ## Features
@@ -158,6 +160,16 @@ output:
 
 prompt:
   output_language: "zh"  # zh, en, auto
+  # prompts_dir: "prompts"  # Custom prompts directory (relative to cwd, optional)
+  # Files should be named: {type}_{lang}.md
+  #   type: enhancement, image_analysis, summary
+  #   lang: zh, en (based on output_language)
+  #   e.g., enhancement_zh.md, image_analysis_en.md
+  # If not found, falls back to built-in prompts
+  # Custom prompt file paths (highest priority, override prompts_dir):
+  # image_analysis_prompt: "my_prompts/image_analysis.md"
+  # enhancement_prompt: "my_prompts/enhancement.md"
+  # summary_prompt: "my_prompts/summary.md"
 
 # LLM Configuration
 # Credentials and models are defined separately for flexibility
@@ -209,40 +221,9 @@ output/
     document.docx.001.png.md    # Image description (with --analyze-image-with-md)
 ```
 
-## Architecture
+## Contributing
 
-MarkIt uses a modular, service-oriented architecture:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           ConversionPipeline                                │
-│                                                                             │
-│  ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────────────┐  │
-│  │ FormatRouter    │  │ ImageProcessing  │  │ LLMOrchestrator            │  │
-│  │                 │  │ Service          │  │                            │  │
-│  │ - Route files   │  │ - Compression    │  │ - ProviderManager          │  │
-│  │ - Select        │  │ - Deduplication  │  │ - MarkdownEnhancer         │  │
-│  │   converter     │  │ - Format convert │  │ - ImageAnalyzer            │  │
-│  └─────────────────┘  └──────────────────┘  └────────────────────────────┘  │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                         OutputManager                               │    │
-│  │                                                                     │    │
-│  │  - Conflict resolution (rename/overwrite/skip)                      │    │
-│  │  - Write markdown + assets                                          │    │
-│  │  - Generate image description .md files                             │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-**Key Design:**
-- **Capability-based model routing**: Text tasks use text models, vision tasks use vision models
-- **Concurrent fallback**: Primary model timeout triggers backup model concurrently
-- **AIMD adaptive concurrency**: Auto-adjusts LLM concurrency based on 429 rate limits
-- **Dead Letter Queue**: Tracks failures per file, isolates permanently failed files after max retries
-- **Backpressure queue**: Prevents memory exhaustion during high-volume batch processing
-- **LibreOffice profile pool**: Isolated profiles for parallel .doc/.ppt/.xls conversion
-- **Process pool for images**: Heavy compression uses process pool to bypass GIL
+See [Contributing Guide](docs/CONTRIBUTING.md) for architecture details, setup instructions, and contribution guidelines.
 
 ## License
 
