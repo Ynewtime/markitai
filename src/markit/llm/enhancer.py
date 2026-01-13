@@ -9,7 +9,7 @@ from markit.llm.base import LLMMessage, LLMTaskResultWithStats
 from markit.llm.manager import ProviderManager
 from markit.markdown.chunker import ChunkConfig, MarkdownChunker
 from markit.markdown.frontmatter import FrontmatterHandler, create_frontmatter
-from markit.utils.logging import get_logger
+from markit.utils.logging import get_logger, set_request_context
 
 if TYPE_CHECKING:
     from markit.config.settings import PromptConfig
@@ -357,11 +357,12 @@ class MarkdownEnhancer:
         Returns:
             Enhanced Markdown with metadata, or LLMTaskResultWithStats if return_stats=True
         """
-        log.info("Enhancing Markdown", file=str(source_file))
+        # Set file context for all LLM-related logs
+        set_request_context(file_path=source_file.name)
 
         # Chunk if needed
         chunks = self.chunker.chunk(markdown)
-        log.debug("Document split into chunks", count=len(chunks), file=str(source_file))
+        log.debug("Document split into chunks", count=len(chunks), file=source_file.name)
 
         # Track statistics
         total_prompt_tokens = 0
@@ -399,11 +400,8 @@ class MarkdownEnhancer:
         if self.config.add_frontmatter:
             enhanced_markdown = self._inject_frontmatter(enhanced_markdown, source_file, summary)
 
-        log.info(
-            "Markdown enhancement complete",
-            model=", ".join(sorted(models_used)) if models_used else None,
-            file=str(source_file),
-        )
+        # provider and model are auto-injected from context set by manager.py
+        log.info("Markdown enhancement complete", file=source_file.name)
 
         result = EnhancedMarkdown(
             content=enhanced_markdown,

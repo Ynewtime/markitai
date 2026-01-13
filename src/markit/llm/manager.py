@@ -14,7 +14,7 @@ from markit.config.settings import (
 )
 from markit.exceptions import LLMError, LLMTimeoutError, ProviderNotFoundError
 from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse
-from markit.utils.logging import get_logger, set_request_context
+from markit.utils.logging import clear_request_context, get_logger, set_request_context
 
 log = get_logger(__name__)
 
@@ -191,8 +191,8 @@ class ProviderManager:
                     if should_validate:
                         log.info(
                             "Provider initialized",
-                            credential=cred_id,
-                            provider=state.config.provider,
+                            provider=cred_id,
+                            model=state.config.model,
                             base_url=state.config.base_url or "default",
                         )
                     else:
@@ -653,6 +653,7 @@ class ProviderManager:
         image_data: bytes,
         prompt: str,
         image_format: str = "png",
+        filename: str | None = None,
         **kwargs,
     ) -> LLMResponse:
         """Analyze an image with automatic fallback. Supports lazy loading.
@@ -664,6 +665,7 @@ class ProviderManager:
             image_data: Raw image bytes
             prompt: Prompt for analysis
             image_format: Image format
+            filename: Optional filename for logging
             **kwargs: Additional arguments
 
         Returns:
@@ -724,6 +726,11 @@ class ProviderManager:
                     else provider_name,
                     model=state.config.model if state else None,
                 )
+
+                # Log with provider/model context now available
+                if filename:
+                    log.debug("Analyzing image with LLM", filename=filename)
+
                 response = await provider.analyze_image(image_data, prompt, image_format, **kwargs)
                 response.estimated_cost = self.calculate_cost(provider_name, response)
 
@@ -733,14 +740,13 @@ class ProviderManager:
             except Exception as e:
                 log.warning(
                     "Provider failed for image analysis",
-                    provider_id=provider_name,
+                    filename=filename,
                     error=str(e),
                     error_type=type(e).__name__,
                 )
 
                 log.warning(
                     "Hint: If provider is text-only, set capabilities=['text'] in config",
-                    provider_id=provider_name,
                 )
 
                 errors.append((provider_name, str(e)))
@@ -899,6 +905,7 @@ class ProviderManager:
                         raise LLMTimeoutError(max_timeout, primary_name) from None
 
             fallback_provider = self._providers[fallback_name]
+            fallback_state = self._provider_states.get(fallback_name)
 
             log.warning(
                 "Primary model exceeded timeout, starting concurrent fallback",
@@ -907,8 +914,19 @@ class ProviderManager:
                 timeout_seconds=fallback_timeout,
             )
 
-            # Start fallback task
-            fallback_task = asyncio.create_task(fallback_provider.complete(messages, **kwargs))
+            # Helper to run provider.complete with its own context
+            async def _run_fallback_with_context() -> LLMResponse:
+                """Run fallback provider with its own request context."""
+                set_request_context(
+                    provider=fallback_state.credential_id or fallback_state.config.provider
+                    if fallback_state
+                    else fallback_name,
+                    model=fallback_state.config.model if fallback_state else None,
+                )
+                return await fallback_provider.complete(messages, **kwargs)
+
+            # Start fallback task with its own context
+            fallback_task = asyncio.create_task(_run_fallback_with_context())
 
             # Wait for either to complete with absolute timeout
             remaining_timeout = max_timeout - fallback_timeout
@@ -950,6 +968,10 @@ class ProviderManager:
             completed_task = done.pop()
             winner = "primary" if completed_task is primary_task else "fallback"
             winner_name = primary_name if winner == "primary" else fallback_name
+
+            # Clear context to avoid duplicate provider/model in log
+            # (winner_id/primary_id/fallback_id already contain this information)
+            clear_request_context()
             log.info(
                 "Concurrent fallback completed",
                 winner=winner,

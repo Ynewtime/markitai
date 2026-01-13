@@ -654,7 +654,7 @@ class ConversionPipeline:
             # 5. LLM Enhancement via LLMOrchestrator
             markdown_content = conversion_result.markdown
             if self.llm_enabled:
-                log.info("Applying LLM enhancement", file=str(input_file))
+                log.info("Applying LLM enhancement", file=input_file.name)
                 markdown_content = await self._llm_orchestrator.enhance_markdown(
                     markdown_content, input_file
                 )
@@ -755,7 +755,7 @@ class ConversionPipeline:
             analyzer = await self._llm_orchestrator.get_image_analyzer()
             log.info(
                 "Analyzing images in parallel",
-                file=str(input_file),
+                file=input_file.name,
                 count=len(images_for_analysis),
             )
 
@@ -771,7 +771,7 @@ class ConversionPipeline:
 
                     log.debug(
                         "Image analyzed",
-                        file=str(input_file),
+                        file=input_file.name,
                         filename=processed_image.filename,
                         type=analysis.image_type,
                     )

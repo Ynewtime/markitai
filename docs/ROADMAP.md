@@ -3,40 +3,107 @@
 
 ## 任务批次 2026011202 - v0.2.0
 
+### 原始需求
+
+请基于 /home/tseng/src/tries/2026-01-06-markit/docs/ROADMAP.md (需求规划) 中的 [任务批次 2026011202 - v0.2.0]，结合 /home/tseng/src/tries/2026-01-06-markit/docs/020-SPEC.md (详细设计规格) 和 /home/tseng/src/tries/2026-01-06-markit/docs/reference/ocr.md (OCR调研文档) 两个文档作为参考，启动 v0.2.0 开发
+
 ### 目标
 
-本版本聚焦于**本地化能力增强**与**底层架构升级**。
-1. **本地 OCR 支持**：引入本地 OCR 引擎，支持离线环境下的扫描件/图片文字提取，提升中文识别准确率，降低对昂贵的多模态大模型的依赖。
-2. **LLM 架构重构调研**：深度评估 `litellm` 生态，探索用其统一接口替代当前自研的 Provider/Model 适配层，以获得更广泛的模型支持、更精准的成本计算及更强大的路由能力。
+本版本进行**全量架构重构**，聚焦两个核心目标：
+
+1. **本地 OCR 能力**：引入 RapidOCR + PaddleOCR 双引擎方案，支持离线中文 OCR，同时保留图片提取能力
+2. **LLM 层重构**：全面切换至 LiteLLM，废弃现有 Provider 层代码
+
+详细设计参见 [v0.2.0 实施规格书](./020-SPEC.md)，OCR 方案调研详见 [OCR 方案研究报告](./reference/ocr.md)。
 
 ### 任务
 
-#### 1. 本地 OCR 能力支持 (Local OCR)
+#### 1. 本地 OCR 能力 (Local OCR)
 
-基于 `docs/reference/ocr.md` 的调研结论，分阶段落地本地 OCR 能力。
+采用 **RapidOCR + PaddleOCR 双引擎方案**，实现高精度中文 OCR：
 
-*   **Phase 1: PyMuPDF4LLM 内置 OCR (MVP)**
-    *   **依赖集成**：更新 `pyproject.toml`，引入 `ocr` 可选依赖组（含 `opencv-python`）。
-    *   **配置适配**：在 `markit.yaml` 的 `pdf` 节增加 OCR 开关及语言选项（默认 `chi_sim+eng`）。
-    *   **系统适配**：在 `markit check` 命令中增加对系统级依赖（Tesseract）的检查与提示。
-*   **Phase 2: 高精度中文 OCR (RapidOCR)**
-    *   **引擎集成**：引入 `rapidocr-onnxruntime`，封装统一的 OCR 引擎接口。
-    *   **混合策略**：支持在配置中选择 OCR 引擎（`pymupdf` vs `rapidocr`），为纯中文文档提供更高精度的选择。
+| 模式 | 引擎组合 | 适用场景 |
+|------|---------|---------|
+| **默认模式** | RapidOCR + PaddleOCR | 最佳输出质量，适合重要文档 |
+| **快速模式** (`--fast`) | 仅 RapidOCR | 平衡速度与质量，适合批量处理 |
 
-#### 2. LLM 架构演进调研 (LiteLLM Analysis)
+*   **OCR 引擎抽象层**：
+    *   新增 `src/markit/ocr/` 模块
+    *   定义 `BaseOCREngine` 抽象接口
+    *   实现 `RapidOCREngine` (基于 `rapidocr-onnxruntime`)
+    *   实现 `PaddleOCREngine` (基于 `paddleocr`)
+    *   实现 `DualOCREngine` (双引擎并行 + 置信度融合)
+    *   实现 `create_ocr_engine()` 工厂函数
+*   **PDF 转换器集成**：
+    *   修改 `PyMuPDF4LLMConverter`，支持 OCR 模式
+    *   实现扫描件自动检测 (`_detect_scanned_pdf`)
+    *   OCR 文本提取与图片提取并行进行，不丢失内容
+*   **配置与 CLI**：
+    *   `PDFConfig` 增加 `ocr_enabled`, `ocr_auto_detect`, `ocr_dpi`, `ocr_engine` 字段
+    *   `ocr_engine` 支持 `dual` (默认) / `rapid` / `paddle` 三种模式
+    *   `ConcurrencyConfig` 增加 `ocr_workers` 字段
+    *   新增 `markit check` 命令检查环境依赖（RapidOCR + PaddleOCR 状态）
+    *   `--fast` 模式自动切换为 `rapid` 单引擎
+*   **依赖更新**：
+    *   `pyproject.toml` 核心依赖新增 `rapidocr-onnxruntime>=1.4.0`
+    *   新增可选依赖组 `ocr-full`: `paddlepaddle>=2.6.0`, `paddleocr>=2.9.0`
+    *   新增可选依赖组 `ocr-gpu`: GPU 加速支持
 
-基于 `docs/reference/litellm.md`，开展 `litellm` 库与 MarkIt 现有架构的差异分析与重构预研。
+#### 2. LLM 架构重构 (LiteLLM Migration)
 
-*   **能力映射与差距分析**：
-    *   **接口标准化**：对比 MarkIt `Provider` 抽象类与 LiteLLM `completion()` 统一接口，评估迁移复杂度。
-    *   **成本/Token管理**：评估 LiteLLM 的 Cost Tracking 机制是否能覆盖 MarkIt v0.1.2 的自定义成本估算需求。
-    *   **高级特性**：分析 LiteLLM 的 Router（负载均衡）、Fallback（故障转移）与 MarkIt 现有实现的优劣。
-*   **重构可行性验证 (POC)**：
-    *   创建一个 POC 分支，尝试用 `litellm` 替换 `markit/llm/openai.py` 等底层实现。
-    *   **关键决策点**：
-        1. 是否完全废弃现有的 `ProviderManager`？
-        2. 如何保持现有的 CLI 交互体验（进度条、流式输出、Rich 渲染）不变？
-        3. 配置文件结构是否需要随 LiteLLM 规范调整？
+全量替换现有 LLM Provider 层，使用 LiteLLM 统一接口。
+
+*   **删除旧代码**：
+    *   移除 `src/markit/llm/openai.py`
+    *   移除 `src/markit/llm/anthropic.py`
+    *   移除 `src/markit/llm/gemini.py`
+    *   移除 `src/markit/llm/ollama.py`
+    *   移除 `src/markit/llm/openrouter.py`
+*   **新增实现**：
+    *   `src/markit/llm/provider.py` - LiteLLM 统一 Provider
+    *   `src/markit/llm/exceptions.py` - 异常定义
+    *   精简 `src/markit/llm/base.py` 为类型定义
+    *   重写 `src/markit/llm/manager.py`
+*   **服务层适配**：
+    *   更新 `src/markit/llm/enhancer.py`
+    *   更新 `src/markit/llm/queue.py`
+    *   更新 `src/markit/services/llm_orchestrator.py`
+    *   更新 `src/markit/image/analyzer.py`
+*   **依赖更新**：
+    *   `pyproject.toml` 新增 `litellm>=1.50.0`
+    *   移除 `openai`, `anthropic`, `google-generativeai` 直接依赖
+
+#### 3. 测试与文档
+
+*   **单元测试**：OCR 引擎、LiteLLM Provider、ProviderManager
+*   **集成测试**：PDF OCR 转换、LLM fallback
+*   **E2E 测试**：完整 OCR 工作流
+*   **性能测试**：OCR 吞吐量、内存占用
+*   **文档更新**：README、配置示例
+
+### 验收标准
+
+**OCR 功能验收：**
+*   `markit convert scanned.pdf --ocr` 成功提取扫描件文字
+*   智能图片保留：纯文字扫描件不输出图片，含插图/图表的页面保留原图到 `assets/`
+*   默认模式（dual）使用 RapidOCR + PaddleOCR 双引擎，结果融合正确
+*   `--fast` 模式自动切换为仅 RapidOCR
+*   `markit check` 正确显示 RapidOCR 和 PaddleOCR 状态
+*   仅安装 `rapidocr-onnxruntime` 时，双引擎模式降级为单引擎并给出警告
+
+**LLM 功能验收：**
+*   多模型 fallback 正常工作
+*   LiteLLM 统一接口正常调用各提供商
+
+**性能验收：**
+*   10 页扫描 PDF 双引擎 OCR 转换 < 60 秒
+*   10 页扫描 PDF 单引擎 OCR 转换 < 30 秒
+*   100 页扫描 PDF 内存峰值 < 2GB
+
+**测试验收：**
+*   单元测试覆盖率 >= 80%
+*   OCR 单元测试：RapidOCR、PaddleOCR、DualOCREngine
+*   集成测试：PDF OCR 转换、双引擎融合
 
 ### 进展
 
@@ -574,3 +641,44 @@ llm:
 **备注：**
 - 剩余 <80% 模块（executor.py 49%, manager.py 49%, pipeline.py 42%）为复杂协调层，需 E2E 测试覆盖
 - 核心业务模块（LLM providers, converters, image, utils, CLI）均达 70%+
+
+
+## 任务批次 2026011301 - v0.1.4
+
+### 任务
+
+1. ✅ ~~当前 convert 任务依然偶发 JSON 爬取失败的问题~~ -> 实现 `_extract_first_json_object` 方法使用括号计数算法精确提取 JSON
+2. ✅ 日志格式优化：
+   1. ✅ `Analyzing image with LLM` - 移动到 `manager.py` 的 `analyze_image_with_fallback` 函数内，通过 `set_request_context` 自动注入 provider/model
+   2. ✅ `Provider initialized` - 格式改为 `provider=<provider> model=<model> base_url=<base_url>`
+   3. ✅ `Image analyzed` - file 字段改为文件名
+   4. ✅ `Analyzing images in parallel` - file 字段改为文件名
+   5. ✅ `Provider failed for image analysis` - 移除 provider_id，添加 filename
+   6. ✅ `Applying LLM enhancement` - file 字段改为文件名
+   7. ✅ `Enhancing Markdown` - file 字段改为文件名
+   8. ✅ `Document split into chunks` - file 字段改为文件名
+   9. ✅ `Request options` 等长内容 - 添加 event 截断（200 字符限制）
+3. ✅ 超时问题 - `convert` 命令现在正确读取 `concurrent_fallback_enabled` 配置，启用并发回退机制
+4. ✅ 20260113 11:40 新增需求：
+   1. ✅ `Applying LLM enhancement` - 保持原样（此日志在调用 LLM 前输出，无法获取 provider/model）
+   2. ✅ `Enhancing Markdown` - 已移除（冗余日志）
+   3. ✅ `Sending LLM request` - 通过 `set_request_context(file_path=...)` 自动注入 file
+   4. ✅ `Request options` - 简化为 `method=<method> url=<url>` 格式，file 通过 context 注入
+   5. ✅ `Sending HTTP Request` - file 通过 context 自动注入
+   6. ✅ `HTTP Response` - 简化为 `POST url "status"` 格式（移除 Headers 详情），file 通过 context 注入
+   7. ✅ `request_id: None` - 通过 `RequestIdNoneFilter` 过滤掉
+   8. ✅ `LLM response received` - file 通过 context 自动注入
+   9. ✅ `Markdown enhancement complete` - 修改为 `file=<filename>` 格式，provider/model 通过 context 注入
+5. ✅ 日志优化（基于 batch_20260113_155121_bb5b711e.log.terminal 分析）：
+   1. ✅ Provider 字段修正：移除 provider 类中硬编码的 `provider=self.name`，改用 context 注入正确的 credential_id（如 `deepseek` 而非 `openai`）
+   2. ✅ Concurrent fallback 日志简化：移除末尾重复的 `provider/model` 字段（winner_id/primary_id/fallback_id 已包含信息）
+   3. ✅ Fallback context 修复：为 fallback 任务设置独立的 request context，确保日志正确显示 fallback 的 provider/model
+   4. ✅ 模型统计分析：被取消的 fallback 请求不计入统计是预期行为（API 可能未计费）
+   5. ✅ Warn/Error 分析：Anthropic 连接超时（网络问题）、OpenRouter 连接中断（服务端问题）、Primary 超时触发 fallback（正常机制）
+6. ✅ Timeout 配置统一：
+   - 移除 `DEFAULT_LLM_TIMEOUT`（120s），统一使用 `DEFAULT_MAX_REQUEST_TIMEOUT`（300s）作为 httpx 超时
+   - 解决了 httpx 超时（120s）比 max_request_timeout（300s）短导致 concurrent fallback 机制失效的问题
+
+### 进展
+
+✅ 已完成

@@ -343,6 +343,165 @@ class TestImageAnalyzerParseResponse:
         assert result.image_type == "other"
 
 
+class TestImageAnalyzerExtractFirstJsonObject:
+    """Tests for _extract_first_json_object method."""
+
+    def test_extract_simple_json(self):
+        """Test extracting simple JSON object."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        content = '{"key": "value"}'
+        result = analyzer._extract_first_json_object(content)
+
+        assert result == '{"key": "value"}'
+
+    def test_extract_json_with_extra_data(self):
+        """Test extracting JSON when there's extra text after it (Extra data scenario)."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        # This is the exact scenario from the bug report
+        content = '{"alt_text": "test", "image_type": "photo"} 以上是分析结果'
+        result = analyzer._extract_first_json_object(content)
+
+        assert result == '{"alt_text": "test", "image_type": "photo"}'
+
+    def test_extract_json_with_prefix_text(self):
+        """Test extracting JSON when there's text before it."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        content = 'Here is the analysis: {"alt_text": "test"}'
+        result = analyzer._extract_first_json_object(content)
+
+        assert result == '{"alt_text": "test"}'
+
+    def test_extract_first_of_multiple_json_objects(self):
+        """Test extracting only the first JSON when multiple exist."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        content = '{"first": "object"}{"second": "object"}'
+        result = analyzer._extract_first_json_object(content)
+
+        assert result == '{"first": "object"}'
+
+    def test_extract_nested_json(self):
+        """Test extracting nested JSON object."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        content = '{"outer": {"inner": "value"}}'
+        result = analyzer._extract_first_json_object(content)
+
+        assert result == '{"outer": {"inner": "value"}}'
+
+    def test_extract_json_with_escaped_quotes(self):
+        """Test extracting JSON with escaped quotes in strings."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        content = '{"text": "He said \\"hello\\""}'
+        result = analyzer._extract_first_json_object(content)
+
+        assert result == '{"text": "He said \\"hello\\""}'
+
+    def test_extract_json_with_braces_in_string(self):
+        """Test extracting JSON with braces inside string values."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        content = '{"code": "function() { return {}; }"}'
+        result = analyzer._extract_first_json_object(content)
+
+        assert result == '{"code": "function() { return {}; }"}'
+
+    def test_extract_incomplete_json(self):
+        """Test extracting incomplete JSON returns content for repair."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        content = '{"key": "value"'
+        result = analyzer._extract_first_json_object(content)
+
+        # Should return incomplete content for _fix_json_string to repair
+        assert result == '{"key": "value"'
+
+    def test_extract_no_json(self):
+        """Test returns None when no JSON object found."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        content = "No JSON here"
+        result = analyzer._extract_first_json_object(content)
+
+        assert result is None
+
+    def test_extract_empty_string(self):
+        """Test returns None for empty string."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        result = analyzer._extract_first_json_object("")
+
+        assert result is None
+
+    def test_extract_complex_real_world_case(self):
+        """Test extracting JSON from real-world LLM response with Chinese text after."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        # Simulate real response: JSON followed by explanation
+        content = """{"alt_text": "银色笔记本电脑", "detailed_description": "图像展示笔记本电脑", "detected_text": "~, 1, !, 2", "image_type": "photo"}
+
+以上是对图片的详细分析，希望对您有帮助。"""
+
+        result = analyzer._extract_first_json_object(content)
+
+        assert result is not None
+        # Should only contain the JSON, not the Chinese text
+        assert "以上是对图片的详细分析" not in result
+        assert '"alt_text"' in result
+
+
+class TestImageAnalyzerParseResponseExtraData:
+    """Tests for _parse_response handling of 'Extra data' scenarios."""
+
+    def test_parse_json_with_trailing_explanation(self):
+        """Test parsing JSON when LLM adds explanation after the JSON."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        # This was causing "Extra data: line 1 column 752" error
+        content = '{"alt_text": "Test", "detailed_description": "Desc", "detected_text": null, "image_type": "photo"} 以上是分析结果。'
+
+        response = MagicMock(spec=LLMResponse)
+        response.content = content
+
+        result = analyzer._parse_response(response)
+
+        # Should successfully parse despite extra text
+        assert result.alt_text == "Test"
+        assert result.image_type == "photo"
+
+    def test_parse_multiple_json_objects(self):
+        """Test parsing when LLM returns multiple JSON objects."""
+        mock_manager = MagicMock()
+        analyzer = ImageAnalyzer(provider_manager=mock_manager)
+
+        content = '{"alt_text": "First", "image_type": "diagram"}{"alt_text": "Second", "image_type": "photo"}'
+
+        response = MagicMock(spec=LLMResponse)
+        response.content = content
+
+        result = analyzer._parse_response(response)
+
+        # Should return first object
+        assert result.alt_text == "First"
+        assert result.image_type == "diagram"
+
+
 class TestImageAnalyzerFixJsonString:
     """Tests for _fix_json_string method."""
 

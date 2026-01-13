@@ -119,12 +119,11 @@ DEFAULT_RETRY_MIN_WAIT = 1
 DEFAULT_RETRY_MAX_WAIT = 60
 
 # Timeout settings (seconds)
-DEFAULT_LLM_TIMEOUT = 120
 DEFAULT_CONVERSION_TIMEOUT = 300  # 5 minutes
 
 # Concurrent fallback settings
 DEFAULT_CONCURRENT_FALLBACK_TIMEOUT = 60  # Trigger fallback after N seconds
-DEFAULT_MAX_REQUEST_TIMEOUT = 300  # Absolute timeout - force interrupt after 5 minutes
+DEFAULT_MAX_REQUEST_TIMEOUT = 300  # Absolute timeout for LLM requests (also used as httpx timeout)
 DEFAULT_CONCURRENT_FALLBACK_ENABLED = True  # Enable concurrent fallback by default
 
 # CLI/Provider test timeouts
