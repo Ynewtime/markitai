@@ -67,9 +67,11 @@ prompt:
   #   e.g., enhancement_zh.md, image_analysis_en.md
   # If not found, falls back to built-in prompts
   # Custom prompt file paths (highest priority, override prompts_dir):
-  # image_analysis_prompt: "my_prompts/image_analysis.md"
-  # enhancement_prompt: "my_prompts/enhancement.md"
-  # summary_prompt: "my_prompts/summary.md"
+  # image_analysis_prompt_file: "my_prompts/image_analysis.md"
+  # enhancement_prompt_file: "my_prompts/enhancement.md"
+  # summary_prompt_file: "my_prompts/summary.md"
+  # Description generation strategy for chunked documents:
+  # description_strategy: "first_chunk"  # first_chunk (default), separate_call, none
 
 # LLM Configuration - Use `markit provider add` to add credentials
 # llm:

@@ -98,10 +98,24 @@ class TestMarkdownFormatter:
         assert result == "## Title1\n## Title2"
 
     def test_fix_heading_levels_preserve_h2_plus(self):
-        """Test h2+ headings are preserved."""
+        """Test h2+ headings are preserved when not starting with h1."""
         formatter = MarkdownFormatter()
+        # When document doesn't start with h1, headings are preserved
         result = formatter._fix_heading_levels("## Title\n### Subtitle")
         assert result == "## Title\n### Subtitle"
+
+    def test_fix_heading_levels_shift_all_when_h1_start(self):
+        """Test all headings shift down when starting with h1."""
+        formatter = MarkdownFormatter()
+        # When document starts with h1, ALL headings shift down one level
+        result = formatter._fix_heading_levels("# Main\n## Section\n### Sub")
+        assert result == "## Main\n### Section\n#### Sub"
+
+    def test_fix_heading_levels_h6_capped(self):
+        """Test h6 remains h6 when shifting (no h7)."""
+        formatter = MarkdownFormatter()
+        result = formatter._fix_heading_levels("# Main\n###### Deep")
+        assert result == "## Main\n###### Deep"  # h6 stays h6
 
     def test_fix_heading_levels_disabled(self):
         """Test heading level fix can be disabled."""
@@ -244,26 +258,32 @@ class TestMarkdownFormatter:
 
 
 class TestMarkdownCleaner:
-    """Tests for MarkdownCleaner class."""
+    """Tests for MarkdownCleaner class.
+
+    Note: MarkdownCleaner now only handles format-level cleaning.
+    Content cleaning (page numbers, separators, chart residue) is delegated to LLM.
+    """
 
     def test_init(self):
         """Test cleaner initialization."""
         cleaner = MarkdownCleaner()
         assert cleaner._patterns is not None
-        assert "multiple_spaces" in cleaner._patterns
-        assert "page_numbers" in cleaner._patterns
+        assert "zero_width" in cleaner._patterns
+        assert "empty_links" in cleaner._patterns
+        assert "html_comments" in cleaner._patterns
 
     def test_compile_patterns(self):
         """Test pattern compilation."""
         cleaner = MarkdownCleaner()
         patterns = cleaner._compile_patterns()
-        assert "multiple_spaces" in patterns
-        assert "page_numbers" in patterns
-        assert "separator_lines" in patterns
-        assert "empty_links" in patterns
-        assert "repeated_chars" in patterns
-        assert "html_comments" in patterns
+        # Format-level patterns only
         assert "zero_width" in patterns
+        assert "empty_links" in patterns
+        assert "html_comments" in patterns
+        # Content-level patterns removed (delegated to LLM)
+        assert "page_numbers" not in patterns
+        assert "separator_lines" not in patterns
+        assert "repeated_chars" not in patterns
 
     def test_clean_zero_width_chars(self):
         """Test zero-width character removal."""
@@ -280,42 +300,6 @@ class TestMarkdownCleaner:
         cleaner = MarkdownCleaner()
         result = cleaner.clean("Text []()")
         assert "[]()" not in result
-
-    def test_clean_page_numbers(self):
-        """Test page number removal."""
-        cleaner = MarkdownCleaner()
-        result = cleaner.clean("Content\nPage 1\nMore content")
-        assert "Page 1" not in result
-
-    def test_clean_page_numbers_with_total(self):
-        """Test page number with total removal."""
-        cleaner = MarkdownCleaner()
-        result = cleaner.clean("Content\nPage 5 of 10\nMore")
-        assert "Page 5 of 10" not in result
-
-    def test_clean_page_numbers_lowercase(self):
-        """Test lowercase page number removal."""
-        cleaner = MarkdownCleaner()
-        result = cleaner.clean("Content\npage 1\np. 2")
-        assert "page 1" not in result
-
-    def test_clean_page_numbers_disabled(self):
-        """Test page number removal can be disabled."""
-        cleaner = MarkdownCleaner()
-        result = cleaner.clean("Page 1\nContent", remove_page_numbers=False)
-        assert "Page 1" in result
-
-    def test_clean_separator_lines(self):
-        """Test separator line removal."""
-        cleaner = MarkdownCleaner()
-        result = cleaner.clean("Content\n----------\nMore", remove_separators=True)
-        assert "----------" not in result
-
-    def test_clean_separator_lines_disabled(self):
-        """Test separator line removal disabled by default."""
-        cleaner = MarkdownCleaner()
-        result = cleaner.clean("Content\n---\nMore")
-        assert "---" in result
 
     def test_clean_html_comments(self):
         """Test HTML comment removal."""
@@ -335,18 +319,6 @@ class TestMarkdownCleaner:
         result = cleaner.clean("<!-- comment -->", remove_html_comments=False)
         assert "<!-- comment -->" in result
 
-    def test_clean_repeated_chars(self):
-        """Test repeated character collapsing."""
-        cleaner = MarkdownCleaner()
-        result = cleaner.clean("aaaaaaa")  # 7 a's
-        assert len(result) == 3  # Collapsed to 3
-
-    def test_clean_repeated_chars_threshold(self):
-        """Test repeated chars not collapsed if <= 3."""
-        cleaner = MarkdownCleaner()
-        result = cleaner.clean("aaa")  # 3 a's
-        assert result == "aaa"
-
     def test_clean_multiple_blank_lines(self):
         """Test multiple blank lines collapsed."""
         cleaner = MarkdownCleaner()
@@ -358,6 +330,20 @@ class TestMarkdownCleaner:
         cleaner = MarkdownCleaner()
         result = cleaner.clean("  Content  ")
         assert result == "Content"
+
+    def test_clean_preserves_page_numbers(self):
+        """Test page numbers are preserved (LLM responsibility)."""
+        cleaner = MarkdownCleaner()
+        result = cleaner.clean("Content\nPage 1\nMore content")
+        # Page numbers are now preserved - LLM handles content cleaning
+        assert "Page 1" in result
+
+    def test_clean_preserves_separators(self):
+        """Test separator lines are preserved."""
+        cleaner = MarkdownCleaner()
+        result = cleaner.clean("Content\n----------\nMore")
+        # Separators are preserved
+        assert "----------" in result
 
 
 class TestConvenienceFunctions:

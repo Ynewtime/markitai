@@ -7,10 +7,6 @@ import pytest
 
 from markit.llm.base import LLMResponse, TokenUsage
 from markit.llm.enhancer import (
-    ENHANCEMENT_PROMPT_EN,
-    ENHANCEMENT_PROMPT_ZH,
-    SUMMARY_PROMPT_EN,
-    SUMMARY_PROMPT_ZH,
     EnhancedMarkdown,
     EnhancementConfig,
     MarkdownEnhancer,
@@ -81,32 +77,32 @@ class TestPromptFunctions:
     """Tests for prompt helper functions."""
 
     def test_get_enhancement_prompt_zh(self):
-        """Test getting Chinese enhancement prompt."""
+        """Test getting Chinese enhancement prompt from file."""
         prompt = get_enhancement_prompt("zh")
-        assert prompt == ENHANCEMENT_PROMPT_ZH
+        assert "{content}" in prompt
         assert "请按照以下规则优化" in prompt
 
     def test_get_enhancement_prompt_en(self):
-        """Test getting English enhancement prompt."""
+        """Test getting English enhancement prompt from file."""
         prompt = get_enhancement_prompt("en")
-        assert prompt == ENHANCEMENT_PROMPT_EN
+        assert "{content}" in prompt
         assert "Please optimize" in prompt
 
     def test_get_enhancement_prompt_default(self):
         """Test default is Chinese."""
         prompt = get_enhancement_prompt()
-        assert prompt == ENHANCEMENT_PROMPT_ZH
+        assert "请按照以下规则优化" in prompt
 
     def test_get_summary_prompt_zh(self):
-        """Test getting Chinese summary prompt."""
+        """Test getting Chinese summary prompt from file."""
         prompt = get_summary_prompt("zh")
-        assert prompt == SUMMARY_PROMPT_ZH
+        assert "{content}" in prompt
         assert "请用一句话概括" in prompt
 
     def test_get_summary_prompt_en(self):
-        """Test getting English summary prompt."""
+        """Test getting English summary prompt from file."""
         prompt = get_summary_prompt("en")
-        assert prompt == SUMMARY_PROMPT_EN
+        assert "{content}" in prompt
         assert "Summarize" in prompt
 
 
@@ -115,13 +111,16 @@ class TestMarkdownEnhancerInit:
 
     def test_init_default(self):
         """Test default initialization."""
+        from markit.config.settings import PromptConfig
+
         mock_manager = MagicMock()
         enhancer = MarkdownEnhancer(mock_manager)
 
         assert enhancer.provider_manager is mock_manager
         assert isinstance(enhancer.config, EnhancementConfig)
         assert enhancer.use_concurrent_fallback is False
-        assert enhancer.prompt_config is None
+        # prompt_config is auto-created if not provided
+        assert isinstance(enhancer.prompt_config, PromptConfig)
 
     def test_init_custom_config(self):
         """Test initialization with custom config."""
@@ -537,3 +536,260 @@ More content   \t
         # Ends with single newline
         assert result.endswith("\n")
         assert not result.endswith("\n\n")
+
+
+class TestContinuationPrompt:
+    """Tests for multi-chunk continuation prompt functionality."""
+
+    @pytest.fixture
+    def enhancer(self):
+        """Create an enhancer with mocked manager."""
+        mock_manager = MagicMock()
+        return MarkdownEnhancer(mock_manager)
+
+    def test_get_enhancement_prompt_first_chunk(self, enhancer):
+        """Test that first chunk uses full prompt with frontmatter instructions."""
+        prompt = enhancer._get_enhancement_prompt(is_first_chunk=True)
+
+        # Should contain frontmatter instructions
+        assert "Frontmatter" in prompt or "frontmatter" in prompt
+        assert "entities" in prompt
+        assert "topics" in prompt
+
+    def test_get_enhancement_prompt_continuation_chunk(self, enhancer):
+        """Test that continuation chunk uses prompt without frontmatter."""
+        prompt = enhancer._get_enhancement_prompt(is_first_chunk=False)
+
+        # Should contain continuation-specific instructions
+        assert "PARTIAL_METADATA" in prompt
+        # Should explicitly tell not to generate frontmatter
+        assert "不要" in prompt or "DO NOT" in prompt
+
+
+class TestExtractPartialMetadata:
+    """Tests for _extract_partial_metadata method."""
+
+    @pytest.fixture
+    def enhancer(self):
+        """Create an enhancer with mocked manager."""
+        mock_manager = MagicMock()
+        return MarkdownEnhancer(mock_manager)
+
+    def test_extract_valid_partial_metadata(self, enhancer):
+        """Test extracting valid partial metadata from content."""
+        content = """## Some Content
+
+This is the main content.
+
+<!-- PARTIAL_METADATA: {"entities": ["Entity1", "Entity2"], "topics": ["Topic1"]} -->"""
+
+        clean_content, metadata = enhancer._extract_partial_metadata(content)
+
+        assert "<!-- PARTIAL_METADATA" not in clean_content
+        assert metadata is not None
+        assert metadata["entities"] == ["Entity1", "Entity2"]
+        assert metadata["topics"] == ["Topic1"]
+
+    def test_extract_no_metadata(self, enhancer):
+        """Test content without partial metadata."""
+        content = "## Some Content\n\nNo metadata here."
+
+        clean_content, metadata = enhancer._extract_partial_metadata(content)
+
+        assert clean_content == content
+        assert metadata is None
+
+    def test_extract_invalid_json(self, enhancer):
+        """Test content with invalid JSON in metadata."""
+        content = """## Content
+
+<!-- PARTIAL_METADATA: {invalid json} -->"""
+
+        clean_content, metadata = enhancer._extract_partial_metadata(content)
+
+        # Should return original content and None on parse failure
+        assert metadata is None
+
+    def test_extract_empty_metadata(self, enhancer):
+        """Test content with empty arrays in metadata."""
+        content = """## Content
+
+<!-- PARTIAL_METADATA: {"entities": [], "topics": []} -->"""
+
+        clean_content, metadata = enhancer._extract_partial_metadata(content)
+
+        assert metadata is not None
+        assert metadata["entities"] == []
+        assert metadata["topics"] == []
+
+
+class TestInjectFrontmatterWithPartialMetadata:
+    """Tests for _inject_frontmatter with partial_metadata parameter."""
+
+    @pytest.fixture
+    def enhancer(self):
+        """Create an enhancer with mocked manager."""
+        mock_manager = MagicMock()
+        return MarkdownEnhancer(mock_manager)
+
+    def test_inject_with_partial_metadata_merges_entities(self, enhancer):
+        """Test that partial metadata entities are merged."""
+        markdown = """---
+description: "Test doc"
+entities:
+  - Entity1
+topics:
+  - Topic1
+---
+
+# Content"""
+
+        partial_metadata = {
+            "entities": ["Entity2", "Entity3"],
+            "topics": ["Topic2"],
+        }
+
+        result = enhancer._inject_frontmatter(
+            markdown,
+            source_file=Path("test.md"),
+            summary="Test",
+            partial_metadata=partial_metadata,
+        )
+
+        # Should contain all entities
+        assert "Entity1" in result
+        assert "Entity2" in result
+        assert "Entity3" in result
+        # Should contain all topics
+        assert "Topic1" in result
+        assert "Topic2" in result
+
+    def test_inject_with_partial_metadata_deduplicates(self, enhancer):
+        """Test that duplicate entities/topics are deduplicated."""
+        markdown = """---
+description: "Test doc"
+entities:
+  - Entity1
+  - Entity2
+topics:
+  - Topic1
+---
+
+# Content"""
+
+        partial_metadata = {
+            "entities": ["Entity2", "Entity3"],  # Entity2 is duplicate
+            "topics": ["Topic1", "Topic2"],  # Topic1 is duplicate
+        }
+
+        result = enhancer._inject_frontmatter(
+            markdown,
+            source_file=Path("test.md"),
+            summary="Test",
+            partial_metadata=partial_metadata,
+        )
+
+        # Should deduplicate (Entity2 and Topic1 should appear only once)
+        # Count occurrences
+        assert result.count("Entity2") == 1
+        assert result.count("Topic1") == 1
+
+    def test_inject_with_empty_partial_metadata(self, enhancer):
+        """Test that empty partial metadata doesn't affect result."""
+        markdown = """---
+description: "Test doc"
+entities:
+  - Entity1
+---
+
+# Content"""
+
+        partial_metadata = {"entities": [], "topics": []}
+
+        result = enhancer._inject_frontmatter(
+            markdown,
+            source_file=Path("test.md"),
+            summary="Test",
+            partial_metadata=partial_metadata,
+        )
+
+        # Should still have Entity1
+        assert "Entity1" in result
+
+    def test_inject_without_partial_metadata(self, enhancer):
+        """Test backward compatibility - None partial_metadata works."""
+        markdown = """---
+description: "Test doc"
+---
+
+# Content"""
+
+        result = enhancer._inject_frontmatter(
+            markdown,
+            source_file=Path("test.md"),
+            summary="Test",
+            partial_metadata=None,
+        )
+
+        # Should work without error
+        assert "---" in result
+
+
+class TestMultiChunkProcessing:
+    """Tests for multi-chunk processing with continuation prompts."""
+
+    @pytest.fixture
+    def mock_manager(self):
+        """Create a mock provider manager."""
+        manager = MagicMock()
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_process_chunk_with_is_first_chunk_true(self, mock_manager):
+        """Test that first chunk uses full prompt."""
+        mock_manager.complete_with_fallback = AsyncMock(
+            return_value=LLMResponse(
+                content="Enhanced content with frontmatter",
+                usage=TokenUsage(prompt_tokens=100, completion_tokens=50),
+                model="gpt-4o",
+                finish_reason="stop",
+            )
+        )
+        enhancer = MarkdownEnhancer(mock_manager)
+
+        result, stats = await enhancer._process_chunk_with_stats(
+            "Test content", is_first_chunk=True
+        )
+
+        # Verify the prompt used contained frontmatter instructions
+        call_args = mock_manager.complete_with_fallback.call_args
+        messages = call_args.kwargs.get("messages") or call_args.args[0]
+        prompt_content = messages[0].content
+
+        # First chunk prompt should have frontmatter instructions
+        assert "Frontmatter" in prompt_content or "frontmatter" in prompt_content
+
+    @pytest.mark.asyncio
+    async def test_process_chunk_with_is_first_chunk_false(self, mock_manager):
+        """Test that continuation chunk uses continuation prompt."""
+        mock_manager.complete_with_fallback = AsyncMock(
+            return_value=LLMResponse(
+                content="Enhanced content",
+                usage=TokenUsage(prompt_tokens=100, completion_tokens=50),
+                model="gpt-4o",
+                finish_reason="stop",
+            )
+        )
+        enhancer = MarkdownEnhancer(mock_manager)
+
+        result, stats = await enhancer._process_chunk_with_stats(
+            "Test content", is_first_chunk=False
+        )
+
+        # Verify the prompt used contained continuation instructions
+        call_args = mock_manager.complete_with_fallback.call_args
+        messages = call_args.kwargs.get("messages") or call_args.args[0]
+        prompt_content = messages[0].content
+
+        # Continuation prompt should have PARTIAL_METADATA instructions
+        assert "PARTIAL_METADATA" in prompt_content

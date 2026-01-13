@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, cast
 
 from markit.llm.base import LLMMessage, LLMTaskResultWithStats
 from markit.llm.manager import ProviderManager
@@ -13,6 +13,9 @@ from markit.utils.logging import get_logger, set_request_context
 
 if TYPE_CHECKING:
     from markit.config.settings import PromptConfig
+
+# Type alias for supported languages
+LanguageCode = Literal["zh", "en", "auto"]
 
 log = get_logger(__name__)
 
@@ -44,243 +47,52 @@ class EnhancedMarkdown:
     models_used: list[str] | None = None
 
 
-# Chinese enhancement prompt
-ENHANCEMENT_PROMPT_ZH = """请按照以下规则优化 Markdown 文档的格式。
-
-## 核心原则：尊重原文
-
-**严禁修改原文档中的任何实际内容**，包括但不限于：
-- **表格列头/表头**: 必须保持原文，禁止翻译或改写（如 "First Name" 不能改为 "名字"）
-- **正文文本**: 所有段落、句子必须保持原样
-- **数据内容**: 表格数据、列表内容必须原样保留
-- **专有名词**: 人名、地名、产品名等保持原文
-
-**仅以下内容可以使用中文**：
-- YAML Frontmatter 中的 `description`、`topics`、`domain` 等元数据值
-- 图片的 alt 描述文本
-
-## 清理规则
-
-### 1. 垃圾内容清理
-- **页眉页脚**: 移除文档顶部/底部重复出现的公司名称、日期、机密标识等
-- **水印干扰**: 移除扫描件中的斜体水印文字（如"CONFIDENTIAL"、"内部资料"、"草稿"）
-- **图表残留清理**: 移除从图表/图片中错误提取的坐标轴数据：
-  - 连续的独立数字行（如 "12"、"10"、"8"...通常是Y轴刻度）
-  - 图表轴标签（如 "Row 1"、"Column 1"、"Category A"）
-  - 图例文字（如 "Series 1"、"数据系列1"）
-  - 这些内容通常出现在图片标记 `![...]()` 的前后
-- **页码清理**: 移除独立成行的页码（如 "1"、"Page 2"、"第X页"）
-- **PPT特有**: 移除每页重复的公司logo说明、版权声明、日期时间戳
-- **乱码字符**: 移除OCR识别产生的乱码（如"■■■"、"口口口"、连续特殊符号）
-
-### 2. PPT/演示文稿特殊处理
-对于 PPT/PPTX 转换的内容，必须保留页码结构：
-- 使用 `## 第 N 页` 或 `## Slide N` 作为每页的标题
-- 每页内容放在对应的页码标题下
-- 保持幻灯片的原有顺序
-
-### 3. 标题层级规范
-- 文档内容从 `##` (h2) 开始，避免使用多个 `#` (h1)
-- 保持标题层级的逻辑递进关系
-
-### 4. 空行规范化
-- 标题上方保留一个空行
-- 标题下方内容前保留一个空行
-- 段落之间保留一个空行
-- 移除连续超过两个的空行
-
-### 5. GFM 规范
-- 无序列表使用 `-` 作为标记符
-- 代码块使用 ``` 并标注语言标识符
-- **代码块内容必须完整保留，不得删除或修改**
-- 表格对齐规范化
-
-### 6. 复杂表格处理
-- 合并单元格转换为多行表示
-- 嵌套表格展开为独立表格
-- 超宽表格考虑转换为列表形式
-- **表头必须保持原文，禁止翻译**
-
-### 7. 知识图谱元数据抽取
-从文档内容中抽取以下元数据，添加到 YAML Frontmatter：
-- **description**: 一句话概括文档核心内容（最多100个汉字），突出主题和关键信息，避免使用"本文档"等冗余词汇
-- **entities**: 文档中的关键实体（人名、组织、产品、技术术语、地名等）- 保持原文
-- **topics**: 文档涉及的主题标签（3-5个最相关的主题）- 可使用中文
-- **domain**: 文档所属领域（如：技术、商业、学术、医疗、法律、金融等）- 可使用中文
-
-**Frontmatter 格式要求**：
-- 位于文档最开头，使用 `---` 包裹
-- **不要**使用 Markdown 代码块（如 ```yaml）包裹 Frontmatter
-- 包含特殊字符的值使用双引号包裹（如冒号、引号、换行符）
-- 列表项每行一个，使用 `- ` 前缀
-- 确保 YAML 语法正确，可被标准解析器解析
-
-**示例输出格式**：
-```yaml
----
-description: "Kubernetes 容器编排技术指南，涵盖部署、扩展和监控最佳实践。"
-entities:
-  - "Kubernetes"
-  - "Docker"
-  - "AWS"
-topics:
-  - "容器化"
-  - "云原生"
-  - "DevOps"
-domain: "技术"
----
-```
-
----
-
-原始 Markdown:
-```markdown
-{content}
-```
-
-请输出优化后的 Markdown（包含 YAML Frontmatter，不要包含 ```markdown 标记）:"""
-
-# English enhancement prompt
-ENHANCEMENT_PROMPT_EN = """Please optimize the following Markdown document's format according to these rules:
-
-## Core Principle: Respect Original Content
-
-**DO NOT modify any actual content from the original document**, including:
-- **Table headers/column names**: Must keep original text, do NOT translate (e.g., keep "First Name" as is)
-- **Body text**: All paragraphs and sentences must remain unchanged
-- **Data content**: Table data, list items must be preserved exactly
-- **Proper nouns**: Names, locations, product names must stay in original language
-
-**Only the following may be translated/localized**:
-- YAML Frontmatter values like `description`, `topics`, `domain`
-- Image alt text descriptions
-
-## Cleanup Rules
-
-1. **Clean up junk content**:
-   - Remove headers, footers, watermarks, and meaningless repeated characters
-   - For PowerPoint slides: remove repetitive footer text (company names, dates, slide numbers, copyright notices) that appear on every slide
-   - **Chart artifact cleanup**: Remove incorrectly extracted chart axis data:
-     - Consecutive standalone number lines (e.g., "12", "10", "8"... usually Y-axis ticks)
-     - Chart axis labels (e.g., "Row 1", "Column 1", "Category A")
-     - Legend text (e.g., "Series 1", "Data Series 1")
-     - These typically appear before/after image markers `![...]()`
-   - Remove standalone page/slide numbers (e.g., "1", "Page 2", "Slide 3")
-   - Remove OCR artifacts (garbled characters like "■■■", consecutive special symbols)
-
-2. **PowerPoint/Presentation special handling**:
-   For PPT/PPTX converted content, preserve slide structure:
-   - Use `## Slide N` or `## Page N` as heading for each slide
-   - Place each slide's content under its corresponding slide heading
-   - Maintain original slide order
-
-3. **Heading levels**: Ensure headings start from ## (h2), avoid multiple # (h1)
-
-4. **Blank line normalization**:
-   - One blank line above headings
-   - One blank line below headings before content
-   - One blank line between paragraphs
-   - Remove more than 2 consecutive blank lines
-
-5. **Follow GFM specification**:
-   - Use `-` for unordered list markers
-   - Use ``` with language identifier for code blocks
-   - **Code block content must be preserved completely**
-   - Properly align tables
-
-6. **Complex table handling**:
-   - Convert merged cells to multi-row representation
-   - Expand nested tables to independent tables
-   - Consider converting very wide tables to list format
-   - **Table headers must remain in original language, do NOT translate**
-
-7. **Knowledge Graph Metadata Extraction**:
-   Extract the following metadata from the document and add to YAML Frontmatter:
-   - **description**: One-sentence summary of the document's core content (max 100 characters), highlighting the theme and key information, avoiding redundant phrases like "this document"
-   - **entities**: Key entities in the document (person names, organizations, products, technical terms, locations) - keep original
-   - **topics**: Topic tags the document covers (3-5 most relevant topics)
-   - **domain**: The domain the document belongs to (e.g., technology, business, academic, medical, legal, finance)
-
-   **Frontmatter format requirements**:
-   - Place at the very beginning of the document, wrapped with `---`
-   - Do **NOT** wrap Frontmatter in Markdown code blocks (e.g., ```yaml)
-   - Use double quotes for values containing special characters (colons, quotes, newlines)
-   - List items on separate lines with `- ` prefix
-   - Ensure valid YAML syntax parseable by standard parsers
-
-   **Example output format**:
-   ```yaml
-   ---
-   description: "Kubernetes container orchestration guide covering deployment, scaling, and monitoring best practices."
-   entities:
-     - "Kubernetes"
-     - "Docker"
-     - "AWS"
-   topics:
-     - "Containerization"
-     - "Cloud Native"
-     - "DevOps"
-   domain: "Technology"
-   ---
-   ```
-
-Original Markdown:
-```markdown
-{content}
-```
-
-Output the optimized Markdown (including YAML Frontmatter, without ```markdown markers):"""
-
-# Default prompt (uses Chinese)
-ENHANCEMENT_PROMPT = ENHANCEMENT_PROMPT_ZH
-
-# Chinese summary prompt
-SUMMARY_PROMPT_ZH = """请用一句话概括以下文档的核心内容（最多100个汉字）。
-
-要求：
-- 使用中文输出
-- 突出文档的主题和关键信息
-- 避免使用"本文档"、"该文件"等冗余词汇
-- 格式：直接陈述核心内容
-
-文档内容:
-{content}
-
-摘要:"""
-
-# English summary prompt
-SUMMARY_PROMPT_EN = """Summarize the following document in one sentence (maximum 100 characters):
-
-{content}
-
-Summary:"""
-
-# Default prompt (uses Chinese)
-SUMMARY_PROMPT = SUMMARY_PROMPT_ZH
-
-
 def get_enhancement_prompt(language: str = "zh") -> str:
     """Get the enhancement prompt for the specified language.
+
+    Loads prompt from package files in markit.config.prompts.
 
     Args:
         language: Language code ("zh" for Chinese, "en" for English)
 
     Returns:
         Enhancement prompt string
+
+    Raises:
+        RuntimeError: If prompt file cannot be loaded
     """
-    return ENHANCEMENT_PROMPT_ZH if language == "zh" else ENHANCEMENT_PROMPT_EN
+    from markit.config.settings import PromptConfig
+
+    # Cast to LanguageCode - valid values are "zh", "en", "auto"
+    config = PromptConfig(output_language=cast(LanguageCode, language))
+    prompt = config.get_prompt("enhancement")
+    if not prompt:
+        raise RuntimeError(f"Failed to load enhancement_{language}.md prompt file")
+    return prompt
 
 
 def get_summary_prompt(language: str = "zh") -> str:
     """Get the summary prompt for the specified language.
+
+    Loads prompt from package files in markit.config.prompts.
 
     Args:
         language: Language code ("zh" for Chinese, "en" for English)
 
     Returns:
         Summary prompt string
+
+    Raises:
+        RuntimeError: If prompt file cannot be loaded
     """
-    return SUMMARY_PROMPT_ZH if language == "zh" else SUMMARY_PROMPT_EN
+    from markit.config.settings import PromptConfig
+
+    # Cast to LanguageCode - valid values are "zh", "en", "auto"
+    config = PromptConfig(output_language=cast(LanguageCode, language))
+    prompt = config.get_prompt("summary")
+    if not prompt:
+        raise RuntimeError(f"Failed to load summary_{language}.md prompt file")
+    return prompt
 
 
 class MarkdownEnhancer:
@@ -303,35 +115,53 @@ class MarkdownEnhancer:
             prompt_config: Optional prompt configuration for customizing prompts.
                           If not provided, uses builtin prompts.
         """
+        from markit.config.settings import PromptConfig
+
         self.provider_manager = provider_manager
         self.config = config or EnhancementConfig()
         self.use_concurrent_fallback = use_concurrent_fallback
-        self.prompt_config = prompt_config
+        # Ensure prompt_config is always available for loading prompts from files
+        self.prompt_config = prompt_config or PromptConfig()
         self.chunker = MarkdownChunker(ChunkConfig(max_tokens=self.config.chunk_size))
 
-    def _get_enhancement_prompt(self) -> str:
-        """Get the enhancement prompt from config or builtin default.
+    def _get_enhancement_prompt(self, is_first_chunk: bool = True) -> str:
+        """Get the enhancement prompt from config files.
+
+        Args:
+            is_first_chunk: If True, returns the full prompt with frontmatter instructions.
+                           If False, returns continuation prompt without frontmatter.
 
         Returns:
             Enhancement prompt string with {content} placeholder
+
+        Raises:
+            RuntimeError: If prompt file cannot be loaded
         """
-        if self.prompt_config:
-            custom_prompt = self.prompt_config.get_prompt("enhancement")
-            if custom_prompt:
-                return custom_prompt
-        return ENHANCEMENT_PROMPT
+        prompt_type = "enhancement" if is_first_chunk else "enhancement_continuation"
+        prompt = self.prompt_config.get_prompt(prompt_type)
+        if not prompt:
+            raise RuntimeError(
+                f"Failed to load {prompt_type} prompt. "
+                f"Check that prompt files exist in markit.config.prompts package."
+            )
+        return prompt
 
     def _get_summary_prompt(self) -> str:
-        """Get the summary prompt from config or builtin default.
+        """Get the summary prompt from config files.
 
         Returns:
             Summary prompt string with {content} placeholder
+
+        Raises:
+            RuntimeError: If prompt file cannot be loaded
         """
-        if self.prompt_config:
-            custom_prompt = self.prompt_config.get_prompt("summary")
-            if custom_prompt:
-                return custom_prompt
-        return SUMMARY_PROMPT
+        prompt = self.prompt_config.get_prompt("summary")
+        if not prompt:
+            raise RuntimeError(
+                "Failed to load summary prompt. "
+                "Check that prompt files exist in markit.config.prompts package."
+            )
+        return prompt
 
     async def enhance(
         self,
@@ -371,17 +201,31 @@ class MarkdownEnhancer:
         models_used: set[str] = set()
 
         # Process chunks concurrently (with optional rate limiting)
-        async def process_with_limit(chunk: str) -> tuple[str, dict]:
+        # First chunk uses full prompt (with frontmatter), subsequent chunks use continuation prompt
+        async def process_with_limit(chunk: str, chunk_index: int) -> tuple[str, dict]:
+            is_first = chunk_index == 0
             if semaphore:
                 async with semaphore:
-                    return await self._process_chunk_with_stats(chunk)
-            return await self._process_chunk_with_stats(chunk)
+                    return await self._process_chunk_with_stats(chunk, is_first_chunk=is_first)
+            return await self._process_chunk_with_stats(chunk, is_first_chunk=is_first)
 
-        chunk_results = await asyncio.gather(*[process_with_limit(chunk) for chunk in chunks])
+        chunk_results = await asyncio.gather(
+            *[process_with_limit(chunk, i) for i, chunk in enumerate(chunks)]
+        )
 
-        # Collect results and stats
+        # Collect results and stats, extract partial metadata from continuation chunks
         enhanced_chunks = []
-        for content, stats in chunk_results:
+        all_partial_entities: list[str] = []
+        all_partial_topics: list[str] = []
+
+        for i, (content, stats) in enumerate(chunk_results):
+            # For non-first chunks, extract and remove PARTIAL_METADATA from content
+            if i > 0:
+                content, partial_meta = self._extract_partial_metadata(content)
+                if partial_meta:
+                    all_partial_entities.extend(partial_meta.get("entities", []))
+                    all_partial_topics.extend(partial_meta.get("topics", []))
+
             enhanced_chunks.append(content)
             total_prompt_tokens += stats.get("prompt_tokens", 0)
             total_completion_tokens += stats.get("completion_tokens", 0)
@@ -392,13 +236,21 @@ class MarkdownEnhancer:
         # Merge chunks
         enhanced_markdown = self.chunker.merge(enhanced_chunks)
 
+        # Merge partial metadata from all continuation chunks (deduplicated)
+        merged_partial_metadata = {
+            "entities": list(dict.fromkeys(all_partial_entities)),  # preserve order, dedupe
+            "topics": list(dict.fromkeys(all_partial_topics)),
+        }
+
         # Extract summary from LLM-generated frontmatter (description field)
         # No separate LLM call needed - summary is generated as part of enhancement
         summary = self._extract_summary_from_frontmatter(enhanced_markdown)
 
-        # Inject frontmatter
+        # Inject frontmatter (with merged partial metadata from all chunks)
         if self.config.add_frontmatter:
-            enhanced_markdown = self._inject_frontmatter(enhanced_markdown, source_file, summary)
+            enhanced_markdown = self._inject_frontmatter(
+                enhanced_markdown, source_file, summary, merged_partial_metadata
+            )
 
         # provider and model are auto-injected from context set by manager.py
         log.info("Markdown enhancement complete", file=source_file.name)
@@ -422,16 +274,20 @@ class MarkdownEnhancer:
             )
         return result
 
-    async def _process_chunk_with_stats(self, chunk: str) -> tuple[str, dict]:
+    async def _process_chunk_with_stats(
+        self, chunk: str, is_first_chunk: bool = True
+    ) -> tuple[str, dict]:
         """Process a single chunk with LLM and return stats.
 
         Args:
             chunk: Markdown chunk to process
+            is_first_chunk: If True, use full prompt with frontmatter instructions.
+                           If False, use continuation prompt.
 
         Returns:
             Tuple of (enhanced_chunk, stats_dict)
         """
-        prompt = self._get_enhancement_prompt().format(content=chunk)
+        prompt = self._get_enhancement_prompt(is_first_chunk).format(content=chunk)
         stats: dict = {}
 
         try:
@@ -470,6 +326,40 @@ class MarkdownEnhancer:
         """
         content, _ = await self._process_chunk_with_stats(chunk)
         return content
+
+    def _extract_partial_metadata(self, content: str) -> tuple[str, dict | None]:
+        """Extract PARTIAL_METADATA from continuation chunk content.
+
+        The continuation prompt instructs LLM to output metadata at the end as:
+        <!-- PARTIAL_METADATA: {"entities": [...], "topics": [...]} -->
+
+        Args:
+            content: Enhanced chunk content
+
+        Returns:
+            Tuple of (content_without_metadata, metadata_dict or None)
+        """
+        import json
+        import re
+
+        # Pattern to match PARTIAL_METADATA HTML comment at the end
+        pattern = re.compile(
+            r"\s*<!--\s*PARTIAL_METADATA:\s*(\{.*?\})\s*-->\s*$",
+            re.DOTALL,
+        )
+
+        match = pattern.search(content)
+        if not match:
+            return content, None
+
+        try:
+            metadata = json.loads(match.group(1))
+            # Remove the metadata comment from content
+            clean_content = content[: match.start()].rstrip()
+            return clean_content, metadata
+        except json.JSONDecodeError as e:
+            log.warning("Failed to parse PARTIAL_METADATA JSON", error=str(e))
+            return content, None
 
     def _extract_summary_from_frontmatter(self, markdown: str) -> str:
         """Extract description from LLM-generated frontmatter as summary.
@@ -552,6 +442,7 @@ class MarkdownEnhancer:
         markdown: str,
         source_file: Path,
         summary: str,
+        partial_metadata: dict | None = None,
     ) -> str:
         """Inject YAML frontmatter into the document.
 
@@ -559,6 +450,7 @@ class MarkdownEnhancer:
             markdown: Enhanced Markdown content
             source_file: Original source file
             summary: Generated summary
+            partial_metadata: Optional dict with entities/topics from continuation chunks
 
         Returns:
             Markdown with frontmatter
@@ -620,6 +512,22 @@ class MarkdownEnhancer:
             for k, v in llm_frontmatter.extra.items():
                 if k not in ["title", "processed", "description", "source"]:
                     system_frontmatter.extra[k] = v
+
+        # 4.5 Merge partial metadata from continuation chunks
+        if partial_metadata:
+            # Merge entities (deduplicate while preserving order)
+            if partial_metadata.get("entities"):
+                existing_entities = system_frontmatter.entities or []
+                all_entities = existing_entities + partial_metadata["entities"]
+                # Deduplicate while preserving order
+                system_frontmatter.entities = list(dict.fromkeys(all_entities))
+
+            # Merge topics (deduplicate while preserving order)
+            if partial_metadata.get("topics"):
+                existing_topics = system_frontmatter.topics or []
+                all_topics = existing_topics + partial_metadata["topics"]
+                # Deduplicate while preserving order
+                system_frontmatter.topics = list(dict.fromkeys(all_topics))
 
         # 5. Recombine
         return handler.add(content, system_frontmatter)
