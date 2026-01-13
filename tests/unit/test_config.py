@@ -484,7 +484,8 @@ class TestPromptConfig:
         custom_file = tmp_path / "my_prompt.md"
         custom_file.write_text("Custom image prompt", encoding="utf-8")
 
-        config = PromptConfig(image_analysis_prompt=str(custom_file))
+        # Use new *_prompt_file naming
+        config = PromptConfig(image_analysis_prompt_file=str(custom_file))
         result = config.get_prompt("image_analysis")
 
         assert result == "Custom image prompt"
@@ -553,8 +554,9 @@ class TestPromptConfig:
         """Test get_prompt falls back when custom file doesn't exist."""
         from markit.config.settings import PromptConfig
 
+        # Use new *_prompt_file naming
         config = PromptConfig(
-            image_analysis_prompt=str(tmp_path / "nonexistent.md"),
+            image_analysis_prompt_file=str(tmp_path / "nonexistent.md"),
             output_language="en",
         )
         result = config.get_prompt("image_analysis")

@@ -354,7 +354,8 @@ class TestCreateEnhancementTask:
                 return_stats=False,
             )
 
-            assert result == "# Enhanced"
+            # format_markdown adds trailing newline (correct behavior)
+            assert result == "# Enhanced\n"
 
     async def test_returns_stats_when_requested(self, orchestrator):
         """Enhancement task returns stats when requested."""
@@ -379,7 +380,8 @@ class TestCreateEnhancementTask:
             )
 
             assert isinstance(result, LLMTaskResultWithStats)
-            assert result.result == "# Enhanced"
+            # format_markdown adds trailing newline (correct behavior)
+            assert result.result == "# Enhanced\n"
             assert result.model == "test-model"
 
     async def test_fallback_on_error(self, orchestrator):
@@ -602,7 +604,8 @@ class TestCreateEnhancementTaskEdgeCases:
             from markit.llm.base import LLMTaskResultWithStats
 
             assert isinstance(result, LLMTaskResultWithStats)
-            assert result.result == "# Enhanced"
+            # format_markdown adds trailing newline (correct behavior)
+            assert result.result == "# Enhanced\n"
 
     async def test_wraps_string_result_in_stats(self, orchestrator):
         """Wraps string result in stats when requested."""
@@ -620,7 +623,8 @@ class TestCreateEnhancementTaskEdgeCases:
             from markit.llm.base import LLMTaskResultWithStats
 
             assert isinstance(result, LLMTaskResultWithStats)
-            assert result.result == "# String Result"
+            # format_markdown adds trailing newline (correct behavior)
+            assert result.result == "# String Result\n"
 
     async def test_error_fallback_with_stats(self, orchestrator):
         """Returns stats wrapper on error when requested."""

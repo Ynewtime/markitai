@@ -49,6 +49,7 @@ class LLMOrchestrator:
         use_concurrent_fallback: bool = False,
         prompt_config: PromptConfig | None = None,
         output_dir: Path | None = None,
+        chunk_concurrency: int = 4,
     ) -> None:
         """Initialize the LLM orchestrator.
 
@@ -65,6 +66,8 @@ class LLMOrchestrator:
                           If not provided, uses builtin prompts.
             output_dir: If provided, image analysis results will be immediately
                        written to output_dir/assets/<filename>.md as they complete.
+            chunk_concurrency: Max concurrent LLM calls within a single document's
+                              chunks. Prevents API overload from large documents.
         """
         # Resolve CLI overrides using centralized resolver
         from markit.config.settings import LLMConfigResolver
@@ -80,12 +83,17 @@ class LLMOrchestrator:
         self.use_concurrent_fallback = use_concurrent_fallback
         self.prompt_config = prompt_config
         self.output_dir = output_dir
+        self.chunk_concurrency = chunk_concurrency
 
         # Lazy-loaded components
         self._provider_manager: ProviderManager | None = None
         self._provider_manager_initialized = False
         self._enhancer: MarkdownEnhancer | None = None
         self._image_analyzer: ImageAnalyzer | None = None
+
+        # Semaphore to limit concurrent LLM calls within a document's chunks
+        # This prevents API overload when a large document is split into many chunks
+        self._chunk_semaphore = asyncio.Semaphore(chunk_concurrency)
 
         # Locks for thread-safe lazy initialization
         self._provider_lock = asyncio.Lock()
@@ -340,17 +348,30 @@ class LLMOrchestrator:
         """
         from markit.llm.base import LLMTaskResultWithStats
         from markit.llm.enhancer import EnhancedMarkdown
+        from markit.markdown.formatter import FormatterConfig, format_markdown
 
         enhancer = await self.get_enhancer()
         try:
-            result = await enhancer.enhance(markdown, source_file, return_stats=return_stats)
+            # Pass chunk semaphore to limit concurrent LLM calls within this document
+            result = await enhancer.enhance(
+                markdown, source_file, semaphore=self._chunk_semaphore, return_stats=return_stats
+            )
+
+            # Post-processing: format markdown for consistent output
+            # Note: Only format, don't clean (cleaning is LLM's responsibility)
+            def _post_process(content: str) -> str:
+                # Normalize CRLF to LF first
+                content = content.replace("\r\n", "\n").replace("\r", "\n")
+                # Format with ensure_h2_start=False to preserve LLM's heading structure
+                return format_markdown(content, FormatterConfig(ensure_h2_start=False))
+
             if return_stats:
                 # enhancer returns LLMTaskResultWithStats when return_stats=True
                 # but we need to extract content for the final result
                 if isinstance(result, LLMTaskResultWithStats):
                     # Replace the EnhancedMarkdown result with just the content string
                     return LLMTaskResultWithStats(
-                        result=result.result.content,
+                        result=_post_process(result.result.content),
                         model=result.model,
                         prompt_tokens=result.prompt_tokens,
                         completion_tokens=result.completion_tokens,
@@ -358,12 +379,12 @@ class LLMOrchestrator:
                     )
                 # If not LLMTaskResultWithStats, wrap the result
                 if isinstance(result, EnhancedMarkdown):
-                    return LLMTaskResultWithStats(result=result.content)
-                return LLMTaskResultWithStats(result=str(result))
+                    return LLMTaskResultWithStats(result=_post_process(result.content))
+                return LLMTaskResultWithStats(result=_post_process(str(result)))
             # When not returning stats, extract content from EnhancedMarkdown
             if isinstance(result, EnhancedMarkdown):
-                return result.content
-            return str(result)
+                return _post_process(result.content)
+            return _post_process(str(result))
         except Exception as e:
             log.warning("LLM enhancement failed", error=str(e))
             from markit.llm.enhancer import SimpleMarkdownCleaner

@@ -91,31 +91,44 @@ class MarkdownFormatter:
         return re.sub(pattern, replacement, text)
 
     def _fix_heading_levels(self, text: str) -> str:
-        """Fix heading levels to start from h2."""
+        """Fix heading levels to start from h2.
+
+        If the document starts with h1, shift ALL headings down one level
+        to maintain relative hierarchy:
+        - h1 → h2
+        - h2 → h3
+        - h3 → h4
+        - h4 → h5
+        - h5 → h6
+        - h6 → h6 (cannot go lower)
+        """
         if not self.config.ensure_h2_start:
             return text
 
         lines = text.split("\n")
-        result_lines = []
-        found_h1 = False
 
+        # First pass: check if document starts with h1
+        starts_with_h1 = False
         for line in lines:
-            # Match ATX headings
+            match = re.match(r"^(#{1,6})\s+.+$", line)
+            if match:
+                if len(match.group(1)) == 1:
+                    starts_with_h1 = True
+                break  # Only check first heading
+
+        if not starts_with_h1:
+            return text  # No adjustment needed
+
+        # Second pass: shift all headings down one level
+        result_lines = []
+        for line in lines:
             match = re.match(r"^(#{1,6})\s+(.+)$", line)
             if match:
-                hashes = match.group(1)
+                level = len(match.group(1))
                 content = match.group(2)
-                level = len(hashes)
-
-                # If first heading is h1, note it but keep content as h2
-                if level == 1 and not found_h1:
-                    found_h1 = True
-                    result_lines.append(f"## {content}")
-                elif level == 1:
-                    # Subsequent h1s become h2
-                    result_lines.append(f"## {content}")
-                else:
-                    result_lines.append(line)
+                # Shift down one level, max 6
+                new_level = min(level + 1, 6)
+                result_lines.append(f"{'#' * new_level} {content}")
             else:
                 result_lines.append(line)
 
@@ -143,16 +156,19 @@ class MarkdownFormatter:
         final_lines = []
         for i, line in enumerate(result_lines):
             is_heading = re.match(r"^#{1,6}\s+", line)
+            prev_is_heading = i > 0 and re.match(r"^#{1,6}\s+", result_lines[i - 1])
 
             if is_heading:
-                # Add blank line before heading (if not first line)
+                # Add blank line before heading (if not first line and prev line has content)
                 if i > 0 and final_lines and final_lines[-1].strip():
                     final_lines.append("")
 
                 final_lines.append(line)
-
-                # Add blank line after heading will be handled by paragraph logic
             else:
+                # Add blank line after heading (if prev was heading and current has content)
+                if prev_is_heading and line.strip() and final_lines and final_lines[-1].strip():
+                    final_lines.append("")
+
                 final_lines.append(line)
 
         return "\n".join(final_lines)
@@ -277,71 +293,60 @@ class MarkdownFormatter:
 
 
 class MarkdownCleaner:
-    """Clean unwanted content from Markdown."""
+    """Clean formatting issues from Markdown.
+
+    This cleaner only handles FORMAT issues (invisible characters, broken syntax).
+    Content cleaning (page numbers, separators, repeated text) is delegated to LLM.
+
+    Principle: "程序提取，LLM 清理" - Programs extract, LLM cleans content.
+    """
 
     def __init__(self):
         """Initialize the cleaner."""
         self._patterns = self._compile_patterns()
 
     def _compile_patterns(self) -> dict[str, re.Pattern]:
-        """Compile regex patterns for cleaning."""
+        """Compile regex patterns for cleaning.
+
+        Only format-related patterns are included:
+        - zero_width: Invisible Unicode characters that break rendering
+        - empty_links: Broken markdown link syntax []()
+        - html_comments: Used internally for PARTIAL_METADATA markers
+        """
         return {
-            # Multiple spaces
-            "multiple_spaces": re.compile(r"  +"),
-            # Page numbers (various formats)
-            "page_numbers": re.compile(
-                r"^[\s]*(?:Page|P\.|p\.?)[\s]*\d+[\s]*(?:of[\s]*\d+)?[\s]*$",
-                re.MULTILINE | re.IGNORECASE,
-            ),
-            # Headers/footers (lines with only dashes, equals, or underscores)
-            "separator_lines": re.compile(r"^[-_=]{3,}$", re.MULTILINE),
-            # Empty links
-            "empty_links": re.compile(r"\[]\(\)"),
-            # Repeated characters (more than 3)
-            "repeated_chars": re.compile(r"(.)\1{3,}"),
-            # HTML comments
-            "html_comments": re.compile(r"<!--.*?-->", re.DOTALL),
-            # Zero-width characters
+            # Zero-width characters (invisible, break rendering)
             "zero_width": re.compile(r"[\u200b\u200c\u200d\ufeff]"),
+            # Empty links (broken syntax)
+            "empty_links": re.compile(r"\[]\(\)"),
+            # HTML comments (used for internal markers like PARTIAL_METADATA)
+            "html_comments": re.compile(r"<!--.*?-->", re.DOTALL),
         }
 
     def clean(
         self,
         markdown: str,
-        remove_page_numbers: bool = True,
-        remove_separators: bool = False,
         remove_html_comments: bool = True,
     ) -> str:
-        """Clean Markdown content.
+        """Clean Markdown formatting issues.
 
         Args:
             markdown: Markdown content to clean
-            remove_page_numbers: Remove page number indicators
-            remove_separators: Remove separator lines
-            remove_html_comments: Remove HTML comments
+            remove_html_comments: Remove HTML comments (default True)
 
         Returns:
             Cleaned Markdown content
         """
         result = markdown
 
-        # Remove zero-width characters
+        # Remove zero-width characters (always)
         result = self._patterns["zero_width"].sub("", result)
 
-        # Remove empty links
+        # Remove empty links (always)
         result = self._patterns["empty_links"].sub("", result)
 
-        if remove_page_numbers:
-            result = self._patterns["page_numbers"].sub("", result)
-
-        if remove_separators:
-            result = self._patterns["separator_lines"].sub("", result)
-
+        # Remove HTML comments (optional, used for PARTIAL_METADATA cleanup)
         if remove_html_comments:
             result = self._patterns["html_comments"].sub("", result)
-
-        # Collapse repeated characters
-        result = self._patterns["repeated_chars"].sub(r"\1\1\1", result)
 
         # Clean up multiple blank lines that may have been created
         result = re.sub(r"\n{3,}", "\n\n", result)

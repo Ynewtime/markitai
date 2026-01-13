@@ -195,9 +195,16 @@ class PromptConfig(BaseModel):
     prompts_dir: str = DEFAULT_PROMPTS_DIR
 
     # Custom prompt file paths (override prompts_dir)
-    image_analysis_prompt: str | None = None
-    enhancement_prompt: str | None = None
-    summary_prompt: str | None = None
+    # Renamed from *_prompt to *_prompt_file for clarity
+    image_analysis_prompt_file: str | None = None
+    enhancement_prompt_file: str | None = None
+    summary_prompt_file: str | None = None
+
+    # Description generation strategy for chunked documents
+    # - "first_chunk": Use description from first chunk only (default, fast)
+    # - "separate_call": Generate description with separate LLM call after merging (higher quality)
+    # - "none": Do not generate description
+    description_strategy: Literal["first_chunk", "separate_call", "none"] = "first_chunk"
 
     # Legacy: inline custom prompts (deprecated, use file paths instead)
     custom_enhancement_prompt: str | None = None
@@ -208,13 +215,13 @@ class PromptConfig(BaseModel):
         """Get prompt content for the specified type.
 
         Lookup order:
-        1. Custom file path (e.g., image_analysis_prompt config option)
+        1. Custom file path (e.g., image_analysis_prompt_file config option)
         2. User's prompts directory with language suffix
         3. Legacy inline custom prompts (deprecated)
         4. Package built-in prompts
 
         Args:
-            prompt_type: One of "image_analysis", "enhancement", "summary"
+            prompt_type: One of "image_analysis", "enhancement", "enhancement_continuation", "summary"
 
         Returns:
             Prompt content string, or None if not found
@@ -222,13 +229,14 @@ class PromptConfig(BaseModel):
         lang = self.output_language if self.output_language != "auto" else "zh"
         filename = f"{prompt_type}_{lang}.md"
 
-        # 1. Check custom file path
-        custom_path_attr = f"{prompt_type}_prompt"
-        custom_path = getattr(self, custom_path_attr, None)
-        if custom_path:
-            path = Path(custom_path)
-            if path.exists():
-                return path.read_text(encoding="utf-8")
+        # 1. Check custom file path (only for main prompt types, not continuation)
+        if prompt_type not in ("enhancement_continuation",):
+            custom_path_attr = f"{prompt_type}_prompt_file"
+            custom_path = getattr(self, custom_path_attr, None)
+            if custom_path:
+                path = Path(custom_path)
+                if path.exists():
+                    return path.read_text(encoding="utf-8")
 
         # 2. Check user's prompts directory with language suffix
         prompts_dir = Path(self.prompts_dir)
@@ -236,11 +244,12 @@ class PromptConfig(BaseModel):
         if default_path.exists():
             return default_path.read_text(encoding="utf-8")
 
-        # 3. Check legacy inline custom prompts
-        legacy_attr = f"custom_{prompt_type}_prompt"
-        legacy_prompt = getattr(self, legacy_attr, None)
-        if legacy_prompt:
-            return legacy_prompt
+        # 3. Check legacy inline custom prompts (only for main prompt types)
+        if prompt_type not in ("enhancement_continuation",):
+            legacy_attr = f"custom_{prompt_type}_prompt"
+            legacy_prompt = getattr(self, legacy_attr, None)
+            if legacy_prompt:
+                return legacy_prompt
 
         # 4. Fall back to package built-in prompts
         try:

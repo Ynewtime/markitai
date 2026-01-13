@@ -17,7 +17,12 @@ Please optimize the following Markdown document's format according to these rule
 1. **Clean up junk content**:
    - Remove headers, footers, watermarks, and meaningless repeated characters
    - For PowerPoint slides: remove repetitive footer text (company names, dates, slide numbers, copyright notices) that appear on every slide
-   - Remove standalone numbers that are likely page/slide numbers (e.g., just "1", "2", etc. on their own lines)
+   - **Chart artifact cleanup**: Remove incorrectly extracted chart axis data:
+     - Consecutive standalone number lines (e.g., "12", "10", "8"... usually Y-axis ticks)
+     - Chart axis labels (e.g., "Row 1", "Column 1", "Category A")
+     - Legend text (e.g., "Series 1", "Data Series 1")
+     - These typically appear before/after image markers `![...]()`
+   - Remove standalone page/slide numbers (e.g., "1", "Page 2", "Slide 3")
    - Remove OCR artifacts (garbled characters like "■■■", consecutive special symbols)
 
 2. **PowerPoint/Presentation special handling**:
@@ -48,6 +53,7 @@ Please optimize the following Markdown document's format according to these rule
 
 7. **Knowledge Graph Metadata Extraction**:
    Extract the following metadata from the document and add to YAML Frontmatter:
+   - **description**: One-sentence summary of the document's core content (max 100 characters), highlighting the theme and key information, avoiding redundant phrases like "this document"
    - **entities**: Key entities in the document (person names, organizations, products, technical terms, locations) - keep original
    - **topics**: Topic tags the document covers (3-5 most relevant topics)
    - **domain**: The domain the document belongs to (e.g., technology, business, academic, medical, legal, finance)
@@ -62,6 +68,7 @@ Please optimize the following Markdown document's format according to these rule
    **Example output format**:
    ```yaml
    ---
+   description: "Kubernetes container orchestration guide covering deployment, scaling, and monitoring best practices."
    entities:
      - "Kubernetes"
      - "Docker"

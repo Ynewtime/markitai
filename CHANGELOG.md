@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-01-13
+
+### Changed
+
+- **Prompt Management Refactoring**
+  - Migrated all hardcoded prompts to external files in `src/markit/config/prompts/`
+  - Added `PromptConfig.get_prompt()` for file-based prompt loading with fallback chain
+  - Renamed config options: `*_prompt` → `*_prompt_file` for clarity
+
+- **MarkdownCleaner Simplification**
+  - Removed content-level cleaning rules (page_numbers, separators, repeated_chars)
+  - Retained only format-level cleaning (zero_width, empty_links, html_comments)
+  - Content cleaning now fully delegated to LLM per "程序提取，LLM 清理" principle
+
+- **Heading Level Fix**
+  - Fixed `_fix_heading_levels` to shift ALL headings down one level when document starts with h1
+  - Previous behavior only changed h1→h2, now correctly shifts h2→h3, h3→h4, etc.
+
+### Added
+
+- **Description Strategy Configuration**
+  - New `prompt.description_strategy` config option: `first_chunk` (default), `separate_call`, `none`
+  - Allows control over description generation for chunked documents
+
+- **Continuation Prompts**
+  - Added `enhancement_continuation_zh.md` / `enhancement_continuation_en.md`
+  - Simplified continuation prompts without key_points collection (方案 D)
+
+### Documentation
+
+- Updated CLAUDE.md with completed prompt management architecture
+- Updated ROADMAP.md with v0.1.5 completion status
+
 ## [0.1.4] - 2026-01-13
 
 ### Fixed
@@ -162,6 +195,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI Commands**: convert, batch, config, provider, model
 - **Configuration**: YAML-based config with credential/model separation
 
+[0.1.5]: https://github.com/Ynewtime/markit/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Ynewtime/markit/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Ynewtime/markit/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Ynewtime/markit/compare/v0.1.1...v0.1.2
