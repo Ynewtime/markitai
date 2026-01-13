@@ -268,7 +268,7 @@ class TestLLMConfig:
         )
 
         assert model.capabilities is None  # Defaults to None (optimistic)
-        assert model.timeout == 120  # DEFAULT_LLM_TIMEOUT
+        assert model.timeout == 300  # DEFAULT_MAX_REQUEST_TIMEOUT
         assert model.max_retries == 3
 
     def test_llm_config_with_credentials_and_models(self):

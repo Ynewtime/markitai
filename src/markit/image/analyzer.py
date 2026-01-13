@@ -187,9 +187,6 @@ class ImageAnalyzer:
             ImageAnalysis with descriptions and metadata, or LLMTaskResultWithStats
             if return_stats=True
         """
-        # Changed to debug to reduce log noise when processing many images
-        log.debug("Analyzing image with LLM", filename=image.filename)
-
         # Convert to LLM-supported format if needed (e.g., GIF -> PNG)
         image_data, image_format = self._convert_to_supported_format(image)
 
@@ -206,6 +203,7 @@ class ImageAnalyzer:
                 image_data=image_data,
                 prompt=prompt,
                 image_format=image_format,
+                filename=image.filename,  # For logging with provider/model context
                 response_format=ResponseFormat(
                     type="json_object",
                     # Note: json_schema is available but not all providers support it
@@ -369,29 +367,78 @@ class ImageAnalyzer:
 
         return "\n".join(lines) + "\n"
 
+    def _extract_first_json_object(self, content: str) -> str | None:
+        """Extract the first complete JSON object using bracket-counting.
+
+        This method precisely finds the first balanced {} object, avoiding
+        the greedy regex issue that captures extra content after the JSON.
+
+        Args:
+            content: Raw string that may contain JSON
+
+        Returns:
+            The first complete JSON object string, or None if not found
+        """
+        start = content.find("{")
+        if start == -1:
+            return None
+
+        depth = 0
+        in_string = False
+        escape = False
+
+        for i, char in enumerate(content[start:], start):
+            if escape:
+                escape = False
+                continue
+            if char == "\\" and in_string:
+                escape = True
+                continue
+            if char == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[start : i + 1]
+
+        # Incomplete object - return from start to end for _fix_json_string to attempt repair
+        return content[start:]
+
     def _parse_response(self, response: LLMResponse) -> ImageAnalysis:
         """Parse the LLM response into ImageAnalysis."""
         import json
         import re
 
         content = response.content.strip()
-        json_str = content
+        json_str: str | None = None
 
         # 1. Try to extract from code blocks first (standard format)
-        # Use greedy match for JSON object inside code blocks
-        code_block_pattern = re.compile(r"```(?:json)?\s*(\{[\s\S]*\})\s*```", re.IGNORECASE)
+        code_block_pattern = re.compile(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", re.IGNORECASE)
         match = code_block_pattern.search(content)
 
         if match:
             json_str = match.group(1)
         else:
-            # 2. Try to find the outermost JSON object
-            # This regex matches a brace, followed by anything (non-greedy), ending with a brace
-            # It's simple and relies on the LLM outputting a single main object
-            json_pattern = re.compile(r"(\{[\s\S]*\})")
-            match = json_pattern.search(content)
-            if match:
-                json_str = match.group(1)
+            # 2. Use precise bracket-counting to extract first complete JSON object
+            # This avoids the greedy regex issue that captures "Extra data" after JSON
+            json_str = self._extract_first_json_object(content)
+
+        if not json_str:
+            log.warning(
+                "No JSON object found in response, using fallback",
+                content_preview=content[:100] if content else "",
+            )
+            return ImageAnalysis(
+                alt_text="Image",
+                detailed_description=content[:500] if content else "",
+                detected_text=None,
+                image_type="other",
+            )
 
         # 3. Clean up common JSON formatting issues from LLMs
         json_str = self._fix_json_string(json_str)

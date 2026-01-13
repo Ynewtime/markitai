@@ -57,10 +57,9 @@ class OllamaProvider(BaseLLMProvider):
         model_name = kwargs.get("model", self.model)
         start_time = time.perf_counter()
 
+        # Note: provider and model are injected from context set by manager.py
         log.debug(
             "Sending LLM request",
-            provider=self.name,
-            model=model_name,
             request_id=request_id,
         )
 
@@ -88,10 +87,9 @@ class OllamaProvider(BaseLLMProvider):
                 )
 
             duration_ms = int((time.perf_counter() - start_time) * 1000)
+            # provider and model injected from context
             log.debug(
                 "LLM response received",
-                provider=self.name,
-                model=response.get("model", model_name),
                 request_id=request_id,
                 input_tokens=usage.prompt_tokens if usage else 0,
                 output_tokens=usage.completion_tokens if usage else 0,
@@ -107,10 +105,9 @@ class OllamaProvider(BaseLLMProvider):
 
         except Exception as e:
             duration_ms = int((time.perf_counter() - start_time) * 1000)
+            # provider and model injected from context
             log.warning(
                 "LLM request failed",
-                provider=self.name,
-                model=model_name,
                 request_id=request_id,
                 duration_ms=duration_ms,
                 error=str(e),

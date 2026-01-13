@@ -113,7 +113,9 @@ def execute_single_file(
 def _run_conversion(input_file: Path, ctx: ConversionContext) -> None:
     """Run the actual conversion logic."""
 
-    pipeline = ctx.create_pipeline()
+    # Use concurrent fallback setting from config (enables backup model on timeout)
+    use_concurrent_fallback = ctx.settings.llm.concurrent_fallback_enabled
+    pipeline = ctx.create_pipeline(use_concurrent_fallback=use_concurrent_fallback)
 
     if ctx.options.verbose:
         result = pipeline.convert_file(input_file, ctx.output_dir)

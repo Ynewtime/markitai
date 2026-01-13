@@ -272,8 +272,36 @@ def _truncate_base64(
 def _filter_event_dict(
     _logger: "WrappedLogger", _method_name: str, event_dict: "EventDict"
 ) -> "EventDict":
-    """Filter out excessively long values from event dict."""
+    """Filter out excessively long values and simplify SDK debug logs.
+
+    Special handling for SDK/HTTP logs:
+    - "Request options:" events are simplified to show method/url only
+    - "HTTP Response:" events are simplified to show method/url/status only
+    """
     max_value_length = 500
+
+    event = event_dict.get("event", "")
+    if isinstance(event, str):
+        # Simplify "Request options:" logs - extract method and url
+        if event.startswith("Request options:"):
+            # Extract method and url from the dict-like string
+            method_match = re.search(r"'method':\s*'(\w+)'", event)
+            url_match = re.search(r"'url':\s*'([^']+)'", event)
+            method = method_match.group(1) if method_match else "unknown"
+            url = url_match.group(1) if url_match else "unknown"
+            event_dict["event"] = f"Request options: method={method} url={url}"
+            return event_dict
+
+        # Simplify "HTTP Response:" logs - keep method/url/status only
+        if event.startswith("HTTP Response:"):
+            # Format: "HTTP Response: POST url "status" Headers({...})"
+            # Keep everything before "Headers("
+            headers_idx = event.find(" Headers(")
+            if headers_idx > 0:
+                event_dict["event"] = event[:headers_idx]
+            return event_dict
+
+    # Standard truncation for other long values
     for key, value in list(event_dict.items()):
         if isinstance(value, str) and len(value) > max_value_length:
             event_dict[key] = value[:max_value_length] + f"... [{len(value)} chars total]"
@@ -298,6 +326,15 @@ def _add_separator(
         event_dict["event"] = f"{event_dict['event']} |"
 
     return event_dict
+
+
+class RequestIdNoneFilter(logging.Filter):
+    """Filter out useless 'request_id: None' logs from SDK."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Return False to drop 'request_id: None' events."""
+        msg = record.getMessage() if hasattr(record, "getMessage") else str(record.msg)
+        return msg != "request_id: None"
 
 
 def setup_logging(
@@ -334,10 +371,13 @@ def setup_logging(
     root_logger.setLevel(log_level)
 
     # Suppress noisy third-party loggers (set them to WARNING unless we're at DEBUG)
+    # Also add filter to drop useless "request_id: None" logs from SDK
+    request_id_filter = RequestIdNoneFilter()
     for logger_name in _NOISY_LOGGERS:
         third_party_logger = logging.getLogger(logger_name)
         # Only show WARNING+ from these loggers unless explicitly debugging
         third_party_logger.setLevel(max(log_level, logging.WARNING))
+        third_party_logger.addFilter(request_id_filter)
 
     # Shared processors for structlog (includes base64 truncation and context injection)
     shared_processors: list[structlog.types.Processor] = [

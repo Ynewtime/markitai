@@ -20,7 +20,6 @@ from markit.config.constants import (
     DEFAULT_LIBREOFFICE_PROFILE_DIR,
     DEFAULT_LIBREOFFICE_RESET_AFTER_FAILURES,
     DEFAULT_LIBREOFFICE_RESET_AFTER_USES,
-    DEFAULT_LLM_TIMEOUT,
     DEFAULT_LLM_WORKERS,
     DEFAULT_LOG_DIR,
     DEFAULT_MAX_IMAGE_DIMENSION,
@@ -47,7 +46,7 @@ class LLMProviderConfig(BaseModel):
     api_key: str | None = None
     api_key_env: str | None = None
     base_url: str | None = None
-    timeout: int = DEFAULT_LLM_TIMEOUT
+    timeout: int = DEFAULT_MAX_REQUEST_TIMEOUT
     max_retries: int = DEFAULT_MAX_RETRIES
     capabilities: list[str] | None = None  # None implies ["text", "vision"] (optimistic)
 
@@ -77,7 +76,7 @@ class LLMModelConfig(BaseModel):
     model: str  # Model ID (e.g. "gpt-4o")
     credential_id: str  # Reference to LLMCredentialConfig.id
     capabilities: list[str] | None = None
-    timeout: int = DEFAULT_LLM_TIMEOUT
+    timeout: int = DEFAULT_MAX_REQUEST_TIMEOUT
     max_retries: int = DEFAULT_MAX_RETRIES
     cost: ModelCostConfig | None = None  # Optional cost config for statistics
 
