@@ -97,5 +97,5 @@ CMD ["--help"]
 # Labels
 LABEL org.opencontainers.image.title="MarkIt"
 LABEL org.opencontainers.image.description="Intelligent Document to Markdown Converter"
-LABEL org.opencontainers.image.version="0.1.5"
+LABEL org.opencontainers.image.version="0.1.6"
 LABEL org.opencontainers.image.source="https://github.com/Ynewtime/markit"

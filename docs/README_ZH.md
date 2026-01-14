@@ -163,6 +163,7 @@ output:
 
 prompt:
   output_language: "zh"  # zh, en, auto
+  # description_strategy: "first_chunk"  # first_chunk, separate_call, none
   # prompts_dir: "prompts"  # 自定义 prompts 目录（相对于当前工作目录，可选）
   # 文件命名格式: {type}_{lang}.md
   #   type: enhancement, image_analysis, summary
@@ -170,9 +171,21 @@ prompt:
   #   示例: enhancement_zh.md, image_analysis_en.md
   # 找不到时自动回退到内置 prompts
   # 自定义 prompt 文件路径（最高优先级，覆盖 prompts_dir）：
-  # image_analysis_prompt: "my_prompts/image_analysis.md"
-  # enhancement_prompt: "my_prompts/enhancement.md"
-  # summary_prompt: "my_prompts/summary.md"
+  # image_analysis_prompt_file: "my_prompts/image_analysis.md"
+  # enhancement_prompt_file: "my_prompts/enhancement.md"
+  # summary_prompt_file: "my_prompts/summary.md"
+
+# 执行模式
+# execution:
+#   mode: "default"  # default, fast
+#   fast_max_fallback: 1
+#   fast_skip_validation: true
+
+# LibreOffice 配置池（用于 .doc/.ppt/.xls 转换）
+# libreoffice:
+#   pool_size: 4
+#   reset_after_failures: 3
+#   reset_after_uses: 100
 
 # LLM 配置
 # 将凭证和模型分开定义，更加灵活
@@ -180,6 +193,16 @@ llm:
   concurrent_fallback_enabled: true
   concurrent_fallback_timeout: 60  # 触发备用模型的超时秒数
   max_request_timeout: 300
+
+  # 路由策略（模型选择方式）
+  routing:
+    strategy: "least_pending"  # cost_first, least_pending, round_robin
+
+  # AIMD 限流（按凭证自动调整并发数）
+  # adaptive:
+  #   enabled: true
+  #   max_concurrency: 10
+  #   min_concurrency: 1
 
   credentials:
     - id: "openai-main"

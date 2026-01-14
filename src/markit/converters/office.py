@@ -276,7 +276,7 @@ class LibreOfficeConverter(_BaseOfficeConverter):
                 except subprocess.CalledProcessError as e:
                     raise ConversionError(
                         file_path,
-                        f"LibreOffice error: {e.stderr.decode() if e.stderr else 'Unknown error'}",
+                        f"LibreOffice error: {e.stderr.decode('utf-8', errors='replace') if e.stderr else 'Unknown error'}",
                     ) from e
 
             # Profile directory is automatically cleaned up here
@@ -415,7 +415,7 @@ class LibreOfficeConverter(_BaseOfficeConverter):
             except subprocess.CalledProcessError as e:
                 raise ConversionError(
                     file_path,
-                    f"LibreOffice error: {e.stderr.decode() if e.stderr else 'Unknown error'}",
+                    f"LibreOffice error: {e.stderr.decode('utf-8', errors='replace') if e.stderr else 'Unknown error'}",
                 ) from e
 
             # Find output file

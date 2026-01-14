@@ -221,7 +221,7 @@ pytest -m e2e
 
 更新文档时必须同步更新关联文档：
 - `README.md` ↔ `docs/README_ZH.md`：内容保持同步
-- `CLAUDE.md` ↔ `AGENTS.md`：开发规范保持一致
+- `CLAUDE.md`：AI 助手开发规范
 - `docs/ROADMAP.md`：任务进展及时更新
 - `docs/CONTRIBUTING.md` ↔ `docs/CONTRIBUTING_ZH.md`：保持同步
 

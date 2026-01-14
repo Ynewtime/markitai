@@ -91,9 +91,9 @@ class LLMOrchestrator:
         self._enhancer: MarkdownEnhancer | None = None
         self._image_analyzer: ImageAnalyzer | None = None
 
-        # Semaphore to limit concurrent LLM calls within a document's chunks
-        # This prevents API overload when a large document is split into many chunks
-        self._chunk_semaphore = asyncio.Semaphore(chunk_concurrency)
+        # Note: We no longer use a global _chunk_semaphore here.
+        # Each enhancement task creates its own per-file semaphore to ensure
+        # fair chunk concurrency across multiple documents being processed in parallel.
 
         # Locks for thread-safe lazy initialization
         self._provider_lock = asyncio.Lock()
@@ -338,6 +338,9 @@ class LLMOrchestrator:
     ) -> str | LLMTaskResultWithStats:
         """Create and execute a markdown enhancement task.
 
+        Each task creates its own per-file chunk semaphore to ensure fair
+        concurrency across multiple documents being processed in parallel.
+
         Args:
             markdown: Markdown content to enhance
             source_file: Source file path for context
@@ -352,9 +355,13 @@ class LLMOrchestrator:
 
         enhancer = await self.get_enhancer()
         try:
-            # Pass chunk semaphore to limit concurrent LLM calls within this document
+            # Create per-file chunk semaphore for fair concurrency distribution
+            # This ensures each file gets its own chunk_concurrency slots,
+            # preventing a single large document from starving others
+            per_file_semaphore = asyncio.Semaphore(self.chunk_concurrency)
+
             result = await enhancer.enhance(
-                markdown, source_file, semaphore=self._chunk_semaphore, return_stats=return_stats
+                markdown, source_file, semaphore=per_file_semaphore, return_stats=return_stats
             )
 
             # Post-processing: format markdown for consistent output

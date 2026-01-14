@@ -101,7 +101,7 @@ markit provider list   # 列出已配置的 LLM 提供商
 
 所有 LLM Prompt 集中在 `src/markit/config/prompts/` 目录，通过 `PromptConfig.get_prompt()` 加载。
 
-**当前结构**（v0.1.5 已完成重构）：
+**当前结构**（v0.1.6）：
 ```
 src/markit/config/prompts/
 ├── __init__.py
@@ -231,8 +231,17 @@ MarkIt 是一个文档转 Markdown 工具，支持可选的 LLM 增强。代码�
 - 基于能力的路由（文本 vs 视觉任务）
 - 失败时自动回退
 - 并发回退（主模型超时时启动备用模型）
-- 轮询负载均衡
 - 按模型成本追踪
+
+**路由策略** (`llm.routing.strategy`)：
+- `cost_first`: 优先使用最便宜的模型，失败时回退
+- `least_pending`: 综合考虑成本和负载，分散请求
+- `round_robin`: 简单轮询，依次使用各模型
+
+**AIMD 限流** (`llm.adaptive`): 按凭证自动调整并发：
+- 成功时线性增加并发（Additive Increase）
+- 失败时指数降低并发（Multiplicative Decrease）
+- 每个凭证独立限流，避免一个 API 问题影响其他
 
 支持的提供商: OpenAI, Anthropic, Gemini, Ollama, OpenRouter（均在 `src/markit/llm/` 模块中）
 

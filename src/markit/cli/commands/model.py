@@ -240,8 +240,9 @@ def add_model() -> None:
         yaml.preserve_quotes = True
         yaml.indent(mapping=2, sequence=4, offset=2)
 
-        # Load the configuration
-        config_data = yaml.load(config_path)
+        # Load the configuration (explicit UTF-8 for Windows compatibility)
+        with config_path.open("r", encoding="utf-8") as f:
+            config_data = yaml.load(f)
 
         # Prepare the new model entry
         new_model = {
@@ -292,7 +293,9 @@ def add_model() -> None:
 
         if not exists:
             llm_section["models"].append(new_model)
-            yaml.dump(config_data, config_path)
+            # Write with explicit UTF-8 for Windows compatibility
+            with config_path.open("w", encoding="utf-8") as f:
+                yaml.dump(config_data, f)
             console.print(f"\n[green]Successfully added {real_model_id} to markit.yaml![/green]")
             console.print(
                 "Run [bold]markit provider test[/bold] to verify the provider configuration,"

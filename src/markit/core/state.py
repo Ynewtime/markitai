@@ -271,6 +271,7 @@ class StateManager:
             completed=self._state.completed_files,
             failed=self._state.failed_files,
             skipped=self._state.skipped_files,
+            task_output=self._state.output_dir,  # Use task_output to keep full path
         )
 
     def get_pending_files(self) -> list[Path]:

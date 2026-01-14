@@ -73,12 +73,46 @@ prompt:
   # Description generation strategy for chunked documents:
   # description_strategy: "first_chunk"  # first_chunk (default), separate_call, none
 
+# Execution mode
+# execution:
+#   mode: "default"  # default, fast (skip validation, limit fallbacks)
+#   fast_max_fallback: 1  # Max fallback attempts in fast mode
+#   fast_skip_validation: true  # Skip provider validation in fast mode
+
+# LibreOffice profile pool (for .doc/.ppt/.xls conversion)
+# libreoffice:
+#   pool_size: 4  # Number of concurrent LibreOffice profiles
+#   reset_after_failures: 3  # Reset profile after N consecutive failures
+#   reset_after_uses: 100  # Reset profile after N conversions
+
 # LLM Configuration - Use `markit provider add` to add credentials
 # llm:
 #   # Concurrent fallback settings
 #   concurrent_fallback_enabled: true  # Enable smart concurrent fallback
 #   concurrent_fallback_timeout: 60  # Seconds before starting backup model
 #   max_request_timeout: 300  # Absolute timeout (5 min), force interrupt
+#
+#   # Routing strategy (how to select models for requests)
+#   routing:
+#     strategy: "least_pending"  # cost_first, least_pending, round_robin
+#     cost_weight: 0.3  # Weight for cost in least_pending (0-1)
+#     load_weight: 0.7  # Weight for load balancing in least_pending (0-1)
+#
+#   # AIMD rate limiting (per credential, auto-adjusts concurrency)
+#   adaptive:
+#     enabled: true
+#     initial_concurrency: 3
+#     max_concurrency: 10
+#     min_concurrency: 1
+#     success_threshold: 5  # Increase concurrency after N successes
+#     multiplicative_decrease: 0.5  # Halve on failure
+#     cooldown_seconds: 30.0  # Cooldown after decrease
+#
+#   # Provider validation
+#   validation:
+#     enabled: true
+#     retry_count: 2
+#     on_failure: "warn"  # warn, skip, fail
 #
 #   credentials:
 #     - id: "deepseek"

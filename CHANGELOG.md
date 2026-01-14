@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-01-14
+
+### Fixed
+
+- **Routing Strategy in Concurrent Fallback**: `complete_with_concurrent_fallback` now properly respects `round_robin` and `least_pending` routing strategies instead of always using the first candidate. Primary model selection uses `_select_best_provider()` for smart routing.
+
+- **Fallback Model Selection**: Fixed issue where multiple concurrent fallbacks would select the same model. Now updates `_current_index` after each fallback selection to ensure different models are chosen in round-robin/least_pending strategies.
+
+- **Log Path Simplification**: Extended `_simplify_file_paths` processor to simplify all path-related log fields (`file`, `original`, `converted`, `path`, `output`, etc.) to filenames for readability. The final "Batch complete" log line retains full path via `task_output` field.
+
+### Documentation
+
+- Updated ROADMAP.md with v0.1.6 bug fixes
+- Updated 016-SPEC.md with section 5.2.3 documenting concurrent fallback routing strategy support
+
 ## [0.1.5] - 2026-01-13
 
 ### Changed
@@ -195,6 +210,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI Commands**: convert, batch, config, provider, model
 - **Configuration**: YAML-based config with credential/model separation
 
+[0.1.6]: https://github.com/Ynewtime/markit/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Ynewtime/markit/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Ynewtime/markit/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Ynewtime/markit/compare/v0.1.2...v0.1.3

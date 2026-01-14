@@ -313,6 +313,68 @@ def _filter_event_dict(
 # Keys that are handled specially by ConsoleRenderer (not user context)
 _INTERNAL_KEYS = {"event", "level", "timestamp", "_record", "_from_structlog"}
 
+# Path keys that should be simplified to filename only (for readability)
+# All path-like keys are simplified EXCEPT final_output (used in "Batch complete" log)
+_PATH_KEYS_TO_SIMPLIFY = {
+    "file",
+    "original",
+    "converted",
+    "path",
+    "image_path",
+    "filename",
+    "output",  # Simplified in intermediate logs
+    "output_path",
+    "output_dir",
+    "input_dir",
+    "log_file",
+}
+
+# Path keys that should keep full path (only the final summary line)
+_PATH_KEYS_TO_KEEP_FULL = {"task_output"}
+
+
+def _extract_filename(path_value: str) -> str:
+    """Extract filename from a path string.
+
+    Args:
+        path_value: Full path string (Windows or Unix style)
+
+    Returns:
+        Just the filename portion
+    """
+    # Handle both forward slashes and backslashes for cross-platform support
+    normalized = path_value.replace("\\", "/")
+    return normalized.rsplit("/", 1)[-1]
+
+
+def _simplify_file_paths(
+    _logger: "WrappedLogger", _method_name: str, event_dict: "EventDict"
+) -> "EventDict":
+    """Simplify file paths in log messages to show only filenames.
+
+    This processor converts full file paths like:
+        file=C:\\Users\\...\\documents\\example.pdf
+        original=C:\\Users\\...\\input\\test.doc
+    to:
+        file=example.pdf
+        original=test.doc
+
+    Keys that are simplified (intermediate paths):
+        file, original, converted, path, image_path, filename
+
+    Keys that keep full path (user needs these):
+        output, output_path, output_dir, log_file, input_dir
+
+    This makes logs more readable while preserving important output paths.
+    """
+    for key in _PATH_KEYS_TO_SIMPLIFY:
+        if key in event_dict:
+            value = event_dict[key]
+            if isinstance(value, str) and value:
+                event_dict[key] = _extract_filename(value)
+
+    return event_dict
+
 
 def _add_separator(
     _logger: "WrappedLogger", _method_name: str, event_dict: "EventDict"
@@ -390,6 +452,7 @@ def setup_logging(
         _inject_request_context,  # Inject request_id, file, provider, model from context
         _truncate_base64,  # Truncate base64 data before logging
         _filter_event_dict,  # Filter overly long values
+        _simplify_file_paths,  # Simplify file paths to just filenames
         _add_separator,  # Add visual separator between message and context
     ]
 

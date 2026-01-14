@@ -221,7 +221,7 @@ pytest -m e2e
 
 When updating documentation, keep these files in sync:
 - `README.md` ↔ `docs/README_ZH.md`: Content must stay synchronized
-- `CLAUDE.md` ↔ `AGENTS.md`: Development guidelines must be consistent
+- `CLAUDE.md`: Development guidelines for AI assistants
 - `docs/ROADMAP.md`: Update task progress promptly
 - `docs/CONTRIBUTING.md` ↔ `docs/CONTRIBUTING_ZH.md`: Keep in sync
 

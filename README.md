@@ -160,6 +160,7 @@ output:
 
 prompt:
   output_language: "zh"  # zh, en, auto
+  # description_strategy: "first_chunk"  # first_chunk, separate_call, none
   # prompts_dir: "prompts"  # Custom prompts directory (relative to cwd, optional)
   # Files should be named: {type}_{lang}.md
   #   type: enhancement, image_analysis, summary
@@ -167,9 +168,21 @@ prompt:
   #   e.g., enhancement_zh.md, image_analysis_en.md
   # If not found, falls back to built-in prompts
   # Custom prompt file paths (highest priority, override prompts_dir):
-  # image_analysis_prompt: "my_prompts/image_analysis.md"
-  # enhancement_prompt: "my_prompts/enhancement.md"
-  # summary_prompt: "my_prompts/summary.md"
+  # image_analysis_prompt_file: "my_prompts/image_analysis.md"
+  # enhancement_prompt_file: "my_prompts/enhancement.md"
+  # summary_prompt_file: "my_prompts/summary.md"
+
+# Execution mode
+# execution:
+#   mode: "default"  # default, fast
+#   fast_max_fallback: 1
+#   fast_skip_validation: true
+
+# LibreOffice profile pool (for .doc/.ppt/.xls)
+# libreoffice:
+#   pool_size: 4
+#   reset_after_failures: 3
+#   reset_after_uses: 100
 
 # LLM Configuration
 # Credentials and models are defined separately for flexibility
@@ -177,6 +190,16 @@ llm:
   concurrent_fallback_enabled: true
   concurrent_fallback_timeout: 60  # Seconds before starting backup model
   max_request_timeout: 300
+
+  # Routing strategy for model selection
+  routing:
+    strategy: "least_pending"  # cost_first, least_pending, round_robin
+
+  # AIMD rate limiting (auto-adjusts concurrency per credential)
+  # adaptive:
+  #   enabled: true
+  #   max_concurrency: 10
+  #   min_concurrency: 1
 
   credentials:
     - id: "openai-main"

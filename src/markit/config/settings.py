@@ -9,8 +9,15 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict, YamlConfigSettingsSource
 
 from markit.config.constants import (
+    DEFAULT_AIMD_COOLDOWN_SECONDS,
+    DEFAULT_AIMD_INITIAL_CONCURRENCY,
+    DEFAULT_AIMD_MAX_CONCURRENCY,
+    DEFAULT_AIMD_MIN_CONCURRENCY,
+    DEFAULT_AIMD_MULTIPLICATIVE_DECREASE,
+    DEFAULT_AIMD_SUCCESS_THRESHOLD,
     DEFAULT_CHUNK_OVERLAP,
     DEFAULT_CHUNK_SIZE,
+    DEFAULT_CHUNK_WORKERS,
     DEFAULT_CONCURRENT_FALLBACK_ENABLED,
     DEFAULT_CONCURRENT_FALLBACK_TIMEOUT,
     DEFAULT_FILE_WORKERS,
@@ -33,6 +40,8 @@ from markit.config.constants import (
     DEFAULT_PROCESS_POOL_MAX_WORKERS,
     DEFAULT_PROCESS_POOL_THRESHOLD,
     DEFAULT_PROMPTS_DIR,
+    DEFAULT_ROUTING_COST_WEIGHT,
+    DEFAULT_ROUTING_LOAD_WEIGHT,
     DEFAULT_STATE_FILE,
 )
 
@@ -89,6 +98,41 @@ class ValidationConfig(BaseModel):
     on_failure: Literal["warn", "skip", "fail"] = "warn"  # Action on failure
 
 
+class AdaptiveConfig(BaseModel):
+    """AIMD (Additive Increase Multiplicative Decrease) rate limiting configuration.
+
+    This config controls per-credential adaptive concurrency limiting.
+    Each credential gets its own AIMD limiter that automatically adjusts
+    concurrency based on success/failure patterns.
+    """
+
+    enabled: bool = True
+    initial_concurrency: int = Field(default=DEFAULT_AIMD_INITIAL_CONCURRENCY, ge=1)
+    max_concurrency: int = Field(default=DEFAULT_AIMD_MAX_CONCURRENCY, ge=1)
+    min_concurrency: int = Field(default=DEFAULT_AIMD_MIN_CONCURRENCY, ge=1)
+    success_threshold: int = Field(default=DEFAULT_AIMD_SUCCESS_THRESHOLD, ge=1)
+    multiplicative_decrease: float = Field(
+        default=DEFAULT_AIMD_MULTIPLICATIVE_DECREASE, gt=0.0, lt=1.0
+    )
+    cooldown_seconds: float = Field(default=DEFAULT_AIMD_COOLDOWN_SECONDS, ge=0.0)
+
+
+class RoutingConfig(BaseModel):
+    """LLM routing strategy configuration.
+
+    Controls how requests are distributed across multiple configured models.
+
+    Strategies:
+    - cost_first: Always prefer cheaper models, fallback on failure (default legacy behavior)
+    - least_pending: Balance between cost and load, distribute across models
+    - round_robin: Simple rotation across available models
+    """
+
+    strategy: Literal["cost_first", "least_pending", "round_robin"] = "least_pending"
+    cost_weight: float = Field(default=DEFAULT_ROUTING_COST_WEIGHT, ge=0.0, le=1.0)
+    load_weight: float = Field(default=DEFAULT_ROUTING_LOAD_WEIGHT, ge=0.0, le=1.0)
+
+
 class LLMConfig(BaseModel):
     """LLM configuration - supports multiple providers."""
 
@@ -103,6 +147,12 @@ class LLMConfig(BaseModel):
 
     # Validation settings
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
+
+    # Adaptive rate limiting (per credential)
+    adaptive: AdaptiveConfig = Field(default_factory=AdaptiveConfig)
+
+    # Routing strategy
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
 
     # Concurrent fallback settings
     concurrent_fallback_enabled: bool = DEFAULT_CONCURRENT_FALLBACK_ENABLED
@@ -137,6 +187,7 @@ class ConcurrencyConfig(BaseModel):
     file_workers: int = Field(default=DEFAULT_FILE_WORKERS, ge=1)
     image_workers: int = Field(default=DEFAULT_IMAGE_WORKERS, ge=1)
     llm_workers: int = Field(default=DEFAULT_LLM_WORKERS, ge=1)
+    chunk_workers: int = Field(default=DEFAULT_CHUNK_WORKERS, ge=1)  # Per-file chunk concurrency
 
 
 class PDFConfig(BaseModel):

@@ -1,196 +1,117 @@
 # ROADMAP
 
-## 任务批次 2026011302 - v0.1.5
+## 任务批次 2026011401 - v0.1.6
 
-### 任务
+问题一:
 
-命令和终端完整输出信息参考: `docs/fail_logs/20260113_windows_powershell_test.txt`
-
-处理结果参考: `docs/fail_output`
-
-请深度分析上面终端输出，全量识别其中的问题，基于本项目库代码，制定修复方案。
-
-包括但不限于：
-1. 终端输出：大量 API 报错;
-2. 输出格式：
-   1. 如 `docs/fail_output/2.Hello OCS源码剖析.doc.md` 和 `docs/fail_output/OCS计费原理与实现(排版后).doc.md`，输出 Markdown 中存在大量无效 Chunk YAML
-   2. 如 `docs/fail_output/CBS架构演进规划201605 V0.5.pptx.md`，header 没有遵循前后各一行空行的要求，同时未做内容规整，LLM 处理后的格式跟直接使用工具转换出来的内容基本一致，未达到使用 LLM 来规整内容的目的
-   3. 如 `docs/fail_output/预付费业务信令流程规范（V4.0）.doc.md`，同样存在内容未规整、零散的不成意义的文本散落在正文中，意味不明，未作清洗
-
-备注：上述命令测试和处理结果在 Windows PowerShell 环境执行，此处需根据其日志和交付件深入推理分析。
+```
+PS C:\Users\user\Documents\markit> & C:/Users/user/Documents/markit/.venv/Scripts/Activate.ps1
+(markit) PS C:\Users\user\Documents\markit> markit model add
+? Select a provider credential to use: gemini (gemini)
+Fetching models for gemini... 54 models found
+? Select a model (type to search): models/gemini-2.5-flash-lite [text, vision]
+? Enter a display name for this configuration: models/gemini-2.5-flash-lite
+Failed to update config: 'charmap' codec can't encode character '\u2264' in position 550: character maps to <undefined>
+```
 
 ### 进展
 
-#### 问题分析
+**已完成** - v0.1.6 所有核心改进已实施并通过 CI 验证 (1384 passed)。
 
-基于 `docs/fail_logs/20260113_windows_powershell_test.txt` 和 `docs/fail_output/` 的深度分析，识别出以下核心问题：
+#### Bug 修复 (2026-01-14)
 
-1. **无效 Chunk YAML（严重）**
-   - **现象**：输出 Markdown 中存在多个散落的 frontmatter 块
-   - **根因**：每个 chunk 都使用相同的 prompt，包含生成 frontmatter 的指令
+1. **`complete_with_concurrent_fallback` 路由策略支持**
+   - **问题**：配置 `strategy: "round_robin"` 或 `strategy: "least_pending"` 时，`complete_with_concurrent_fallback` 方法直接使用 `candidates[0]`，完全忽略路由策略配置
+   - **根因**：该方法只优先使用 `_last_successful_provider`，然后直接取第一个候选，没有调用 `_select_best_provider()`
+   - **修复**：
+     - `cost_first` 策略：保留 `_last_successful_provider` 优先逻辑（稳定性优先）
+     - `round_robin`/`least_pending` 策略：调用 `_select_best_provider()` 选择主模型，并更新 `_current_index`
+   - **文件**：`llm/manager.py:1026-1055`
 
-2. **格式未规整（中等）**
-   - **现象**：标题前后空行不规范，LLM 输出与原始转换基本一致
-   - **根因**：`ENHANCEMENT_PROMPT` 中的格式规则不够具体
+2. **Fallback 选择后更新 `_current_index`**
+   - **问题**：fallback 选择时调用了 `_select_best_provider`，但没有更新 `_current_index`，导致并发场景下多个超时请求的 fallback 都选择同一个模型
+   - **根因**：三个请求相隔 5-6 秒超时，但都读取到同一个 `_current_index` 值
+   - **修复**：fallback 选择后也更新 `_current_index`
+   - **文件**：`llm/manager.py:1120-1122`
 
-3. **内容未清洗（中等）**
-   - **现象**：零散文本、图表残留（坐标轴数字、图例等）未清理
-   - **根因**：`ENHANCEMENT_PROMPT` 中的清理规则太笼统，缺少具体示例
+3. **日志路径简化扩展**
+   - **问题**：`_simplify_file_paths` 只处理 `file` 键，其他路径键（`original`, `converted`, `path`, `output`, `output_dir`, `input_dir`）仍显示完整路径
+   - **用户需求**：除了最后一行 "Batch complete" 之外，所有路径都应简化为文件名
+   - **修复**：
+     - 扩展 `_PATH_KEYS_TO_SIMPLIFY` 包含所有路径键
+     - 最后一行使用 `task_output` 字段保留完整路径
+   - **文件**：`utils/logging.py:316-329`, `core/state.py:274`
 
-4. **API 错误频繁（低）**
-   - **现象**：`httpx.ConnectError`、`httpx.ReadError`、超时
-   - **根因**：待分析（需进一步确认是网络问题还是配置问题）
+#### 问题一修复：Windows 字符编码
 
-#### 第一次实现尝试（已回滚）
+- **根因**：Windows 默认使用 cp1252/GBK 编码，而非 UTF-8
+- **修复方案**：
+  | 级别 | 文件 | 修改内容 |
+  |------|------|----------|
+  | P0 | `cli/commands/model.py:244,295` | YAML 读写添加 `encoding="utf-8"` |
+  | P0 | `cli/commands/provider.py:129,182` | YAML 读写添加 `encoding="utf-8"` |
+  | P1 | `utils/flow_control.py:351,366,521` | JSON 读写添加 `encoding="utf-8", ensure_ascii=False` |
+  | P1 | `cli/commands/provider.py:982` | JSON 缓存写入添加编码 |
+  | P2 | `converters/office.py:279,418` | stderr 解码使用 `decode('utf-8', errors='replace')` |
+  | P2 | `converters/pandoc.py:140,249,274,288,314` | subprocess 添加 `encoding="utf-8", errors="replace"` |
 
-首次实现采用了以下方案，但经分析存在严重设计缺陷，已全部回滚：
+#### 问题二修复：并发架构重构
 
-| 修改 | 设计缺陷 |
-|------|----------|
-| 新增 `ENHANCEMENT_PROMPT_CONTINUATION_*` 续段 Prompt（不含 frontmatter 指令） | 如果关键 entities/topics 在文档后半部分，会丢失元数据 |
-| `_remove_intermediate_frontmatter()` 正则清理中间 frontmatter | 可能误删文档中的 YAML 代码块示例 |
-| Pipeline 后处理调用 `format_markdown(ensure_h2_start=True)` | 会破坏 LLM 已处理的标题结构（如 PPT 各 slide 标题） |
-| `MarkdownCleaner` 新增图表残留正则模式 | 正则无法理解语义，风险高（误删数字列表、有效内容） |
-| `retry_count` 从 2 增至 3 | 创可贴方案，未深入分析根因 |
+采用 **Plan C - 两层并发控制** 方案：
 
-**核心问题**：违反了"程序提取、LLM 清理"的职责分离原则。试图用程序正则来弥补 LLM 清理不彻底的问题，而非优化 Prompt。
+1. **配置层** (`config/constants.py`, `config/settings.py`)：
+   - 新增 `chunk_workers` (默认 6)
+   - 新增 `AdaptiveConfig` (AIMD 参数)
+   - 新增 `RoutingConfig` (路由策略)
 
-#### 新方案设计（已完成）
+2. **ProviderManager 智能路由** (`llm/manager.py`)：
+   - 每 credential 独立 AIMD 限流器 (`_credential_limiters`)
+   - 智能路由 `least_pending` 策略：`cost × cost_weight + load × load_weight`
+   - 请求计数追踪 (`_credential_pending`)
 
-遵循 CLAUDE.md 中的核心设计原则，采用纯 Prompt 优化方案：
+3. **LLMOrchestrator 每文件独立 semaphore** (`services/llm_orchestrator.py`)：
+   - 移除全局 `_chunk_semaphore`
+   - 每个文件创建独立 `asyncio.Semaphore(chunk_concurrency)`
+   - 防止大文档独占所有并发槽
 
-##### 1. 多 Chunk 元数据策略
+4. **测试修复**：
+   - `test_round_robin_load_balancing` 显式配置 `round_robin` 策略
+
+详细设计见 `docs/016-SPEC.md`。
+
+---
+
+问题二原始记录：
+
+5 个文件的 LLM 分析（无图片分析，未开 Verbose 模式）任务耗时（第一次执行，日志见 /mnt/c/Users/user/Documents/markit/.logs/batch_20260113_233226_7402b527.log）:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Prompt 设计                                │
-├─────────────────────────────────────────────────────────────────┤
-│ 首 Chunk:  生成完整 frontmatter (entities, topics, ...)        │
-│ 续 Chunk:  生成 partial_metadata (仅新增的 entities, topics)   │
-│            明确指令："不要生成 --- frontmatter 块"              │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    合并策略 (Enhancer)                          │
-├─────────────────────────────────────────────────────────────────┤
-│ 1. 解析首 chunk 的 frontmatter                                  │
-│ 2. 解析续 chunk 末尾的 partial_metadata JSON                    │
-│ 3. 合并去重：entities = set(all_entities)                       │
-│ 4. 注入最终 frontmatter 到输出开头                              │
-└─────────────────────────────────────────────────────────────────┘
+Batch Statistics:
+Complete: 5 success, 0 failed
+Total: 870s | Init: 5s | Process: 865s | LLM: 859s
+Tokens: 307,527 | Est. cost: $0.1012
+Models used: deepseek-chat(5)
 ```
 
-##### 2. Prompt 优化方向
+5 个文件的 LLM 分析（无图片分析，开了 Verbose 模式）任务耗时（第二次执行，日志见 /mnt/c/Users/user/Documents/markit/.logs/batch_20260114_000012_0cd682ed.log）:
 
-**src/markit/llm/enhancer.py** 中的 `ENHANCEMENT_PROMPT_*`:
+```
+Batch Statistics:
+Complete: 5 success, 0 failed
+Total: 795s | Init: 1s | Process: 794s | LLM: 789s
+Tokens: 385,795 | Est. cost: $0.0881
+Models used: models/gemini-2.5-flash-lite(5)
+```
 
-1. **格式规则具体化**：
-   - 标题前后各保留一个空行
-   - 表格前后各保留一个空行
-   - 代码块保持原样，不要修改缩进
+5 个文件的 LLM 分析 + 图片分析任务耗时（日志见 /mnt/c/Users/user/Documents/markit/.logs/batch_20260113_230432_c3a53b8c.log）:
 
-2. **图表残留清理示例**：
-   ```
-   删除以下类型的无意义文本：
-   - 坐标轴刻度：如单独的 "0", "10", "20", "30" 数字行
-   - 图例标签：如 "Series1", "Category A", "Row 1" 等孤立文本
-   - 图表组件：如 "Legend", "Title", "X-axis", "Y-axis"
-   ```
-
-3. **PPT 标题层级规则**（明确写入 Prompt）：
-   ```
-   对于 PPT/PPTX 文档：
-   - 每张幻灯片标题 → ## (h2)
-   - 幻灯片内的一级标题 → ### (h3)
-   - 幻灯片内的二级标题 → #### (h4)
-   ```
-
-4. **续 Chunk 指令**：
-   ```
-   【重要】这是文档的第 N 段（非首段）：
-   1. 不要生成 YAML frontmatter 块（--- ... ---）
-   2. 在文档末尾以 JSON 格式输出本段新发现的实体和主题：
-      <!-- PARTIAL_METADATA: {"entities": [...], "topics": [...]} -->
-   ```
-
-##### 3. 实施计划
-
-| 阶段 | 文件 | 修改内容 | 状态 |
-|------|------|----------|------|
-| P0 | `src/markit/llm/enhancer.py` | 新增 `ENHANCEMENT_PROMPT_CONTINUATION_*` 续段 Prompt | ✅ |
-| P0 | `src/markit/llm/enhancer.py` | 新增 `_extract_partial_metadata()` 提取方法 | ✅ |
-| P0 | `src/markit/llm/enhancer.py` | 修改 `enhance()` 流程支持多 chunk 元数据收集 | ✅ |
-| P0 | `src/markit/llm/enhancer.py` | 修改 `_inject_frontmatter()` 支持 partial_metadata 合并 | ✅ |
-| P1 | `tests/unit/llm/test_enhancer.py` | 新增 12 个多 chunk 元数据合并测试 | ✅ |
-| P2 | `docs/fail_logs/` | 深入分析 API 错误日志，确认是否为网络问题 | 跳过（网络问题） |
-
-##### 4. 验证标准
-
-1. ✅ 多 chunk 文档只有一个 frontmatter（开头）
-2. ✅ 后续 chunk 中的 entities/topics 被正确合并到 frontmatter
-3. ✅ 不使用正则删除任何文档内容（交给 LLM 判断）
-4. ✅ PPT 标题层级规则已写入续段 Prompt
-
-##### 5. 专家复盘后改进 (2026-01-13)
-
-基于 `docs/015-REVIEW.md` 专家分析，追加以下修复：
-
-| 问题 | 修复内容 | 文件 |
-|------|----------|------|
-| description 切块问题 | 续段输出 `key_points`，合并到 description | `enhancer.py` |
-| batch 模式无 post-processing | 在 `create_enhancement_task` 添加格式化 | `llm_orchestrator.py` |
-| 标题后无空行 | 修复 `_normalize_headings` | `formatter.py` |
-| chunk 并发失控 | 新增 `chunk_concurrency` 参数和 semaphore | `llm_orchestrator.py` |
-| CRLF 问题 | 格式化前 normalize 换行符 | `llm_orchestrator.py` |
-
-**不采纳的建议**（违反"程序提取，LLM 清理"原则）：
-- P0-5（frontmatter regex 收窄）- 新方案不用正则删 frontmatter
-- P1-6（图表残留 deterministic 清理）- 应优化 Prompt，不加正则
-
-##### 6. 第二次复盘改进 (2026-01-13)
-
-基于进一步代码审查，追加以下优化：
-
-| 问题 | 修复内容 | 文件 |
-|------|----------|------|
-| 配置命名不一致 | `*_prompt` → `*_prompt_file`，语义更清晰 | `settings.py` |
-| 标题层级规则错误 | `_fix_heading_levels` 从仅改 h1 → 所有标题下移一级 | `formatter.py` |
-| Cleaner 职责混乱 | 移除内容清洗规则，仅保留格式规则，内容交给 LLM | `formatter.py` |
-| Prompts 硬编码 | 迁移到 `src/markit/config/prompts/`，使用 `get_prompt()` 加载 | `enhancer.py`, `settings.py` |
-| key_points 冗余 | 从 continuation prompts 和代码中移除（方案 D 简化） | `enhancer.py`, prompts |
-| description 策略缺失 | 新增 `description_strategy` 配置（first_chunk/separate_call/none） | `settings.py` |
-
-**关键设计变更**：
-
-1. **PromptConfig 新增字段**：
-   - `image_analysis_prompt_file`、`enhancement_prompt_file`、`summary_prompt_file`
-   - `description_strategy`: `"first_chunk"` (默认) / `"separate_call"` / `"none"`
-
-2. **`_fix_heading_levels` 行为变更**：
-   - 旧：仅将 h1 改为 h2
-   - 新：若文档以 h1 开头，所有标题下移一级 (h1→h2, h2→h3, ..., h6 保持)
-
-3. **MarkdownCleaner 精简**：
-   - 保留：`zero_width`、`empty_links`、`html_comments`
-   - 移除：`page_numbers`、`separator_lines`、`repeated_chars`（交给 LLM）
-
-4. **Prompts 文件化**：
-   - `enhancement_zh.md` / `enhancement_en.md`
-   - `enhancement_continuation_zh.md` / `enhancement_continuation_en.md`
-   - `summary_zh.md` / `summary_en.md`
-   - `image_analysis_zh.md` / `image_analysis_en.md`
-
-##### 7. CI 验证
-
-- 1384 tests passed, 5 skipped
-- 0 type errors
-- Lint checks passed
-
-### 状态
-
-**已完成** - v0.1.5 所有核心改进已实施并通过 CI 验证。
-
+```
+Batch Statistics:
+Complete: 5 success, 0 failed
+Total: 923s | Init: 6s | Process: 917s | LLM: 911s
+Tokens: 567,208 | Est. cost: $0.3713
+Models used: models/gemini-3-flash-preview(134), deepseek-chat(5)
+```
 
 ## 任务批次 2026011202 - v0.2.0
 
@@ -873,3 +794,195 @@ llm:
 ### 进展
 
 ✅ 已完成
+
+
+## 任务批次 2026011302 - v0.1.5
+
+### 任务
+
+命令和终端完整输出信息参考: `docs/fail_logs/20260113_windows_powershell_test.txt`
+
+处理结果参考: `docs/fail_output`
+
+请深度分析上面终端输出，全量识别其中的问题，基于本项目库代码，制定修复方案。
+
+包括但不限于：
+1. 终端输出：大量 API 报错;
+2. 输出格式：
+   1. 如 `docs/fail_output/2.Hello OCS源码剖析.doc.md` 和 `docs/fail_output/OCS计费原理与实现(排版后).doc.md`，输出 Markdown 中存在大量无效 Chunk YAML
+   2. 如 `docs/fail_output/CBS架构演进规划201605 V0.5.pptx.md`，header 没有遵循前后各一行空行的要求，同时未做内容规整，LLM 处理后的格式跟直接使用工具转换出来的内容基本一致，未达到使用 LLM 来规整内容的目的
+   3. 如 `docs/fail_output/预付费业务信令流程规范（V4.0）.doc.md`，同样存在内容未规整、零散的不成意义的文本散落在正文中，意味不明，未作清洗
+
+备注：上述命令测试和处理结果在 Windows PowerShell 环境执行，此处需根据其日志和交付件深入推理分析。
+
+### 进展
+
+#### 问题分析
+
+基于 `docs/fail_logs/20260113_windows_powershell_test.txt` 和 `docs/fail_output/` 的深度分析，识别出以下核心问题：
+
+1. **无效 Chunk YAML（严重）**
+   - **现象**：输出 Markdown 中存在多个散落的 frontmatter 块
+   - **根因**：每个 chunk 都使用相同的 prompt，包含生成 frontmatter 的指令
+
+2. **格式未规整（中等）**
+   - **现象**：标题前后空行不规范，LLM 输出与原始转换基本一致
+   - **根因**：`ENHANCEMENT_PROMPT` 中的格式规则不够具体
+
+3. **内容未清洗（中等）**
+   - **现象**：零散文本、图表残留（坐标轴数字、图例等）未清理
+   - **根因**：`ENHANCEMENT_PROMPT` 中的清理规则太笼统，缺少具体示例
+
+4. **API 错误频繁（低）**
+   - **现象**：`httpx.ConnectError`、`httpx.ReadError`、超时
+   - **根因**：待分析（需进一步确认是网络问题还是配置问题）
+
+#### 第一次实现尝试（已回滚）
+
+首次实现采用了以下方案，但经分析存在严重设计缺陷，已全部回滚：
+
+| 修改 | 设计缺陷 |
+|------|----------|
+| 新增 `ENHANCEMENT_PROMPT_CONTINUATION_*` 续段 Prompt（不含 frontmatter 指令） | 如果关键 entities/topics 在文档后半部分，会丢失元数据 |
+| `_remove_intermediate_frontmatter()` 正则清理中间 frontmatter | 可能误删文档中的 YAML 代码块示例 |
+| Pipeline 后处理调用 `format_markdown(ensure_h2_start=True)` | 会破坏 LLM 已处理的标题结构（如 PPT 各 slide 标题） |
+| `MarkdownCleaner` 新增图表残留正则模式 | 正则无法理解语义，风险高（误删数字列表、有效内容） |
+| `retry_count` 从 2 增至 3 | 创可贴方案，未深入分析根因 |
+
+**核心问题**：违反了"程序提取、LLM 清理"的职责分离原则。试图用程序正则来弥补 LLM 清理不彻底的问题，而非优化 Prompt。
+
+#### 新方案设计（已完成）
+
+遵循 CLAUDE.md 中的核心设计原则，采用纯 Prompt 优化方案：
+
+##### 1. 多 Chunk 元数据策略
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Prompt 设计                                │
+├─────────────────────────────────────────────────────────────────┤
+│ 首 Chunk:  生成完整 frontmatter (entities, topics, ...)        │
+│ 续 Chunk:  生成 partial_metadata (仅新增的 entities, topics)   │
+│            明确指令："不要生成 --- frontmatter 块"              │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    合并策略 (Enhancer)                          │
+├─────────────────────────────────────────────────────────────────┤
+│ 1. 解析首 chunk 的 frontmatter                                  │
+│ 2. 解析续 chunk 末尾的 partial_metadata JSON                    │
+│ 3. 合并去重：entities = set(all_entities)                       │
+│ 4. 注入最终 frontmatter 到输出开头                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+##### 2. Prompt 优化方向
+
+**src/markit/llm/enhancer.py** 中的 `ENHANCEMENT_PROMPT_*`:
+
+1. **格式规则具体化**：
+   - 标题前后各保留一个空行
+   - 表格前后各保留一个空行
+   - 代码块保持原样，不要修改缩进
+
+2. **图表残留清理示例**：
+   ```
+   删除以下类型的无意义文本：
+   - 坐标轴刻度：如单独的 "0", "10", "20", "30" 数字行
+   - 图例标签：如 "Series1", "Category A", "Row 1" 等孤立文本
+   - 图表组件：如 "Legend", "Title", "X-axis", "Y-axis"
+   ```
+
+3. **PPT 标题层级规则**（明确写入 Prompt）：
+   ```
+   对于 PPT/PPTX 文档：
+   - 每张幻灯片标题 → ## (h2)
+   - 幻灯片内的一级标题 → ### (h3)
+   - 幻灯片内的二级标题 → #### (h4)
+   ```
+
+4. **续 Chunk 指令**：
+   ```
+   【重要】这是文档的第 N 段（非首段）：
+   1. 不要生成 YAML frontmatter 块（--- ... ---）
+   2. 在文档末尾以 JSON 格式输出本段新发现的实体和主题：
+      <!-- PARTIAL_METADATA: {"entities": [...], "topics": [...]} -->
+   ```
+
+##### 3. 实施计划
+
+| 阶段 | 文件 | 修改内容 | 状态 |
+|------|------|----------|------|
+| P0 | `src/markit/llm/enhancer.py` | 新增 `ENHANCEMENT_PROMPT_CONTINUATION_*` 续段 Prompt | ✅ |
+| P0 | `src/markit/llm/enhancer.py` | 新增 `_extract_partial_metadata()` 提取方法 | ✅ |
+| P0 | `src/markit/llm/enhancer.py` | 修改 `enhance()` 流程支持多 chunk 元数据收集 | ✅ |
+| P0 | `src/markit/llm/enhancer.py` | 修改 `_inject_frontmatter()` 支持 partial_metadata 合并 | ✅ |
+| P1 | `tests/unit/llm/test_enhancer.py` | 新增 12 个多 chunk 元数据合并测试 | ✅ |
+| P2 | `docs/fail_logs/` | 深入分析 API 错误日志，确认是否为网络问题 | 跳过（网络问题） |
+
+##### 4. 验证标准
+
+1. ✅ 多 chunk 文档只有一个 frontmatter（开头）
+2. ✅ 后续 chunk 中的 entities/topics 被正确合并到 frontmatter
+3. ✅ 不使用正则删除任何文档内容（交给 LLM 判断）
+4. ✅ PPT 标题层级规则已写入续段 Prompt
+
+##### 5. 专家复盘后改进 (2026-01-13)
+
+基于 `docs/015-REVIEW.md` 专家分析，追加以下修复：
+
+| 问题 | 修复内容 | 文件 |
+|------|----------|------|
+| description 切块问题 | 续段输出 `key_points`，合并到 description | `enhancer.py` |
+| batch 模式无 post-processing | 在 `create_enhancement_task` 添加格式化 | `llm_orchestrator.py` |
+| 标题后无空行 | 修复 `_normalize_headings` | `formatter.py` |
+| chunk 并发失控 | 新增 `chunk_concurrency` 参数和 semaphore | `llm_orchestrator.py` |
+| CRLF 问题 | 格式化前 normalize 换行符 | `llm_orchestrator.py` |
+
+**不采纳的建议**（违反"程序提取，LLM 清理"原则）：
+- P0-5（frontmatter regex 收窄）- 新方案不用正则删 frontmatter
+- P1-6（图表残留 deterministic 清理）- 应优化 Prompt，不加正则
+
+##### 6. 第二次复盘改进 (2026-01-13)
+
+基于进一步代码审查，追加以下优化：
+
+| 问题 | 修复内容 | 文件 |
+|------|----------|------|
+| 配置命名不一致 | `*_prompt` → `*_prompt_file`，语义更清晰 | `settings.py` |
+| 标题层级规则错误 | `_fix_heading_levels` 从仅改 h1 → 所有标题下移一级 | `formatter.py` |
+| Cleaner 职责混乱 | 移除内容清洗规则，仅保留格式规则，内容交给 LLM | `formatter.py` |
+| Prompts 硬编码 | 迁移到 `src/markit/config/prompts/`，使用 `get_prompt()` 加载 | `enhancer.py`, `settings.py` |
+| key_points 冗余 | 从 continuation prompts 和代码中移除（方案 D 简化） | `enhancer.py`, prompts |
+| description 策略缺失 | 新增 `description_strategy` 配置（first_chunk/separate_call/none） | `settings.py` |
+
+**关键设计变更**：
+
+1. **PromptConfig 新增字段**：
+   - `image_analysis_prompt_file`、`enhancement_prompt_file`、`summary_prompt_file`
+   - `description_strategy`: `"first_chunk"` (默认) / `"separate_call"` / `"none"`
+
+2. **`_fix_heading_levels` 行为变更**：
+   - 旧：仅将 h1 改为 h2
+   - 新：若文档以 h1 开头，所有标题下移一级 (h1→h2, h2→h3, ..., h6 保持)
+
+3. **MarkdownCleaner 精简**：
+   - 保留：`zero_width`、`empty_links`、`html_comments`
+   - 移除：`page_numbers`、`separator_lines`、`repeated_chars`（交给 LLM）
+
+4. **Prompts 文件化**：
+   - `enhancement_zh.md` / `enhancement_en.md`
+   - `enhancement_continuation_zh.md` / `enhancement_continuation_en.md`
+   - `summary_zh.md` / `summary_en.md`
+   - `image_analysis_zh.md` / `image_analysis_en.md`
+
+##### 7. CI 验证
+
+- 1384 tests passed, 5 skipped
+- 0 type errors
+- Lint checks passed
+
+### 状态
+
+**已完成** - v0.1.5 所有核心改进已实施并通过 CI 验证。

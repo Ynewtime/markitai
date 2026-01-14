@@ -9,8 +9,10 @@ import pytest
 from markit.utils.logging import (
     SafeStreamHandler,
     _add_separator,
+    _extract_filename,
     _filter_event_dict,
     _inject_request_context,
+    _simplify_file_paths,
     _truncate_base64,
     clear_request_context,
     create_task_log_path,
@@ -532,3 +534,125 @@ class TestSetupTaskLogging:
 
         # Just verify it doesn't raise
         assert task_id is not None
+
+
+class TestExtractFilename:
+    """Tests for _extract_filename function."""
+
+    def test_extracts_from_unix_path(self):
+        """Test extracting filename from Unix-style path."""
+        result = _extract_filename("/home/user/documents/test.pdf")
+        assert result == "test.pdf"
+
+    def test_extracts_from_windows_path(self):
+        """Test extracting filename from Windows-style path."""
+        result = _extract_filename(r"C:\Users\user\Documents\test.pdf")
+        assert result == "test.pdf"
+
+    def test_extracts_from_mixed_path(self):
+        """Test extracting filename from mixed path separators."""
+        result = _extract_filename("C:\\Users/documents\\folder/test.pdf")
+        assert result == "test.pdf"
+
+    def test_returns_filename_if_no_path(self):
+        """Test that simple filename is returned unchanged."""
+        result = _extract_filename("test.pdf")
+        assert result == "test.pdf"
+
+    def test_handles_empty_string(self):
+        """Test handling of empty string."""
+        result = _extract_filename("")
+        assert result == ""
+
+
+class TestSimplifyFilePaths:
+    """Tests for _simplify_file_paths processor."""
+
+    def test_simplifies_file_key(self):
+        """Test that 'file' key is simplified."""
+        event_dict = {"event": "test", "file": r"C:\Users\docs\example.pdf"}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["file"] == "example.pdf"
+
+    def test_simplifies_original_key(self):
+        """Test that 'original' key is simplified."""
+        event_dict = {"event": "test", "original": r"C:\input\source.doc"}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["original"] == "source.doc"
+
+    def test_simplifies_converted_key(self):
+        """Test that 'converted' key is simplified."""
+        event_dict = {"event": "test", "converted": r"C:\output\result.xlsx"}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["converted"] == "result.xlsx"
+
+    def test_simplifies_path_key(self):
+        """Test that 'path' key is simplified."""
+        event_dict = {"event": "test", "path": r"C:\output\document.md"}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["path"] == "document.md"
+
+    def test_simplifies_image_path_key(self):
+        """Test that 'image_path' key is simplified."""
+        event_dict = {"event": "test", "image_path": r"C:\temp\tmpz8qlnv6z"}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["image_path"] == "tmpz8qlnv6z"
+
+    def test_simplifies_filename_key(self):
+        """Test that 'filename' key is simplified."""
+        event_dict = {"event": "test", "filename": "/var/data/image.png"}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["filename"] == "image.png"
+
+    def test_simplifies_output_key(self):
+        """Test that 'output' key is simplified (intermediate logs)."""
+        event_dict = {"event": "test", "output": r"C:\Users\output\final.md"}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["output"] == "final.md"
+
+    def test_simplifies_output_path_key(self):
+        """Test that 'output_path' key is simplified."""
+        event_dict = {"event": "test", "output_path": r"C:\Users\output\final.md"}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["output_path"] == "final.md"
+
+    def test_simplifies_output_dir_key(self):
+        """Test that 'output_dir' key is simplified."""
+        event_dict = {"event": "test", "output_dir": r"C:\Users\output\assets"}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["output_dir"] == "assets"
+
+    def test_preserves_task_output_key(self):
+        """Test that 'task_output' key keeps full path (for Batch complete log)."""
+        event_dict = {"event": "test", "task_output": r"C:\Users\output"}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["task_output"] == r"C:\Users\output"
+
+    def test_handles_non_string_values(self):
+        """Test that non-string values are not modified."""
+        event_dict = {"event": "test", "file": 12345}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["file"] == 12345
+
+    def test_handles_empty_string_values(self):
+        """Test that empty string values are not modified."""
+        event_dict = {"event": "test", "file": ""}
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["file"] == ""
+
+    def test_simplifies_multiple_keys(self):
+        """Test that multiple path keys are simplified."""
+        event_dict = {
+            "event": "test",
+            "file": r"C:\Users\docs\example.pdf",
+            "original": r"C:\input\source.doc",
+            "converted": r"C:\output\result.xlsx",
+            "output": r"C:\final\output.md",  # Now simplified
+            "task_output": r"C:\final\batch_output",  # Preserved
+        }
+        result = _simplify_file_paths(None, "", event_dict)
+        assert result["file"] == "example.pdf"
+        assert result["original"] == "source.doc"
+        assert result["converted"] == "result.xlsx"
+        assert result["output"] == "output.md"  # Now simplified
+        assert result["task_output"] == r"C:\final\batch_output"  # Preserved
