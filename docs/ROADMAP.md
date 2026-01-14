@@ -1,221 +1,16 @@
 # ROADMAP
 
-## 任务批次 2026011401 - v0.1.6
+## 任务批次 2026011403 - v0.2.1
 
-问题一:
-
-```
-PS C:\Users\user\Documents\markit> & C:/Users/user/Documents/markit/.venv/Scripts/Activate.ps1
-(markit) PS C:\Users\user\Documents\markit> markit model add
-? Select a provider credential to use: gemini (gemini)
-Fetching models for gemini... 54 models found
-? Select a model (type to search): models/gemini-2.5-flash-lite [text, vision]
-? Enter a display name for this configuration: models/gemini-2.5-flash-lite
-Failed to update config: 'charmap' codec can't encode character '\u2264' in position 550: character maps to <undefined>
-```
+**本地 OCR 能力**：引入 RapidOCR + PaddleOCR 双引擎方案，支持离线中文 OCR，同时保留 PDF 图片提取能力。OCR 方案调研详见 [OCR 方案研究报告](./reference/ocr.md)。
 
 ### 进展
 
-**已完成** - v0.1.6 所有核心改进已实施并通过 CI 验证 (1384 passed)。
+待开始
 
-#### Bug 修复 (2026-01-14)
+## 任务批次 2026011402 - v0.2.0
 
-1. **`complete_with_concurrent_fallback` 路由策略支持**
-   - **问题**：配置 `strategy: "round_robin"` 或 `strategy: "least_pending"` 时，`complete_with_concurrent_fallback` 方法直接使用 `candidates[0]`，完全忽略路由策略配置
-   - **根因**：该方法只优先使用 `_last_successful_provider`，然后直接取第一个候选，没有调用 `_select_best_provider()`
-   - **修复**：
-     - `cost_first` 策略：保留 `_last_successful_provider` 优先逻辑（稳定性优先）
-     - `round_robin`/`least_pending` 策略：调用 `_select_best_provider()` 选择主模型，并更新 `_current_index`
-   - **文件**：`llm/manager.py:1026-1055`
-
-2. **Fallback 选择后更新 `_current_index`**
-   - **问题**：fallback 选择时调用了 `_select_best_provider`，但没有更新 `_current_index`，导致并发场景下多个超时请求的 fallback 都选择同一个模型
-   - **根因**：三个请求相隔 5-6 秒超时，但都读取到同一个 `_current_index` 值
-   - **修复**：fallback 选择后也更新 `_current_index`
-   - **文件**：`llm/manager.py:1120-1122`
-
-3. **日志路径简化扩展**
-   - **问题**：`_simplify_file_paths` 只处理 `file` 键，其他路径键（`original`, `converted`, `path`, `output`, `output_dir`, `input_dir`）仍显示完整路径
-   - **用户需求**：除了最后一行 "Batch complete" 之外，所有路径都应简化为文件名
-   - **修复**：
-     - 扩展 `_PATH_KEYS_TO_SIMPLIFY` 包含所有路径键
-     - 最后一行使用 `task_output` 字段保留完整路径
-   - **文件**：`utils/logging.py:316-329`, `core/state.py:274`
-
-#### 问题一修复：Windows 字符编码
-
-- **根因**：Windows 默认使用 cp1252/GBK 编码，而非 UTF-8
-- **修复方案**：
-  | 级别 | 文件 | 修改内容 |
-  |------|------|----------|
-  | P0 | `cli/commands/model.py:244,295` | YAML 读写添加 `encoding="utf-8"` |
-  | P0 | `cli/commands/provider.py:129,182` | YAML 读写添加 `encoding="utf-8"` |
-  | P1 | `utils/flow_control.py:351,366,521` | JSON 读写添加 `encoding="utf-8", ensure_ascii=False` |
-  | P1 | `cli/commands/provider.py:982` | JSON 缓存写入添加编码 |
-  | P2 | `converters/office.py:279,418` | stderr 解码使用 `decode('utf-8', errors='replace')` |
-  | P2 | `converters/pandoc.py:140,249,274,288,314` | subprocess 添加 `encoding="utf-8", errors="replace"` |
-
-#### 问题二修复：并发架构重构
-
-采用 **Plan C - 两层并发控制** 方案：
-
-1. **配置层** (`config/constants.py`, `config/settings.py`)：
-   - 新增 `chunk_workers` (默认 6)
-   - 新增 `AdaptiveConfig` (AIMD 参数)
-   - 新增 `RoutingConfig` (路由策略)
-
-2. **ProviderManager 智能路由** (`llm/manager.py`)：
-   - 每 credential 独立 AIMD 限流器 (`_credential_limiters`)
-   - 智能路由 `least_pending` 策略：`cost × cost_weight + load × load_weight`
-   - 请求计数追踪 (`_credential_pending`)
-
-3. **LLMOrchestrator 每文件独立 semaphore** (`services/llm_orchestrator.py`)：
-   - 移除全局 `_chunk_semaphore`
-   - 每个文件创建独立 `asyncio.Semaphore(chunk_concurrency)`
-   - 防止大文档独占所有并发槽
-
-4. **测试修复**：
-   - `test_round_robin_load_balancing` 显式配置 `round_robin` 策略
-
-详细设计见 `docs/016-SPEC.md`。
-
----
-
-问题二原始记录：
-
-5 个文件的 LLM 分析（无图片分析，未开 Verbose 模式）任务耗时（第一次执行，日志见 /mnt/c/Users/user/Documents/markit/.logs/batch_20260113_233226_7402b527.log）:
-
-```
-Batch Statistics:
-Complete: 5 success, 0 failed
-Total: 870s | Init: 5s | Process: 865s | LLM: 859s
-Tokens: 307,527 | Est. cost: $0.1012
-Models used: deepseek-chat(5)
-```
-
-5 个文件的 LLM 分析（无图片分析，开了 Verbose 模式）任务耗时（第二次执行，日志见 /mnt/c/Users/user/Documents/markit/.logs/batch_20260114_000012_0cd682ed.log）:
-
-```
-Batch Statistics:
-Complete: 5 success, 0 failed
-Total: 795s | Init: 1s | Process: 794s | LLM: 789s
-Tokens: 385,795 | Est. cost: $0.0881
-Models used: models/gemini-2.5-flash-lite(5)
-```
-
-5 个文件的 LLM 分析 + 图片分析任务耗时（日志见 /mnt/c/Users/user/Documents/markit/.logs/batch_20260113_230432_c3a53b8c.log）:
-
-```
-Batch Statistics:
-Complete: 5 success, 0 failed
-Total: 923s | Init: 6s | Process: 917s | LLM: 911s
-Tokens: 567,208 | Est. cost: $0.3713
-Models used: models/gemini-3-flash-preview(134), deepseek-chat(5)
-```
-
-## 任务批次 2026011202 - v0.2.0
-
-### 原始需求
-
-请基于 /home/tseng/src/tries/2026-01-06-markit/docs/ROADMAP.md (需求规划) 中的 [任务批次 2026011202 - v0.2.0]，结合 /home/tseng/src/tries/2026-01-06-markit/docs/020-SPEC.md (详细设计规格) 和 /home/tseng/src/tries/2026-01-06-markit/docs/reference/ocr.md (OCR调研文档) 两个文档作为参考，启动 v0.2.0 开发
-
-### 目标
-
-本版本进行**全量架构重构**，聚焦两个核心目标：
-
-1. **本地 OCR 能力**：引入 RapidOCR + PaddleOCR 双引擎方案，支持离线中文 OCR，同时保留图片提取能力
-2. **LLM 层重构**：全面切换至 LiteLLM，废弃现有 Provider 层代码
-
-详细设计参见 [v0.2.0 实施规格书](./020-SPEC.md)，OCR 方案调研详见 [OCR 方案研究报告](./reference/ocr.md)。
-
-### 任务
-
-#### 1. 本地 OCR 能力 (Local OCR)
-
-采用 **RapidOCR + PaddleOCR 双引擎方案**，实现高精度中文 OCR：
-
-| 模式 | 引擎组合 | 适用场景 |
-|------|---------|---------|
-| **默认模式** | RapidOCR + PaddleOCR | 最佳输出质量，适合重要文档 |
-| **快速模式** (`--fast`) | 仅 RapidOCR | 平衡速度与质量，适合批量处理 |
-
-*   **OCR 引擎抽象层**：
-    *   新增 `src/markit/ocr/` 模块
-    *   定义 `BaseOCREngine` 抽象接口
-    *   实现 `RapidOCREngine` (基于 `rapidocr-onnxruntime`)
-    *   实现 `PaddleOCREngine` (基于 `paddleocr`)
-    *   实现 `DualOCREngine` (双引擎并行 + 置信度融合)
-    *   实现 `create_ocr_engine()` 工厂函数
-*   **PDF 转换器集成**：
-    *   修改 `PyMuPDF4LLMConverter`，支持 OCR 模式
-    *   实现扫描件自动检测 (`_detect_scanned_pdf`)
-    *   OCR 文本提取与图片提取并行进行，不丢失内容
-*   **配置与 CLI**：
-    *   `PDFConfig` 增加 `ocr_enabled`, `ocr_auto_detect`, `ocr_dpi`, `ocr_engine` 字段
-    *   `ocr_engine` 支持 `dual` (默认) / `rapid` / `paddle` 三种模式
-    *   `ConcurrencyConfig` 增加 `ocr_workers` 字段
-    *   新增 `markit check` 命令检查环境依赖（RapidOCR + PaddleOCR 状态）
-    *   `--fast` 模式自动切换为 `rapid` 单引擎
-*   **依赖更新**：
-    *   `pyproject.toml` 核心依赖新增 `rapidocr-onnxruntime>=1.4.0`
-    *   新增可选依赖组 `ocr-full`: `paddlepaddle>=2.6.0`, `paddleocr>=2.9.0`
-    *   新增可选依赖组 `ocr-gpu`: GPU 加速支持
-
-#### 2. LLM 架构重构 (LiteLLM Migration)
-
-全量替换现有 LLM Provider 层，使用 LiteLLM 统一接口。
-
-*   **删除旧代码**：
-    *   移除 `src/markit/llm/openai.py`
-    *   移除 `src/markit/llm/anthropic.py`
-    *   移除 `src/markit/llm/gemini.py`
-    *   移除 `src/markit/llm/ollama.py`
-    *   移除 `src/markit/llm/openrouter.py`
-*   **新增实现**：
-    *   `src/markit/llm/provider.py` - LiteLLM 统一 Provider
-    *   `src/markit/llm/exceptions.py` - 异常定义
-    *   精简 `src/markit/llm/base.py` 为类型定义
-    *   重写 `src/markit/llm/manager.py`
-*   **服务层适配**：
-    *   更新 `src/markit/llm/enhancer.py`
-    *   更新 `src/markit/llm/queue.py`
-    *   更新 `src/markit/services/llm_orchestrator.py`
-    *   更新 `src/markit/image/analyzer.py`
-*   **依赖更新**：
-    *   `pyproject.toml` 新增 `litellm>=1.50.0`
-    *   移除 `openai`, `anthropic`, `google-generativeai` 直接依赖
-
-#### 3. 测试与文档
-
-*   **单元测试**：OCR 引擎、LiteLLM Provider、ProviderManager
-*   **集成测试**：PDF OCR 转换、LLM fallback
-*   **E2E 测试**：完整 OCR 工作流
-*   **性能测试**：OCR 吞吐量、内存占用
-*   **文档更新**：README、配置示例
-
-### 验收标准
-
-**OCR 功能验收：**
-*   `markit convert scanned.pdf --ocr` 成功提取扫描件文字
-*   智能图片保留：纯文字扫描件不输出图片，含插图/图表的页面保留原图到 `assets/`
-*   默认模式（dual）使用 RapidOCR + PaddleOCR 双引擎，结果融合正确
-*   `--fast` 模式自动切换为仅 RapidOCR
-*   `markit check` 正确显示 RapidOCR 和 PaddleOCR 状态
-*   仅安装 `rapidocr-onnxruntime` 时，双引擎模式降级为单引擎并给出警告
-
-**LLM 功能验收：**
-*   多模型 fallback 正常工作
-*   LiteLLM 统一接口正常调用各提供商
-
-**性能验收：**
-*   10 页扫描 PDF 双引擎 OCR 转换 < 60 秒
-*   10 页扫描 PDF 单引擎 OCR 转换 < 30 秒
-*   100 页扫描 PDF 内存峰值 < 2GB
-
-**测试验收：**
-*   单元测试覆盖率 >= 80%
-*   OCR 单元测试：RapidOCR、PaddleOCR、DualOCREngine
-*   集成测试：PDF OCR 转换、双引擎融合
+本版本进行**全量架构重构**，核心目标是 **LLM 层重构**：全面切换至 LiteLLM，废弃现有 Provider 层代码。LiteLLM 调研参考 [LiteLLM 调研报告](./reference/litellm.md)。
 
 ### 进展
 
@@ -986,3 +781,117 @@ llm:
 ### 状态
 
 **已完成** - v0.1.5 所有核心改进已实施并通过 CI 验证。
+
+
+## 任务批次 2026011401 - v0.1.6
+
+问题一:
+
+```
+PS C:\Users\user\Documents\markit> & C:/Users/user/Documents/markit/.venv/Scripts/Activate.ps1
+(markit) PS C:\Users\user\Documents\markit> markit model add
+? Select a provider credential to use: gemini (gemini)
+Fetching models for gemini... 54 models found
+? Select a model (type to search): models/gemini-2.5-flash-lite [text, vision]
+? Enter a display name for this configuration: models/gemini-2.5-flash-lite
+Failed to update config: 'charmap' codec can't encode character '\u2264' in position 550: character maps to <undefined>
+```
+
+### 进展
+
+**已完成** - v0.1.6 所有核心改进已实施并通过 CI 验证 (1384 passed)。
+
+#### Bug 修复 (2026-01-14)
+
+1. **`complete_with_concurrent_fallback` 路由策略支持**
+   - **问题**：配置 `strategy: "round_robin"` 或 `strategy: "least_pending"` 时，`complete_with_concurrent_fallback` 方法直接使用 `candidates[0]`，完全忽略路由策略配置
+   - **根因**：该方法只优先使用 `_last_successful_provider`，然后直接取第一个候选，没有调用 `_select_best_provider()`
+   - **修复**：
+     - `cost_first` 策略：保留 `_last_successful_provider` 优先逻辑（稳定性优先）
+     - `round_robin`/`least_pending` 策略：调用 `_select_best_provider()` 选择主模型，并更新 `_current_index`
+   - **文件**：`llm/manager.py:1026-1055`
+
+2. **Fallback 选择后更新 `_current_index`**
+   - **问题**：fallback 选择时调用了 `_select_best_provider`，但没有更新 `_current_index`，导致并发场景下多个超时请求的 fallback 都选择同一个模型
+   - **根因**：三个请求相隔 5-6 秒超时，但都读取到同一个 `_current_index` 值
+   - **修复**：fallback 选择后也更新 `_current_index`
+   - **文件**：`llm/manager.py:1120-1122`
+
+3. **日志路径简化扩展**
+   - **问题**：`_simplify_file_paths` 只处理 `file` 键，其他路径键（`original`, `converted`, `path`, `output`, `output_dir`, `input_dir`）仍显示完整路径
+   - **用户需求**：除了最后一行 "Batch complete" 之外，所有路径都应简化为文件名
+   - **修复**：
+     - 扩展 `_PATH_KEYS_TO_SIMPLIFY` 包含所有路径键
+     - 最后一行使用 `task_output` 字段保留完整路径
+   - **文件**：`utils/logging.py:316-329`, `core/state.py:274`
+
+#### 问题一修复：Windows 字符编码
+
+- **根因**：Windows 默认使用 cp1252/GBK 编码，而非 UTF-8
+- **修复方案**：
+  | 级别 | 文件 | 修改内容 |
+  |------|------|----------|
+  | P0 | `cli/commands/model.py:244,295` | YAML 读写添加 `encoding="utf-8"` |
+  | P0 | `cli/commands/provider.py:129,182` | YAML 读写添加 `encoding="utf-8"` |
+  | P1 | `utils/flow_control.py:351,366,521` | JSON 读写添加 `encoding="utf-8", ensure_ascii=False` |
+  | P1 | `cli/commands/provider.py:982` | JSON 缓存写入添加编码 |
+  | P2 | `converters/office.py:279,418` | stderr 解码使用 `decode('utf-8', errors='replace')` |
+  | P2 | `converters/pandoc.py:140,249,274,288,314` | subprocess 添加 `encoding="utf-8", errors="replace"` |
+
+#### 问题二修复：并发架构重构
+
+采用 **Plan C - 两层并发控制** 方案：
+
+1. **配置层** (`config/constants.py`, `config/settings.py`)：
+   - 新增 `chunk_workers` (默认 6)
+   - 新增 `AdaptiveConfig` (AIMD 参数)
+   - 新增 `RoutingConfig` (路由策略)
+
+2. **ProviderManager 智能路由** (`llm/manager.py`)：
+   - 每 credential 独立 AIMD 限流器 (`_credential_limiters`)
+   - 智能路由 `least_pending` 策略：`cost × cost_weight + load × load_weight`
+   - 请求计数追踪 (`_credential_pending`)
+
+3. **LLMOrchestrator 每文件独立 semaphore** (`services/llm_orchestrator.py`)：
+   - 移除全局 `_chunk_semaphore`
+   - 每个文件创建独立 `asyncio.Semaphore(chunk_concurrency)`
+   - 防止大文档独占所有并发槽
+
+4. **测试修复**：
+   - `test_round_robin_load_balancing` 显式配置 `round_robin` 策略
+
+详细设计见 `docs/016-SPEC.md`。
+
+---
+
+问题二原始记录：
+
+5 个文件的 LLM 分析（无图片分析，未开 Verbose 模式）任务耗时（第一次执行，日志见 /mnt/c/Users/user/Documents/markit/.logs/batch_20260113_233226_7402b527.log）:
+
+```
+Batch Statistics:
+Complete: 5 success, 0 failed
+Total: 870s | Init: 5s | Process: 865s | LLM: 859s
+Tokens: 307,527 | Est. cost: $0.1012
+Models used: deepseek-chat(5)
+```
+
+5 个文件的 LLM 分析（无图片分析，开了 Verbose 模式）任务耗时（第二次执行，日志见 /mnt/c/Users/user/Documents/markit/.logs/batch_20260114_000012_0cd682ed.log）:
+
+```
+Batch Statistics:
+Complete: 5 success, 0 failed
+Total: 795s | Init: 1s | Process: 794s | LLM: 789s
+Tokens: 385,795 | Est. cost: $0.0881
+Models used: models/gemini-2.5-flash-lite(5)
+```
+
+5 个文件的 LLM 分析 + 图片分析任务耗时（日志见 /mnt/c/Users/user/Documents/markit/.logs/batch_20260113_230432_c3a53b8c.log）:
+
+```
+Batch Statistics:
+Complete: 5 success, 0 failed
+Total: 923s | Init: 6s | Process: 917s | LLM: 911s
+Tokens: 567,208 | Est. cost: $0.3713
+Models used: models/gemini-3-flash-preview(134), deepseek-chat(5)
+```

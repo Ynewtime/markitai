@@ -82,7 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Markdown: formatter 97%, chunker 94%, frontmatter 100%
   - Utils/Image: fs 93%, stats 97%, concurrency 99%, analyzer 94%, extractor 96%
 
-- **LiteLLM Integration Analysis** (`docs/reference/litellm_analysis.md`, `docs/020-SPEC.md`)
+- **LiteLLM Integration Analysis** (`docs/reference/litellm_analysis_1.md`, `docs/reference/020-SPEC-1.md`)
   - Compatibility analysis with existing provider architecture
   - Migration path evaluation and risk assessment
 
