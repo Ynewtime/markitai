@@ -136,11 +136,13 @@ class PandocConverter(BaseConverter):
 
             log.debug("Running Pandoc", command=" ".join(cmd))
 
-            # Run Pandoc
+            # Run Pandoc with explicit UTF-8 for Windows compatibility
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=True,
             )
 
@@ -248,6 +250,8 @@ class PandocConverter(BaseConverter):
                 [self._pandoc_path or "pandoc", "--version"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
             )
             # First line is "pandoc X.Y.Z"
             first_line = result.stdout.split("\n")[0]
@@ -272,6 +276,8 @@ class PandocTableConverter:
             input=csv_content,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         )
         return result.stdout
@@ -286,6 +292,8 @@ class PandocTableConverter:
             input=html_content,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         )
         return result.stdout
@@ -307,6 +315,8 @@ def get_pandoc_version() -> str | None:
             [pandoc_path, "--version"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         first_line = result.stdout.split("\n")[0]
         return first_line.replace("pandoc ", "")

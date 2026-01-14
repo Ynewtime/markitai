@@ -348,7 +348,7 @@ class DeadLetterQueue:
             return
 
         try:
-            data = json.loads(self._storage_path.read_text())
+            data = json.loads(self._storage_path.read_text(encoding="utf-8"))
             for item_id, entry_data in data.items():
                 self._entries[item_id] = DLQEntry.from_dict(entry_data)
             log.debug("Loaded DLQ entries", count=len(self._entries))
@@ -363,7 +363,9 @@ class DeadLetterQueue:
         try:
             data = {item_id: entry.to_dict() for item_id, entry in self._entries.items()}
             self._storage_path.parent.mkdir(parents=True, exist_ok=True)
-            self._storage_path.write_text(json.dumps(data, indent=2))
+            self._storage_path.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
         except Exception as e:
             log.warning("Failed to save DLQ", error=str(e))
 
@@ -516,7 +518,9 @@ class DeadLetterQueue:
         """
         report = self.generate_report()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(report, indent=2))
+        output_path.write_text(
+            json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
         log.info(
             "DLQ report exported",

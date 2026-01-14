@@ -14,6 +14,7 @@ from markit.config.settings import (
 )
 from markit.exceptions import LLMError, LLMTimeoutError, ProviderNotFoundError
 from markit.llm.base import BaseLLMProvider, LLMMessage, LLMResponse
+from markit.utils.adaptive_limiter import AdaptiveRateLimiter, AIMDConfig
 from markit.utils.logging import clear_request_context, get_logger, set_request_context
 
 log = get_logger(__name__)
@@ -66,6 +67,11 @@ class ProviderManager:
 
         # Track last successful provider per capability for optimized routing
         self._last_successful_provider: dict[str, str] = {}
+
+        # Per-credential AIMD rate limiters and pending request tracking
+        self._credential_limiters: dict[str, AdaptiveRateLimiter] = {}
+        self._credential_pending: dict[str, int] = {}
+        self._limiters_initialized = False
 
     async def _load_configs(self) -> None:
         """Load configurations without initializing providers (lazy loading support)."""
@@ -134,6 +140,154 @@ class ProviderManager:
                     self._provider_costs[provider_key] = model_config.cost
 
             self._configs_loaded = True
+
+            # Initialize AIMD limiters for each credential
+            self._init_credential_limiters()
+
+    def _init_credential_limiters(self) -> None:
+        """Initialize AIMD rate limiters for each credential.
+
+        Creates one limiter per credential_id to manage concurrency per API key.
+        """
+        if self._limiters_initialized:
+            return
+
+        adaptive_config = self.config.adaptive
+        if not adaptive_config.enabled:
+            self._limiters_initialized = True
+            return
+
+        # Build AIMD config from settings
+        aimd_config = AIMDConfig(
+            initial_concurrency=adaptive_config.initial_concurrency,
+            max_concurrency=adaptive_config.max_concurrency,
+            min_concurrency=adaptive_config.min_concurrency,
+            success_threshold=adaptive_config.success_threshold,
+            multiplicative_decrease=adaptive_config.multiplicative_decrease,
+            cooldown_seconds=adaptive_config.cooldown_seconds,
+        )
+
+        # Collect unique credential IDs
+        credential_ids: set[str] = set()
+
+        for state in self._provider_states.values():
+            cred_id = state.credential_id or state.config.provider
+            credential_ids.add(cred_id)
+
+        # Create limiter for each credential
+        for cred_id in credential_ids:
+            self._credential_limiters[cred_id] = AdaptiveRateLimiter(
+                config=aimd_config,
+                on_adjust=lambda new_val, direction, cid=cred_id: log.debug(
+                    "AIMD adjustment",
+                    credential=cid,
+                    new_concurrency=new_val,
+                    direction=direction,
+                ),
+            )
+            self._credential_pending[cred_id] = 0
+
+        if credential_ids:
+            log.debug(
+                "Initialized AIMD limiters",
+                credentials=list(credential_ids),
+                initial_concurrency=adaptive_config.initial_concurrency,
+            )
+
+        self._limiters_initialized = True
+
+    def _get_credential_id(self, provider_name: str) -> str:
+        """Get the credential ID for a provider.
+
+        Args:
+            provider_name: Name of the provider
+
+        Returns:
+            Credential ID (or provider type as fallback)
+        """
+        state = self._provider_states.get(provider_name)
+        if state:
+            return state.credential_id or state.config.provider
+        return provider_name
+
+    def _select_best_provider(self, candidates: list[str]) -> str:
+        """Select the best provider using the configured routing strategy.
+
+        Args:
+            candidates: List of provider names to choose from
+
+        Returns:
+            Name of the selected provider
+        """
+        if len(candidates) == 1:
+            return candidates[0]
+
+        routing_config = self.config.routing
+        strategy = routing_config.strategy
+
+        if strategy == "cost_first":
+            # Original behavior: just use the first (cheapest) candidate
+            return candidates[0]
+
+        elif strategy == "round_robin":
+            # Simple round-robin
+            idx = self._current_index % len(candidates)
+            return candidates[idx]
+
+        else:  # least_pending (default)
+            cost_weight = routing_config.cost_weight
+            load_weight = routing_config.load_weight
+
+            best_provider = candidates[0]
+            best_score = -1.0
+
+            # Calculate cost score using actual ModelCostConfig
+            # First, collect costs for all candidates
+            costs: list[tuple[str, float]] = []
+            for provider_name in candidates:
+                cost_config = self._provider_costs.get(provider_name)
+                if cost_config:
+                    # Simple total cost estimation (input + output per 1M tokens)
+                    total_cost = cost_config.input_per_1m + cost_config.output_per_1m
+                else:
+                    # No cost config, assume high cost to deprioritize
+                    total_cost = float("inf")
+                costs.append((provider_name, total_cost))
+
+            # Find min and max costs for normalization
+            valid_costs = [c for _, c in costs if c < float("inf")]
+            if valid_costs:
+                min_cost = min(valid_costs)
+                max_cost = max(valid_costs)
+                cost_range = max_cost - min_cost if max_cost > min_cost else 1.0
+            else:
+                min_cost = 0.0
+                cost_range = 1.0
+
+            for provider_name, total_cost in costs:
+                cred_id = self._get_credential_id(provider_name)
+                limiter = self._credential_limiters.get(cred_id)
+                pending = self._credential_pending.get(cred_id, 0)
+                capacity = limiter.current_concurrency if limiter else 10
+
+                # Cost score: lower cost = higher score (normalized to 0-1)
+                if total_cost < float("inf") and cost_range > 0:
+                    cost_score = 1.0 - ((total_cost - min_cost) / cost_range)
+                else:
+                    cost_score = 0.0  # No cost config or infinite cost
+
+                # Load score: fewer pending requests = higher score
+                load_ratio = min(pending / capacity, 1.0) if capacity > 0 else 1.0
+                load_score = 1.0 - load_ratio
+
+                # Combined score
+                score = cost_weight * cost_score + load_weight * load_score
+
+                if score > best_score:
+                    best_score = score
+                    best_provider = provider_name
+
+            return best_provider
 
     async def _ensure_provider_initialized(self, provider_name: str) -> bool:
         """Ensure a specific provider is initialized (lazy loading).
@@ -571,7 +725,8 @@ class ProviderManager:
     ) -> LLMResponse:
         """Make a completion request with automatic fallback.
 
-        Tries each provider in order until one succeeds. Supports lazy loading.
+        Uses smart routing (least_pending strategy by default) to select the best
+        provider, and AIMD rate limiting per credential to prevent overload.
 
         Args:
             messages: List of messages
@@ -600,13 +755,18 @@ class ProviderManager:
         errors = []
         provider_count = len(candidates)
 
-        # Round Robin Load Balancing
-        start_index = self._current_index % provider_count
+        # Smart routing: select best provider based on strategy
+        best_provider = self._select_best_provider(candidates)
+        start_index = candidates.index(best_provider)
+
+        # Update round-robin index for next request
         self._current_index = (self._current_index + 1) % max(provider_count, 1)
 
         for i in range(provider_count):
             idx = (start_index + i) % provider_count
             provider_name = candidates[idx]
+            cred_id = self._get_credential_id(provider_name)
+            limiter = self._credential_limiters.get(cred_id)
 
             # Lazy initialize the provider if needed
             if provider_name not in self._providers:
@@ -616,37 +776,92 @@ class ProviderManager:
 
             provider = self._providers[provider_name]
             state = self._provider_states.get(provider_name)
+
+            # Track pending requests
+            self._credential_pending[cred_id] = self._credential_pending.get(cred_id, 0) + 1
+
             try:
-                if i > 0:
-                    log.debug(
-                        "Retrying with provider",
-                        provider_id=provider_name,
-                        attempt=i + 1,
-                        max_attempts=provider_count,
+                # Acquire AIMD slot if enabled
+                if limiter:
+                    await limiter.acquire()
+
+                try:
+                    if i > 0:
+                        log.debug(
+                            "Retrying with provider",
+                            provider_id=provider_name,
+                            attempt=i + 1,
+                            max_attempts=provider_count,
+                        )
+                    # Set provider/model context for HTTP logs
+                    set_request_context(
+                        provider=state.credential_id or state.config.provider
+                        if state
+                        else provider_name,
+                        model=state.config.model if state else None,
                     )
-                # Set provider/model context for HTTP logs
-                set_request_context(
-                    provider=state.credential_id or state.config.provider
-                    if state
-                    else provider_name,
-                    model=state.config.model if state else None,
+                    response = await provider.complete(messages, **kwargs)
+                    response.estimated_cost = self.calculate_cost(provider_name, response)
+
+                    # Record success for AIMD
+                    if limiter:
+                        await limiter.record_success()
+
+                    return response
+
+                except Exception as e:
+                    # Check if it's a rate limit error
+                    is_rate_limit = self._is_rate_limit_error(e)
+                    if limiter:
+                        await limiter.record_error(is_rate_limit=is_rate_limit)
+
+                    log.warning(
+                        "Provider failed",
+                        provider_id=provider_name,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                        is_rate_limit=is_rate_limit,
+                    )
+                    errors.append((provider_name, e))
+
+                finally:
+                    if limiter:
+                        limiter.release()
+
+            finally:
+                # Decrement pending counter
+                self._credential_pending[cred_id] = max(
+                    0, self._credential_pending.get(cred_id, 1) - 1
                 )
-                response = await provider.complete(messages, **kwargs)
-                response.estimated_cost = self.calculate_cost(provider_name, response)
-                return response
-            except Exception as e:
-                log.warning(
-                    "Provider failed",
-                    provider_id=provider_name,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-                errors.append((provider_name, e))
-                continue
 
         # All providers failed
         error_details = "; ".join(f"{name}: {err}" for name, err in errors)
         raise LLMError(f"All providers failed: {error_details}")
+
+    def _is_rate_limit_error(self, error: Exception) -> bool:
+        """Check if an exception is a rate limit (429) error.
+
+        Args:
+            error: The exception to check
+
+        Returns:
+            True if it's a rate limit error
+        """
+        error_str = str(error).lower()
+        error_type = type(error).__name__.lower()
+
+        # Check for common rate limit indicators
+        if "429" in error_str or "rate limit" in error_str or "too many requests" in error_str:
+            return True
+        if "ratelimit" in error_type:
+            return True
+
+        # Check for httpx status code
+        if hasattr(error, "response") and hasattr(error.response, "status_code"):
+            if error.response.status_code == 429:
+                return True
+
+        return False
 
     async def analyze_image_with_fallback(
         self,
@@ -808,20 +1023,36 @@ class ProviderManager:
             cap_desc = required_capability or "any"
             raise ProviderNotFoundError(f"No provider with '{cap_desc}' capability available")
 
-        # Prioritize last successful provider
+        # Select primary model using routing strategy
+        # For cost_first: prioritize last successful provider for stability
+        # For round_robin/least_pending: use the routing strategy for distribution
         capability_key = required_capability or "text"
-        if capability_key in self._last_successful_provider:
+        routing_strategy = self.config.routing.strategy
+
+        if routing_strategy == "cost_first" and capability_key in self._last_successful_provider:
+            # cost_first: prefer last successful for stability
             preferred = self._last_successful_provider[capability_key]
             if preferred in candidates:
                 candidates.remove(preferred)
                 candidates.insert(0, preferred)
                 log.debug(
-                    "Prioritizing last successful provider",
+                    "Prioritizing last successful provider (cost_first)",
                     provider_id=preferred,
                     capability=capability_key,
                 )
-
-        primary_name = candidates[0]
+            primary_name = candidates[0]
+        else:
+            # round_robin/least_pending: use smart routing strategy
+            primary_name = self._select_best_provider(candidates)
+            # Update round-robin index for next request
+            provider_count = len(candidates)
+            self._current_index = (self._current_index + 1) % max(provider_count, 1)
+            log.debug(
+                "Selected provider via routing strategy",
+                provider_id=primary_name,
+                strategy=routing_strategy,
+                capability=capability_key,
+            )
 
         # Ensure primary is initialized
         if primary_name not in self._providers:
@@ -883,8 +1114,11 @@ class ProviderManager:
                         await primary_task
                     raise LLMTimeoutError(max_timeout, primary_name) from None
 
-            # Select and initialize fallback
-            fallback_name = fallback_candidates[0]
+            # Select fallback using routing strategy (for consistency)
+            fallback_name = self._select_best_provider(fallback_candidates)
+            # Update round-robin index so next fallback selects a different model
+            fallback_count = len(fallback_candidates)
+            self._current_index = (self._current_index + 1) % max(fallback_count, 1)
             if fallback_name not in self._providers:
                 if not await self._ensure_provider_initialized(fallback_name):
                     log.warning(

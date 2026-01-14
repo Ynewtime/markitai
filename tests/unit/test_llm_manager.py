@@ -7,6 +7,7 @@ from markit.config.settings import (
     LLMCredentialConfig,
     LLMModelConfig,
     LLMProviderConfig,
+    RoutingConfig,
 )
 from markit.exceptions import LLMError, ProviderNotFoundError
 from markit.llm.base import LLMResponse, TokenUsage
@@ -50,7 +51,12 @@ def provider_manager(mock_providers):
         LLMProviderConfig(provider="openai", model="gpt-4", api_key="sk-123"),
         LLMProviderConfig(provider="anthropic", model="claude", api_key="sk-456"),
     ]
-    pm = ProviderManager(configs)
+    # Use round_robin strategy for predictable test behavior
+    llm_config = LLMConfig(
+        providers=configs,
+        routing=RoutingConfig(strategy="round_robin"),
+    )
+    pm = ProviderManager(llm_config)
 
     # Manually set up provider states to bypass initialization logic
     # The new architecture uses _provider_states with ProviderState objects

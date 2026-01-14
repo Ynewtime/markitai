@@ -126,7 +126,9 @@ def _write_credential_to_config(credential: dict[str, Any]) -> bool:
         yaml.preserve_quotes = True
         yaml.indent(mapping=2, sequence=4, offset=2)
 
-        config_data = yaml.load(config_path)
+        # Load with explicit UTF-8 for Windows compatibility
+        with config_path.open("r", encoding="utf-8") as f:
+            config_data = yaml.load(f)
 
         # Ensure config_data is a valid map
         if config_data is None:
@@ -178,8 +180,9 @@ def _write_credential_to_config(credential: dict[str, Any]) -> bool:
         # Append to credentials list
         llm_section["credentials"].append(new_cred)
 
-        # Write back to file
-        yaml.dump(config_data, config_path)
+        # Write back to file with explicit UTF-8 for Windows compatibility
+        with config_path.open("w", encoding="utf-8") as f:
+            yaml.dump(config_data, f)
         return True
 
     except Exception as e:
@@ -976,5 +979,8 @@ def fetch_models(
         }
         # Ensure parent directory exists for custom output path
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text(json.dumps(cache_data, indent=2, default=str))
+        cache_file.write_text(
+            json.dumps(cache_data, indent=2, default=str, ensure_ascii=False),
+            encoding="utf-8",
+        )
         console.print(f"\n[green]Models cached to {cache_file}[/green]")

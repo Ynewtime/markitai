@@ -171,6 +171,7 @@ class ConversionPipeline:
             llm_model=llm_model,
             enhancement_chunk_size=settings.enhancement.chunk_size,
             use_concurrent_fallback=use_concurrent_fallback,
+            chunk_concurrency=settings.concurrency.chunk_workers,
         )
 
         self._output_manager = output_manager or OutputManager(
