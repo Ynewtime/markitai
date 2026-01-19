@@ -17,8 +17,16 @@ markit document.docx
 # LLM处理（支持利用 LLM 处理基础转换后的 Markdown 文本，含格式清洗、添加带 title(文章标题)|source(输入文件名)|description(全文摘要)|markit_processed(处理时间)|tags(标签如['TAG1','TAG2']) 的 YAML frontmatter）
 markit document.docx --llm
 
-# 图片分析（生成 ![alt](相对输出Markdown的图片路径) 中的 alt 文本 + 生成图片描述Markdown:<output/<如果处理的是文件夹且包含子文件夹 && 子文件夹名称>/assets/<处理文件名>.<处理文件格式>.<4位自然序号>.<图片格式>.md>）
-markit document.pdf --image
+# 使用预设（推荐方式）
+markit document.pdf --preset rich          # rich: LLM + alt + desc + screenshot
+markit document.pdf --preset rich --ocr    # 针对扫描版 PDF 可利用 OCR 能力
+markit document.pdf --preset standard      # standard: LLM + alt + desc
+markit document.pdf --preset minimal       # minimal: 仅基础转换
+
+# 图片分析（生成 ![alt](相对输出Markdown的图片路径) 中的 alt 文本 + 生成图片描述 JSON）
+markit document.pdf --alt                    # 仅生成 alt 文本
+markit document.pdf --alt --desc             # alt 文本 + 描述文件
+markit document.pdf --preset rich --no-desc  # 预设可与单独参数组合
 
 # 批量转换（默认输出到当前工作目录的 output 文件夹内，多次执行采用重命名机制，不覆盖原有的文件，也可以通过 -o 指定输出目录）
 markit ./docs
@@ -33,9 +41,9 @@ markit ./docs -o ./output --resume
 output/                         # 输出目录
   document.docx.md              # 基础转换后的 markdown
   document.docx.llm.md          # LLM 优化后的 markdown
+  assets.desc.json              # 图片描述（使用 --desc 时）
   assets/
     document.docx.0001.png      # 提取的图片
-    document.docx.0001.png.md   # 图片描述（使用 --image 时）
   sub_dir/                      # 输入的目录包含子文件夹时，按照相同的层级放置
 ```
 
