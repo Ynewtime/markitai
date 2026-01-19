@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -17,6 +16,7 @@ from markit.converter.base import (
     register_converter,
 )
 from markit.converter.office import OfficeConverter, PptxConverter
+from markit.utils.office import find_libreoffice
 
 if TYPE_CHECKING:
     from markit.config import MarkitConfig
@@ -40,28 +40,7 @@ class LegacyOfficeConverter(BaseConverter):
         super().__init__(config)
         self._office_converter = OfficeConverter(config)
         self._pptx_converter = PptxConverter(config)
-        self._soffice_path = self._find_soffice()
-
-    def _find_soffice(self) -> str | None:
-        """Find LibreOffice soffice executable."""
-        # Check common paths
-        common_paths = [
-            "soffice",  # In PATH
-            "/usr/bin/soffice",
-            "/usr/local/bin/soffice",
-            "/opt/libreoffice/program/soffice",
-            # macOS
-            "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-            # Windows
-            r"C:\Program Files\LibreOffice\program\soffice.exe",
-            r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-        ]
-
-        for path in common_paths:
-            if shutil.which(path):
-                return path
-
-        return None
+        self._soffice_path = find_libreoffice()
 
     def _convert_with_libreoffice(
         self,

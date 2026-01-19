@@ -90,12 +90,17 @@ class TestBatchState:
         assert Path("/path/file3.pdf") in pending
 
     def test_to_dict(self) -> None:
-        """Test converting state to dictionary."""
+        """Test converting state to dictionary.
+
+        Note: After refactoring, input_dir/output_dir are stored in options (not root),
+        and files keys are relative paths. stats section is removed (merged into summary).
+        """
         state = BatchState(
             version="1.0",
             started_at="2026-01-15T10:00:00Z",
             input_dir="/input",
             output_dir="/output",
+            log_file="/nonexistent/path/markit.log",  # Non-existent, kept as-is
         )
         state.files["/input/test.pdf"] = FileState(
             path="/input/test.pdf",
@@ -106,9 +111,15 @@ class TestBatchState:
         data = state.to_dict()
 
         assert data["version"] == "1.0"
-        assert data["input_dir"] == "/input"
-        assert "stats" in data
-        assert data["stats"]["total"] == 1
+        # input_dir is no longer in root level (only in options)
+        assert "input_dir" not in data
+        # log_file is kept as-is when file doesn't exist
+        assert data["log_file"] == "/nonexistent/path/markit.log"
+        # stats is removed (merged into summary computed by processor)
+        assert "stats" not in data
+        # files keys are now relative paths
+        assert "test.pdf" in data["files"]
+        assert data["files"]["test.pdf"]["status"] == "completed"
 
     def test_from_dict(self) -> None:
         """Test creating state from dictionary."""
@@ -118,6 +129,7 @@ class TestBatchState:
             "updated_at": "2026-01-15T10:30:00Z",
             "input_dir": "/input",
             "output_dir": "/output",
+            "log_file": "/home/user/.markit/logs/markit_20260115_100000.log",
             "options": {"llm": True},
             "files": {
                 "/input/test.pdf": {
@@ -131,6 +143,7 @@ class TestBatchState:
 
         assert state.version == "1.0"
         assert state.input_dir == "/input"
+        assert state.log_file == "/home/user/.markit/logs/markit_20260115_100000.log"
         assert len(state.files) == 1
         assert state.files["/input/test.pdf"].status == FileStatus.COMPLETED
 
@@ -261,6 +274,23 @@ class TestBatchProcessor:
         assert state.pending_count == 2
         assert str(tmp_path) == state.input_dir
 
+    def test_init_state_with_log_file(self, tmp_path: Path) -> None:
+        """Test state initialization with log file path."""
+        files = [tmp_path / "file1.pdf"]
+        files[0].touch()
+
+        log_file = tmp_path / "logs" / "markit_test.log"
+        config = BatchConfig()
+        processor = BatchProcessor(config, tmp_path / "output", log_file=log_file)
+
+        state = processor.init_state(
+            input_dir=tmp_path,
+            files=files,
+            options={"llm": True},
+        )
+
+        assert state.log_file == str(log_file)
+
     def test_save_and_load_state(self, tmp_path: Path) -> None:
         """Test saving and loading state."""
         output_dir = tmp_path / "output"
@@ -361,7 +391,10 @@ class TestBatchProcessor:
         report = processor.generate_report()
 
         assert "summary" in report
-        assert report["summary"]["total_files"] == 1
+        # total_files was renamed to total
+        assert report["summary"]["total"] == 1
         assert report["summary"]["completed"] == 1
         assert "files" in report
+        # files keys are now relative paths
         assert len(report["files"]) == 1
+        assert "test.pdf" in report["files"]

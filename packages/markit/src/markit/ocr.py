@@ -76,6 +76,7 @@ class OCRProcessor:
         }
 
         # Set language if configured (must use LangRec enum)
+        # TODO: RapidOCR 类型定义问题，params 字典值类型不匹配
         if self.config and self.config.lang:
             params["Rec.lang_type"] = self._get_lang_enum(self.config.lang)  # type: ignore[assignment]
 
@@ -226,6 +227,7 @@ class OCRProcessor:
 
             for i in range(pages_to_check):
                 page = doc[i]
+                # TODO: pymupdf 类型定义问题，get_text() 返回类型不精确
                 text: str = page.get_text()  # type: ignore[assignment]
                 total_text_length += len(text.strip())
 

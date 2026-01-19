@@ -8,7 +8,10 @@ import os
 import sys
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from markit.llm import ImageAnalysis, LLMProcessor
 
 # Suppress noisy messages before imports
 os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
@@ -19,7 +22,6 @@ from dotenv import load_dotenv
 
 # Load .env file from current directory and parent directories
 load_dotenv()
-from datetime import UTC
 
 from click import Context
 from loguru import logger
@@ -68,8 +70,9 @@ def resolve_output_path(
 
     Returns:
         Resolved path, or None if file should be skipped.
-        For rename strategy: file.pdf.md -> file.pdf.2.md -> file.pdf.3.md
-        For rename with .llm.md: file.pdf.llm.md -> file.pdf.2.llm.md
+        For rename strategy: file.pdf.md -> file.pdf.v2.md -> file.pdf.v3.md
+        For rename with .llm.md: file.pdf.llm.md -> file.pdf.v2.llm.md
+        This ensures files sort in natural order (A-Z).
     """
     if not base_path.exists():
         return base_path
@@ -79,29 +82,116 @@ def resolve_output_path(
     elif on_conflict == "overwrite":
         return base_path
     else:  # rename
-        # Parse filename to insert sequence number
-        # e.g., "file.pdf.md" -> stem="file.pdf", suffix=".md"
-        # e.g., "file.pdf.llm.md" -> need to handle .llm.md specially
+        # Parse filename to insert version number before .md/.llm.md suffix
+        # e.g., "file.pdf.md" -> "file.pdf.v2.md" -> "file.pdf.v3.md"
+        # e.g., "file.pdf.llm.md" -> "file.pdf.v2.llm.md"
+        # This ensures files sort in natural A-Z order (.md < .v2.md < .v3.md)
         name = base_path.name
 
-        # Check for .llm.md suffix
+        # Determine the markit suffix (.md or .llm.md)
         if name.endswith(".llm.md"):
-            base_stem = name[:-7]  # Remove ".llm.md"
-            suffix = ".llm.md"
+            base_stem = name[:-7]  # Remove ".llm.md" -> "file.pdf"
+            markit_suffix = ".llm.md"
         else:
-            base_stem = base_path.stem
-            suffix = base_path.suffix
+            base_stem = name[:-3]  # Remove ".md" -> "file.pdf"
+            markit_suffix = ".md"
 
         # Find next available sequence number
         seq = 2
         while True:
-            new_name = f"{base_stem}.{seq}{suffix}"
+            new_name = f"{base_stem}.v{seq}{markit_suffix}"
             new_path = base_path.parent / new_name
             if not new_path.exists():
                 return new_path
             seq += 1
             if seq > 9999:  # Safety limit
                 raise RuntimeError(f"Too many conflicting files for {base_path}")
+
+
+def compute_task_hash(
+    input_path: Path,
+    output_dir: Path,
+    options: dict[str, Any] | None = None,
+) -> str:
+    """Compute hash from task input parameters.
+
+    Hash is based on:
+    - input_path (resolved)
+    - output_dir (resolved)
+    - key task options (llm_enabled, ocr_enabled, etc.)
+
+    This ensures different parameter combinations produce different hashes.
+
+    Args:
+        input_path: Input file or directory path
+        output_dir: Output directory path
+        options: Task options dict (llm_enabled, ocr_enabled, etc.)
+
+    Returns:
+        6-character hex hash string
+    """
+    import hashlib
+
+    # Extract key options that affect output
+    key_options = {}
+    if options:
+        key_options = {
+            k: v
+            for k, v in options.items()
+            if k
+            in (
+                "llm_enabled",
+                "ocr_enabled",
+                "screenshot_enabled",
+                "image_alt_enabled",
+                "image_desc_enabled",
+            )
+        }
+
+    hash_params = {
+        "input": str(input_path.resolve()),
+        "output": str(output_dir.resolve()),
+        "options": key_options,
+    }
+    hash_str = json.dumps(hash_params, sort_keys=True)
+    return hashlib.md5(hash_str.encode()).hexdigest()[:6]
+
+
+def get_report_file_path(
+    output_dir: Path,
+    task_hash: str,
+    on_conflict: str = "rename",
+) -> Path:
+    """Generate report file path based on task hash.
+
+    Format: reports/markit.<hash>.report.json
+    Respects on_conflict strategy for rename.
+
+    Args:
+        output_dir: Output directory
+        task_hash: Task hash string
+        on_conflict: Conflict resolution strategy
+
+    Returns:
+        Path to the report file
+    """
+    reports_dir = output_dir / "reports"
+    base_path = reports_dir / f"markit.{task_hash}.report.json"
+
+    if not base_path.exists():
+        return base_path
+
+    if on_conflict == "skip":
+        return base_path  # Will be handled by caller
+    elif on_conflict == "overwrite":
+        return base_path
+    else:  # rename
+        seq = 2
+        while True:
+            new_path = reports_dir / f"markit.{task_hash}.v{seq}.report.json"
+            if not new_path.exists():
+                return new_path
+            seq += 1
 
 
 # =============================================================================
@@ -245,7 +335,7 @@ def setup_logging(
     log_level: str = "DEBUG",
     rotation: str = "10 MB",
     retention: str = "7 days",
-) -> int | None:
+) -> tuple[int | None, Path | None]:
     """Configure logging based on configuration.
 
     Args:
@@ -257,8 +347,12 @@ def setup_logging(
         retention: Log file retention period.
 
     Returns:
-        Console handler ID (can be used to temporarily disable console logging).
+        Tuple of (console_handler_id, log_file_path).
+        Console handler ID can be used to temporarily disable console logging.
+        Log file path is None if file logging is disabled.
     """
+    from datetime import datetime
+
     logger.remove()
 
     # Console output level
@@ -275,18 +369,22 @@ def setup_logging(
         log_dir = env_log_dir
 
     # Add file logging (independent handler, not affected by console disable)
+    log_file_path: Path | None = None
     if log_dir:
         log_path = Path(log_dir).expanduser()
         log_path.mkdir(parents=True, exist_ok=True)
+        # Generate log filename with current timestamp (matching loguru's format)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        log_file_path = log_path / f"markit_{timestamp}.log"
         logger.add(
-            log_path / "markit_{time}.log",
+            log_file_path,
             level=log_level,
             rotation=rotation,
             retention=retention,
             serialize=True,
         )
 
-    return console_handler_id
+    return console_handler_id, log_file_path
 
 
 def print_version(ctx: Context, param: Any, value: bool) -> None:
@@ -456,7 +554,7 @@ def app(
     cfg = config_manager.load(config_path=config_path)
 
     # Setup logging with configuration
-    console_handler_id = setup_logging(
+    console_handler_id, log_file_path = setup_logging(
         verbose=verbose,
         log_dir=cfg.log.dir,
         log_level=cfg.log.level,
@@ -484,8 +582,9 @@ def app(
             f"{len(unique_models)} unique models"
         )
 
-    # Store handler ID and verbose in context for batch processing
+    # Store handler ID, log file path and verbose in context for batch processing
     ctx.obj["_console_handler_id"] = console_handler_id
+    ctx.obj["_log_file_path"] = log_file_path
     ctx.obj["_verbose"] = verbose
 
     # Apply preset first (if specified)
@@ -521,8 +620,8 @@ def app(
     cfg.batch.concurrency = batch_concurrency
     cfg.llm.concurrency = llm_concurrency
 
-    logger.debug(f"Processing: {input_path}")
-    logger.debug(f"Output directory: {output}")
+    logger.debug(f"Processing: {input_path.resolve()}")
+    logger.debug(f"Output directory: {output.resolve()}")
 
     async def run_workflow() -> None:
         # Check if input is directory (batch mode)
@@ -535,11 +634,12 @@ def app(
                 dry_run,
                 verbose=verbose,
                 console_handler_id=console_handler_id,
+                log_file_path=log_file_path,
             )
             return
 
         # Single file mode
-        await process_single_file(input_path, output, cfg, dry_run)
+        await process_single_file(input_path, output, cfg, dry_run, log_file_path)
 
     asyncio.run(run_workflow())
 
@@ -703,6 +803,7 @@ async def process_single_file(
     output_dir: Path,
     cfg: MarkitConfig,
     dry_run: bool,
+    log_file_path: Path | None = None,
 ) -> None:
     """Process a single file."""
     # Validate file size to prevent DoS
@@ -753,7 +854,7 @@ async def process_single_file(
 
     from datetime import datetime
 
-    started_at = datetime.now(UTC)
+    started_at = datetime.now()
     total_llm_cost = 0.0
     error_msg = None
 
@@ -780,6 +881,13 @@ async def process_single_file(
         image_processor = ImageProcessor(config=cfg.image)
         base64_images = image_processor.extract_base64_images(result.markdown)
 
+        # Count screenshots (page/slide images for OCR/LLM)
+        page_images = result.metadata.get("page_images", [])
+        screenshots_count = len(page_images)
+
+        # Count embedded images (extracted from document content)
+        embedded_images_count = len(base64_images)
+
         if base64_images:
             logger.info(f"Processing {len(base64_images)} embedded images...")
             image_result = image_processor.process_and_save(
@@ -791,9 +899,11 @@ async def process_single_file(
                 result.markdown,
                 image_result.saved_images,
             )
+            embedded_images_count = len(image_result.saved_images)
 
-        # Write output markdown
-        atomic_write_text(output_file, result.markdown)
+        # Write output markdown with basic frontmatter
+        base_md_content = _add_basic_frontmatter(result.markdown, input_path.name)
+        atomic_write_text(output_file, base_md_content)
         logger.info(f"Written output: {output_file}")
 
         # LLM processing
@@ -808,7 +918,9 @@ async def process_single_file(
         if (ocr_llm_mode or pptx_llm_mode) and cfg.llm.enabled:
             mode_name = "PPTX+LLM" if pptx_llm_mode else "OCR+LLM"
             logger.info(f"[LLM] {input_path.name}: Starting {mode_name} processing")
-            extracted_text = result.metadata.get("extracted_text", result.markdown)
+            # Use result.markdown which already has base64 images replaced with assets/ paths
+            # Do NOT use extracted_text from metadata as it contains raw base64 data
+            extracted_text = result.markdown
             page_images = result.metadata.get("page_images", [])
 
             # Enhanced document (clean + frontmatter in one flow)
@@ -838,16 +950,29 @@ async def process_single_file(
             # Write LLM version directly (no extra process_with_llm call needed)
             from markit.llm import LLMProcessor
 
+            # Validate image references - remove any LLM-hallucinated non-existent images
+            assets_dir = output_dir / "assets"
+            if assets_dir.exists():
+                result.markdown = ImageProcessor.remove_nonexistent_images(
+                    result.markdown, assets_dir
+                )
+
             processor = LLMProcessor(cfg.llm, cfg.prompts)
             llm_output = output_file.with_suffix(".llm.md")
             llm_content = processor.format_llm_output(result.markdown, frontmatter)
             atomic_write_text(llm_output, llm_content)
             logger.info(f"Written LLM version: {llm_output}")
 
-            # Analyze embedded images
+            # Analyze embedded images (only images from this file)
             if (cfg.image.alt_enabled or cfg.image.desc_enabled) and base64_images:
                 assets_dir = output_dir / "assets"
-                saved_images = list(assets_dir.glob("*")) if assets_dir.exists() else []
+                # Only match images from this specific file
+                escaped_name = escape_glob_pattern(input_path.name)
+                saved_images = (
+                    list(assets_dir.glob(f"{escaped_name}*"))
+                    if assets_dir.exists()
+                    else []
+                )
                 saved_images = [
                     p
                     for p in saved_images
@@ -871,29 +996,32 @@ async def process_single_file(
                     _merge_llm_usage(llm_usage, image_usage)
 
         elif cfg.llm.enabled:
-            # Save original markdown BEFORE LLM processing for base .md file
-            # Base .md should not have LLM-generated alt text
-            original_markdown = result.markdown
-
-            result.markdown, doc_cost, doc_usage = await process_with_llm(
-                result.markdown, input_path.name, cfg, output_file
+            # Check if this is a standalone image file
+            is_standalone_image = input_path.suffix.lower() in (
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp",
             )
-            llm_cost += doc_cost
-            _merge_llm_usage(llm_usage, doc_usage)
 
-            # Image analysis (if enabled)
-            # NOTE: This updates .llm.md file with LLM-generated alt text
-            # The base .md file keeps original alt text
+            # Get saved images from assets directory (only images from this file)
             assets_dir = output_dir / "assets"
-            saved_images = list(assets_dir.glob("*")) if assets_dir.exists() else []
+            escaped_name = escape_glob_pattern(input_path.name)
+            saved_images = (
+                list(assets_dir.glob(f"{escaped_name}*")) if assets_dir.exists() else []
+            )
             saved_images = [
                 p
                 for p in saved_images
                 if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")
             ]
-            if (cfg.image.alt_enabled or cfg.image.desc_enabled) and saved_images:
+
+            if is_standalone_image and saved_images:
+                # Standalone image: only run image analysis (single LLM call)
+                # analyze_images_with_llm generates frontmatter via _format_standalone_image_markdown
+                logger.info(f"[LLM] {input_path.name}: Processing standalone image")
                 (
-                    _,  # Don't use updated markdown for base .md
+                    _,
                     image_cost,
                     image_usage,
                     img_analysis,
@@ -908,18 +1036,55 @@ async def process_single_file(
                 llm_cost += image_cost
                 _merge_llm_usage(llm_usage, image_usage)
 
-            # Update base .md with basic frontmatter using ORIGINAL markdown
-            # This ensures .md keeps original alt text, not LLM-generated
-            base_md_content = _add_basic_frontmatter(original_markdown, input_path.name)
-            atomic_write_text(output_file, base_md_content)
+                # Write base .md with basic frontmatter
+                base_md_content = _add_basic_frontmatter(
+                    result.markdown, input_path.name
+                )
+                atomic_write_text(output_file, base_md_content)
+            else:
+                # Save original markdown BEFORE LLM processing for base .md file
+                # Base .md should not have LLM-generated alt text
+                original_markdown = result.markdown
+
+                result.markdown, doc_cost, doc_usage = await process_with_llm(
+                    result.markdown, input_path.name, cfg, output_file
+                )
+                llm_cost += doc_cost
+                _merge_llm_usage(llm_usage, doc_usage)
+
+                # Image analysis (if enabled)
+                # NOTE: This updates .llm.md file with LLM-generated alt text
+                # The base .md file keeps original alt text
+                if (cfg.image.alt_enabled or cfg.image.desc_enabled) and saved_images:
+                    (
+                        _,  # Don't use updated markdown for base .md
+                        image_cost,
+                        image_usage,
+                        img_analysis,
+                    ) = await analyze_images_with_llm(
+                        saved_images,
+                        result.markdown,
+                        output_file,
+                        cfg,
+                        input_path,
+                        concurrency_limit=cfg.llm.concurrency,
+                    )
+                    llm_cost += image_cost
+                    _merge_llm_usage(llm_usage, image_usage)
+
+                # Update base .md with basic frontmatter using ORIGINAL markdown
+                # This ensures .md keeps original alt text, not LLM-generated
+                base_md_content = _add_basic_frontmatter(
+                    original_markdown, input_path.name
+                )
+                atomic_write_text(output_file, base_md_content)
 
         # Write image descriptions (single file)
         if img_analysis and cfg.image.desc_enabled:
             write_assets_desc_json(output_dir, [img_analysis])
-            logger.info(f"Image descriptions saved: {output_dir / 'assets.desc.json'}")
 
         # Generate report with token usage
-        finished_at = datetime.now(UTC)
+        finished_at = datetime.now()
         duration_seconds = (finished_at - started_at).total_seconds()
 
         total_llm_cost = llm_cost
@@ -934,11 +1099,14 @@ async def process_single_file(
 
         token_status = "estimated" if total_llm_usage else "unknown"
 
+        # Build report with structure consistent with batch mode
+        # files is a dict with relative paths as keys
         report = {
             "version": "1.0",
-            "generated_at": finished_at.isoformat(),
+            "generated_at": datetime.now().astimezone().isoformat(),
+            "log_file": str(log_file_path) if log_file_path else None,
             "summary": {
-                "total_files": 1,
+                "total": 1,
                 "completed": 1,
                 "failed": 0,
                 "duration_seconds": duration_seconds,
@@ -951,13 +1119,17 @@ async def process_single_file(
                 "total_cost_usd": total_llm_cost,
                 "token_status": token_status,
             },
-            "files": [
-                {
-                    "input": input_path.name,
-                    "output": str(output_file),
+            "files": {
+                input_path.name: {
                     "status": "completed",
                     "error": None,
-                    "images_extracted": len(result.images) if result.images else 0,
+                    "output": str(
+                        output_file.with_suffix(".llm.md")
+                        if cfg.llm.enabled
+                        else output_file
+                    ),
+                    "images_extracted": embedded_images_count,
+                    "screenshots": screenshots_count,
                     "duration_seconds": duration_seconds,
                     "llm_usage": {
                         "input_tokens": total_input_tokens,
@@ -966,19 +1138,23 @@ async def process_single_file(
                         "token_status": token_status,
                     },
                 }
-            ],
+            },
         }
 
-        reports_dir = output_dir / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        report_path = reports_dir / f"{input_path.name}.report.json"
-        if report_path.exists():
-            counter = 1
-            while True:
-                report_path = reports_dir / f"{input_path.name}.report.{counter}.json"
-                if not report_path.exists():
-                    break
-                counter += 1
+        # Generate report file path with hash-based naming
+        # Format: reports/markit.<hash>.report.json
+        task_options = {
+            "llm_enabled": cfg.llm.enabled,
+            "ocr_enabled": cfg.ocr.enabled,
+            "screenshot_enabled": cfg.screenshot.enabled,
+            "image_alt_enabled": cfg.image.alt_enabled,
+            "image_desc_enabled": cfg.image.desc_enabled,
+        }
+        task_hash = compute_task_hash(input_path, output_dir, task_options)
+        report_path = get_report_file_path(
+            output_dir, task_hash, cfg.output.on_conflict
+        )
+        report_path.parent.mkdir(parents=True, exist_ok=True)
 
         atomic_write_json(report_path, report)
         logger.info(f"Report saved: {report_path}")
@@ -999,7 +1175,7 @@ async def process_with_llm(
     cfg: MarkitConfig,
     output_file: Path,
     page_images: list[dict] | None = None,
-    processor: Any | None = None,
+    processor: LLMProcessor | None = None,
     original_markdown: str | None = None,
 ) -> tuple[str, float, dict[str, dict[str, Any]]]:
     """Process markdown with LLM.
@@ -1026,14 +1202,19 @@ async def process_with_llm(
         # Extract protected content from original if provided
         original_protected = None
         if original_markdown:
-            original_protected = processor._extract_protected_content(original_markdown)
+            original_protected = processor.extract_protected_content(original_markdown)
 
         cleaned, frontmatter = await processor.process_document(markdown, source)
 
         # Restore any content from original that was lost
         # This is a fallback - process_document already uses placeholder protection
         if original_protected:
-            cleaned = processor._restore_protected_content(cleaned, original_protected)
+            cleaned = processor.restore_protected_content(cleaned, original_protected)
+
+        # Validate image references - remove any LLM-hallucinated non-existent images
+        assets_dir = output_file.parent / "assets"
+        if assets_dir.exists():
+            cleaned = ImageProcessor.remove_nonexistent_images(cleaned, assets_dir)
 
         # Write LLM version
         llm_output = output_file.with_suffix(".llm.md")
@@ -1082,45 +1263,9 @@ async def process_with_llm(
         return markdown, 0.0, {}
 
 
-def _deep_copy_usage(usage: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Deep copy usage dict for calculating increments."""
-    return {
-        model: {
-            "requests": data.get("requests", 0),
-            "input_tokens": data.get("input_tokens", 0),
-            "output_tokens": data.get("output_tokens", 0),
-            "cost_usd": data.get("cost_usd", 0.0),
-        }
-        for model, data in usage.items()
-    }
-
-
-def _calculate_usage_increment(
-    before: dict[str, dict[str, Any]],
-    after: dict[str, dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Calculate incremental usage between two snapshots."""
-    result: dict[str, dict[str, Any]] = {}
-    for model, after_data in after.items():
-        before_data = before.get(model, {})
-        requests_diff = after_data.get("requests", 0) - before_data.get("requests", 0)
-        # Only include models with new requests
-        if requests_diff > 0:
-            result[model] = {
-                "requests": requests_diff,
-                "input_tokens": after_data.get("input_tokens", 0)
-                - before_data.get("input_tokens", 0),
-                "output_tokens": after_data.get("output_tokens", 0)
-                - before_data.get("output_tokens", 0),
-                "cost_usd": after_data.get("cost_usd", 0.0)
-                - before_data.get("cost_usd", 0.0),
-            }
-    return result
-
-
 def _format_standalone_image_markdown(
     input_path: Path,
-    analysis: Any,
+    analysis: ImageAnalysis,
     image_ref_path: str,
     include_frontmatter: bool = False,
 ) -> str:
@@ -1146,6 +1291,9 @@ def _format_standalone_image_markdown(
 
     # Frontmatter (for .llm.md files)
     if include_frontmatter:
+        from datetime import datetime
+
+        timestamp = datetime.now().astimezone().isoformat()
         frontmatter_lines = [
             "---",
             f"title: {input_path.stem}",
@@ -1154,6 +1302,7 @@ def _format_standalone_image_markdown(
             "tags:",
             "- image",
             "- analysis",
+            f"markit_processed: {timestamp}",
             "---",
             "",
         ]
@@ -1188,7 +1337,7 @@ async def analyze_images_with_llm(
     cfg: MarkitConfig,
     input_path: Path | None = None,
     concurrency_limit: int | None = None,
-    processor: Any | None = None,
+    processor: LLMProcessor | None = None,
 ) -> tuple[str, float, dict[str, dict[str, Any]], ImageAnalysisResult | None]:
     """Analyze images with LLM Vision using batch processing.
 
@@ -1223,9 +1372,13 @@ async def analyze_images_with_llm(
         if processor is None:
             processor = LLMProcessor(cfg.llm, cfg.prompts)
 
-        # Snapshot usage before this call to calculate increment
-        usage_before = _deep_copy_usage(processor.get_usage())
-        cost_before = processor.get_total_cost()
+        # Use unique context for image analysis to track usage separately from doc processing
+        # Format: "full_path:images" ensures isolation even for files with same name in different dirs
+        # This prevents usage from concurrent files being mixed together
+        source_path = (
+            str(input_path.resolve()) if input_path else str(output_file.resolve())
+        )
+        context = f"{source_path}:images"
 
         # Detect document language from markdown content
         language = _detect_language(markdown)
@@ -1233,10 +1386,10 @@ async def analyze_images_with_llm(
         # Use batch analysis (10 images per call)
         logger.info(f"Analyzing {len(image_paths)} images in batches...")
         analyses = await processor.analyze_images_batch(
-            image_paths, language=language, max_images_per_batch=10
+            image_paths, language=language, max_images_per_batch=10, context=context
         )
 
-        timestamp = datetime.now(UTC).isoformat()
+        timestamp = datetime.now().astimezone().isoformat()
 
         # Collect asset descriptions for JSON output
         asset_descriptions: list[dict[str, Any]] = []
@@ -1249,7 +1402,7 @@ async def analyze_images_with_llm(
         )
 
         # Process results (analyses is in same order as image_paths)
-        results: list[tuple[Path, Any, str]] = []
+        results: list[tuple[Path, ImageAnalysis | None, str]] = []
         for image_path, analysis in zip(image_paths, analyses):
             results.append((image_path, analysis, timestamp))
 
@@ -1261,7 +1414,7 @@ async def analyze_images_with_llm(
                         "alt": analysis.caption,
                         "desc": analysis.description,
                         "text": analysis.extracted_text or "",
-                        "model": getattr(analysis, "model", "") or "",
+                        "llm_usage": analysis.llm_usage or {},
                         "created": timestamp,
                     }
                 )
@@ -1285,6 +1438,8 @@ async def analyze_images_with_llm(
                     f"assets/{input_path.name}",
                     include_frontmatter=True,
                 )
+                # Normalize whitespace (ensure headers have blank lines before/after)
+                rich_content = LLMProcessor._normalize_whitespace(rich_content)
                 atomic_write_text(llm_output, rich_content)
         elif alt_enabled and llm_output.exists():
             # For other files, just update alt text
@@ -1306,10 +1461,10 @@ async def analyze_images_with_llm(
                 assets=asset_descriptions,
             )
 
-        # Calculate incremental usage (this call only, not cumulative)
-        usage_after = processor.get_usage()
-        incremental_usage = _calculate_usage_increment(usage_before, usage_after)
-        incremental_cost = processor.get_total_cost() - cost_before
+        # Get usage for THIS file only using context-based tracking
+        # This is concurrency-safe: only includes LLM calls tagged with this context
+        incremental_usage = processor.get_context_usage(context)
+        incremental_cost = processor.get_context_cost(context)
 
         return (
             markdown,
@@ -1328,7 +1483,7 @@ async def enhance_document_with_vision(
     page_images: list[dict],
     cfg: MarkitConfig,
     source: str = "document",
-    processor: Any | None = None,
+    processor: LLMProcessor | None = None,
 ) -> tuple[str, str, float, dict[str, dict[str, Any]]]:
     """Enhance document by combining extracted text with page images.
 
@@ -1395,6 +1550,7 @@ async def process_batch(
     dry_run: bool,
     verbose: bool = False,
     console_handler_id: int | None = None,
+    log_file_path: Path | None = None,
 ) -> None:
     """Process directory in batch mode."""
     from markit.batch import BatchProcessor, ProcessResult
@@ -1402,7 +1558,29 @@ async def process_batch(
     # Supported extensions
     extensions = set(EXTENSION_MAP.keys())
 
-    batch = BatchProcessor(cfg.batch, output_dir, input_path=input_dir)
+    # Build task options for report (before BatchProcessor init for hash calculation)
+    # Note: input_dir and output_dir will be converted to absolute paths by init_state()
+    task_options: dict[str, Any] = {
+        "concurrency": cfg.batch.concurrency,
+        "llm_enabled": cfg.llm.enabled,
+        "ocr_enabled": cfg.ocr.enabled,
+        "screenshot_enabled": cfg.screenshot.enabled,
+        "image_alt_enabled": cfg.image.alt_enabled,
+        "image_desc_enabled": cfg.image.desc_enabled,
+    }
+    if cfg.llm.enabled and cfg.llm.model_list:
+        task_options["llm_models"] = [
+            m.litellm_params.model for m in cfg.llm.model_list
+        ]
+
+    batch = BatchProcessor(
+        cfg.batch,
+        output_dir,
+        input_path=input_dir,
+        log_file=log_file_path,
+        on_conflict=cfg.output.on_conflict,
+        task_options=task_options,
+    )
     files = batch.discover_files(input_dir, extensions)
 
     if not files:
@@ -1498,7 +1676,12 @@ async def process_batch(
             image_processor = ImageProcessor(config=cfg.image)
             base64_images = image_processor.extract_base64_images(result.markdown)
 
-            images_count = len(result.images) + len(base64_images)
+            # Count screenshots (page/slide images for OCR/LLM)
+            page_images = result.metadata.get("page_images", [])
+            screenshots_count = len(page_images)
+
+            # Count embedded images (extracted from document content)
+            embedded_images_count = len(base64_images)
             image_result = None  # Initialize for later use in PPTX+LLM mode
 
             if base64_images:
@@ -1511,7 +1694,15 @@ async def process_batch(
                     result.markdown,
                     image_result.saved_images,
                 )
-                images_count = len(image_result.saved_images) + len(result.images)
+                # Also update extracted_text in metadata for PPTX+LLM mode
+                if "extracted_text" in result.metadata:
+                    result.metadata["extracted_text"] = (
+                        image_processor.replace_base64_with_paths(
+                            result.metadata["extracted_text"],
+                            image_result.saved_images,
+                        )
+                    )
+                embedded_images_count = len(image_result.saved_images)
 
             # Write base output
             atomic_write_text(output_file, result.markdown)
@@ -1541,15 +1732,14 @@ async def process_batch(
                 # Enhanced mode: Use extracted text + page images for LLM processing
                 mode_name = "PPTX+LLM" if pptx_llm_mode else "OCR+LLM"
                 logger.info(f"[LLM] {file_path.name}: Starting {mode_name} processing")
-                extracted_text = result.metadata.get("extracted_text", result.markdown)
+                # Use result.markdown which has base64 images replaced with assets/ paths
+                # Do NOT use metadata["extracted_text"] as it may contain raw base64 data
+                extracted_text = result.markdown
                 page_images = result.metadata.get("page_images", [])
-
-                # Fix: Replace base64 in extracted_text as well (same as result.markdown)
-                if image_result is not None and image_result.saved_images:
-                    extracted_text = image_processor.replace_base64_with_paths(
-                        extracted_text,
-                        image_result.saved_images,
-                    )
+                logger.debug(
+                    f"[DEBUG] page_images count={len(page_images)}, "
+                    f"image_result={image_result is not None}"
+                )
 
                 # Build commented image links
                 commented_images_str = ""
@@ -1591,8 +1781,38 @@ async def process_batch(
                     llm_cost += enhance_cost
                     _merge_llm_usage(llm_usage, enhance_usage)
 
+                    # LLM may introduce base64 images - strip them
+                    # Use saved image path if available, otherwise remove
+                    has_base64_before = "data:image" in cleaned_content
+                    if image_result is not None and image_result.saved_images:
+                        first_image = image_result.saved_images[0]
+                        logger.debug(
+                            f"[DEBUG] Stripping base64, has_before={has_base64_before}, "
+                            f"image_path={first_image.path.name}"
+                        )
+                        cleaned_content = image_processor.strip_base64_images(
+                            cleaned_content,
+                            replacement_path=f"assets/{first_image.path.name}",
+                        )
+                    else:
+                        logger.debug(
+                            f"[DEBUG] Stripping base64 (no saved images), "
+                            f"has_before={has_base64_before}, image_result={image_result}"
+                        )
+                        cleaned_content = image_processor.strip_base64_images(
+                            cleaned_content
+                        )
+                    has_base64_after = "data:image" in cleaned_content
+                    logger.debug(f"[DEBUG] After strip: has_base64={has_base64_after}")
+
                     # Build final content
                     result.markdown = cleaned_content + commented_images_str
+
+                    # Validate image references - remove any LLM-hallucinated non-existent images
+                    if assets_dir.exists():
+                        result.markdown = ImageProcessor.remove_nonexistent_images(
+                            result.markdown, assets_dir
+                        )
 
                     # Write LLM version directly (no extra process_with_llm call needed)
                     llm_output = output_file.with_suffix(".llm.md")
@@ -1641,34 +1861,21 @@ async def process_batch(
                         _merge_llm_usage(llm_usage, image_usage)
 
             elif cfg.llm.enabled:
-                # Normal LLM processing (clean + frontmatter)
-                # Save original markdown BEFORE LLM processing for base .md file
-                # Base .md should not have LLM-generated alt text
-                original_markdown = result.markdown
-
-                logger.info(f"[LLM] {file_path.name}: Starting standard LLM processing")
-                llm_start = time.perf_counter()
-                result.markdown, doc_cost, doc_usage = await process_with_llm(
-                    result.markdown,
-                    file_path.name,
-                    cfg,
-                    output_file,
-                    processor=shared_processor,
+                # Check if this is a standalone image file
+                is_standalone_image = file_path.suffix.lower() in (
+                    ".jpg",
+                    ".jpeg",
+                    ".png",
+                    ".webp",
                 )
-                llm_time = time.perf_counter() - llm_start
-                logger.info(
-                    f"[LLM] {file_path.name}: Standard processing {llm_time:.2f}s, ${doc_cost:.4f}"
-                )
-                llm_cost += doc_cost
-                _merge_llm_usage(llm_usage, doc_usage)
 
-                # Image analysis mode (if enabled)
-                # NOTE: This updates .llm.md file with LLM-generated alt text
-                # The base .md file keeps original alt text
-                if (cfg.image.alt_enabled or cfg.image.desc_enabled) and saved_images:
+                if is_standalone_image and saved_images:
+                    # Standalone image: only run image analysis (single LLM call)
+                    # analyze_images_with_llm generates frontmatter via _format_standalone_image_markdown
+                    logger.info(f"[LLM] {file_path.name}: Processing standalone image")
                     img_start = time.perf_counter()
                     (
-                        _,  # Don't use updated markdown for base .md
+                        _,
                         image_cost,
                         image_usage,
                         img_analysis,
@@ -1683,27 +1890,90 @@ async def process_batch(
                     )
                     img_time = time.perf_counter() - img_start
                     logger.info(
-                        f"[LLM] {file_path.name}: Image analysis {img_time:.2f}s ({len(saved_images)} images), ${image_cost:.4f}"
+                        f"[LLM] {file_path.name}: Image analysis {img_time:.2f}s, ${image_cost:.4f}"
                     )
                     llm_cost += image_cost
                     _merge_llm_usage(llm_usage, image_usage)
 
-                # Update base .md with basic frontmatter using ORIGINAL markdown
-                # This ensures .md keeps original alt text, not LLM-generated
-                base_md_content = _add_basic_frontmatter(
-                    original_markdown, file_path.name
-                )
-                atomic_write_text(output_file, base_md_content)
+                    # Write base .md with basic frontmatter
+                    base_md_content = _add_basic_frontmatter(
+                        result.markdown, file_path.name
+                    )
+                    atomic_write_text(output_file, base_md_content)
+                else:
+                    # Normal LLM processing (clean + frontmatter)
+                    # Save original markdown BEFORE LLM processing for base .md file
+                    # Base .md should not have LLM-generated alt text
+                    original_markdown = result.markdown
+
+                    logger.info(
+                        f"[LLM] {file_path.name}: Starting standard LLM processing"
+                    )
+                    llm_start = time.perf_counter()
+                    result.markdown, doc_cost, doc_usage = await process_with_llm(
+                        result.markdown,
+                        file_path.name,
+                        cfg,
+                        output_file,
+                        processor=shared_processor,
+                    )
+                    llm_time = time.perf_counter() - llm_start
+                    logger.info(
+                        f"[LLM] {file_path.name}: Standard processing {llm_time:.2f}s, ${doc_cost:.4f}"
+                    )
+                    llm_cost += doc_cost
+                    _merge_llm_usage(llm_usage, doc_usage)
+
+                    # Image analysis mode (if enabled)
+                    # NOTE: This updates .llm.md file with LLM-generated alt text
+                    # The base .md file keeps original alt text
+                    if (
+                        cfg.image.alt_enabled or cfg.image.desc_enabled
+                    ) and saved_images:
+                        img_start = time.perf_counter()
+                        (
+                            _,  # Don't use updated markdown for base .md
+                            image_cost,
+                            image_usage,
+                            img_analysis,
+                        ) = await analyze_images_with_llm(
+                            saved_images,
+                            result.markdown,
+                            output_file,
+                            cfg,
+                            file_path,
+                            concurrency_limit=cfg.llm.concurrency,
+                            processor=shared_processor,
+                        )
+                        img_time = time.perf_counter() - img_start
+                        logger.info(
+                            f"[LLM] {file_path.name}: Image analysis {img_time:.2f}s ({len(saved_images)} images), ${image_cost:.4f}"
+                        )
+                        llm_cost += image_cost
+                        _merge_llm_usage(llm_usage, image_usage)
+
+                    # Update base .md with basic frontmatter using ORIGINAL markdown
+                    # This ensures .md keeps original alt text, not LLM-generated
+                    base_md_content = _add_basic_frontmatter(
+                        original_markdown, file_path.name
+                    )
+                    atomic_write_text(output_file, base_md_content)
 
             total_time = time.perf_counter() - start_time
             logger.info(
-                f"[DONE] {file_path.name}: {total_time:.2f}s (images={images_count}, cost=${llm_cost:.4f})"
+                f"[DONE] {file_path.name}: {total_time:.2f}s "
+                f"(images={embedded_images_count}, screenshots={screenshots_count}, cost=${llm_cost:.4f})"
             )
 
             return ProcessResult(
                 success=True,
-                output_path=str(output_file),
-                images_extracted=images_count,
+                output_path=str(
+                    output_file.with_suffix(".llm.md")
+                    if cfg.llm.enabled
+                    else output_file
+                ),
+                images_extracted=embedded_images_count,
+                screenshots=screenshots_count,
                 llm_cost_usd=llm_cost,
                 llm_usage=llm_usage,
                 image_analysis_result=img_analysis,
@@ -1713,19 +1983,6 @@ async def process_batch(
             total_time = time.perf_counter() - start_time
             logger.error(f"[FAIL] {file_path.name}: {e} ({total_time:.2f}s)")
             return ProcessResult(success=False, error=str(e))
-
-    # Build options for report
-    task_options = {
-        "input_dir": str(input_dir),
-        "output_dir": str(output_dir),
-        "concurrency": cfg.batch.concurrency,
-        "llm_enabled": cfg.llm.enabled,
-        "image_enabled": (cfg.image.alt_enabled or cfg.image.desc_enabled),
-    }
-    if cfg.llm.enabled and cfg.llm.model_list:
-        task_options["llm_models"] = [
-            m.litellm_params.model for m in cfg.llm.model_list
-        ]
 
     # Run batch processing
     logger.info(
@@ -1747,11 +2004,9 @@ async def process_batch(
     # Write aggregated image analysis JSON (if any)
     if batch.image_analysis_results and cfg.image.desc_enabled:
         write_assets_desc_json(output_dir, batch.image_analysis_results)
-        logger.info(f"Image descriptions saved: {output_dir / 'assets.desc.json'}")
 
-    # Save report
-    report_path = batch.save_report()
-    logger.info(f"Report saved: {report_path}")
+    # Save report (logging is done inside save_report)
+    batch.save_report()
 
     # Exit with appropriate code
     if state.failed_count > 0:

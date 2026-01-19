@@ -139,6 +139,13 @@ class TestLLMProcessor:
             )
 
         assert result.caption == "Alt"
+        # Verify llm_usage is populated on the result
+        assert result.llm_usage is not None
+        assert "test-model" in result.llm_usage
+        assert result.llm_usage["test-model"]["requests"] == 1
+        assert result.llm_usage["test-model"]["input_tokens"] == 123
+        assert result.llm_usage["test-model"]["output_tokens"] == 45
+        # Also verify processor's aggregate usage
         usage = processor.get_usage()
         assert "test-model" in usage
         assert usage["test-model"]["input_tokens"] == 123
@@ -431,32 +438,32 @@ class TestProtectedContent:
     def test_extract_images(self):
         """Test extracting image links."""
         content = "Text\n![Alt](path/to/image.jpg)\nMore text"
-        protected = LLMProcessor._extract_protected_content(content)
+        protected = LLMProcessor.extract_protected_content(content)
         assert len(protected["images"]) == 1
         assert protected["images"][0] == "![Alt](path/to/image.jpg)"
 
     def test_extract_slides(self):
         """Test extracting slide comments."""
         content = "<!-- Slide 1 -->\nContent\n<!-- Slide 2 -->"
-        protected = LLMProcessor._extract_protected_content(content)
+        protected = LLMProcessor.extract_protected_content(content)
         assert len(protected["slides"]) == 2
 
     def test_extract_page_comments(self):
         """Test extracting page image comments."""
         content = "<!-- Page images for reference -->\n<!-- ![Page 1](path) -->"
-        protected = LLMProcessor._extract_protected_content(content)
+        protected = LLMProcessor.extract_protected_content(content)
         assert len(protected["page_comments"]) == 2
 
     def test_restore_missing_image(self):
         """Test restoring missing images."""
         protected = {"images": ["![Test](img.jpg)"], "slides": [], "page_comments": []}
-        result = LLMProcessor._restore_protected_content("Content only", protected)
+        result = LLMProcessor.restore_protected_content("Content only", protected)
         assert "![Test](img.jpg)" in result
 
     def test_preserve_existing_image(self):
         """Test that existing images are not duplicated."""
         protected = {"images": ["![Test](img.jpg)"], "slides": [], "page_comments": []}
-        result = LLMProcessor._restore_protected_content(
+        result = LLMProcessor.restore_protected_content(
             "Content ![Test](img.jpg) more", protected
         )
         assert result.count("![Test](img.jpg)") == 1
@@ -511,7 +518,7 @@ class TestPlaceholderProtection:
     def test_unprotect_fallback_for_removed_placeholder(self):
         """Test fallback when LLM removes a placeholder."""
         content = "Text ![Image](img.jpg) End"
-        protected_data = LLMProcessor._extract_protected_content(content)
+        protected_data = LLMProcessor.extract_protected_content(content)
         _, mapping = LLMProcessor._protect_content(content)
         # Simulate LLM removing the placeholder
         modified = "Text without image End"

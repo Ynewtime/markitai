@@ -9,7 +9,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import instructor
 import litellm
@@ -27,6 +27,8 @@ from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from markit.config import LLMConfig, PromptsConfig
+    from markit.types import LLMUsageByModel, ModelUsageStats
+
 
 from markit.prompts import PromptManager
 
@@ -42,6 +44,28 @@ RETRYABLE_ERRORS = (
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_RETRY_BASE_DELAY = 1.0  # seconds
 DEFAULT_RETRY_MAX_DELAY = 60.0  # seconds
+
+# Default max_output_tokens when model info is unavailable
+DEFAULT_MAX_OUTPUT_TOKENS = 8192  # Conservative default for most models
+
+
+def get_model_max_output_tokens(model: str) -> int:
+    """Get max_output_tokens for a model using litellm.get_model_info().
+
+    Args:
+        model: Model identifier (e.g., "deepseek/deepseek-chat", "gemini/gemini-2.5-flash")
+
+    Returns:
+        max_output_tokens value, or DEFAULT_MAX_OUTPUT_TOKENS if unavailable
+    """
+    try:
+        info = litellm.get_model_info(model)
+        max_output = info.get("max_output_tokens")
+        if max_output and isinstance(max_output, int) and max_output > 0:
+            return max_output
+    except Exception:
+        pass
+    return DEFAULT_MAX_OUTPUT_TOKENS
 
 
 class MarkitLLMLogger(CustomLogger):
@@ -159,12 +183,21 @@ class LLMResponse:
 
 @dataclass
 class ImageAnalysis:
-    """Result of image analysis."""
+    """Result of image analysis.
+
+    Attributes:
+        caption: Short alt text for accessibility
+        description: Detailed markdown description
+        extracted_text: Text extracted from image (OCR)
+        llm_usage: LLM usage statistics in format:
+            {"<model-name>": {"requests": N, "input_tokens": N,
+             "output_tokens": N, "cost_usd": N}}
+    """
 
     caption: str  # Short alt text
     description: str  # Detailed description
     extracted_text: str | None = None  # Text extracted from image
-    model: str | None = None  # Model used for analysis
+    llm_usage: LLMUsageByModel | None = None  # LLM usage stats
 
 
 class ImageAnalysisResult(BaseModel):
@@ -347,6 +380,14 @@ class LLMProcessor:
         # Call counter for each context (file)
         self._call_counter: dict[str, int] = {}
 
+        # Lock for thread-safe access to usage tracking dicts in concurrent contexts
+        # Using threading.Lock instead of asyncio.Lock because:
+        # 1. Dict operations are CPU-bound and don't need await
+        # 2. Works in both sync and async contexts
+        import threading
+
+        self._usage_lock = threading.Lock()
+
         # Content cache for avoiding duplicate LLM calls
         self._cache = ContentCache()
         self._cache_hits = 0
@@ -369,16 +410,24 @@ class LLMProcessor:
             litellm.callbacks.append(_markit_llm_logger)
 
     def _get_next_call_index(self, context: str) -> int:
-        """Get the next call index for a given context."""
-        self._call_counter[context] = self._call_counter.get(context, 0) + 1
-        return self._call_counter[context]
+        """Get the next call index for a given context.
+
+        Thread-safe: uses lock for atomic increment.
+        """
+        with self._usage_lock:
+            self._call_counter[context] = self._call_counter.get(context, 0) + 1
+            return self._call_counter[context]
 
     def reset_call_counter(self, context: str = "") -> None:
-        """Reset call counter for a context or all contexts."""
-        if context:
-            self._call_counter.pop(context, None)
-        else:
-            self._call_counter.clear()
+        """Reset call counter for a context or all contexts.
+
+        Thread-safe: uses lock for safe modification.
+        """
+        with self._usage_lock:
+            if context:
+                self._call_counter.pop(context, None)
+            else:
+                self._call_counter.clear()
 
     @property
     def router(self) -> Router:
@@ -416,13 +465,14 @@ class LLMProcessor:
         if not self.config.model_list:
             raise ValueError("No models configured in llm.model_list")
 
-        # Build model list with resolved API keys
+        # Build model list with resolved API keys and max_tokens
         model_list = []
         for model_config in self.config.model_list:
+            model_id = model_config.litellm_params.model
             model_entry = {
                 "model_name": model_config.model_name,
                 "litellm_params": {
-                    "model": model_config.litellm_params.model,
+                    "model": model_id,
                 },
             }
 
@@ -440,6 +490,14 @@ class LLMProcessor:
                 model_entry["litellm_params"]["weight"] = (
                     model_config.litellm_params.weight
                 )
+
+            # Inject max_tokens: prioritize litellm.get_model_info(), fallback to config
+            max_tokens = get_model_max_output_tokens(model_id)
+            if model_config.litellm_params.max_tokens is not None:
+                # User override takes precedence if litellm returned default
+                if max_tokens == DEFAULT_MAX_OUTPUT_TOKENS:
+                    max_tokens = model_config.litellm_params.max_tokens
+            model_entry["litellm_params"]["max_tokens"] = max_tokens
 
             if model_config.model_info:
                 model_entry["model_info"] = model_config.model_info.model_dump()
@@ -539,6 +597,7 @@ class LLMProcessor:
                             f"status={status_code}"
                         )
 
+                    # TODO: litellm 类型定义问题，messages 应为 list[AllMessageValues]
                     response = await self.router.acompletion(
                         model=model,
                         messages=messages,  # type: ignore[arg-type]
@@ -626,6 +685,8 @@ class LLMProcessor:
     ) -> None:
         """Track usage statistics per model (and optionally per context).
 
+        Thread-safe: uses lock to protect concurrent access to usage dicts.
+
         Args:
             model: Model name
             input_tokens: Number of input tokens
@@ -633,47 +694,60 @@ class LLMProcessor:
             cost: Cost in USD
             context: Optional context identifier (e.g., filename)
         """
-        # Track global usage
-        if model not in self._usage:
-            self._usage[model] = {
-                "requests": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "cost_usd": 0.0,
-            }
-
-        self._usage[model]["requests"] += 1
-        self._usage[model]["input_tokens"] += input_tokens
-        self._usage[model]["output_tokens"] += output_tokens
-        self._usage[model]["cost_usd"] += cost
-
-        # Track per-context usage if context provided
-        if context:
-            if context not in self._context_usage:
-                self._context_usage[context] = {}
-            if model not in self._context_usage[context]:
-                self._context_usage[context][model] = {
+        with self._usage_lock:
+            # Track global usage
+            if model not in self._usage:
+                self._usage[model] = {
                     "requests": 0,
                     "input_tokens": 0,
                     "output_tokens": 0,
                     "cost_usd": 0.0,
                 }
 
-            self._context_usage[context][model]["requests"] += 1
-            self._context_usage[context][model]["input_tokens"] += input_tokens
-            self._context_usage[context][model]["output_tokens"] += output_tokens
-            self._context_usage[context][model]["cost_usd"] += cost
+            self._usage[model]["requests"] += 1
+            self._usage[model]["input_tokens"] += input_tokens
+            self._usage[model]["output_tokens"] += output_tokens
+            self._usage[model]["cost_usd"] += cost
+
+            # Track per-context usage if context provided
+            if context:
+                if context not in self._context_usage:
+                    self._context_usage[context] = {}
+                if model not in self._context_usage[context]:
+                    self._context_usage[context][model] = {
+                        "requests": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cost_usd": 0.0,
+                    }
+
+                self._context_usage[context][model]["requests"] += 1
+                self._context_usage[context][model]["input_tokens"] += input_tokens
+                self._context_usage[context][model]["output_tokens"] += output_tokens
+                self._context_usage[context][model]["cost_usd"] += cost
 
     def get_usage(self) -> dict[str, dict[str, Any]]:
-        """Get global usage statistics."""
-        return self._usage.copy()
+        """Get global usage statistics.
+
+        Thread-safe: uses lock and returns a deep copy.
+        """
+        import copy
+
+        with self._usage_lock:
+            return copy.deepcopy(self._usage)
 
     def get_total_cost(self) -> float:
-        """Get total cost across all models."""
-        return sum(u["cost_usd"] for u in self._usage.values())
+        """Get total cost across all models.
+
+        Thread-safe: uses lock for consistent read.
+        """
+        with self._usage_lock:
+            return sum(u["cost_usd"] for u in self._usage.values())
 
     def get_context_usage(self, context: str) -> dict[str, dict[str, Any]]:
         """Get usage statistics for a specific context.
+
+        Thread-safe: uses lock and returns a deep copy.
 
         Args:
             context: Context identifier (e.g., filename)
@@ -681,10 +755,15 @@ class LLMProcessor:
         Returns:
             Usage statistics for that context, or empty dict if not found
         """
-        return self._context_usage.get(context, {}).copy()
+        import copy
+
+        with self._usage_lock:
+            return copy.deepcopy(self._context_usage.get(context, {}))
 
     def get_context_cost(self, context: str) -> float:
         """Get total cost for a specific context.
+
+        Thread-safe: uses lock for consistent read.
 
         Args:
             context: Context identifier (e.g., filename)
@@ -692,17 +771,21 @@ class LLMProcessor:
         Returns:
             Total cost for that context
         """
-        context_usage = self._context_usage.get(context, {})
-        return sum(u["cost_usd"] for u in context_usage.values())
+        with self._usage_lock:
+            context_usage = self._context_usage.get(context, {})
+            return sum(u["cost_usd"] for u in context_usage.values())
 
     def clear_context_usage(self, context: str) -> None:
         """Clear usage tracking for a specific context.
 
+        Thread-safe: uses lock for safe modification.
+
         Args:
             context: Context identifier to clear
         """
-        self._context_usage.pop(context, None)
-        self._call_counter.pop(context, None)
+        with self._usage_lock:
+            self._context_usage.pop(context, None)
+            self._call_counter.pop(context, None)
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics.
@@ -806,7 +889,7 @@ class LLMProcessor:
         return text[:max_chars]
 
     @staticmethod
-    def _extract_protected_content(content: str) -> dict[str, list[str]]:
+    def extract_protected_content(content: str) -> dict[str, list[str]]:
         """Extract content that must be preserved through LLM processing.
 
         Extracts:
@@ -831,8 +914,10 @@ class LLMProcessor:
         # Extract image links
         protected["images"] = re.findall(r"!\[[^\]]*\]\([^)]+\)", content)
 
-        # Extract slide comments
-        protected["slides"] = re.findall(r"<!--\s*Slide\s+\d+\s*-->", content)
+        # Extract slide comments: <!-- Slide X --> or <!-- Slide number: X -->
+        protected["slides"] = re.findall(
+            r"<!--\s*Slide\s+(?:number:\s*)?\d+\s*-->", content
+        )
 
         # Extract page image comments
         # Pattern 1: <!-- Page images for reference -->
@@ -871,8 +956,8 @@ class LLMProcessor:
             mapping[placeholder] = match.group(0)
             result = result.replace(match.group(0), placeholder, 1)
 
-        # Protect slide comments: <!-- Slide X -->
-        slide_pattern = r"<!--\s*Slide\s+\d+\s*-->"
+        # Protect slide comments: <!-- Slide X --> or <!-- Slide number: X -->
+        slide_pattern = r"<!--\s*Slide\s+(?:number:\s*)?\d+\s*-->"
         for i, match in enumerate(re.finditer(slide_pattern, result)):
             placeholder = f"__MARKIT_SLIDE_{i}__"
             mapping[placeholder] = match.group(0)
@@ -955,7 +1040,8 @@ class LLMProcessor:
             if missing_slides:
                 slide_info = []
                 for slide in missing_slides:
-                    match = re.search(r"Slide\s+(\d+)", slide)
+                    # Support both "Slide X" and "Slide number: X" formats
+                    match = re.search(r"Slide\s+(?:number:\s*)?(\d+)", slide)
                     if match:
                         slide_info.append((int(match.group(1)), slide))
                 slide_info.sort()
@@ -1009,14 +1095,14 @@ class LLMProcessor:
         return result
 
     @staticmethod
-    def _restore_protected_content(result: str, protected: dict[str, list[str]]) -> str:
+    def restore_protected_content(result: str, protected: dict[str, list[str]]) -> str:
         """Restore any protected content that was lost during LLM processing.
 
         Legacy method - use _unprotect_content for new code.
 
         Args:
             result: LLM output
-            protected: Dict of protected content from _extract_protected_content
+            protected: Dict of protected content from extract_protected_content
 
         Returns:
             Result with missing protected content restored
@@ -1047,7 +1133,7 @@ class LLMProcessor:
         self._cache_misses += 1
 
         # Extract and protect content before LLM processing
-        protected = self._extract_protected_content(content)
+        protected = self.extract_protected_content(content)
         protected_content, mapping = self._protect_content(content)
 
         prompt = self._prompt_manager.get_prompt("cleaner", content=protected_content)
@@ -1099,7 +1185,7 @@ class LLMProcessor:
         return response.content
 
     async def analyze_image(
-        self, image_path: Path, language: str = "en"
+        self, image_path: Path, language: str = "en", context: str = ""
     ) -> ImageAnalysis:
         """
         Analyze an image using vision model.
@@ -1112,6 +1198,7 @@ class LLMProcessor:
         Args:
             image_path: Path to the image file
             language: Language for output (e.g., "en", "zh")
+            context: Context identifier for usage tracking (e.g., source filename)
 
         Returns:
             ImageAnalysis with caption and description
@@ -1161,7 +1248,7 @@ class LLMProcessor:
 
         # Try structured output methods with fallbacks
         result = await self._analyze_image_with_fallback(
-            messages, vision_model, image_path.name
+            messages, vision_model, image_path.name, context
         )
 
         logger.debug(f"Analyzed image: {image_path.name}")
@@ -1172,6 +1259,7 @@ class LLMProcessor:
         image_paths: list[Path],
         language: str = "en",
         max_images_per_batch: int = 10,
+        context: str = "",
     ) -> list[ImageAnalysis]:
         """
         Analyze multiple images in batches to reduce LLM calls.
@@ -1180,6 +1268,7 @@ class LLMProcessor:
             image_paths: List of image paths to analyze
             language: Language for output ("en" or "zh")
             max_images_per_batch: Max images per LLM call (default 10)
+            context: Context identifier for usage tracking (e.g., source filename)
 
         Returns:
             List of ImageAnalysis results in same order as input
@@ -1203,33 +1292,46 @@ class LLMProcessor:
                 f"{len(batch_paths)} images"
             )
 
-            batch_results = await self._analyze_batch_impl(batch_paths, language)
+            batch_results = await self.analyze_batch(batch_paths, language, context)
             all_results.extend(batch_results)
 
         return all_results
 
-    async def _analyze_batch_impl(
+    async def analyze_batch(
         self,
         image_paths: list[Path],
         language: str,
+        context: str = "",
     ) -> list[ImageAnalysis]:
-        """Implementation of batch image analysis using Instructor."""
-        # Language instruction
+        """Batch image analysis using Instructor.
+
+        Uses the same prompt template as single image analysis for consistency.
+
+        Args:
+            image_paths: List of image paths to analyze
+            language: Language for output ("en" or "zh")
+            context: Context identifier for usage tracking
+
+        Returns:
+            List of ImageAnalysis results
+        """
+        # Get base prompt from template (same as single image analysis)
         lang_instruction = (
             "Output in English." if language == "en" else "使用中文输出。"
         )
+        base_prompt = self._prompt_manager.get_prompt("image_analysis")
+        base_prompt = base_prompt.replace(
+            "**输出语言必须与源文档保持一致** - 英文文档用英文，中文文档用中文",
+            lang_instruction,
+        )
 
-        # Build batch prompt
-        prompt = f"""Analyze each of the following {len(image_paths)} images.
-
-For each image, provide:
-1. caption: Short alt text (10-30 characters)
-2. description: Detailed markdown description
-3. extracted_text: Any text visible in the image (null if none)
-
-{lang_instruction}
-
-Return a JSON object with an "images" array containing results for each image in order."""
+        # Build batch prompt with the same base prompt
+        batch_header = (
+            f"请依次分析以下 {len(image_paths)} 张图片。对每张图片，"
+            if language == "zh"
+            else f"Analyze the following {len(image_paths)} images in order. For each image, "
+        )
+        prompt = f"{batch_header}{base_prompt}\n\nReturn a JSON object with an 'images' array containing results for each image in order."
 
         # Build content parts with all images
         content_parts: list[dict] = [{"type": "text", "text": prompt}]
@@ -1245,8 +1347,9 @@ Return a JSON object with an "images" array containing results for each image in
             }
             mime_type = mime_map.get(suffix, "image/jpeg")
 
+            # Unique image label that won't conflict with document content
             content_parts.append(
-                {"type": "text", "text": f"\n## Image {i}: {image_path.name}"}
+                {"type": "text", "text": f"\n__MARKIT_IMG_LABEL_{i}__"}
             )
             content_parts.append(
                 {
@@ -1263,6 +1366,7 @@ Return a JSON object with an "images" array containing results for each image in
                 (
                     response,
                     raw_response,
+                    # TODO: instructor 类型定义问题，messages 应为 list[ChatCompletionMessageParam]
                 ) = await client.chat.completions.create_with_completion(
                     model="vision",
                     messages=[{"role": "user", "content": content_parts}],  # type: ignore[arg-type]
@@ -1270,8 +1374,19 @@ Return a JSON object with an "images" array containing results for each image in
                     max_retries=0,
                 )
 
+                # Check for truncation
+                if hasattr(raw_response, "choices") and raw_response.choices:
+                    finish_reason = getattr(
+                        raw_response.choices[0], "finish_reason", None
+                    )
+                    if finish_reason == "length":
+                        raise ValueError("Output truncated due to max_tokens limit")
+
                 # Track usage
                 actual_model = getattr(raw_response, "model", None) or "vision"
+                input_tokens = 0
+                output_tokens = 0
+                cost = 0.0
                 if hasattr(raw_response, "usage") and raw_response.usage is not None:
                     input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
                     output_tokens = (
@@ -1282,8 +1397,22 @@ Return a JSON object with an "images" array containing results for each image in
                     except Exception:
                         cost = 0.0
                     self._track_usage(
-                        actual_model, input_tokens, output_tokens, cost, "batch_images"
+                        actual_model, input_tokens, output_tokens, cost, context
                     )
+
+                # Calculate per-image usage (divide batch usage by number of images)
+                num_images = max(len(response.images), 1)
+                per_image_llm_usage: LLMUsageByModel = {
+                    actual_model: cast(
+                        "ModelUsageStats",
+                        {
+                            "requests": 1,  # Each image counts as 1 request share
+                            "input_tokens": input_tokens // num_images,
+                            "output_tokens": output_tokens // num_images,
+                            "cost_usd": cost / num_images,
+                        },
+                    )
+                }
 
                 # Convert to ImageAnalysis list
                 results: list[ImageAnalysis] = []
@@ -1293,6 +1422,7 @@ Return a JSON object with an "images" array containing results for each image in
                             caption=img_result.caption,
                             description=img_result.description,
                             extracted_text=img_result.extracted_text,
+                            llm_usage=per_image_llm_usage,
                         )
                     )
 
@@ -1303,6 +1433,7 @@ Return a JSON object with an "images" array containing results for each image in
                             caption="Image",
                             description="Image analysis failed",
                             extracted_text=None,
+                            llm_usage=per_image_llm_usage,
                         )
                     )
 
@@ -1313,10 +1444,11 @@ Return a JSON object with an "images" array containing results for each image in
                 f"Batch image analysis failed: {e}, falling back to individual analysis"
             )
             # Fallback: analyze each image individually
+            # Pass context to maintain accurate per-file usage tracking
             results = []
             for image_path in image_paths:
                 try:
-                    result = await self.analyze_image(image_path, language)
+                    result = await self.analyze_image(image_path, language, context)
                     results.append(result)
                 except Exception:
                     results.append(
@@ -1343,6 +1475,7 @@ Return a JSON object with an "images" array containing results for each image in
         messages: list[dict],
         model: str,
         image_name: str,
+        context: str = "",
     ) -> ImageAnalysis:
         """
         Analyze image with multiple fallback strategies.
@@ -1350,11 +1483,19 @@ Return a JSON object with an "images" array containing results for each image in
         Strategy 1: Instructor structured output (most precise)
         Strategy 2: JSON mode + manual parsing
         Strategy 3: Original two-call method (most compatible)
+
+        Args:
+            messages: LLM messages with image
+            model: Model name to use
+            image_name: Image filename for logging
+            context: Context identifier for usage tracking
         """
         # Strategy 1: Try Instructor
         try:
             # Deep copy to prevent Instructor from modifying original messages
-            result = await self._analyze_with_instructor(copy.deepcopy(messages), model)
+            result = await self._analyze_with_instructor(
+                copy.deepcopy(messages), model, context
+            )
             logger.debug(f"[{image_name}] Used Instructor structured output")
             return result
         except Exception as e:
@@ -1362,7 +1503,9 @@ Return a JSON object with an "images" array containing results for each image in
 
         # Strategy 2: Try JSON mode
         try:
-            result = await self._analyze_with_json_mode(copy.deepcopy(messages), model)
+            result = await self._analyze_with_json_mode(
+                copy.deepcopy(messages), model, context
+            )
             logger.debug(f"[{image_name}] Used JSON mode fallback")
             return result
         except Exception as e:
@@ -1372,13 +1515,14 @@ Return a JSON object with an "images" array containing results for each image in
 
         # Strategy 3: Original two-call method
         return await self._analyze_with_two_calls(
-            copy.deepcopy(messages), model, context=image_name
+            copy.deepcopy(messages), model, context=context or image_name
         )
 
     async def _analyze_with_instructor(
         self,
         messages: list[dict],
         model: str,
+        context: str = "",
     ) -> ImageAnalysis:
         """Analyze using Instructor for structured output."""
         async with self.semaphore:
@@ -1388,6 +1532,7 @@ Return a JSON object with an "images" array containing results for each image in
             )
 
             # Use create_with_completion to get both the model and the raw response
+            # TODO: instructor 类型定义问题，messages 应为 list[ChatCompletionMessageParam]
             (
                 response,
                 raw_response,
@@ -1397,6 +1542,12 @@ Return a JSON object with an "images" array containing results for each image in
                 response_model=ImageAnalysisResult,
                 max_retries=0,
             )
+
+            # Check for truncation
+            if hasattr(raw_response, "choices") and raw_response.choices:
+                finish_reason = getattr(raw_response.choices[0], "finish_reason", None)
+                if finish_reason == "length":
+                    raise ValueError("Output truncated due to max_tokens limit")
 
             # Track usage from raw API response
             # Get actual model from response for accurate tracking
@@ -1411,19 +1562,35 @@ Return a JSON object with an "images" array containing results for each image in
                     cost = completion_cost(completion_response=raw_response)
                 except Exception:
                     cost = 0.0
-                self._track_usage(actual_model, input_tokens, output_tokens, cost)
+                self._track_usage(
+                    actual_model, input_tokens, output_tokens, cost, context
+                )
+
+            # Build llm_usage dict for this analysis
+            llm_usage: LLMUsageByModel = {
+                actual_model: cast(
+                    "ModelUsageStats",
+                    {
+                        "requests": 1,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cost_usd": cost,
+                    },
+                )
+            }
 
             return ImageAnalysis(
                 caption=response.caption.strip(),
                 description=response.description,
                 extracted_text=response.extracted_text,
-                model=actual_model,
+                llm_usage=llm_usage,
             )
 
     async def _analyze_with_json_mode(
         self,
         messages: list[dict],
         model: str,
+        context: str = "",
     ) -> ImageAnalysis:
         """Analyze using JSON mode with manual parsing."""
         # Add JSON instruction to the prompt
@@ -1441,33 +1608,48 @@ Return a JSON object with an "images" array containing results for each image in
         }
 
         async with self.semaphore:
-            # Use router for load balancing
+            # TODO: litellm 类型定义问题，messages 应为 list[AllMessageValues]
             response = await self.router.acompletion(
                 model=model,
                 messages=json_messages,  # type: ignore[arg-type]
                 response_format={"type": "json_object"},
             )
 
-            content = response.choices[0].message.content or "{}"  # type: ignore[union-attr]
+            message = response.choices[0].message
+            content = message.content if message else "{}"
             actual_model = response.model or model
 
             # Track usage
-            usage = response.usage  # type: ignore[union-attr]
+            usage = getattr(response, "usage", None)
             input_tokens = usage.prompt_tokens if usage else 0
             output_tokens = usage.completion_tokens if usage else 0
             try:
                 cost = completion_cost(completion_response=response)
             except Exception:
                 cost = 0.0
-            self._track_usage(actual_model, input_tokens, output_tokens, cost)
+            self._track_usage(actual_model, input_tokens, output_tokens, cost, context)
 
             # Parse JSON
             data = json.loads(content)
+
+            # Build llm_usage dict for this analysis
+            llm_usage: LLMUsageByModel = {
+                actual_model: cast(
+                    "ModelUsageStats",
+                    {
+                        "requests": 1,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cost_usd": cost,
+                    },
+                )
+            }
+
             return ImageAnalysis(
                 caption=data.get("caption", "").strip(),
                 description=data.get("description", ""),
                 extracted_text=data.get("extracted_text"),
-                model=actual_model,
+                llm_usage=llm_usage,
             )
 
     async def _analyze_with_two_calls(
@@ -1522,10 +1704,28 @@ Return a JSON object with an "images" array containing results for each image in
             context=context,
         )
 
+        # Build aggregated llm_usage from both calls
+        llm_usage: LLMUsageByModel = {}
+        for resp in [caption_response, desc_response]:
+            if resp.model not in llm_usage:
+                llm_usage[resp.model] = cast(
+                    "ModelUsageStats",
+                    {
+                        "requests": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cost_usd": 0.0,
+                    },
+                )
+            llm_usage[resp.model]["requests"] += 1
+            llm_usage[resp.model]["input_tokens"] += resp.input_tokens
+            llm_usage[resp.model]["output_tokens"] += resp.output_tokens
+            llm_usage[resp.model]["cost_usd"] += resp.cost_usd
+
         return ImageAnalysis(
             caption=caption_response.content.strip(),
             description=desc_response.content,
-            model=caption_response.model,
+            llm_usage=llm_usage,
         )
 
     async def extract_page_content(self, image_path: Path, context: str = "") -> str:
@@ -1635,6 +1835,9 @@ Return a JSON object with an "images" array containing results for each image in
         This method only cleans formatting issues (removes residuals, fixes structure).
         It does NOT restructure or rewrite content.
 
+        Uses placeholder-based protection to preserve images, slides, and
+        page comments in their original positions during LLM processing.
+
         Args:
             extracted_text: Text extracted by pymupdf4llm/markitdown
             page_images: List of paths to page/slide images
@@ -1646,6 +1849,10 @@ Return a JSON object with an "images" array containing results for each image in
         if not page_images:
             return extracted_text
 
+        # Extract and protect content before LLM processing
+        protected = self.extract_protected_content(extracted_text)
+        protected_content, mapping = self._protect_content(extracted_text)
+
         # Build message with text + images
         prompt = self._prompt_manager.get_prompt("document_enhance")
 
@@ -1653,7 +1860,7 @@ Return a JSON object with an "images" array containing results for each image in
         content_parts: list[dict] = [
             {
                 "type": "text",
-                "text": f"{prompt}\n\n## Extracted Text:\n\n{extracted_text}",
+                "text": f"{prompt}\n\n## Extracted Text:\n\n{protected_content}",
             },
         ]
 
@@ -1670,10 +1877,11 @@ Return a JSON object with an "images" array containing results for each image in
             }
             mime_type = mime_map.get(suffix, "image/jpeg")
 
+            # Unique page label that won't conflict with document content
             content_parts.append(
                 {
                     "type": "text",
-                    "text": f"\n## Page {i} Image:",
+                    "text": f"\n__MARKIT_PAGE_LABEL_{i}__",
                 }
             )
             content_parts.append(
@@ -1689,7 +1897,9 @@ Return a JSON object with an "images" array containing results for each image in
             context=context,
         )
 
-        return response.content
+        # Restore protected content from placeholders, with fallback for removed items
+        result = self._unprotect_content(response.content, mapping, protected)
+        return result
 
     async def enhance_document_complete(
         self,
@@ -1701,10 +1911,11 @@ Return a JSON object with an "images" array containing results for each image in
         """
         Complete document enhancement: clean format + generate frontmatter.
 
-        Architecture (simplified - vision only cleans, frontmatter separate):
-        - Vision calls only do format cleaning (no Instructor, pure markdown output)
-        - Frontmatter generated separately after all cleaning is done
-        - More stable output, avoids JSON mode content truncation
+        Architecture:
+        - Single batch (pages <= max_pages_per_batch): Use Instructor for combined
+          cleaning + frontmatter in one LLM call (saves one API call)
+        - Multi batch (pages > max_pages_per_batch): Clean in batches, then
+          generate frontmatter separately
 
         Args:
             extracted_text: Text extracted by pymupdf4llm/markitdown
@@ -1719,23 +1930,33 @@ Return a JSON object with an "images" array containing results for each image in
             # No images, fall back to regular process_document
             return await self.process_document(extracted_text, source)
 
-        # Step 1: Clean format with vision (single or batched)
+        # Single batch: use combined Instructor call (saves one API call)
         if len(page_images) <= max_pages_per_batch:
             logger.info(
-                f"[{source}] Processing {len(page_images)} pages in single call"
+                f"[{source}] Processing {len(page_images)} pages with combined call"
             )
-            cleaned = await self.enhance_document_with_vision(
-                extracted_text, page_images, context=source
-            )
-        else:
-            logger.info(
-                f"[{source}] Processing {len(page_images)} pages in batches of {max_pages_per_batch}"
-            )
-            cleaned = await self._enhance_document_batched_simple(
-                extracted_text, page_images, max_pages_per_batch, source
-            )
+            try:
+                return await self._enhance_with_frontmatter(
+                    extracted_text, page_images, source
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[{source}] Combined call failed: {e}, falling back to separate calls"
+                )
+                # Fallback to separate calls
+                cleaned = await self.enhance_document_with_vision(
+                    extracted_text, page_images, context=source
+                )
+                frontmatter = await self.generate_frontmatter(cleaned, source)
+                return cleaned, frontmatter
 
-        # Step 2: Generate frontmatter from cleaned content
+        # Multi batch: clean in batches, then generate frontmatter
+        logger.info(
+            f"[{source}] Processing {len(page_images)} pages in batches of {max_pages_per_batch}"
+        )
+        cleaned = await self._enhance_document_batched_simple(
+            extracted_text, page_images, max_pages_per_batch, source
+        )
         frontmatter = await self.generate_frontmatter(cleaned, source)
 
         return cleaned, frontmatter
@@ -1760,6 +1981,12 @@ Return a JSON object with an "images" array containing results for each image in
         """
         import yaml
 
+        # Extract protected content for fallback restoration
+        protected = self.extract_protected_content(extracted_text)
+
+        # Protect slide comments and images with placeholders before LLM processing
+        protected_text, mapping = self._protect_content(extracted_text)
+
         # Get combined prompt
         prompt = self._prompt_manager.get_prompt(
             "document_enhance_complete",
@@ -1770,7 +1997,7 @@ Return a JSON object with an "images" array containing results for each image in
         content_parts: list[dict] = [
             {
                 "type": "text",
-                "text": f"{prompt}\n\n## Extracted Text:\n\n{extracted_text}",
+                "text": f"{prompt}\n\n## Extracted Text:\n\n{protected_text}",
             },
         ]
 
@@ -1785,7 +2012,10 @@ Return a JSON object with an "images" array containing results for each image in
                 ".webp": "image/webp",
             }
             mime_type = mime_map.get(suffix, "image/jpeg")
-            content_parts.append({"type": "text", "text": f"\n## Page {i} Image:"})
+            # Unique page label that won't conflict with document content
+            content_parts.append(
+                {"type": "text", "text": f"\n__MARKIT_PAGE_LABEL_{i}__"}
+            )
             content_parts.append(
                 {
                     "type": "image_url",
@@ -1797,6 +2027,7 @@ Return a JSON object with an "images" array containing results for each image in
             client = instructor.from_litellm(
                 self.router.acompletion, mode=instructor.Mode.JSON
             )
+            # TODO: instructor 类型定义问题，messages 应为 list[ChatCompletionMessageParam]
             (
                 response,
                 raw_response,
@@ -1806,6 +2037,12 @@ Return a JSON object with an "images" array containing results for each image in
                 response_model=EnhancedDocumentResult,
                 max_retries=0,
             )
+
+            # Check for truncation
+            if hasattr(raw_response, "choices") and raw_response.choices:
+                finish_reason = getattr(raw_response.choices[0], "finish_reason", None)
+                if finish_reason == "length":
+                    raise ValueError("Output truncated due to max_tokens limit")
 
             # Track usage
             actual_model = getattr(raw_response, "model", None) or "vision"
@@ -1831,7 +2068,13 @@ Return a JSON object with an "images" array containing results for each image in
                 frontmatter_dict, allow_unicode=True, default_flow_style=False
             ).strip()
 
-            return response.cleaned_markdown, frontmatter_yaml
+            # Restore protected content from placeholders
+            # Pass protected dict for fallback restoration if LLM removed placeholders
+            cleaned_markdown = self._unprotect_content(
+                response.cleaned_markdown, mapping, protected
+            )
+
+            return cleaned_markdown, frontmatter_yaml
 
     @staticmethod
     def _split_text_by_pages(text: str, num_pages: int) -> list[str]:
@@ -1934,8 +2177,9 @@ Return a JSON object with an "images" array containing results for each image in
             )
 
             # All batches: clean only (no frontmatter)
+            # Use source as context (not batch-specific) so all usage aggregates to same context
             batch_cleaned = await self.enhance_document_with_vision(
-                batch_text, batch_images, context=f"{source}:batch{batch_num + 1}"
+                batch_text, batch_images, context=source
             )
 
             cleaned_parts.append(batch_cleaned)
@@ -1965,7 +2209,7 @@ Return a JSON object with an "images" array containing results for each image in
             Tuple of (cleaned_markdown, frontmatter_yaml)
         """
         # Extract and protect content before LLM processing
-        protected = self._extract_protected_content(markdown)
+        protected = self.extract_protected_content(markdown)
         protected_content, mapping = self._protect_content(markdown)
 
         # Try combined approach with Instructor first
@@ -2099,6 +2343,12 @@ Return a JSON object with an "images" array containing results for each image in
                 max_retries=0,
             )
 
+            # Check for truncation
+            if hasattr(raw_response, "choices") and raw_response.choices:
+                finish_reason = getattr(raw_response.choices[0], "finish_reason", None)
+                if finish_reason == "length":
+                    raise ValueError("Output truncated due to max_tokens limit")
+
             # Track usage from raw API response
             # Get actual model from response for accurate tracking
             actual_model = getattr(raw_response, "model", None) or "default"
@@ -2133,7 +2383,13 @@ Return a JSON object with an "images" array containing results for each image in
         Returns:
             Complete markdown with frontmatter
         """
+        from datetime import datetime
+
         frontmatter = self._clean_frontmatter(frontmatter)
+
+        # Add markit_processed timestamp (use local time)
+        timestamp = datetime.now().astimezone().isoformat()
+        frontmatter = f"{frontmatter}\nmarkit_processed: {timestamp}"
 
         # Remove non-commented screenshot references that shouldn't be in content
         # These are page screenshots that should only appear as comments at the end
@@ -2178,10 +2434,24 @@ Return a JSON object with an "images" array containing results for each image in
             for pattern in patterns:
                 content = re.sub(pattern, "", content, flags=re.MULTILINE)
 
-            # Also remove any section headers that preceded these removed images
-            # Pattern: ### Page N Image: followed by empty line
+            # Also remove any page/image labels that LLM may have copied
+            # Pattern: ## or ### Page N Image: followed by empty line (legacy format)
+            # Pattern: [Page N] or [Image N] on its own line (simple format)
+            # Pattern: __MARKIT_PAGE_LABEL_N__ or __MARKIT_IMG_LABEL_N__ (unique format)
             content = re.sub(
-                r"^###\s+Page\s+\d+\s+Image:\s*\n\s*\n",
+                r"^#{2,3}\s+Page\s+\d+\s+Image:\s*\n\s*\n",
+                "",
+                content,
+                flags=re.MULTILINE,
+            )
+            content = re.sub(
+                r"^\[(Page|Image)\s+\d+\]\s*\n",
+                "",
+                content,
+                flags=re.MULTILINE,
+            )
+            content = re.sub(
+                r"^__MARKIT_(PAGE|IMG)_LABEL_\d+__\s*\n",
                 "",
                 content,
                 flags=re.MULTILINE,
@@ -2202,9 +2472,21 @@ Return a JSON object with an "images" array containing results for each image in
             for pattern in patterns:
                 before = re.sub(pattern, "", before, flags=re.MULTILINE)
 
-            # Also remove any section headers that preceded these removed images
+            # Also remove any page/image labels that LLM may have copied
             before = re.sub(
-                r"^###\s+Page\s+\d+\s+Image:\s*\n\s*\n",
+                r"^#{2,3}\s+Page\s+\d+\s+Image:\s*\n\s*\n",
+                "",
+                before,
+                flags=re.MULTILINE,
+            )
+            before = re.sub(
+                r"^\[(Page|Image)\s+\d+\]\s*\n",
+                "",
+                before,
+                flags=re.MULTILINE,
+            )
+            before = re.sub(
+                r"^__MARKIT_(PAGE|IMG)_LABEL_\d+__\s*\n",
                 "",
                 before,
                 flags=re.MULTILINE,
@@ -2253,9 +2535,13 @@ Return a JSON object with an "images" array containing results for each image in
     def _normalize_whitespace(content: str) -> str:
         """Normalize whitespace in markdown content.
 
+        - Ensure headers (#) have one blank line before and after
         - Merge 3+ consecutive blank lines into 2 blank lines
         - Ensure consistent line endings
         - Strip trailing whitespace from lines
+
+        Note: Header normalization is markdown-aware and correctly handles
+        nested code blocks (e.g., ```` containing ```).
 
         Args:
             content: Markdown content to normalize
@@ -2267,7 +2553,56 @@ Return a JSON object with an "images" array containing results for each image in
 
         # Strip trailing whitespace from each line
         lines = [line.rstrip() for line in content.split("\n")]
-        content = "\n".join(lines)
+
+        # Normalize header spacing (markdown-aware, skip code blocks)
+        result_lines: list[str] = []
+        code_block_char: str | None = None  # '`' or '~'
+        code_block_count: int = 0  # Number of fence chars that opened the block
+
+        for i, line in enumerate(lines):
+            # Check for code fence (``` or ~~~, possibly more)
+            fence_match = re.match(r"^(`{3,}|~{3,})", line)
+            if fence_match:
+                fence = fence_match.group(1)
+                fence_char = fence[0]
+                fence_count = len(fence)
+
+                if code_block_char is None:
+                    # Start of code block
+                    code_block_char = fence_char
+                    code_block_count = fence_count
+                elif fence_char == code_block_char and fence_count >= code_block_count:
+                    # End of code block (same char, count >= opening)
+                    code_block_char = None
+                    code_block_count = 0
+                # else: fence inside code block, ignore
+
+            # Only process headers and slide comments outside code blocks
+            in_code_block = code_block_char is not None
+
+            # ATX headers: 1-6 # followed by space or end of line
+            # Excludes: #hashtag, #123, #! (shebang)
+            is_atx_header = bool(re.match(r"^#{1,6}(\s|$)", line))
+
+            # Slide comments: <!-- Slide number: X -->
+            is_slide_comment = bool(
+                re.match(r"^<!--\s*Slide\s+(number:\s*)?\d+\s*-->", line)
+            )
+
+            needs_spacing = is_atx_header or is_slide_comment
+
+            if not in_code_block and needs_spacing:
+                # Add blank line before if needed
+                if result_lines and result_lines[-1] != "":
+                    result_lines.append("")
+                result_lines.append(line)
+                # Add blank line after if next line is not empty
+                if i + 1 < len(lines) and lines[i + 1] != "":
+                    result_lines.append("")
+            else:
+                result_lines.append(line)
+
+        content = "\n".join(result_lines)
 
         # Merge 3+ consecutive blank lines into 2 (keep one blank line between blocks)
         content = re.sub(r"\n{3,}", "\n\n", content)

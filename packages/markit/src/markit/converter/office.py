@@ -17,6 +17,7 @@ from markit.converter.base import (
     FileFormat,
     register_converter,
 )
+from markit.utils.office import find_libreoffice, has_ms_office
 
 if TYPE_CHECKING:
     from markit.config import MarkitConfig
@@ -25,42 +26,6 @@ if TYPE_CHECKING:
 def _is_windows() -> bool:
     """Check if running on Windows."""
     return sys.platform == "win32"
-
-
-def _detect_ms_office() -> bool:
-    """Detect if MS Office is installed on Windows.
-
-    Returns:
-        True if MS Office (Word) is available via COM, False otherwise.
-    """
-    if not _is_windows():
-        return False
-
-    try:
-        import win32com.client
-
-        # Try to create Word application (most reliable check)
-        word = win32com.client.Dispatch("Word.Application")
-        word.Quit()
-        return True
-    except Exception:
-        return False
-
-
-# Cache the detection result
-_MS_OFFICE_AVAILABLE: bool | None = None
-
-
-def _has_ms_office() -> bool:
-    """Check if MS Office is available (cached)."""
-    global _MS_OFFICE_AVAILABLE
-    if _MS_OFFICE_AVAILABLE is None:
-        _MS_OFFICE_AVAILABLE = _detect_ms_office()
-        if _MS_OFFICE_AVAILABLE:
-            logger.debug("MS Office detected, will use COM automation")
-        else:
-            logger.debug("MS Office not detected, using MarkItDown fallback")
-    return _MS_OFFICE_AVAILABLE
 
 
 class OfficeConverter(BaseConverter):
@@ -90,7 +55,7 @@ class OfficeConverter(BaseConverter):
         input_path = Path(input_path)
 
         # Try COM automation on Windows if available
-        if _has_ms_office():
+        if has_ms_office():
             try:
                 return self._convert_with_com(input_path, output_dir)
             except Exception as e:
@@ -103,16 +68,7 @@ class OfficeConverter(BaseConverter):
 
     def _convert_with_markitdown(self, input_path: Path) -> ConvertResult:
         """Convert using MarkItDown library."""
-        import re
-
         result = self._markitdown.convert(input_path, keep_data_uris=True)
-
-        # Normalize slide markers: <!-- Slide number: X --> → <!-- Slide X -->
-        markdown = re.sub(
-            r"<!--\s*Slide\s+number:\s*(\d+)\s*-->",
-            r"<!-- Slide \1 -->",
-            result.markdown,
-        )
 
         metadata = {
             "source": str(input_path),
@@ -124,7 +80,7 @@ class OfficeConverter(BaseConverter):
             metadata["title"] = result.title
 
         return ConvertResult(
-            markdown=markdown,
+            markdown=result.markdown,
             images=[],
             metadata=metadata,
         )
@@ -353,7 +309,7 @@ class PptxConverter(OfficeConverter):
         """
 
         # Try Windows COM first
-        if _has_ms_office():
+        if has_ms_office():
             try:
                 return self._render_slides_with_com(
                     input_path, screenshots_dir, image_format
@@ -439,13 +395,12 @@ class PptxConverter(OfficeConverter):
         self, input_path: Path, screenshots_dir: Path, image_format: str
     ) -> tuple[list[ExtractedImage], list[dict]]:
         """Render slides by converting to PDF first."""
-        import shutil
         import subprocess
         import time
 
         logger.info(f"[PPTX] Rendering slides via PDF: {input_path.name}")
 
-        soffice_cmd = shutil.which("soffice") or shutil.which("libreoffice")
+        soffice_cmd = find_libreoffice()
         if not soffice_cmd:
             logger.warning("LibreOffice not found")
             return [], []

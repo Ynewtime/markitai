@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -74,7 +74,7 @@ def add_basic_frontmatter(content: str, source: str) -> str:
             if title:
                 break
 
-    timestamp = datetime.now(UTC).isoformat()
+    timestamp = datetime.now().astimezone().isoformat()
 
     frontmatter = f"""---
 title: {title}
@@ -125,6 +125,9 @@ def write_assets_desc_json(
 ) -> Path | None:
     """Write or merge asset descriptions to a single JSON file.
 
+    File is saved to: assets/assets.desc.json
+    Multiple runs with same input merge into the same file.
+
     Args:
         output_dir: Output directory
         analysis_results: List of ImageAnalysisResult objects
@@ -135,7 +138,9 @@ def write_assets_desc_json(
     if not analysis_results:
         return None
 
-    desc_file = output_dir / "assets.desc.json"
+    # Path: output_dir/assets/assets.desc.json
+    assets_dir = output_dir / "assets"
+    desc_file = assets_dir / "assets.desc.json"
 
     existing_data: dict[str, Any] = {}
     if desc_file.exists():
@@ -155,15 +160,17 @@ def write_assets_desc_json(
             "assets": result.assets,
         }
 
+    # Use local time for timestamps
+    local_now = datetime.now().astimezone().isoformat()
     desc_json = {
         "version": "1.0",
-        "created": existing_data.get("created", datetime.now(UTC).isoformat()),
-        "updated": datetime.now(UTC).isoformat(),
+        "created": existing_data.get("created", local_now),
+        "updated": local_now,
         "sources": list(sources_map.values()),
     }
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    assets_dir.mkdir(parents=True, exist_ok=True)
     atomic_write_json(desc_file, desc_json)
-    logger.info(f"Written asset descriptions: {desc_file}")
+    logger.info(f"Asset description saved: {desc_file.resolve()}")
 
     return desc_file

@@ -58,6 +58,7 @@ class LiteLLMParams(BaseModel):
     api_key: str | None = None
     api_base: str | None = None
     weight: int = 1
+    max_tokens: int | None = None  # Override max_output_tokens for this model
 
     def get_resolved_api_key(self, strict: bool = True) -> str | None:
         """Get API key with env: syntax resolved.

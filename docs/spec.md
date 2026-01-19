@@ -1,7 +1,7 @@
 # Markit 技术规格文档
 
 > 版本: 0.2.0-draft
-> 最后更新: 2026-01-15
+> 最后更新: 2026-01-20
 
 ---
 
@@ -683,6 +683,7 @@ output/                              # 输出目录
 ├── assets/                          # 资源目录
 │   ├── document.docx.0001.jpg       # 提取的图片（已压缩）
 │   ├── document.docx.0002.jpg
+│   └── assets.desc.json             # 图片描述文件 (--desc)，合并模式
 ├── sub_dir/                         # 子目录（保持输入目录结构）
 │   ├── file.pdf.md
 │   └── assets/
@@ -690,11 +691,16 @@ output/                              # 输出目录
 ├── screenshots/                     # 页面截图目录（OCR+LLM/PPTX+LLM 模式）
 │   ├── document.pdf.page0.png
 │   └── document.pdf.page1.png
-├── assets.desc.json                 # 图片描述文件 (--desc)
+├── states/                          # 状态目录（用于断点恢复）
+│   └── markit.<hash>.state.json     # 批处理状态文件
 └── reports/                         # 报告目录
-    ├── document.docx.report.json    # 单文件报告
-    └── docs.report.json             # 批处理报告（同时作为恢复状态文件）
+    └── markit.<hash>.report.json    # 处理报告（支持 on_conflict 策略）
 ```
+
+**目录设计说明**：
+- `assets/assets.desc.json`：采用合并模式，多次运行的描述会按源文件合并，不受 `on_conflict` 策略影响
+- `states/`：状态文件用于断点恢复，文件名包含基于输入/输出路径计算的 hash
+- `reports/`：报告文件遵循 `on_conflict` 策略（skip/overwrite/rename）
 
 ### 5.3 文件命名规则
 
@@ -703,27 +709,48 @@ output/                              # 输出目录
 | 基础 Markdown | `{原文件名}.md` | `document.docx.md` |
 | LLM Markdown | `{原文件名}.llm.md` | `document.docx.llm.md` |
 | 提取的图片 | `{原文件名}.{4位序号}.{格式}` | `document.docx.0001.jpg` |
-| 图片描述 | `assets.desc.json`（集中存储） | 见下方格式说明 |
-| 处理报告 | `reports/{原文件名}.report.json` | `reports/document.docx.report.json` |
+| 图片描述 | `assets/assets.desc.json`（合并存储） | 见下方格式说明 |
+| 状态文件 | `states/markit.{hash}.state.json` | `states/markit.a1b2c3d4e5f6.state.json` |
+| 处理报告 | `reports/markit.{hash}.report.json` | `reports/markit.a1b2c3d4e5f6.report.json` |
 
-**图片描述文件格式** (`assets.desc.json`)：
+**Hash 计算说明**：
+- Hash 基于以下参数计算：
+  - 输入路径（resolved）
+  - 输出目录路径（resolved）
+  - 关键选项：`llm_enabled`、`ocr_enabled`、`screenshot_enabled`、`image_alt_enabled`、`image_desc_enabled`
+- 使用 MD5 取前 12 位十六进制字符
+- 不同参数组合会生成不同的 hash，确保不同任务的状态/报告文件相互独立
+
+**图片描述文件格式** (`assets/assets.desc.json`)：
 
 ```json
-[
-  {
-    "source_file": "/path/to/input.pdf",
-    "assets": [
-      {
-        "asset": "/path/to/output/assets/input.pdf-image-0.jpg",
-        "alt": "简短描述（用于 Markdown alt 文本）",
-        "desc": "详细描述（Markdown 格式）",
-        "text": "提取的文字内容（如有）",
-        "model": "使用的模型名称",
-        "created": "2026-01-18T10:30:45.123456+00:00"
-      }
-    ]
-  }
-]
+{
+  "version": "1.0",
+  "created": "2026-01-18T10:30:00.000000+08:00",
+  "updated": "2026-01-18T10:30:45.123456+08:00",
+  "sources": [
+    {
+      "file": "/path/to/input.pdf",
+      "assets": [
+        {
+          "asset": "/path/to/output/assets/input.pdf-image-0.jpg",
+          "alt": "简短描述（用于 Markdown alt 文本）",
+          "desc": "详细描述（Markdown 格式）",
+          "text": "提取的文字内容（如有）",
+          "llm_usage": {
+            "gemini-2.5-flash-lite": {
+              "requests": 1,
+              "input_tokens": 1024,
+              "output_tokens": 256,
+              "cost_usd": 0.0005
+            }
+          },
+          "created": "2026-01-18T10:30:45.123456+00:00"
+        }
+      ]
+    }
+  ]
+}
 ```
 
 **文件冲突处理**（由 `output.on_conflict` 控制）：
@@ -1372,30 +1399,33 @@ with Live(auto_refresh=True) as live:
 
 ### 11.3 断点恢复
 
-批处理状态与报告统一存储在 `reports/{dir_name}.report.json`，支持断点恢复。
+批处理使用独立的状态文件和报告文件：
+- **状态文件**：`states/markit.<hash>.state.json`，用于断点恢复
+- **报告文件**：`reports/markit.<hash>.report.json`，遵循 `on_conflict` 策略
 
-**报告/状态文件格式**：
+**状态文件格式** (`states/markit.<hash>.state.json`)：
 
 ```json
 {
   "version": "1.0",
   "started_at": "2026-01-14T10:00:00Z",
   "updated_at": "2026-01-14T10:30:00Z",
-  "generated_at": "2026-01-14T10:30:00Z",
-  "input_dir": "/path/to/input",
-  "output_dir": "/path/to/output",
+  "log_file": "/home/user/.markit/logs/markit_20260114_100000_123456.log",
   "options": {
-    "llm": true,
-    "alt": true,
-    "desc": false
+    "input_dir": "/path/to/input",
+    "output_dir": "/path/to/output",
+    "llm_enabled": true,
+    "image_alt_enabled": true,
+    "image_desc_enabled": false
   },
   "files": {
-    "/path/to/input/file1.pdf": {
+    "file1.pdf": {
       "status": "completed",
       "output": "/path/to/output/file1.pdf.md",
       "completed_at": "2026-01-14T10:05:00Z",
       "duration_seconds": 12.5,
       "images_extracted": 5,
+      "screenshots": 0,
       "llm_cost_usd": 0.0012,
       "llm_usage": {
         "gemini/gemini-2.5-flash": {
@@ -1406,30 +1436,50 @@ with Live(auto_refresh=True) as live:
         }
       }
     },
-    "/path/to/input/file2.docx": {
+    "file2.docx": {
       "status": "failed",
       "error": "LLM timeout"
     },
-    "/path/to/input/file3.xlsx": {
+    "file3.xlsx": {
       "status": "pending"
     }
-  },
-  "stats": {
-    "total": 100,
-    "completed": 50,
-    "failed": 5,
-    "pending": 45
-  },
+  }
+}
+```
+
+**说明**：
+- `files` 的 key 使用相对于 `input_dir` 的相对路径
+- 状态文件在每次处理完成后更新（节流间隔由 `batch.state_flush_interval_seconds` 控制）
+
+**报告文件格式** (`reports/markit.<hash>.report.json`)：
+
+报告文件在批处理完成后生成，包含状态信息外加 `summary` 和 `llm_usage` 统计：
+
+```json
+{
+  "version": "1.0",
+  "generated_at": "2026-01-14T10:30:00Z",
+  "log_file": "/home/user/.markit/logs/markit_20260114_100000_123456.log",
+  "options": { "..." },
+  "files": { "..." },
   "summary": {
-    "total_files": 100,
-    "completed": 50,
+    "total": 100,
+    "completed": 95,
     "failed": 5,
+    "pending": 0,
     "duration_seconds": 932,
     "duration_human": "00:15:32",
     "cumulative_processing_seconds": 1250.5
   },
   "llm_usage": {
-    "models": { ... },
+    "models": {
+      "gemini/gemini-2.5-flash": {
+        "requests": 200,
+        "input_tokens": 167000,
+        "output_tokens": 60000,
+        "cost_usd": 0.0390
+      }
+    },
     "total_requests": 200,
     "total_input_tokens": 167000,
     "total_output_tokens": 60000,
@@ -1570,9 +1620,9 @@ async def _call_llm_with_retry(self, model, messages, call_id, max_retries=3):
 处理完成后，在 `output/reports/` 目录生成报告文件：
 
 **报告命名规则**：
-- 单文件模式：`{filename}.report.json`（如 `document.pdf.report.json`）
-- 批处理模式：`{dirname}.report.json`（如 `documents.report.json`）
-- 防覆盖：自动递增后缀 `*.report.1.json`、`*.report.2.json`
+- 格式：`markit.<hash>.report.json`
+- Hash 基于输入路径和输出目录计算
+- 遵循 `on_conflict` 策略：`skip`（跳过）、`overwrite`（覆盖）、`rename`（递增后缀如 `.2.`、`.3.`）
 
 ```json
 {
@@ -1875,9 +1925,11 @@ tags:
   - 销售报告
   - 年度总结
   - 数据分析
-markit_processed: "2026-01-14T10:30:00Z"
+markit_processed: "2026-01-14T10:30:00+08:00"
 ---
 ```
+
+**注意**：`markit_processed` 使用本地时间（带时区偏移），而非 UTC 时间。
 
 **tags 生成规则**（在提示词中明确）：
 - 数量：3-10 个
