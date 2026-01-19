@@ -1,0 +1,52 @@
+{
+    // Python interpreter (VS Code auto-detects .venv)
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
+    "python.terminal.activateEnvironment": true,
+    "python.terminal.activateEnvInCurrentTerminal": true,
+
+    // Linting and formatting (use ruff)
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll": "explicit"
+        }
+    },
+
+    // Type checking (use pyright, match pyproject.toml)
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingImports": "error",
+        "reportMissingTypeStubs": "none"
+    },
+
+    // Testing
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": [
+        "tests",
+        "-v",
+        "--tb=short",
+        "-m",
+        "not e2e"
+    ],
+
+    // Editor settings (match ruff line-length)
+    "editor.rulers": [88],
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+
+    // File associations
+    "files.associations": {
+        "*.md": "markdown"
+    },
+
+    // Exclude from search
+    "search.exclude": {
+        "**/.venv": true,
+        "**/__pycache__": true,
+        "**/output": true,
+        "**/.ruff_cache": true,
+        "**/htmlcov": true
+    }
+}

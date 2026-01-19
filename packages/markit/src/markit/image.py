@@ -95,6 +95,69 @@ class ImageProcessor:
         result = self.DATA_URI_PATTERN.sub(replace_match, result)
         return result
 
+    def strip_base64_images(
+        self,
+        markdown: str,
+        replacement_path: str | None = None,
+    ) -> str:
+        """
+        Remove all base64 data URIs from markdown.
+
+        Args:
+            markdown: Markdown content with data URIs
+            replacement_path: If provided, replace with this path; otherwise remove
+
+        Returns:
+            Markdown with base64 images removed or replaced
+        """
+
+        def replace_match(match: re.Match) -> str:
+            alt_text = match.group(1)
+            if replacement_path:
+                return f"![{alt_text}]({replacement_path})"
+            return ""  # Remove the image entirely
+
+        return self.DATA_URI_PATTERN.sub(replace_match, markdown)
+
+    @staticmethod
+    def remove_nonexistent_images(
+        markdown: str,
+        assets_dir: Path,
+    ) -> str:
+        """
+        Remove image references that don't exist in assets directory.
+
+        LLM may hallucinate non-existent image references. This method
+        validates each assets/ image reference and removes those that
+        don't exist on disk.
+
+        Args:
+            markdown: Markdown content with image references
+            assets_dir: Path to the assets directory
+
+        Returns:
+            Markdown with non-existent image references removed
+        """
+        # Pattern to match image references: ![alt](assets/filename) or ![alt](assets\filename)
+        # Support both forward slash and backslash for Windows compatibility
+        img_pattern = re.compile(r"!\[[^\]]*\]\(assets[/\\]([^)]+)\)")
+
+        def validate_image(match: re.Match) -> str:
+            filename = match.group(1)
+            image_path = assets_dir / filename
+            if image_path.exists():
+                return match.group(0)  # Keep existing image
+            # Remove non-existent image reference
+            return ""
+
+        result = img_pattern.sub(validate_image, markdown)
+
+        # Clean up any resulting double spaces or empty lines
+        result = re.sub(r"  +", " ", result)  # Multiple spaces to single
+        result = re.sub(r"\n{3,}", "\n\n", result)  # 3+ newlines to 2
+
+        return result
+
     def compress(
         self,
         image: Image.Image,

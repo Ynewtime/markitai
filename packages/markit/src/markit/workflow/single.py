@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -114,8 +114,9 @@ class SingleFileWorkflow:
             atomic_write_text(llm_output, llm_content)
             logger.info(f"Written LLM version: {llm_output}")
 
-            cost = self.processor.get_total_cost()
-            usage = self.processor.get_usage()
+            # Use context-based tracking for accurate per-file usage in concurrent scenarios
+            cost = self.processor.get_context_cost(source)
+            usage = self.processor.get_context_usage(source)
             return markdown, cost, usage
 
         except Exception as e:
@@ -148,6 +149,12 @@ class SingleFileWorkflow:
         alt_enabled = self.config.image.alt_enabled
         desc_enabled = self.config.image.desc_enabled
 
+        # Use unique context for accurate per-file usage tracking in concurrent scenarios
+        source_path = (
+            str(input_path.resolve()) if input_path else str(output_file.resolve())
+        )
+        context = f"{source_path}:images"
+
         try:
             # Detect document language from markdown content
             language = detect_language(markdown)
@@ -156,11 +163,11 @@ class SingleFileWorkflow:
                 image_path: Path,
             ) -> tuple[Path, ImageAnalysis | None, str]:
                 """Analyze a single image."""
-                timestamp = datetime.now(UTC).isoformat()
+                timestamp = datetime.now().astimezone().isoformat()
                 try:
                     logger.debug(f"Analyzing image: {image_path.name}")
                     analysis = await self.processor.analyze_image(
-                        image_path, language=language
+                        image_path, language=language, context=context
                     )
                     return image_path, analysis, timestamp
                 except Exception as e:
@@ -215,7 +222,7 @@ class SingleFileWorkflow:
                             "alt": analysis.caption,
                             "desc": analysis.description,
                             "text": analysis.extracted_text or "",
-                            "model": analysis.model or "",
+                            "llm_usage": analysis.llm_usage or {},
                             "created": timestamp,
                         }
                     )
@@ -252,10 +259,11 @@ class SingleFileWorkflow:
                     assets=asset_descriptions,
                 )
 
+            # Use context-based tracking for accurate per-file usage in concurrent scenarios
             return (
                 markdown,
-                self.processor.get_total_cost(),
-                self.processor.get_usage(),
+                self.processor.get_context_cost(context),
+                self.processor.get_context_usage(context),
                 analysis_result,
             )
 
@@ -301,11 +309,12 @@ class SingleFileWorkflow:
                 extracted_text, image_paths, source=source
             )
 
+            # Use context-based tracking for accurate per-file usage in concurrent scenarios
             return (
                 cleaned_content,
                 frontmatter,
-                self.processor.get_total_cost(),
-                self.processor.get_usage(),
+                self.processor.get_context_cost(source),
+                self.processor.get_context_usage(source),
             )
 
         except Exception as e:

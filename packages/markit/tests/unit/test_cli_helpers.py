@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC
 from pathlib import Path
+
+
+def find_report_files(reports_dir: Path) -> list[Path]:
+    """Find all report files in directory, sorted by name."""
+    if not reports_dir.exists():
+        return []
+    return sorted(reports_dir.glob("markit.*.report.json"))
 
 
 class TestReportGeneration:
@@ -33,8 +39,9 @@ class TestReportGeneration:
         )
 
         assert result.exit_code == 0
-        report_path = output_dir / "reports" / "test.txt.report.json"
-        assert report_path.exists()
+        # Report file is now named markit.<hash>.report.json
+        reports = find_report_files(output_dir / "reports")
+        assert len(reports) == 1
 
     def test_report_structure(self, tmp_path: Path) -> None:
         """Test report structure."""
@@ -58,8 +65,9 @@ class TestReportGeneration:
             ],
         )
 
-        report_path = output_dir / "reports" / "test.txt.report.json"
-        report = json.loads(report_path.read_text())
+        reports = find_report_files(output_dir / "reports")
+        assert len(reports) == 1
+        report = json.loads(reports[0].read_text())
 
         # Check required fields
         assert "version" in report
@@ -68,9 +76,9 @@ class TestReportGeneration:
         assert "llm_usage" in report
         assert "files" in report
 
-        # Check summary fields
+        # Check summary fields (total_files renamed to total)
         summary = report["summary"]
-        assert "total_files" in summary
+        assert "total" in summary
         assert "completed" in summary
         assert "failed" in summary
         assert "duration_seconds" in summary
@@ -100,21 +108,24 @@ class TestReportGeneration:
             ],
         )
 
-        report_path = output_dir / "reports" / "test.txt.report.json"
-        report = json.loads(report_path.read_text())
+        reports = find_report_files(output_dir / "reports")
+        assert len(reports) == 1
+        report = json.loads(reports[0].read_text())
 
+        # files is now a dict with relative paths as keys
         assert len(report["files"]) == 1
-        file_info = report["files"][0]
+        # Get the first (and only) file entry
+        file_key = list(report["files"].keys())[0]
+        file_info = report["files"][file_key]
 
-        assert file_info["input"] == "test.txt"
+        assert file_key == "test.txt"  # Relative path
         assert file_info["status"] == "completed"
         assert file_info["error"] is None
         assert "duration_seconds" in file_info
         assert "llm_usage" in file_info
-        assert "cost_usd" in file_info["llm_usage"]
 
     def test_report_no_overwrite(self, tmp_path: Path) -> None:
-        """Test that reports are not overwritten."""
+        """Test that reports are not overwritten (on_conflict=rename)."""
         from click.testing import CliRunner
 
         from markit.cli import app
@@ -129,19 +140,18 @@ class TestReportGeneration:
 
         # First run
         runner.invoke(app, [str(test_file), "-o", str(output_dir)])
-        report1 = output_dir / "reports" / "test.txt.report.json"
-        assert report1.exists()
+        reports = find_report_files(output_dir / "reports")
+        assert len(reports) == 1
 
-        # Second run
+        # Second run - should create a new report with .2. in name
         runner.invoke(app, [str(test_file), "-o", str(output_dir)])
-        report2 = output_dir / "reports" / "test.txt.report.1.json"
-        assert report2.exists()
-        assert report1.exists()  # First report still exists
+        reports = find_report_files(output_dir / "reports")
+        assert len(reports) == 2
 
-        # Third run
+        # Third run - should create another report with .3. in name
         runner.invoke(app, [str(test_file), "-o", str(output_dir)])
-        report3 = output_dir / "reports" / "test.txt.report.2.json"
-        assert report3.exists()
+        reports = find_report_files(output_dir / "reports")
+        assert len(reports) == 3
 
 
 class TestAssetDescriptions:
@@ -192,36 +202,38 @@ class TestBatchResumeDuration:
         from markit.batch import BatchProcessor, BatchState, FileState, FileStatus
         from markit.config import BatchConfig
 
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
-        # Create old state file with old timestamp
+        # Create processor first to get the state file path
+        config = BatchConfig()
+        processor = BatchProcessor(config, output_dir, input_path=input_dir)
+
+        # Create old state file with old timestamp at the correct path
         old_time = "2026-01-01T00:00:00+00:00"
         state = BatchState(
             started_at=old_time,
             updated_at=old_time,
-            input_dir=str(tmp_path),
+            input_dir=str(input_dir),
             output_dir=str(output_dir),
         )
-        state.files[str(tmp_path / "file1.txt")] = FileState(
-            path=str(tmp_path / "file1.txt"),
+        state.files[str(input_dir / "file1.txt")] = FileState(
+            path=str(input_dir / "file1.txt"),
             status=FileStatus.COMPLETED,
         )
-        state.files[str(tmp_path / "file2.txt")] = FileState(
-            path=str(tmp_path / "file2.txt"),
+        state.files[str(input_dir / "file2.txt")] = FileState(
+            path=str(input_dir / "file2.txt"),
             status=FileStatus.PENDING,
         )
 
-        # Save state
-        state_file = output_dir / ".markit-state.json"
-        state_file.write_text(json.dumps(state.to_dict()))
-
-        # Create processor and load state with resume
-        config = BatchConfig()
-        processor = BatchProcessor(config, output_dir)
+        # Save state to the correct state file path (states/markit.<hash>.state.json)
+        processor.state_file.parent.mkdir(parents=True, exist_ok=True)
+        processor.state_file.write_text(json.dumps(state.to_dict()))
 
         # Create the pending file
-        (tmp_path / "file2.txt").write_text("content")
+        (input_dir / "file2.txt").write_text("content")
 
         # Process with resume
         async def mock_process(path: Path):
@@ -229,9 +241,9 @@ class TestBatchResumeDuration:
 
             return ProcessResult(success=True, output_path=str(path) + ".md")
 
-        before_process = datetime.now(UTC)
+        before_process = datetime.now().astimezone()
         await processor.process_batch(
-            [tmp_path / "file2.txt"],
+            [input_dir / "file2.txt"],
             mock_process,
             resume=True,
         )

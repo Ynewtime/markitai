@@ -11,7 +11,7 @@ Markdown 格式优化任务。
 - 混合语言文档 → 根据上下文判断，保持局部一致性
 
 【清理规范】
-- 保留幻灯片标记（如 `<!-- Slide X -->`）
+- 保留幻灯片标记（如 `<!-- Slide number: X -->`），不要添加新的 slide 注释
 - 保留页面图片注释（如 `<!-- Page images for reference -->` 和 `<!-- ![Page X](...) -->`）
 - 删除其他 HTML 注释
 - 删除 PPT 页眉页脚（通常是重复出现的短文本 + 页码，如 "FTD\nFREE TEST DATA\n3"）

@@ -1,7 +1,5 @@
 # 说明
 
-此目录是 Markit 项目的 dev worktree+branch。
-
 ## 开发偏好
 
 1. Keep plan mode concise, remove unnecessary grammar.
@@ -11,11 +9,7 @@
 
 ## Browser Automation
 
-> source: https://github.com/vercel-labs/agent-browser
-
-Run `agent-browser --help` for all commands.
-
-Use `agent-browser` for web automation.
+Use `agent-browser` for web automation. Run `agent-browser --help` for all commands.
 
 Core workflow:
 1. `agent-browser open <url>` - Navigate to page

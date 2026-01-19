@@ -7,7 +7,7 @@ import json
 from collections import deque
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,6 +30,7 @@ from markit.security import atomic_write_json
 
 if TYPE_CHECKING:
     from markit.config import BatchConfig
+    from markit.workflow.single import ImageAnalysisResult
 
 
 class FileStatus(str, Enum):
@@ -52,7 +53,8 @@ class FileState:
     started_at: str | None = None
     completed_at: str | None = None
     duration_seconds: float | None = None
-    images_extracted: int = 0
+    images_extracted: int = 0  # Embedded images extracted from document content
+    screenshots: int = 0  # Page/slide screenshots for OCR/LLM processing
     llm_cost_usd: float = 0.0
     # LLM usage per model: {"model_name": {"requests": N, "input_tokens": N, "output_tokens": N, "cost_usd": F}}
     llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -67,6 +69,7 @@ class BatchState:
     updated_at: str = ""
     input_dir: str = ""
     output_dir: str = ""
+    log_file: str | None = None  # Path to log file for this run
     options: dict = field(default_factory=dict)
     files: dict[str, FileState] = field(default_factory=dict)
 
@@ -103,51 +106,86 @@ class BatchState:
         ]
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
+        """Convert to dictionary for JSON serialization.
+
+        Note: input_dir/output_dir are stored in options with absolute paths.
+        Files keys are stored as relative paths (relative to input_dir).
+        """
+        # Convert log_file to absolute path if it exists
+        log_file_abs = None
+        if self.log_file:
+            log_path = Path(self.log_file)
+            log_file_abs = (
+                str(log_path.resolve()) if log_path.exists() else self.log_file
+            )
+
+        # Convert files keys to relative paths (relative to input_dir)
+        input_dir_path = Path(self.input_dir).resolve()
+        files_dict = {}
+        for path, state in self.files.items():
+            file_path = Path(path).resolve()
+            try:
+                rel_path = str(file_path.relative_to(input_dir_path))
+            except ValueError:
+                # File is not under input_dir, use filename only
+                rel_path = file_path.name
+            files_dict[rel_path] = {
+                "status": state.status.value,
+                "output": state.output,
+                "error": state.error,
+                "started_at": state.started_at,
+                "completed_at": state.completed_at,
+                "duration_seconds": state.duration_seconds,
+                "images_extracted": state.images_extracted,
+                "screenshots": state.screenshots,
+                "llm_cost_usd": state.llm_cost_usd,
+                "llm_usage": state.llm_usage,
+            }
+
         return {
             "version": self.version,
             "started_at": self.started_at,
             "updated_at": self.updated_at,
-            "input_dir": self.input_dir,
-            "output_dir": self.output_dir,
+            "log_file": log_file_abs,
             "options": self.options,
-            "files": {
-                path: {
-                    "status": state.status.value,
-                    "output": state.output,
-                    "error": state.error,
-                    "started_at": state.started_at,
-                    "completed_at": state.completed_at,
-                    "duration_seconds": state.duration_seconds,
-                    "images_extracted": state.images_extracted,
-                    "llm_cost_usd": state.llm_cost_usd,
-                    "llm_usage": state.llm_usage,
-                }
-                for path, state in self.files.items()
-            },
-            "stats": {
-                "total": self.total,
-                "completed": self.completed_count,
-                "failed": self.failed_count,
-                "pending": self.pending_count,
-            },
+            "files": files_dict,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BatchState:
-        """Create from dictionary."""
+        """Create from dictionary.
+
+        Supports both old format (root-level input_dir/output_dir) and
+        new format (input_dir/output_dir in options with absolute paths).
+        """
+        options = data.get("options", {})
+
+        # Get input_dir/output_dir from options (new format) or root level (old format)
+        input_dir = options.get("input_dir") or data.get("input_dir", "")
+        output_dir = options.get("output_dir") or data.get("output_dir", "")
+
         state = cls(
             version=data.get("version", "1.0"),
             started_at=data.get("started_at", ""),
             updated_at=data.get("updated_at", ""),
-            input_dir=data.get("input_dir", ""),
-            output_dir=data.get("output_dir", ""),
-            options=data.get("options", {}),
+            input_dir=input_dir,
+            output_dir=output_dir,
+            log_file=data.get("log_file"),
+            options=options,
         )
 
+        # Reconstruct absolute file paths from relative paths
+        input_dir_path = Path(input_dir) if input_dir else Path(".")
         for path, file_data in data.get("files", {}).items():
-            state.files[path] = FileState(
-                path=path,
+            # If path is relative, make it absolute relative to input_dir
+            file_path = Path(path)
+            if not file_path.is_absolute():
+                abs_path = str(input_dir_path / path)
+            else:
+                abs_path = path
+
+            state.files[abs_path] = FileState(
+                path=abs_path,
                 status=FileStatus(file_data.get("status", "pending")),
                 output=file_data.get("output"),
                 error=file_data.get("error"),
@@ -155,6 +193,7 @@ class BatchState:
                 completed_at=file_data.get("completed_at"),
                 duration_seconds=file_data.get("duration_seconds"),
                 images_extracted=file_data.get("images_extracted", 0),
+                screenshots=file_data.get("screenshots", 0),
                 llm_cost_usd=file_data.get("llm_cost_usd", 0.0),
                 llm_usage=file_data.get("llm_usage", {}),
             )
@@ -169,12 +208,13 @@ class ProcessResult:
     success: bool
     output_path: str | None = None
     error: str | None = None
-    images_extracted: int = 0
+    images_extracted: int = 0  # Embedded images extracted from document content
+    screenshots: int = 0  # Page/slide screenshots for OCR/LLM processing
     llm_cost_usd: float = 0.0
     # LLM usage per model: {"model_name": {"requests": N, "input_tokens": N, "output_tokens": N, "cost_usd": F}}
     llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # Image analysis result for JSON aggregation (cli.ImageAnalysisResult | None)
-    image_analysis_result: Any = None
+    # Image analysis result for JSON aggregation
+    image_analysis_result: ImageAnalysisResult | None = None
 
 
 # Type alias for process function
@@ -206,6 +246,9 @@ class BatchProcessor:
         config: BatchConfig,
         output_dir: Path,
         input_path: Path | None = None,
+        log_file: Path | str | None = None,
+        on_conflict: str = "rename",
+        task_options: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize batch processor.
@@ -214,39 +257,90 @@ class BatchProcessor:
             config: Batch processing configuration
             output_dir: Output directory
             input_path: Input file or directory (used for report file naming)
+            log_file: Path to the log file for this run
+            on_conflict: Conflict resolution strategy ("skip", "overwrite", "rename")
+            task_options: Task options dict (used for computing task hash)
         """
         self.config = config
         self.output_dir = Path(output_dir)
         self.input_path = Path(input_path) if input_path else None
+        self.log_file = str(log_file) if log_file else None
+        self.on_conflict = on_conflict
+        self.task_options = task_options or {}
+        self.task_hash = self._compute_task_hash()
+        self.state_file = self._get_state_file_path()
         self.report_file = self._get_report_file_path()
         self.state: BatchState | None = None
         self.console = Console()
         # Collect image analysis results for JSON aggregation
-        self.image_analysis_results: list[Any] = []
+        self.image_analysis_results: list[ImageAnalysisResult] = []
+
+    def _compute_task_hash(self) -> str:
+        """Compute hash from task input parameters.
+
+        Hash is based on:
+        - input_path (resolved)
+        - output_dir (resolved)
+        - key task options (llm_enabled, ocr_enabled, etc.)
+
+        This ensures different parameter combinations produce different hashes,
+        so resuming with different options creates a new state file.
+        """
+        import hashlib
+
+        # Extract key options that affect output (exclude paths, they're added separately)
+        key_options = {
+            k: v
+            for k, v in self.task_options.items()
+            if k
+            in (
+                "llm_enabled",
+                "ocr_enabled",
+                "screenshot_enabled",
+                "image_alt_enabled",
+                "image_desc_enabled",
+            )
+        }
+
+        hash_params = {
+            "input": str(self.input_path.resolve()) if self.input_path else "",
+            "output": str(self.output_dir.resolve()),
+            "options": key_options,
+        }
+        hash_str = json.dumps(hash_params, sort_keys=True)
+        return hashlib.md5(hash_str.encode()).hexdigest()[:6]
+
+    def _get_state_file_path(self) -> Path:
+        """Generate state file path for resume capability.
+
+        Format: states/markit.<hash>.state.json
+        """
+        states_dir = self.output_dir / "states"
+        return states_dir / f"markit.{self.task_hash}.state.json"
 
     def _get_report_file_path(self) -> Path:
-        """Generate report file path based on input path.
+        """Generate report file path based on task hash.
 
-        Format: reports/{dir_name}.report.json
-        This file serves as both state (for resume) and final report.
+        Format: reports/markit.<hash>.report.json
+        Respects on_conflict strategy for rename.
         """
         reports_dir = self.output_dir / "reports"
+        base_path = reports_dir / f"markit.{self.task_hash}.report.json"
 
-        if self.input_path is None:
-            return reports_dir / "batch.report.json"
+        if not base_path.exists():
+            return base_path
 
-        # Get directory name (or file's parent dir name)
-        if self.input_path.is_file():
-            dir_name = self.input_path.parent.name or "root"
-        else:
-            dir_name = self.input_path.name or "root"
-
-        # Sanitize dir_name (remove special characters)
-        safe_dir_name = "".join(
-            c if c.isalnum() or c in "-_" else "_" for c in dir_name
-        )
-
-        return reports_dir / f"{safe_dir_name}.report.json"
+        if self.on_conflict == "skip":
+            return base_path  # Will be handled by caller
+        elif self.on_conflict == "overwrite":
+            return base_path
+        else:  # rename
+            seq = 2
+            while True:
+                new_path = reports_dir / f"markit.{self.task_hash}.v{seq}.report.json"
+                if not new_path.exists():
+                    return new_path
+                seq += 1
 
     def discover_files(
         self,
@@ -316,57 +410,53 @@ class BatchProcessor:
         return sorted(set(files))
 
     def load_state(self) -> BatchState | None:
-        """Load state from report file if exists (for resume capability)."""
+        """Load state from state file if exists (for resume capability)."""
         from markit.security import MAX_STATE_FILE_SIZE, validate_file_size
 
-        if not self.report_file.exists():
+        if not self.state_file.exists():
             return None
 
         try:
             # Validate file size to prevent DoS
-            validate_file_size(self.report_file, MAX_STATE_FILE_SIZE)
-            data = json.loads(self.report_file.read_text(encoding="utf-8"))
+            validate_file_size(self.state_file, MAX_STATE_FILE_SIZE)
+            data = json.loads(self.state_file.read_text(encoding="utf-8"))
             return BatchState.from_dict(data)
         except Exception as e:
-            logger.warning(f"Failed to load report file for resume: {e}")
+            logger.warning(f"Failed to load state file for resume: {e}")
             return None
 
-    def save_state(self, force: bool = False, finalize: bool = False) -> None:
-        """Save current state to report file.
+    def save_state(self, force: bool = False, log: bool = False) -> None:
+        """Save current state to state file for resume capability.
 
-        This unified file serves as both state (for resume) and final report.
+        State file is saved to: states/markit.<hash>.state.json
 
         Args:
             force: Force save even if interval hasn't passed
-            finalize: Set to True when processing is complete to add summary
+            log: Whether to log the save operation
         """
         if self.state is None:
             return
 
-        now = datetime.now(UTC)
+        now = datetime.now().astimezone()
         interval = getattr(self.config, "state_flush_interval_seconds", 0) or 0
-        if not force and not finalize and interval > 0:
+        if not force and interval > 0:
             last_saved = getattr(self, "_last_state_save", None)
             if last_saved and (now - last_saved).total_seconds() < interval:
                 return
 
         self.state.updated_at = now.isoformat()
 
-        # Build unified report/state document
-        report = self.state.to_dict()
+        # Build state document (minimal, for resume)
+        state_data = self.state.to_dict()
 
-        # Add summary and llm_usage when finalizing or always for better visibility
-        report["summary"] = self._compute_summary()
-        report["llm_usage"] = self._compute_llm_usage()
+        # Ensure states directory exists
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
-        if finalize:
-            report["generated_at"] = now.isoformat()
-
-        # Ensure reports directory exists
-        self.report_file.parent.mkdir(parents=True, exist_ok=True)
-
-        atomic_write_json(self.report_file, report)
+        atomic_write_json(self.state_file, state_data)
         self._last_state_save = now
+
+        if log:
+            logger.info(f"State file saved: {self.state_file.resolve()}")
 
     def _compute_summary(self) -> dict[str, Any]:
         """Compute summary statistics for report."""
@@ -394,9 +484,10 @@ class BatchProcessor:
         duration_human = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
         return {
-            "total_files": self.state.total,
+            "total": self.state.total,
             "completed": self.state.completed_count,
             "failed": self.state.failed_count,
+            "pending": self.state.pending_count,
             "duration_seconds": wall_duration,
             "duration_human": duration_human,
             "cumulative_processing_seconds": cumulative_duration,
@@ -451,16 +542,31 @@ class BatchProcessor:
         Args:
             input_dir: Input directory
             files: List of files to process
-            options: Processing options
+            options: Processing options (will be updated with absolute paths)
 
         Returns:
             New BatchState
         """
+        # Resolve absolute paths
+        abs_input_dir = str(input_dir.resolve())
+        abs_output_dir = str(self.output_dir.resolve())
+        abs_log_file = None
+        if self.log_file:
+            log_path = Path(self.log_file)
+            abs_log_file = (
+                str(log_path.resolve()) if log_path.exists() else self.log_file
+            )
+
+        # Update options with absolute paths
+        options["input_dir"] = abs_input_dir
+        options["output_dir"] = abs_output_dir
+
         state = BatchState(
-            started_at=datetime.now(UTC).isoformat(),
-            updated_at=datetime.now(UTC).isoformat(),
-            input_dir=str(input_dir),
-            output_dir=str(self.output_dir),
+            started_at=datetime.now().astimezone().isoformat(),
+            updated_at=datetime.now().astimezone().isoformat(),
+            input_dir=abs_input_dir,
+            output_dir=abs_output_dir,
+            log_file=abs_log_file,
             options=options,
         )
 
@@ -502,7 +608,7 @@ class BatchProcessor:
                     f"{len(files)} remaining"
                 )
                 # Reset started_at for accurate duration calculation in this session
-                self.state.started_at = datetime.now(UTC).isoformat()
+                self.state.started_at = datetime.now().astimezone().isoformat()
 
         if self.state is None:
             self.state = self.init_state(
@@ -558,16 +664,17 @@ class BatchProcessor:
         async def process_with_limit(file_path: Path) -> None:
             """Process a file with semaphore limit."""
             async with semaphore:
+                assert self.state is not None  # Guaranteed by _init_state() above
                 file_key = str(file_path)
-                file_state = self.state.files.get(file_key)  # type: ignore[union-attr]
+                file_state = self.state.files.get(file_key)
 
                 if file_state is None:
                     file_state = FileState(path=file_key)
-                    self.state.files[file_key] = file_state  # type: ignore[union-attr]
+                    self.state.files[file_key] = file_state
 
                 # Update state to in_progress
                 file_state.status = FileStatus.IN_PROGRESS
-                file_state.started_at = datetime.now(UTC).isoformat()
+                file_state.started_at = datetime.now().astimezone().isoformat()
 
                 start_time = asyncio.get_event_loop().time()
 
@@ -578,6 +685,7 @@ class BatchProcessor:
                         file_state.status = FileStatus.COMPLETED
                         file_state.output = result.output_path
                         file_state.images_extracted = result.images_extracted
+                        file_state.screenshots = result.screenshots
                         file_state.llm_cost_usd = result.llm_cost_usd
                         file_state.llm_usage = result.llm_usage
                         # Collect image analysis result for JSON aggregation
@@ -596,7 +704,7 @@ class BatchProcessor:
 
                 finally:
                     end_time = asyncio.get_event_loop().time()
-                    file_state.completed_at = datetime.now(UTC).isoformat()
+                    file_state.completed_at = datetime.now().astimezone().isoformat()
                     file_state.duration_seconds = end_time - start_time
 
                     # Save state after each file (throttled)
@@ -662,21 +770,31 @@ class BatchProcessor:
         report = self.state.to_dict()
         report["summary"] = self._compute_summary()
         report["llm_usage"] = self._compute_llm_usage()
-        report["generated_at"] = datetime.now(UTC).isoformat()
+        report["generated_at"] = datetime.now().astimezone().isoformat()
 
         return report
 
     def save_report(self) -> Path:
         """Finalize and save report to file.
 
-        This method finalizes the processing by adding generated_at timestamp
-        and returns the report file path. The unified report file serves as
-        both state (for resume) and final report.
+        Report file is saved to: reports/markit.<hash>.report.json
+        Respects on_conflict strategy (skip/overwrite/rename).
 
         Returns:
             Path to the report file
         """
-        self.save_state(force=True, finalize=True)
+        # First, ensure state is saved for resume capability
+        self.save_state(force=True, log=True)
+
+        # Generate and save the report
+        report = self.generate_report()
+
+        # Ensure reports directory exists
+        self.report_file.parent.mkdir(parents=True, exist_ok=True)
+
+        atomic_write_json(self.report_file, report)
+        logger.info(f"Report saved: {self.report_file.resolve()}")
+
         return self.report_file
 
     def print_summary(self) -> None:
