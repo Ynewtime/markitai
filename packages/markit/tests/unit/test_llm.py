@@ -664,3 +664,128 @@ class TestContentCache:
         result = cache.get("prompt", "content")
         assert result == value
         assert result is value  # Same object reference
+
+
+class TestParallelImageBatchAnalysis:
+    """Tests for parallel batch image analysis."""
+
+    async def test_analyze_images_batch_empty(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig
+    ):
+        """Test analyzing empty image list."""
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        results = await processor.analyze_images_batch([], "en", 10, "test")
+        assert results == []
+
+    async def test_analyze_images_batch_single(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig, tmp_path
+    ):
+        """Test analyzing single image."""
+        from PIL import Image
+
+        from markit.llm import ImageAnalysis
+
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        # Create test image
+        img = Image.new("RGB", (100, 100), color="red")
+        img_path = tmp_path / "test.jpg"
+        img.save(img_path, "JPEG")
+
+        # Mock analyze_batch
+        with patch.object(
+            processor,
+            "analyze_batch",
+            new=AsyncMock(
+                return_value=[ImageAnalysis(caption="Test", description="Test image")]
+            ),
+        ):
+            results = await processor.analyze_images_batch([img_path], "en", 10, "test")
+
+        assert len(results) == 1
+        assert results[0].caption == "Test"
+
+    async def test_analyze_images_batch_multiple_batches(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig, tmp_path
+    ):
+        """Test analyzing multiple batches in parallel."""
+        from PIL import Image
+
+        from markit.llm import ImageAnalysis
+
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        # Create 25 test images (will be split into 3 batches of 10, 10, 5)
+        image_paths = []
+        for i in range(25):
+            img = Image.new("RGB", (100, 100), color="red")
+            img_path = tmp_path / f"test_{i}.jpg"
+            img.save(img_path, "JPEG")
+            image_paths.append(img_path)
+
+        # Track batch calls
+        batch_calls = []
+
+        async def mock_analyze_batch(paths, lang, ctx):
+            batch_calls.append(len(paths))
+            return [
+                ImageAnalysis(caption=f"Image {i}", description=f"Description {i}")
+                for i in range(len(paths))
+            ]
+
+        with patch.object(
+            processor, "analyze_batch", new=AsyncMock(side_effect=mock_analyze_batch)
+        ):
+            results = await processor.analyze_images_batch(
+                image_paths, "en", max_images_per_batch=10, context="test"
+            )
+
+        # Should have 3 batches
+        assert len(batch_calls) == 3
+        assert sorted(batch_calls) == [5, 10, 10]
+
+        # Should have 25 results in correct order
+        assert len(results) == 25
+
+    async def test_analyze_images_batch_handles_failures(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig, tmp_path
+    ):
+        """Test that batch failures are handled gracefully."""
+        from PIL import Image
+
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        # Create 5 test images
+        image_paths = []
+        for i in range(5):
+            img = Image.new("RGB", (100, 100), color="blue")
+            img_path = tmp_path / f"test_{i}.jpg"
+            img.save(img_path, "JPEG")
+            image_paths.append(img_path)
+
+        # Mock analyze_batch to fail
+        with patch.object(
+            processor,
+            "analyze_batch",
+            new=AsyncMock(side_effect=Exception("API Error")),
+        ):
+            results = await processor.analyze_images_batch(
+                image_paths, "en", max_images_per_batch=10, context="test"
+            )
+
+        # Should return placeholder results
+        assert len(results) == 5
+        for result in results:
+            assert result.description == "Analysis failed"
+
+
+class TestImageCacheSize:
+    """Tests for image cache configuration."""
+
+    def test_image_cache_max_size_increased(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig
+    ):
+        """Test that image cache max size is set to 200."""
+        processor = LLMProcessor(llm_config, prompts_config)
+        assert processor._image_cache_max_size == 200

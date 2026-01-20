@@ -30,23 +30,26 @@ if TYPE_CHECKING:
     from markit.types import LLMUsageByModel, ModelUsageStats
 
 
+from markit.constants import (
+    DEFAULT_CACHE_MAXSIZE,
+    DEFAULT_CACHE_TTL_SECONDS,
+    DEFAULT_IO_CONCURRENCY,
+    DEFAULT_MAX_IMAGES_PER_BATCH,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    DEFAULT_MAX_PAGES_PER_BATCH,
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RETRY_BASE_DELAY,
+    DEFAULT_RETRY_MAX_DELAY,
+)
 from markit.prompts import PromptManager
 
-# Retryable exceptions
+# Retryable exceptions (kept here as they depend on litellm types)
 RETRYABLE_ERRORS = (
     RateLimitError,
     APIConnectionError,
     Timeout,
     ServiceUnavailableError,
 )
-
-# Default retry configuration
-DEFAULT_MAX_RETRIES = 2
-DEFAULT_RETRY_BASE_DELAY = 1.0  # seconds
-DEFAULT_RETRY_MAX_DELAY = 60.0  # seconds
-
-# Default max_output_tokens when model info is unavailable
-DEFAULT_MAX_OUTPUT_TOKENS = 8192  # Conservative default for most models
 
 
 def get_model_max_output_tokens(model: str) -> int:
@@ -149,7 +152,7 @@ class LLMRuntime:
     """
 
     concurrency: int
-    io_concurrency: int = 20  # Higher limit for I/O operations
+    io_concurrency: int = DEFAULT_IO_CONCURRENCY
     _semaphore: asyncio.Semaphore | None = field(default=None, init=False, repr=False)
     _io_semaphore: asyncio.Semaphore | None = field(
         default=None, init=False, repr=False
@@ -261,13 +264,17 @@ class ContentCache:
     Uses OrderedDict for O(1) LRU eviction instead of O(n) min() search.
     """
 
-    def __init__(self, maxsize: int = 100, ttl_seconds: int = 300) -> None:
+    def __init__(
+        self,
+        maxsize: int = DEFAULT_CACHE_MAXSIZE,
+        ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS,
+    ) -> None:
         """
         Initialize content cache.
 
         Args:
             maxsize: Maximum number of entries to cache
-            ttl_seconds: Time-to-live in seconds (default 5 minutes)
+            ttl_seconds: Time-to-live in seconds
         """
         from collections import OrderedDict
 
@@ -396,7 +403,9 @@ class LLMProcessor:
         # Image cache for avoiding repeated file reads during document processing
         # Key: file path string, Value: (bytes, base64_encoded_string)
         self._image_cache: dict[str, tuple[bytes, str]] = {}
-        self._image_cache_max_size = 50  # Max number of images to cache
+        self._image_cache_max_size = (
+            200  # Max number of images to cache (increased for better performance)
+        )
 
         # Register LiteLLM callback for additional details
         self._setup_callbacks()
@@ -458,7 +467,7 @@ class LLMProcessor:
         if self._runtime is not None:
             return self._runtime.io_semaphore
         # Fallback: use higher limit for local I/O operations
-        return asyncio.Semaphore(20)
+        return asyncio.Semaphore(DEFAULT_IO_CONCURRENCY)
 
     def _create_router(self) -> Router:
         """Create LiteLLM Router from configuration."""
@@ -990,7 +999,7 @@ class LLMProcessor:
         """Restore protected content from placeholders after LLM processing.
 
         Also handles cases where the LLM removed placeholders by appending
-        missing content at the end.
+        missing content at the end, and detects garbage content replacement.
 
         Args:
             content: LLM output with placeholders
@@ -1000,11 +1009,61 @@ class LLMProcessor:
         Returns:
             Content with placeholders replaced by original content
         """
+        import re
+
         result = content
 
         # First pass: replace placeholders with original content
         for placeholder, original in mapping.items():
             result = result.replace(placeholder, original)
+
+        # Detect and fix garbage content replacement in slide sections
+        # Pattern: slide comment followed by very short garbage content (< 10 chars)
+        # before the next slide comment or end of document
+        if protected and protected.get("images"):
+            # Track which images have been restored to avoid duplicates
+            restored_images: set[str] = set()
+
+            # Find slide sections with suspiciously short content
+            slide_pattern = r"(<!--\s*Slide\s+(?:number:\s*)?(\d+)\s*-->)\s*\n\s*([^\n]*(?:\n[^\n]*){0,3}?)(?=\n*<!--\s*(?:Slide|Page)|$)"
+            matches = list(re.finditer(slide_pattern, result, re.MULTILINE))
+
+            for match in matches:
+                slide_comment = match.group(1)
+                slide_num = int(match.group(2))
+                section_content = match.group(3).strip()
+
+                # Check if content is garbage (very short, no meaningful content)
+                # Garbage indicators: less than 10 chars, or looks like parsing artifacts
+                is_garbage = (
+                    len(section_content) < 10
+                    and not re.search(r"!\[.*\]\(.*\)", section_content)  # No images
+                    and not re.search(r"^#+\s", section_content)  # No headings
+                )
+
+                if is_garbage:
+                    # Find an image that hasn't been restored yet
+                    for img in protected.get("images", []):
+                        if img in restored_images:
+                            continue
+                        # Check if this image is not already in the result
+                        img_match = re.search(r"\]\(([^)]+)\)", img)
+                        if img_match:
+                            img_path = img_match.group(1)
+                            if img_path in result:
+                                # Image already exists in result, skip
+                                restored_images.add(img)
+                                continue
+                            # Replace the garbage content with the original image
+                            old_section = match.group(0)
+                            new_section = f"{slide_comment}\n\n{img}\n"
+                            result = result.replace(old_section, new_section, 1)
+                            restored_images.add(img)
+                            logger.debug(
+                                f"Restored image to slide {slide_num} "
+                                f"(replaced garbage: {section_content!r})"
+                            )
+                            break
 
         # Second pass: if protected content was provided, restore any missing items
         # This handles cases where the LLM removed placeholders entirely
@@ -1258,11 +1317,14 @@ class LLMProcessor:
         self,
         image_paths: list[Path],
         language: str = "en",
-        max_images_per_batch: int = 10,
+        max_images_per_batch: int = DEFAULT_MAX_IMAGES_PER_BATCH,
         context: str = "",
     ) -> list[ImageAnalysis]:
         """
-        Analyze multiple images in batches to reduce LLM calls.
+        Analyze multiple images in batches with parallel execution.
+
+        Batches are processed concurrently using asyncio.gather for better
+        throughput. LLM concurrency is controlled by the shared semaphore.
 
         Args:
             image_paths: List of image paths to analyze
@@ -1276,24 +1338,56 @@ class LLMProcessor:
         if not image_paths:
             return []
 
-        # Process in batches
-        all_results: list[ImageAnalysis] = []
+        # Split into batches
         num_batches = (
             len(image_paths) + max_images_per_batch - 1
         ) // max_images_per_batch
 
+        batches: list[tuple[int, list[Path]]] = []
         for batch_num in range(num_batches):
             batch_start = batch_num * max_images_per_batch
             batch_end = min(batch_start + max_images_per_batch, len(image_paths))
             batch_paths = image_paths[batch_start:batch_end]
+            batches.append((batch_num, batch_paths))
 
-            logger.info(
-                f"Analyzing images batch {batch_num + 1}/{num_batches}: "
-                f"{len(batch_paths)} images"
-            )
+        logger.info(
+            f"[{context}] Analyzing {len(image_paths)} images in "
+            f"{num_batches} batches (parallel)"
+        )
 
-            batch_results = await self.analyze_batch(batch_paths, language, context)
-            all_results.extend(batch_results)
+        # Process all batches concurrently
+        async def process_batch(
+            batch_num: int, batch_paths: list[Path]
+        ) -> tuple[int, list[ImageAnalysis]]:
+            """Process a single batch and return with batch number for ordering."""
+            try:
+                results = await self.analyze_batch(batch_paths, language, context)
+                return (batch_num, results)
+            except Exception as e:
+                logger.warning(
+                    f"[{context}] Batch {batch_num + 1}/{num_batches} failed: {e}"
+                )
+                # Return empty results with placeholder for failed images
+                return (
+                    batch_num,
+                    [
+                        ImageAnalysis(
+                            caption=f"Image {i + 1}",
+                            description="Analysis failed",
+                        )
+                        for i in range(len(batch_paths))
+                    ],
+                )
+
+        # Launch all batches concurrently
+        tasks = [process_batch(batch_num, paths) for batch_num, paths in batches]
+        batch_results = await asyncio.gather(*tasks)
+
+        # Sort by batch number and flatten results
+        batch_results_sorted = sorted(batch_results, key=lambda x: x[0])
+        all_results: list[ImageAnalysis] = []
+        for _, results in batch_results_sorted:
+            all_results.extend(results)
 
         return all_results
 
@@ -1906,7 +2000,7 @@ class LLMProcessor:
         extracted_text: str,
         page_images: list[Path],
         source: str = "",
-        max_pages_per_batch: int = 10,
+        max_pages_per_batch: int = DEFAULT_MAX_PAGES_PER_BATCH,
     ) -> tuple[str, str]:
         """
         Complete document enhancement: clean format + generate frontmatter.
@@ -1950,14 +2044,25 @@ class LLMProcessor:
                 frontmatter = await self.generate_frontmatter(cleaned, source)
                 return cleaned, frontmatter
 
-        # Multi batch: clean in batches, then generate frontmatter
+        # Multi batch: clean in batches AND generate frontmatter in parallel
+        # Frontmatter can be generated from original text while cleaning proceeds
         logger.info(
-            f"[{source}] Processing {len(page_images)} pages in batches of {max_pages_per_batch}"
+            f"[{source}] Processing {len(page_images)} pages in batches of "
+            f"{max_pages_per_batch} (parallel frontmatter)"
         )
-        cleaned = await self._enhance_document_batched_simple(
-            extracted_text, page_images, max_pages_per_batch, source
+
+        # Launch cleaning and frontmatter generation concurrently
+        clean_task = asyncio.create_task(
+            self._enhance_document_batched_simple(
+                extracted_text, page_images, max_pages_per_batch, source
+            )
         )
-        frontmatter = await self.generate_frontmatter(cleaned, source)
+        # Generate frontmatter from beginning of original text (first 5000 chars)
+        frontmatter_task = asyncio.create_task(
+            self.generate_frontmatter(extracted_text[:5000], source)
+        )
+
+        cleaned, frontmatter = await asyncio.gather(clean_task, frontmatter_task)
 
         return cleaned, frontmatter
 

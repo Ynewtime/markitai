@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -10,6 +9,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from markitdown import MarkItDown
 
+from markit.constants import DEFAULT_RENDER_DPI
 from markit.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -17,22 +17,18 @@ from markit.converter.base import (
     FileFormat,
     register_converter,
 )
+from markit.image import ImageProcessor
 from markit.utils.office import find_libreoffice, has_ms_office
 
 if TYPE_CHECKING:
     from markit.config import MarkitConfig
 
 
-def _is_windows() -> bool:
-    """Check if running on Windows."""
-    return sys.platform == "win32"
-
-
 class OfficeConverter(BaseConverter):
     """Base converter for Office documents.
 
-    On Windows with MS Office installed, uses COM automation for better fidelity.
-    Otherwise falls back to MarkItDown (which may use LibreOffice).
+    Uses MarkItDown for text extraction (cross-platform).
+    COM is only used for slide/page rendering when needed.
     """
 
     def __init__(self, config: MarkitConfig | None = None) -> None:
@@ -42,29 +38,8 @@ class OfficeConverter(BaseConverter):
     def convert(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
-        """
-        Convert Office document to Markdown.
-
-        Args:
-            input_path: Path to the input file
-            output_dir: Optional output directory for extracted images
-
-        Returns:
-            ConvertResult containing markdown and extracted images
-        """
-        input_path = Path(input_path)
-
-        # Try COM automation on Windows if available
-        if has_ms_office():
-            try:
-                return self._convert_with_com(input_path, output_dir)
-            except Exception as e:
-                logger.warning(
-                    f"COM conversion failed, falling back to MarkItDown: {e}"
-                )
-
-        # Fallback to MarkItDown
-        return self._convert_with_markitdown(input_path)
+        """Convert Office document to Markdown using MarkItDown."""
+        return self._convert_with_markitdown(Path(input_path))
 
     def _convert_with_markitdown(self, input_path: Path) -> ConvertResult:
         """Convert using MarkItDown library."""
@@ -85,94 +60,29 @@ class OfficeConverter(BaseConverter):
             metadata=metadata,
         )
 
-    def _convert_with_com(
-        self, input_path: Path, output_dir: Path | None = None
-    ) -> ConvertResult:
-        """Convert using MS Office COM automation.
-
-        This method should be overridden by subclasses for specific Office formats.
-        """
-        # Default implementation falls back to MarkItDown
-        return self._convert_with_markitdown(input_path)
-
 
 @register_converter(FileFormat.DOCX)
 class DocxConverter(OfficeConverter):
     """Converter for DOCX (Word) documents.
 
-    On Windows with MS Office, uses Word COM automation for better conversion fidelity.
+    Uses MarkItDown directly (via python-docx) - cross-platform.
     """
 
     supported_formats = [FileFormat.DOCX]
-
-    def _convert_with_com(
-        self, input_path: Path, output_dir: Path | None = None
-    ) -> ConvertResult:
-        """Convert DOCX using Word COM automation."""
-        import win32com.client
-
-        # Create temporary directory for HTML output
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            html_path = temp_path / f"{input_path.stem}.html"
-
-            word = None
-            doc = None
-            try:
-                # Initialize Word application
-                word = win32com.client.Dispatch("Word.Application")
-                word.Visible = False
-                word.DisplayAlerts = False
-
-                # Open document
-                doc = word.Documents.Open(str(input_path.resolve()))
-
-                # Save as filtered HTML (wdFormatFilteredHTML = 10)
-                doc.SaveAs2(str(html_path.resolve()), FileFormat=10)
-
-                # Close document
-                doc.Close(False)
-                doc = None
-
-            finally:
-                if doc:
-                    try:
-                        doc.Close(False)
-                    except Exception:
-                        pass
-                if word:
-                    try:
-                        word.Quit()
-                    except Exception:
-                        pass
-
-            # Convert HTML to Markdown using MarkItDown
-            result = self._markitdown.convert(html_path, keep_data_uris=True)
-
-            metadata = {
-                "source": str(input_path),
-                "format": "DOCX",
-                "converter": "ms-office-com",
-            }
-
-            if result.title:
-                metadata["title"] = result.title
-
-            return ConvertResult(
-                markdown=result.markdown,
-                images=[],
-                metadata=metadata,
-            )
 
 
 @register_converter(FileFormat.PPTX)
 class PptxConverter(OfficeConverter):
     """Converter for PPTX (PowerPoint) documents.
 
-    Supports multiple conversion modes:
-    - Default: Extract text using MarkItDown or COM (on Windows)
-    - OCR mode: Extract text + render slides as images (commented in markdown)
-    - OCR+LLM mode: Extract text + render slides for LLM Vision analysis
+    Text extraction uses MarkItDown (via python-pptx) - cross-platform.
+    Slide rendering uses COM (Windows) or LibreOffice (Linux/macOS).
+
+    Modes:
+    - Default: Text extraction only
+    - --screenshot: Text + slide screenshots
+    - --ocr: Text + commented slide images
+    - --ocr --llm: Text + slides for LLM Vision
     """
 
     supported_formats = [FileFormat.PPTX]
@@ -201,8 +111,9 @@ class PptxConverter(OfficeConverter):
             logger.info("PPTX OCR mode: extracting text with slide images (commented)")
             return self._convert_with_ocr(input_path, output_dir)
 
-        # Standard conversion (COM on Windows, MarkItDown otherwise)
-        result = super().convert(input_path, output_dir)
+        # Standard conversion - use MarkItDown directly (cross-platform)
+        # COM is only needed for slide screenshots, not text extraction
+        result = self._convert_with_markitdown(input_path)
 
         # Render slide screenshots if enabled (independent of OCR)
         enable_screenshot = self.config and self.config.screenshot.enabled
@@ -324,6 +235,7 @@ class PptxConverter(OfficeConverter):
         self, input_path: Path, screenshots_dir: Path, image_format: str
     ) -> tuple[list[ExtractedImage], list[dict]]:
         """Render slides using PowerPoint COM automation."""
+        import pythoncom
         import win32com.client
 
         logger.debug(f"Rendering slides with PowerPoint COM: {input_path.name}")
@@ -333,6 +245,11 @@ class PptxConverter(OfficeConverter):
         images: list[ExtractedImage] = []
         slide_images: list[dict] = []
 
+        # Create ImageProcessor for compression with config
+        img_processor = ImageProcessor(self.config.image if self.config else None)
+
+        # Initialize COM for this thread (required for asyncio thread pool)
+        pythoncom.CoInitialize()
         try:
             ppt = win32com.client.Dispatch("PowerPoint.Application")
             presentation = ppt.Presentations.Open(
@@ -350,10 +267,34 @@ class PptxConverter(OfficeConverter):
 
                 slide.Export(str(image_path.resolve()), export_format)
 
+                # Apply compression with configured quality
                 from PIL import Image
 
                 with Image.open(image_path) as img:
-                    width, height = img.size
+                    original_width, original_height = img.size
+
+                    # Compress if enabled in config
+                    if self.config and self.config.image.compress:
+                        format_map = {
+                            "jpg": "JPEG",
+                            "jpeg": "JPEG",
+                            "png": "PNG",
+                            "webp": "WEBP",
+                        }
+                        output_format = format_map.get(image_format, "JPEG")
+                        compressed_img, compressed_data = img_processor.compress(
+                            img.copy(),
+                            quality=self.config.image.quality,
+                            max_size=(
+                                self.config.image.max_width,
+                                self.config.image.max_height,
+                            ),
+                            output_format=output_format,
+                        )
+                        image_path.write_bytes(compressed_data)
+                        width, height = compressed_img.size
+                    else:
+                        width, height = original_width, original_height
 
                 images.append(
                     ExtractedImage(
@@ -388,6 +329,7 @@ class PptxConverter(OfficeConverter):
                     ppt.Quit()
                 except Exception:
                     pass
+            pythoncom.CoUninitialize()
 
         return images, slide_images
 
@@ -449,11 +391,14 @@ class PptxConverter(OfficeConverter):
                 return [], []
 
             render_start = time.perf_counter()
+            # Create ImageProcessor for compression
+            img_processor = ImageProcessor(self.config.image if self.config else None)
+
             doc = pymupdf.open(pdf_path)
             try:
                 images: list[ExtractedImage] = []
                 slide_images: list[dict] = []
-                dpi = 150
+                dpi = DEFAULT_RENDER_DPI
 
                 for page_num in range(len(doc)):
                     page = doc[page_num]
@@ -464,7 +409,10 @@ class PptxConverter(OfficeConverter):
                         f"{input_path.name}.slide{page_num + 1:04d}.{image_format}"
                     )
                     image_path = screenshots_dir / image_name
-                    pix.save(str(image_path))
+                    # Save with compression (ensures < 5MB for LLM)
+                    final_size = img_processor.save_screenshot(
+                        pix.samples, pix.width, pix.height, image_path
+                    )
 
                     images.append(
                         ExtractedImage(
@@ -472,8 +420,8 @@ class PptxConverter(OfficeConverter):
                             index=page_num + 1,
                             original_name=image_name,
                             mime_type=f"image/{image_format}",
-                            width=pix.width,
-                            height=pix.height,
+                            width=final_size[0],
+                            height=final_size[1],
                         )
                     )
                     slide_images.append(
@@ -550,158 +498,12 @@ class PptxConverter(OfficeConverter):
             },
         )
 
-    def _convert_with_com(
-        self, input_path: Path, output_dir: Path | None = None
-    ) -> ConvertResult:
-        """Convert PPTX using PowerPoint COM automation (text extraction)."""
-        import win32com.client
-
-        # Create temporary directory for output
-        with tempfile.TemporaryDirectory() as temp_dir:  # noqa: F841
-            ppt = None
-            presentation = None
-            try:
-                # Initialize PowerPoint application
-                ppt = win32com.client.Dispatch("PowerPoint.Application")
-
-                # Open presentation
-                presentation = ppt.Presentations.Open(
-                    str(input_path.resolve()),
-                    ReadOnly=True,
-                    Untitled=False,
-                    WithWindow=False,
-                )
-
-                # Extract text from slides
-                markdown_parts = [f"# {input_path.stem}\n"]
-
-                for i, slide in enumerate(presentation.Slides, 1):
-                    slide_text = []
-
-                    # Get slide title if exists
-                    if slide.Shapes.HasTitle:
-                        title_shape = slide.Shapes.Title
-                        if title_shape.HasTextFrame:
-                            title = title_shape.TextFrame.TextRange.Text.strip()
-                            if title:
-                                slide_text.append(f"## Slide {i}: {title}")
-                            else:
-                                slide_text.append(f"## Slide {i}")
-                    else:
-                        slide_text.append(f"## Slide {i}")
-
-                    # Get text from all shapes
-                    for shape in slide.Shapes:
-                        if shape.HasTextFrame:
-                            text = shape.TextFrame.TextRange.Text.strip()
-                            if text and shape != slide.Shapes.Title:
-                                slide_text.append(text)
-
-                    # Get speaker notes
-                    if slide.HasNotesPage:
-                        try:
-                            notes_text = slide.NotesPage.Shapes.Placeholders(
-                                2
-                            ).TextFrame.TextRange.Text.strip()
-                            if notes_text:
-                                slide_text.append(f"\n> **Notes:** {notes_text}")
-                        except Exception:
-                            pass
-
-                    markdown_parts.append("\n".join(slide_text))
-
-                presentation.Close()
-                presentation = None
-
-            finally:
-                if presentation:
-                    try:
-                        presentation.Close()
-                    except Exception:
-                        pass
-                if ppt:
-                    try:
-                        ppt.Quit()
-                    except Exception:
-                        pass
-
-            markdown = "\n\n".join(markdown_parts)
-
-            return ConvertResult(
-                markdown=markdown,
-                images=[],
-                metadata={
-                    "source": str(input_path),
-                    "format": "PPTX",
-                    "converter": "ms-office-com",
-                    "slides": len(markdown_parts) - 1,
-                },
-            )
-
 
 @register_converter(FileFormat.XLSX)
 class XlsxConverter(OfficeConverter):
     """Converter for XLSX (Excel) documents.
 
-    On Windows with MS Office, uses Excel COM automation for better conversion.
+    Uses MarkItDown directly (via openpyxl) - cross-platform.
     """
 
     supported_formats = [FileFormat.XLSX]
-
-    def _convert_with_com(
-        self, input_path: Path, output_dir: Path | None = None
-    ) -> ConvertResult:
-        """Convert XLSX using Excel COM automation."""
-        import win32com.client
-
-        # Create temporary directory for HTML output
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            html_path = temp_path / f"{input_path.stem}.html"
-
-            excel = None
-            workbook = None
-            try:
-                # Initialize Excel application
-                excel = win32com.client.Dispatch("Excel.Application")
-                excel.Visible = False
-                excel.DisplayAlerts = False
-
-                # Open workbook
-                workbook = excel.Workbooks.Open(str(input_path.resolve()))
-
-                # Save as HTML (xlHtml = 44)
-                workbook.SaveAs(str(html_path.resolve()), FileFormat=44)
-
-                workbook.Close(False)
-                workbook = None
-
-            finally:
-                if workbook:
-                    try:
-                        workbook.Close(False)
-                    except Exception:
-                        pass
-                if excel:
-                    try:
-                        excel.Quit()
-                    except Exception:
-                        pass
-
-            # Convert HTML to Markdown using MarkItDown
-            result = self._markitdown.convert(html_path, keep_data_uris=True)
-
-            metadata = {
-                "source": str(input_path),
-                "format": "XLSX",
-                "converter": "ms-office-com",
-            }
-
-            if result.title:
-                metadata["title"] = result.title
-
-            return ConvertResult(
-                markdown=result.markdown,
-                images=[],
-                metadata=metadata,
-            )
