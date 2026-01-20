@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -91,7 +92,6 @@ async def run_in_converter_thread(func, *args, **kwargs):
     if kwargs:
         func = partial(func, **kwargs)
     return await loop.run_in_executor(executor, func, *args)
-
 
 
 def resolve_output_path(
@@ -499,6 +499,11 @@ def print_version(ctx: Context, param: Any, value: bool) -> None:
     help="Disable image compression.",
 )
 @click.option(
+    "--no-cache",
+    is_flag=True,
+    help="Disable LLM result caching (force fresh API calls).",
+)
+@click.option(
     "--llm-concurrency",
     type=int,
     default=None,
@@ -543,6 +548,7 @@ def app(
     screenshot: bool | None,
     resume: bool,
     no_compress: bool,
+    no_cache: bool,
     batch_concurrency: int | None,
     llm_concurrency: int | None,
     verbose: bool,
@@ -653,6 +659,8 @@ def app(
         cfg.screenshot.enabled = screenshot
     if no_compress:
         cfg.image.compress = False
+    if no_cache:
+        cfg.cache.no_cache = True
     if batch_concurrency is not None:
         cfg.batch.concurrency = batch_concurrency
     if llm_concurrency is not None:
@@ -832,6 +840,172 @@ def config_set(key: str, value: str) -> None:
 
 
 # =============================================================================
+# Cache subcommands
+# =============================================================================
+
+
+@app.group()
+def cache() -> None:
+    """Cache management commands."""
+    pass
+
+
+@cache.command("stats")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Output as JSON.",
+)
+def cache_stats(as_json: bool) -> None:
+    """Show cache statistics."""
+    from markit.constants import (
+        DEFAULT_CACHE_DB_FILENAME,
+        DEFAULT_PROJECT_CACHE_DIR,
+    )
+    from markit.llm import SQLiteCache
+
+    manager = ConfigManager()
+    cfg = manager.load()
+
+    stats_data: dict[str, Any] = {
+        "project": None,
+        "global": None,
+        "enabled": cfg.cache.enabled,
+    }
+
+    # Check project cache (current directory)
+    project_cache_path = (
+        Path.cwd() / DEFAULT_PROJECT_CACHE_DIR / DEFAULT_CACHE_DB_FILENAME
+    )
+    if project_cache_path.exists():
+        try:
+            project_cache = SQLiteCache(project_cache_path, cfg.cache.max_size_bytes)
+            stats_data["project"] = project_cache.stats()
+        except Exception as e:
+            stats_data["project"] = {"error": str(e)}
+
+    # Check global cache
+    global_cache_path = (
+        Path(cfg.cache.global_dir).expanduser() / DEFAULT_CACHE_DB_FILENAME
+    )
+    if global_cache_path.exists():
+        try:
+            global_cache = SQLiteCache(global_cache_path, cfg.cache.max_size_bytes)
+            stats_data["global"] = global_cache.stats()
+        except Exception as e:
+            stats_data["global"] = {"error": str(e)}
+
+    if as_json:
+        console.print(json.dumps(stats_data, indent=2, ensure_ascii=False))
+    else:
+        console.print("[bold]Cache Statistics[/bold]")
+        console.print(f"Enabled: {cfg.cache.enabled}")
+        console.print()
+
+        if stats_data["project"]:
+            p = stats_data["project"]
+            if "error" in p:
+                console.print(f"[red]Project cache error:[/red] {p['error']}")
+            else:
+                console.print("[bold]Project Cache[/bold]")
+                console.print(f"  Path: {p['db_path']}")
+                console.print(f"  Entries: {p['count']}")
+                console.print(f"  Size: {p['size_mb']} MB / {p['max_size_mb']} MB")
+        else:
+            console.print("[dim]No project cache found in current directory[/dim]")
+
+        console.print()
+
+        if stats_data["global"]:
+            g = stats_data["global"]
+            if "error" in g:
+                console.print(f"[red]Global cache error:[/red] {g['error']}")
+            else:
+                console.print("[bold]Global Cache[/bold]")
+                console.print(f"  Path: {g['db_path']}")
+                console.print(f"  Entries: {g['count']}")
+                console.print(f"  Size: {g['size_mb']} MB / {g['max_size_mb']} MB")
+        else:
+            console.print("[dim]No global cache found[/dim]")
+
+
+@cache.command("clear")
+@click.option(
+    "--scope",
+    type=click.Choice(["project", "global", "all"]),
+    default="project",
+    help="Which cache to clear (default: project).",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt.",
+)
+def cache_clear(scope: str, yes: bool) -> None:
+    """Clear cache entries."""
+    from markit.constants import (
+        DEFAULT_CACHE_DB_FILENAME,
+        DEFAULT_PROJECT_CACHE_DIR,
+    )
+    from markit.llm import SQLiteCache
+
+    manager = ConfigManager()
+    cfg = manager.load()
+
+    # Confirm if not --yes
+    if not yes:
+        scope_desc = {
+            "project": "project cache (current directory)",
+            "global": "global cache (~/.markit)",
+            "all": "ALL caches (project + global)",
+        }
+        if not click.confirm(f"Clear {scope_desc[scope]}?"):
+            console.print("[yellow]Aborted[/yellow]")
+            return
+
+    result = {"project": 0, "global": 0}
+
+    # Clear project cache
+    if scope in ("project", "all"):
+        project_cache_path = (
+            Path.cwd() / DEFAULT_PROJECT_CACHE_DIR / DEFAULT_CACHE_DB_FILENAME
+        )
+        if project_cache_path.exists():
+            try:
+                project_cache = SQLiteCache(
+                    project_cache_path, cfg.cache.max_size_bytes
+                )
+                result["project"] = project_cache.clear()
+            except Exception as e:
+                console.print(f"[red]Failed to clear project cache:[/red] {e}")
+
+    # Clear global cache
+    if scope in ("global", "all"):
+        global_cache_path = (
+            Path(cfg.cache.global_dir).expanduser() / DEFAULT_CACHE_DB_FILENAME
+        )
+        if global_cache_path.exists():
+            try:
+                global_cache = SQLiteCache(global_cache_path, cfg.cache.max_size_bytes)
+                result["global"] = global_cache.clear()
+            except Exception as e:
+                console.print(f"[red]Failed to clear global cache:[/red] {e}")
+
+    # Report results
+    total = result["project"] + result["global"]
+    if total > 0:
+        console.print(f"[green]Cleared {total} cache entries[/green]")
+        if result["project"] > 0:
+            console.print(f"  Project: {result['project']}")
+        if result["global"] > 0:
+            console.print(f"  Global: {result['global']}")
+    else:
+        console.print("[dim]No cache entries to clear[/dim]")
+
+
+# =============================================================================
 # Processing functions
 # =============================================================================
 
@@ -968,7 +1142,11 @@ async def process_single_file(
                 enhance_cost,
                 enhance_usage,
             ) = await enhance_document_with_vision(
-                extracted_text, page_images, cfg, source=input_path.name
+                extracted_text,
+                page_images,
+                cfg,
+                source=input_path.name,
+                project_dir=output_dir.parent,
             )
             llm_cost += enhance_cost
             _merge_llm_usage(llm_usage, enhance_usage)
@@ -995,7 +1173,12 @@ async def process_single_file(
                     result.markdown, assets_dir
                 )
 
-            processor = LLMProcessor(cfg.llm, cfg.prompts)
+            processor = LLMProcessor(
+                cfg.llm,
+                cfg.prompts,
+                project_dir=output_dir.parent,
+                no_cache=cfg.cache.no_cache,
+            )
             llm_output = output_file.with_suffix(".llm.md")
             llm_content = processor.format_llm_output(result.markdown, frontmatter)
             atomic_write_text(llm_output, llm_content)
@@ -1029,6 +1212,7 @@ async def process_single_file(
                         cfg,
                         input_path,
                         concurrency_limit=cfg.llm.concurrency,
+                        project_dir=output_dir.parent,
                     )
                     llm_cost += image_cost
                     _merge_llm_usage(llm_usage, image_usage)
@@ -1070,6 +1254,7 @@ async def process_single_file(
                     cfg,
                     input_path,
                     concurrency_limit=cfg.llm.concurrency,
+                    project_dir=output_dir.parent,
                 )
                 llm_cost += image_cost
                 _merge_llm_usage(llm_usage, image_usage)
@@ -1106,6 +1291,7 @@ async def process_single_file(
                         cfg,
                         input_path,
                         concurrency_limit=cfg.llm.concurrency,
+                        project_dir=output_dir.parent,
                     )
                     llm_cost += image_cost
                     _merge_llm_usage(llm_usage, image_usage)
@@ -1200,7 +1386,7 @@ async def process_single_file(
     except Exception as e:
         error_msg = str(e)
         console.print(Panel(f"[red]{error_msg}[/red]", title="Error"))
-        raise SystemExit(1) from e
+        sys.exit(1)
 
     finally:
         if error_msg:
@@ -1215,6 +1401,7 @@ async def process_with_llm(
     page_images: list[dict] | None = None,
     processor: LLMProcessor | None = None,
     original_markdown: str | None = None,
+    project_dir: Path | None = None,
 ) -> tuple[str, float, dict[str, dict[str, Any]]]:
     """Process markdown with LLM and write enhanced version to .llm.md file.
 
@@ -1244,7 +1431,12 @@ async def process_with_llm(
 
     try:
         if processor is None:
-            processor = LLMProcessor(cfg.llm, cfg.prompts)
+            processor = LLMProcessor(
+                cfg.llm,
+                cfg.prompts,
+                project_dir=project_dir,
+                no_cache=cfg.cache.no_cache,
+            )
 
         # Extract protected content from original if provided
         original_protected = None
@@ -1385,6 +1577,7 @@ async def analyze_images_with_llm(
     input_path: Path | None = None,
     concurrency_limit: int | None = None,
     processor: LLMProcessor | None = None,
+    project_dir: Path | None = None,
 ) -> tuple[str, float, dict[str, dict[str, Any]], ImageAnalysisResult | None]:
     """Analyze images with LLM Vision using batch processing.
 
@@ -1402,6 +1595,7 @@ async def analyze_images_with_llm(
         input_path: Source input file path (for absolute path in JSON)
         concurrency_limit: Max concurrent LLM requests (unused, kept for API compat)
         processor: Optional shared LLMProcessor (created if not provided)
+        project_dir: Project directory for persistent cache scope
 
     Returns:
         Tuple of (updated_markdown, cost_usd, llm_usage, image_analysis_result):
@@ -1420,7 +1614,12 @@ async def analyze_images_with_llm(
 
     try:
         if processor is None:
-            processor = LLMProcessor(cfg.llm, cfg.prompts)
+            processor = LLMProcessor(
+                cfg.llm,
+                cfg.prompts,
+                project_dir=project_dir,
+                no_cache=cfg.cache.no_cache,
+            )
 
         # Use unique context for image analysis to track usage separately from doc processing
         # Format: "full_path:images" ensures isolation even for files with same name in different dirs
@@ -1537,6 +1736,7 @@ async def enhance_document_with_vision(
     cfg: MarkitConfig,
     source: str = "document",
     processor: LLMProcessor | None = None,
+    project_dir: Path | None = None,
 ) -> tuple[str, str, float, dict[str, dict[str, Any]]]:
     """Enhance document by combining extracted text with page images.
 
@@ -1552,6 +1752,7 @@ async def enhance_document_with_vision(
         cfg: Configuration
         source: Source file name for logging context
         processor: Optional shared LLMProcessor (created if not provided)
+        project_dir: Project directory for persistent cache scope
 
     Returns:
         Tuple of (cleaned_markdown, frontmatter_yaml, cost_usd, llm_usage)
@@ -1560,7 +1761,12 @@ async def enhance_document_with_vision(
 
     try:
         if processor is None:
-            processor = LLMProcessor(cfg.llm, cfg.prompts)
+            processor = LLMProcessor(
+                cfg.llm,
+                cfg.prompts,
+                project_dir=project_dir,
+                no_cache=cfg.cache.no_cache,
+            )
 
         # Sort images by page number
         def get_page_num(img_info: dict) -> int:
@@ -1660,13 +1866,50 @@ async def process_batch(
             console.print(f"  ... and {len(files) - 10} more")
         raise SystemExit(0)
 
+    # Record batch start time before any processing (including pre-conversion)
+    from datetime import datetime
+
+    batch_started_at = datetime.now().astimezone().isoformat()
+
+    # Pre-convert legacy Office files using batch COM (Windows only)
+    # This reduces overhead by starting each Office app only once
+    legacy_suffixes = {".doc", ".ppt", ".xls"}
+    legacy_files = [f for f in files if f.suffix.lower() in legacy_suffixes]
+    preconverted_map: dict[Path, Path] = {}
+    preconvert_temp_dir: tempfile.TemporaryDirectory | None = None
+
+    if legacy_files:
+        import platform
+
+        if platform.system() == "Windows":
+            from markit.converter.legacy import batch_convert_legacy_files
+
+            # Create temp directory for pre-converted files
+            preconvert_temp_dir = tempfile.TemporaryDirectory(prefix="markit_preconv_")
+            preconvert_path = Path(preconvert_temp_dir.name)
+
+            logger.info(f"Pre-converting {len(legacy_files)} legacy files...")
+            preconverted_map = batch_convert_legacy_files(legacy_files, preconvert_path)
+            if preconverted_map:
+                logger.info(
+                    f"Pre-converted {len(preconverted_map)}/{len(legacy_files)} files with MS Office COM"
+                )
+
     # Create shared LLM runtime and processor for batch mode
     shared_processor = None
     if cfg.llm.enabled:
         from markit.llm import LLMProcessor, LLMRuntime
 
         runtime = LLMRuntime(concurrency=cfg.llm.concurrency)
-        shared_processor = LLMProcessor(cfg.llm, cfg.prompts, runtime=runtime)
+        # Use output directory's parent as project dir for project-level cache
+        project_dir = output_dir.parent if output_dir else Path.cwd()
+        shared_processor = LLMProcessor(
+            cfg.llm,
+            cfg.prompts,
+            runtime=runtime,
+            project_dir=project_dir,
+            no_cache=cfg.cache.no_cache,
+        )
         logger.info(
             f"Created shared LLMProcessor with concurrency={cfg.llm.concurrency}"
         )
@@ -1682,7 +1925,12 @@ async def process_batch(
             # Validate file size
             validate_file_size(file_path, MAX_DOCUMENT_SIZE)
 
-            converter = get_converter(file_path, config=cfg)
+            # Check if we have a pre-converted version (for legacy Office files)
+            # This uses the batch COM conversion result to avoid per-file COM overhead
+            actual_file = preconverted_map.get(file_path, file_path)
+            use_preconverted = actual_file != file_path
+
+            converter = get_converter(actual_file, config=cfg)
             if converter is None:
                 logger.warning(
                     f"[SKIP] {file_path.name}: No converter for {file_path.suffix}"
@@ -1706,11 +1954,14 @@ async def process_batch(
             convert_start = time.perf_counter()
             result = await run_in_converter_thread(
                 converter.convert,
-                file_path,
+                actual_file,
                 output_dir=file_output_dir,
             )
             convert_time = time.perf_counter() - convert_start
-            logger.info(f"[CONVERT] {file_path.name}: {convert_time:.2f}s")
+            preconv_note = " (pre-converted)" if use_preconverted else ""
+            logger.info(
+                f"[CONVERT] {file_path.name}: {convert_time:.2f}s{preconv_note}"
+            )
 
             # Generate output filename with conflict resolution
             base_output_file = file_output_dir / f"{file_path.name}.md"
@@ -1792,7 +2043,9 @@ async def process_batch(
 
             if has_page_images and cfg.llm.enabled:
                 # Enhanced mode: Use extracted text + page images for LLM processing
-                logger.info(f"[LLM] {file_path.name}: Starting Screenshot+LLM processing")
+                logger.info(
+                    f"[LLM] {file_path.name}: Starting Screenshot+LLM processing"
+                )
                 # Use result.markdown which has base64 images replaced with assets/ paths
                 # Do NOT use metadata["extracted_text"] as it may contain raw base64 data
                 extracted_text = result.markdown
@@ -1845,24 +2098,17 @@ async def process_batch(
                     # LLM may introduce base64 images - strip them
                     # Use saved image path if available, otherwise remove
                     has_base64_before = "data:image" in cleaned_content
-                    if image_result is not None and image_result.saved_images:
-                        first_image = image_result.saved_images[0]
-                        logger.debug(
-                            f"[DEBUG] Stripping base64, has_before={has_base64_before}, "
-                            f"image_path={first_image.path.name}"
-                        )
-                        cleaned_content = image_processor.strip_base64_images(
-                            cleaned_content,
-                            replacement_path=f"assets/{first_image.path.name}",
-                        )
-                    else:
-                        logger.debug(
-                            f"[DEBUG] Stripping base64 (no saved images), "
-                            f"has_before={has_base64_before}, image_result={image_result}"
-                        )
-                        cleaned_content = image_processor.strip_base64_images(
-                            cleaned_content
-                        )
+
+                    # BUGFIX: Do NOT replace with first image path.
+                    # If LLM introduces base64, it's likely hallucination or duplication.
+                    # Valid images are already handled via placeholders/paths before LLM.
+                    logger.debug(
+                        f"[DEBUG] Stripping base64, has_before={has_base64_before}"
+                    )
+                    cleaned_content = image_processor.strip_base64_images(
+                        cleaned_content
+                    )
+
                     has_base64_after = "data:image" in cleaned_content
                     logger.debug(f"[DEBUG] After strip: has_base64={has_base64_after}")
 
@@ -2050,14 +2296,20 @@ async def process_batch(
         f"Processing {len(files)} files with concurrency {cfg.batch.concurrency}"
     )
 
-    state = await batch.process_batch(
-        files,
-        process_file,
-        resume=resume,
-        options=task_options,
-        verbose=verbose,
-        console_handler_id=console_handler_id,
-    )
+    try:
+        state = await batch.process_batch(
+            files,
+            process_file,
+            resume=resume,
+            options=task_options,
+            verbose=verbose,
+            console_handler_id=console_handler_id,
+            started_at=batch_started_at,
+        )
+    finally:
+        # Clean up pre-conversion temp directory
+        if preconvert_temp_dir is not None:
+            preconvert_temp_dir.cleanup()
 
     # Print summary
     batch.print_summary()

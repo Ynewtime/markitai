@@ -104,9 +104,59 @@ class OCRProcessor:
         result: Any = self.engine(str(image_path))
 
         # Extract text from result (RapidOCR returns union type with incomplete stubs)
-        texts = result.txts if result.txts else []
-        scores = result.scores if result.scores else []
-        boxes = result.boxes if result.boxes else []
+        # Use 'is not None' to avoid numpy array boolean ambiguity
+        texts = list(result.txts) if result.txts is not None else []
+        scores = list(result.scores) if result.scores is not None else []
+        boxes = list(result.boxes) if result.boxes is not None else []
+
+        # Join all recognized text
+        full_text = "\n".join(texts)
+
+        # Calculate average confidence
+        avg_confidence = sum(scores) / len(scores) if scores else 0.0
+
+        logger.debug(
+            f"OCR completed: {len(texts)} text blocks, "
+            f"avg confidence: {avg_confidence:.2f}"
+        )
+
+        return OCRResult(
+            text=full_text,
+            confidence=avg_confidence,
+            boxes=[
+                box.tolist() if hasattr(box, "tolist") else list(box) for box in boxes
+            ],
+        )
+
+    def recognize_numpy(self, image_array: Any) -> OCRResult:
+        """
+        Perform OCR on a numpy array (RGB image data).
+
+        This is more efficient than recognize_bytes as it avoids
+        intermediate file I/O when the image is already in memory.
+
+        Args:
+            image_array: numpy array of shape (H, W, 3) or (H, W, 4) in RGB(A) format
+
+        Returns:
+            OCRResult with recognized text and metadata
+        """
+        import numpy as np
+
+        # Ensure we have a proper numpy array
+        if not isinstance(image_array, np.ndarray):
+            raise TypeError(f"Expected numpy array, got {type(image_array)}")
+
+        logger.debug(f"Running OCR on numpy array: shape={image_array.shape}")
+
+        # RapidOCR can accept numpy arrays directly
+        result: Any = self.engine(image_array)
+
+        # Extract text from result
+        # Use 'is not None' to avoid numpy array boolean ambiguity
+        texts = list(result.txts) if result.txts is not None else []
+        scores = list(result.scores) if result.scores is not None else []
+        boxes = list(result.boxes) if result.boxes is not None else []
 
         # Join all recognized text
         full_text = "\n".join(texts)
@@ -139,6 +189,7 @@ class OCRProcessor:
         """
         import io
 
+        import numpy as np
         from PIL import Image
 
         # Load image from bytes
@@ -148,18 +199,10 @@ class OCRProcessor:
         if image.mode != "RGB":
             image = image.convert("RGB")
 
-        # Save to temporary file (RapidOCR works with file paths)
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            image.save(tmp.name, format="JPEG", quality=95)
-            tmp_path = Path(tmp.name)
-
-        try:
-            return self.recognize(tmp_path)
-        finally:
-            # Clean up temp file
-            tmp_path.unlink(missing_ok=True)
+        # Convert to numpy array and use recognize_numpy directly
+        # This avoids temporary file I/O
+        image_array = np.array(image)
+        return self.recognize_numpy(image_array)
 
     def recognize_pdf_page(
         self,
@@ -198,13 +241,46 @@ class OCRProcessor:
             mat = fitz.Matrix(dpi / 72, dpi / 72)
             pix = page.get_pixmap(matrix=mat)
 
-            # Convert to bytes
-            image_data = pix.tobytes("jpeg")
-
-            return self.recognize_bytes(image_data)
+            # Use recognize_pixmap for direct processing
+            return self.recognize_pixmap(pix.samples, pix.width, pix.height, pix.n)
 
         finally:
             doc.close()
+
+    def recognize_pixmap(
+        self,
+        samples: bytes,
+        width: int,
+        height: int,
+        n_channels: int,
+    ) -> OCRResult:
+        """
+        Perform OCR on raw pixel data (e.g., from pymupdf pixmap).
+
+        This method is optimized for use with pymupdf's pixmap.samples,
+        avoiding redundant image encoding/decoding.
+
+        Args:
+            samples: Raw pixel data bytes
+            width: Image width in pixels
+            height: Image height in pixels
+            n_channels: Number of color channels (3 for RGB, 4 for RGBA)
+
+        Returns:
+            OCRResult with recognized text
+        """
+        import numpy as np
+
+        # Convert raw bytes to numpy array
+        image_array = np.frombuffer(samples, dtype=np.uint8).reshape(
+            (height, width, n_channels)
+        )
+
+        # If RGBA, convert to RGB
+        if n_channels == 4:
+            image_array = image_array[:, :, :3]
+
+        return self.recognize_numpy(image_array)
 
     def is_scanned_pdf(
         self, pdf_path: Path, sample_pages: int = DEFAULT_OCR_SAMPLE_PAGES

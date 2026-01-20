@@ -87,7 +87,9 @@ line-ending = "auto"
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
 include = ["src"]
-exclude = ["tests"]
+exclude = ["tests", "**/__pycache__"]
+venvPath = "../.."
+venv = ".venv"
 reportMissingImports = true
 reportMissingTypeStubs = false
 reportUnusedImport = true
@@ -98,3 +100,5 @@ reportAttributeAccessIssue = "warning"
 reportArgumentType = "warning"
 reportCallIssue = "warning"
 reportReturnType = "warning"
+# Click decorator patterns (e.g., @app.group())
+reportFunctionMemberAccess = "warning"

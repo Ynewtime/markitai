@@ -159,7 +159,7 @@ class TestLLMProcessorAsync:
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
         """Test markdown cleaning."""
-        processor = LLMProcessor(llm_config, prompts_config)
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
         # Mock the router's acompletion
         mock_response = MagicMock()
@@ -182,7 +182,7 @@ class TestLLMProcessorAsync:
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
         """Test frontmatter generation."""
-        processor = LLMProcessor(llm_config, prompts_config)
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
         mock_response = MagicMock()
         mock_response.choices = [
@@ -204,7 +204,7 @@ class TestLLMProcessorAsync:
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
         """Test full document processing with fallback to parallel mode."""
-        processor = LLMProcessor(llm_config, prompts_config)
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
         # Set different responses for clean and frontmatter
         clean_response = MagicMock()
@@ -286,7 +286,7 @@ class TestLLMProcessorAsync:
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
         """Test that process_document falls back to parallel when combined fails."""
-        processor = LLMProcessor(llm_config, prompts_config)
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
         # Mock instructor to fail
         with patch("markit.llm.instructor.from_litellm") as mock_from_litellm:
@@ -481,13 +481,14 @@ class TestPlaceholderProtection:
         assert len(mapping) == 1
 
     def test_protect_slides(self):
-        """Test protecting slide comments with placeholders."""
+        """Test that slide comments are NOT protected (removed for simplicity)."""
         content = "<!-- Slide 1 -->\nContent\n<!-- Slide 2 -->"
         protected, mapping = LLMProcessor._protect_content(content)
-        assert "__MARKIT_SLIDE_0__" in protected
-        assert "__MARKIT_SLIDE_1__" in protected
-        assert "<!-- Slide 1 -->" not in protected
-        assert len(mapping) == 2
+        # Slides are no longer protected - they remain as is
+        assert "<!-- Slide 1 -->" in protected
+        assert "<!-- Slide 2 -->" in protected
+        assert "__MARKIT_SLIDE_" not in protected
+        assert len(mapping) == 0  # No slide mappings
 
     def test_protect_page_comments(self):
         """Test protecting page image comments with placeholders."""
@@ -498,11 +499,11 @@ class TestPlaceholderProtection:
 
     def test_unprotect_restores_content(self):
         """Test that unprotect restores original content."""
-        content = "Start ![Image](img.jpg) Middle <!-- Slide 1 --> End"
+        content = "Start ![Image](img.jpg) Middle End"
         protected, mapping = LLMProcessor._protect_content(content)
         restored = LLMProcessor._unprotect_content(protected, mapping)
         assert "![Image](img.jpg)" in restored
-        assert "<!-- Slide 1 -->" in restored
+        # Slides are no longer protected, so they remain unchanged
 
     def test_unprotect_preserves_position(self):
         """Test that restored content is in original position."""

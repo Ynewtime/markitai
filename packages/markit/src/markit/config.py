@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 from markit.constants import (
     CONFIG_FILENAME,
     DEFAULT_BATCH_CONCURRENCY,
+    DEFAULT_CACHE_SIZE_LIMIT,
+    DEFAULT_GLOBAL_CACHE_DIR,
     DEFAULT_IMAGE_FILTER_MIN_AREA,
     DEFAULT_IMAGE_FILTER_MIN_HEIGHT,
     DEFAULT_IMAGE_FILTER_MIN_WIDTH,
@@ -207,6 +209,15 @@ class LogConfig(BaseModel):
     retention: str = DEFAULT_LOG_RETENTION
 
 
+class CacheConfig(BaseModel):
+    """Cache configuration."""
+
+    enabled: bool = True
+    no_cache: bool = False  # Skip reading cache but still write (Bun semantics)
+    max_size_bytes: int = DEFAULT_CACHE_SIZE_LIMIT
+    global_dir: str = DEFAULT_GLOBAL_CACHE_DIR
+
+
 class PresetConfig(BaseModel):
     """Preset configuration defining which features to enable."""
 
@@ -236,6 +247,7 @@ class MarkitConfig(BaseModel):
     prompts: PromptsConfig = Field(default_factory=PromptsConfig)
     batch: BatchConfig = Field(default_factory=BatchConfig)
     log: LogConfig = Field(default_factory=LogConfig)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
     presets: dict[str, PresetConfig] = Field(default_factory=dict)
 
 

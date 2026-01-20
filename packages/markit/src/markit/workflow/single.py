@@ -47,15 +47,21 @@ class SingleFileWorkflow:
         self,
         config: MarkitConfig,
         processor: LLMProcessor | None = None,
+        project_dir: Path | None = None,
+        no_cache: bool = False,
     ) -> None:
         """Initialize workflow.
 
         Args:
             config: Markit configuration
             processor: Optional shared LLMProcessor (created if not provided)
+            project_dir: Optional project directory for project-level cache
+            no_cache: If True, skip reading from cache but still write results
         """
         self.config = config
         self._processor = processor
+        self._project_dir = project_dir
+        self._no_cache = no_cache
         self._llm_cost = 0.0
         self._llm_usage: dict[str, dict[str, Any]] = {}
 
@@ -65,7 +71,12 @@ class SingleFileWorkflow:
         if self._processor is None:
             from markit.llm import LLMProcessor
 
-            self._processor = LLMProcessor(self.config.llm, self.config.prompts)
+            self._processor = LLMProcessor(
+                self.config.llm,
+                self.config.prompts,
+                project_dir=self._project_dir,
+                no_cache=self._no_cache,
+            )
         return self._processor
 
     def _merge_usage(self, usage: dict[str, dict[str, Any]]) -> None:

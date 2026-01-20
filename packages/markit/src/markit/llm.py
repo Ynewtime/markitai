@@ -33,13 +33,18 @@ if TYPE_CHECKING:
 
 
 from markit.constants import (
+    DEFAULT_CACHE_CONTENT_TRUNCATE,
+    DEFAULT_CACHE_DB_FILENAME,
     DEFAULT_CACHE_MAXSIZE,
+    DEFAULT_CACHE_SIZE_LIMIT,
     DEFAULT_CACHE_TTL_SECONDS,
+    DEFAULT_GLOBAL_CACHE_DIR,
     DEFAULT_IO_CONCURRENCY,
     DEFAULT_MAX_IMAGES_PER_BATCH,
     DEFAULT_MAX_OUTPUT_TOKENS,
     DEFAULT_MAX_PAGES_PER_BATCH,
     DEFAULT_MAX_RETRIES,
+    DEFAULT_PROJECT_CACHE_DIR,
     DEFAULT_RETRY_BASE_DELAY,
     DEFAULT_RETRY_MAX_DELAY,
 )
@@ -260,6 +265,335 @@ class EnhancedDocumentResult(BaseModel):
     frontmatter: Frontmatter = Field(description="Document metadata")
 
 
+class SQLiteCache:
+    """SQLite-based persistent LRU cache with size limit.
+
+    Thread-safe via SQLite's built-in locking mechanism.
+    Uses WAL mode for better concurrent read performance.
+    """
+
+    def __init__(
+        self,
+        db_path: Path,
+        max_size_bytes: int = DEFAULT_CACHE_SIZE_LIMIT,
+    ) -> None:
+        """Initialize SQLite cache.
+
+        Args:
+            db_path: Path to the SQLite database file
+            max_size_bytes: Maximum total cache size in bytes (default 1GB)
+        """
+        import hashlib
+
+        self._db_path = Path(db_path)
+        self._max_size_bytes = max_size_bytes
+        self._hashlib = hashlib
+
+        # Ensure parent directory exists
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Initialize database
+        self._init_db()
+
+    def _get_connection(self) -> Any:
+        """Get a new database connection (thread-local)."""
+        import sqlite3
+
+        conn = sqlite3.connect(str(self._db_path), timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_db(self) -> None:
+        """Initialize database schema."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS cache (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    model TEXT DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    accessed_at INTEGER NOT NULL,
+                    size_bytes INTEGER NOT NULL
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_accessed ON cache(accessed_at)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_created ON cache(created_at)")
+            conn.commit()
+
+    def _compute_hash(self, prompt: str, content: str) -> str:
+        """Compute hash key from prompt and content."""
+        # Truncate content to avoid huge keys while maintaining uniqueness
+        truncated = content[:DEFAULT_CACHE_CONTENT_TRUNCATE]
+        combined = f"{prompt}|{truncated}"
+        return self._hashlib.sha256(combined.encode()).hexdigest()[:32]
+
+    def get(self, prompt: str, content: str) -> str | None:
+        """Get cached value if exists, update accessed_at for LRU.
+
+        Args:
+            prompt: Prompt template used
+            content: Content being processed
+
+        Returns:
+            Cached JSON string or None if not found
+        """
+        key = self._compute_hash(prompt, content)
+        now = int(time.time())
+
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM cache WHERE key = ?", (key,)
+            ).fetchone()
+
+            if row:
+                # Update accessed_at for LRU tracking
+                conn.execute(
+                    "UPDATE cache SET accessed_at = ? WHERE key = ?", (now, key)
+                )
+                conn.commit()
+                return row["value"]
+
+        return None
+
+    def set(self, prompt: str, content: str, value: str, model: str = "") -> None:
+        """Set cache value, evict LRU entries if size exceeded.
+
+        Args:
+            prompt: Prompt template used
+            content: Content being processed
+            value: JSON string to cache
+            model: Model identifier (for potential invalidation)
+        """
+        key = self._compute_hash(prompt, content)
+        now = int(time.time())
+        size_bytes = len(value.encode("utf-8"))
+
+        with self._get_connection() as conn:
+            # Check current total size
+            total_size = conn.execute(
+                "SELECT COALESCE(SUM(size_bytes), 0) as total FROM cache"
+            ).fetchone()["total"]
+
+            # Evict LRU entries if needed
+            while total_size + size_bytes > self._max_size_bytes:
+                oldest = conn.execute(
+                    "SELECT key, size_bytes FROM cache ORDER BY accessed_at ASC LIMIT 1"
+                ).fetchone()
+
+                if oldest is None:
+                    break
+
+                conn.execute("DELETE FROM cache WHERE key = ?", (oldest["key"],))
+                total_size -= oldest["size_bytes"]
+                logger.debug(f"[Cache] Evicted LRU entry: {oldest['key'][:8]}...")
+
+            # Insert or replace
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO cache (key, value, model, created_at, accessed_at, size_bytes)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
+                (key, value, model, now, now, size_bytes),
+            )
+            conn.commit()
+
+    def clear(self) -> int:
+        """Clear all entries.
+
+        Returns:
+            Number of entries deleted
+        """
+        with self._get_connection() as conn:
+            count = conn.execute("SELECT COUNT(*) as cnt FROM cache").fetchone()["cnt"]
+            conn.execute("DELETE FROM cache")
+            conn.commit()
+            return count
+
+    def stats(self) -> dict[str, Any]:
+        """Return cache statistics.
+
+        Returns:
+            Dict with count, size_bytes, size_mb, db_path
+        """
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) as count, COALESCE(SUM(size_bytes), 0) as size_bytes
+                FROM cache
+            """
+            ).fetchone()
+
+            return {
+                "count": row["count"],
+                "size_bytes": row["size_bytes"],
+                "size_mb": round(row["size_bytes"] / (1024 * 1024), 2),
+                "max_size_mb": round(self._max_size_bytes / (1024 * 1024), 2),
+                "db_path": str(self._db_path),
+            }
+
+
+class PersistentCache:
+    """Dual-layer persistent cache: project-level + global-level.
+
+    Lookup order: project cache -> global cache -> None
+    Write behavior: write to both caches simultaneously
+
+    Supports "no-cache" mode (skip_read=True) which:
+    - Skips reading from cache (always returns None)
+    - Still writes to cache (for future use)
+    This follows Bun's --no-cache semantics.
+    """
+
+    def __init__(
+        self,
+        project_dir: Path | None = None,
+        global_dir: Path | None = None,
+        max_size_bytes: int = DEFAULT_CACHE_SIZE_LIMIT,
+        enabled: bool = True,
+        skip_read: bool = False,
+    ) -> None:
+        """Initialize dual-layer cache.
+
+        Args:
+            project_dir: Project directory (will create .markit/cache.db)
+            global_dir: Global cache directory (default ~/.markit)
+            max_size_bytes: Max size per cache file
+            enabled: Whether caching is enabled (both read and write)
+            skip_read: If True, skip reading from cache but still write
+                       (Bun's --no-cache semantics: force fresh, update cache)
+        """
+        self._enabled = enabled
+        self._skip_read = skip_read
+        self._project_cache: SQLiteCache | None = None
+        self._global_cache: SQLiteCache | None = None
+        self._hits = 0
+        self._misses = 0
+
+        if not enabled:
+            return
+
+        # Initialize project cache
+        if project_dir:
+            project_cache_path = (
+                Path(project_dir)
+                / DEFAULT_PROJECT_CACHE_DIR
+                / DEFAULT_CACHE_DB_FILENAME
+            )
+            try:
+                self._project_cache = SQLiteCache(project_cache_path, max_size_bytes)
+                logger.debug(f"[Cache] Project cache: {project_cache_path}")
+            except Exception as e:
+                logger.warning(f"[Cache] Failed to init project cache: {e}")
+
+        # Initialize global cache
+        global_cache_dir = global_dir or Path(DEFAULT_GLOBAL_CACHE_DIR).expanduser()
+        global_cache_path = Path(global_cache_dir) / DEFAULT_CACHE_DB_FILENAME
+        try:
+            self._global_cache = SQLiteCache(global_cache_path, max_size_bytes)
+            logger.debug(f"[Cache] Global cache: {global_cache_path}")
+        except Exception as e:
+            logger.warning(f"[Cache] Failed to init global cache: {e}")
+
+    def get(self, prompt: str, content: str) -> Any | None:
+        """Lookup in project cache first, then global cache.
+
+        Args:
+            prompt: Prompt template used
+            content: Content being processed
+
+        Returns:
+            Cached result (deserialized from JSON) or None
+        """
+        if not self._enabled or self._skip_read:
+            # skip_read: Bun-style --no-cache (force fresh, still write)
+            return None
+
+        # Try project cache first
+        if self._project_cache:
+            result = self._project_cache.get(prompt, content)
+            if result is not None:
+                self._hits += 1
+                logger.debug("[Cache] Project cache hit")
+                return json.loads(result)
+
+        # Fallback to global cache
+        if self._global_cache:
+            result = self._global_cache.get(prompt, content)
+            if result is not None:
+                self._hits += 1
+                logger.debug("[Cache] Global cache hit")
+                return json.loads(result)
+
+        self._misses += 1
+        return None
+
+    def set(self, prompt: str, content: str, result: Any, model: str = "") -> None:
+        """Write to both caches.
+
+        Args:
+            prompt: Prompt template used
+            content: Content being processed
+            result: Result to cache (will be JSON serialized)
+            model: Model identifier
+        """
+        if not self._enabled:
+            return
+
+        value = json.dumps(result, ensure_ascii=False)
+
+        if self._project_cache:
+            try:
+                self._project_cache.set(prompt, content, value, model)
+            except Exception as e:
+                logger.warning(f"[Cache] Failed to write to project cache: {e}")
+
+        if self._global_cache:
+            try:
+                self._global_cache.set(prompt, content, value, model)
+            except Exception as e:
+                logger.warning(f"[Cache] Failed to write to global cache: {e}")
+
+    def clear(self, scope: str = "project") -> dict[str, int]:
+        """Clear cache entries.
+
+        Args:
+            scope: "project", "global", or "all"
+
+        Returns:
+            Dict with counts of deleted entries
+        """
+        result = {"project": 0, "global": 0}
+
+        if scope in ("project", "all") and self._project_cache:
+            result["project"] = self._project_cache.clear()
+
+        if scope in ("global", "all") and self._global_cache:
+            result["global"] = self._global_cache.clear()
+
+        return result
+
+    def stats(self) -> dict[str, Any]:
+        """Return cache statistics.
+
+        Returns:
+            Dict with project/global stats and hit rate
+        """
+        total_requests = self._hits + self._misses
+        hit_rate = (self._hits / total_requests * 100) if total_requests > 0 else 0.0
+
+        return {
+            "project": self._project_cache.stats() if self._project_cache else None,
+            "global": self._global_cache.stats() if self._global_cache else None,
+            "hits": self._hits,
+            "misses": self._misses,
+            "hit_rate": round(hit_rate, 2),
+        }
+
+
 class ContentCache:
     """LRU cache with TTL for LLM responses based on content hash.
 
@@ -364,6 +698,8 @@ class LLMProcessor:
         config: LLMConfig,
         prompts_config: PromptsConfig | None = None,
         runtime: LLMRuntime | None = None,
+        project_dir: Path | None = None,
+        no_cache: bool = False,
     ) -> None:
         """
         Initialize LLM processor.
@@ -373,17 +709,27 @@ class LLMProcessor:
             prompts_config: Optional prompts configuration
             runtime: Optional shared runtime for concurrency control.
                      If provided, uses runtime's semaphore instead of creating one.
+            project_dir: Optional project directory for project-level cache.
+                         If None, only global cache is used.
+            no_cache: If True, skip reading from cache but still write results.
+                      Follows Bun's --no-cache semantics (force fresh, update cache).
         """
         self.config = config
         self._runtime = runtime
         self._router: Router | None = None
+        self._vision_router: Router | None = None  # Lazy-initialized vision router
         self._semaphore: asyncio.Semaphore | None = None
         self._prompt_manager = PromptManager(prompts_config)
 
         # Usage tracking (global across all contexts)
         # Use defaultdict to avoid check-then-create race conditions
         def _make_usage_dict() -> dict[str, Any]:
-            return {"requests": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
+            return {
+                "requests": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cost_usd": 0.0,
+            }
 
         self._usage: defaultdict[str, dict[str, Any]] = defaultdict(_make_usage_dict)
 
@@ -402,10 +748,17 @@ class LLMProcessor:
         # The lock hold time is minimal (only simple dict updates)
         self._usage_lock = threading.Lock()
 
-        # Content cache for avoiding duplicate LLM calls
+        # In-memory content cache for session-level deduplication (fast, no I/O)
         self._cache = ContentCache()
         self._cache_hits = 0
         self._cache_misses = 0
+
+        # Persistent cache for cross-session reuse (SQLite-based)
+        # no_cache=True: skip reading but still write (Bun semantics)
+        self._persistent_cache = PersistentCache(
+            project_dir=project_dir,
+            skip_read=no_cache,
+        )
 
         # Image cache for avoiding repeated file reads during document processing
         # Key: file path string, Value: (bytes, base64_encoded_string)
@@ -542,6 +895,116 @@ class LLMProcessor:
 
         return Router(model_list=model_list, **router_settings)
 
+    def _create_router_from_models(
+        self, models: list[Any], router_settings: dict[str, Any] | None = None
+    ) -> Router:
+        """Create a Router from a subset of model configurations.
+
+        Args:
+            models: List of ModelConfig objects from self.config.model_list
+            router_settings: Optional router settings (uses default if not provided)
+
+        Returns:
+            LiteLLM Router instance
+        """
+        # Build model list with resolved API keys and max_tokens
+        model_list = []
+        for model_config in models:
+            model_id = model_config.litellm_params.model
+            model_entry = {
+                "model_name": model_config.model_name,
+                "litellm_params": {
+                    "model": model_id,
+                },
+            }
+
+            # Add optional params
+            api_key = model_config.litellm_params.get_resolved_api_key()
+            if api_key:
+                model_entry["litellm_params"]["api_key"] = api_key
+
+            if model_config.litellm_params.api_base:
+                model_entry["litellm_params"]["api_base"] = (
+                    model_config.litellm_params.api_base
+                )
+
+            if model_config.litellm_params.weight != 1:
+                model_entry["litellm_params"]["weight"] = (
+                    model_config.litellm_params.weight
+                )
+
+            # Inject max_tokens
+            max_tokens = get_model_max_output_tokens(model_id)
+            if model_config.litellm_params.max_tokens is not None:
+                if max_tokens == DEFAULT_MAX_OUTPUT_TOKENS:
+                    max_tokens = model_config.litellm_params.max_tokens
+            model_entry["litellm_params"]["max_tokens"] = max_tokens
+
+            if model_config.model_info:
+                model_entry["model_info"] = model_config.model_info.model_dump()
+
+            model_list.append(model_entry)
+
+        # Use provided settings or default
+        settings = router_settings or self.config.router_settings.model_dump()
+        settings["num_retries"] = 0  # We handle retries ourselves
+
+        return Router(model_list=model_list, **settings)
+
+    @property
+    def vision_router(self) -> Router:
+        """Get or create Router with only vision-capable models (lazy).
+
+        Filters models based on model_info.supports_vision flag.
+        Falls back to main router if no vision models configured.
+
+        Returns:
+            LiteLLM Router with vision-capable models only
+        """
+        if self._vision_router is None:
+            vision_models = [
+                m
+                for m in self.config.model_list
+                if m.model_info and m.model_info.supports_vision
+            ]
+
+            if not vision_models:
+                # No dedicated vision models - fall back to main router
+                logger.warning(
+                    "[Router] No vision-capable models configured, using main router"
+                )
+                self._vision_router = self.router
+            else:
+                logger.info(
+                    f"[Router] Creating vision router with {len(vision_models)} models"
+                )
+                for m in vision_models:
+                    logger.debug(
+                        f"[Router] Vision model: {m.model_name} -> {m.litellm_params.model}"
+                    )
+                self._vision_router = self._create_router_from_models(vision_models)
+
+        return self._vision_router
+
+    def _message_contains_image(self, messages: list[dict[str, Any]]) -> bool:
+        """Detect if messages contain image content.
+
+        Checks for image_url type in message content parts.
+
+        Args:
+            messages: List of chat messages
+
+        Returns:
+            True if any message contains an image
+        """
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "image_url":
+                        return True
+        return False
+
     async def _call_llm(
         self,
         model: str,
@@ -551,8 +1014,11 @@ class LLMProcessor:
         """
         Make an LLM call with rate limiting, retry logic, and detailed logging.
 
+        Smart router selection: automatically uses vision_router when messages
+        contain images, otherwise uses the main router.
+
         Args:
-            model: Logical model name (e.g., "default", "vision")
+            model: Logical model name (e.g., "default")
             messages: Chat messages
             context: Context identifier for logging (e.g., filename)
 
@@ -563,6 +1029,10 @@ class LLMProcessor:
         call_index = self._get_next_call_index(context) if context else 0
         call_id = f"{context}:{call_index}" if context else f"call:{call_index}"
 
+        # Smart router selection based on message content
+        requires_vision = self._message_contains_image(messages)
+        router = self.vision_router if requires_vision else self.router
+
         max_retries = self.config.router_settings.num_retries
         return await self._call_llm_with_retry(
             model=model,
@@ -570,6 +1040,7 @@ class LLMProcessor:
             call_id=call_id,
             context=context,
             max_retries=max_retries,
+            router=router,
         )
 
     async def _call_llm_with_retry(
@@ -579,20 +1050,24 @@ class LLMProcessor:
         call_id: str,
         context: str = "",
         max_retries: int = DEFAULT_MAX_RETRIES,
+        router: Router | None = None,
     ) -> LLMResponse:
         """
         Make an LLM call with custom retry logic and detailed logging.
 
         Args:
-            model: Logical model name (e.g., "default", "vision")
+            model: Logical model name (e.g., "default")
             messages: Chat messages
             call_id: Unique identifier for this call (for logging)
             context: Context identifier for usage tracking (e.g., filename)
             max_retries: Maximum number of retry attempts
+            router: Router to use (defaults to self.router if not provided)
 
         Returns:
             LLMResponse with content and usage info
         """
+        # Use provided router or default to main router
+        active_router = router or self.router
         last_exception: Exception | None = None
 
         for attempt in range(max_retries + 1):
@@ -617,7 +1092,7 @@ class LLMProcessor:
                         )
 
                     # TODO: litellm 类型定义问题，messages 应为 list[AllMessageValues]
-                    response = await self.router.acompletion(
+                    response = await active_router.acompletion(
                         model=model,
                         messages=messages,  # type: ignore[arg-type]
                         metadata={"call_id": call_id, "attempt": attempt},
@@ -792,22 +1267,43 @@ class LLMProcessor:
         """Get cache statistics.
 
         Returns:
-            Dict with cache hits, misses, hit rate, and size
+            Dict with memory cache stats, persistent cache stats, and combined hit rate
         """
         total = self._cache_hits + self._cache_misses
         hit_rate = self._cache_hits / total if total > 0 else 0.0
         return {
-            "hits": self._cache_hits,
-            "misses": self._cache_misses,
-            "hit_rate": hit_rate,
-            "size": self._cache.size,
+            "memory": {
+                "hits": self._cache_hits,
+                "misses": self._cache_misses,
+                "hit_rate": round(hit_rate * 100, 2),
+                "size": self._cache.size,
+            },
+            "persistent": self._persistent_cache.stats(),
         }
 
-    def clear_cache(self) -> None:
-        """Clear the content cache and reset statistics."""
-        self._cache.clear()
-        self._cache_hits = 0
-        self._cache_misses = 0
+    def clear_cache(self, scope: str = "memory") -> dict[str, Any]:
+        """Clear the content cache and reset statistics.
+
+        Args:
+            scope: "memory" (in-memory only), "project", "global", or "all"
+
+        Returns:
+            Dict with counts of cleared entries
+        """
+        result: dict[str, Any] = {"memory": 0, "project": 0, "global": 0}
+
+        if scope in ("memory", "all"):
+            result["memory"] = self._cache.size
+            self._cache.clear()
+            self._cache_hits = 0
+            self._cache_misses = 0
+
+        if scope in ("project", "global", "all"):
+            persistent_result = self._persistent_cache.clear(scope)
+            result["project"] = persistent_result.get("project", 0)
+            result["global"] = persistent_result.get("global", 0)
+
+        return result
 
     def clear_image_cache(self) -> None:
         """Clear the image cache to free memory after document processing."""
@@ -818,6 +1314,7 @@ class LLMProcessor:
         """Get image bytes and base64 encoding, using cache if available.
 
         Uses LRU eviction when cache limits are reached (both count and bytes).
+        Also ensures image is under 5MB limit for LLM API compatibility.
 
         Args:
             image_path: Path to the image file
@@ -834,18 +1331,79 @@ class LLMProcessor:
 
         # Read and encode image
         image_data = image_path.read_bytes()
+
+        # Check size limit (5MB for Anthropic/LiteLLM safety)
+        # Using 4.5MB to be safe
+        MAX_IMAGE_SIZE = 4.5 * 1024 * 1024
+        if len(image_data) > MAX_IMAGE_SIZE:
+            try:
+                import io
+
+                from PIL import Image
+
+                with io.BytesIO(image_data) as buffer:
+                    img = Image.open(buffer)
+                    # Resize logic: iterative downscaling if needed
+                    quality = 85
+                    max_dim = 2048
+
+                    while True:
+                        if max(img.size) > max_dim:
+                            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+                        out_buffer = io.BytesIO()
+                        # Use JPEG for compression efficiency unless transparency is needed
+                        fmt = "JPEG"
+                        if img.mode in ("RGBA", "LA") or (
+                            img.format and img.format.upper() == "PNG"
+                        ):
+                            # If PNG is too big, convert to JPEG (losing transparency) or resize more
+                            # For document analysis, JPEG is usually fine
+                            if len(image_data) > 8 * 1024 * 1024:  # If huge, force JPEG
+                                img = img.convert("RGB")
+                                fmt = "JPEG"
+                            else:
+                                fmt = "PNG"
+
+                        if fmt == "JPEG" and img.mode != "RGB":
+                            img = img.convert("RGB")
+
+                        if fmt == "JPEG":
+                            img.save(out_buffer, format=fmt, quality=quality)
+                        else:
+                            img.save(out_buffer, format=fmt)
+                        new_data = out_buffer.getvalue()
+
+                        if len(new_data) <= MAX_IMAGE_SIZE:
+                            image_data = new_data
+                            logger.debug(
+                                f"Resized large image {image_path.name}: {len(new_data) / 1024 / 1024:.2f}MB"
+                            )
+                            break
+
+                        # If still too big, reduce quality/size
+                        if quality > 50 and fmt == "JPEG":
+                            quality -= 15
+                        else:
+                            max_dim = int(max_dim * 0.75)
+                            if max_dim < 512:  # Safety floor
+                                logger.warning(
+                                    f"Could not compress {image_path.name} below 5MB even at 512px"
+                                )
+                                break
+
+            except Exception as e:
+                logger.warning(f"Failed to resize large image {image_path.name}: {e}")
+
         base64_image = base64.b64encode(image_data).decode()
 
         # Calculate entry size: raw bytes + base64 string (roughly 1.33x raw size)
         entry_bytes = len(image_data) + len(base64_image)
 
         # Evict old entries if adding this would exceed limits
-        while (
-            self._image_cache
-            and (
-                len(self._image_cache) >= self._image_cache_max_size
-                or self._image_cache_bytes + entry_bytes > self._image_cache_max_bytes
-            )
+        while self._image_cache and (
+            len(self._image_cache) >= self._image_cache_max_size
+            or self._image_cache_bytes + entry_bytes > self._image_cache_max_bytes
         ):
             # Remove oldest entry (first item in OrderedDict)
             _, oldest_value = self._image_cache.popitem(last=False)
@@ -976,13 +1534,6 @@ class LLMProcessor:
         img_pattern = r"!\[[^\]]*\]\([^)]+\)"
         for i, match in enumerate(re.finditer(img_pattern, content)):
             placeholder = f"__MARKIT_IMG_{i}__"
-            mapping[placeholder] = match.group(0)
-            result = result.replace(match.group(0), placeholder, 1)
-
-        # Protect slide comments: <!-- Slide X --> or <!-- Slide number: X -->
-        slide_pattern = r"<!--\s*Slide\s+(?:number:\s*)?\d+\s*-->"
-        for i, match in enumerate(re.finditer(slide_pattern, result)):
-            placeholder = f"__MARKIT_SLIDE_{i}__"
             mapping[placeholder] = match.group(0)
             result = result.replace(match.group(0), placeholder, 1)
 
@@ -1189,6 +1740,11 @@ class LLMProcessor:
         Uses placeholder-based protection to preserve images, slides, and
         page comments in their original positions during LLM processing.
 
+        Cache lookup order:
+        1. In-memory cache (session-level, fast)
+        2. Persistent cache (cross-session, SQLite)
+        3. LLM API call
+
         Args:
             content: Raw markdown content
             context: Context identifier for logging (e.g., filename)
@@ -1196,16 +1752,27 @@ class LLMProcessor:
         Returns:
             Cleaned markdown content
         """
-        # Check cache first
-        cached = self._cache.get("cleaner", content)
+        cache_key = "cleaner"
+
+        # 1. Check in-memory cache first (fastest)
+        cached = self._cache.get(cache_key, content)
         if cached is not None:
             self._cache_hits += 1
-            logger.debug(f"[{context}] Cache hit for clean_markdown")
+            logger.debug(f"[{context}] Memory cache hit for clean_markdown")
+            return cached
+
+        # 2. Check persistent cache (cross-session)
+        cached = self._persistent_cache.get(cache_key, content)
+        if cached is not None:
+            self._cache_hits += 1
+            logger.debug(f"[{context}] Persistent cache hit for clean_markdown")
+            # Also populate in-memory cache for faster subsequent access
+            self._cache.set(cache_key, content, cached)
             return cached
 
         self._cache_misses += 1
 
-        # Extract and protect content before LLM processing
+        # 3. Extract and protect content before LLM processing
         protected = self.extract_protected_content(content)
         protected_content, mapping = self._protect_content(content)
 
@@ -1220,8 +1787,10 @@ class LLMProcessor:
         # Restore protected content from placeholders, with fallback for removed items
         result = self._unprotect_content(response.content, mapping, protected)
 
-        # Cache the result
-        self._cache.set("cleaner", content, result)
+        # Cache the result in both layers
+        self._cache.set(cache_key, content, result)
+        self._persistent_cache.set(cache_key, content, result, model="default")
+
         return result
 
     async def generate_frontmatter(
@@ -1232,6 +1801,11 @@ class LLMProcessor:
         """
         Generate YAML frontmatter for markdown content.
 
+        Cache lookup order:
+        1. In-memory cache (session-level, fast)
+        2. Persistent cache (cross-session, SQLite)
+        3. LLM API call
+
         Args:
             content: Markdown content
             source: Source file name
@@ -1239,7 +1813,27 @@ class LLMProcessor:
         Returns:
             YAML frontmatter string (without --- markers)
         """
-        # Detect document language
+        cache_key = f"frontmatter:{source}"
+
+        # 1. Check in-memory cache first (fastest)
+        cached = self._cache.get(cache_key, content)
+        if cached is not None:
+            self._cache_hits += 1
+            logger.debug(f"[{source}] Memory cache hit for generate_frontmatter")
+            return cached
+
+        # 2. Check persistent cache (cross-session)
+        cached = self._persistent_cache.get(cache_key, content)
+        if cached is not None:
+            self._cache_hits += 1
+            logger.debug(f"[{source}] Persistent cache hit for generate_frontmatter")
+            # Also populate in-memory cache for faster subsequent access
+            self._cache.set(cache_key, content, cached)
+            return cached
+
+        self._cache_misses += 1
+
+        # 3. Detect document language
         language = self._detect_language(content)
 
         prompt = self._prompt_manager.get_prompt(
@@ -1255,7 +1849,13 @@ class LLMProcessor:
             context=source,
         )
 
-        return response.content
+        result = response.content
+
+        # Cache the result in both layers
+        self._cache.set(cache_key, content, result)
+        self._persistent_cache.set(cache_key, content, result, model="default")
+
+        return result
 
     async def analyze_image(
         self, image_path: Path, language: str = "en", context: str = ""
@@ -1278,6 +1878,22 @@ class LLMProcessor:
         """
         # Get cached image data and base64 encoding
         _, base64_image = self._get_cached_image(image_path)
+
+        # Check persistent cache using image hash + language as key
+        # Use first 64 chars of base64 as image fingerprint for cache key
+        cache_key = f"image_analysis:{language}"
+        image_fingerprint = (
+            base64_image[:64] if len(base64_image) > 64 else base64_image
+        )
+        cached = self._persistent_cache.get(cache_key, image_fingerprint)
+        if cached is not None:
+            logger.debug(f"[{image_path.name}] Persistent cache hit for analyze_image")
+            # Reconstruct ImageAnalysis from cached dict
+            return ImageAnalysis(
+                caption=cached.get("caption", ""),
+                description=cached.get("description", ""),
+                extracted_text=cached.get("extracted_text"),
+            )
 
         # Determine MIME type
         suffix = image_path.suffix.lower()
@@ -1315,13 +1931,23 @@ class LLMProcessor:
             }
         ]
 
-        # Use logical model name for router load balancing
-        # Router will select actual model based on routing strategy
-        vision_model = "vision"
+        # Use "default" model name - smart router will auto-select vision-capable model
+        # since the message contains image content
+        vision_model = "default"
 
         # Try structured output methods with fallbacks
         result = await self._analyze_image_with_fallback(
             messages, vision_model, image_path.name, context
+        )
+
+        # Store in persistent cache
+        cache_value = {
+            "caption": result.caption,
+            "description": result.description,
+            "extracted_text": result.extracted_text,
+        }
+        self._persistent_cache.set(
+            cache_key, image_fingerprint, cache_value, model="vision"
         )
 
         logger.debug(f"Analyzed image: {image_path.name}")
@@ -1433,6 +2059,7 @@ class LLMProcessor:
         """Batch image analysis using Instructor.
 
         Uses the same prompt template as single image analysis for consistency.
+        Checks persistent cache first and only calls LLM for uncached images.
 
         Args:
             image_paths: List of image paths to analyze
@@ -1442,6 +2069,41 @@ class LLMProcessor:
         Returns:
             List of ImageAnalysis results
         """
+        # Check persistent cache for all images first
+        # Use same cache key format as analyze_image for consistency
+        cache_key = f"image_analysis:{language}"
+        cached_results: dict[int, ImageAnalysis] = {}
+        uncached_indices: list[int] = []
+        image_fingerprints: dict[int, str] = {}
+
+        for i, image_path in enumerate(image_paths):
+            _, base64_image = self._get_cached_image(image_path)
+            fingerprint = base64_image[:64] if len(base64_image) > 64 else base64_image
+            image_fingerprints[i] = fingerprint
+
+            cached = self._persistent_cache.get(cache_key, fingerprint)
+            if cached is not None:
+                logger.debug(f"[{image_path.name}] Cache hit in batch analysis")
+                cached_results[i] = ImageAnalysis(
+                    caption=cached.get("caption", ""),
+                    description=cached.get("description", ""),
+                    extracted_text=cached.get("extracted_text"),
+                )
+            else:
+                uncached_indices.append(i)
+
+        # If all images are cached, return cached results
+        if not uncached_indices:
+            logger.info(f"[{context}] All {len(image_paths)} images found in cache")
+            return [cached_results[i] for i in range(len(image_paths))]
+
+        # Only process uncached images
+        uncached_paths = [image_paths[i] for i in uncached_indices]
+        logger.debug(
+            f"[{context}] Cache: {len(cached_results)} hits, "
+            f"{len(uncached_indices)} misses"
+        )
+
         # Get base prompt from template (same as single image analysis)
         lang_instruction = (
             "Output in English." if language == "en" else "使用中文输出。"
@@ -1454,16 +2116,16 @@ class LLMProcessor:
 
         # Build batch prompt with the same base prompt
         batch_header = (
-            f"请依次分析以下 {len(image_paths)} 张图片。对每张图片，"
+            f"请依次分析以下 {len(uncached_paths)} 张图片。对每张图片，"
             if language == "zh"
-            else f"Analyze the following {len(image_paths)} images in order. For each image, "
+            else f"Analyze the following {len(uncached_paths)} images in order. For each image, "
         )
         prompt = f"{batch_header}{base_prompt}\n\nReturn a JSON object with an 'images' array containing results for each image in order."
 
-        # Build content parts with all images
+        # Build content parts with uncached images only
         content_parts: list[dict] = [{"type": "text", "text": prompt}]
 
-        for i, image_path in enumerate(image_paths, 1):
+        for i, image_path in enumerate(uncached_paths, 1):
             _, base64_image = self._get_cached_image(image_path)
             suffix = image_path.suffix.lower()
             mime_map = {
@@ -1488,14 +2150,14 @@ class LLMProcessor:
         try:
             async with self.semaphore:
                 client = instructor.from_litellm(
-                    self.router.acompletion, mode=instructor.Mode.JSON
+                    self.vision_router.acompletion, mode=instructor.Mode.JSON
                 )
                 (
                     response,
                     raw_response,
                     # TODO: instructor 类型定义问题，messages 应为 list[ChatCompletionMessageParam]
                 ) = await client.chat.completions.create_with_completion(
-                    model="vision",
+                    model="default",
                     messages=[{"role": "user", "content": content_parts}],  # type: ignore[arg-type]
                     response_model=BatchImageAnalysisResult,
                     max_retries=0,
@@ -1510,7 +2172,7 @@ class LLMProcessor:
                         raise ValueError("Output truncated due to max_tokens limit")
 
                 # Track usage
-                actual_model = getattr(raw_response, "model", None) or "vision"
+                actual_model = getattr(raw_response, "model", None) or "default"
                 input_tokens = 0
                 output_tokens = 0
                 cost = 0.0
@@ -1541,21 +2203,33 @@ class LLMProcessor:
                     )
                 }
 
-                # Convert to ImageAnalysis list
-                results: list[ImageAnalysis] = []
-                for img_result in response.images:
-                    results.append(
-                        ImageAnalysis(
-                            caption=img_result.caption,
-                            description=img_result.description,
-                            extracted_text=img_result.extracted_text,
-                            llm_usage=per_image_llm_usage,
-                        )
+                # Convert to ImageAnalysis list and store in cache
+                new_results: list[ImageAnalysis] = []
+                for idx, img_result in enumerate(response.images):
+                    analysis = ImageAnalysis(
+                        caption=img_result.caption,
+                        description=img_result.description,
+                        extracted_text=img_result.extracted_text,
+                        llm_usage=per_image_llm_usage,
                     )
+                    new_results.append(analysis)
 
-                # Ensure we have results for all images
-                while len(results) < len(image_paths):
-                    results.append(
+                    # Store in persistent cache using original index
+                    if idx < len(uncached_indices):
+                        original_idx = uncached_indices[idx]
+                        fingerprint = image_fingerprints[original_idx]
+                        cache_value = {
+                            "caption": analysis.caption,
+                            "description": analysis.description,
+                            "extracted_text": analysis.extracted_text,
+                        }
+                        self._persistent_cache.set(
+                            cache_key, fingerprint, cache_value, model="vision"
+                        )
+
+                # Ensure we have results for all uncached images
+                while len(new_results) < len(uncached_paths):
+                    new_results.append(
                         ImageAnalysis(
                             caption="Image",
                             description="Image analysis failed",
@@ -1564,28 +2238,43 @@ class LLMProcessor:
                         )
                     )
 
-                return results
+                # Merge cached and new results in original order
+                final_results: list[ImageAnalysis] = []
+                new_result_iter = iter(new_results)
+                for i in range(len(image_paths)):
+                    if i in cached_results:
+                        final_results.append(cached_results[i])
+                    else:
+                        final_results.append(next(new_result_iter))
+
+                return final_results
 
         except Exception as e:
             logger.warning(
                 f"Batch image analysis failed: {e}, falling back to individual analysis"
             )
-            # Fallback: analyze each image individually
+            # Fallback: analyze each image individually (uses persistent cache)
             # Pass context to maintain accurate per-file usage tracking
-            results = []
-            for image_path in image_paths:
-                try:
-                    result = await self.analyze_image(image_path, language, context)
-                    results.append(result)
-                except Exception:
-                    results.append(
-                        ImageAnalysis(
-                            caption="Image",
-                            description="Image analysis failed",
-                            extracted_text=None,
+            # Note: cached_results may already have some hits from the initial check
+            fallback_results: list[ImageAnalysis] = []
+            for i, image_path in enumerate(image_paths):
+                if i in cached_results:
+                    # Use already-cached result
+                    fallback_results.append(cached_results[i])
+                else:
+                    try:
+                        # analyze_image will also check/populate cache
+                        result = await self.analyze_image(image_path, language, context)
+                        fallback_results.append(result)
+                    except Exception:
+                        fallback_results.append(
+                            ImageAnalysis(
+                                caption="Image",
+                                description="Image analysis failed",
+                                extracted_text=None,
+                            )
                         )
-                    )
-            return results
+            return fallback_results
 
     def _get_actual_model_name(self, logical_name: str) -> str:
         """Get actual model name from router configuration."""
@@ -1653,9 +2342,9 @@ class LLMProcessor:
     ) -> ImageAnalysis:
         """Analyze using Instructor for structured output."""
         async with self.semaphore:
-            # Create instructor client from router for load balancing
+            # Create instructor client from vision router for load balancing
             client = instructor.from_litellm(
-                self.router.acompletion, mode=instructor.Mode.JSON
+                self.vision_router.acompletion, mode=instructor.Mode.JSON
             )
 
             # Use create_with_completion to get both the model and the raw response
@@ -1802,7 +2491,7 @@ class LLMProcessor:
             lang_instruction,
         )
         caption_response = await self._call_llm(
-            model="vision",
+            model="default",
             messages=[
                 {
                     "role": "user",
@@ -1818,7 +2507,7 @@ class LLMProcessor:
         # Generate description
         desc_prompt = self._prompt_manager.get_prompt("image_description")
         desc_response = await self._call_llm(
-            model="vision",
+            model="default",
             messages=[
                 {
                     "role": "user",
@@ -1889,7 +2578,7 @@ class LLMProcessor:
         call_context = context or image_path.name
 
         response = await self._call_llm(
-            model="vision",
+            model="default",
             messages=[
                 {
                     "role": "user",
@@ -1976,6 +2665,18 @@ class LLMProcessor:
         if not page_images:
             return extracted_text
 
+        # Check persistent cache using page count + text fingerprint as key
+        # Create a fingerprint from text + page image names for cache lookup
+        page_names = "|".join(p.name for p in page_images[:10])  # First 10 page names
+        cache_key = f"enhance_vision:{context}:{len(page_images)}"
+        cache_content = f"{page_names}|{extracted_text[:1000]}"
+        cached = self._persistent_cache.get(cache_key, cache_content)
+        if cached is not None:
+            logger.debug(
+                f"[{context}] Persistent cache hit for enhance_document_with_vision"
+            )
+            return cached
+
         # Extract and protect content before LLM processing
         protected = self.extract_protected_content(extracted_text)
         protected_content, mapping = self._protect_content(extracted_text)
@@ -2019,13 +2720,17 @@ class LLMProcessor:
             )
 
         response = await self._call_llm(
-            model="vision",
+            model="default",
             messages=[{"role": "user", "content": content_parts}],
             context=context,
         )
 
         # Restore protected content from placeholders, with fallback for removed items
         result = self._unprotect_content(response.content, mapping, protected)
+
+        # Store in persistent cache
+        self._persistent_cache.set(cache_key, cache_content, result, model="vision")
+
         return result
 
     async def enhance_document_complete(
@@ -2067,8 +2772,13 @@ class LLMProcessor:
                     extracted_text, page_images, source
                 )
             except Exception as e:
+                # Log succinct warning instead of full exception trace
+                err_msg = str(e)
+                if len(err_msg) > 200:
+                    err_msg = err_msg[:200] + "..."
                 logger.warning(
-                    f"[{source}] Combined call failed: {e}, falling back to separate calls"
+                    f"[{source}] Combined call failed: {type(e).__name__}: {err_msg}, "
+                    "falling back to separate calls"
                 )
                 # Fallback to separate calls
                 cleaned = await self.enhance_document_with_vision(
@@ -2119,6 +2829,20 @@ class LLMProcessor:
         """
         import yaml
 
+        # Check persistent cache first
+        # Use page count + source + text fingerprint as cache key
+        page_names = "|".join(p.name for p in page_images[:10])  # First 10 page names
+        cache_key = f"enhance_frontmatter:{source}:{len(page_images)}"
+        cache_content = f"{page_names}|{extracted_text[:1000]}"
+        cached = self._persistent_cache.get(cache_key, cache_content)
+        if cached is not None:
+            logger.debug(
+                f"[{source}] Persistent cache hit for _enhance_with_frontmatter"
+            )
+            return cached.get("cleaned_markdown", ""), cached.get(
+                "frontmatter_yaml", ""
+            )
+
         # Extract protected content for fallback restoration
         protected = self.extract_protected_content(extracted_text)
 
@@ -2163,14 +2887,14 @@ class LLMProcessor:
 
         async with self.semaphore:
             client = instructor.from_litellm(
-                self.router.acompletion, mode=instructor.Mode.JSON
+                self.vision_router.acompletion, mode=instructor.Mode.JSON
             )
             # TODO: instructor 类型定义问题，messages 应为 list[ChatCompletionMessageParam]
             (
                 response,
                 raw_response,
             ) = await client.chat.completions.create_with_completion(
-                model="vision",
+                model="default",
                 messages=[{"role": "user", "content": content_parts}],  # type: ignore[arg-type]
                 response_model=EnhancedDocumentResult,
                 max_retries=0,
@@ -2183,7 +2907,7 @@ class LLMProcessor:
                     raise ValueError("Output truncated due to max_tokens limit")
 
             # Track usage
-            actual_model = getattr(raw_response, "model", None) or "vision"
+            actual_model = getattr(raw_response, "model", None) or "default"
             if hasattr(raw_response, "usage") and raw_response.usage is not None:
                 input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
                 output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
@@ -2210,6 +2934,15 @@ class LLMProcessor:
             # Pass protected dict for fallback restoration if LLM removed placeholders
             cleaned_markdown = self._unprotect_content(
                 response.cleaned_markdown, mapping, protected
+            )
+
+            # Store in persistent cache
+            cache_value = {
+                "cleaned_markdown": cleaned_markdown,
+                "frontmatter_yaml": frontmatter_yaml,
+            }
+            self._persistent_cache.set(
+                cache_key, cache_content, cache_value, model="vision"
             )
 
             return cleaned_markdown, frontmatter_yaml
@@ -2445,6 +3178,11 @@ class LLMProcessor:
         """
         Process document with combined cleaner + frontmatter using Instructor.
 
+        Cache lookup order:
+        1. In-memory cache (session-level, fast)
+        2. Persistent cache (cross-session, SQLite)
+        3. LLM API call
+
         Args:
             markdown: Raw markdown content
             source: Source file name
@@ -2452,6 +3190,39 @@ class LLMProcessor:
         Returns:
             DocumentProcessResult with cleaned markdown and frontmatter
         """
+        cache_key = f"document_process:{source}"
+
+        # Helper to reconstruct DocumentProcessResult from cached dict
+        def _from_cache(cached: dict) -> DocumentProcessResult:
+            return DocumentProcessResult(
+                cleaned_markdown=cached.get("cleaned_markdown", ""),
+                frontmatter=Frontmatter(
+                    title=cached.get("title", source),
+                    description=cached.get("description", ""),
+                    tags=cached.get("tags", []),
+                ),
+            )
+
+        # 1. Check in-memory cache first (fastest)
+        cached = self._cache.get(cache_key, markdown)
+        if cached is not None:
+            self._cache_hits += 1
+            logger.debug(f"[{source}] Memory cache hit for _process_document_combined")
+            return _from_cache(cached)
+
+        # 2. Check persistent cache (cross-session)
+        cached = self._persistent_cache.get(cache_key, markdown)
+        if cached is not None:
+            self._cache_hits += 1
+            logger.debug(
+                f"[{source}] Persistent cache hit for _process_document_combined"
+            )
+            # Also populate in-memory cache for faster subsequent access
+            self._cache.set(cache_key, markdown, cached)
+            return _from_cache(cached)
+
+        self._cache_misses += 1
+
         # Detect document language
         language = self._detect_language(markdown)
 
@@ -2513,6 +3284,18 @@ class LLMProcessor:
                 f"[LLM:{source}] document_process: {actual_model} "
                 f"tokens={input_tokens}+{output_tokens} "
                 f"time={elapsed_ms:.0f}ms cost=${cost:.6f}"
+            )
+
+            # Store in both cache layers
+            cache_value = {
+                "cleaned_markdown": response.cleaned_markdown,
+                "title": response.frontmatter.title,
+                "description": response.frontmatter.description,
+                "tags": response.frontmatter.tags,
+            }
+            self._cache.set(cache_key, markdown, cache_value)
+            self._persistent_cache.set(
+                cache_key, markdown, cache_value, model="default"
             )
 
             return response
@@ -2605,6 +3388,13 @@ class LLMProcessor:
                 content,
                 flags=re.MULTILINE,
             )
+            # Remove any leftover slide placeholders (shouldn't exist but cleanup)
+            content = re.sub(
+                r"^__MARKIT_SLIDE_\d+__\s*\n",
+                "",
+                content,
+                flags=re.MULTILINE,
+            )
 
             # Clean up any resulting empty lines
             content = re.sub(r"\n{3,}", "\n\n", content)
@@ -2636,6 +3426,13 @@ class LLMProcessor:
             )
             before = re.sub(
                 r"^__MARKIT_(PAGE|IMG)_LABEL_\d+__\s*\n",
+                "",
+                before,
+                flags=re.MULTILINE,
+            )
+            # Remove any leftover slide placeholders (shouldn't exist but cleanup)
+            before = re.sub(
+                r"^__MARKIT_SLIDE_\d+__\s*\n",
                 "",
                 before,
                 flags=re.MULTILINE,

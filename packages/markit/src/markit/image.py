@@ -102,14 +102,87 @@ class ImageProcessor:
     """Processor for image extraction, compression, and filtering."""
 
     # Regex pattern to match base64 data URIs in markdown
+    # Support MIME types like png, jpeg, x-emf, x-wmf (with hyphens)
     DATA_URI_PATTERN = re.compile(
-        r"!\[([^\]]*)\]\(data:image/([\w+]+);base64,([A-Za-z0-9+/=]+)\)"
+        r"!\[([^\]]*)\]\(data:image/([\w+.-]+);base64,([A-Za-z0-9+/=]+)\)"
     )
 
     def __init__(self, config: ImageConfig | None = None) -> None:
         """Initialize with optional image configuration."""
         self.config = config
         self._seen_hashes: set[str] = set()
+
+    def _convert_to_png(self, image_data: bytes, original_fmt: str) -> bytes:
+        """Convert unsupported image formats (EMF/WMF) to PNG.
+
+        On Windows, uses Pillow which has native EMF/WMF support.
+        On other platforms, falls back to LibreOffice if available.
+        """
+        import platform
+
+        # Normalize format name
+        fmt_lower = original_fmt.lower().replace("x-", "")  # x-emf -> emf
+
+        # On Windows, Pillow can natively read EMF/WMF files
+        if platform.system() == "Windows" and fmt_lower in ("emf", "wmf"):
+            try:
+                with io.BytesIO(image_data) as buffer:
+                    img = Image.open(buffer)
+                    # Load at higher DPI for better quality
+                    # WmfImagePlugin.load() accepts dpi parameter
+                    img.load(dpi=150)  # type: ignore[call-arg]
+
+                    # Convert to RGB if necessary (EMF/WMF loads as RGB)
+                    if img.mode not in ("RGB", "RGBA"):
+                        img = img.convert("RGB")
+
+                    # Save as PNG
+                    out_buffer = io.BytesIO()
+                    img.save(out_buffer, format="PNG")
+                    return out_buffer.getvalue()
+            except Exception:
+                # Fall through to LibreOffice fallback
+                pass
+
+        # Fallback to LibreOffice (for non-Windows or if Pillow fails)
+        import subprocess
+        import tempfile
+        import uuid
+
+        from markit.utils.office import find_libreoffice
+
+        soffice = find_libreoffice()
+        if not soffice:
+            return image_data
+
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                # Ensure extension doesn't have special chars
+                ext = re.sub(r"[^a-zA-Z0-9]", "", original_fmt)
+                temp_in = temp_path / f"temp_{uuid.uuid4().hex[:8]}.{ext}"
+                temp_in.write_bytes(image_data)
+
+                cmd = [
+                    soffice,
+                    "--headless",
+                    "--convert-to",
+                    "png",
+                    "--outdir",
+                    str(temp_path),
+                    str(temp_in),
+                ]
+
+                subprocess.run(cmd, capture_output=True, timeout=30)
+
+                # LibreOffice output filename depends on input filename
+                temp_out = temp_path / f"{temp_in.stem}.png"
+                if temp_out.exists():
+                    return temp_out.read_bytes()
+        except Exception:
+            pass
+
+        return image_data
 
     def extract_base64_images(self, markdown: str) -> list[tuple[str, str, bytes]]:
         """
@@ -129,6 +202,12 @@ class ImageProcessor:
 
             try:
                 image_data = base64.b64decode(base64_data)
+
+                # Handle EMF/WMF conversion
+                if image_type.lower() in ("x-emf", "emf", "x-wmf", "wmf"):
+                    image_data = self._convert_to_png(image_data, image_type)
+                    image_type = "png"
+
                 mime_type = f"image/{image_type}"
                 images.append((alt_text, mime_type, image_data))
             except Exception:
@@ -214,8 +293,14 @@ class ImageProcessor:
         # Support both forward slash and backslash for Windows compatibility
         img_pattern = re.compile(r"!\[[^\]]*\]\(assets[/\\]([^)]+)\)")
 
+        # Invalid filename patterns that indicate placeholders or hallucinations
+        invalid_patterns = {"...", "..", ".", "placeholder", "image", "filename"}
+
         def validate_image(match: re.Match) -> str:
             filename = match.group(1)
+            # Check for placeholder patterns
+            if filename.strip() in invalid_patterns or filename.strip() == "":
+                return ""
             image_path = assets_dir / filename
             if image_path.exists():
                 return match.group(0)  # Keep existing image
@@ -702,7 +787,9 @@ class ImageProcessor:
         from markit.security import write_bytes_async
 
         if not images:
-            return ImageProcessResult(saved_images=[], filtered_count=0, deduplicated_count=0)
+            return ImageProcessResult(
+                saved_images=[], filtered_count=0, deduplicated_count=0
+            )
 
         # Create assets directory
         assets_dir = output_dir / "assets"
@@ -796,7 +883,9 @@ class ImageProcessor:
                         filtered_count += 1
                     else:
                         compressed_data, final_w, final_h = result
-                        processed_results.append((idx, compressed_data, final_w, final_h))
+                        processed_results.append(
+                            (idx, compressed_data, final_w, final_h)
+                        )
                 except Exception:
                     filtered_count += 1
 

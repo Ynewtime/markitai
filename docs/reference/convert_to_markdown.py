@@ -735,7 +735,7 @@ def analyze_image_with_llm(
                 detail = data.get("detail", "")
             except json.JSONDecodeError:
                 # 降级处理：如果不是 JSON，假设整个内容是 detailed，尝试生成一个 summary
-                print(f"        ⚠️ 响应非 JSON 格式，尝试降级处理")
+                print("        ⚠️ 响应非 JSON 格式，尝试降级处理")
                 detail = content
                 summary = content[:50].replace("\n", " ") + "..."
 

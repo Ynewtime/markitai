@@ -412,7 +412,7 @@ markit doc.pdf --preset rich --no-desc  # rich 但不生成描述文件
   },
   "batch": {
     "concurrency": 10,
-    "state_flush_interval_seconds": 5,
+    "state_flush_interval_seconds": 10,
     "scan_max_depth": 5,
     "scan_max_files": 10000
   },
@@ -543,7 +543,7 @@ markit doc.pdf --preset rich --no-desc  # rich 但不生成描述文件
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `concurrency` | int | 10 | 文件处理并发数 |
-| `state_flush_interval_seconds` | int | 5 | 状态/报告文件写入节流间隔（秒） |
+| `state_flush_interval_seconds` | int | 10 | 状态/报告文件写入节流间隔（秒） |
 | `scan_max_depth` | int | 5 | 扫描目录最大深度（相对输入目录） |
 | `scan_max_files` | int | 10000 | 扫描文件数上限 |
 
@@ -718,7 +718,7 @@ output/                              # 输出目录
   - 输入路径（resolved）
   - 输出目录路径（resolved）
   - 关键选项：`llm_enabled`、`ocr_enabled`、`screenshot_enabled`、`image_alt_enabled`、`image_desc_enabled`
-- 使用 MD5 取前 12 位十六进制字符
+- 使用 MD5 取前 6 位十六进制字符
 - 不同参数组合会生成不同的 hash，确保不同任务的状态/报告文件相互独立
 
 **图片描述文件格式** (`assets/assets.desc.json`)：
@@ -885,13 +885,13 @@ class PromptManager:
 | 格式 | 处理器 | 依赖 |
 |------|--------|------|
 | DOCX | `DocxConverter` | markitdown |
-| DOC | `LegacyDocConverter` | pywin32 / soffice → markitdown |
+| DOC | `DocConverter` | pywin32 / soffice → markitdown |
 | PPTX | `PptxConverter` | markitdown |
-| PPT | `LegacyPptConverter` | pywin32 / soffice → markitdown |
+| PPT | `PptConverter` | pywin32 / soffice → markitdown |
 | XLSX | `XlsxConverter` | markitdown |
-| XLS | `LegacyXlsConverter` | pywin32 / soffice → markitdown |
+| XLS | `XlsConverter` | pywin32 / soffice → markitdown |
 | PDF | `PdfConverter` | pymupdf4llm + rapidocr |
-| TXT | `TextConverter` | built-in |
+| TXT | `TxtConverter` | built-in |
 | MD | `MarkdownConverter` | built-in |
 | Image | `ImageConverter` | rapidocr / litellm |
 
@@ -1052,7 +1052,7 @@ from litellm.exceptions import RateLimitError, APIConnectionError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 @retry(
-    stop=stop_after_attempt(config.llm.max_retries),
+    stop=stop_after_attempt(config.llm.router_settings.num_retries),
     wait=wait_exponential(min=1, max=60),
     retry=retry_if_exception_type((RateLimitError, APIConnectionError))
 )
@@ -1901,7 +1901,7 @@ def test_basic_conversion():
   },
   "batch": {
     "concurrency": 10,
-    "state_flush_interval_seconds": 5,
+    "state_flush_interval_seconds": 10,
     "scan_max_depth": 5,
     "scan_max_files": 10000
   },
