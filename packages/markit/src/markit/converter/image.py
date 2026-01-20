@@ -64,7 +64,6 @@ class ImageConverter(BaseConverter):
                 metadata={
                     "format": input_path.suffix.lstrip(".").upper(),
                     "source": str(input_path),
-                    "ocr_llm_mode": True,
                     "asset_path": image_ref_path,
                 },
             )

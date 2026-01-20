@@ -6,7 +6,9 @@ import asyncio
 import base64
 import copy
 import json
+import threading
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -379,20 +381,25 @@ class LLMProcessor:
         self._prompt_manager = PromptManager(prompts_config)
 
         # Usage tracking (global across all contexts)
-        self._usage: dict[str, dict[str, Any]] = {}
+        # Use defaultdict to avoid check-then-create race conditions
+        def _make_usage_dict() -> dict[str, Any]:
+            return {"requests": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
+
+        self._usage: defaultdict[str, dict[str, Any]] = defaultdict(_make_usage_dict)
 
         # Per-context usage tracking for batch processing
-        self._context_usage: dict[str, dict[str, dict[str, Any]]] = {}
+        self._context_usage: defaultdict[str, defaultdict[str, dict[str, Any]]] = (
+            defaultdict(lambda: defaultdict(_make_usage_dict))
+        )
 
         # Call counter for each context (file)
-        self._call_counter: dict[str, int] = {}
+        self._call_counter: defaultdict[str, int] = defaultdict(int)
 
         # Lock for thread-safe access to usage tracking dicts in concurrent contexts
         # Using threading.Lock instead of asyncio.Lock because:
         # 1. Dict operations are CPU-bound and don't need await
         # 2. Works in both sync and async contexts
-        import threading
-
+        # The lock hold time is minimal (only simple dict updates)
         self._usage_lock = threading.Lock()
 
         # Content cache for avoiding duplicate LLM calls
@@ -402,10 +409,13 @@ class LLMProcessor:
 
         # Image cache for avoiding repeated file reads during document processing
         # Key: file path string, Value: (bytes, base64_encoded_string)
-        self._image_cache: dict[str, tuple[bytes, str]] = {}
-        self._image_cache_max_size = (
-            200  # Max number of images to cache (increased for better performance)
-        )
+        # Uses OrderedDict for LRU eviction when limits are reached
+        from collections import OrderedDict
+
+        self._image_cache: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
+        self._image_cache_max_size = 200  # Max number of images to cache
+        self._image_cache_max_bytes = 500 * 1024 * 1024  # 500MB max total cache size
+        self._image_cache_bytes = 0  # Current total bytes in cache
 
         # Register LiteLLM callback for additional details
         self._setup_callbacks()
@@ -424,7 +434,7 @@ class LLMProcessor:
         Thread-safe: uses lock for atomic increment.
         """
         with self._usage_lock:
-            self._call_counter[context] = self._call_counter.get(context, 0) + 1
+            self._call_counter[context] += 1
             return self._call_counter[context]
 
     def reset_call_counter(self, context: str = "") -> None:
@@ -704,15 +714,7 @@ class LLMProcessor:
             context: Optional context identifier (e.g., filename)
         """
         with self._usage_lock:
-            # Track global usage
-            if model not in self._usage:
-                self._usage[model] = {
-                    "requests": 0,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "cost_usd": 0.0,
-                }
-
+            # Track global usage (defaultdict auto-creates entries)
             self._usage[model]["requests"] += 1
             self._usage[model]["input_tokens"] += input_tokens
             self._usage[model]["output_tokens"] += output_tokens
@@ -720,16 +722,6 @@ class LLMProcessor:
 
             # Track per-context usage if context provided
             if context:
-                if context not in self._context_usage:
-                    self._context_usage[context] = {}
-                if model not in self._context_usage[context]:
-                    self._context_usage[context][model] = {
-                        "requests": 0,
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "cost_usd": 0.0,
-                    }
-
                 self._context_usage[context][model]["requests"] += 1
                 self._context_usage[context][model]["input_tokens"] += input_tokens
                 self._context_usage[context][model]["output_tokens"] += output_tokens
@@ -820,9 +812,12 @@ class LLMProcessor:
     def clear_image_cache(self) -> None:
         """Clear the image cache to free memory after document processing."""
         self._image_cache.clear()
+        self._image_cache_bytes = 0
 
     def _get_cached_image(self, image_path: Path) -> tuple[bytes, str]:
         """Get image bytes and base64 encoding, using cache if available.
+
+        Uses LRU eviction when cache limits are reached (both count and bytes).
 
         Args:
             image_path: Path to the image file
@@ -833,15 +828,34 @@ class LLMProcessor:
         path_key = str(image_path)
 
         if path_key in self._image_cache:
+            # Move to end for LRU (most recently used)
+            self._image_cache.move_to_end(path_key)
             return self._image_cache[path_key]
 
         # Read and encode image
         image_data = image_path.read_bytes()
         base64_image = base64.b64encode(image_data).decode()
 
-        # Cache if not at max capacity
-        if len(self._image_cache) < self._image_cache_max_size:
+        # Calculate entry size: raw bytes + base64 string (roughly 1.33x raw size)
+        entry_bytes = len(image_data) + len(base64_image)
+
+        # Evict old entries if adding this would exceed limits
+        while (
+            self._image_cache
+            and (
+                len(self._image_cache) >= self._image_cache_max_size
+                or self._image_cache_bytes + entry_bytes > self._image_cache_max_bytes
+            )
+        ):
+            # Remove oldest entry (first item in OrderedDict)
+            _, oldest_value = self._image_cache.popitem(last=False)
+            old_bytes = len(oldest_value[0]) + len(oldest_value[1])
+            self._image_cache_bytes -= old_bytes
+
+        # Cache if entry size is reasonable (skip very large single images)
+        if entry_bytes < self._image_cache_max_bytes // 2:
             self._image_cache[path_key] = (image_data, base64_image)
+            self._image_cache_bytes += entry_bytes
 
         return image_data, base64_image
 
@@ -1350,38 +1364,57 @@ class LLMProcessor:
             batch_paths = image_paths[batch_start:batch_end]
             batches.append((batch_num, batch_paths))
 
+        # Limit concurrent batches to avoid memory pressure from loading all images
+        # at once. The semaphore controls LLM API calls, but images are loaded
+        # before acquiring the semaphore. This batch-level limit prevents that.
+        max_concurrent_batches = min(self.config.concurrency, num_batches)
+        batch_semaphore = asyncio.Semaphore(max_concurrent_batches)
+
         logger.info(
             f"[{context}] Analyzing {len(image_paths)} images in "
-            f"{num_batches} batches (parallel)"
+            f"{num_batches} batches (max {max_concurrent_batches} concurrent)"
         )
 
-        # Process all batches concurrently
+        # Process batches with backpressure and streaming
         async def process_batch(
             batch_num: int, batch_paths: list[Path]
         ) -> tuple[int, list[ImageAnalysis]]:
-            """Process a single batch and return with batch number for ordering."""
-            try:
-                results = await self.analyze_batch(batch_paths, language, context)
-                return (batch_num, results)
-            except Exception as e:
-                logger.warning(
-                    f"[{context}] Batch {batch_num + 1}/{num_batches} failed: {e}"
-                )
-                # Return empty results with placeholder for failed images
-                return (
-                    batch_num,
-                    [
-                        ImageAnalysis(
-                            caption=f"Image {i + 1}",
-                            description="Analysis failed",
-                        )
-                        for i in range(len(batch_paths))
-                    ],
-                )
+            """Process a single batch with backpressure control."""
+            async with batch_semaphore:
+                try:
+                    results = await self.analyze_batch(batch_paths, language, context)
+                    return (batch_num, results)
+                except Exception as e:
+                    logger.warning(
+                        f"[{context}] Batch {batch_num + 1}/{num_batches} failed: {e}"
+                    )
+                    # Return empty results with placeholder for failed images
+                    return (
+                        batch_num,
+                        [
+                            ImageAnalysis(
+                                caption=f"Image {i + 1}",
+                                description="Analysis failed",
+                            )
+                            for i in range(len(batch_paths))
+                        ],
+                    )
 
-        # Launch all batches concurrently
-        tasks = [process_batch(batch_num, paths) for batch_num, paths in batches]
-        batch_results = await asyncio.gather(*tasks)
+        # Launch all batches and process results as they complete
+        # Using as_completed allows earlier batches to free resources sooner
+        tasks = {
+            asyncio.create_task(process_batch(batch_num, paths)): batch_num
+            for batch_num, paths in batches
+        }
+
+        batch_results: list[tuple[int, list[ImageAnalysis]]] = []
+        for coro in asyncio.as_completed(tasks.keys()):
+            try:
+                result = await coro
+                batch_results.append(result)
+            except Exception as e:
+                # Find which batch failed by checking tasks
+                logger.error(f"[{context}] Batch processing error: {e}")
 
         # Sort by batch number and flatten results
         batch_results_sorted = sorted(batch_results, key=lambda x: x[0])
@@ -2431,6 +2464,8 @@ class LLMProcessor:
         )
 
         async with self.semaphore:
+            start_time = time.perf_counter()
+
             # Create instructor client from router for load balancing
             client = instructor.from_litellm(
                 self.router.acompletion, mode=instructor.Mode.JSON
@@ -2447,6 +2482,8 @@ class LLMProcessor:
                 response_model=DocumentProcessResult,
                 max_retries=0,
             )
+
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
 
             # Check for truncation
             if hasattr(raw_response, "choices") and raw_response.choices:
@@ -2470,6 +2507,13 @@ class LLMProcessor:
                 self._track_usage(
                     actual_model, input_tokens, output_tokens, cost, source
                 )
+
+            # Log detailed timing for performance analysis
+            logger.info(
+                f"[LLM:{source}] document_process: {actual_model} "
+                f"tokens={input_tokens}+{output_tokens} "
+                f"time={elapsed_ms:.0f}ms cost=${cost:.6f}"
+            )
 
             return response
 

@@ -123,13 +123,16 @@ class TestConfigManager:
 
         assert config.output.dir == "./custom_output"
 
-    def test_get_nested_value(self) -> None:
+    def test_get_nested_value(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test getting nested configuration values."""
+        # Change to tmp_path to avoid loading project's markit.json
+        monkeypatch.chdir(tmp_path)
+
         manager = ConfigManager()
         manager.load()
 
         assert manager.get("llm.enabled") is False
-        assert manager.get("image.quality") == 85
+        assert manager.get("image.quality") == 85  # Default value
         assert manager.get("nonexistent.key", "default") == "default"
 
     def test_set_nested_value(self) -> None:

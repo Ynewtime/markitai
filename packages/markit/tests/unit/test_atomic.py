@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 from pathlib import Path
+
+import pytest
 
 from markit.security import atomic_write_json, atomic_write_text
 
@@ -150,27 +153,47 @@ class TestAtomicWriteJson:
 class TestAtomicWriteAtomicity:
     """Tests for atomicity guarantees."""
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Windows file locking prevents concurrent access during writes",
+    )
     def test_concurrent_writes_produce_valid_content(self, tmp_path: Path) -> None:
-        """Test that concurrent writes don't produce corrupted files."""
+        """Test that concurrent writes don't produce corrupted files.
+
+        This test verifies that atomic writes never produce partial/corrupted content.
+        Each read should return either "AAAA" or "BBBB", never a mix or partial data.
+        Note: We don't verify that a writer reads back its own content, as another
+        thread may have written between the write and read (expected concurrent behavior).
+        """
         file_path = tmp_path / "concurrent.txt"
-        results = []
-        errors = []
+        # Initialize file to avoid FileNotFoundError on first read
+        file_path.write_text("INIT")
+
+        results: list[bool] = []
+        errors: list[str] = []
+        valid_contents = {"AAAA", "BBBB", "INIT"}
 
         def writer(content: str) -> None:
             try:
                 for _ in range(10):
                     atomic_write_text(file_path, content)
-                    # Verify the file is readable and has valid content
-                    read_content = file_path.read_text()
-                    if read_content not in ["AAAA", "BBBB"]:
-                        errors.append(f"Corrupted content: {read_content!r}")
                 results.append(True)
             except Exception as e:
-                errors.append(str(e))
+                errors.append(f"Write error: {e}")
+
+        def reader() -> None:
+            try:
+                for _ in range(20):
+                    read_content = file_path.read_text()
+                    if read_content not in valid_contents:
+                        errors.append(f"Corrupted content: {read_content!r}")
+            except Exception as e:
+                errors.append(f"Read error: {e}")
 
         threads = [
             threading.Thread(target=writer, args=("AAAA",)),
             threading.Thread(target=writer, args=("BBBB",)),
+            threading.Thread(target=reader),
         ]
 
         for t in threads:

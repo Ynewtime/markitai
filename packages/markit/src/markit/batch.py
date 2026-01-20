@@ -463,6 +463,10 @@ class BatchProcessor:
 
         State file is saved to: states/markit.<hash>.state.json
 
+        Optimized with interval-based throttling:
+        - Checks interval BEFORE serialization to avoid unnecessary work
+        - Uses minimal serialization when possible
+
         Args:
             force: Force save even if interval hasn't passed
             log: Whether to log the save operation
@@ -472,10 +476,12 @@ class BatchProcessor:
 
         now = datetime.now().astimezone()
         interval = getattr(self.config, "state_flush_interval_seconds", 0) or 0
+
+        # Check interval BEFORE any serialization work (optimization)
         if not force and interval > 0:
             last_saved = getattr(self, "_last_state_save", None)
             if last_saved and (now - last_saved).total_seconds() < interval:
-                return
+                return  # Skip: interval not passed, no work done
 
         self.state.updated_at = now.isoformat()
 

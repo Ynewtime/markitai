@@ -130,7 +130,7 @@ class TestBuiltinPrompts:
     def test_cleaner_prompt_content(self) -> None:
         """Test cleaner prompt has required elements."""
         path = BUILTIN_PROMPTS_DIR / "cleaner.md"
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "{content}" in content
         assert "Markdown" in content
@@ -138,7 +138,7 @@ class TestBuiltinPrompts:
     def test_frontmatter_prompt_content(self) -> None:
         """Test frontmatter prompt has required elements."""
         path = BUILTIN_PROMPTS_DIR / "frontmatter.md"
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "{content}" in content
         assert "{source}" in content
@@ -147,13 +147,13 @@ class TestBuiltinPrompts:
     def test_image_caption_prompt_content(self) -> None:
         """Test image caption prompt content."""
         path = BUILTIN_PROMPTS_DIR / "image_caption.md"
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "alt" in content.lower() or "描述" in content
 
     def test_image_description_prompt_content(self) -> None:
         """Test image description prompt content."""
         path = BUILTIN_PROMPTS_DIR / "image_description.md"
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "描述" in content or "describe" in content.lower()

@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import os
 import re
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,6 +25,68 @@ from markit.constants import (
 if TYPE_CHECKING:
     from markit.config import ImageConfig
     from markit.converter.base import ExtractedImage
+
+
+# Module-level function for multiprocessing (must be picklable)
+def _compress_image_worker(
+    image_data: bytes,
+    quality: int,
+    max_size: tuple[int, int],
+    output_format: str,
+    min_width: int,
+    min_height: int,
+    min_area: int,
+) -> tuple[bytes, int, int] | None:
+    """Compress a single image in a worker process.
+
+    Args:
+        image_data: Raw image bytes
+        quality: JPEG quality (1-100)
+        max_size: Maximum dimensions (width, height)
+        output_format: Output format (JPEG, PNG, WEBP)
+        min_width: Minimum width filter
+        min_height: Minimum height filter
+        min_area: Minimum area filter
+
+    Returns:
+        Tuple of (compressed_data, final_width, final_height) or None if filtered
+    """
+    try:
+        with io.BytesIO(image_data) as buffer:
+            img = Image.open(buffer)
+            img.load()
+            width, height = img.size
+
+            # Apply filter
+            if width < min_width or height < min_height or width * height < min_area:
+                return None
+
+            # Resize if needed
+            img.thumbnail(max_size, Image.Resampling.LANCZOS)
+
+            # Convert to RGB for JPEG
+            if output_format.upper() == "JPEG" and img.mode in ("RGBA", "P", "LA"):
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                if img.mode in ("RGBA", "LA"):
+                    background.paste(img, mask=img.split()[-1])
+                else:
+                    background.paste(img)
+                img = background
+
+            # Compress to bytes
+            out_buffer = io.BytesIO()
+            save_kwargs: dict[str, Any] = {"format": output_format}
+            if output_format.upper() in ("JPEG", "WEBP"):
+                save_kwargs["quality"] = quality
+            if output_format.upper() == "PNG":
+                save_kwargs["optimize"] = True
+
+            img.save(out_buffer, **save_kwargs)
+            return out_buffer.getvalue(), img.size[0], img.size[1]
+    except Exception:
+        return None
 
 
 @dataclass
@@ -388,12 +452,19 @@ class ImageProcessor:
 
             # Load image
             try:
-                with Image.open(io.BytesIO(image_data)) as img:
+                # Use BytesIO as context manager to ensure buffer is released
+                img_buffer = io.BytesIO(image_data)
+                try:
+                    img = Image.open(img_buffer)
+                    # Load image data immediately so we can release the buffer
+                    img.load()
+
                     width, height = img.size
 
                     # Check filter
                     if self.should_filter(width, height):
                         filtered_count += 1
+                        img.close()
                         continue
 
                     # Compress
@@ -407,16 +478,23 @@ class ImageProcessor:
                     )
 
                     if self.config and self.config.compress:
+                        # No need for img.copy() - compress can modify the image
+                        # since we don't need the original after this
                         compressed_img, compressed_data = self.compress(
-                            img.copy(),
+                            img,
                             quality=quality,
                             max_size=max_size,
                             output_format=output_format,
                         )
                         final_width, final_height = compressed_img.size
+                        # Release the compressed image
+                        compressed_img.close()
                     else:
                         compressed_data = image_data
                         final_width, final_height = width, height
+
+                    # Close original image to release memory
+                    img.close()
 
                     # Generate filename
                     filename = f"{base_name}.{idx:04d}.{extension}"
@@ -424,6 +502,9 @@ class ImageProcessor:
 
                     # Save
                     output_path.write_bytes(compressed_data)
+
+                    # Release compressed data reference
+                    del compressed_data
 
                     saved_images.append(
                         ExtractedImage(
@@ -435,6 +516,8 @@ class ImageProcessor:
                             height=final_height,
                         )
                     )
+                finally:
+                    img_buffer.close()
 
             except Exception:
                 # Skip invalid images
@@ -573,6 +656,178 @@ class ImageProcessor:
         tasks = [
             save_image(idx, data, width, height)
             for idx, data, width, height in processed_images
+        ]
+        results = await asyncio.gather(*tasks)
+
+        # Collect successful saves
+        for result in results:
+            if result is not None:
+                saved_images.append(result)
+
+        # Sort by index to maintain order
+        saved_images.sort(key=lambda x: x.index)
+
+        return ImageProcessResult(
+            saved_images=saved_images,
+            filtered_count=filtered_count,
+            deduplicated_count=deduplicated_count,
+        )
+
+    async def process_and_save_multiprocess(
+        self,
+        images: list[tuple[str, str, bytes]],
+        output_dir: Path,
+        base_name: str,
+        max_workers: int | None = None,
+        max_io_concurrency: int = DEFAULT_IMAGE_IO_CONCURRENCY,
+    ) -> ImageProcessResult:
+        """Process and save images using multiprocessing for CPU-bound compression.
+
+        This version uses ProcessPoolExecutor to parallelize image compression
+        across multiple CPU cores, bypassing the GIL limitation.
+
+        Args:
+            images: List of (alt_text, mime_type, image_data) tuples
+            output_dir: Directory to save images
+            base_name: Base name for image files
+            max_workers: Max worker processes (default: cpu_count // 2)
+            max_io_concurrency: Maximum concurrent I/O operations
+
+        Returns:
+            ImageProcessResult with saved images and statistics
+        """
+        import asyncio
+
+        from markit.converter.base import ExtractedImage
+        from markit.security import write_bytes_async
+
+        if not images:
+            return ImageProcessResult(saved_images=[], filtered_count=0, deduplicated_count=0)
+
+        # Create assets directory
+        assets_dir = output_dir / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+
+        # Determine output format
+        output_format = "JPEG"
+        extension = "jpg"
+        if self.config:
+            format_map = {
+                "jpeg": ("JPEG", "jpg"),
+                "png": ("PNG", "png"),
+                "webp": ("WEBP", "webp"),
+            }
+            output_format, extension = format_map.get(
+                self.config.format, ("JPEG", "jpg")
+            )
+
+        # Get compression parameters
+        quality = self.config.quality if self.config else DEFAULT_IMAGE_QUALITY
+        max_size = (
+            (self.config.max_width, self.config.max_height)
+            if self.config
+            else (DEFAULT_IMAGE_MAX_WIDTH, DEFAULT_IMAGE_MAX_HEIGHT)
+        )
+        compress_enabled = self.config.compress if self.config else True
+
+        # Get filter parameters
+        min_width = self.config.filter.min_width if self.config else 50
+        min_height = self.config.filter.min_height if self.config else 50
+        min_area = self.config.filter.min_area if self.config else 5000
+
+        # Prepare work items (filter duplicates first)
+        work_items: list[tuple[int, bytes]] = []
+        deduplicated_count = 0
+        for idx, (_alt_text, _mime_type, image_data) in enumerate(images, start=1):
+            if self.is_duplicate(image_data):
+                deduplicated_count += 1
+                continue
+            work_items.append((idx, image_data))
+
+        if not work_items:
+            return ImageProcessResult(
+                saved_images=[], filtered_count=0, deduplicated_count=deduplicated_count
+            )
+
+        # Determine worker count (use half of CPUs to avoid system overload)
+        if max_workers is None:
+            max_workers = max(1, (os.cpu_count() or 4) // 2)
+
+        # Process images in parallel using ProcessPoolExecutor
+        loop = asyncio.get_event_loop()
+        processed_results: list[tuple[int, bytes, int, int]] = []
+        filtered_count = 0
+
+        # Use ProcessPoolExecutor for CPU-bound compression
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for idx, image_data in work_items:
+                if compress_enabled:
+                    future = loop.run_in_executor(
+                        executor,
+                        _compress_image_worker,
+                        image_data,
+                        quality,
+                        max_size,
+                        output_format,
+                        min_width,
+                        min_height,
+                        min_area,
+                    )
+                    futures.append((idx, future))
+                else:
+                    # No compression, just validate size
+                    try:
+                        with io.BytesIO(image_data) as buffer:
+                            img = Image.open(buffer)
+                            w, h = img.size
+                            if w >= min_width and h >= min_height and w * h >= min_area:
+                                processed_results.append((idx, image_data, w, h))
+                            else:
+                                filtered_count += 1
+                    except Exception:
+                        pass
+
+            # Gather results from workers
+            for idx, future in futures:
+                try:
+                    result = await future
+                    if result is None:
+                        filtered_count += 1
+                    else:
+                        compressed_data, final_w, final_h = result
+                        processed_results.append((idx, compressed_data, final_w, final_h))
+                except Exception:
+                    filtered_count += 1
+
+        # Second pass: save images concurrently (I/O-bound)
+        semaphore = asyncio.Semaphore(max_io_concurrency)
+        saved_images: list[ExtractedImage] = []
+
+        async def save_image(
+            idx: int, data: bytes, width: int, height: int
+        ) -> ExtractedImage | None:
+            filename = f"{base_name}.{idx:04d}.{extension}"
+            output_path = assets_dir / filename
+
+            async with semaphore:
+                try:
+                    await write_bytes_async(output_path, data)
+                    return ExtractedImage(
+                        path=output_path,
+                        index=idx,
+                        original_name=filename,
+                        mime_type=f"image/{extension}",
+                        width=width,
+                        height=height,
+                    )
+                except Exception:
+                    return None
+
+        # Run all saves concurrently
+        tasks = [
+            save_image(idx, data, width, height)
+            for idx, data, width, height in processed_results
         ]
         results = await asyncio.gather(*tasks)
 

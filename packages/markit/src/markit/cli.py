@@ -7,6 +7,8 @@ import json
 import os
 import sys
 import warnings
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,7 +33,11 @@ from rich.syntax import Syntax
 
 from markit import __version__
 from markit.config import ConfigManager, MarkitConfig
-from markit.constants import DEFAULT_MAX_IMAGES_PER_BATCH, MAX_DOCUMENT_SIZE
+from markit.constants import (
+    DEFAULT_IMAGE_MULTIPROCESS_THRESHOLD,
+    DEFAULT_MAX_IMAGES_PER_BATCH,
+    MAX_DOCUMENT_SIZE,
+)
 from markit.converter import FileFormat, detect_format, get_converter
 from markit.converter.base import EXTENSION_MAP
 from markit.image import ImageProcessor
@@ -56,6 +62,36 @@ from markit.workflow.helpers import (
 from markit.workflow.single import ImageAnalysisResult
 
 console = Console()
+
+# Global ThreadPoolExecutor for blocking I/O operations
+# Limit threads to avoid context switching overhead in batch processing
+_CONVERTER_EXECUTOR: ThreadPoolExecutor | None = None
+_CONVERTER_MAX_WORKERS = min(os.cpu_count() or 4, 8)
+
+
+def _get_converter_executor() -> ThreadPoolExecutor:
+    """Get or create the global converter executor."""
+    global _CONVERTER_EXECUTOR
+    if _CONVERTER_EXECUTOR is None:
+        _CONVERTER_EXECUTOR = ThreadPoolExecutor(
+            max_workers=_CONVERTER_MAX_WORKERS,
+            thread_name_prefix="markit-converter",
+        )
+    return _CONVERTER_EXECUTOR
+
+
+async def run_in_converter_thread(func, *args, **kwargs):
+    """Run a blocking function in the converter thread pool.
+
+    This limits the number of concurrent converter threads to avoid
+    excessive context switching overhead in batch processing.
+    """
+    loop = asyncio.get_running_loop()
+    executor = _get_converter_executor()
+    if kwargs:
+        func = partial(func, **kwargs)
+    return await loop.run_in_executor(executor, func, *args)
+
 
 
 def resolve_output_path(
@@ -863,7 +899,7 @@ async def process_single_file(
     try:
         # Convert document
         logger.info(f"Converting {input_path.name}...")
-        result = await asyncio.to_thread(
+        result = await run_in_converter_thread(
             converter.convert,
             input_path,
             output_dir=output_dir,
@@ -913,12 +949,12 @@ async def process_single_file(
         llm_cost = 0.0
         img_analysis: ImageAnalysisResult | None = None
 
-        # Check if OCR+LLM mode
-        ocr_llm_mode = result.metadata.get("ocr_llm_mode", False)
-        pptx_llm_mode = result.metadata.get("pptx_llm_mode", False)
+        # Check if page images exist for Vision LLM processing
+        # page_images is set by converters when screenshot is enabled
+        has_page_images = len(page_images) > 0
 
-        if (ocr_llm_mode or pptx_llm_mode) and cfg.llm.enabled:
-            mode_name = "PPTX+LLM" if pptx_llm_mode else "OCR+LLM"
+        if has_page_images and cfg.llm.enabled:
+            mode_name = "Screenshot+LLM"
             logger.info(f"[LLM] {input_path.name}: Starting {mode_name} processing")
             # Use result.markdown which already has base64 images replaced with assets/ paths
             # Do NOT use extracted_text from metadata as it contains raw base64 data
@@ -1668,7 +1704,7 @@ async def process_batch(
             file_output_dir.mkdir(parents=True, exist_ok=True)
 
             convert_start = time.perf_counter()
-            result = await asyncio.to_thread(
+            result = await run_in_converter_thread(
                 converter.convert,
                 file_path,
                 output_dir=file_output_dir,
@@ -1702,11 +1738,19 @@ async def process_batch(
             image_result = None  # Initialize for later use in PPTX+LLM mode
 
             if base64_images:
-                image_result = image_processor.process_and_save(
-                    base64_images,
-                    output_dir=file_output_dir,
-                    base_name=file_path.name,
-                )
+                # Use multiprocess compression for large image batches
+                if len(base64_images) > DEFAULT_IMAGE_MULTIPROCESS_THRESHOLD:
+                    image_result = await image_processor.process_and_save_multiprocess(
+                        base64_images,
+                        output_dir=file_output_dir,
+                        base_name=file_path.name,
+                    )
+                else:
+                    image_result = image_processor.process_and_save(
+                        base64_images,
+                        output_dir=file_output_dir,
+                        base_name=file_path.name,
+                    )
                 result.markdown = image_processor.replace_base64_with_paths(
                     result.markdown,
                     image_result.saved_images,
@@ -1729,8 +1773,8 @@ async def process_batch(
             llm_cost = 0.0
             llm_usage: dict[str, dict[str, Any]] = {}
             img_analysis: ImageAnalysisResult | None = None  # For JSON aggregation
-            ocr_llm_mode = result.metadata.get("ocr_llm_mode", False)
-            pptx_llm_mode = result.metadata.get("pptx_llm_mode", False)
+            # Check if page images exist for Vision LLM processing
+            has_page_images = len(page_images) > 0
 
             # Get saved images from assets directory
             assets_dir = file_output_dir / "assets"
@@ -1746,10 +1790,9 @@ async def process_batch(
                     if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")
                 ]
 
-            if (ocr_llm_mode or pptx_llm_mode) and cfg.llm.enabled:
+            if has_page_images and cfg.llm.enabled:
                 # Enhanced mode: Use extracted text + page images for LLM processing
-                mode_name = "PPTX+LLM" if pptx_llm_mode else "OCR+LLM"
-                logger.info(f"[LLM] {file_path.name}: Starting {mode_name} processing")
+                logger.info(f"[LLM] {file_path.name}: Starting Screenshot+LLM processing")
                 # Use result.markdown which has base64 images replaced with assets/ paths
                 # Do NOT use metadata["extracted_text"] as it may contain raw base64 data
                 extracted_text = result.markdown

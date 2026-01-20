@@ -121,20 +121,31 @@ class TestBatchState:
         assert "test.pdf" in data["files"]
         assert data["files"]["test.pdf"]["status"] == "completed"
 
-    def test_from_dict(self) -> None:
+    def test_from_dict(self, tmp_path: Path) -> None:
         """Test creating state from dictionary."""
+        # Use real paths for cross-platform compatibility
+        input_dir = tmp_path / "input"
+        output_dir = tmp_path / "output"
+        input_dir.mkdir()
+        output_dir.mkdir()
+
+        # Create a test file
+        test_file = input_dir / "test.pdf"
+        test_file.write_text("test")
+
         data = {
             "version": "1.0",
             "started_at": "2026-01-15T10:00:00Z",
             "updated_at": "2026-01-15T10:30:00Z",
-            "input_dir": "/input",
-            "output_dir": "/output",
-            "log_file": "/home/user/.markit/logs/markit_20260115_100000.log",
+            "input_dir": str(input_dir),
+            "output_dir": str(output_dir),
+            "log_file": str(tmp_path / "markit.log"),
             "options": {"llm": True},
             "files": {
-                "/input/test.pdf": {
+                # Use relative path (new format used by to_dict)
+                "test.pdf": {
                     "status": "completed",
-                    "output": "/output/test.pdf.md",
+                    "output": "test.pdf.md",
                 }
             },
         }
@@ -142,10 +153,12 @@ class TestBatchState:
         state = BatchState.from_dict(data)
 
         assert state.version == "1.0"
-        assert state.input_dir == "/input"
-        assert state.log_file == "/home/user/.markit/logs/markit_20260115_100000.log"
+        assert state.input_dir == str(input_dir)
         assert len(state.files) == 1
-        assert state.files["/input/test.pdf"].status == FileStatus.COMPLETED
+        # from_dict reconstructs absolute path from relative path + input_dir
+        expected_key = str(input_dir / "test.pdf")
+        assert expected_key in state.files
+        assert state.files[expected_key].status == FileStatus.COMPLETED
 
 
 class TestBatchProcessor:

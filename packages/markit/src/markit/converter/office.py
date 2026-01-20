@@ -134,7 +134,6 @@ class PptxConverter(OfficeConverter):
             # Update metadata with page_images for LLM processing
             result.metadata["page_images"] = slide_images
             result.metadata["pages"] = len(slide_images)
-            result.metadata["pptx_llm_mode"] = True  # Enable LLM mode for screenshots
             result.metadata["extracted_text"] = result.markdown
             result.images = images
 
@@ -491,7 +490,6 @@ class PptxConverter(OfficeConverter):
             metadata={
                 "source": str(input_path),
                 "format": "PPTX",
-                "pptx_llm_mode": True,
                 "slides": len(images),
                 "extracted_text": extracted_text,
                 "page_images": slide_images,
