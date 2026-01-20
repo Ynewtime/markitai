@@ -9,6 +9,34 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from markit.constants import (
+    CONFIG_FILENAME,
+    DEFAULT_BATCH_CONCURRENCY,
+    DEFAULT_IMAGE_FILTER_MIN_AREA,
+    DEFAULT_IMAGE_FILTER_MIN_HEIGHT,
+    DEFAULT_IMAGE_FILTER_MIN_WIDTH,
+    DEFAULT_IMAGE_FORMAT,
+    DEFAULT_IMAGE_MAX_HEIGHT,
+    DEFAULT_IMAGE_MAX_WIDTH,
+    DEFAULT_IMAGE_QUALITY,
+    DEFAULT_LLM_CONCURRENCY,
+    DEFAULT_LOG_DIR,
+    DEFAULT_LOG_LEVEL,
+    DEFAULT_LOG_RETENTION,
+    DEFAULT_LOG_ROTATION,
+    DEFAULT_MODEL_WEIGHT,
+    DEFAULT_OCR_LANG,
+    DEFAULT_ON_CONFLICT,
+    DEFAULT_OUTPUT_DIR,
+    DEFAULT_PROMPTS_DIR,
+    DEFAULT_ROUTER_NUM_RETRIES,
+    DEFAULT_ROUTER_TIMEOUT,
+    DEFAULT_ROUTING_STRATEGY,
+    DEFAULT_SCAN_MAX_DEPTH,
+    DEFAULT_SCAN_MAX_FILES,
+    DEFAULT_STATE_FLUSH_INTERVAL_SECONDS,
+)
+
 
 class EnvVarNotFoundError(ValueError):
     """Raised when an environment variable referenced by env: syntax is not found."""
@@ -46,8 +74,8 @@ def resolve_env_value(value: str, strict: bool = True) -> str | None:
 class OutputConfig(BaseModel):
     """Output configuration."""
 
-    dir: str = "./output"
-    on_conflict: Literal["skip", "overwrite", "rename"] = "rename"
+    dir: str = DEFAULT_OUTPUT_DIR
+    on_conflict: Literal["skip", "overwrite", "rename"] = DEFAULT_ON_CONFLICT
     allow_symlinks: bool = False
 
 
@@ -57,7 +85,7 @@ class LiteLLMParams(BaseModel):
     model: str
     api_key: str | None = None
     api_base: str | None = None
-    weight: int = 1
+    weight: int = DEFAULT_MODEL_WEIGHT
     max_tokens: int | None = None  # Override max_output_tokens for this model
 
     def get_resolved_api_key(self, strict: bool = True) -> str | None:
@@ -98,9 +126,9 @@ class RouterSettings(BaseModel):
 
     routing_strategy: Literal[
         "simple-shuffle", "least-busy", "usage-based-routing", "latency-based-routing"
-    ] = "simple-shuffle"
-    num_retries: int = 2
-    timeout: int = 120
+    ] = DEFAULT_ROUTING_STRATEGY
+    num_retries: int = DEFAULT_ROUTER_NUM_RETRIES
+    timeout: int = DEFAULT_ROUTER_TIMEOUT
     fallbacks: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -110,15 +138,15 @@ class LLMConfig(BaseModel):
     enabled: bool = False
     model_list: list[ModelConfig] = Field(default_factory=list)
     router_settings: RouterSettings = Field(default_factory=RouterSettings)
-    concurrency: int = 10
+    concurrency: int = DEFAULT_LLM_CONCURRENCY
 
 
 class ImageFilterConfig(BaseModel):
     """Image filter configuration."""
 
-    min_width: int = 50
-    min_height: int = 50
-    min_area: int = 5000
+    min_width: int = DEFAULT_IMAGE_FILTER_MIN_WIDTH
+    min_height: int = DEFAULT_IMAGE_FILTER_MIN_HEIGHT
+    min_area: int = DEFAULT_IMAGE_FILTER_MIN_AREA
     deduplicate: bool = True
 
 
@@ -128,10 +156,10 @@ class ImageConfig(BaseModel):
     alt_enabled: bool = False  # Generate alt text for images via LLM
     desc_enabled: bool = False  # Generate description files for images
     compress: bool = True
-    quality: int = Field(default=85, ge=1, le=100)
-    format: Literal["jpeg", "png", "webp"] = "jpeg"
-    max_width: int = 1920
-    max_height: int = 1080
+    quality: int = Field(default=DEFAULT_IMAGE_QUALITY, ge=1, le=100)
+    format: Literal["jpeg", "png", "webp"] = DEFAULT_IMAGE_FORMAT
+    max_width: int = DEFAULT_IMAGE_MAX_WIDTH
+    max_height: int = DEFAULT_IMAGE_MAX_HEIGHT
     filter: ImageFilterConfig = Field(default_factory=ImageFilterConfig)
 
 
@@ -139,7 +167,7 @@ class OCRConfig(BaseModel):
     """OCR configuration."""
 
     enabled: bool = False
-    lang: str = "zh"
+    lang: str = DEFAULT_OCR_LANG
 
 
 class ScreenshotConfig(BaseModel):
@@ -151,7 +179,7 @@ class ScreenshotConfig(BaseModel):
 class PromptsConfig(BaseModel):
     """Prompts configuration."""
 
-    dir: str = "~/.markit/prompts"
+    dir: str = DEFAULT_PROMPTS_DIR
     cleaner: str | None = None
     frontmatter: str | None = None
     image_caption: str | None = None
@@ -164,19 +192,19 @@ class PromptsConfig(BaseModel):
 class BatchConfig(BaseModel):
     """Batch processing configuration."""
 
-    concurrency: int = 10
-    state_flush_interval_seconds: int = 5
-    scan_max_depth: int = 5
-    scan_max_files: int = 10000
+    concurrency: int = DEFAULT_BATCH_CONCURRENCY
+    state_flush_interval_seconds: int = DEFAULT_STATE_FLUSH_INTERVAL_SECONDS
+    scan_max_depth: int = DEFAULT_SCAN_MAX_DEPTH
+    scan_max_files: int = DEFAULT_SCAN_MAX_FILES
 
 
 class LogConfig(BaseModel):
     """Logging configuration."""
 
-    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "DEBUG"
-    dir: str | None = "~/.markit/logs"
-    rotation: str = "10 MB"
-    retention: str = "7 days"
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = DEFAULT_LOG_LEVEL
+    dir: str | None = DEFAULT_LOG_DIR
+    rotation: str = DEFAULT_LOG_ROTATION
+    retention: str = DEFAULT_LOG_RETENTION
 
 
 class PresetConfig(BaseModel):
@@ -214,7 +242,7 @@ class MarkitConfig(BaseModel):
 class ConfigManager:
     """Configuration manager for loading and merging configs."""
 
-    CONFIG_FILENAME = "markit.json"
+    CONFIG_FILENAME = CONFIG_FILENAME
     DEFAULT_USER_CONFIG_DIR = Path.home() / ".markit"
 
     def __init__(self) -> None:

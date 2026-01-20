@@ -459,3 +459,29 @@ max_images_per_batch = 15  # 原10 (需测试API限制)
 | State 保存 | batch.py | 428-459 | `save_state()` / flush 逻辑 |
 | 图像缓存 | llm.py | 395-399 | `_image_cache_max_size` |
 | LLM Semaphore | llm.py | 440-450 | `semaphore` property |
+
+---
+
+## 8. 实施状态 (2026-01-20)
+
+### ✅ 已完成的优化
+
+| 优化项 | 状态 | 实施说明 |
+|--------|------|----------|
+| 批量图片分析并行化 (3.1) | ✅ 完成 | `analyze_images_batch()` 现在使用 `asyncio.gather()` 并行处理所有批次 |
+| 多批文档并行处理 (3.2) | ✅ 完成 | `enhance_document_complete()` 中清理和 frontmatter 生成并行执行 |
+| State 保存移出 semaphore (3.4) | ✅ 完成 | `process_with_limit()` 中状态保存移到 semaphore 外，使用 `asyncio.to_thread()` |
+| 增大图像缓存容量 (3.6) | ✅ 完成 | `_image_cache_max_size` 从 50 增加到 200 |
+
+### ✅ 额外修复
+
+| 修复项 | 说明 |
+|--------|------|
+| Anthropic 5MB 图片限制 | `image.py` 新增 `save_screenshot()` 方法，截图保存时自动压缩到 < 5MB |
+| 截图压缩 | `pdf.py` 和 `office.py` 中 4 处 `pix.save()` 改为使用 `ImageProcessor.save_screenshot()`，尊重 `image.quality` 配置 |
+
+### 📝 测试覆盖
+
+- 新增单元测试: `TestSaveScreenshot`, `TestParallelImageBatchAnalysis`, `TestImageCacheSize`
+- batch.py 覆盖率: 71%
+- 全部 244 个测试通过

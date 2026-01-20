@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pymupdf4llm
 from loguru import logger
 
+from markit.constants import DEFAULT_RENDER_DPI
 from markit.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -77,7 +78,7 @@ class PdfConverter(BaseConverter):
 
         # Get image format from config
         image_format = "png"
-        dpi = 150
+        dpi = DEFAULT_RENDER_DPI
         if self.config:
             image_format = self.config.image.format
             if image_format == "jpeg":
@@ -183,9 +184,12 @@ class PdfConverter(BaseConverter):
 
             import pymupdf
 
+            # Create ImageProcessor for compression
+            img_processor = ImageProcessor(self.config.image if self.config else None)
+
             doc = pymupdf.open(input_path)
             try:
-                screenshot_dpi = 150
+                screenshot_dpi = DEFAULT_RENDER_DPI
                 screenshot_format = image_format if image_format != "png" else "jpg"
                 for page_num in range(len(doc)):
                     page = doc[page_num]
@@ -194,12 +198,14 @@ class PdfConverter(BaseConverter):
                     mat = pymupdf.Matrix(screenshot_dpi / 72, screenshot_dpi / 72)
                     pix = page.get_pixmap(matrix=mat)
 
-                    # Save page image to screenshots directory
+                    # Save page image with compression (ensures < 5MB for LLM)
                     image_name = (
                         f"{input_path.name}.page{page_num + 1:04d}.{screenshot_format}"
                     )
                     screenshot_path = screenshots_dir / image_name
-                    pix.save(str(screenshot_path))
+                    img_processor.save_screenshot(
+                        pix.samples, pix.width, pix.height, screenshot_path
+                    )
 
                     page_images.append(
                         {
@@ -336,11 +342,14 @@ class PdfConverter(BaseConverter):
         images: list[ExtractedImage] = []
         page_images: list[dict] = []
         markdown_parts = []
-        dpi = 150
+        dpi = DEFAULT_RENDER_DPI
 
         # Step 2: Render each page as image (only if screenshot enabled)
         if enable_screenshot:
             screenshots_dir.mkdir(parents=True, exist_ok=True)
+            # Create ImageProcessor for compression
+            img_processor = ImageProcessor(self.config.image if self.config else None)
+
             doc = pymupdf.open(input_path)
             try:
                 for page_num in range(len(doc)):
@@ -351,12 +360,14 @@ class PdfConverter(BaseConverter):
                     mat = pymupdf.Matrix(dpi / 72, dpi / 72)
                     pix = page.get_pixmap(matrix=mat)
 
-                    # Save page image to screenshots directory
+                    # Save page image with compression (ensures < 5MB for LLM)
                     image_name = (
                         f"{input_path.name}.page{page_num + 1:04d}.{image_format}"
                     )
                     image_path = screenshots_dir / image_name
-                    pix.save(str(image_path))
+                    final_size = img_processor.save_screenshot(
+                        pix.samples, pix.width, pix.height, image_path
+                    )
 
                     images.append(
                         ExtractedImage(
@@ -364,8 +375,8 @@ class PdfConverter(BaseConverter):
                             index=page_num + 1,
                             original_name=image_name,
                             mime_type=f"image/{image_format}",
-                            width=pix.width,
-                            height=pix.height,
+                            width=final_size[0],
+                            height=final_size[1],
                         )
                     )
 
@@ -472,7 +483,7 @@ class PdfConverter(BaseConverter):
                 write_images=True,
                 image_path=str(assets_dir),
                 image_format=image_format,
-                dpi=150,
+                dpi=DEFAULT_RENDER_DPI,
                 force_text=True,
             ),
         )
@@ -489,9 +500,12 @@ class PdfConverter(BaseConverter):
 
         if enable_screenshot:
             screenshots_dir.mkdir(parents=True, exist_ok=True)
+            # Create ImageProcessor for compression
+            img_processor = ImageProcessor(self.config.image if self.config else None)
+
             doc = pymupdf.open(input_path)
             try:
-                dpi = 150
+                dpi = DEFAULT_RENDER_DPI
                 for page_num in range(len(doc)):
                     page = doc[page_num]
 
@@ -499,12 +513,14 @@ class PdfConverter(BaseConverter):
                     mat = pymupdf.Matrix(dpi / 72, dpi / 72)
                     pix = page.get_pixmap(matrix=mat)
 
-                    # Save page image to screenshots directory
+                    # Save page image with compression (ensures < 5MB for LLM)
                     image_name = (
                         f"{input_path.name}.page{page_num + 1:04d}.{image_format}"
                     )
                     image_path = screenshots_dir / image_name
-                    pix.save(str(image_path))
+                    final_size = img_processor.save_screenshot(
+                        pix.samples, pix.width, pix.height, image_path
+                    )
 
                     images.append(
                         ExtractedImage(
@@ -512,8 +528,8 @@ class PdfConverter(BaseConverter):
                             index=page_num + 1,
                             original_name=image_name,
                             mime_type=f"image/{image_format}",
-                            width=pix.width,
-                            height=pix.height,
+                            width=final_size[0],
+                            height=final_size[1],
                         )
                     )
 

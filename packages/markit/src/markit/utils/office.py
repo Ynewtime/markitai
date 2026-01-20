@@ -1,7 +1,8 @@
 """Office application detection utilities.
 
-Provides unified detection for MS Office and LibreOffice across platforms.
-On Windows, MS Office is preferred when available.
+Provides detection for MS Office (Windows) and LibreOffice (cross-platform).
+- MS Office COM: Used only for PPTX slide rendering (optional)
+- LibreOffice: Used for legacy format conversion and PDF fallback
 """
 
 from __future__ import annotations
@@ -20,12 +21,13 @@ def _is_windows() -> bool:
 
 @lru_cache(maxsize=1)
 def has_ms_office() -> bool:
-    """Detect if MS Office is installed on Windows (cached).
+    """Detect if MS Office PowerPoint is available via COM (Windows only).
 
-    Checks for PowerPoint availability via COM automation.
+    Used for optional high-quality PPTX slide rendering.
+    Text extraction uses MarkItDown (cross-platform) and doesn't need COM.
 
     Returns:
-        True if MS Office is available, False otherwise.
+        True if PowerPoint COM is available, False otherwise.
     """
     if not _is_windows():
         return False

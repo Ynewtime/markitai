@@ -205,3 +205,85 @@ class TestProcessAndSave:
 
         assert len(result.saved_images) == 0
         assert result.filtered_count == 1
+
+
+class TestSaveScreenshot:
+    """Tests for save_screenshot method (screenshot compression for LLM)."""
+
+    def test_save_screenshot_basic(self, tmp_path: Path) -> None:
+        """Test basic screenshot saving."""
+        processor = ImageProcessor()
+
+        # Create test image (simulate pymupdf pixmap samples)
+        img = Image.new("RGB", (800, 600), color="blue")
+        samples = img.tobytes()
+
+        output_path = tmp_path / "screenshot.jpg"
+        final_size = processor.save_screenshot(
+            samples, img.width, img.height, output_path
+        )
+
+        assert output_path.exists()
+        assert final_size[0] <= 1920  # Max width
+        assert final_size[1] <= 1080  # Max height
+
+    def test_save_screenshot_respects_quality_config(self, tmp_path: Path) -> None:
+        """Test that save_screenshot respects image.quality config."""
+        config = ImageConfig(quality=50, format="jpeg")
+        processor = ImageProcessor(config=config)
+
+        # Create test image
+        img = Image.new("RGB", (500, 500))
+        pixels = img.load()
+        for i in range(img.width):
+            for j in range(img.height):
+                pixels[i, j] = (i % 256, j % 256, (i + j) % 256)
+        samples = img.tobytes()
+
+        output_path = tmp_path / "screenshot.jpg"
+        processor.save_screenshot(samples, img.width, img.height, output_path)
+
+        # File should exist and be reasonable size
+        assert output_path.exists()
+        file_size = output_path.stat().st_size
+        assert file_size > 0
+
+    def test_save_screenshot_compresses_to_under_5mb(self, tmp_path: Path) -> None:
+        """Test that save_screenshot ensures output is under 5MB."""
+        processor = ImageProcessor()
+
+        # Create large test image with gradient pattern
+        img = Image.new("RGB", (3000, 3000))
+        pixels = img.load()
+        for i in range(img.width):
+            for j in range(img.height):
+                pixels[i, j] = (i % 256, j % 256, (i + j) % 256)
+        samples = img.tobytes()
+
+        output_path = tmp_path / "large_screenshot.jpg"
+        processor.save_screenshot(
+            samples, img.width, img.height, output_path, max_bytes=5 * 1024 * 1024
+        )
+
+        assert output_path.exists()
+        file_size = output_path.stat().st_size
+        # Should be under 5MB (with some tolerance for edge cases)
+        assert file_size <= 5 * 1024 * 1024 * 1.1
+
+    def test_save_screenshot_resizes_large_images(self, tmp_path: Path) -> None:
+        """Test that large images are resized according to config."""
+        config = ImageConfig(max_width=800, max_height=600)
+        processor = ImageProcessor(config=config)
+
+        # Create image larger than max dimensions
+        img = Image.new("RGB", (2000, 1500), color="green")
+        samples = img.tobytes()
+
+        output_path = tmp_path / "resized.jpg"
+        final_size = processor.save_screenshot(
+            samples, img.width, img.height, output_path
+        )
+
+        # Result should be within configured max dimensions
+        assert final_size[0] <= 800
+        assert final_size[1] <= 600

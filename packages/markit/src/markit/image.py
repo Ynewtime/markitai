@@ -12,6 +12,14 @@ from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
+from markit.constants import (
+    DEFAULT_IMAGE_IO_CONCURRENCY,
+    DEFAULT_IMAGE_MAX_HEIGHT,
+    DEFAULT_IMAGE_MAX_WIDTH,
+    DEFAULT_IMAGE_QUALITY,
+    DEFAULT_SCREENSHOT_MAX_BYTES,
+)
+
 if TYPE_CHECKING:
     from markit.config import ImageConfig
     from markit.converter.base import ExtractedImage
@@ -161,8 +169,8 @@ class ImageProcessor:
     def compress(
         self,
         image: Image.Image,
-        quality: int = 85,
-        max_size: tuple[int, int] = (1920, 1080),
+        quality: int = DEFAULT_IMAGE_QUALITY,
+        max_size: tuple[int, int] = (DEFAULT_IMAGE_MAX_WIDTH, DEFAULT_IMAGE_MAX_HEIGHT),
         output_format: str = "JPEG",
     ) -> tuple[Image.Image, bytes]:
         """
@@ -203,6 +211,88 @@ class ImageProcessor:
         compressed_data = buffer.getvalue()
 
         return image, compressed_data
+
+    def save_screenshot(
+        self,
+        pix_samples: bytes,
+        width: int,
+        height: int,
+        output_path: Path,
+        max_bytes: int = DEFAULT_SCREENSHOT_MAX_BYTES,
+    ) -> tuple[int, int]:
+        """
+        Save a screenshot with compression to ensure it's under the size limit.
+
+        Converts raw pixel data to PIL Image, compresses using config quality,
+        and progressively reduces quality if needed to stay under max_bytes.
+
+        Args:
+            pix_samples: Raw RGB pixel data from pymupdf pixmap.samples
+            width: Image width
+            height: Image height
+            output_path: Path to save the image
+            max_bytes: Maximum file size in bytes (default 5MB for LLM providers)
+
+        Returns:
+            Tuple of (final_width, final_height) after any resizing
+        """
+        from loguru import logger
+
+        # Convert raw samples to PIL Image
+        image = Image.frombytes("RGB", (width, height), pix_samples)
+
+        # Get quality from config or use default
+        quality = self.config.quality if self.config else DEFAULT_IMAGE_QUALITY
+        max_width = self.config.max_width if self.config else DEFAULT_IMAGE_MAX_WIDTH
+        max_height = self.config.max_height if self.config else DEFAULT_IMAGE_MAX_HEIGHT
+        output_format = (self.config.format if self.config else "jpeg").upper()
+        if output_format == "JPG":
+            output_format = "JPEG"
+
+        # Resize to configured max dimensions
+        image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+
+        # Convert to RGB for JPEG
+        if output_format == "JPEG" and image.mode in ("RGBA", "P", "LA"):
+            background = Image.new("RGB", image.size, (255, 255, 255))
+            if image.mode == "P":
+                image = image.convert("RGBA")
+            if image.mode in ("RGBA", "LA"):
+                background.paste(image, mask=image.split()[-1])
+            else:
+                background.paste(image)
+            image = background
+
+        # Try compressing with configured quality first
+        for q in [quality, 70, 55, 40, 25]:
+            buffer = io.BytesIO()
+            save_kwargs: dict[str, Any] = {"format": output_format}
+            if output_format in ("JPEG", "WEBP"):
+                save_kwargs["quality"] = q
+                save_kwargs["optimize"] = True
+            elif output_format == "PNG":
+                save_kwargs["optimize"] = True
+
+            image.save(buffer, **save_kwargs)
+            data = buffer.getvalue()
+
+            if len(data) <= max_bytes:
+                output_path.write_bytes(data)
+                if q < quality:
+                    logger.debug(
+                        f"Screenshot compressed: quality {quality}->{q}, "
+                        f"size {len(data) / 1024:.1f}KB"
+                    )
+                return image.size
+
+        # Last resort: aggressive resize
+        image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=20, optimize=True)
+        data = buffer.getvalue()
+        output_path.write_bytes(data)
+        logger.warning(f"Screenshot aggressively compressed: {len(data) / 1024:.1f}KB")
+        return image.size
 
     def should_filter(self, width: int, height: int) -> bool:
         """
@@ -307,11 +397,13 @@ class ImageProcessor:
                         continue
 
                     # Compress
-                    quality = self.config.quality if self.config else 85
+                    quality = (
+                        self.config.quality if self.config else DEFAULT_IMAGE_QUALITY
+                    )
                     max_size = (
                         (self.config.max_width, self.config.max_height)
                         if self.config
-                        else (1920, 1080)
+                        else (DEFAULT_IMAGE_MAX_WIDTH, DEFAULT_IMAGE_MAX_HEIGHT)
                     )
 
                     if self.config and self.config.compress:
@@ -363,7 +455,7 @@ class ImageProcessor:
         images: list[tuple[str, str, bytes]],
         output_dir: Path,
         base_name: str,
-        max_concurrency: int = 4,
+        max_concurrency: int = DEFAULT_IMAGE_IO_CONCURRENCY,
     ) -> ImageProcessResult:
         """Process and save a list of images with async I/O.
 
@@ -425,11 +517,13 @@ class ImageProcessor:
                         continue
 
                     # Compress
-                    quality = self.config.quality if self.config else 85
+                    quality = (
+                        self.config.quality if self.config else DEFAULT_IMAGE_QUALITY
+                    )
                     max_size = (
                         (self.config.max_width, self.config.max_height)
                         if self.config
-                        else (1920, 1080)
+                        else (DEFAULT_IMAGE_MAX_WIDTH, DEFAULT_IMAGE_MAX_HEIGHT)
                     )
 
                     if self.config and self.config.compress:

@@ -25,7 +25,9 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
+from rich.text import Text
 
+from markit.constants import DEFAULT_LOG_PANEL_MAX_LINES
 from markit.security import atomic_write_json
 
 if TYPE_CHECKING:
@@ -34,7 +36,14 @@ if TYPE_CHECKING:
 
 
 class FileStatus(str, Enum):
-    """Status of a file in batch processing."""
+    """Status of a file in batch processing.
+
+    State transitions:
+        PENDING -> IN_PROGRESS -> COMPLETED
+                               -> FAILED
+
+    On resume: IN_PROGRESS files are treated as FAILED (re-processed).
+    """
 
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
@@ -44,7 +53,21 @@ class FileStatus(str, Enum):
 
 @dataclass
 class FileState:
-    """State of a single file in batch processing."""
+    """State of a single file in batch processing.
+
+    Attributes:
+        path: Relative path to source file from input_dir
+        status: Current processing status
+        output: Relative path to output .md file from output_dir
+        error: Error message if status is FAILED
+        started_at: ISO timestamp when processing started
+        completed_at: ISO timestamp when processing completed
+        duration_seconds: Total processing time
+        images_extracted: Count of embedded images extracted from document content
+        screenshots: Count of page/slide screenshots rendered for OCR/LLM
+        llm_cost_usd: Total LLM API cost for this file
+        llm_usage: Per-model usage stats {model: {requests, input_tokens, output_tokens, cost_usd}}
+    """
 
     path: str
     status: FileStatus = FileStatus.PENDING
@@ -53,10 +76,9 @@ class FileState:
     started_at: str | None = None
     completed_at: str | None = None
     duration_seconds: float | None = None
-    images_extracted: int = 0  # Embedded images extracted from document content
-    screenshots: int = 0  # Page/slide screenshots for OCR/LLM processing
+    images_extracted: int = 0
+    screenshots: int = 0
     llm_cost_usd: float = 0.0
-    # LLM usage per model: {"model_name": {"requests": N, "input_tokens": N, "output_tokens": N, "cost_usd": F}}
     llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
@@ -203,17 +225,26 @@ class BatchState:
 
 @dataclass
 class ProcessResult:
-    """Result of processing a single file."""
+    """Result of processing a single file.
+
+    Attributes:
+        success: Whether processing completed without errors
+        output_path: Path to generated .md file (None if failed)
+        error: Error message if success is False
+        images_extracted: Count of embedded images extracted from document
+        screenshots: Count of page/slide screenshots for OCR/LLM
+        llm_cost_usd: Total LLM API cost for this file
+        llm_usage: Per-model usage {model: {requests, input_tokens, output_tokens, cost_usd}}
+        image_analysis_result: Aggregated image analysis for JSON output (None if disabled)
+    """
 
     success: bool
     output_path: str | None = None
     error: str | None = None
-    images_extracted: int = 0  # Embedded images extracted from document content
-    screenshots: int = 0  # Page/slide screenshots for OCR/LLM processing
+    images_extracted: int = 0
+    screenshots: int = 0
     llm_cost_usd: float = 0.0
-    # LLM usage per model: {"model_name": {"requests": N, "input_tokens": N, "output_tokens": N, "cost_usd": F}}
     llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # Image analysis result for JSON aggregation
     image_analysis_result: ImageAnalysisResult | None = None
 
 
@@ -224,7 +255,7 @@ ProcessFunc = Callable[[Path], Coroutine[Any, Any, ProcessResult]]
 class LogPanel:
     """Log panel for verbose mode, displays scrolling log messages."""
 
-    def __init__(self, max_lines: int = 8):
+    def __init__(self, max_lines: int = DEFAULT_LOG_PANEL_MAX_LINES):
         self.logs: deque[str] = deque(maxlen=max_lines)
 
     def add(self, message: str) -> None:
@@ -235,7 +266,8 @@ class LogPanel:
     def __rich__(self) -> Panel:
         """Render the log panel."""
         content = "\n".join(self.logs) if self.logs else "(waiting for logs...)"
-        return Panel(content, title="Logs", border_style="dim")
+        # Use Text object to prevent markup parsing (paths like [/foo/bar] would be misinterpreted)
+        return Panel(Text(content), title="Logs", border_style="dim")
 
 
 class BatchProcessor:
@@ -411,7 +443,8 @@ class BatchProcessor:
 
     def load_state(self) -> BatchState | None:
         """Load state from state file if exists (for resume capability)."""
-        from markit.security import MAX_STATE_FILE_SIZE, validate_file_size
+        from markit.constants import MAX_STATE_FILE_SIZE
+        from markit.security import validate_file_size
 
         if not self.state_file.exists():
             return None
@@ -646,7 +679,7 @@ class BatchProcessor:
         panel_handler_id: int | None = None
 
         if verbose:
-            log_panel = LogPanel(max_lines=8)
+            log_panel = LogPanel()
 
             def panel_sink(message: Any) -> None:
                 """Sink function to write logs to the panel."""
@@ -662,56 +695,60 @@ class BatchProcessor:
             )
 
         async def process_with_limit(file_path: Path) -> None:
-            """Process a file with semaphore limit."""
-            async with semaphore:
-                assert self.state is not None  # Guaranteed by _init_state() above
-                file_key = str(file_path)
-                file_state = self.state.files.get(file_key)
+            """Process a file with semaphore limit.
 
-                if file_state is None:
-                    file_state = FileState(path=file_key)
-                    self.state.files[file_key] = file_state
+            State saving is performed outside the semaphore to avoid blocking
+            concurrent file processing.
+            """
+            assert self.state is not None  # Guaranteed by _init_state() above
+            file_key = str(file_path)
+            file_state = self.state.files.get(file_key)
 
-                # Update state to in_progress
-                file_state.status = FileStatus.IN_PROGRESS
-                file_state.started_at = datetime.now().astimezone().isoformat()
+            if file_state is None:
+                file_state = FileState(path=file_key)
+                self.state.files[file_key] = file_state
 
-                start_time = asyncio.get_event_loop().time()
+            # Update state to in_progress
+            file_state.status = FileStatus.IN_PROGRESS
+            file_state.started_at = datetime.now().astimezone().isoformat()
 
-                try:
+            start_time = asyncio.get_event_loop().time()
+
+            try:
+                # Process file within semaphore
+                async with semaphore:
                     result = await process_func(file_path)
 
-                    if result.success:
-                        file_state.status = FileStatus.COMPLETED
-                        file_state.output = result.output_path
-                        file_state.images_extracted = result.images_extracted
-                        file_state.screenshots = result.screenshots
-                        file_state.llm_cost_usd = result.llm_cost_usd
-                        file_state.llm_usage = result.llm_usage
-                        # Collect image analysis result for JSON aggregation
-                        if result.image_analysis_result is not None:
-                            self.image_analysis_results.append(
-                                result.image_analysis_result
-                            )
-                    else:
-                        file_state.status = FileStatus.FAILED
-                        file_state.error = result.error
-
-                except Exception as e:
+                if result.success:
+                    file_state.status = FileStatus.COMPLETED
+                    file_state.output = result.output_path
+                    file_state.images_extracted = result.images_extracted
+                    file_state.screenshots = result.screenshots
+                    file_state.llm_cost_usd = result.llm_cost_usd
+                    file_state.llm_usage = result.llm_usage
+                    # Collect image analysis result for JSON aggregation
+                    if result.image_analysis_result is not None:
+                        self.image_analysis_results.append(result.image_analysis_result)
+                else:
                     file_state.status = FileStatus.FAILED
-                    file_state.error = str(e)
-                    logger.error(f"Failed to process {file_path.name}: {e}")
+                    file_state.error = result.error
 
-                finally:
-                    end_time = asyncio.get_event_loop().time()
-                    file_state.completed_at = datetime.now().astimezone().isoformat()
-                    file_state.duration_seconds = end_time - start_time
+            except Exception as e:
+                file_state.status = FileStatus.FAILED
+                file_state.error = str(e)
+                logger.error(f"Failed to process {file_path.name}: {e}")
 
-                    # Save state after each file (throttled)
-                    self.save_state()
+            finally:
+                end_time = asyncio.get_event_loop().time()
+                file_state.completed_at = datetime.now().astimezone().isoformat()
+                file_state.duration_seconds = end_time - start_time
 
-                    # Update progress
-                    progress.advance(overall_task)
+                # Update progress
+                progress.advance(overall_task)
+
+            # Save state outside semaphore (non-blocking, throttled)
+            # Use asyncio.to_thread to avoid blocking the event loop
+            await asyncio.to_thread(self.save_state)
 
         # Run with live progress display
         # Disable console handler to avoid conflict with progress bar

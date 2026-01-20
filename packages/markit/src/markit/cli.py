@@ -31,11 +31,11 @@ from rich.syntax import Syntax
 
 from markit import __version__
 from markit.config import ConfigManager, MarkitConfig
+from markit.constants import DEFAULT_MAX_IMAGES_PER_BATCH, MAX_DOCUMENT_SIZE
 from markit.converter import FileFormat, detect_format, get_converter
 from markit.converter.base import EXTENSION_MAP
 from markit.image import ImageProcessor
 from markit.security import (
-    MAX_DOCUMENT_SIZE,
     atomic_write_json,
     atomic_write_text,
     escape_glob_pattern,
@@ -465,15 +465,15 @@ def print_version(ctx: Context, param: Any, value: bool) -> None:
 @click.option(
     "--llm-concurrency",
     type=int,
-    default=10,
-    help="Number of concurrent LLM requests.",
+    default=None,
+    help="Number of concurrent LLM requests (default from config).",
 )
 @click.option(
     "--batch-concurrency",
     "-j",
     type=int,
-    default=10,
-    help="Number of concurrent batch tasks.",
+    default=None,
+    help="Number of concurrent batch tasks (default from config).",
 )
 @click.option(
     "--verbose",
@@ -507,8 +507,8 @@ def app(
     screenshot: bool | None,
     resume: bool,
     no_compress: bool,
-    batch_concurrency: int,
-    llm_concurrency: int,
+    batch_concurrency: int | None,
+    llm_concurrency: int | None,
     verbose: bool,
     dry_run: bool,
 ) -> None:
@@ -617,8 +617,10 @@ def app(
         cfg.screenshot.enabled = screenshot
     if no_compress:
         cfg.image.compress = False
-    cfg.batch.concurrency = batch_concurrency
-    cfg.llm.concurrency = llm_concurrency
+    if batch_concurrency is not None:
+        cfg.batch.concurrency = batch_concurrency
+    if llm_concurrency is not None:
+        cfg.llm.concurrency = llm_concurrency
 
     logger.debug(f"Processing: {input_path.resolve()}")
     logger.debug(f"Output directory: {output.resolve()}")
@@ -1178,20 +1180,29 @@ async def process_with_llm(
     processor: LLMProcessor | None = None,
     original_markdown: str | None = None,
 ) -> tuple[str, float, dict[str, dict[str, Any]]]:
-    """Process markdown with LLM.
+    """Process markdown with LLM and write enhanced version to .llm.md file.
+
+    The LLM-enhanced content is written to output_file with .llm.md suffix.
+    Returns the original markdown unchanged for use in base .md file.
 
     Args:
         markdown: Markdown content to process
-        source: Source file name
-        cfg: Configuration
-        output_file: Output file path
-        page_images: Optional list of page image info dicts for adding commented links
+        source: Source file name (used as LLM context identifier)
+        cfg: Configuration with LLM and prompt settings
+        output_file: Base output file path (.llm.md suffix added automatically)
+        page_images: Optional page image info for adding commented references
         processor: Optional shared LLMProcessor (created if not provided)
-        original_markdown: Original markdown before LLM enhancement (for preserving
-            slide comments that may be lost during vision enhancement)
+        original_markdown: Original markdown for preserving slide comments
+            that may be lost during vision enhancement
 
     Returns:
-        Tuple of (markdown, cost_usd, llm_usage)
+        Tuple of (original_markdown, cost_usd, llm_usage):
+        - original_markdown: Input markdown unchanged (for base .md file)
+        - cost_usd: LLM API cost for this file
+        - llm_usage: Per-model usage {model: {requests, input_tokens, output_tokens, cost_usd}}
+
+    Side Effects:
+        Writes LLM-enhanced content to {output_file}.llm.md
     """
     from markit.llm import LLMProcessor
 
@@ -1357,8 +1368,11 @@ async def analyze_images_with_llm(
         processor: Optional shared LLMProcessor (created if not provided)
 
     Returns:
-        Tuple of (updated markdown, cost_usd, llm_usage, image_analysis_result)
-        image_analysis_result is None if desc_enabled is False or no images analyzed
+        Tuple of (updated_markdown, cost_usd, llm_usage, image_analysis_result):
+        - updated_markdown: Markdown with updated alt text (if alt_enabled)
+        - cost_usd: LLM API cost for image analysis
+        - llm_usage: Per-model usage {model: {requests, input_tokens, output_tokens, cost_usd}}
+        - image_analysis_result: Analysis data for JSON output (None if desc_enabled=False)
     """
     import re
     from datetime import datetime
@@ -1383,10 +1397,13 @@ async def analyze_images_with_llm(
         # Detect document language from markdown content
         language = _detect_language(markdown)
 
-        # Use batch analysis (10 images per call)
+        # Use batch analysis
         logger.info(f"Analyzing {len(image_paths)} images in batches...")
         analyses = await processor.analyze_images_batch(
-            image_paths, language=language, max_images_per_batch=10, context=context
+            image_paths,
+            language=language,
+            max_images_per_batch=DEFAULT_MAX_IMAGES_PER_BATCH,
+            context=context,
         )
 
         timestamp = datetime.now().astimezone().isoformat()
@@ -1704,8 +1721,9 @@ async def process_batch(
                     )
                 embedded_images_count = len(image_result.saved_images)
 
-            # Write base output
-            atomic_write_text(output_file, result.markdown)
+            # Write base output with basic frontmatter
+            base_md_content = _add_basic_frontmatter(result.markdown, file_path.name)
+            atomic_write_text(output_file, base_md_content)
 
             # Image/page processing with LLM Vision
             llm_cost = 0.0

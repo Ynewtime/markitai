@@ -1,4 +1,7 @@
-"""Legacy Office document converters (DOC, PPT, XLS)."""
+"""Legacy Office format converters (DOC, PPT, XLS - Office 97-2003).
+
+These formats require LibreOffice for conversion to modern formats first.
+"""
 
 from __future__ import annotations
 

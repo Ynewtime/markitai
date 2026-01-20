@@ -440,7 +440,7 @@ markit doc.pdf --preset rich --no-desc  # rich 但不生成描述文件
 **on_conflict 策略说明**：
 - `skip`：如果输出文件已存在，跳过处理
 - `overwrite`：直接覆盖已存在的文件
-- `rename`：自动添加序号，如 `file.pdf.md` → `file.pdf.2.md`，`file.pdf.llm.md` → `file.pdf.2.llm.md`
+- `rename`：自动添加版本号，如 `file.pdf.md` → `file.pdf.v2.md`，`file.pdf.llm.md` → `file.pdf.v2.llm.md`
 
 #### llm 配置
 
@@ -757,7 +757,7 @@ output/                              # 输出目录
 
 - `skip`：跳过已存在的文件
 - `overwrite`：直接覆盖
-- `rename`（默认）：添加序号 `file.pdf.md` → `file.pdf.2.md` → `file.pdf.3.md`
+- `rename`（默认）：添加版本号 `file.pdf.md` → `file.pdf.v2.md` → `file.pdf.v3.md`
 
 ---
 

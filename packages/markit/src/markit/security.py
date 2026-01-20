@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markit.constants import DEFAULT_JSON_INDENT
+
 if TYPE_CHECKING:
     pass
 
@@ -57,7 +59,7 @@ def atomic_write_text(
 def atomic_write_json(
     path: Path,
     obj: Any,
-    indent: int = 2,
+    indent: int = DEFAULT_JSON_INDENT,
     ensure_ascii: bool = False,
 ) -> None:
     """Write JSON to file atomically.
@@ -119,7 +121,7 @@ async def atomic_write_text_async(
 async def atomic_write_json_async(
     path: Path,
     obj: Any,
-    indent: int = 2,
+    indent: int = DEFAULT_JSON_INDENT,
     ensure_ascii: bool = False,
 ) -> None:
     """Write JSON to file atomically (async version).
@@ -258,8 +260,8 @@ def validate_file_size(path: Path, max_size_bytes: int) -> None:
         )
 
 
-# Size limits
-MAX_STATE_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-MAX_IMAGE_SIZE = 100 * 1024 * 1024  # 100 MB per image
-MAX_TOTAL_IMAGES_SIZE = 500 * 1024 * 1024  # 500 MB total
-MAX_DOCUMENT_SIZE = 500 * 1024 * 1024  # 500 MB
+# Re-export size limits from constants for backward compatibility
+from markit.constants import MAX_DOCUMENT_SIZE as MAX_DOCUMENT_SIZE
+from markit.constants import MAX_IMAGE_SIZE as MAX_IMAGE_SIZE
+from markit.constants import MAX_STATE_FILE_SIZE as MAX_STATE_FILE_SIZE
+from markit.constants import MAX_TOTAL_IMAGES_SIZE as MAX_TOTAL_IMAGES_SIZE

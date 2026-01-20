@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markit.constants import DEFAULT_OCR_SAMPLE_PAGES, DEFAULT_RENDER_DPI
+
 if TYPE_CHECKING:
     from markit.config import OCRConfig
 
@@ -76,7 +78,7 @@ class OCRProcessor:
         }
 
         # Set language if configured (must use LangRec enum)
-        # TODO: RapidOCR 类型定义问题，params 字典值类型不匹配
+        # Note: RapidOCR params dict expects specific types, type checker doesn't recognize LangRec enum
         if self.config and self.config.lang:
             params["Rec.lang_type"] = self._get_lang_enum(self.config.lang)  # type: ignore[assignment]
 
@@ -163,7 +165,7 @@ class OCRProcessor:
         self,
         pdf_path: Path,
         page_num: int,
-        dpi: int = 150,
+        dpi: int = DEFAULT_RENDER_DPI,
     ) -> OCRResult:
         """
         Perform OCR on a specific PDF page.
@@ -204,7 +206,9 @@ class OCRProcessor:
         finally:
             doc.close()
 
-    def is_scanned_pdf(self, pdf_path: Path, sample_pages: int = 3) -> bool:
+    def is_scanned_pdf(
+        self, pdf_path: Path, sample_pages: int = DEFAULT_OCR_SAMPLE_PAGES
+    ) -> bool:
         """
         Check if a PDF is likely scanned (image-based).
 
@@ -227,7 +231,7 @@ class OCRProcessor:
 
             for i in range(pages_to_check):
                 page = doc[i]
-                # TODO: pymupdf 类型定义问题，get_text() 返回类型不精确
+                # Note: pymupdf get_text() returns str but type stubs say Any
                 text: str = page.get_text()  # type: ignore[assignment]
                 total_text_length += len(text.strip())
 

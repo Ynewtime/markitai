@@ -15,12 +15,12 @@ if TYPE_CHECKING:
 class FileFormat(Enum):
     """Supported file formats."""
 
-    # Office formats (new)
+    # Office Open XML formats (2007+)
     DOCX = "docx"
     PPTX = "pptx"
     XLSX = "xlsx"
 
-    # Office formats (legacy) - P5
+    # Legacy Office formats (97-2003), requires LibreOffice
     DOC = "doc"
     PPT = "ppt"
     XLS = "xls"
