@@ -52,7 +52,8 @@ DEFAULT_ROUTER_TIMEOUT = 120  # seconds
 
 DEFAULT_IMAGE_QUALITY = 85  # JPEG quality (1-100)
 DEFAULT_RENDER_DPI = 150  # DPI for page screenshots (PDF, PPTX, etc.)
-DEFAULT_IMAGE_IO_CONCURRENCY = 4  # Concurrent I/O for image saving
+DEFAULT_IMAGE_IO_CONCURRENCY = 8  # Concurrent I/O for image saving (optimized for NVMe)
+DEFAULT_IMAGE_MULTIPROCESS_THRESHOLD = 10  # Use multiprocess compression when images > this
 DEFAULT_IMAGE_MAX_WIDTH = 1920
 DEFAULT_IMAGE_MAX_HEIGHT = 1080
 
@@ -72,7 +73,7 @@ DEFAULT_CACHE_TTL_SECONDS = 300  # Cache TTL (5 minutes)
 # Batch Processing
 # =============================================================================
 
-DEFAULT_STATE_FLUSH_INTERVAL_SECONDS = 5
+DEFAULT_STATE_FLUSH_INTERVAL_SECONDS = 10  # Increased to reduce I/O overhead
 DEFAULT_SCAN_MAX_DEPTH = 5
 DEFAULT_SCAN_MAX_FILES = 10000
 

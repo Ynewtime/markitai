@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -98,6 +99,10 @@ class TestCheckSymlinkSafety:
         # Should not raise
         check_symlink_safety(test_file, allow_symlinks=False)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Symlink creation requires admin privileges on Windows",
+    )
     def test_symlink_not_allowed(self, tmp_path: Path) -> None:
         """Test symlink raises when not allowed."""
         target = tmp_path / "target.txt"
@@ -108,6 +113,10 @@ class TestCheckSymlinkSafety:
         with pytest.raises(ValueError, match="Symlink not allowed"):
             check_symlink_safety(link, allow_symlinks=False)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Symlink creation requires admin privileges on Windows",
+    )
     def test_symlink_allowed(self, tmp_path: Path) -> None:
         """Test symlink allowed when flag set."""
         target = tmp_path / "target.txt"
@@ -209,6 +218,10 @@ class TestSizeConstants:
 class TestPathTraversalInBatch:
     """Tests for path traversal protection in batch processing."""
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Symlink creation requires admin privileges on Windows",
+    )
     def test_discover_files_rejects_symlink_outside(self, tmp_path: Path) -> None:
         """Test batch discover_files rejects symlinks pointing outside."""
         from markit.batch import BatchProcessor

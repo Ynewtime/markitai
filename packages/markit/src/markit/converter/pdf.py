@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -221,7 +223,6 @@ class PdfConverter(BaseConverter):
 
             metadata["page_images"] = page_images
             metadata["pages"] = len(page_images)
-            metadata["ocr_llm_mode"] = True  # Enable LLM mode for screenshots
             metadata["extracted_text"] = markdown
 
         # Clean up temporary directory if used
@@ -345,22 +346,48 @@ class PdfConverter(BaseConverter):
         dpi = DEFAULT_RENDER_DPI
 
         # Step 2: Render each page as image (only if screenshot enabled)
+        # Use parallel processing for better performance
+        doc = pymupdf.open(input_path)
+        total_pages = len(doc)
+        doc.close()
+
+        # Determine optimal worker count based on file size and system resources
+        # Each worker opens its own PDF copy, so memory usage scales with workers × file_size
+        file_size_mb = input_path.stat().st_size / (1024 * 1024)
+        cpu_count = os.cpu_count() or 4
+
+        # Adaptive worker count:
+        # - Small files (<10MB): use up to cpu_count/2 workers
+        # - Medium files (10-50MB): use up to 4 workers
+        # - Large files (>50MB): use up to 2 workers to limit memory
+        if file_size_mb < 10:
+            max_workers = min(cpu_count // 2 or 2, total_pages, 6)
+        elif file_size_mb < 50:
+            max_workers = min(4, total_pages)
+        else:
+            max_workers = min(2, total_pages)
+
+        # Ensure at least 1 worker
+        max_workers = max(1, max_workers)
+
         if enable_screenshot:
             screenshots_dir.mkdir(parents=True, exist_ok=True)
-            # Create ImageProcessor for compression
-            img_processor = ImageProcessor(self.config.image if self.config else None)
 
-            doc = pymupdf.open(input_path)
-            try:
-                for page_num in range(len(doc)):
-                    logger.debug(f"OCR processing page {page_num + 1}/{len(doc)}")
-                    page = doc[page_num]
+            def process_page_with_screenshot(page_num: int) -> dict:
+                """Process a single page: render + OCR (thread-safe)."""
+                # Each thread opens its own document (PyMuPDF not thread-safe)
+                thread_doc = pymupdf.open(input_path)
+                img_processor = ImageProcessor(
+                    self.config.image if self.config else None
+                )
+                try:
+                    page = thread_doc[page_num]
 
                     # Render page to image
                     mat = pymupdf.Matrix(dpi / 72, dpi / 72)
                     pix = page.get_pixmap(matrix=mat)
 
-                    # Save page image with compression (ensures < 5MB for LLM)
+                    # Save page image with compression
                     image_name = (
                         f"{input_path.name}.page{page_num + 1:04d}.{image_format}"
                     )
@@ -369,25 +396,7 @@ class PdfConverter(BaseConverter):
                         pix.samples, pix.width, pix.height, image_path
                     )
 
-                    images.append(
-                        ExtractedImage(
-                            path=image_path,
-                            index=page_num + 1,
-                            original_name=image_name,
-                            mime_type=f"image/{image_format}",
-                            width=final_size[0],
-                            height=final_size[1],
-                        )
-                    )
-
-                    page_images.append(
-                        {
-                            "page": page_num + 1,
-                            "path": str(image_path),
-                            "name": image_name,
-                        }
-                    )
-
+                    # OCR
                     try:
                         result = ocr.recognize_pdf_page(input_path, page_num, dpi=dpi)
                         text_content = (
@@ -400,28 +409,100 @@ class PdfConverter(BaseConverter):
                         text_content = f"*(OCR failed: {e})*"
 
                     page_content = f"{text_content}\n\n<!-- ![Page {page_num + 1}](screenshots/{image_name}) -->"
-                    markdown_parts.append(page_content)
 
-                    logger.debug(f"Rendered page {page_num + 1}/{len(doc)}")
-            finally:
-                doc.close()
-        else:
-            doc = pymupdf.open(input_path)
-            try:
-                for page_num in range(len(doc)):
+                    return {
+                        "page_num": page_num,
+                        "image": ExtractedImage(
+                            path=image_path,
+                            index=page_num + 1,
+                            original_name=image_name,
+                            mime_type=f"image/{image_format}",
+                            width=final_size[0],
+                            height=final_size[1],
+                        ),
+                        "page_image": {
+                            "page": page_num + 1,
+                            "path": str(image_path),
+                            "name": image_name,
+                        },
+                        "markdown": page_content,
+                    }
+                finally:
+                    thread_doc.close()
+
+            # Process pages in parallel
+            results: dict[int, dict] = {}
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(process_page_with_screenshot, i): i
+                    for i in range(total_pages)
+                }
+                for future in as_completed(futures):
+                    page_num = futures[future]
                     try:
-                        result = ocr.recognize_pdf_page(input_path, page_num, dpi=dpi)
-                        text_content = (
-                            result.text.strip()
-                            if result.text.strip()
-                            else "*(No text detected)*"
+                        result = future.result()
+                        results[page_num] = result
+                        logger.debug(
+                            f"OCR processed page {page_num + 1}/{total_pages}"
                         )
                     except Exception as e:
-                        logger.warning(f"OCR failed for page {page_num + 1}: {e}")
-                        text_content = f"*(OCR failed: {e})*"
-                    markdown_parts.append(text_content)
-            finally:
-                doc.close()
+                        logger.error(f"Failed to process page {page_num + 1}: {e}")
+                        results[page_num] = {
+                            "page_num": page_num,
+                            "image": None,
+                            "page_image": None,
+                            "markdown": f"*(Page processing failed: {e})*",
+                        }
+
+            # Collect results in order
+            for i in range(total_pages):
+                r = results[i]
+                if r["image"]:
+                    images.append(r["image"])
+                if r["page_image"]:
+                    page_images.append(r["page_image"])
+                markdown_parts.append(r["markdown"])
+        else:
+
+            def process_page_ocr_only(page_num: int) -> dict:
+                """Process a single page: OCR only (thread-safe)."""
+                try:
+                    result = ocr.recognize_pdf_page(input_path, page_num, dpi=dpi)
+                    text_content = (
+                        result.text.strip()
+                        if result.text.strip()
+                        else "*(No text detected)*"
+                    )
+                except Exception as e:
+                    logger.warning(f"OCR failed for page {page_num + 1}: {e}")
+                    text_content = f"*(OCR failed: {e})*"
+                return {"page_num": page_num, "markdown": text_content}
+
+            # Process pages in parallel
+            results: dict[int, dict] = {}
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(process_page_ocr_only, i): i
+                    for i in range(total_pages)
+                }
+                for future in as_completed(futures):
+                    page_num = futures[future]
+                    try:
+                        result = future.result()
+                        results[page_num] = result
+                        logger.debug(
+                            f"OCR processed page {page_num + 1}/{total_pages}"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to process page {page_num + 1}: {e}")
+                        results[page_num] = {
+                            "page_num": page_num,
+                            "markdown": f"*(OCR failed: {e})*",
+                        }
+
+            # Collect results in order
+            for i in range(total_pages):
+                markdown_parts.append(results[i]["markdown"])
 
         extracted_text = f"# {input_path.stem}\n\n" + "\n\n".join(markdown_parts)
 
@@ -551,7 +632,6 @@ class PdfConverter(BaseConverter):
             metadata={
                 "source": str(input_path),
                 "format": "PDF",
-                "ocr_llm_mode": True,
                 "pages": len(page_images) if page_images else 0,
                 "extracted_text": extracted_text,
                 "page_images": page_images,

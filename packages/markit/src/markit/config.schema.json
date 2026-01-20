@@ -9,7 +9,7 @@
           "type": "integer"
         },
         "state_flush_interval_seconds": {
-          "default": 5,
+          "default": 10,
           "title": "State Flush Interval Seconds",
           "type": "integer"
         },
