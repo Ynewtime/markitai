@@ -396,9 +396,11 @@ class PdfConverter(BaseConverter):
                         pix.samples, pix.width, pix.height, image_path
                     )
 
-                    # OCR
+                    # OCR - reuse already rendered pixmap to avoid re-rendering
                     try:
-                        result = ocr.recognize_pdf_page(input_path, page_num, dpi=dpi)
+                        result = ocr.recognize_pixmap(
+                            pix.samples, pix.width, pix.height, pix.n
+                        )
                         text_content = (
                             result.text.strip()
                             if result.text.strip()
@@ -442,9 +444,7 @@ class PdfConverter(BaseConverter):
                     try:
                         result = future.result()
                         results[page_num] = result
-                        logger.debug(
-                            f"OCR processed page {page_num + 1}/{total_pages}"
-                        )
+                        logger.debug(f"OCR processed page {page_num + 1}/{total_pages}")
                     except Exception as e:
                         logger.error(f"Failed to process page {page_num + 1}: {e}")
                         results[page_num] = {
@@ -490,9 +490,7 @@ class PdfConverter(BaseConverter):
                     try:
                         result = future.result()
                         results[page_num] = result
-                        logger.debug(
-                            f"OCR processed page {page_num + 1}/{total_pages}"
-                        )
+                        logger.debug(f"OCR processed page {page_num + 1}/{total_pages}")
                     except Exception as e:
                         logger.error(f"Failed to process page {page_num + 1}: {e}")
                         results[page_num] = {

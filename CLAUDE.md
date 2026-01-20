@@ -1,5 +1,9 @@
 # 说明
 
+## 环境检测
+
+1. 开始工作前，先确认好你所在的系统（Windows|Linux|MacOS），选择对应的执行命令；
+
 ## 开发偏好
 
 1. Keep plan mode concise, remove unnecessary grammar.

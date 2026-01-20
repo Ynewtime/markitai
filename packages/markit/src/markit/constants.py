@@ -37,7 +37,7 @@ DEFAULT_BATCH_CONCURRENCY = 10  # Batch file processing (config default)
 
 # Batch sizes
 DEFAULT_MAX_IMAGES_PER_BATCH = 10  # Images per LLM vision call
-DEFAULT_MAX_PAGES_PER_BATCH = 10  # Pages per LLM call for document processing
+DEFAULT_MAX_PAGES_PER_BATCH = 5  # Pages per LLM call for document processing (reduced from 10 to avoid max_tokens)
 
 # Router settings
 DEFAULT_ROUTER_NUM_RETRIES = 2
@@ -53,7 +53,9 @@ DEFAULT_ROUTER_TIMEOUT = 120  # seconds
 DEFAULT_IMAGE_QUALITY = 85  # JPEG quality (1-100)
 DEFAULT_RENDER_DPI = 150  # DPI for page screenshots (PDF, PPTX, etc.)
 DEFAULT_IMAGE_IO_CONCURRENCY = 8  # Concurrent I/O for image saving (optimized for NVMe)
-DEFAULT_IMAGE_MULTIPROCESS_THRESHOLD = 10  # Use multiprocess compression when images > this
+DEFAULT_IMAGE_MULTIPROCESS_THRESHOLD = (
+    10  # Use multiprocess compression when images > this
+)
 DEFAULT_IMAGE_MAX_WIDTH = 1920
 DEFAULT_IMAGE_MAX_HEIGHT = 1080
 
@@ -66,8 +68,16 @@ DEFAULT_IMAGE_FILTER_MIN_AREA = 5000
 # Cache Settings
 # =============================================================================
 
+# In-memory cache (legacy, still used for image bytes cache)
 DEFAULT_CACHE_MAXSIZE = 100  # Max entries in LLM content cache
 DEFAULT_CACHE_TTL_SECONDS = 300  # Cache TTL (5 minutes)
+
+# Persistent SQLite cache
+DEFAULT_CACHE_SIZE_LIMIT = 1 * 1024 * 1024 * 1024  # 1 GB per cache file
+DEFAULT_GLOBAL_CACHE_DIR = "~/.markit"  # Global cache directory
+DEFAULT_PROJECT_CACHE_DIR = ".markit"  # Project-level cache directory
+DEFAULT_CACHE_DB_FILENAME = "cache.db"  # SQLite database filename
+DEFAULT_CACHE_CONTENT_TRUNCATE = 50000  # Truncate content for hash key (chars)
 
 # =============================================================================
 # Batch Processing

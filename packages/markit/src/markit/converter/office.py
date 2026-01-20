@@ -228,6 +228,16 @@ class PptxConverter(OfficeConverter):
                 logger.warning(f"COM rendering failed, trying PDF fallback: {e}")
 
         # Fallback: Convert to PDF and render pages
+        # Log a hint for Windows users without MS Office
+        import platform
+
+        if platform.system() == "Windows":
+            logger.warning(
+                "[PPTX] MS Office not available. "
+                "Install Microsoft Office for faster slide rendering. "
+                "Falling back to LibreOffice PDF conversion..."
+            )
+
         return self._render_slides_via_pdf(input_path, screenshots_dir, image_format)
 
     def _render_slides_with_com(
@@ -343,7 +353,18 @@ class PptxConverter(OfficeConverter):
 
         soffice_cmd = find_libreoffice()
         if not soffice_cmd:
-            logger.warning("LibreOffice not found")
+            import platform
+
+            if platform.system() == "Windows":
+                logger.warning(
+                    "[PPTX] Cannot render slides: Neither MS Office nor LibreOffice found. "
+                    "Install Microsoft Office (recommended) or LibreOffice to enable slide rendering."
+                )
+            else:
+                logger.warning(
+                    "[PPTX] Cannot render slides: LibreOffice not found. "
+                    "Install LibreOffice to enable slide rendering."
+                )
             return [], []
 
         with tempfile.TemporaryDirectory() as temp_dir:

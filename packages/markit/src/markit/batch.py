@@ -573,15 +573,17 @@ class BatchProcessor:
         self,
         input_dir: Path,
         files: list[Path],
-        options: dict,
+        options: dict[str, Any],
+        started_at: str | None = None,
     ) -> BatchState:
         """
-        Initialize new batch state.
+        Initialize a new batch state.
 
         Args:
             input_dir: Input directory
             files: List of files to process
             options: Processing options (will be updated with absolute paths)
+            started_at: ISO timestamp when processing started (defaults to now)
 
         Returns:
             New BatchState
@@ -600,9 +602,10 @@ class BatchProcessor:
         options["input_dir"] = abs_input_dir
         options["output_dir"] = abs_output_dir
 
+        now = datetime.now().astimezone().isoformat()
         state = BatchState(
-            started_at=datetime.now().astimezone().isoformat(),
-            updated_at=datetime.now().astimezone().isoformat(),
+            started_at=started_at or now,
+            updated_at=now,
             input_dir=abs_input_dir,
             output_dir=abs_output_dir,
             log_file=abs_log_file,
@@ -622,6 +625,7 @@ class BatchProcessor:
         options: dict[str, Any] | None = None,
         verbose: bool = False,
         console_handler_id: int | None = None,
+        started_at: str | None = None,
     ) -> BatchState:
         """
         Process files in batch with concurrency control.
@@ -633,10 +637,14 @@ class BatchProcessor:
             options: Task options to record in report
             verbose: Whether to show log panel during processing
             console_handler_id: Loguru console handler ID for temporary disable
+            started_at: ISO timestamp when processing started (for accurate duration)
 
         Returns:
             Final batch state
         """
+        # Use provided started_at or default to now
+        actual_started_at = started_at or datetime.now().astimezone().isoformat()
+
         # Initialize or load state
         if resume:
             self.state = self.load_state()
@@ -647,13 +655,14 @@ class BatchProcessor:
                     f"{len(files)} remaining"
                 )
                 # Reset started_at for accurate duration calculation in this session
-                self.state.started_at = datetime.now().astimezone().isoformat()
+                self.state.started_at = actual_started_at
 
         if self.state is None:
             self.state = self.init_state(
                 input_dir=files[0].parent if files else Path("."),
                 files=files,
                 options=options or {},
+                started_at=actual_started_at,
             )
             self.save_state(force=True)
 

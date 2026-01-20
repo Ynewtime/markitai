@@ -1,8 +1,8 @@
 """Office application detection utilities.
 
 Provides detection for MS Office (Windows) and LibreOffice (cross-platform).
-- MS Office COM: Used only for PPTX slide rendering (optional)
-- LibreOffice: Used for legacy format conversion and PDF fallback
+- MS Office COM: Used for legacy format conversion (.doc/.ppt) and PPTX slide rendering
+- LibreOffice: Used as fallback for legacy format conversion and PDF export
 """
 
 from __future__ import annotations
@@ -20,11 +20,95 @@ def _is_windows() -> bool:
 
 
 @lru_cache(maxsize=1)
+def check_ms_powerpoint_available() -> bool:
+    """Check if MS Office PowerPoint is installed (Windows only).
+
+    Uses Windows Registry lookup for fast detection without launching PowerPoint.
+    Preferred over COM-based detection for better performance.
+
+    Returns:
+        True if PowerPoint is installed, False otherwise.
+    """
+    if not _is_windows():
+        return False
+
+    try:
+        import winreg
+
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"PowerPoint.Application")
+            winreg.CloseKey(key)
+            logger.debug("MS PowerPoint detected via registry")
+            return True
+        except OSError:
+            return False
+    except ImportError:
+        return False
+
+
+@lru_cache(maxsize=1)
+def check_ms_word_available() -> bool:
+    """Check if MS Office Word is installed (Windows only).
+
+    Uses Windows Registry lookup for fast detection without launching Word.
+    Preferred over COM-based detection for better performance.
+
+    Returns:
+        True if Word is installed, False otherwise.
+    """
+    if not _is_windows():
+        return False
+
+    try:
+        import winreg
+
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"Word.Application")
+            winreg.CloseKey(key)
+            logger.debug("MS Word detected via registry")
+            return True
+        except OSError:
+            return False
+    except ImportError:
+        return False
+
+
+@lru_cache(maxsize=1)
+def check_ms_excel_available() -> bool:
+    """Check if MS Office Excel is installed (Windows only).
+
+    Uses Windows Registry lookup for fast detection without launching Excel.
+    Preferred over COM-based detection for better performance.
+
+    Returns:
+        True if Excel is installed, False otherwise.
+    """
+    if not _is_windows():
+        return False
+
+    try:
+        import winreg
+
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"Excel.Application")
+            winreg.CloseKey(key)
+            logger.debug("MS Excel detected via registry")
+            return True
+        except OSError:
+            return False
+    except ImportError:
+        return False
+
+
+@lru_cache(maxsize=1)
 def has_ms_office() -> bool:
     """Detect if MS Office PowerPoint is available via COM (Windows only).
 
     Used for optional high-quality PPTX slide rendering.
     Text extraction uses MarkItDown (cross-platform) and doesn't need COM.
+
+    Note: For checking installation status, prefer `check_ms_powerpoint_available()`
+    which uses registry lookup and is faster.
 
     Returns:
         True if PowerPoint COM is available, False otherwise.

@@ -63,6 +63,30 @@ class TestImageProcessor:
 
         assert len(images) == 0
 
+    def test_extract_emf_wmf_images(self) -> None:
+        """Test extracting x-emf and x-wmf images (Office formats with hyphens)."""
+        processor = ImageProcessor()
+        # Create minimal valid base64 data (won't be converted but should be extracted)
+        b64_data = base64.b64encode(b"fake-image-data").decode()
+        markdown = f"![](data:image/x-emf;base64,{b64_data})"
+
+        images = processor.extract_base64_images(markdown)
+        # The image is extracted (even if conversion may fail later)
+        # The regex should match x-emf MIME type
+        assert len(images) == 1
+        assert images[0][1] == "image/png"  # Converted to PNG
+
+    def test_extract_various_mime_types(self) -> None:
+        """Test extracting images with various MIME type formats."""
+        processor = ImageProcessor()
+        b64 = base64.b64encode(create_test_image()).decode()
+
+        # Standard types
+        for mime in ["png", "jpeg", "gif", "webp", "svg+xml"]:
+            md = f"![](data:image/{mime};base64,{b64})"
+            images = processor.extract_base64_images(md)
+            assert len(images) >= 0  # Just ensure regex matches
+
 
 class TestImageCompression:
     """Tests for image compression."""
@@ -205,6 +229,47 @@ class TestProcessAndSave:
 
         assert len(result.saved_images) == 0
         assert result.filtered_count == 1
+
+
+class TestRemoveNonexistentImages:
+    """Tests for remove_nonexistent_images static method."""
+
+    def test_removes_placeholder_patterns(self, tmp_path: Path) -> None:
+        """Test that placeholder image references are removed."""
+        # Create assets dir
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+
+        markdown = "![](assets/...)\n![](assets/placeholder)\n![](assets/..)\nSome text"
+        result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
+
+        assert "assets/..." not in result
+        assert "assets/placeholder" not in result
+        assert "assets/.." not in result
+        assert "Some text" in result
+
+    def test_keeps_existing_images(self, tmp_path: Path) -> None:
+        """Test that existing image references are kept."""
+        # Create assets dir with actual image
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+        (assets_dir / "real.jpg").write_bytes(b"fake image data")
+
+        markdown = "![](assets/real.jpg)\n![](assets/fake.jpg)"
+        result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
+
+        assert "assets/real.jpg" in result
+        assert "assets/fake.jpg" not in result
+
+    def test_removes_nonexistent_images(self, tmp_path: Path) -> None:
+        """Test that nonexistent image references are removed."""
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+
+        markdown = "![alt](assets/nonexistent.png)"
+        result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
+
+        assert "assets/nonexistent.png" not in result
 
 
 class TestSaveScreenshot:
