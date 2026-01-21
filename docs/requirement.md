@@ -41,9 +41,9 @@ markit ./docs -o ./output --resume
 output/                         # 输出目录
   document.docx.md              # 基础转换后的 markdown
   document.docx.llm.md          # LLM 优化后的 markdown
-  assets.desc.json              # 图片描述（使用 --desc 时）
   assets/
     document.docx.0001.png      # 提取的图片
+    assets.json                 # 图片描述（使用 --desc 时）
   sub_dir/                      # 输入的目录包含子文件夹时，按照相同的层级放置
 ```
 

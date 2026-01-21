@@ -86,7 +86,7 @@ markit tests/fixtures/file-example_PDF_500_kB.pdf --preset rich -o /tmp/markit-t
 - [ ] Base .md file created
 - [ ] LLM .llm.md file created with frontmatter
 - [ ] Images have alt text updated
-- [ ] assets.desc.json contains image descriptions
+- [ ] assets.json contains image descriptions
 - [ ] Page screenshots in assets/ (if PDF has multiple pages)
 ```
 
@@ -98,7 +98,7 @@ markit tests/fixtures/file-example_PDF_500_kB.pdf --preset standard -o /tmp/mark
 # Verify
 - [ ] .md and .llm.md files created
 - [ ] Image alt text updated
-- [ ] assets.desc.json created
+- [ ] assets.json created
 - [ ] No page screenshots (--screenshot not enabled)
 ```
 
@@ -110,7 +110,7 @@ markit tests/fixtures/file-example_PDF_500_kB.pdf --preset minimal -o /tmp/marki
 # Verify
 - [ ] Only base .md file created
 - [ ] No .llm.md file
-- [ ] No assets.desc.json
+- [ ] No assets.json
 ```
 
 ### 7. Preset Override
@@ -121,7 +121,7 @@ markit tests/fixtures/file-example_PDF_500_kB.pdf --preset rich --no-desc -o /tm
 # Verify
 - [ ] .llm.md created (from preset)
 - [ ] Alt text generated (from preset)
-- [ ] No assets.desc.json (overridden by --no-desc)
+- [ ] No assets.json (overridden by --no-desc)
 ```
 
 ---
@@ -157,7 +157,7 @@ markit tests/fixtures/file-example_PDF_500_kB.pdf --alt -o /tmp/markit-test
 markit tests/fixtures/file-example_PDF_500_kB.pdf --alt --desc -o /tmp/markit-test
 
 # Verify
-- [ ] assets.desc.json file created in output directory
+- [ ] assets.json file created in output directory
 - [ ] JSON contains: asset path, alt, desc, text, model, created
 ```
 

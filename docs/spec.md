@@ -40,7 +40,7 @@ Markit 是一个文档转 Markdown 工具，原生支持 LLM 增强。核心设�
 | 图片处理 | Pillow | >=12.1.0 | 图片压缩和格式转换 |
 | 异步 | asyncio, aiofiles | stdlib | 异步 IO 和并发处理 |
 
-**Python 版本要求**: >=3.13
+**Python 版本要求**: ==3.13.*（锁定 3.13 系列，确保依赖兼容性）
 
 ### 1.4 项目结构（Monorepo）
 
@@ -683,7 +683,7 @@ output/                              # 输出目录
 ├── assets/                          # 资源目录
 │   ├── document.docx.0001.jpg       # 提取的图片（已压缩）
 │   ├── document.docx.0002.jpg
-│   └── assets.desc.json             # 图片描述文件 (--desc)，合并模式
+│   └── assets.json                  # 图片描述文件 (--desc)，合并模式
 ├── sub_dir/                         # 子目录（保持输入目录结构）
 │   ├── file.pdf.md
 │   └── assets/
@@ -698,7 +698,7 @@ output/                              # 输出目录
 ```
 
 **目录设计说明**：
-- `assets/assets.desc.json`：采用合并模式，多次运行的描述会按源文件合并，不受 `on_conflict` 策略影响
+- `assets/assets.json`：采用合并模式，多次运行的描述会按 asset 路径合并，不受 `on_conflict` 策略影响
 - `states/`：状态文件用于断点恢复，文件名包含基于输入/输出路径计算的 hash
 - `reports/`：报告文件遵循 `on_conflict` 策略（skip/overwrite/rename）
 
@@ -709,7 +709,7 @@ output/                              # 输出目录
 | 基础 Markdown | `{原文件名}.md` | `document.docx.md` |
 | LLM Markdown | `{原文件名}.llm.md` | `document.docx.llm.md` |
 | 提取的图片 | `{原文件名}.{4位序号}.{格式}` | `document.docx.0001.jpg` |
-| 图片描述 | `assets/assets.desc.json`（合并存储） | 见下方格式说明 |
+| 图片描述 | `assets/assets.json`（合并存储） | 见下方格式说明 |
 | 状态文件 | `states/markit.{hash}.state.json` | `states/markit.a1b2c3d4e5f6.state.json` |
 | 处理报告 | `reports/markit.{hash}.report.json` | `reports/markit.a1b2c3d4e5f6.report.json` |
 
@@ -721,33 +721,29 @@ output/                              # 输出目录
 - 使用 MD5 取前 6 位十六进制字符
 - 不同参数组合会生成不同的 hash，确保不同任务的状态/报告文件相互独立
 
-**图片描述文件格式** (`assets/assets.desc.json`)：
+**图片描述文件格式** (`assets/assets.json`)：
 
 ```json
 {
   "version": "1.0",
   "created": "2026-01-18T10:30:00.000000+08:00",
   "updated": "2026-01-18T10:30:45.123456+08:00",
-  "sources": [
+  "assets": [
     {
-      "file": "/path/to/input.pdf",
-      "assets": [
-        {
-          "asset": "/path/to/output/assets/input.pdf-image-0.jpg",
-          "alt": "简短描述（用于 Markdown alt 文本）",
-          "desc": "详细描述（Markdown 格式）",
-          "text": "提取的文字内容（如有）",
-          "llm_usage": {
-            "gemini-2.5-flash-lite": {
-              "requests": 1,
-              "input_tokens": 1024,
-              "output_tokens": 256,
-              "cost_usd": 0.0005
-            }
-          },
-          "created": "2026-01-18T10:30:45.123456+00:00"
+      "asset": "/path/to/output/assets/input.pdf-image-0.jpg",
+      "source": "/path/to/input.pdf",
+      "alt": "简短描述（用于 Markdown alt 文本）",
+      "desc": "详细描述（Markdown 格式）",
+      "text": "提取的文字内容（如有）",
+      "llm_usage": {
+        "gemini-2.5-flash-lite": {
+          "requests": 1,
+          "input_tokens": 1024,
+          "output_tokens": 256,
+          "cost_usd": 0.0005
         }
-      ]
+      },
+      "created": "2026-01-18T10:30:45.123456+00:00"
     }
   ]
 }

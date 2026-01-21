@@ -199,21 +199,45 @@ def validate_path_within_base(path: Path, base_dir: Path) -> Path:
 
 
 def check_symlink_safety(path: Path, allow_symlinks: bool = False) -> None:
-    """Check if a path involves symlinks.
+    """Check if a path involves symlinks at any level.
+
+    This function checks not just the final path, but all parent directories
+    to detect nested symlinks that could be used for path traversal.
 
     Args:
         path: Path to check
         allow_symlinks: If False, raises error on symlinks
 
     Raises:
-        ValueError: If symlinks are not allowed and path is a symlink
+        ValueError: If symlinks are not allowed and any path component is a symlink
     """
+    # Check the path itself
     if path.is_symlink():
         if not allow_symlinks:
             target = path.readlink()
             raise ValueError(f"Symlink not allowed: {path} -> {target}")
         else:
             logger.warning(f"Symlink detected: {path} -> {path.readlink()}")
+            return  # If symlinks allowed, no need to check further
+
+    # Check all parent directories for nested symlinks
+    if not allow_symlinks:
+        checked_parts: list[Path] = []
+        for part in path.parts:
+            checked_parts.append(
+                Path(part) if not checked_parts else checked_parts[-1] / part
+            )
+            current_path = checked_parts[-1]
+            # Only check if path exists and is absolute enough to be meaningful
+            if (
+                len(checked_parts) > 1
+                and current_path.exists()
+                and current_path.is_symlink()
+            ):
+                target = current_path.readlink()
+                raise ValueError(
+                    f"Nested symlink not allowed: {current_path} -> {target} (in path {path})"
+                )
 
 
 def sanitize_error_message(error: Exception) -> str:

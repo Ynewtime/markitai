@@ -11,7 +11,6 @@ If Chinese → title/description/tags 必须使用中文。
 - source: {source}
 - description: 全文摘要（100字以内）
 - tags: 相关标签数组（3-5个）
-- markit_processed: {timestamp}
 
 【输出要求】
 - 直接输出纯 YAML，不要包裹在代码块中

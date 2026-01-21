@@ -44,8 +44,8 @@ output/
 ├── document.docx.md        # 基础 Markdown
 ├── document.docx.llm.md    # LLM 优化版
 ├── assets/
-│   └── document.docx.0001.jpg
-└── assets.desc.json        # 图片描述
+│   ├── document.docx.0001.jpg
+│   └── assets.json         # 图片描述
 ```
 
 ## 配置
