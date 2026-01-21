@@ -69,15 +69,17 @@ class TestPromptManager:
         assert "my content" in prompt
         assert "test.docx" in prompt
 
-    def test_timestamp_variable(self) -> None:
-        """Test automatic timestamp variable."""
+    def test_source_variable_in_frontmatter(self) -> None:
+        """Test source variable substitution in frontmatter prompt."""
         manager = PromptManager()
 
         prompt = manager.get_prompt("frontmatter", content="test", source="test.txt")
 
-        # Timestamp should be ISO format with 'T'
-        # The prompt template uses {timestamp}
-        assert "markit_processed" in prompt or "timestamp" in prompt.lower()
+        # Source should be substituted in the prompt
+        assert "test.txt" in prompt
+        # Prompt should contain frontmatter field instructions
+        assert "title" in prompt
+        assert "description" in prompt
 
     def test_custom_prompt_from_config(self, tmp_path: Path) -> None:
         """Test loading custom prompt from config path."""

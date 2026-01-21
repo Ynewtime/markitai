@@ -307,6 +307,15 @@ class BatchProcessor:
         # Collect image analysis results for JSON aggregation
         self.image_analysis_results: list[ImageAnalysisResult] = []
 
+        # Live display state (managed by start_live_display/stop_live_display)
+        self._live: Live | None = None
+        self._log_panel: LogPanel | None = None
+        self._panel_handler_id: int | None = None
+        self._console_handler_id: int | None = None
+        self._verbose: bool = False
+        self._progress: Progress | None = None
+        self._overall_task_id: Any | None = None
+
     def _compute_task_hash(self) -> str:
         """Compute hash from task input parameters.
 
@@ -373,6 +382,112 @@ class BatchProcessor:
                 if not new_path.exists():
                     return new_path
                 seq += 1
+
+    def start_live_display(
+        self,
+        verbose: bool = False,
+        console_handler_id: int | None = None,
+        total_files: int = 0,
+    ) -> None:
+        """Start Live display with progress bar and optional log panel.
+
+        Call this before any processing (including pre-conversion) to capture
+        all logs in the panel instead of printing to console.
+
+        Args:
+            verbose: Whether to show log panel
+            console_handler_id: Loguru console handler ID to disable
+            total_files: Total number of files (for progress bar)
+        """
+
+        self._verbose = verbose
+        self._console_handler_id = console_handler_id
+
+        # Create progress display
+        self._progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.fields[filename]:<30}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+        )
+        self._overall_task_id = self._progress.add_task(
+            "Overall",
+            total=total_files,
+            filename="[Overall Progress]",
+        )
+
+        # Create log panel for verbose mode
+        if verbose:
+            self._log_panel = LogPanel()
+
+            def panel_sink(message: Any) -> None:
+                """Sink function to write logs to the panel."""
+                if self._log_panel is not None:
+                    self._log_panel.add(message.record["message"])
+
+            # Add a handler that writes to the log panel
+            self._panel_handler_id = logger.add(
+                panel_sink,
+                level="INFO",
+                format="{message}",
+                filter=lambda record: record["level"].no >= 20,  # INFO and above
+            )
+
+        # Disable console handler to avoid conflict with progress bar
+        if console_handler_id is not None:
+            try:
+                logger.remove(console_handler_id)
+            except ValueError:
+                pass  # Handler already removed
+
+        # Start Live display
+        if verbose and self._log_panel is not None:
+            display = Group(self._progress, self._log_panel)
+            self._live = Live(display, console=self.console, refresh_per_second=4)
+        else:
+            self._live = Live(
+                self._progress, console=self.console, refresh_per_second=4
+            )
+
+        self._live.start()
+
+    def stop_live_display(self) -> None:
+        """Stop Live display and restore console handler."""
+        import sys
+
+        # Stop Live display
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
+
+        # Remove panel handler if added
+        if self._panel_handler_id is not None:
+            try:
+                logger.remove(self._panel_handler_id)
+            except ValueError:
+                pass
+            self._panel_handler_id = None
+
+        # Re-add console handler (restore original state)
+        if self._console_handler_id is not None:
+            new_handler_id = logger.add(
+                sys.stderr,
+                level="DEBUG" if self._verbose else "INFO",
+                format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+            )
+            self._restored_console_handler_id = new_handler_id
+            self._console_handler_id = None
+
+    def update_progress_total(self, total: int) -> None:
+        """Update progress bar total after file discovery."""
+        if self._progress is not None and self._overall_task_id is not None:
+            self._progress.update(self._overall_task_id, total=total)
+
+    def advance_progress(self) -> None:
+        """Advance progress bar by one."""
+        if self._progress is not None and self._overall_task_id is not None:
+            self._progress.advance(self._overall_task_id)
 
     def discover_files(
         self,
@@ -637,6 +752,7 @@ class BatchProcessor:
             options: Task options to record in report
             verbose: Whether to show log panel during processing
             console_handler_id: Loguru console handler ID for temporary disable
+                               (ignored if start_live_display was already called)
             started_at: ISO timestamp when processing started (for accurate duration)
 
         Returns:
@@ -674,40 +790,48 @@ class BatchProcessor:
         # Create semaphore for concurrency control
         semaphore = asyncio.Semaphore(self.config.concurrency)
 
-        # Create progress display
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold blue]{task.fields[filename]:<30}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeElapsedColumn(),
-        )
+        # Check if Live display was already started by caller
+        live_already_started = self._live is not None
 
-        overall_task = progress.add_task(
-            "Overall",
-            total=len(files),
-            filename="[Overall Progress]",
-        )
-
-        # Create log panel for verbose mode
-        log_panel: LogPanel | None = None
-        panel_handler_id: int | None = None
-
-        if verbose:
-            log_panel = LogPanel()
-
-            def panel_sink(message: Any) -> None:
-                """Sink function to write logs to the panel."""
-                if log_panel is not None:
-                    log_panel.add(message.record["message"])
-
-            # Add a handler that writes to the log panel
-            panel_handler_id = logger.add(
-                panel_sink,
-                level="INFO",
-                format="{message}",
-                filter=lambda record: record["level"].no >= 20,  # INFO and above
+        # Use existing progress or create new one
+        if live_already_started and self._progress is not None:
+            progress = self._progress
+            overall_task = self._overall_task_id
+            # Update total in case it changed
+            progress.update(overall_task, total=len(files))
+            log_panel = self._log_panel
+        else:
+            # Create progress display (legacy path for backwards compatibility)
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.fields[filename]:<30}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeElapsedColumn(),
             )
+            overall_task = progress.add_task(
+                "Overall",
+                total=len(files),
+                filename="[Overall Progress]",
+            )
+            log_panel = None
+
+            # Create log panel for verbose mode (if not already created)
+            if verbose:
+                log_panel = LogPanel()
+
+                def panel_sink(message: Any) -> None:
+                    """Sink function to write logs to the panel."""
+                    if log_panel is not None:
+                        log_panel.add(message.record["message"])
+
+                # Add a handler that writes to the log panel
+                self._panel_handler_id = logger.add(
+                    panel_sink,
+                    level="INFO",
+                    format="{message}",
+                    filter=lambda record: record["level"].no >= 20,  # INFO and above
+                )
 
         async def process_with_limit(file_path: Path) -> None:
             """Process a file with semaphore limit.
@@ -765,44 +889,50 @@ class BatchProcessor:
             # Use asyncio.to_thread to avoid blocking the event loop
             await asyncio.to_thread(self.save_state)
 
-        # Run with live progress display
-        # Disable console handler to avoid conflict with progress bar
-        # (file logging continues to work)
-        if console_handler_id is not None:
-            try:
-                logger.remove(console_handler_id)
-            except ValueError:
-                pass  # Handler already removed
-
-        try:
-            if verbose and log_panel is not None:
-                # Verbose mode: show progress + log panel
-                display = Group(progress, log_panel)
-                with Live(display, console=self.console, refresh_per_second=4):
-                    tasks = [process_with_limit(f) for f in files]
-                    await asyncio.gather(*tasks, return_exceptions=True)
-            else:
-                # Normal mode: progress bar only
-                with Live(progress, console=self.console, refresh_per_second=4):
-                    tasks = [process_with_limit(f) for f in files]
-                    await asyncio.gather(*tasks, return_exceptions=True)
-        finally:
-            # Remove panel handler if added
-            if panel_handler_id is not None:
-                try:
-                    logger.remove(panel_handler_id)
-                except ValueError:
-                    pass
-
-            # Re-add console handler (restore original state)
+        # If Live display was already started, just run the tasks without creating new Live
+        if live_already_started:
+            tasks = [process_with_limit(f) for f in files]
+            await asyncio.gather(*tasks, return_exceptions=True)
+        else:
+            # Legacy path: create Live display here (for backwards compatibility)
+            # Disable console handler to avoid conflict with progress bar
             if console_handler_id is not None:
-                import sys
+                try:
+                    logger.remove(console_handler_id)
+                except ValueError:
+                    pass  # Handler already removed
 
-                logger.add(
-                    sys.stderr,
-                    level="DEBUG" if verbose else "INFO",
-                    format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
-                )
+            try:
+                if verbose and log_panel is not None:
+                    # Verbose mode: show progress + log panel
+                    display = Group(progress, log_panel)
+                    with Live(display, console=self.console, refresh_per_second=4):
+                        tasks = [process_with_limit(f) for f in files]
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                else:
+                    # Normal mode: progress bar only
+                    with Live(progress, console=self.console, refresh_per_second=4):
+                        tasks = [process_with_limit(f) for f in files]
+                        await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                # Remove panel handler if added (only in legacy path)
+                if self._panel_handler_id is not None:
+                    try:
+                        logger.remove(self._panel_handler_id)
+                    except ValueError:
+                        pass
+                    self._panel_handler_id = None
+
+                # Re-add console handler (restore original state)
+                if console_handler_id is not None:
+                    import sys
+
+                    new_handler_id = logger.add(
+                        sys.stderr,
+                        level="DEBUG" if verbose else "INFO",
+                        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+                    )
+                    self._restored_console_handler_id = new_handler_id
 
         # Final save
         self.save_state(force=True)
@@ -888,4 +1018,4 @@ class BatchProcessor:
         if failed:
             self.console.print("\n[red]Failed files:[/red]")
             for f in failed:
-                self.console.print(f"  - {Path(f.path).name}: {f.error}")
+                self.console.print(f" - {Path(f.path).name}: {f.error}")

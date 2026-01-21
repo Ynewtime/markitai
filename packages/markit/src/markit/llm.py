@@ -24,7 +24,9 @@ from litellm.exceptions import (
 )
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.router import Router
+from litellm.types.llms.openai import AllMessageValues
 from loguru import logger
+from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
@@ -76,6 +78,29 @@ def get_model_max_output_tokens(model: str) -> int:
     except Exception:
         pass
     return DEFAULT_MAX_OUTPUT_TOKENS
+
+
+def _context_display_name(context: str) -> str:
+    """Extract display name from context for logging.
+
+    Converts full paths to filenames while preserving suffixes like ':images'.
+    Examples:
+        'C:/path/to/file.pdf:images' -> 'file.pdf:images'
+        'file.pdf' -> 'file.pdf'
+        '' -> ''
+    """
+    if not context:
+        return context
+    # Split context into path part and suffix (e.g., ':images')
+    if (
+        ":" in context and context[1:3] != ":\\"
+    ):  # Avoid splitting Windows drive letters
+        # Find the last colon that's not part of a Windows path
+        parts = context.rsplit(":", 1)
+        if len(parts) == 2 and not parts[1].startswith("\\"):
+            path_part, suffix = parts
+            return f"{Path(path_part).name}:{suffix}"
+    return Path(context).name
 
 
 class MarkitLLMLogger(CustomLogger):
@@ -1091,10 +1116,9 @@ class LLMProcessor:
                             f"status={status_code}"
                         )
 
-                    # TODO: litellm 类型定义问题，messages 应为 list[AllMessageValues]
                     response = await active_router.acompletion(
                         model=model,
-                        messages=messages,  # type: ignore[arg-type]
+                        messages=cast(list[AllMessageValues], messages),
                         metadata={"call_id": call_id, "attempt": attempt},
                     )
 
@@ -1117,12 +1141,34 @@ class LLMProcessor:
                         actual_model, input_tokens, output_tokens, cost, context
                     )
 
-                    # Log success
+                    # Log result
                     logger.info(
                         f"[LLM:{call_id}] {actual_model} "
                         f"tokens={input_tokens}+{output_tokens} "
                         f"time={elapsed_ms:.0f}ms cost=${cost:.6f}"
                     )
+
+                    # Detect empty response (0 output tokens with substantial input)
+                    # This usually indicates a model failure that should be retried
+                    if output_tokens == 0 and input_tokens > 100:
+                        if attempt < max_retries:
+                            logger.warning(
+                                f"[LLM:{call_id}] Empty response (0 output tokens), "
+                                f"retrying with different model..."
+                            )
+                            # Treat as retryable error
+                            await asyncio.sleep(
+                                min(
+                                    DEFAULT_RETRY_BASE_DELAY * (2**attempt),
+                                    DEFAULT_RETRY_MAX_DELAY,
+                                )
+                            )
+                            continue
+                        else:
+                            logger.error(
+                                f"[LLM:{call_id}] Empty response after {max_retries + 1} "
+                                f"attempts, returning empty content"
+                            )
 
                     return LLMResponse(
                         content=content,
@@ -1758,14 +1804,18 @@ class LLMProcessor:
         cached = self._cache.get(cache_key, content)
         if cached is not None:
             self._cache_hits += 1
-            logger.debug(f"[{context}] Memory cache hit for clean_markdown")
+            logger.debug(
+                f"[{_context_display_name(context)}] Memory cache hit for clean_markdown"
+            )
             return cached
 
         # 2. Check persistent cache (cross-session)
         cached = self._persistent_cache.get(cache_key, content)
         if cached is not None:
             self._cache_hits += 1
-            logger.debug(f"[{context}] Persistent cache hit for clean_markdown")
+            logger.debug(
+                f"[{_context_display_name(context)}] Persistent cache hit for clean_markdown"
+            )
             # Also populate in-memory cache for faster subsequent access
             self._cache.set(cache_key, content, cached)
             return cached
@@ -1996,8 +2046,9 @@ class LLMProcessor:
         max_concurrent_batches = min(self.config.concurrency, num_batches)
         batch_semaphore = asyncio.Semaphore(max_concurrent_batches)
 
+        display_name = _context_display_name(context)
         logger.info(
-            f"[{context}] Analyzing {len(image_paths)} images in "
+            f"[{display_name}] Analyzing {len(image_paths)} images in "
             f"{num_batches} batches (max {max_concurrent_batches} concurrent)"
         )
 
@@ -2012,7 +2063,7 @@ class LLMProcessor:
                     return (batch_num, results)
                 except Exception as e:
                     logger.warning(
-                        f"[{context}] Batch {batch_num + 1}/{num_batches} failed: {e}"
+                        f"[{display_name}] Batch {batch_num + 1}/{num_batches} failed: {e}"
                     )
                     # Return empty results with placeholder for failed images
                     return (
@@ -2040,7 +2091,7 @@ class LLMProcessor:
                 batch_results.append(result)
             except Exception as e:
                 # Find which batch failed by checking tasks
-                logger.error(f"[{context}] Batch processing error: {e}")
+                logger.error(f"[{display_name}] Batch processing error: {e}")
 
         # Sort by batch number and flatten results
         batch_results_sorted = sorted(batch_results, key=lambda x: x[0])
@@ -2093,14 +2144,17 @@ class LLMProcessor:
                 uncached_indices.append(i)
 
         # If all images are cached, return cached results
+        display_name = _context_display_name(context)
         if not uncached_indices:
-            logger.info(f"[{context}] All {len(image_paths)} images found in cache")
+            logger.info(
+                f"[{display_name}] All {len(image_paths)} images found in cache"
+            )
             return [cached_results[i] for i in range(len(image_paths))]
 
         # Only process uncached images
         uncached_paths = [image_paths[i] for i in uncached_indices]
         logger.debug(
-            f"[{context}] Cache: {len(cached_results)} hits, "
+            f"[{display_name}] Cache: {len(cached_results)} hits, "
             f"{len(uncached_indices)} misses"
         )
 
@@ -2155,10 +2209,12 @@ class LLMProcessor:
                 (
                     response,
                     raw_response,
-                    # TODO: instructor 类型定义问题，messages 应为 list[ChatCompletionMessageParam]
                 ) = await client.chat.completions.create_with_completion(
                     model="default",
-                    messages=[{"role": "user", "content": content_parts}],  # type: ignore[arg-type]
+                    messages=cast(
+                        list[ChatCompletionMessageParam],
+                        [{"role": "user", "content": content_parts}],
+                    ),
                     response_model=BatchImageAnalysisResult,
                     max_retries=0,
                 )
@@ -2348,13 +2404,12 @@ class LLMProcessor:
             )
 
             # Use create_with_completion to get both the model and the raw response
-            # TODO: instructor 类型定义问题，messages 应为 list[ChatCompletionMessageParam]
             (
                 response,
                 raw_response,
             ) = await client.chat.completions.create_with_completion(
                 model=model,
-                messages=messages,  # type: ignore[arg-type]
+                messages=cast(list[ChatCompletionMessageParam], messages),
                 response_model=ImageAnalysisResult,
                 max_retries=0,
             )
@@ -2424,10 +2479,9 @@ class LLMProcessor:
         }
 
         async with self.semaphore:
-            # TODO: litellm 类型定义问题，messages 应为 list[AllMessageValues]
             response = await self.router.acompletion(
                 model=model,
-                messages=json_messages,  # type: ignore[arg-type]
+                messages=cast(list[AllMessageValues], json_messages),
                 response_format={"type": "json_object"},
             )
 
@@ -2673,7 +2727,7 @@ class LLMProcessor:
         cached = self._persistent_cache.get(cache_key, cache_content)
         if cached is not None:
             logger.debug(
-                f"[{context}] Persistent cache hit for enhance_document_with_vision"
+                f"[{_context_display_name(context)}] Persistent cache hit for enhance_document_with_vision"
             )
             return cached
 
@@ -2889,13 +2943,15 @@ class LLMProcessor:
             client = instructor.from_litellm(
                 self.vision_router.acompletion, mode=instructor.Mode.JSON
             )
-            # TODO: instructor 类型定义问题，messages 应为 list[ChatCompletionMessageParam]
             (
                 response,
                 raw_response,
             ) = await client.chat.completions.create_with_completion(
                 model="default",
-                messages=[{"role": "user", "content": content_parts}],  # type: ignore[arg-type]
+                messages=cast(
+                    list[ChatCompletionMessageParam],
+                    [{"role": "user", "content": content_parts}],
+                ),
                 response_model=EnhancedDocumentResult,
                 max_retries=0,
             )
@@ -3317,11 +3373,24 @@ class LLMProcessor:
         """
         from datetime import datetime
 
+        import yaml
+
+        from markit.workflow.helpers import normalize_frontmatter
+
         frontmatter = self._clean_frontmatter(frontmatter)
+
+        # Parse frontmatter to dict, add timestamp, then normalize
+        try:
+            frontmatter_dict = yaml.safe_load(frontmatter) or {}
+        except yaml.YAMLError:
+            frontmatter_dict = {}
 
         # Add markit_processed timestamp (use local time)
         timestamp = datetime.now().astimezone().isoformat()
-        frontmatter = f"{frontmatter}\nmarkit_processed: {timestamp}"
+        frontmatter_dict["markit_processed"] = timestamp
+
+        # Normalize to ensure consistent field order
+        frontmatter = normalize_frontmatter(frontmatter_dict)
 
         # Remove non-commented screenshot references that shouldn't be in content
         # These are page screenshots that should only appear as comments at the end

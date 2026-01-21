@@ -123,7 +123,9 @@ class TestConfigManager:
 
         assert config.output.dir == "./custom_output"
 
-    def test_get_nested_value(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_get_nested_value(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test getting nested configuration values."""
         # Change to tmp_path to avoid loading project's markit.json
         monkeypatch.chdir(tmp_path)

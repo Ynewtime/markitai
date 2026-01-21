@@ -1,5 +1,10 @@
 """Converter modules for various document formats."""
 
+# Apply compatibility patches before importing converters
+from markit.converter._patches import apply_all_patches
+
+apply_all_patches()
+
 from markit.converter.base import (
     BaseConverter,
     ConvertResult,

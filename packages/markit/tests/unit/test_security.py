@@ -127,6 +127,37 @@ class TestCheckSymlinkSafety:
         # Should not raise, just warn
         check_symlink_safety(link, allow_symlinks=True)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Symlink creation requires admin privileges on Windows",
+    )
+    def test_nested_symlink_not_allowed(self, tmp_path: Path) -> None:
+        """Test nested symlink in parent directory is detected."""
+        # Create: tmp_path/real_dir/file.txt
+        real_dir = tmp_path / "real_dir"
+        real_dir.mkdir()
+        real_file = real_dir / "file.txt"
+        real_file.touch()
+
+        # Create symlink directory: tmp_path/link_dir -> tmp_path/real_dir
+        link_dir = tmp_path / "link_dir"
+        link_dir.symlink_to(real_dir)
+
+        # Access file through symlink: tmp_path/link_dir/file.txt
+        nested_path = link_dir / "file.txt"
+
+        with pytest.raises(ValueError, match="Nested symlink not allowed"):
+            check_symlink_safety(nested_path, allow_symlinks=False)
+
+    def test_regular_nested_path(self, tmp_path: Path) -> None:
+        """Test deeply nested regular paths pass check."""
+        deep_path = tmp_path / "a" / "b" / "c" / "d" / "file.txt"
+        deep_path.parent.mkdir(parents=True)
+        deep_path.touch()
+
+        # Should not raise
+        check_symlink_safety(deep_path, allow_symlinks=False)
+
 
 class TestSanitizeErrorMessage:
     """Tests for sanitize_error_message function."""

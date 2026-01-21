@@ -58,7 +58,7 @@ from markit.workflow.helpers import (
     merge_llm_usage as _merge_llm_usage,
 )
 from markit.workflow.helpers import (
-    write_assets_desc_json,
+    write_assets_json,
 )
 from markit.workflow.single import ImageAnalysisResult
 
@@ -1305,7 +1305,7 @@ async def process_single_file(
 
         # Write image descriptions (single file)
         if img_analysis and cfg.image.desc_enabled:
-            write_assets_desc_json(output_dir, [img_analysis])
+            write_assets_json(output_dir, [img_analysis])
 
         # Generate report with token usage
         finished_at = datetime.now()
@@ -1871,6 +1871,14 @@ async def process_batch(
 
     batch_started_at = datetime.now().astimezone().isoformat()
 
+    # Start Live display early to capture all logs (including pre-conversion)
+    # This ensures all INFO+ logs go to the panel instead of console
+    batch.start_live_display(
+        verbose=verbose,
+        console_handler_id=console_handler_id,
+        total_files=len(files),
+    )
+
     # Pre-convert legacy Office files using batch COM (Windows only)
     # This reduces overhead by starting each Office app only once
     legacy_suffixes = {".doc", ".ppt", ".xls"}
@@ -2303,10 +2311,14 @@ async def process_batch(
             resume=resume,
             options=task_options,
             verbose=verbose,
-            console_handler_id=console_handler_id,
+            # console_handler_id already handled by start_live_display
             started_at=batch_started_at,
         )
     finally:
+        # Stop Live display and restore console handler
+        # This must be done before printing summary
+        batch.stop_live_display()
+
         # Clean up pre-conversion temp directory
         if preconvert_temp_dir is not None:
             preconvert_temp_dir.cleanup()
@@ -2316,7 +2328,7 @@ async def process_batch(
 
     # Write aggregated image analysis JSON (if any)
     if batch.image_analysis_results and cfg.image.desc_enabled:
-        write_assets_desc_json(output_dir, batch.image_analysis_results)
+        write_assets_json(output_dir, batch.image_analysis_results)
 
     # Save report (logging is done inside save_report)
     batch.save_report()
