@@ -1,107 +1,119 @@
 # Markitai
 
-开箱即用的 Markdown 转换器，原生支持 LLM 增强。
+Opinionated Markdown converter with native LLM enhancement support.
 
-## 特性
+## Features
 
-- **多格式支持** - DOCX/DOC, PPTX/PPT, XLSX/XLS, PDF, TXT, MD, JPG/PNG/WebP, URLs
-- **LLM 增强** - 格式清洗、元数据生成、图片分析
-- **批量处理** - 并发转换、断点恢复、进度显示
-- **OCR 识别** - 扫描版 PDF 和图片文字提取
-- **URL 转换** - 直接转换网页，支持 SPA 浏览器渲染
+- **Multi-format Support** - DOCX/DOC, PPTX/PPT, XLSX/XLS, PDF, TXT, MD, JPG/PNG/WebP, URLs
+- **LLM Enhancement** - Format cleaning, metadata generation, image analysis
+- **Batch Processing** - Concurrent conversion, resume capability, progress display
+- **OCR Recognition** - Text extraction from scanned PDFs and images
+- **URL Conversion** - Direct webpage conversion with SPA browser rendering support
 
-## 安装
+## Installation
+
+### One-Click Setup (Recommended)
 
 ```bash
-# 需要 Python 3.11+
-uv add markitai
+# Linux/macOS
+curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 
-# 或使用 pip
-pip install markitai
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
 ```
 
-## 快速开始
+### Manual Installation
 
 ```bash
-# 基础转换
+# Requires Python 3.11+
+uv tool install markitai
+
+# Or using pip
+pip install --user markitai
+```
+
+## Quick Start
+
+```bash
+# Basic conversion
 markitai document.docx
 
-# URL 转换
+# URL conversion
 markitai https://example.com/article
 
-# LLM 增强
+# LLM enhancement
 markitai document.docx --llm
 
-# 使用预设
+# Using presets
 markitai document.pdf --preset rich      # LLM + alt + desc + screenshot
 markitai document.pdf --preset standard  # LLM + alt + desc
-markitai document.pdf --preset minimal   # 仅基础转换
+markitai document.pdf --preset minimal   # Basic conversion only
 
-# 批量处理
+# Batch processing
 markitai ./docs -o ./output
 
-# 断点恢复
+# Resume interrupted job
 markitai ./docs -o ./output --resume
 
-# URL 批量处理（自动识别 .urls 文件）
+# Batch URL processing (auto-detect .urls files)
 markitai urls.urls -o ./output
 ```
 
-## 输出结构
+## Output Structure
 
 ```
 output/
-├── document.docx.md        # 基础 Markdown
-├── document.docx.llm.md    # LLM 优化版
+├── document.docx.md        # Basic Markdown
+├── document.docx.llm.md    # LLM-enhanced version
 ├── assets/
 │   ├── document.docx.0001.jpg
-│   └── images.json         # 图片描述
-├── screenshots/            # 页面截图（--screenshot 时）
+│   └── images.json         # Image descriptions
+├── screenshots/            # Page screenshots (with --screenshot)
 │   └── example_com.full.jpg
 ```
 
-## 配置
+## Configuration
 
-优先级：命令行 > 环境变量 > 配置文件 > 默认值
+Priority: CLI arguments > Environment variables > Config file > Defaults
 
 ```bash
-# 查看配置
+# View configuration
 markitai config list
 
-# 初始化配置文件
+# Initialize config file
 markitai config init -o .
 
-# 查看缓存状态
+# View cache status
 markitai cache stats
 
-# 清理缓存
+# Clear cache
 markitai cache clear
 ```
 
-配置文件路径：`./markitai.json` 或 `~/.markitai/config.json`
+Config file location: `./markitai.json` or `~/.markitai/config.json`
 
-## 环境变量
+## Environment Variables
 
-| 变量 | 说明 |
-|------|------|
+| Variable | Description |
+|----------|-------------|
 | `OPENAI_API_KEY` | OpenAI API Key |
 | `GEMINI_API_KEY` | Google Gemini API Key |
 | `DEEPSEEK_API_KEY` | DeepSeek API Key |
 | `ANTHROPIC_API_KEY` | Anthropic API Key |
-| `JINA_API_KEY` | Jina Reader API Key（URL 转换） |
+| `JINA_API_KEY` | Jina Reader API Key (URL conversion) |
 
-## 依赖
+## Dependencies
 
-- [pymupdf4llm](https://github.com/pymupdf/RAG) - PDF 转换
-- [markitdown](https://github.com/microsoft/markitdown) - Office 文档和 URL 转换
-- [LiteLLM](https://github.com/BerriAI/litellm) - LLM 网关
-- [RapidOCR](https://github.com/RapidAI/RapidOCR) - OCR 识别
+- [pymupdf4llm](https://github.com/pymupdf/RAG) - PDF conversion
+- [markitdown](https://github.com/microsoft/markitdown) - Office documents and URL conversion
+- [LiteLLM](https://github.com/BerriAI/litellm) - LLM gateway
+- [RapidOCR](https://github.com/RapidAI/RapidOCR) - OCR recognition
 
-## 文档
+## Documentation
 
-- [快速开始](https://ynewtime.github.io/markitai/guide/getting-started)
-- [配置说明](https://ynewtime.github.io/markitai/guide/configuration)
-- [CLI 命令参考](https://ynewtime.github.io/markitai/guide/cli)
+- [Getting Started](https://markitai.ynewtime.com/guide/getting-started)
+- [Configuration](https://markitai.ynewtime.com/guide/configuration)
+- [CLI Reference](https://markitai.ynewtime.com/guide/cli)
 
 ## License
 
