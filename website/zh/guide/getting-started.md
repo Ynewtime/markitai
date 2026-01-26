@@ -30,12 +30,34 @@ agent-browser install --with-deps  # Linux: 同时安装系统依赖
 
 ## 安装
 
+### 一键安装（推荐）
+
+运行安装脚本，自动安装 Python、UV 和 markitai：
+
+::: code-group
+```bash [Linux/macOS]
+curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
+```
+
+```powershell [Windows]
+irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
+```
+:::
+
+脚本会：
+- 检测 Python 3.11+
+- 安装 [uv](https://docs.astral.sh/uv/) 包管理器（需要确认）
+- 安装 markitai 及所有可选依赖
+- 可选安装 `agent-browser` 用于浏览器自动化
+
+### 手动安装
+
 ```bash
 # 使用 uv（推荐）
-uv add markitai
+uv tool install markitai
 
 # 或使用 pip
-pip install markitai
+pip install --user markitai
 ```
 
 ## 快速上手

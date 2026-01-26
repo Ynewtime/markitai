@@ -53,7 +53,7 @@ def apply_pptx_patches() -> None:
     """
     # Check if lxml is available
     try:
-        from lxml import etree
+        from lxml import etree  # type: ignore[import-not-found]
     except ImportError:
         return  # lxml not installed
 

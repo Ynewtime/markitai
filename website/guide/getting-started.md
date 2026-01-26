@@ -30,12 +30,34 @@ Then use `--agent-browser` flag to enable browser rendering.
 
 ## Installation
 
+### One-Click Setup (Recommended)
+
+Run the setup script to automatically install Python, UV, and markitai:
+
+::: code-group
+```bash [Linux/macOS]
+curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
+```
+
+```powershell [Windows]
+irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
+```
+:::
+
+The script will:
+- Check for Python 3.11+
+- Install [uv](https://docs.astral.sh/uv/) package manager (with your permission)
+- Install markitai with all optional dependencies
+- Optionally install `agent-browser` for browser automation
+
+### Manual Installation
+
 ```bash
 # Using uv (recommended)
-uv add markitai
+uv tool install markitai
 
 # Or using pip
-pip install markitai
+pip install --user markitai
 ```
 
 ## Quick Start

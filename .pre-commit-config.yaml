@@ -8,6 +8,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: sync-readme
+        name: sync README to package
+        entry: bash -c 'cp README.md packages/markitai/README.md && git add packages/markitai/README.md'
+        language: system
+        files: ^README\.md$
+        pass_filenames: false
+
       - id: pyright
         name: pyright
         entry: uv run pyright

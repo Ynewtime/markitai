@@ -3,7 +3,25 @@ name = "markitai"
 version = "0.3.0"
 description = "Document to Markdown converter with LLM enhancement"
 license = "MIT"
+readme = "README.md"
 requires-python = ">=3.11"
+authors = [
+    { name = "Ynewtime", email = "longqiliuye@gmail.com" }
+]
+keywords = ["markdown", "converter", "llm", "pdf", "docx", "ocr"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing :: Markup :: Markdown",
+    "Topic :: Utilities",
+]
 dependencies = [
     "pymupdf4llm>=0.2.9",
     "markitdown[all]>=0.1.4",
@@ -20,8 +38,17 @@ dependencies = [
     "pywin32>=310; sys_platform == 'win32'",
 ]
 
+[project.urls]
+Homepage = "https://markitai.ynewtime.com"
+Documentation = "https://markitai.ynewtime.com/guide/getting-started"
+Repository = "https://github.com/Ynewtime/markitai"
+Changelog = "https://github.com/Ynewtime/markitai/blob/main/CHANGELOG.md"
+
 [project.scripts]
 markitai = "markitai.cli:app"
+
+[project.optional-dependencies]
+all = []
 
 [dependency-groups]
 dev = [

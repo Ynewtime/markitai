@@ -955,6 +955,7 @@ requires-dist = [
     { name = "rapidocr", specifier = ">=3.5.0" },
     { name = "rich", specifier = ">=14.2.0" },
 ]
+provides-extras = ["all"]
 
 [package.metadata.requires-dev]
 dev = [
