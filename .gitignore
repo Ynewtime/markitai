@@ -28,9 +28,6 @@ wheels/
 venv/
 ENV/
 
-# uv
-uv.lock
-
 # IDE
 .idea/
 # .vscode/
@@ -49,11 +46,12 @@ htmlcov/
 .mypy_cache/
 .pytype/
 
-# Markit output
+# Markitai output
 output/
+output-*/
 
-# Markit config (user-specific)
-markit.json
+# Markitai config (user-specific)
+markitai.json
 
 # Logs
 logs/
@@ -68,4 +66,16 @@ logs/
 .DS_Store
 Thumbs.db
 
+# SQLite cache (including WAL mode files)
 cache.db
+cache.db-wal
+cache.db-shm
+*.db-wal
+*.db-shm
+fetch_cache.db
+
+# VitePress (website)
+website/node_modules/
+website/.vitepress/cache/
+website/.vitepress/dist/
+website/changelog.md

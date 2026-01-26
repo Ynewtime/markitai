@@ -1,6 +1,6 @@
-# Markit 需求文档
+# Markitai 需求文档
 
-文档转 Markdown 工具，原生支持 LLM 增强。
+开箱即用的 Markdown 转换器，原生支持 LLM 增强。
 
 ## 原则
 
@@ -8,31 +8,49 @@
 2. **不造轮子**: 无论是功能特性还是非功能特性，开发和构建时都要严格避免重新造轮子，优先基于社区优秀依赖实现
 3. **测试驱动**: 所有特性都需要测试覆盖，除了支持程序自动执行的单元测试外，需要维护一个用于开发者和大模型进行测试的 tests/SKILL.md 文件，并将测试所需的相关脚本/输入放到 tests 目录，以方便大模型进行自动测试
 
+## 持续迭代
+
+20260126-需求规划:
+1. 对 URL/URL File 的缓存策略优化: 是否有办法根据 URL 获取到的 html 更新时间记录缓存？也即，当第一次爬取到某网页时，记录该网页的 html 更新时间（URL Header），第二次时识别到未更新则命中缓存？
+2. LLM 要支持使用 Claude 订阅或 GitHub Copilot 订阅的能力，即在处理 LLM 相关任务时，允许将任务发送到本地 Claude Code 客户端或 GitHub Copilot 客户端执行。实现上需要尽可能的在现有框架能力上迭代。
+
 ## 接口
 
 ```bash
 # 基础转换（直接打印输出结果，并默认保存到当前工作目录的 output 文件夹内）
-markit document.docx
+markitai document.docx
 
-# LLM处理（支持利用 LLM 处理基础转换后的 Markdown 文本，含格式清洗、添加带 title(文章标题)|source(输入文件名)|description(全文摘要)|markit_processed(处理时间)|tags(标签如['TAG1','TAG2']) 的 YAML frontmatter）
-markit document.docx --llm
+# URL 转换（直接转换网页）
+markitai https://example.com/article
+
+# URL 批量处理（自动识别 .urls 文件）
+markitai urls.urls -o ./output
+
+# LLM处理（支持利用 LLM 处理基础转换后的 Markdown 文本，含格式清洗、添加带 title(文章标题)|source(输入文件名)|description(全文摘要)|markitai_processed(处理时间)|tags(标签如['TAG1','TAG2']) 的 YAML frontmatter）
+markitai document.docx --llm
 
 # 使用预设（推荐方式）
-markit document.pdf --preset rich          # rich: LLM + alt + desc + screenshot
-markit document.pdf --preset rich --ocr    # 针对扫描版 PDF 可利用 OCR 能力
-markit document.pdf --preset standard      # standard: LLM + alt + desc
-markit document.pdf --preset minimal       # minimal: 仅基础转换
+markitai document.pdf --preset rich          # rich: LLM + alt + desc + screenshot
+markitai document.pdf --preset rich --ocr    # 针对扫描版 PDF 可利用 OCR 能力
+markitai document.pdf --preset standard      # standard: LLM + alt + desc
+markitai document.pdf --preset minimal       # minimal: 仅基础转换
 
 # 图片分析（生成 ![alt](相对输出Markdown的图片路径) 中的 alt 文本 + 生成图片描述 JSON）
-markit document.pdf --alt                    # 仅生成 alt 文本
-markit document.pdf --alt --desc             # alt 文本 + 描述文件
-markit document.pdf --preset rich --no-desc  # 预设可与单独参数组合
+markitai document.pdf --alt                    # 仅生成 alt 文本
+markitai document.pdf --alt --desc             # alt 文本 + 描述文件
+markitai document.pdf --preset rich --no-desc  # 预设可与单独参数组合
 
 # 批量转换（默认输出到当前工作目录的 output 文件夹内，多次执行采用重命名机制，不覆盖原有的文件，也可以通过 -o 指定输出目录）
-markit ./docs
+markitai ./docs
 
 # 恢复中断的批处理
-markit ./docs -o ./output --resume
+markitai ./docs -o ./output --resume
+
+# 缓存控制
+markitai ./docs --llm --no-cache               # 全局禁用缓存读取
+markitai ./docs --llm --no-cache-for "*.pdf"   # 仅对 PDF 禁用缓存
+markitai cache stats                           # 查看缓存统计
+markitai cache clear                           # 清理缓存
 ```
 
 ### 输出结构
@@ -43,7 +61,9 @@ output/                         # 输出目录
   document.docx.llm.md          # LLM 优化后的 markdown
   assets/
     document.docx.0001.png      # 提取的图片
-    assets.json                 # 图片描述（使用 --desc 时）
+    images.json                 # 图片描述（使用 --desc 时）
+  screenshots/                  # 页面截图（使用 --screenshot 时）
+    example_com.full.jpg
   sub_dir/                      # 输入的目录包含子文件夹时，按照相同的层级放置
 ```
 

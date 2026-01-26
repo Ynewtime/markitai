@@ -1,0 +1,748 @@
+{
+  "$defs": {
+    "AgentBrowserConfig": {
+      "description": "agent-browser configuration for JS-rendered pages.",
+      "properties": {
+        "command": {
+          "default": "agent-browser",
+          "title": "Command",
+          "type": "string"
+        },
+        "timeout": {
+          "default": 30000,
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "wait_for": {
+          "default": "domcontentloaded",
+          "enum": [
+            "load",
+            "domcontentloaded",
+            "networkidle"
+          ],
+          "title": "Wait For",
+          "type": "string"
+        },
+        "extra_wait_ms": {
+          "default": 1000,
+          "title": "Extra Wait Ms",
+          "type": "integer"
+        },
+        "session": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session"
+        }
+      },
+      "title": "AgentBrowserConfig",
+      "type": "object"
+    },
+    "BatchConfig": {
+      "description": "Batch processing configuration.",
+      "properties": {
+        "concurrency": {
+          "default": 10,
+          "minimum": 1,
+          "title": "Concurrency",
+          "type": "integer"
+        },
+        "url_concurrency": {
+          "default": 5,
+          "minimum": 1,
+          "title": "Url Concurrency",
+          "type": "integer"
+        },
+        "state_flush_interval_seconds": {
+          "default": 10,
+          "title": "State Flush Interval Seconds",
+          "type": "integer"
+        },
+        "scan_max_depth": {
+          "default": 5,
+          "minimum": 1,
+          "title": "Scan Max Depth",
+          "type": "integer"
+        },
+        "scan_max_files": {
+          "default": 10000,
+          "minimum": 1,
+          "title": "Scan Max Files",
+          "type": "integer"
+        }
+      },
+      "title": "BatchConfig",
+      "type": "object"
+    },
+    "CacheConfig": {
+      "description": "Cache configuration.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "no_cache": {
+          "default": false,
+          "title": "No Cache",
+          "type": "boolean"
+        },
+        "no_cache_patterns": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "No Cache Patterns",
+          "type": "array"
+        },
+        "max_size_bytes": {
+          "default": 536870912,
+          "title": "Max Size Bytes",
+          "type": "integer"
+        },
+        "global_dir": {
+          "default": "~/.markitai",
+          "title": "Global Dir",
+          "type": "string"
+        }
+      },
+      "title": "CacheConfig",
+      "type": "object"
+    },
+    "FetchConfig": {
+      "description": "URL fetch configuration for handling static and JS-rendered pages.",
+      "properties": {
+        "strategy": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "static",
+            "browser",
+            "jina"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        },
+        "agent_browser": {
+          "$ref": "#/$defs/AgentBrowserConfig"
+        },
+        "jina": {
+          "$ref": "#/$defs/JinaConfig"
+        },
+        "fallback_patterns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fallback Patterns",
+          "type": "array"
+        }
+      },
+      "title": "FetchConfig",
+      "type": "object"
+    },
+    "ImageConfig": {
+      "description": "Image processing configuration.",
+      "properties": {
+        "alt_enabled": {
+          "default": false,
+          "title": "Alt Enabled",
+          "type": "boolean"
+        },
+        "desc_enabled": {
+          "default": false,
+          "title": "Desc Enabled",
+          "type": "boolean"
+        },
+        "compress": {
+          "default": true,
+          "title": "Compress",
+          "type": "boolean"
+        },
+        "quality": {
+          "default": 75,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Quality",
+          "type": "integer"
+        },
+        "format": {
+          "default": "jpeg",
+          "enum": [
+            "jpeg",
+            "png",
+            "webp"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "max_width": {
+          "default": 1920,
+          "title": "Max Width",
+          "type": "integer"
+        },
+        "max_height": {
+          "default": 99999,
+          "title": "Max Height",
+          "type": "integer"
+        },
+        "filter": {
+          "$ref": "#/$defs/ImageFilterConfig"
+        }
+      },
+      "title": "ImageConfig",
+      "type": "object"
+    },
+    "ImageFilterConfig": {
+      "description": "Image filter configuration.",
+      "properties": {
+        "min_width": {
+          "default": 50,
+          "title": "Min Width",
+          "type": "integer"
+        },
+        "min_height": {
+          "default": 50,
+          "title": "Min Height",
+          "type": "integer"
+        },
+        "min_area": {
+          "default": 5000,
+          "title": "Min Area",
+          "type": "integer"
+        },
+        "deduplicate": {
+          "default": true,
+          "title": "Deduplicate",
+          "type": "boolean"
+        }
+      },
+      "title": "ImageFilterConfig",
+      "type": "object"
+    },
+    "JinaConfig": {
+      "description": "Jina Reader API configuration.",
+      "properties": {
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Key"
+        },
+        "timeout": {
+          "default": 30,
+          "title": "Timeout",
+          "type": "integer"
+        }
+      },
+      "title": "JinaConfig",
+      "type": "object"
+    },
+    "LLMConfig": {
+      "description": "LLM configuration.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "model_list": {
+          "items": {
+            "$ref": "#/$defs/ModelConfig"
+          },
+          "title": "Model List",
+          "type": "array"
+        },
+        "router_settings": {
+          "$ref": "#/$defs/RouterSettings"
+        },
+        "concurrency": {
+          "default": 10,
+          "title": "Concurrency",
+          "type": "integer"
+        }
+      },
+      "title": "LLMConfig",
+      "type": "object"
+    },
+    "LiteLLMParams": {
+      "description": "LiteLLM parameters for a model.",
+      "properties": {
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Key"
+        },
+        "api_base": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Base"
+        },
+        "weight": {
+          "default": 1,
+          "title": "Weight",
+          "type": "integer"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tokens"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "title": "LiteLLMParams",
+      "type": "object"
+    },
+    "LogConfig": {
+      "description": "Logging configuration.",
+      "properties": {
+        "level": {
+          "default": "INFO",
+          "enum": [
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "~/.markitai/logs",
+          "title": "Dir"
+        },
+        "rotation": {
+          "default": "10 MB",
+          "title": "Rotation",
+          "type": "string"
+        },
+        "retention": {
+          "default": "7 days",
+          "title": "Retention",
+          "type": "string"
+        }
+      },
+      "title": "LogConfig",
+      "type": "object"
+    },
+    "ModelConfig": {
+      "description": "Model configuration for LiteLLM Router.",
+      "properties": {
+        "model_name": {
+          "title": "Model Name",
+          "type": "string"
+        },
+        "litellm_params": {
+          "$ref": "#/$defs/LiteLLMParams"
+        },
+        "model_info": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "model_name",
+        "litellm_params"
+      ],
+      "title": "ModelConfig",
+      "type": "object"
+    },
+    "ModelInfo": {
+      "description": "Model metadata.",
+      "properties": {
+        "supports_vision": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional. If not set, auto-detected from litellm.",
+          "title": "Supports Vision"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional. If not set, auto-detected from litellm.",
+          "title": "Max Tokens"
+        },
+        "max_input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional. If not set, auto-detected from litellm.",
+          "title": "Max Input Tokens"
+        }
+      },
+      "description": "Model metadata. All fields are optional and auto-detected from litellm if not set.",
+      "title": "ModelInfo",
+      "type": "object"
+    },
+    "OCRConfig": {
+      "description": "OCR configuration.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "lang": {
+          "default": "en",
+          "title": "Lang",
+          "type": "string"
+        }
+      },
+      "title": "OCRConfig",
+      "type": "object"
+    },
+    "OutputConfig": {
+      "description": "Output configuration.",
+      "properties": {
+        "dir": {
+          "default": "./output",
+          "title": "Dir",
+          "type": "string"
+        },
+        "on_conflict": {
+          "default": "rename",
+          "enum": [
+            "skip",
+            "overwrite",
+            "rename"
+          ],
+          "title": "On Conflict",
+          "type": "string"
+        },
+        "allow_symlinks": {
+          "default": false,
+          "title": "Allow Symlinks",
+          "type": "boolean"
+        }
+      },
+      "title": "OutputConfig",
+      "type": "object"
+    },
+    "PresetConfig": {
+      "description": "Preset configuration defining which features to enable.",
+      "properties": {
+        "llm": {
+          "default": false,
+          "title": "Llm",
+          "type": "boolean"
+        },
+        "ocr": {
+          "default": false,
+          "title": "Ocr",
+          "type": "boolean"
+        },
+        "alt": {
+          "default": false,
+          "title": "Alt",
+          "type": "boolean"
+        },
+        "desc": {
+          "default": false,
+          "title": "Desc",
+          "type": "boolean"
+        },
+        "screenshot": {
+          "default": false,
+          "title": "Screenshot",
+          "type": "boolean"
+        }
+      },
+      "title": "PresetConfig",
+      "type": "object"
+    },
+    "PromptsConfig": {
+      "description": "Prompts configuration.",
+      "properties": {
+        "dir": {
+          "default": "~/.markitai/prompts",
+          "title": "Dir",
+          "type": "string"
+        },
+        "cleaner": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cleaner"
+        },
+        "frontmatter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Frontmatter"
+        },
+        "image_caption": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Caption"
+        },
+        "image_description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Description"
+        },
+        "image_analysis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Analysis"
+        },
+        "page_content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page Content"
+        },
+        "document_enhance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Enhance"
+        },
+        "url_enhance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url Enhance"
+        }
+      },
+      "title": "PromptsConfig",
+      "type": "object"
+    },
+    "RouterSettings": {
+      "description": "LiteLLM Router settings.",
+      "properties": {
+        "routing_strategy": {
+          "default": "simple-shuffle",
+          "enum": [
+            "simple-shuffle",
+            "least-busy",
+            "usage-based-routing",
+            "latency-based-routing"
+          ],
+          "title": "Routing Strategy",
+          "type": "string"
+        },
+        "num_retries": {
+          "default": 2,
+          "title": "Num Retries",
+          "type": "integer"
+        },
+        "timeout": {
+          "default": 120,
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "fallbacks": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Fallbacks",
+          "type": "array"
+        }
+      },
+      "title": "RouterSettings",
+      "type": "object"
+    },
+    "ScreenshotConfig": {
+      "description": "Screenshot rendering configuration.\n\nFor PDF/PPTX: Renders pages as JPEG images.\nFor URLs: Captures full-page screenshots using agent-browser.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "viewport_width": {
+          "default": 1920,
+          "title": "Viewport Width",
+          "type": "integer"
+        },
+        "viewport_height": {
+          "default": 1080,
+          "title": "Viewport Height",
+          "type": "integer"
+        },
+        "quality": {
+          "default": 75,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Quality",
+          "type": "integer"
+        },
+        "max_height": {
+          "default": 10000,
+          "title": "Max Height",
+          "type": "integer"
+        }
+      },
+      "title": "ScreenshotConfig",
+      "type": "object"
+    }
+  },
+  "description": "Main configuration model.",
+  "properties": {
+    "output": {
+      "$ref": "#/$defs/OutputConfig"
+    },
+    "llm": {
+      "$ref": "#/$defs/LLMConfig"
+    },
+    "image": {
+      "$ref": "#/$defs/ImageConfig"
+    },
+    "ocr": {
+      "$ref": "#/$defs/OCRConfig"
+    },
+    "screenshot": {
+      "$ref": "#/$defs/ScreenshotConfig"
+    },
+    "prompts": {
+      "$ref": "#/$defs/PromptsConfig"
+    },
+    "batch": {
+      "$ref": "#/$defs/BatchConfig"
+    },
+    "log": {
+      "$ref": "#/$defs/LogConfig"
+    },
+    "cache": {
+      "$ref": "#/$defs/CacheConfig"
+    },
+    "fetch": {
+      "$ref": "#/$defs/FetchConfig"
+    },
+    "presets": {
+      "additionalProperties": {
+        "$ref": "#/$defs/PresetConfig"
+      },
+      "title": "Presets",
+      "type": "object"
+    }
+  },
+  "title": "MarkitaiConfig",
+  "type": "object"
+}
