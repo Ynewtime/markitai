@@ -1,1 +1,0 @@
-"""Markit tests."""

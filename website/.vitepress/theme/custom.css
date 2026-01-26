@@ -1,0 +1,86 @@
+/**
+ * Markitai Custom Theme
+ * Based on VitePress default theme with brand color override
+ */
+
+:root {
+  /* Brand colors - matching logo (#18181b) */
+  --vp-c-brand-1: #18181b;
+  --vp-c-brand-2: #27272a;
+  --vp-c-brand-3: #3f3f46;
+  --vp-c-brand-soft: rgba(24, 24, 27, 0.14);
+
+  /* Hero title gradient (optional) */
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(135deg, #18181b 0%, #52525b 100%);
+
+  /* Hero image glow */
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    #71717a33 50%,
+    #a1a1aa33 50%
+  );
+  --vp-home-hero-image-filter: blur(44px);
+}
+
+.dark {
+  /* Dark mode brand colors */
+  --vp-c-brand-1: #fafafa;
+  --vp-c-brand-2: #e4e4e7;
+  --vp-c-brand-3: #d4d4d8;
+  --vp-c-brand-soft: rgba(250, 250, 250, 0.14);
+
+  /* Hero title gradient for dark mode */
+  --vp-home-hero-name-background: linear-gradient(135deg, #fafafa 0%, #a1a1aa 100%);
+
+  /* Hero image glow for dark mode */
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    #52525b33 50%,
+    #71717a33 50%
+  );
+}
+
+/* Button styling */
+.VPButton.brand {
+  border-color: var(--vp-c-brand-1);
+  background-color: var(--vp-c-brand-1);
+}
+
+.VPButton.brand:hover {
+  border-color: var(--vp-c-brand-2);
+  background-color: var(--vp-c-brand-2);
+}
+
+.dark .VPButton.brand {
+  border-color: var(--vp-c-brand-1);
+  background-color: var(--vp-c-brand-1);
+  color: #18181b;
+}
+
+.dark .VPButton.brand:hover {
+  border-color: var(--vp-c-brand-3);
+  background-color: var(--vp-c-brand-3);
+  color: #18181b;
+}
+
+/* Feature icon styling - make SVG icons more visible */
+.VPFeature .icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  background-color: var(--vp-c-brand-soft);
+  border-radius: 8px;
+}
+
+.VPFeature .icon svg {
+  width: 24px;
+  height: 24px;
+  stroke: var(--vp-c-brand-1);
+}
+
+.dark .VPFeature .icon svg {
+  stroke: var(--vp-c-brand-1);
+}

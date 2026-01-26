@@ -1,16 +1,16 @@
 [project]
-name = "markit-workspace"
+name = "markitai-workspace"
 version = "0.1.0"
 requires-python = "==3.13.*"
 dependencies = [
-    "markit",
+    "markitai",
 ]
 
 [tool.uv.workspace]
 members = ["packages/*"]
 
 [tool.uv.sources]
-markit = { workspace = true }
+markitai = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -24,6 +24,6 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/markit/tests"]
+testpaths = ["packages/markitai/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

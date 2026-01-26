@@ -1,0 +1,14 @@
+{
+  "name": "markitai-website",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "docs:dev": "cp ../CHANGELOG.md ./changelog.md && vitepress dev",
+    "docs:build": "cp ../CHANGELOG.md ./changelog.md && vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^2.0.0-alpha.15"
+  }
+}
