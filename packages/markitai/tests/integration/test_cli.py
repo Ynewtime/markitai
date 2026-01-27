@@ -259,7 +259,7 @@ class TestCLIWithSubprocess:
             text=True,
         )
         assert result.returncode == 0
-        assert "Document to Markdown converter" in result.stdout
+        assert "Opinionated Markdown converter" in result.stdout
 
     def test_version_command(self):
         """Test version command via subprocess."""

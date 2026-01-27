@@ -721,7 +721,7 @@ def app(
     verbose: bool,
     dry_run: bool,
 ) -> None:
-    """Markitai - Document to Markdown converter with LLM enhancement.
+    """Markitai - Opinionated Markdown converter with native LLM enhancement support.
 
     Convert various document formats and URLs to Markdown with optional
     LLM-powered enhancement for format optimization and image analysis.
