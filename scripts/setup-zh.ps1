@@ -3,7 +3,7 @@
 
 $ErrorActionPreference = "Stop"
 
-# Helper functions
+# 颜色辅助函数
 function Write-Header {
     param([string]$Text)
     Write-Host ""
@@ -70,11 +70,11 @@ function Ask-YesNo {
     return $answer -match "^[Yy]"
 }
 
-# Detect Python (requires 3.11-3.13, 3.14+ not supported)
+# 检测 Python (需要 3.11-3.13，不支持 3.14+)
 function Test-Python {
-    Write-Step 1 4 "Detecting Python..."
+    Write-Step 1 4 "检测 Python..."
 
-    # Prefer 3.11-3.13 versions
+    # 优先使用 3.11-3.13 版本
     $pythonCommands = @("py -3.13", "py -3.12", "py -3.11", "python", "python3", "py")
 
     foreach ($cmd in $pythonCommands) {
@@ -92,32 +92,32 @@ function Test-Python {
             $minorArgs = $args + @("-c", "import sys; print(sys.version_info.minor)")
             $minor = & $exe @minorArgs 2>$null
 
-            # Check version range: 3.11 <= version < 3.14
+            # 检查版本范围: 3.11 <= version < 3.14
             if ($major -eq 3 -and $minor -ge 11 -and $minor -le 13) {
                 $script:PYTHON_CMD = $cmd
-                Write-Success "Python $version installed ($cmd)"
+                Write-Success "Python $version 已安装 ($cmd)"
                 return $true
             } elseif ($major -eq 3 -and $minor -ge 14) {
-                Write-Warning2 "Python $version detected, but onnxruntime doesn't support Python 3.14+"
+                Write-Warning2 "Python $version 检测到，但 onnxruntime 不支持 Python 3.14+"
             }
         } catch {
             continue
         }
     }
 
-    Write-Error2 "Python 3.11-3.13 not found"
+    Write-Error2 "未找到 Python 3.11-3.13"
     Write-Host ""
-    Write-Warning2 "Please install Python 3.13 (recommended) or 3.11/3.12:"
-    Write-Info "Download: https://www.python.org/downloads/"
+    Write-Warning2 "请安装 Python 3.13 (推荐) 或 3.11/3.12:"
+    Write-Info "官网下载: https://www.python.org/downloads/"
     Write-Info "scoop: scoop install python@3.13"
     Write-Info "pim: winget install 9NQ7512CXL7T"
-    Write-Info "Note: onnxruntime doesn't support Python 3.14 yet"
+    Write-Info "提示: onnxruntime 暂不支持 Python 3.14"
     return $false
 }
 
-# Detect/install UV
+# 检测/安装 UV
 function Test-UV {
-    Write-Step 2 4 "Detecting UV package manager..."
+    Write-Step 2 4 "检测 UV 包管理器..."
 
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -127,19 +127,19 @@ function Test-UV {
         $ErrorActionPreference = $oldErrorAction
     }
     if ($version -and $version -notmatch "error") {
-        Write-Success "$version installed"
+        Write-Success "$version 已安装"
         return $true
     }
 
-    Write-Error2 "UV not installed"
+    Write-Error2 "UV 未安装"
 
-    if (Ask-YesNo "Install UV automatically?" $true) {
-        Write-Info "Installing UV..."
+    if (Ask-YesNo "是否自动安装 UV?" $true) {
+        Write-Info "正在安装 UV..."
 
         try {
             Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
 
-            # Refresh PATH
+            # 刷新 PATH
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
             $oldErrorAction = $ErrorActionPreference
@@ -150,32 +150,32 @@ function Test-UV {
                 $ErrorActionPreference = $oldErrorAction
             }
             if ($version -and $version -notmatch "error") {
-                Write-Success "$version installed successfully"
+                Write-Success "$version 安装成功"
                 return $true
             } else {
-                Write-Warning2 "UV installed, but PowerShell needs to be restarted"
-                Write-Info "Please restart PowerShell and run this script again"
+                Write-Warning2 "UV 已安装，但需要重新打开 PowerShell"
+                Write-Info "请重新打开 PowerShell 后再次运行此脚本"
                 return $false
             }
         } catch {
-            Write-Error2 "UV installation failed: $_"
-            Write-Info "Manual install: irm https://astral.sh/uv/install.ps1 | iex"
+            Write-Error2 "UV 安装失败: $_"
+            Write-Info "手动安装: irm https://astral.sh/uv/install.ps1 | iex"
             return $false
         }
     } else {
-        Write-Info "Skipping UV installation"
-        Write-Warning2 "markitai recommends using UV for installation"
+        Write-Info "跳过 UV 安装"
+        Write-Warning2 "markitai 推荐使用 UV 进行安装"
         return $false
     }
 }
 
-# Install markitai
+# 安装 markitai
 function Install-Markitai {
-    Write-Step 3 4 "Installing markitai..."
+    Write-Step 3 4 "安装 markitai..."
 
-    Write-Info "Installing..."
+    Write-Info "正在安装..."
 
-    # Prefer uv tool install (recommended)
+    # 优先使用 uv tool install（推荐方式）
     $uvExists = Get-Command uv -ErrorAction SilentlyContinue
     if ($uvExists) {
         $oldErrorAction = $ErrorActionPreference
@@ -187,16 +187,16 @@ function Install-Markitai {
             $ErrorActionPreference = $oldErrorAction
         }
         if ($exitCode -eq 0) {
-            # Refresh PATH
+            # 刷新 PATH
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
             $version = & markitai --version 2>&1 | Select-Object -First 1
-            if (-not $version) { $version = "installed" }
-            Write-Success "markitai $version installed successfully"
+            if (-not $version) { $version = "已安装" }
+            Write-Success "markitai $version 安装成功"
             return $true
         }
     }
 
-    # Fallback to pipx
+    # 回退到 pipx
     $pipxExists = Get-Command pipx -ErrorAction SilentlyContinue
     if ($pipxExists) {
         $oldErrorAction = $ErrorActionPreference
@@ -209,13 +209,13 @@ function Install-Markitai {
         }
         if ($exitCode -eq 0) {
             $version = & markitai --version 2>&1 | Select-Object -First 1
-            if (-not $version) { $version = "installed" }
-            Write-Success "markitai $version installed successfully"
+            if (-not $version) { $version = "已安装" }
+            Write-Success "markitai $version 安装成功"
             return $true
         }
     }
 
-    # Fallback to pip --user
+    # 回退到 pip --user
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
@@ -226,20 +226,20 @@ function Install-Markitai {
     }
     if ($exitCode -eq 0) {
         $version = & markitai --version 2>&1 | Select-Object -First 1
-        if (-not $version) { $version = "installed" }
-        Write-Success "markitai $version installed successfully"
-        Write-Warning2 "You may need to add Python Scripts directory to PATH"
+        if (-not $version) { $version = "已安装" }
+        Write-Success "markitai $version 安装成功"
+        Write-Warning2 "可能需要将 Python Scripts 目录添加到 PATH"
         return $true
     }
 
-    Write-Error2 "markitai installation failed"
-    Write-Info "Manual install: uv tool install markitai"
+    Write-Error2 "markitai 安装失败"
+    Write-Info "请手动安装: uv tool install markitai"
     return $false
 }
 
-# Detect Node.js
+# 检测 Node.js
 function Test-NodeJS {
-    Write-Info "Detecting Node.js..."
+    Write-Info "检测 Node.js..."
 
     try {
         $version = & node --version 2>$null
@@ -247,116 +247,116 @@ function Test-NodeJS {
             $major = [int]($version -replace "v", "" -split "\.")[0]
 
             if ($major -ge 18) {
-                Write-Success "Node.js $version installed"
+                Write-Success "Node.js $version 已安装"
                 return $true
             } else {
-                Write-Warning2 "Node.js $version is outdated, 18+ recommended"
+                Write-Warning2 "Node.js $version 版本较低，建议 18+"
                 return $true
             }
         }
     } catch {}
 
-    Write-Error2 "Node.js not found"
+    Write-Error2 "未找到 Node.js"
     Write-Host ""
-    Write-Warning2 "Please install Node.js 18+:"
-    Write-Info "Download: https://nodejs.org/"
+    Write-Warning2 "请安装 Node.js 18+:"
+    Write-Info "官网下载: https://nodejs.org/"
     Write-Info "winget: winget install OpenJS.NodeJS.LTS"
     Write-Info "Chocolatey: choco install nodejs-lts"
     Write-Info "fnm: winget install Schniz.fnm"
     return $false
 }
 
-# Install agent-browser
+# 安装 agent-browser
 function Install-AgentBrowser {
     if (-not (Test-NodeJS)) {
-        Write-Warning2 "Skipping agent-browser installation (requires Node.js)"
+        Write-Warning2 "跳过 agent-browser 安装 (需要 Node.js)"
         return $false
     }
 
-    Write-Info "Installing agent-browser..."
+    Write-Info "正在安装 agent-browser..."
 
     try {
         & npm install -g agent-browser
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "agent-browser installed successfully"
+            Write-Success "agent-browser 安装成功"
 
-            if (Ask-YesNo "Download Chromium browser?" $true) {
-                Write-Info "Downloading Chromium..."
+            if (Ask-YesNo "是否下载 Chromium 浏览器?" $true) {
+                Write-Info "正在下载 Chromium..."
                 & agent-browser install
-                Write-Success "Chromium download complete"
+                Write-Success "Chromium 下载完成"
             }
 
             return $true
         }
     } catch {
-        Write-Error2 "agent-browser installation failed: $_"
+        Write-Error2 "agent-browser 安装失败: $_"
     }
 
-    Write-Info "Manual install: npm install -g agent-browser"
+    Write-Info "请手动安装: npm install -g agent-browser"
     return $false
 }
 
-# Optional components
+# 可选组件
 function Install-Optional {
-    Write-Step 4 4 "Optional components"
+    Write-Step 4 4 "可选组件"
 
-    if (Ask-YesNo "Install browser automation support (agent-browser)?" $false) {
+    if (Ask-YesNo "是否安装浏览器自动化支持 (agent-browser)?" $false) {
         Install-AgentBrowser | Out-Null
     } else {
-        Write-Info "Skipping agent-browser installation"
+        Write-Info "跳过 agent-browser 安装"
     }
 }
 
-# Initialize config
+# 初始化配置
 function Initialize-Config {
-    Write-Info "Initializing configuration..."
+    Write-Info "初始化配置..."
 
     try {
         $markitaiExists = Get-Command markitai -ErrorAction SilentlyContinue
         if ($markitaiExists) {
             & markitai config init 2>$null
-            Write-Success "Configuration initialized"
+            Write-Success "配置初始化完成"
         }
     } catch {}
 }
 
-# Print completion message
+# 打印完成信息
 function Write-Completion {
     Write-Host ""
     Write-Host "[OK] " -ForegroundColor Green -NoNewline
-    Write-Host "Setup complete!" -ForegroundColor White
+    Write-Host "配置完成!" -ForegroundColor White
     Write-Host ""
-    Write-Host "  Get started:" -ForegroundColor White
+    Write-Host "  开始使用:" -ForegroundColor White
     Write-Host "    markitai --help" -ForegroundColor Yellow
     Write-Host ""
 }
 
-# Main function
+# 主函数
 function Main {
-    Write-Header "Markitai Setup Wizard"
+    Write-Header "Markitai 环境配置向导"
 
-    # Detect Python
+    # 检测 Python
     if (-not (Test-Python)) {
         exit 1
     }
 
-    # Detect/install UV
+    # 检测/安装 UV
     Test-UV | Out-Null
 
-    # Install markitai
+    # 安装 markitai
     if (-not (Install-Markitai)) {
         exit 1
     }
 
-    # Optional components
+    # 可选组件
     Install-Optional
 
-    # Initialize config
+    # 初始化配置
     Initialize-Config
 
-    # Complete
+    # 完成
     Write-Completion
 }
 
-# Run main function
+# 运行主函数
 Main

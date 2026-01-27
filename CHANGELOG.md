@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-01-27
+
+### Added
+
+- Chinese README (`README_ZH.md`) with language toggle
+- Chinese setup scripts: `setup-zh.sh`, `setup-zh.ps1`, `setup-dev-zh.sh`, `setup-dev-zh.ps1`
+
+### Changed
+
+- Improved setup scripts with better error handling and user feedback
+- Updated Python version note: 3.11-3.13 (3.14 not yet supported)
+- Updated documentation language toggle links
+
 ## [0.3.1] - 2026-01-27
 
 ### Fixed
@@ -388,6 +401,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.3.2]: https://github.com/Ynewtime/markitai/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Ynewtime/markitai/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Ynewtime/markitai/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/Ynewtime/markitai/compare/v0.2.3...v0.2.4

@@ -1,10 +1,10 @@
 [project]
 name = "markitai"
-version = "0.3.1"
+version = "0.3.2"
 description = "Document to Markdown converter with LLM enhancement"
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 authors = [
     { name = "Ynewtime", email = "longqiliuye@gmail.com" }
 ]

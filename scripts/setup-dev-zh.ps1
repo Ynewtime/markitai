@@ -3,7 +3,7 @@
 
 $ErrorActionPreference = "Stop"
 
-# Helper functions
+# 颜色辅助函数
 function Write-Header {
     param([string]$Text)
     Write-Host ""
@@ -70,7 +70,7 @@ function Ask-YesNo {
     return $answer -match "^[Yy]"
 }
 
-# Get project root directory
+# 获取项目根目录
 function Get-ProjectRoot {
     $scriptDir = Split-Path -Parent $MyInvocation.ScriptName
     if (-not $scriptDir) {
@@ -82,11 +82,11 @@ function Get-ProjectRoot {
     return Split-Path -Parent $scriptDir
 }
 
-# Detect Python (requires 3.11-3.13, 3.14+ not supported)
+# 检测 Python (需要 3.11-3.13，不支持 3.14+)
 function Test-Python {
-    Write-Step 1 5 "Detecting Python..."
+    Write-Step 1 5 "检测 Python..."
 
-    # Prefer 3.11-3.13 versions
+    # 优先使用 3.11-3.13 版本
     $pythonCommands = @("py -3.13", "py -3.12", "py -3.11", "python", "python3", "py")
 
     foreach ($cmd in $pythonCommands) {
@@ -104,32 +104,32 @@ function Test-Python {
             $minorArgs = $args + @("-c", "import sys; print(sys.version_info.minor)")
             $minor = & $exe @minorArgs 2>$null
 
-            # Check version range: 3.11 <= version < 3.14
+            # 检查版本范围: 3.11 <= version < 3.14
             if ($major -eq 3 -and $minor -ge 11 -and $minor -le 13) {
                 $script:PYTHON_CMD = $cmd
-                Write-Success "Python $version installed ($cmd)"
+                Write-Success "Python $version 已安装 ($cmd)"
                 return $true
             } elseif ($major -eq 3 -and $minor -ge 14) {
-                Write-Warning2 "Python $version detected, but onnxruntime doesn't support Python 3.14+"
+                Write-Warning2 "Python $version 检测到，但 onnxruntime 不支持 Python 3.14+"
             }
         } catch {
             continue
         }
     }
 
-    Write-Error2 "Python 3.11-3.13 not found"
+    Write-Error2 "未找到 Python 3.11-3.13"
     Write-Host ""
-    Write-Warning2 "Please install Python 3.13 (recommended) or 3.11/3.12:"
-    Write-Info "Download: https://www.python.org/downloads/"
+    Write-Warning2 "请安装 Python 3.13 (推荐) 或 3.11/3.12:"
+    Write-Info "官网下载: https://www.python.org/downloads/"
     Write-Info "scoop: scoop install python@3.13"
     Write-Info "pim: winget install 9NQ7512CXL7T"
-    Write-Info "Note: onnxruntime doesn't support Python 3.14 yet"
+    Write-Info "提示: onnxruntime 暂不支持 Python 3.14"
     return $false
 }
 
-# Detect/install UV
+# 检测/安装 UV
 function Test-UV {
-    Write-Step 2 5 "Detecting UV package manager..."
+    Write-Step 2 5 "检测 UV 包管理器..."
 
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -139,19 +139,19 @@ function Test-UV {
         $ErrorActionPreference = $oldErrorAction
     }
     if ($version -and $version -notmatch "error") {
-        Write-Success "$version installed"
+        Write-Success "$version 已安装"
         return $true
     }
 
-    Write-Error2 "UV not installed"
+    Write-Error2 "UV 未安装"
 
-    if (Ask-YesNo "Install UV automatically?" $true) {
-        Write-Info "Installing UV..."
+    if (Ask-YesNo "是否自动安装 UV?" $true) {
+        Write-Info "正在安装 UV..."
 
         try {
             Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
 
-            # Refresh PATH
+            # 刷新 PATH
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
             $oldErrorAction = $ErrorActionPreference
@@ -162,41 +162,41 @@ function Test-UV {
                 $ErrorActionPreference = $oldErrorAction
             }
             if ($version -and $version -notmatch "error") {
-                Write-Success "$version installed successfully"
+                Write-Success "$version 安装成功"
                 return $true
             } else {
-                Write-Warning2 "UV installed, but PowerShell needs to be restarted"
-                Write-Info "Please restart PowerShell and run this script again"
+                Write-Warning2 "UV 已安装，但需要重新打开 PowerShell"
+                Write-Info "请重新打开 PowerShell 后再次运行此脚本"
                 return $false
             }
         } catch {
-            Write-Error2 "UV installation failed: $_"
-            Write-Info "Manual install: irm https://astral.sh/uv/install.ps1 | iex"
+            Write-Error2 "UV 安装失败: $_"
+            Write-Info "手动安装: irm https://astral.sh/uv/install.ps1 | iex"
             return $false
         }
     } else {
-        Write-Error2 "UV is required for development"
+        Write-Error2 "UV 是开发所必需的"
         return $false
     }
 }
 
-# Sync development dependencies
+# 同步开发依赖
 function Sync-Dependencies {
-    Write-Step 3 5 "Syncing development dependencies..."
+    Write-Step 3 5 "同步开发依赖..."
 
     $projectRoot = Get-ProjectRoot
-    Write-Info "Project directory: $projectRoot"
+    Write-Info "项目目录: $projectRoot"
 
     Push-Location $projectRoot
 
     try {
-        Write-Info "Running uv sync --all-extras..."
+        Write-Info "运行 uv sync --all-extras..."
         & uv sync --all-extras
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Dependencies synced successfully"
+            Write-Success "依赖同步完成"
             return $true
         } else {
-            Write-Error2 "Dependency sync failed"
+            Write-Error2 "依赖同步失败"
             return $false
         }
     } finally {
@@ -204,34 +204,34 @@ function Sync-Dependencies {
     }
 }
 
-# Install pre-commit hooks
+# 安装 pre-commit hooks
 function Install-PreCommit {
-    Write-Step 4 5 "Configuring pre-commit..."
+    Write-Step 4 5 "配置 pre-commit..."
 
     $projectRoot = Get-ProjectRoot
     Push-Location $projectRoot
 
     try {
         if (Test-Path ".pre-commit-config.yaml") {
-            Write-Info "Installing pre-commit hooks..."
+            Write-Info "安装 pre-commit hooks..."
 
             & uv run pre-commit install
             if ($LASTEXITCODE -eq 0) {
-                Write-Success "pre-commit hooks installed successfully"
+                Write-Success "pre-commit hooks 安装完成"
             } else {
-                Write-Warning2 "pre-commit installation failed, please run manually: uv run pre-commit install"
+                Write-Warning2 "pre-commit 安装失败，请手动运行: uv run pre-commit install"
             }
         } else {
-            Write-Info ".pre-commit-config.yaml not found, skipping"
+            Write-Info "未找到 .pre-commit-config.yaml，跳过"
         }
     } finally {
         Pop-Location
     }
 }
 
-# Detect Node.js
+# 检测 Node.js
 function Test-NodeJS {
-    Write-Info "Detecting Node.js..."
+    Write-Info "检测 Node.js..."
 
     try {
         $version = & node --version 2>$null
@@ -239,113 +239,113 @@ function Test-NodeJS {
             $major = [int]($version -replace "v", "" -split "\.")[0]
 
             if ($major -ge 18) {
-                Write-Success "Node.js $version installed"
+                Write-Success "Node.js $version 已安装"
                 return $true
             } else {
-                Write-Warning2 "Node.js $version is outdated, 18+ recommended"
+                Write-Warning2 "Node.js $version 版本较低，建议 18+"
                 return $true
             }
         }
     } catch {}
 
-    Write-Error2 "Node.js not found"
+    Write-Error2 "未找到 Node.js"
     Write-Host ""
-    Write-Warning2 "Please install Node.js 18+:"
-    Write-Info "Download: https://nodejs.org/"
+    Write-Warning2 "请安装 Node.js 18+:"
+    Write-Info "官网下载: https://nodejs.org/"
     Write-Info "winget: winget install OpenJS.NodeJS.LTS"
     Write-Info "Chocolatey: choco install nodejs-lts"
     Write-Info "fnm: winget install Schniz.fnm"
     return $false
 }
 
-# Install agent-browser
+# 安装 agent-browser
 function Install-AgentBrowser {
     if (-not (Test-NodeJS)) {
-        Write-Warning2 "Skipping agent-browser installation (requires Node.js)"
+        Write-Warning2 "跳过 agent-browser 安装 (需要 Node.js)"
         return $false
     }
 
-    Write-Info "Installing agent-browser..."
+    Write-Info "正在安装 agent-browser..."
 
     try {
         & npm install -g agent-browser
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "agent-browser installed successfully"
+            Write-Success "agent-browser 安装成功"
 
-            if (Ask-YesNo "Download Chromium browser?" $true) {
-                Write-Info "Downloading Chromium..."
+            if (Ask-YesNo "是否下载 Chromium 浏览器?" $true) {
+                Write-Info "正在下载 Chromium..."
                 & agent-browser install
-                Write-Success "Chromium download complete"
+                Write-Success "Chromium 下载完成"
             }
 
             return $true
         }
     } catch {
-        Write-Error2 "agent-browser installation failed: $_"
+        Write-Error2 "agent-browser 安装失败: $_"
     }
 
-    Write-Info "Manual install: npm install -g agent-browser"
+    Write-Info "请手动安装: npm install -g agent-browser"
     return $false
 }
 
-# Optional components
+# 可选组件
 function Install-Optional {
-    Write-Step 5 5 "Optional components"
+    Write-Step 5 5 "可选组件"
 
-    if (Ask-YesNo "Install browser automation support (agent-browser)?" $false) {
+    if (Ask-YesNo "是否安装浏览器自动化支持 (agent-browser)?" $false) {
         Install-AgentBrowser | Out-Null
     } else {
-        Write-Info "Skipping agent-browser installation"
+        Write-Info "跳过 agent-browser 安装"
     }
 }
 
-# Print completion message
+# 打印完成信息
 function Write-Completion {
     $projectRoot = Get-ProjectRoot
 
     Write-Host ""
     Write-Host "[OK] " -ForegroundColor Green -NoNewline
-    Write-Host "Development environment setup complete!" -ForegroundColor White
+    Write-Host "开发环境配置完成!" -ForegroundColor White
     Write-Host ""
-    Write-Host "  Activate virtual environment:" -ForegroundColor White
+    Write-Host "  激活虚拟环境:" -ForegroundColor White
     Write-Host "    $projectRoot\.venv\Scripts\Activate.ps1" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  Run tests:" -ForegroundColor White
+    Write-Host "  运行测试:" -ForegroundColor White
     Write-Host "    uv run pytest" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  Run CLI:" -ForegroundColor White
+    Write-Host "  运行 CLI:" -ForegroundColor White
     Write-Host "    uv run markitai --help" -ForegroundColor Yellow
     Write-Host ""
 }
 
-# Main function
+# 主函数
 function Main {
-    Write-Header "Markitai Dev Environment Setup"
+    Write-Header "Markitai 开发环境配置向导"
 
-    # Detect Python
+    # 检测 Python
     if (-not (Test-Python)) {
         exit 1
     }
 
-    # Detect/install UV
+    # 检测/安装 UV
     if (-not (Test-UV)) {
         exit 1
     }
 
-    # Sync dependencies
+    # 同步依赖
     if (-not (Sync-Dependencies)) {
         exit 1
     }
 
-    # Install pre-commit
+    # 安装 pre-commit
     Install-PreCommit
 
-    # Optional components
+    # 可选组件
     Install-Optional
 
-    # Complete
+    # 完成
     Write-Completion
 }
 
-# Run main function
+# 运行主函数
 Main

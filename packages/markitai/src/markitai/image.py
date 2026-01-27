@@ -1455,7 +1455,7 @@ async def download_url_images(
     # Download all images concurrently
     async with httpx.AsyncClient(
         headers={
-            "User-Agent": "Mozilla/5.0 (compatible; markitai/0.3.1; +https://github.com/Ynewtime/markitai)"
+            "User-Agent": "Mozilla/5.0 (compatible; markitai/0.3.2; +https://github.com/Ynewtime/markitai)"
         },
         follow_redirects=True,
     ) as client:
