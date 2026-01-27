@@ -4,7 +4,7 @@
 
 ### Required
 
-- **Python 3.11+** - Required runtime
+- **Python 3.11-3.13** - Required runtime (3.14 not yet supported due to onnxruntime)
 - **[uv](https://docs.astral.sh/uv/)** - Package manager (recommended) or pip
 
 ### Optional Dependencies
@@ -45,7 +45,7 @@ irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 |
 :::
 
 The script will:
-- Check for Python 3.11+
+- Check for Python 3.11-3.13
 - Install [uv](https://docs.astral.sh/uv/) package manager (with your permission)
 - Install markitai with all optional dependencies
 - Optionally install `agent-browser` for browser automation

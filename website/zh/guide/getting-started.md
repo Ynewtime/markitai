@@ -4,7 +4,7 @@
 
 ### 必需依赖
 
-- **Python 3.11+** - 运行时环境
+- **Python 3.11-3.13** - 运行时环境（由于 onnxruntime 限制，暂不支持 3.14）
 - **[uv](https://docs.astral.sh/uv/)** - 包管理器（推荐）或 pip
 
 ### 可选依赖
@@ -36,16 +36,16 @@ agent-browser install --with-deps  # Linux: 同时安装系统依赖
 
 ::: code-group
 ```bash [Linux/macOS]
-curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.sh | sh
 ```
 
 ```powershell [Windows]
-irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
+irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps1 | iex
 ```
 :::
 
 脚本会：
-- 检测 Python 3.11+
+- 检测 Python 3.11-3.13
 - 安装 [uv](https://docs.astral.sh/uv/) 包管理器（需要确认）
 - 安装 markitai 及所有可选依赖
 - 可选安装 `agent-browser` 用于浏览器自动化

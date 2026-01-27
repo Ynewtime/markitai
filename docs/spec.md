@@ -1,6 +1,6 @@
 # Markitai 技术规格文档
 
-> 版本: 0.3.1
+> 版本: 0.3.2
 > 最后更新: 2026-01-27
 
 ---
@@ -83,7 +83,7 @@ dev = ["pytest-cov>=7.0.0"]
 ```toml
 [project]
 name = "markitai"
-version = "0.3.1"
+version = "0.3.2"
 requires-python = ">=3.11"
 dependencies = [
     "pymupdf4llm>=0.2.9",

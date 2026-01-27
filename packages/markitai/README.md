@@ -1,5 +1,7 @@
 # Markitai
 
+English | [简体中文](./README_ZH.md)
+
 Opinionated Markdown converter with native LLM enhancement support.
 
 ## Features
@@ -26,7 +28,7 @@ irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 |
 ### Manual Installation
 
 ```bash
-# Requires Python 3.11+
+# Requires Python 3.11-3.13 (3.14 not yet supported)
 uv tool install markitai
 
 # Or using pip

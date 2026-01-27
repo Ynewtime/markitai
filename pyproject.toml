@@ -27,3 +27,21 @@ dev = [
 testpaths = ["packages/markitai/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+include = ["packages/markitai/src"]
+exclude = ["**/tests", "**/__pycache__", "docs/reference"]
+venvPath = "."
+venv = ".venv"
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportUnusedImport = true
+reportUnusedVariable = "warning"
+reportPrivateImportUsage = "warning"
+reportAttributeAccessIssue = "warning"
+reportArgumentType = "warning"
+reportCallIssue = "warning"
+reportReturnType = "warning"
+reportFunctionMemberAccess = "warning"
