@@ -116,7 +116,7 @@ markitai ./docs --llm --llm-concurrency 10
 
 ### `-j, --batch-concurrency <n>`
 
-文件处理并发数（默认：15）。
+文件处理并发数（默认：10）。
 
 ```bash
 markitai ./docs -o ./output -j 4
@@ -170,7 +170,7 @@ https://example.com/page2
 
 ### `--url-concurrency <n>`
 
-URL 抓取并发数（默认：3）。与 `--batch-concurrency` 独立，防止慢速 URL 阻塞文件处理。
+URL 抓取并发数（默认：5）。与 `--batch-concurrency` 独立，防止慢速 URL 阻塞文件处理。
 
 ```bash
 markitai ./docs -o ./output --url-concurrency 5
@@ -281,7 +281,39 @@ markitai cache stats --scope project  # 仅项目缓存
 markitai cache clear
 markitai cache clear --scope project  # 只清除项目缓存
 markitai cache clear --scope global   # 只清除全局缓存
+markitai cache clear --include-spa-domains  # 同时清除已学习的 SPA 域名
 ```
+
+### `markitai cache spa-domains`
+
+查看或管理已学习的 SPA 域名。这些是自动检测到需要浏览器渲染的域名。
+
+```bash
+markitai cache spa-domains             # 列出已学习的域名
+markitai cache spa-domains --json      # JSON 输出
+markitai cache spa-domains --clear     # 清除所有已学习的域名
+```
+
+::: tip
+SPA 域名会在静态抓取检测到 JavaScript 依赖时自动学习。这可以加速后续请求，避免浪费的静态抓取尝试。
+:::
+
+## 诊断命令
+
+### `markitai check-deps`
+
+检查所有可选依赖及其状态。用于诊断安装问题。
+
+```bash
+markitai check-deps
+markitai check-deps --json    # JSON 输出
+```
+
+此命令验证：
+- **agent-browser**: 用于动态 URL 抓取（SPA 渲染）
+- **LibreOffice**: 用于 Office 文档转换（doc, docx, xls, xlsx, ppt, pptx）
+- **Tesseract OCR**: 用于扫描文档处理（可选，RapidOCR 已内置）
+- **LLM API**: 配置和连接状态
 
 ## 其他选项
 

@@ -247,9 +247,13 @@ class PdfConverter(BaseConverter):
 
         pymupdf4llm generates paths like: ![](full/path/to/assets/image.jpg)
         We need: ![](assets/image.jpg)
+
+        Note: pymupdf4llm always uses forward slashes in markdown, even on Windows.
+        We must use as_posix() to ensure consistent path matching.
         """
-        # Escape special regex characters in the path
-        escaped_path = re.escape(str(image_path))
+        # Use as_posix() to ensure forward slashes (cross-platform compatibility)
+        posix_path = image_path.as_posix()
+        escaped_path = re.escape(posix_path)
         # Match image references with the full path and replace with assets/filename
         # Preserve alt text if present
         pattern = rf"!\[([^\]]*)\]\({escaped_path}/([^)]+)\)"

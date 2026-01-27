@@ -240,8 +240,9 @@ class SingleFileWorkflow:
                     analysis_text = analysis.extracted_text or ""
                     analysis_usage = analysis.llm_usage or {}
 
-                # Collect for JSON output (if desc_enabled)
-                if desc_enabled:
+                # Collect for JSON output and alt text updates
+                # Need to collect when either alt_enabled or desc_enabled
+                if alt_enabled or desc_enabled:
                     asset_descriptions.append(
                         {
                             "asset": str(image_path.resolve()),
@@ -295,8 +296,10 @@ class SingleFileWorkflow:
                 pass
 
             # Build analysis result for caller to aggregate
+            # Need result when either alt_enabled (for apply_alt_text_updates)
+            # or desc_enabled (for images.json output)
             analysis_result: ImageAnalysisResult | None = None
-            if desc_enabled and asset_descriptions:
+            if (alt_enabled or desc_enabled) and asset_descriptions:
                 source_path = (
                     str(input_path.resolve()) if input_path else output_file.stem
                 )

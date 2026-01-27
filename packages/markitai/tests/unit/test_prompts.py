@@ -14,9 +14,8 @@ class TestPromptManager:
     def test_get_builtin_prompt(self) -> None:
         """Test getting a built-in prompt."""
         manager = PromptManager()
-        prompt = manager.get_prompt("cleaner", content="test content")
+        prompt = manager.get_prompt("cleaner_system")
 
-        assert "test content" in prompt
         assert "Markdown" in prompt
 
     def test_get_all_builtin_prompts(self) -> None:
@@ -32,18 +31,18 @@ class TestPromptManager:
         manager = PromptManager()
 
         # First call loads from file
-        prompt1 = manager.get_prompt("cleaner", content="test")
-        assert "cleaner" in manager._cache
+        prompt1 = manager.get_prompt("cleaner_system")
+        assert "cleaner_system" in manager._cache
 
         # Second call uses cache
-        prompt2 = manager.get_prompt("cleaner", content="test")
+        prompt2 = manager.get_prompt("cleaner_system")
         assert prompt1 == prompt2
 
     def test_clear_cache(self) -> None:
         """Test clearing prompt cache."""
         manager = PromptManager()
 
-        manager.get_prompt("cleaner", content="test")
+        manager.get_prompt("cleaner_system")
         assert len(manager._cache) > 0
 
         manager.clear_cache()
@@ -61,19 +60,20 @@ class TestPromptManager:
         manager = PromptManager()
 
         prompt = manager.get_prompt(
-            "frontmatter",
+            "frontmatter_user",
             content="my content",
             source="test.docx",
         )
 
         assert "my content" in prompt
-        assert "test.docx" in prompt
 
-    def test_source_variable_in_frontmatter(self) -> None:
-        """Test source variable substitution in frontmatter prompt."""
+    def test_source_variable_in_frontmatter_system(self) -> None:
+        """Test source variable substitution in frontmatter system prompt."""
         manager = PromptManager()
 
-        prompt = manager.get_prompt("frontmatter", content="test", source="test.txt")
+        prompt = manager.get_prompt(
+            "frontmatter_system", source="test.txt", language="English"
+        )
 
         # Source should be substituted in the prompt
         assert "test.txt" in prompt
@@ -84,30 +84,29 @@ class TestPromptManager:
     def test_custom_prompt_from_config(self, tmp_path: Path) -> None:
         """Test loading custom prompt from config path."""
         # Create custom prompt
-        custom_prompt = tmp_path / "my_cleaner.md"
-        custom_prompt.write_text("Custom cleaner: {content}")
+        custom_prompt = tmp_path / "my_cleaner_system.md"
+        custom_prompt.write_text("Custom cleaner system prompt")
 
-        config = PromptsConfig(cleaner=str(custom_prompt))
+        config = PromptsConfig(cleaner_system=str(custom_prompt))
         manager = PromptManager(config)
 
-        prompt = manager.get_prompt("cleaner", content="test data")
+        prompt = manager.get_prompt("cleaner_system")
 
-        assert "Custom cleaner" in prompt
-        assert "test data" in prompt
+        assert "Custom cleaner system prompt" in prompt
 
     def test_custom_prompt_from_directory(self, tmp_path: Path) -> None:
         """Test loading custom prompt from prompts directory."""
         # Create custom prompt in directory
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        (prompts_dir / "cleaner.md").write_text("Dir cleaner: {content}")
+        (prompts_dir / "cleaner_system.md").write_text("Dir cleaner system: {content}")
 
         config = PromptsConfig(dir=str(prompts_dir))
         manager = PromptManager(config)
 
-        prompt = manager.get_prompt("cleaner", content="test")
+        prompt = manager.get_prompt("cleaner_system", content="test")
 
-        assert "Dir cleaner" in prompt
+        assert "Dir cleaner system" in prompt
 
     def test_list_prompts(self) -> None:
         """Test listing available prompts."""
@@ -129,33 +128,45 @@ class TestBuiltinPrompts:
             path = BUILTIN_PROMPTS_DIR / f"{name}.md"
             assert path.exists(), f"Missing built-in prompt: {name}"
 
-    def test_cleaner_prompt_content(self) -> None:
-        """Test cleaner prompt has required elements."""
-        path = BUILTIN_PROMPTS_DIR / "cleaner.md"
+    def test_cleaner_system_prompt_content(self) -> None:
+        """Test cleaner system prompt has required elements."""
+        path = BUILTIN_PROMPTS_DIR / "cleaner_system.md"
         content = path.read_text(encoding="utf-8")
 
-        assert "{content}" in content
         assert "Markdown" in content
 
-    def test_frontmatter_prompt_content(self) -> None:
-        """Test frontmatter prompt has required elements."""
-        path = BUILTIN_PROMPTS_DIR / "frontmatter.md"
+    def test_cleaner_user_prompt_content(self) -> None:
+        """Test cleaner user prompt has content placeholder."""
+        path = BUILTIN_PROMPTS_DIR / "cleaner_user.md"
         content = path.read_text(encoding="utf-8")
 
         assert "{content}" in content
-        assert "{source}" in content
-        assert "YAML" in content
 
-    def test_image_caption_prompt_content(self) -> None:
-        """Test image caption prompt content."""
-        path = BUILTIN_PROMPTS_DIR / "image_caption.md"
+    def test_frontmatter_system_prompt_content(self) -> None:
+        """Test frontmatter system prompt has required elements."""
+        path = BUILTIN_PROMPTS_DIR / "frontmatter_system.md"
+        content = path.read_text(encoding="utf-8")
+
+        assert "{source}" in content or "源文件" in content
+        assert "YAML" in content or "yaml" in content
+
+    def test_frontmatter_user_prompt_content(self) -> None:
+        """Test frontmatter user prompt has content placeholder."""
+        path = BUILTIN_PROMPTS_DIR / "frontmatter_user.md"
+        content = path.read_text(encoding="utf-8")
+
+        assert "{content}" in content
+
+    def test_image_caption_system_prompt_content(self) -> None:
+        """Test image caption system prompt content."""
+        path = BUILTIN_PROMPTS_DIR / "image_caption_system.md"
         content = path.read_text(encoding="utf-8")
 
         assert "alt" in content.lower() or "描述" in content
 
-    def test_image_description_prompt_content(self) -> None:
-        """Test image description prompt content."""
-        path = BUILTIN_PROMPTS_DIR / "image_description.md"
+    def test_image_description_system_prompt_content(self) -> None:
+        """Test image description system prompt content."""
+        path = BUILTIN_PROMPTS_DIR / "image_description_system.md"
         content = path.read_text(encoding="utf-8")
 
         assert "描述" in content or "describe" in content.lower()

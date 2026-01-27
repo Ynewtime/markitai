@@ -7,7 +7,12 @@ from pathlib import Path
 from PIL import Image
 
 from markitai.config import ImageConfig, ImageFilterConfig
-from markitai.image import ImageProcessor
+from markitai.image import (
+    ImageProcessor,
+    _compress_image_cv2,
+    _compress_image_pillow,
+    _compress_image_worker,
+)
 
 
 def create_test_image(width: int = 100, height: int = 100, color: str = "red") -> bytes:
@@ -514,6 +519,7 @@ class TestSaveScreenshot:
         # Create test image
         img = Image.new("RGB", (500, 500))
         pixels = img.load()
+        assert pixels is not None
         for i in range(img.width):
             for j in range(img.height):
                 pixels[i, j] = (i % 256, j % 256, (i + j) % 256)
@@ -534,6 +540,7 @@ class TestSaveScreenshot:
         # Create large test image with gradient pattern
         img = Image.new("RGB", (3000, 3000))
         pixels = img.load()
+        assert pixels is not None
         for i in range(img.width):
             for j in range(img.height):
                 pixels[i, j] = (i % 256, j % 256, (i + j) % 256)
@@ -566,3 +573,209 @@ class TestSaveScreenshot:
         # Result should be within configured max dimensions
         assert final_size[0] <= 800
         assert final_size[1] <= 600
+
+
+class TestCompressImageWorkerFunctions:
+    """Tests for _compress_image_cv2, _compress_image_pillow, and _compress_image_worker."""
+
+    def test_compress_image_pillow_basic(self) -> None:
+        """Test basic Pillow compression."""
+        img_data = create_test_image(200, 200, "red")
+
+        result = _compress_image_pillow(
+            image_data=img_data,
+            quality=85,
+            max_size=(100, 100),
+            output_format="JPEG",
+            min_width=10,
+            min_height=10,
+            min_area=100,
+        )
+
+        assert result is not None
+        compressed_data, width, height = result
+        assert width <= 100
+        assert height <= 100
+        assert len(compressed_data) > 0
+
+    def test_compress_image_pillow_filters_small(self) -> None:
+        """Test Pillow compression filters small images."""
+        img_data = create_test_image(50, 50, "red")
+
+        result = _compress_image_pillow(
+            image_data=img_data,
+            quality=85,
+            max_size=(1000, 1000),
+            output_format="JPEG",
+            min_width=100,  # Image is smaller
+            min_height=100,
+            min_area=10000,
+        )
+
+        assert result is None  # Filtered out
+
+    def test_compress_image_cv2_basic(self) -> None:
+        """Test basic OpenCV compression."""
+        img_data = create_test_image(200, 200, "blue")
+
+        result = _compress_image_cv2(
+            image_data=img_data,
+            quality=85,
+            max_size=(100, 100),
+            output_format="JPEG",
+            min_width=10,
+            min_height=10,
+            min_area=100,
+        )
+
+        assert result is not None
+        compressed_data, width, height = result
+        assert width <= 100
+        assert height <= 100
+        assert len(compressed_data) > 0
+
+    def test_compress_image_cv2_filters_small(self) -> None:
+        """Test OpenCV compression filters small images."""
+        img_data = create_test_image(50, 50, "blue")
+
+        result = _compress_image_cv2(
+            image_data=img_data,
+            quality=85,
+            max_size=(1000, 1000),
+            output_format="JPEG",
+            min_width=100,  # Image is smaller
+            min_height=100,
+            min_area=10000,
+        )
+
+        assert result is None  # Filtered out
+
+    def test_compress_image_cv2_png_format(self) -> None:
+        """Test OpenCV compression with PNG format."""
+        img_data = create_test_image(100, 100, "green")
+
+        result = _compress_image_cv2(
+            image_data=img_data,
+            quality=85,
+            max_size=(100, 100),
+            output_format="PNG",
+            min_width=10,
+            min_height=10,
+            min_area=100,
+        )
+
+        assert result is not None
+        compressed_data, width, height = result
+        assert len(compressed_data) > 0
+        # PNG signature
+        assert compressed_data[:4] == b"\x89PNG"
+
+    def test_compress_image_cv2_webp_format(self) -> None:
+        """Test OpenCV compression with WebP format."""
+        img_data = create_test_image(100, 100, "yellow")
+
+        result = _compress_image_cv2(
+            image_data=img_data,
+            quality=85,
+            max_size=(100, 100),
+            output_format="WEBP",
+            min_width=10,
+            min_height=10,
+            min_area=100,
+        )
+
+        assert result is not None
+        compressed_data, width, height = result
+        assert len(compressed_data) > 0
+        # WebP signature
+        assert compressed_data[:4] == b"RIFF"
+
+    def test_compress_image_worker_uses_opencv_first(self) -> None:
+        """Test that worker uses OpenCV first, falls back to Pillow."""
+        img_data = create_test_image(100, 100, "purple")
+
+        # Worker should succeed using OpenCV
+        result = _compress_image_worker(
+            image_data=img_data,
+            quality=85,
+            max_size=(100, 100),
+            output_format="JPEG",
+            min_width=10,
+            min_height=10,
+            min_area=100,
+        )
+
+        assert result is not None
+        compressed_data, width, height = result
+        assert len(compressed_data) > 0
+
+    def test_compress_image_worker_handles_invalid_data(self) -> None:
+        """Test that worker handles invalid image data gracefully."""
+        invalid_data = b"not an image"
+
+        result = _compress_image_worker(
+            image_data=invalid_data,
+            quality=85,
+            max_size=(100, 100),
+            output_format="JPEG",
+            min_width=10,
+            min_height=10,
+            min_area=100,
+        )
+
+        # Both OpenCV and Pillow should fail, return None
+        assert result is None
+
+    def test_compress_image_cv2_handles_rgba(self) -> None:
+        """Test OpenCV handles RGBA images for JPEG output."""
+        # Create RGBA image
+        img = Image.new("RGBA", (100, 100), (255, 0, 0, 128))
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        img_data = buffer.getvalue()
+
+        result = _compress_image_cv2(
+            image_data=img_data,
+            quality=85,
+            max_size=(100, 100),
+            output_format="JPEG",  # JPEG doesn't support alpha
+            min_width=10,
+            min_height=10,
+            min_area=100,
+        )
+
+        assert result is not None
+        compressed_data, width, height = result
+        # Should produce valid JPEG
+        assert compressed_data[:2] == b"\xff\xd8"  # JPEG signature
+
+    def test_compress_consistency_between_cv2_and_pillow(self) -> None:
+        """Test that CV2 and Pillow produce similar sized outputs."""
+        img_data = create_test_image(200, 200, "orange")
+
+        result_cv2 = _compress_image_cv2(
+            image_data=img_data,
+            quality=85,
+            max_size=(100, 100),
+            output_format="JPEG",
+            min_width=10,
+            min_height=10,
+            min_area=100,
+        )
+
+        result_pillow = _compress_image_pillow(
+            image_data=img_data,
+            quality=85,
+            max_size=(100, 100),
+            output_format="JPEG",
+            min_width=10,
+            min_height=10,
+            min_area=100,
+        )
+
+        assert result_cv2 is not None
+        assert result_pillow is not None
+
+        # Both should produce similar dimensions
+        assert result_cv2[1] == result_pillow[1]  # width
+        assert result_cv2[2] == result_pillow[2]  # height

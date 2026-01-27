@@ -1037,6 +1037,15 @@ class BatchProcessor:
             self.save_state(force=True)
             return self.state
 
+        # Preheat OCR engine if OCR is enabled to eliminate cold start delay
+        if options and options.get("ocr_enabled"):
+            try:
+                from markitai.ocr import OCRProcessor
+
+                OCRProcessor.preheat()
+            except ImportError:
+                logger.debug("OCR preheat skipped: RapidOCR not installed")
+
         # Create semaphore for concurrency control
         semaphore = asyncio.Semaphore(self.config.concurrency)
 

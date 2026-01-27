@@ -1,4 +1,4 @@
-# Markitai 环境配置脚本 (开发者版)
+﻿# Markitai 环境配置脚本 (开发者版)
 # PowerShell 5.1+
 
 $ErrorActionPreference = "Stop"
@@ -126,13 +126,17 @@ function Test-Python {
 function Test-UV {
     Write-Step 2 5 "检测 UV 包管理器..."
 
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     try {
-        $version = & uv --version 2>$null
-        if ($version) {
-            Write-Success "$version 已安装"
-            return $true
-        }
-    } catch {}
+        $version = & uv --version 2>&1 | Select-Object -First 1
+    } finally {
+        $ErrorActionPreference = $oldErrorAction
+    }
+    if ($version -and $version -notmatch "error") {
+        Write-Success "$version 已安装"
+        return $true
+    }
 
     Write-Error2 "UV 未安装"
 
@@ -145,8 +149,14 @@ function Test-UV {
             # 刷新 PATH
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
-            $version = & uv --version 2>$null
-            if ($version) {
+            $oldErrorAction = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                $version = & uv --version 2>&1 | Select-Object -First 1
+            } finally {
+                $ErrorActionPreference = $oldErrorAction
+            }
+            if ($version -and $version -notmatch "error") {
                 Write-Success "$version 安装成功"
                 return $true
             } else {

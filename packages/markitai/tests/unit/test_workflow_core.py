@@ -2,11 +2,35 @@
 
 from __future__ import annotations
 
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 from markitai.config import MarkitaiConfig
+
+
+def _can_create_symlink() -> bool:
+    """Check if the current process can create symlinks."""
+    if sys.platform != "win32":
+        return True
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            target = tmp_path / "target"
+            target.mkdir()
+            link = tmp_path / "link"
+            link.symlink_to(target)
+            return True
+    except OSError:
+        return False
+
+
+requires_symlink = pytest.mark.skipif(
+    not _can_create_symlink(),
+    reason="Symlink creation requires elevated privileges on Windows",
+)
 from markitai.converter.base import ConvertResult
 from markitai.workflow.core import (
     ConversionContext,
@@ -276,6 +300,7 @@ class TestPrepareOutputDirectory:
         assert result.success is True
         assert sample_context.output_dir.exists()
 
+    @requires_symlink
     def test_symlink_disallowed(
         self, sample_context: ConversionContext, tmp_path: Path
     ) -> None:
@@ -297,6 +322,7 @@ class TestPrepareOutputDirectory:
         assert result.success is False
         assert result.error is not None
 
+    @requires_symlink
     def test_symlink_allowed(
         self, sample_context: ConversionContext, tmp_path: Path
     ) -> None:

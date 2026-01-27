@@ -53,6 +53,15 @@ class FetchStrategy(Enum):
     JINA = "jina"
 
 
+# Reasons that indicate content is completely invalid and should not be used
+# When these are detected, we should raise an error instead of using invalid content
+CRITICAL_INVALID_REASONS = {
+    "javascript_disabled",  # JS-rendered sites (Twitter/X, etc.)
+    "javascript_required",  # Sites requiring JS
+    "login_required",  # Sites requiring authentication
+}
+
+
 class FetchError(Exception):
     """Base exception for fetch errors."""
 
@@ -326,6 +335,189 @@ class FetchCache:
         return count
 
 
+class SPADomainCache:
+    """JSON-based cache for learned SPA domains.
+
+    When static fetching fails (detected as JS-required), the domain is
+    recorded here. On subsequent requests to the same domain, browser
+    rendering is used directly, avoiding the wasted static request.
+
+    Storage format:
+    {
+      "domains": {
+        "example.com": {
+          "learned_at": "2026-01-27T12:00:00",
+          "hits": 3,
+          "last_hit": "2026-01-27T15:30:00"
+        }
+      },
+      "version": 1
+    }
+    """
+
+    # Cache file expires after 30 days of no hits
+    EXPIRY_DAYS = 30
+    VERSION = 1
+
+    def __init__(self, cache_path: Path | None = None) -> None:
+        """Initialize SPA domain cache.
+
+        Args:
+            cache_path: Path to cache file. Defaults to ~/.markitai/learned_spa_domains.json
+        """
+        if cache_path is None:
+            cache_path = Path.home() / ".markitai" / "learned_spa_domains.json"
+        self._cache_path = cache_path
+        self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self._data: dict[str, Any] = {"domains": {}, "version": self.VERSION}
+        self._load()
+
+    def _load(self) -> None:
+        """Load cache from disk."""
+        if self._cache_path.exists():
+            try:
+                with open(self._cache_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                    if data.get("version") == self.VERSION:
+                        self._data = data
+                    else:
+                        logger.debug("SPA domain cache version mismatch, resetting")
+            except (json.JSONDecodeError, OSError) as e:
+                logger.debug(f"Failed to load SPA domain cache: {e}")
+
+    def _save(self) -> None:
+        """Save cache to disk."""
+        try:
+            with open(self._cache_path, "w", encoding="utf-8") as f:
+                json.dump(self._data, f, indent=2, ensure_ascii=False)
+        except OSError as e:
+            logger.warning(f"Failed to save SPA domain cache: {e}")
+
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain from URL."""
+        parsed = urlparse(url)
+        return parsed.netloc.lower()
+
+    def _is_expired(self, entry: dict[str, Any]) -> bool:
+        """Check if a cache entry has expired."""
+        from datetime import datetime, timedelta
+
+        last_hit_str = entry.get("last_hit") or entry.get("learned_at", "")
+        if not last_hit_str:
+            return True
+        try:
+            last_hit = datetime.fromisoformat(last_hit_str)
+            return datetime.now() - last_hit > timedelta(days=self.EXPIRY_DAYS)
+        except ValueError:
+            return True
+
+    def is_known_spa(self, url: str) -> bool:
+        """Check if URL's domain is a known SPA that needs browser rendering.
+
+        Args:
+            url: URL to check
+
+        Returns:
+            True if domain was previously learned to need browser rendering
+        """
+        domain = self._extract_domain(url)
+        if domain in self._data["domains"]:
+            entry = self._data["domains"][domain]
+            if self._is_expired(entry):
+                # Remove expired entry
+                del self._data["domains"][domain]
+                self._save()
+                return False
+            return True
+        return False
+
+    def record_spa_domain(self, url: str) -> None:
+        """Record that a domain needs browser rendering.
+
+        Args:
+            url: URL whose domain should be recorded
+        """
+        from datetime import datetime
+
+        domain = self._extract_domain(url)
+        now = datetime.now().isoformat()
+
+        if domain in self._data["domains"]:
+            # Update existing entry
+            self._data["domains"][domain]["hits"] += 1
+            self._data["domains"][domain]["last_hit"] = now
+        else:
+            # New entry
+            self._data["domains"][domain] = {
+                "learned_at": now,
+                "hits": 1,
+                "last_hit": now,
+            }
+            logger.info(f"Learned new SPA domain: {domain}")
+
+        self._save()
+
+    def record_hit(self, url: str) -> None:
+        """Record a cache hit (used the cached knowledge).
+
+        Args:
+            url: URL that was fetched using cached knowledge
+        """
+        from datetime import datetime
+
+        domain = self._extract_domain(url)
+        if domain in self._data["domains"]:
+            self._data["domains"][domain]["hits"] += 1
+            self._data["domains"][domain]["last_hit"] = datetime.now().isoformat()
+            self._save()
+
+    def clear(self) -> int:
+        """Clear all learned domains.
+
+        Returns:
+            Number of domains cleared
+        """
+        count = len(self._data["domains"])
+        self._data["domains"] = {}
+        self._save()
+        return count
+
+    def list_domains(self) -> list[dict[str, Any]]:
+        """List all learned domains.
+
+        Returns:
+            List of domain entries with metadata
+        """
+        result = []
+        for domain, entry in self._data["domains"].items():
+            result.append(
+                {
+                    "domain": domain,
+                    "learned_at": entry.get("learned_at"),
+                    "hits": entry.get("hits", 0),
+                    "last_hit": entry.get("last_hit"),
+                    "expired": self._is_expired(entry),
+                }
+            )
+        return sorted(result, key=lambda x: x.get("hits", 0), reverse=True)
+
+
+# Global SPA domain cache instance (initialized lazily)
+_spa_domain_cache: SPADomainCache | None = None
+
+
+def get_spa_domain_cache() -> SPADomainCache:
+    """Get or create the global SPA domain cache instance.
+
+    Returns:
+        SPADomainCache instance
+    """
+    global _spa_domain_cache
+    if _spa_domain_cache is None:
+        _spa_domain_cache = SPADomainCache()
+    return _spa_domain_cache
+
+
 # Global fetch cache instance (initialized lazily)
 _fetch_cache: FetchCache | None = None
 
@@ -360,6 +552,349 @@ _markitdown_instance: Any = None
 # Global httpx.AsyncClient for Jina fetching (reused to avoid connection overhead)
 _jina_client: Any = None
 
+# Cached proxy URL (None = not checked, "" = no proxy, "http://..." = proxy URL)
+_detected_proxy: str | None = None
+
+# Common proxy ports used by popular proxy software
+_COMMON_PROXY_PORTS = [
+    7897,  # Clash Verge default
+    7890,  # Clash default
+    7891,  # Clash mixed
+    1082,  # Shadowrocket
+    10808,  # V2Ray default
+    10809,  # V2Ray HTTP
+    1080,  # SOCKS5 common
+    8080,  # HTTP proxy common
+    8118,  # Privoxy
+    9050,  # Tor
+]
+
+
+def _normalize_bypass_list(bypass: str) -> str:
+    """Normalize proxy bypass list to Linux no_proxy compatible format.
+
+    Converts Windows/macOS bypass patterns to standard no_proxy format:
+    - *.domain.com -> .domain.com (suffix match)
+    - *-prefix.domain.com -> .domain.com (extract base domain)
+    - <local> -> removed (Windows-specific)
+    - 127.* -> 127.0.0.0/8 (CIDR notation)
+    - 10.* -> 10.0.0.0/8
+    - 172.16-31.* -> 172.16.0.0/12
+    - 192.168.* -> 192.168.0.0/16
+
+    Args:
+        bypass: Raw bypass list from system config
+
+    Returns:
+        Normalized comma-separated bypass list
+    """
+    if not bypass:
+        return ""
+
+    # IP wildcard to CIDR mapping
+    ip_cidr_map = {
+        "127.*": "127.0.0.0/8",
+        "10.*": "10.0.0.0/8",
+        "192.168.*": "192.168.0.0/16",
+    }
+    # Add 172.16-31.* mappings
+    for i in range(16, 32):
+        ip_cidr_map[f"172.{i}.*"] = "172.16.0.0/12"
+
+    normalized = []
+    seen: set[str] = set()
+
+    for item in bypass.split(","):
+        item = item.strip()
+        if not item:
+            continue
+
+        # Skip Windows-specific markers
+        if item == "<local>":
+            continue
+
+        result = None
+
+        # Pattern: *.domain.com -> .domain.com
+        if item.startswith("*."):
+            result = item[1:]  # Remove leading *
+
+        # Pattern: *-prefix.domain.com or *suffix.domain.com -> .domain.com
+        # Extract the base domain after the first dot
+        elif item.startswith("*") and "." in item:
+            # Find first dot after the wildcard pattern
+            first_dot = item.find(".")
+            if first_dot > 0:
+                result = item[first_dot:]  # Keep from first dot onwards
+
+        # Handle IP wildcards with exact match
+        elif item in ip_cidr_map:
+            result = ip_cidr_map[item]
+
+        # Handle partial IP wildcards like 100.64.*, 7.*
+        elif item.endswith(".*"):
+            # Convert to base IP prefix (best effort compatibility)
+            base = item[:-2]  # Remove .*
+            result = base
+
+        else:
+            result = item
+
+        # Deduplicate
+        if result and result not in seen:
+            normalized.append(result)
+            seen.add(result)
+
+    return ",".join(normalized)
+
+
+def _get_system_proxy() -> tuple[str, str]:
+    """Get system proxy settings from OS configuration.
+
+    Returns:
+        Tuple of (proxy_url, bypass_list) where bypass_list is comma-separated hosts
+        The bypass list is normalized to Linux no_proxy compatible format.
+    """
+    import platform
+    import subprocess
+
+    system = platform.system()
+
+    if system == "Windows":
+        try:
+            import winreg  # type: ignore[import-not-found]  # Windows-only module
+
+            with winreg.OpenKey(  # type: ignore[attr-defined]
+                winreg.HKEY_CURRENT_USER,  # type: ignore[attr-defined]
+                r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+            ) as key:
+                proxy_enable, _ = winreg.QueryValueEx(key, "ProxyEnable")  # type: ignore[attr-defined]
+                if proxy_enable:
+                    proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")  # type: ignore[attr-defined]
+                    # Handle format: "http=host:port;https=host:port" or "host:port"
+                    if "=" in proxy_server:
+                        # Parse protocol-specific proxies
+                        for part in proxy_server.split(";"):
+                            if part.startswith("https=") or part.startswith("http="):
+                                proxy_addr = part.split("=", 1)[1]
+                                if not proxy_addr.startswith("http"):
+                                    proxy_addr = f"http://{proxy_addr}"
+                                break
+                        else:
+                            proxy_addr = ""
+                    else:
+                        proxy_addr = (
+                            f"http://{proxy_server}"
+                            if not proxy_server.startswith("http")
+                            else proxy_server
+                        )
+
+                    # Get bypass list
+                    try:
+                        bypass, _ = winreg.QueryValueEx(key, "ProxyOverride")  # type: ignore[attr-defined]
+                        # Windows uses semicolon, convert to comma
+                        bypass = bypass.replace(";", ",") if bypass else ""
+                    except FileNotFoundError:
+                        bypass = ""
+
+                    if proxy_addr:
+                        logger.debug(
+                            f"[Proxy] Found Windows system proxy: {proxy_addr}"
+                        )
+                        return proxy_addr, bypass  # Return raw, normalize at usage
+        except Exception as e:
+            logger.debug(f"[Proxy] Failed to read Windows registry: {e}")
+
+    elif system == "Darwin":  # macOS
+        try:
+            # Get network service (usually Wi-Fi or Ethernet)
+            result = subprocess.run(
+                ["scutil", "--proxy"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                output = result.stdout
+                # Parse scutil output
+                https_enable = "HTTPSEnable : 1" in output
+                http_enable = "HTTPEnable : 1" in output
+
+                proxy_addr = ""
+                if https_enable:
+                    # Extract HTTPS proxy
+                    host = ""
+                    for line in output.split("\n"):
+                        if "HTTPSProxy :" in line:
+                            host = line.split(":")[1].strip()
+                        elif "HTTPSPort :" in line:
+                            port = line.split(":")[1].strip()
+                            if host:
+                                proxy_addr = f"http://{host}:{port}"
+                            break
+                elif http_enable:
+                    # Extract HTTP proxy
+                    host = ""
+                    for line in output.split("\n"):
+                        if "HTTPProxy :" in line:
+                            host = line.split(":")[1].strip()
+                        elif "HTTPPort :" in line:
+                            port = line.split(":")[1].strip()
+                            if host:
+                                proxy_addr = f"http://{host}:{port}"
+                            break
+
+                # Get exceptions list
+                bypass = ""
+                if "ExceptionsList" in output:
+                    # Parse exception list from scutil output
+                    in_exceptions = False
+                    exceptions = []
+                    for line in output.split("\n"):
+                        if "ExceptionsList" in line:
+                            in_exceptions = True
+                        elif in_exceptions:
+                            if "}" in line:
+                                break
+                            # Extract host from "0 : localhost" format
+                            if ":" in line:
+                                host = line.split(":", 1)[1].strip()
+                                if host:
+                                    exceptions.append(host)
+                    bypass = ",".join(exceptions)
+
+                if proxy_addr:
+                    logger.debug(f"[Proxy] Found macOS system proxy: {proxy_addr}")
+                    return proxy_addr, bypass  # Return raw, normalize at usage
+        except Exception as e:
+            logger.debug(f"[Proxy] Failed to read macOS proxy settings: {e}")
+
+    return "", ""
+
+
+# Cache for system proxy bypass list
+_detected_proxy_bypass: str | None = None
+
+
+def _detect_proxy(force_recheck: bool = False) -> str:
+    """Detect proxy settings from environment, system config, or common local ports.
+
+    Detection order:
+    1. Environment variables: HTTPS_PROXY, HTTP_PROXY, ALL_PROXY
+    2. System proxy settings (Windows registry / macOS scutil)
+    3. Probe common proxy ports on localhost
+
+    Args:
+        force_recheck: Force re-detection even if cached
+
+    Returns:
+        Proxy URL string (e.g., "http://127.0.0.1:7890") or empty string if no proxy
+    """
+    global _detected_proxy, _detected_proxy_bypass
+
+    if _detected_proxy is not None and not force_recheck:
+        return _detected_proxy
+
+    import os
+    import socket
+
+    # Check environment variables first (highest priority - user explicit config)
+    for var in [
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "ALL_PROXY",
+        "https_proxy",
+        "http_proxy",
+        "all_proxy",
+    ]:
+        proxy = os.environ.get(var, "").strip()
+        if proxy:
+            logger.debug(f"[Proxy] Found proxy from {var}: {proxy}")
+            _detected_proxy = proxy
+            # Also check NO_PROXY env var
+            _detected_proxy_bypass = os.environ.get(
+                "NO_PROXY", os.environ.get("no_proxy", "")
+            )
+            return proxy
+
+    # Check system proxy settings (Windows/macOS)
+    system_proxy, system_bypass = _get_system_proxy()
+    if system_proxy:
+        _detected_proxy = system_proxy
+        _detected_proxy_bypass = system_bypass
+        return system_proxy
+
+    # Probe common proxy ports on localhost (fallback)
+    for port in _COMMON_PROXY_PORTS:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.1)  # 100ms timeout
+            result = sock.connect_ex(("127.0.0.1", port))
+            sock.close()
+            if result == 0:
+                proxy_url = f"http://127.0.0.1:{port}"
+                logger.info(f"[Proxy] Auto-detected local proxy at port {port}")
+                _detected_proxy = proxy_url
+                _detected_proxy_bypass = ""
+                return proxy_url
+        except Exception:
+            pass
+
+    logger.debug("[Proxy] No proxy detected")
+    _detected_proxy = ""
+    _detected_proxy_bypass = ""
+    return ""
+
+
+def _get_proxy_bypass() -> str:
+    """Get the proxy bypass list (NO_PROXY equivalent).
+
+    Returns:
+        Comma-separated list of hosts to bypass proxy
+    """
+    global _detected_proxy_bypass
+
+    # Ensure proxy detection has run
+    if _detected_proxy is None:
+        _detect_proxy()
+
+    return _detected_proxy_bypass or ""
+
+
+def get_proxy_for_url(url: str) -> str:
+    """Get proxy URL for a given target URL.
+
+    Only returns proxy for URLs that likely need it (e.g., blocked sites).
+
+    Args:
+        url: Target URL to fetch
+
+    Returns:
+        Proxy URL or empty string
+    """
+    # Domains that typically need proxy in China
+    proxy_domains = {
+        "x.com",
+        "twitter.com",
+        "facebook.com",
+        "instagram.com",
+        "youtube.com",
+        "google.com",
+        "github.com",  # Sometimes slow without proxy
+    }
+
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        # Check if domain matches any proxy domain
+        for pd in proxy_domains:
+            if domain == pd or domain.endswith("." + pd):
+                return _detect_proxy()
+    except Exception:
+        pass
+
+    return ""
+
 
 def _get_markitdown() -> Any:
     """Get or create the shared MarkItDown instance.
@@ -374,7 +909,7 @@ def _get_markitdown() -> Any:
     return _markitdown_instance
 
 
-def _get_jina_client(timeout: int = 30) -> Any:
+def _get_jina_client(timeout: int = 30, proxy: str = "") -> Any:
     """Get or create the shared httpx.AsyncClient for Jina fetching.
 
     Reusing a single client instance avoids repeated connection setup overhead.
@@ -382,6 +917,7 @@ def _get_jina_client(timeout: int = 30) -> Any:
 
     Args:
         timeout: Request timeout in seconds (used on first creation only)
+        proxy: Proxy URL (used on first creation only)
 
     Returns:
         httpx.AsyncClient instance
@@ -390,10 +926,17 @@ def _get_jina_client(timeout: int = 30) -> Any:
     if _jina_client is None:
         import httpx
 
-        _jina_client = httpx.AsyncClient(
-            timeout=timeout,
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-        )
+        # Use detected proxy if not explicitly provided
+        effective_proxy = proxy or _detect_proxy()
+        client_kwargs: dict[str, Any] = {
+            "timeout": timeout,
+            "limits": httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        }
+        if effective_proxy:
+            client_kwargs["proxy"] = effective_proxy
+            logger.debug(f"[Jina] Using proxy: {effective_proxy}")
+
+        _jina_client = httpx.AsyncClient(**client_kwargs)
     return _jina_client
 
 
@@ -414,8 +957,16 @@ async def close_shared_clients() -> None:
 def detect_js_required(content: str) -> bool:
     """Detect if content indicates JavaScript rendering is required.
 
+    Note: This function receives MARKDOWN content (converted by markitdown),
+    not raw HTML. Detection strategies must work with Markdown text.
+
+    Uses multiple detection strategies:
+    1. Simple string matching for common JS-required messages
+    2. Content patterns that survive Markdown conversion
+    3. Content length and quality checks
+
     Args:
-        content: HTML or Markdown content to check
+        content: Markdown content to check (from markitdown conversion)
 
     Returns:
         True if content suggests JavaScript is needed
@@ -424,16 +975,52 @@ def detect_js_required(content: str) -> bool:
         return True  # Empty content likely means JS-rendered
 
     content_lower = content.lower()
+
+    # 1. Simple string matching for JS-required messages
+    # These text patterns survive Markdown conversion
     for pattern in JS_REQUIRED_PATTERNS:
         if pattern.lower() in content_lower:
-            logger.debug(f"JS required pattern detected: {pattern}")
+            logger.debug(f"JS required: string pattern matched '{pattern}'")
             return True
 
-    # Check for very short content (likely a JS-only page)
-    # Strip markdown formatting for length check
-    text_only = re.sub(r"[#*_\[\]()>`-]", "", content).strip()
+    # 2. Check for SPA/bot-protection text patterns
+    # These patterns are more specific to avoid false positives
+    spa_text_patterns = [
+        # JS requirement messages (already covered by JS_REQUIRED_PATTERNS, but regex variants)
+        r"this (?:page|site|website) requires javascript",
+        r"you need (?:to enable )?javascript",
+        r"enable javascript to (?:view|continue|access)",
+        # Cloudflare/bot protection (only when it's the main content)
+        r"^(?:\s*#?\s*)?(?:just a moment|one moment)\.{0,3}\s*$",
+        r"checking (?:if the site connection is secure|your browser)",
+        r"verifying (?:you are human|your browser)",
+        r"ray id:",  # Cloudflare error pages include Ray ID
+        # Common SPA loading states (only if very short content)
+    ]
+    for pattern in spa_text_patterns:
+        if re.search(pattern, content_lower, re.MULTILINE):
+            logger.debug(f"JS required: SPA text pattern matched '{pattern}'")
+            return True
+
+    # 3. Check for very short content (likely a JS-only page)
+    # Strip markdown formatting for accurate length check
+    text_only = re.sub(r"[#*_\[\]()>`\-|]", "", content)
+    text_only = re.sub(r"!\[.*?\]\(.*?\)", "", text_only)  # Remove image refs
+    text_only = re.sub(r"\[.*?\]\(.*?\)", "", text_only)  # Remove links
+    text_only = " ".join(text_only.split()).strip()
+
     if len(text_only) < 100:
-        logger.debug(f"Content too short ({len(text_only)} chars), likely JS-rendered")
+        logger.debug(f"JS required: content too short ({len(text_only)} chars)")
+        return True
+
+    # 4. Check for repetitive/placeholder content (SPA stub pages)
+    # Some SPAs return minimal placeholder text
+    unique_words = set(text_only.lower().split())
+    if len(text_only) < 500 and len(unique_words) < 20:
+        logger.debug(
+            f"JS required: low content diversity "
+            f"({len(unique_words)} unique words in {len(text_only)} chars)"
+        )
         return True
 
     return False
@@ -480,6 +1067,49 @@ def is_agent_browser_available(command: str = "agent-browser") -> bool:
 # Cache for agent-browser readiness check
 _agent_browser_ready_cache: dict[str, tuple[bool, str]] = {}
 
+# Cache for resolved agent-browser executable path (Windows)
+_agent_browser_exe_cache: dict[str, str | None] = {}
+
+
+def _find_windows_agent_browser_exe(cmd_path: str) -> str | None:
+    """Find the Windows native executable for agent-browser.
+
+    On Windows, npm/pnpm-installed agent-browser CMD files depend on /bin/sh,
+    which doesn't exist in native Windows. However, the package includes
+    a native Windows executable (agent-browser-win32-x64.exe) that works directly.
+
+    Args:
+        cmd_path: Path to the agent-browser CMD file
+
+    Returns:
+        Path to the native Windows exe, or None if not found
+    """
+    if cmd_path in _agent_browser_exe_cache:
+        return _agent_browser_exe_cache[cmd_path]
+
+    try:
+        # CMD file is typically at: npm_root/agent-browser.CMD
+        # Native exe is at: npm_root/node_modules/agent-browser/bin/agent-browser-win32-x64.exe
+        cmd_dir = Path(cmd_path).parent
+        exe_path = (
+            cmd_dir
+            / "node_modules"
+            / "agent-browser"
+            / "bin"
+            / "agent-browser-win32-x64.exe"
+        )
+
+        if exe_path.exists():
+            result = str(exe_path)
+            _agent_browser_exe_cache[cmd_path] = result
+            logger.debug(f"Using Windows native agent-browser exe: {result}")
+            return result
+    except Exception as e:
+        logger.debug(f"Failed to find Windows agent-browser exe: {e}")
+
+    _agent_browser_exe_cache[cmd_path] = None
+    return None
+
 
 def verify_agent_browser_ready(
     command: str = "agent-browser", use_cache: bool = True
@@ -499,13 +1129,15 @@ def verify_agent_browser_ready(
         - (False, "error message") if not ready
     """
     import subprocess
+    import sys
 
     # Check cache first
     if use_cache and command in _agent_browser_ready_cache:
         return _agent_browser_ready_cache[command]
 
     # Step 1: Check if command exists
-    if not shutil.which(command):
+    cmd_path = shutil.which(command)
+    if not cmd_path:
         result = (
             False,
             f"'{command}' command not found. Install with: npm install -g agent-browser",
@@ -513,13 +1145,53 @@ def verify_agent_browser_ready(
         _agent_browser_ready_cache[command] = result
         return result
 
-    # Step 2: Check if agent-browser responds to --help
+    # Step 2: Windows compatibility check
+    # On Windows, CMD files may not work reliably in Python subprocess.
+    # Always prefer the native Windows executable when available.
+    effective_command = command
+    use_shell = False
+
+    if sys.platform == "win32" and cmd_path.lower().endswith((".cmd", ".cmd")):
+        # Always try to find native exe first on Windows
+        native_exe = _find_windows_agent_browser_exe(cmd_path)
+        if native_exe:
+            effective_command = native_exe
+        else:
+            # Check if CMD file requires /bin/sh (pnpm-style)
+            try:
+                with open(cmd_path, encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                    if "/bin/sh" in content and not Path("/bin/sh").exists():
+                        result = (
+                            False,
+                            "agent-browser was installed via pnpm which requires Git Bash. "
+                            "Options: 1) Run markitai from Git Bash terminal, "
+                            "2) Reinstall with npm: npm install -g agent-browser && agent-browser install",
+                        )
+                        _agent_browser_ready_cache[command] = result
+                        return result
+            except Exception:
+                pass  # Unable to read CMD file, continue with regular checks
+
+    # Step 3: Check if agent-browser responds to --help
+    # Windows: Hide console window completely
+    run_kwargs: dict[str, Any] = {
+        "capture_output": True,
+        "text": True,
+        "timeout": 10,
+        "shell": use_shell,
+    }
+    if sys.platform == "win32":
+        run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
+        run_kwargs["startupinfo"] = si
+
     try:
         proc = subprocess.run(
-            [command, "--help"],
-            capture_output=True,
-            text=True,
-            timeout=10,
+            [effective_command, "--help"],
+            **run_kwargs,
         )
         if proc.returncode != 0:
             result = (False, f"'{command}' command failed: {proc.stderr.strip()}")
@@ -529,71 +1201,270 @@ def verify_agent_browser_ready(
         result = (False, f"'{command}' command timed out")
         _agent_browser_ready_cache[command] = result
         return result
+    except FileNotFoundError as e:
+        # Windows-specific error message
+        if sys.platform == "win32":
+            result = (
+                False,
+                "Cannot execute agent-browser on Windows. "
+                "If installed via pnpm, try running from Git Bash terminal "
+                "or reinstall with npm: npm install -g agent-browser",
+            )
+        else:
+            result = (False, f"'{command}' command error: {e}")
+        _agent_browser_ready_cache[command] = result
+        return result
     except Exception as e:
         result = (False, f"'{command}' command error: {e}")
         _agent_browser_ready_cache[command] = result
         return result
 
-    # Step 3: Try a simple operation to verify browser is installed
-    # We use 'agent-browser snapshot' on about:blank which should fail fast if browser not installed
+    # Step 4: Quick version check instead of browser launch
+    # Launching browser is slow and causes popup windows on Windows
+    # The --help check above already validates the command works
+    run_kwargs["timeout"] = 5
     try:
         proc = subprocess.run(
-            [command, "open", "about:blank"],
-            capture_output=True,
-            text=True,
-            timeout=30,
+            [effective_command, "--version"],
+            **run_kwargs,
         )
-        # Check for known error patterns
-        if proc.returncode != 0:
-            stderr_lower = proc.stderr.lower()
-            stderr_orig = proc.stderr.strip()
-            # Check for Playwright browser not installed error
-            if (
-                "executable doesn't exist" in stderr_lower
-                or "browsertype.launch" in stderr_lower
-            ):
-                result = (
-                    False,
-                    "Playwright browser not installed. Run: agent-browser install "
-                    "OR npx playwright install chromium",
-                )
-                _agent_browser_ready_cache[command] = result
-                return result
-            # Check for daemon not found error (global install needs AGENT_BROWSER_HOME)
-            if "daemon not found" in stderr_lower:
-                result = (
-                    False,
-                    "agent-browser daemon not found. "
-                    "Set AGENT_BROWSER_HOME environment variable to the agent-browser package directory. "
-                    "For pnpm global install: AGENT_BROWSER_HOME=$(pnpm list -g agent-browser --parseable)/node_modules/agent-browser "
-                    "For npm global install: AGENT_BROWSER_HOME=$(npm root -g)/agent-browser",
-                )
-                _agent_browser_ready_cache[command] = result
-                return result
-            # Other errors might be transient, still mark as ready
-            logger.debug(
-                f"agent-browser test returned non-zero but may still work: {stderr_orig}"
-            )
-    except subprocess.TimeoutExpired:
-        # Timeout on about:blank is suspicious but not fatal
-        logger.debug("agent-browser test timed out, may still work for real pages")
-    except Exception as e:
-        logger.debug(f"agent-browser test error (may still work): {e}")
-
-    # Close browser if opened
-    try:
-        subprocess.run([command, "close"], capture_output=True, timeout=5)
+        if proc.returncode == 0:
+            version = proc.stdout.strip() if proc.stdout else "unknown"
+            logger.debug(f"agent-browser version: {version}")
     except Exception:
-        pass
+        pass  # Version check is optional
 
     result = (True, "agent-browser is ready")
     _agent_browser_ready_cache[command] = result
+    # Also cache the effective command path for later use
+    if effective_command != command:
+        _agent_browser_exe_cache[command] = effective_command
     return result
 
 
 def clear_agent_browser_cache() -> None:
     """Clear the agent-browser readiness cache."""
     _agent_browser_ready_cache.clear()
+
+
+def _get_effective_agent_browser_args(args: list[str]) -> list[str]:
+    """Get effective command args with Windows native exe resolution.
+
+    On Windows, automatically resolves to native exe if available.
+    Caches the resolved path to avoid repeated lookups.
+
+    Args:
+        args: Command arguments (e.g., ["agent-browser", "open", url])
+
+    Returns:
+        Effective args with resolved executable path
+    """
+    import sys
+
+    effective_args = list(args)
+    if (
+        sys.platform == "win32"
+        and args
+        and args[0] in ("agent-browser", "agent-browser.CMD")
+    ):
+        # Check cache for native exe
+        cached_exe = _agent_browser_exe_cache.get(args[0])
+        if cached_exe:
+            effective_args[0] = cached_exe
+        else:
+            # Try to find native exe
+            cmd_path = shutil.which(args[0])
+            if cmd_path:
+                native_exe = _find_windows_agent_browser_exe(cmd_path)
+                if native_exe:
+                    effective_args[0] = native_exe
+                    _agent_browser_exe_cache[args[0]] = native_exe
+    return effective_args
+
+
+async def _run_agent_browser_command(
+    args: list[str], timeout_seconds: float, proxy: str = ""
+) -> tuple[bytes, bytes, int]:
+    """Run an agent-browser command with cross-platform compatibility.
+
+    On Windows, automatically uses native exe if available.
+    On other platforms, uses direct exec.
+
+    Automatically detects and applies proxy settings for Playwright.
+
+    Note: On Windows, uses temp files instead of PIPE to avoid deadlock
+    with agent-browser's ANSI colored output.
+
+    Args:
+        args: Command arguments (e.g., ["agent-browser", "open", url])
+        timeout_seconds: Timeout in seconds
+        proxy: Proxy URL (auto-detected if not provided)
+
+    Returns:
+        Tuple of (stdout, stderr, returncode)
+
+    Raises:
+        asyncio.TimeoutError: If command times out
+    """
+    import os
+    import subprocess
+    import sys
+    import tempfile
+
+    effective_args = _get_effective_agent_browser_args(args)
+
+    # Build kwargs for subprocess
+    kwargs: dict[str, Any] = {}
+
+    # Windows: Use temp files instead of PIPE to avoid deadlock
+    # agent-browser's ANSI colored output causes pipe buffer issues on Windows
+    # that lead to communicate() hanging indefinitely
+    stdout_file = None
+    stderr_file = None
+    use_temp_files = sys.platform == "win32"
+
+    if use_temp_files:
+        stdout_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
+            mode="w+b", delete=False, suffix=".stdout"
+        )
+        stderr_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
+            mode="w+b", delete=False, suffix=".stderr"
+        )
+        kwargs["stdout"] = stdout_file
+        kwargs["stderr"] = stderr_file
+    else:
+        kwargs["stdout"] = asyncio.subprocess.PIPE
+        kwargs["stderr"] = asyncio.subprocess.PIPE
+
+    # Windows: Hide console window completely
+    # CREATE_NO_WINDOW: Don't create console window for the process
+    # DETACHED_PROCESS: Detach from parent's console session
+    # STARTUPINFO with SW_HIDE: Additional window hiding
+    if sys.platform == "win32":
+        kwargs["creationflags"] = (
+            subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+        )
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
+        kwargs["startupinfo"] = si
+
+    # Set proxy environment for Playwright/agent-browser
+    effective_proxy = proxy or _detect_proxy()
+    if effective_proxy:
+        # Create a copy of current environment with proxy settings
+        env = os.environ.copy()
+        # agent-browser uses AGENT_BROWSER_PROXY (preferred) or standard HTTP_PROXY
+        env["AGENT_BROWSER_PROXY"] = effective_proxy
+        env["HTTPS_PROXY"] = effective_proxy
+        env["HTTP_PROXY"] = effective_proxy
+
+        # Set proxy bypass list
+        bypass = _get_proxy_bypass()
+        if bypass:
+            # AGENT_BROWSER_PROXY_BYPASS: Playwright/Chromium supports wildcards
+            env["AGENT_BROWSER_PROXY_BYPASS"] = bypass
+            # NO_PROXY: Normalize for Linux compatibility (Git Bash, WSL, etc.)
+            env["NO_PROXY"] = _normalize_bypass_list(bypass)
+            logger.debug(f"[agent-browser] Proxy bypass: {bypass}")
+
+        kwargs["env"] = env
+        logger.debug(f"[agent-browser] Using proxy: {effective_proxy}")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(*effective_args, **kwargs)
+
+        if use_temp_files:
+            # Close file handles so subprocess can write
+            assert stdout_file is not None and stderr_file is not None
+            stdout_path = stdout_file.name
+            stderr_path = stderr_file.name
+            stdout_file.close()
+            stderr_file.close()
+
+            # Wait for process with timeout
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=timeout_seconds)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise
+
+            # Read output from temp files
+            with open(stdout_path, "rb") as f:
+                stdout = f.read()
+            with open(stderr_path, "rb") as f:
+                stderr = f.read()
+
+            return stdout, stderr, proc.returncode or 0
+        else:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout_seconds
+            )
+            return stdout or b"", stderr or b"", proc.returncode or 0
+
+    finally:
+        # Cleanup temp files
+        if use_temp_files:
+            try:
+                if stdout_file:
+                    os.unlink(stdout_file.name)
+            except OSError:
+                pass
+            try:
+                if stderr_file:
+                    os.unlink(stderr_file.name)
+            except OSError:
+                pass
+
+
+async def _run_agent_browser_batch(
+    commands: list[tuple[list[str], float]],
+    proxy: str = "",
+) -> list[tuple[bytes, bytes, int]]:
+    """Run multiple agent-browser commands sequentially but efficiently.
+
+    This reduces per-command overhead by reusing the resolved executable path
+    and minimizing repeated path lookups.
+
+    Args:
+        commands: List of (args, timeout_seconds) tuples
+        proxy: Proxy URL (auto-detected if not provided)
+
+    Returns:
+        List of (stdout, stderr, returncode) tuples in same order
+    """
+    # Detect proxy once for all commands
+    effective_proxy = proxy or _detect_proxy()
+
+    results: list[tuple[bytes, bytes, int]] = []
+    for args, timeout_seconds in commands:
+        try:
+            result = await _run_agent_browser_command(
+                args, timeout_seconds, proxy=effective_proxy
+            )
+            results.append(result)
+        except TimeoutError:
+            results.append((b"", b"Timeout", -1))
+        except Exception as e:
+            results.append((b"", str(e).encode(), -1))
+    return results
+
+
+def _url_to_session_id(url: str) -> str:
+    """Generate a stable session ID from URL for potential session reuse.
+
+    Using a hash-based session ID allows browser session caching
+    when the same URL is processed multiple times.
+
+    Args:
+        url: URL to generate session ID for
+
+    Returns:
+        Stable session ID like "markitai-a1b2c3d4"
+    """
+    url_hash = hashlib.sha256(url.encode()).hexdigest()[:8]
+    return f"markitai-{url_hash}"
 
 
 def _url_to_screenshot_filename(url: str) -> str:
@@ -853,20 +1724,26 @@ async def fetch_with_browser(
         # Build command args
         base_args = [command, "--session", effective_session]
 
+        # Detect proxy - must pass via CLI args, not just env vars
+        # agent-browser daemon ignores env vars once running
+        effective_proxy = _detect_proxy()
+        proxy_bypass = _get_proxy_bypass()
+
         # Step 1: Open URL and wait for page load
-        open_args = [*base_args, "open", url]
+        # --proxy and --proxy-bypass must be in 'open' command for daemon to use them
+        open_args = [*base_args]
+        if effective_proxy:
+            open_args.extend(["--proxy", effective_proxy])
+            if proxy_bypass:
+                open_args.extend(["--proxy-bypass", proxy_bypass])
+        open_args.extend(["open", url])
         logger.debug(f"Running: {' '.join(open_args)}")
 
-        proc = await asyncio.create_subprocess_exec(
-            *open_args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout / 1000 + 10
+        stdout, stderr, returncode = await _run_agent_browser_command(
+            open_args, timeout / 1000 + 10
         )
 
-        if proc.returncode != 0:
+        if returncode != 0:
             error_msg = stderr.decode() if stderr else "Unknown error"
             raise FetchError(f"agent-browser open failed: {error_msg}")
 
@@ -874,39 +1751,24 @@ async def fetch_with_browser(
         wait_args = [*base_args, "wait", "--load", wait_for]
         logger.debug(f"Running: {' '.join(wait_args)}")
 
-        proc = await asyncio.create_subprocess_exec(
-            *wait_args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=timeout / 1000 + 10)
+        await _run_agent_browser_command(wait_args, timeout / 1000 + 10)
 
         # Step 2.5: Extra wait for JS rendering (especially for SPAs)
         if extra_wait_ms > 0:
             extra_wait_args = [*base_args, "wait", str(extra_wait_ms)]
             logger.debug(f"Running: {' '.join(extra_wait_args)}")
-            proc = await asyncio.create_subprocess_exec(
-                *extra_wait_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(proc.communicate(), timeout=extra_wait_ms / 1000 + 5)
+            await _run_agent_browser_command(extra_wait_args, extra_wait_ms / 1000 + 5)
 
         # Step 3: Get page content via snapshot (accessibility tree with text)
         # Using snapshot -c (compact) to get clean text structure
         snapshot_args = [*base_args, "snapshot", "-c", "--json"]
         logger.debug(f"Running: {' '.join(snapshot_args)}")
 
-        proc = await asyncio.create_subprocess_exec(
-            *snapshot_args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout / 1000 + 10
+        stdout, stderr, returncode = await _run_agent_browser_command(
+            snapshot_args, timeout / 1000 + 10
         )
 
-        if proc.returncode != 0:
+        if returncode != 0:
             error_msg = stderr.decode() if stderr else "Unknown error"
             raise FetchError(f"agent-browser snapshot failed: {error_msg}")
 
@@ -923,38 +1785,23 @@ async def fetch_with_browser(
         # Step 4, 5 & 6: Get page title, final URL and HTML body in parallel
         async def get_title() -> str | None:
             title_args = [*base_args, "get", "title"]
-            proc = await asyncio.create_subprocess_exec(
-                *title_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-            if proc.returncode == 0 and stdout:
+            stdout, _, returncode = await _run_agent_browser_command(title_args, 10)
+            if returncode == 0 and stdout:
                 return stdout.decode().strip()
             return None
 
         async def get_final_url() -> str | None:
             url_args = [*base_args, "get", "url"]
-            proc = await asyncio.create_subprocess_exec(
-                *url_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-            if proc.returncode == 0 and stdout:
+            stdout, _, returncode = await _run_agent_browser_command(url_args, 10)
+            if returncode == 0 and stdout:
                 return stdout.decode().strip()
             return None
 
         async def get_html_body() -> str | None:
             """Get HTML body content for text extraction."""
             html_args = [*base_args, "get", "html", "body"]
-            proc = await asyncio.create_subprocess_exec(
-                *html_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-            if proc.returncode == 0 and stdout:
+            stdout, _, returncode = await _run_agent_browser_command(html_args, 15)
+            if returncode == 0 and stdout:
                 return stdout.decode()
             return None
 
@@ -1005,12 +1852,7 @@ async def fetch_with_browser(
                             str(screenshot_config.viewport_height),
                         ]
                         logger.debug(f"Running: {' '.join(viewport_args)}")
-                        proc = await asyncio.create_subprocess_exec(
-                            *viewport_args,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE,
-                        )
-                        await asyncio.wait_for(proc.communicate(), timeout=10)
+                        await _run_agent_browser_command(viewport_args, 10)
 
                     # Capture full-page screenshot
                     screenshot_args = [
@@ -1020,16 +1862,11 @@ async def fetch_with_browser(
                         str(screenshot_path),
                     ]
                     logger.debug(f"Running: {' '.join(screenshot_args)}")
-                    proc = await asyncio.create_subprocess_exec(
-                        *screenshot_args,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(), timeout=60
+                    stdout, stderr, returncode = await _run_agent_browser_command(
+                        screenshot_args, 60
                     )
 
-                    if proc.returncode != 0:
+                    if returncode != 0:
                         error_msg = stderr.decode() if stderr else "Unknown error"
                         logger.warning(f"Screenshot capture failed: {error_msg}")
                         screenshot_path = None
@@ -1072,12 +1909,7 @@ async def fetch_with_browser(
         if not session:
             try:
                 close_args = [command, "--session", effective_session, "close"]
-                proc = await asyncio.create_subprocess_exec(
-                    *close_args,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await asyncio.wait_for(proc.communicate(), timeout=5)
+                await _run_agent_browser_command(close_args, 5)
                 logger.debug(f"Closed browser session: {effective_session}")
             except Exception as e:
                 logger.debug(
@@ -1396,16 +2228,21 @@ async def fetch_url(
             )
     elif strategy == FetchStrategy.AUTO:
         # Check if domain needs browser rendering
+        # Priority: 1. Configured fallback_patterns, 2. Learned SPA domains
+        spa_cache = get_spa_domain_cache()
+        use_browser_first = False
+
         if should_use_browser_for_domain(url, config.fallback_patterns):
             logger.info(f"Domain matches fallback pattern, using browser: {url}")
-            result = await _fetch_with_fallback(
-                url, config, start_with_browser=True, **screenshot_kwargs
-            )
-        else:
-            # Try static first, fallback to browser/jina if JS required
-            result = await _fetch_with_fallback(
-                url, config, start_with_browser=False, **screenshot_kwargs
-            )
+            use_browser_first = True
+        elif spa_cache.is_known_spa(url):
+            logger.info(f"Domain is learned SPA, using browser: {url}")
+            spa_cache.record_hit(url)
+            use_browser_first = True
+
+        result = await _fetch_with_fallback(
+            url, config, start_with_browser=use_browser_first, **screenshot_kwargs
+        )
     elif strategy == FetchStrategy.STATIC:
         result = await fetch_with_static(url)
     elif strategy == FetchStrategy.BROWSER:
@@ -1503,6 +2340,8 @@ async def _fetch_multi_source(
     """
     static_content: str | None = None
     browser_result: FetchResult | None = None
+    browser_error: str | None = None  # Track browser fetch error
+    browser_not_installed: bool = False  # Track if browser is not installed
 
     # Task 1: Try static fetch (non-blocking)
     async def fetch_static() -> str | None:
@@ -1515,11 +2354,12 @@ async def _fetch_multi_source(
             return None
 
     # Task 2: Browser fetch with screenshot
-    async def fetch_browser() -> FetchResult | None:
+    async def fetch_browser() -> tuple[FetchResult | None, str | None, bool]:
+        """Returns (result, error_message, not_installed)"""
         try:
             if not is_agent_browser_available(config.agent_browser.command):
                 logger.debug("agent-browser not available")
-                return None
+                return None, None, True
 
             result = await fetch_with_browser(
                 url,
@@ -1533,15 +2373,16 @@ async def _fetch_multi_source(
                 screenshot_config=screenshot_config,
             )
             logger.debug(f"[URL] Browser fetch success: {len(result.content)} chars")
-            return result
+            return result, None, False
         except Exception as e:
             logger.debug(f"[URL] Browser fetch failed: {e}")
-            return None
+            return None, str(e), False
 
     # Execute both fetches in parallel
-    static_content, browser_result = await asyncio.gather(
+    static_content, browser_fetch_result = await asyncio.gather(
         fetch_static(), fetch_browser()
     )
+    browser_result, browser_error, browser_not_installed = browser_fetch_result
 
     browser_content = browser_result.content if browser_result else None
     screenshot_path = browser_result.screenshot_path if browser_result else None
@@ -1601,7 +2442,43 @@ async def _fetch_multi_source(
             f"static={static_reason}, browser={browser_reason}"
         )
     elif static_content:
-        # Both invalid, no browser but has static → use static with warning
+        # Both invalid, no browser but has static
+        # Check if this is a critical invalid reason (content is completely unusable)
+        if static_reason in CRITICAL_INVALID_REASONS:
+            # Check browser status to generate accurate error message
+            browser_timed_out = (
+                browser_error is not None and "timed out" in browser_error.lower()
+            )
+
+            if browser_timed_out:
+                raise FetchError(
+                    f"URL requires browser rendering: {url}. "
+                    f"Browser fetch timed out. "
+                    f"Try: 1) Increase timeout with --fetch-timeout 60000, "
+                    f"2) Check network connectivity, "
+                    f"3) Use Jina API with --jina-api-key"
+                )
+            elif browser_error:
+                # Browser was attempted but failed with other error
+                raise FetchError(
+                    f"URL requires browser rendering: {url}. "
+                    f"Browser fetch failed: {browser_error}"
+                )
+            elif browser_not_installed:
+                # Browser not installed
+                raise FetchError(
+                    f"URL requires browser rendering: {url}. "
+                    f"Reason: {static_reason}. "
+                    f"Please install agent-browser: npm install -g agent-browser && agent-browser install"
+                )
+            else:
+                # Browser available but returned no content
+                raise FetchError(
+                    f"URL requires browser rendering: {url}. "
+                    f"Browser returned no content. Check if the URL is accessible."
+                )
+
+        # Non-critical invalid, use static content with warning
         primary_content = static_content
         final_static_content = static_content
         strategy_used = "static"
@@ -1681,6 +2558,9 @@ async def _fetch_with_fallback(
                     logger.info(
                         "Static content suggests JS required, trying browser..."
                     )
+                    # Learn this domain for future requests
+                    spa_cache = get_spa_domain_cache()
+                    spa_cache.record_spa_domain(url)
                     continue
                 return result
 

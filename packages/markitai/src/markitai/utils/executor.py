@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import platform
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -11,9 +12,25 @@ from typing import Any, TypeVar
 
 T = TypeVar("T")
 
+
+def _get_optimal_workers() -> int:
+    """Get optimal thread pool size based on platform.
+
+    Windows has higher thread context switch overhead (2-8 μs vs 1-3 μs on Linux),
+    so we use a lower default to reduce switching costs.
+    """
+    cpu_count = os.cpu_count() or 4
+    if platform.system() == "Windows":
+        # Windows: lower default to reduce thread switch overhead
+        return min(cpu_count, 4)
+    else:
+        # Linux/macOS: can use higher concurrency
+        return min(cpu_count, 8)
+
+
 # Global converter thread pool executor with thread-safe initialization
 _CONVERTER_EXECUTOR: ThreadPoolExecutor | None = None
-_CONVERTER_MAX_WORKERS = min(os.cpu_count() or 4, 8)
+_CONVERTER_MAX_WORKERS = _get_optimal_workers()
 _EXECUTOR_LOCK = threading.Lock()
 
 

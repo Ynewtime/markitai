@@ -751,6 +751,12 @@ async def convert_document_core(
                     logger.warning(
                         f"Embedded image analysis failed: {embed_result.error}"
                     )
+
+            # Apply alt text updates to .llm.md after both tasks complete
+            # This fixes the missing alt text replacement in Vision mode
+            if ctx.config.image.alt_enabled and ctx.image_analysis and ctx.output_file:
+                llm_output = ctx.output_file.with_suffix(".llm.md")
+                apply_alt_text_updates(llm_output, ctx.image_analysis)
         else:
             # Standard LLM mode
             result = await process_with_standard_llm(ctx)

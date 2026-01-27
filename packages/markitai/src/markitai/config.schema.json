@@ -525,108 +525,112 @@
       "type": "object"
     },
     "PromptsConfig": {
-      "description": "Prompts configuration.",
+      "description": "Prompts configuration for custom prompt overrides. Each prompt has a system and user variant.",
       "properties": {
         "dir": {
           "default": "~/.markitai/prompts",
           "title": "Dir",
           "type": "string"
         },
-        "cleaner": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
+        "cleaner_system": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,
-          "title": "Cleaner"
+          "title": "Cleaner System"
         },
-        "frontmatter": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
+        "cleaner_user": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,
-          "title": "Frontmatter"
+          "title": "Cleaner User"
         },
-        "image_caption": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
+        "frontmatter_system": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,
-          "title": "Image Caption"
+          "title": "Frontmatter System"
         },
-        "image_description": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
+        "frontmatter_user": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,
-          "title": "Image Description"
+          "title": "Frontmatter User"
         },
-        "image_analysis": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
+        "image_caption_system": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,
-          "title": "Image Analysis"
+          "title": "Image Caption System"
         },
-        "page_content": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
+        "image_caption_user": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,
-          "title": "Page Content"
+          "title": "Image Caption User"
         },
-        "document_enhance": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
+        "image_description_system": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,
-          "title": "Document Enhance"
+          "title": "Image Description System"
         },
-        "url_enhance": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
+        "image_description_user": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,
-          "title": "Url Enhance"
+          "title": "Image Description User"
+        },
+        "image_analysis_system": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Image Analysis System"
+        },
+        "image_analysis_user": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Image Analysis User"
+        },
+        "page_content_system": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Page Content System"
+        },
+        "page_content_user": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Page Content User"
+        },
+        "document_enhance_system": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Document Enhance System"
+        },
+        "document_enhance_user": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Document Enhance User"
+        },
+        "document_enhance_complete_system": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Document Enhance Complete System"
+        },
+        "document_enhance_complete_user": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Document Enhance Complete User"
+        },
+        "document_process_system": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Document Process System"
+        },
+        "document_process_user": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Document Process User"
+        },
+        "url_enhance_system": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Url Enhance System"
+        },
+        "url_enhance_user": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Url Enhance User"
         }
       },
       "title": "PromptsConfig",

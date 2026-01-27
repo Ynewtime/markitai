@@ -171,7 +171,8 @@ DEFAULT_FETCH_FALLBACK_PATTERNS: tuple[str, ...] = (
     "threads.net",
 )
 
-# Patterns that indicate JavaScript is required
+# Patterns that indicate JavaScript is required (simple string matching)
+# These patterns are checked against Markdown content (after conversion)
 JS_REQUIRED_PATTERNS: tuple[str, ...] = (
     "JavaScript is disabled",
     "JavaScript is required",
@@ -180,7 +181,6 @@ JS_REQUIRED_PATTERNS: tuple[str, ...] = (
     "You need to enable JavaScript",
     "enable javascript",
     "requires javascript",
-    "noscript",
 )
 
 # =============================================================================

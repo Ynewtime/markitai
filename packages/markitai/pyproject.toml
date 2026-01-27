@@ -1,6 +1,6 @@
 [project]
 name = "markitai"
-version = "0.3.0"
+version = "0.3.1"
 description = "Document to Markdown converter with LLM enhancement"
 license = "MIT"
 readme = "README.md"
@@ -32,6 +32,7 @@ dependencies = [
     "loguru>=0.7.3",
     "rich>=14.2.0",
     "Pillow>=12.1.0",
+    "opencv-python>=4.8.0",
     "aiofiles>=25.1.0",
     "pydantic>=2.10.0",
     "python-dotenv>=1.2.1",

@@ -32,6 +32,7 @@ def clean_residual_placeholders(content: str) -> str:
 def normalize_markdown_whitespace(content: str) -> str:
     """Normalize whitespace in markdown content.
 
+    - Fix malformed image references (double alt text, empty paths)
     - Ensure headers (#) have one blank line before and after
     - Merge 3+ consecutive blank lines into 2 blank lines
     - Ensure consistent line endings
@@ -46,6 +47,9 @@ def normalize_markdown_whitespace(content: str) -> str:
     Returns:
         Normalized content
     """
+    # Fix malformed image references first
+    content = fix_malformed_image_refs(content)
+
     # Strip trailing whitespace from each line
     lines = [line.rstrip() for line in content.split("\n")]
 
@@ -104,6 +108,37 @@ def normalize_markdown_whitespace(content: str) -> str:
 
     # Ensure single newline at end
     return content.strip() + "\n"
+
+
+def fix_malformed_image_refs(content: str) -> str:
+    """Fix malformed image references in markdown.
+
+    Handles common LLM output errors:
+    1. Double alt text: `![alt1]![alt2](path)` -> `![alt2](path)`
+    2. Empty path: `![alt](assets/)` or `![alt]()` -> removed
+    3. Extra closing parenthesis: `![alt](path))` -> `![alt](path)`
+
+    Args:
+        content: Markdown content with potential malformed image refs
+
+    Returns:
+        Content with fixed image references
+    """
+    # Fix double alt text: ![alt1]![alt2](path) -> ![alt2](path)
+    # This happens when LLM generates two consecutive alt texts
+    content = re.sub(
+        r"!\[[^\]]*\](!\[[^\]]*\]\([^)]+\))",
+        r"\1",
+        content,
+    )
+
+    # Remove images with empty paths: ![alt](assets/) or ![alt]()
+    content = re.sub(r"!\[[^\]]*\]\((?:assets/)?\)\s*\n?", "", content)
+
+    # Fix extra closing parenthesis: ![alt](path)) -> ![alt](path)
+    content = re.sub(r"(!\[[^\]]*\]\([^)]+\))\)+", r"\1", content)
+
+    return content
 
 
 def fix_broken_markdown_links(content: str) -> str:

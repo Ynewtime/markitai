@@ -203,17 +203,40 @@ class ScreenshotConfig(BaseModel):
 
 
 class PromptsConfig(BaseModel):
-    """Prompts configuration."""
+    """Prompts configuration for custom prompt overrides.
+
+    Each prompt has a system and user variant:
+    - system: Contains instructions and context
+    - user: Contains the actual request with content placeholders
+    """
 
     dir: str = DEFAULT_PROMPTS_DIR
-    cleaner: str | None = None
-    frontmatter: str | None = None
-    image_caption: str | None = None
-    image_description: str | None = None
-    image_analysis: str | None = None  # Combined caption + description
-    page_content: str | None = None  # Page content extraction
-    document_enhance: str | None = None  # Document enhancement with vision
-    url_enhance: str | None = None  # URL/web page content enhancement
+    # Cleaner prompts
+    cleaner_system: str | None = None
+    cleaner_user: str | None = None
+    # Frontmatter prompts
+    frontmatter_system: str | None = None
+    frontmatter_user: str | None = None
+    # Image prompts
+    image_caption_system: str | None = None
+    image_caption_user: str | None = None
+    image_description_system: str | None = None
+    image_description_user: str | None = None
+    image_analysis_system: str | None = None
+    image_analysis_user: str | None = None
+    # Page content prompts
+    page_content_system: str | None = None
+    page_content_user: str | None = None
+    # Document prompts
+    document_enhance_system: str | None = None
+    document_enhance_user: str | None = None
+    document_enhance_complete_system: str | None = None
+    document_enhance_complete_user: str | None = None
+    document_process_system: str | None = None
+    document_process_user: str | None = None
+    # URL prompts
+    url_enhance_system: str | None = None
+    url_enhance_user: str | None = None
 
 
 class BatchConfig(BaseModel):

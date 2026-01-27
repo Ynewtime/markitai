@@ -67,26 +67,26 @@ markitai config set llm.enabled true
     "alt_enabled": false,
     "desc_enabled": false,
     "compress": true,
-    "quality": 85,
+    "quality": 75,
     "format": "jpeg",
     "max_width": 1920,
-    "max_height": 1080,
+    "max_height": 99999,
     "filter": {
       "min_width": 50,
       "min_height": 50,
-      "min_area": 2500,
+      "min_area": 5000,
       "deduplicate": true
     }
   },
   "ocr": {
     "enabled": false,
-    "lang": "eng+chi_sim"
+    "lang": "en"
   },
   "screenshot": {
     "enabled": false,
     "viewport_width": 1920,
     "viewport_height": 1080,
-    "quality": 85,
+    "quality": 75,
     "max_height": 10000
   },
   "cache": {
@@ -97,8 +97,8 @@ markitai config set llm.enabled true
   },
   "batch": {
     "concurrency": 10,
-    "url_concurrency": 3,
-    "scan_max_depth": 10,
+    "url_concurrency": 5,
+    "scan_max_depth": 5,
     "scan_max_files": 10000
   },
   "fetch": {
@@ -107,13 +107,13 @@ markitai config set llm.enabled true
       "command": "agent-browser",
       "timeout": 30000,
       "wait_for": "domcontentloaded",
-      "extra_wait_ms": 2000
+      "extra_wait_ms": 1000
     },
     "jina": {
       "api_key": null,
       "timeout": 30
     },
-    "fallback_patterns": ["x.com", "twitter.com"]
+    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   },
   "output": {
     "on_conflict": "rename"
@@ -243,14 +243,14 @@ provider/model-name
     "alt_enabled": false,
     "desc_enabled": false,
     "compress": true,
-    "quality": 85,
+    "quality": 75,
     "format": "jpeg",
     "max_width": 1920,
-    "max_height": 1080,
+    "max_height": 99999,
     "filter": {
       "min_width": 50,
       "min_height": 50,
-      "min_area": 2500,
+      "min_area": 5000,
       "deduplicate": true
     }
   }
@@ -262,13 +262,13 @@ provider/model-name
 | `alt_enabled` | `false` | 通过 LLM 生成 alt 文本 |
 | `desc_enabled` | `false` | 生成图片描述文件 |
 | `compress` | `true` | 压缩图片 |
-| `quality` | `85` | JPEG/WebP 质量 (1-100) |
+| `quality` | `75` | JPEG/WebP 质量 (1-100) |
 | `format` | `jpeg` | 输出格式：`jpeg`, `png`, `webp` |
 | `max_width` | `1920` | 最大宽度（像素） |
-| `max_height` | `1080` | 最大高度（像素） |
+| `max_height` | `99999` | 最大高度（像素，实际无限制） |
 | `filter.min_width` | `50` | 跳过宽度小于此值的图片 |
 | `filter.min_height` | `50` | 跳过高度小于此值的图片 |
-| `filter.min_area` | `2500` | 跳过面积小于此值的图片 |
+| `filter.min_area` | `5000` | 跳过面积小于此值的图片 |
 | `filter.deduplicate` | `true` | 去除重复图片 |
 
 ## 截图配置
@@ -281,7 +281,7 @@ provider/model-name
     "enabled": false,
     "viewport_width": 1920,
     "viewport_height": 1080,
-    "quality": 85,
+    "quality": 75,
     "max_height": 10000
   }
 }
@@ -297,7 +297,7 @@ provider/model-name
 | `enabled` | `false` | 启用截图捕获 |
 | `viewport_width` | `1920` | URL 截图的浏览器视口宽度 |
 | `viewport_height` | `1080` | URL 截图的浏览器视口高度 |
-| `quality` | `85` | JPEG 压缩质量 (1-100) |
+| `quality` | `75` | JPEG 压缩质量 (1-100) |
 | `max_height` | `10000` | 截图最大高度（像素） |
 
 截图保存在 `output/screenshots/` 目录。
@@ -308,13 +308,13 @@ provider/model-name
 
 ## OCR 配置
 
-配置扫描文档的光学字符识别：
+配置扫描文档的光学字符识别。Markitai 使用 [RapidOCR](https://github.com/RapidAI/RapidOCR)（ONNX Runtime + OpenCV）进行 OCR 处理。
 
 ```json
 {
   "ocr": {
     "enabled": false,
-    "lang": "eng+chi_sim"
+    "lang": "en"
   }
 }
 ```
@@ -322,17 +322,19 @@ provider/model-name
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `enabled` | `false` | 为 PDF 启用 OCR |
-| `lang` | `eng+chi_sim` | Tesseract 语言代码 |
+| `lang` | `en` | RapidOCR 语言代码 |
 
-常用语言代码：
-- `eng` - 英语
-- `chi_sim` - 简体中文
-- `chi_tra` - 繁体中文
-- `jpn` - 日语
-- `kor` - 韩语
+支持的语言代码：
+- `en` - 英语
+- `zh` / `ch` - 中文（简体）
+- `ja` / `japan` - 日语
+- `ko` / `korean` - 韩语
+- `ar` / `arabic` - 阿拉伯语
+- `th` - 泰语
+- `latin` - 拉丁语系
 
-::: warning
-OCR 需要安装 Tesseract。参见[快速开始](/zh/guide/getting-started#可选依赖)。
+::: tip
+RapidOCR 已作为依赖包含，开箱即用，无需额外安装。
 :::
 
 ## 批处理配置
@@ -343,8 +345,8 @@ OCR 需要安装 Tesseract。参见[快速开始](/zh/guide/getting-started#可�
 {
   "batch": {
     "concurrency": 10,
-    "url_concurrency": 3,
-    "scan_max_depth": 10,
+    "url_concurrency": 5,
+    "scan_max_depth": 5,
     "scan_max_files": 10000
   }
 }
@@ -353,8 +355,8 @@ OCR 需要安装 Tesseract。参见[快速开始](/zh/guide/getting-started#可�
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `concurrency` | `10` | 最大并发文件转换数 |
-| `url_concurrency` | `3` | 最大并发 URL 抓取数（与文件分离） |
-| `scan_max_depth` | `10` | 最大目录扫描深度 |
+| `url_concurrency` | `5` | 最大并发 URL 抓取数（与文件分离） |
+| `scan_max_depth` | `5` | 最大目录扫描深度 |
 | `scan_max_files` | `10000` | 单次运行最大处理文件数 |
 
 ::: tip
@@ -373,13 +375,13 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
       "command": "agent-browser",
       "timeout": 30000,
       "wait_for": "domcontentloaded",
-      "extra_wait_ms": 2000
+      "extra_wait_ms": 1000
     },
     "jina": {
       "api_key": "env:JINA_API_KEY",
       "timeout": 30
     },
-    "fallback_patterns": ["x.com", "twitter.com"]
+    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   }
 }
 ```
@@ -400,7 +402,7 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 | `command` | `agent-browser` | agent-browser 路径 |
 | `timeout` | `30000` | 页面加载超时（毫秒） |
 | `wait_for` | `domcontentloaded` | 等待条件：`load`, `domcontentloaded`, `networkidle` |
-| `extra_wait_ms` | `2000` | JS 渲染额外等待时间 |
+| `extra_wait_ms` | `1000` | JS 渲染额外等待时间 |
 
 ### 回退模式
 
@@ -409,7 +411,7 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 ```json
 {
   "fetch": {
-    "fallback_patterns": ["x.com", "twitter.com", "spa-site.com"]
+    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   }
 }
 ```
@@ -509,19 +511,22 @@ markitai ./docs --no-cache-for "file1.pdf,reports/**"
 
 ## 自定义提示词
 
-自定义不同任务的 LLM 提示词：
+自定义不同任务的 LLM 提示词。每个提示词拆分为 **system**（角色定义）和 **user**（内容模板）两部分：
 
 ```json
 {
   "prompts": {
     "dir": "~/.markitai/prompts",
-    "cleaner": null,
-    "frontmatter": null,
-    "image_caption": null,
-    "image_description": null,
-    "image_analysis": null,
-    "page_content": null,
-    "document_enhance": null
+    "cleaner_system": null,
+    "cleaner_user": null,
+    "frontmatter_system": null,
+    "frontmatter_user": null,
+    "image_caption_system": null,
+    "image_caption_user": null,
+    "image_description_system": null,
+    "image_description_user": null,
+    "document_process_system": null,
+    "document_process_user": null
   }
 }
 ```
@@ -530,11 +535,13 @@ markitai ./docs --no-cache-for "file1.pdf,reports/**"
 
 ```
 ~/.markitai/prompts/
-├── cleaner.md          # 文档清理提示词
-├── frontmatter.md      # 元数据提取提示词
-├── image_caption.md    # Alt 文本生成
-├── image_description.md # 图片描述
-└── document_enhance.md # 基于视觉的增强
+├── cleaner_system.md          # 文档清理角色和规则
+├── cleaner_user.md            # 文档清理内容模板
+├── frontmatter_system.md      # 元数据提取角色
+├── frontmatter_user.md        # 元数据提取模板
+├── image_caption_system.md    # Alt 文本生成角色
+├── image_caption_user.md      # Alt 文本内容模板
+└── document_enhance_system.md # 视觉增强角色
 ```
 
 指定特定的提示词文件路径：
@@ -542,7 +549,12 @@ markitai ./docs --no-cache-for "file1.pdf,reports/**"
 ```json
 {
   "prompts": {
-    "cleaner": "/path/to/my-cleaner.md"
+    "cleaner_system": "/path/to/my-cleaner-system.md",
+    "cleaner_user": "/path/to/my-cleaner-user.md"
   }
 }
 ```
+
+::: tip
+system/user 拆分可以防止 LLM 意外地将提示词指令包含在其输出中。system 提示词定义角色和规则，而 user 提示词包含实际要处理的内容。
+:::

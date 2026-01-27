@@ -57,6 +57,11 @@ from markitai.prompts import PromptManager
 from markitai.utils.mime import get_mime_type, is_llm_supported_image
 from markitai.workflow.helpers import detect_language, get_language_name
 
+# Enable automatic max_tokens adjustment to model limits
+# When user-specified max_tokens exceeds model's max_output_tokens,
+# LiteLLM will automatically cap it to the model's limit
+litellm.modify_params = True
+
 # Retryable exceptions (kept here as they depend on litellm types)
 RETRYABLE_ERRORS = (
     RateLimitError,
@@ -64,7 +69,6 @@ RETRYABLE_ERRORS = (
     Timeout,
     ServiceUnavailableError,
 )
-
 
 # Cache for model info to avoid repeated litellm queries
 _model_info_cache: dict[str, dict[str, Any]] = {}
@@ -318,10 +322,15 @@ class Frontmatter(BaseModel):
 
 
 class DocumentProcessResult(BaseModel):
-    """Pydantic model for combined cleaner + frontmatter output."""
+    """LLM document processing result."""
 
-    cleaned_markdown: str = Field(description="Cleaned and formatted markdown content")
-    frontmatter: Frontmatter = Field(description="Document metadata")
+    cleaned_markdown: str = Field(
+        description=(
+            "格式优化后的 Markdown 文档内容。"
+            "只包含实际的文档内容，不要包含任何处理指令或 prompt 文本。"
+        )
+    )
+    frontmatter: Frontmatter = Field(description="文档元数据：标题、摘要、标签")
 
 
 class EnhancedDocumentResult(BaseModel):
@@ -1374,19 +1383,27 @@ class LLMProcessor:
         )
 
     def _calculate_dynamic_max_tokens(
-        self, messages: list[Any], model_hint: str | None = None
-    ) -> int:
-        """Calculate dynamic max_tokens based on input size and model limits.
+        self,
+        messages: list[Any],
+        target_model_id: str | None = None,
+        router: Router | None = None,
+    ) -> int | None:
+        """Calculate dynamic max_tokens based on input size and target model.
 
-        Uses conservative estimates to avoid context overflow across all models
-        in the router's model list.
+        Uses the target model's limits when available, otherwise returns None
+        to let LiteLLM use model defaults.
+
+        When router is provided, uses the minimum max_output_tokens across all
+        models in the router to ensure compatibility with any model the router
+        might select.
 
         Args:
             messages: Chat messages to estimate input tokens
-            model_hint: Optional model name for more accurate limits
+            target_model_id: Specific model ID (from router pre-selection)
+            router: Optional LiteLLM Router to consider all possible models
 
         Returns:
-            Safe max_tokens value that won't exceed context limits
+            Safe max_tokens value, or None to let LiteLLM use model defaults
         """
         import re
 
@@ -1403,26 +1420,52 @@ class LLMProcessor:
         table_rows = len(re.findall(r"\|[^|]+\|", content_str))
         is_table_heavy = table_rows > 20  # More than 20 table rows
 
-        # Get model limits - use minimum across all configured models for safety
-        min_context = float("inf")
-        min_output = float("inf")
+        # Get model limits - use minimum across all router models if available
+        max_context: int | None = None
+        max_output: int | None = None
 
-        for model_config in self.config.model_list:
-            model_id = model_config.litellm_params.model
-            info = get_model_info_cached(model_id)
-            min_context = min(min_context, info["max_input_tokens"])
-            min_output = min(min_output, info["max_output_tokens"])
+        # If router is provided, get minimum max_output_tokens across all models
+        # This ensures compatibility with any model the router might select
+        if router:
+            all_max_outputs: list[int] = []
+            all_max_contexts: list[int] = []
+            for model_config in router.model_list:
+                model_id = model_config.get("litellm_params", {}).get("model")
+                if model_id:
+                    info = get_model_info_cached(model_id)
+                    if info.get("max_output_tokens"):
+                        all_max_outputs.append(info["max_output_tokens"])
+                    if info.get("max_input_tokens"):
+                        all_max_contexts.append(info["max_input_tokens"])
+            if all_max_outputs:
+                max_output = min(all_max_outputs)
+                logger.debug(
+                    f"[DynamicTokens] Using min max_output across router models: {max_output}"
+                )
+            if all_max_contexts:
+                max_context = min(all_max_contexts)
+        elif target_model_id:
+            info = get_model_info_cached(target_model_id)
+            max_context = info.get("max_input_tokens")
+            max_output = info.get("max_output_tokens")
+            if max_context and max_output:
+                logger.debug(
+                    f"[DynamicTokens] Using target model {target_model_id}: "
+                    f"context={max_context}, max_output={max_output}"
+                )
 
-        # Use defaults if no models configured
-        if min_context == float("inf"):
-            min_context = 128000
-        if min_output == float("inf"):
-            min_output = DEFAULT_MAX_OUTPUT_TOKENS
+        # If target model info unavailable, return None to let LiteLLM handle it
+        if not max_context or not max_output:
+            logger.debug(
+                f"[DynamicTokens] Could not get limits for model={target_model_id}, "
+                f"returning None to use LiteLLM defaults"
+            )
+            return None
 
         # Calculate available output space
         # Reserve buffer for safety (tokenizer differences, system overhead)
         buffer = max(500, int(input_tokens * 0.1))  # 10% or 500, whichever is larger
-        available_context = int(min_context) - input_tokens - buffer
+        available_context = max_context - input_tokens - buffer
 
         # For table-heavy content, ensure output has at least 1.5x input tokens
         # since reformatting tables to Markdown often expands token count
@@ -1435,18 +1478,35 @@ class LLMProcessor:
             )
 
         # max_tokens = min(model's max_output, available context space)
-        max_tokens = min(int(min_output), available_context)
+        max_tokens = min(max_output, available_context)
 
         # Ensure reasonable minimum (higher for table-heavy content)
         min_floor = 4000 if is_table_heavy else 1000
         max_tokens = max(max_tokens, min_floor)
 
         logger.debug(
-            f"[DynamicTokens] input={input_tokens}, context={int(min_context)}, "
-            f"max_output={int(min_output)}, calculated={max_tokens}"
+            f"[DynamicTokens] input={input_tokens}, model={target_model_id}, "
+            f"max_output={max_output}, calculated={max_tokens}"
         )
 
         return max_tokens
+
+    def _get_router_primary_model(self, router: Router) -> str | None:
+        """Get the primary model ID from a Router's model_list.
+
+        Args:
+            router: LiteLLM Router instance
+
+        Returns:
+            Model ID string (e.g., "deepseek/deepseek-chat"), or None if unavailable
+        """
+        try:
+            model_list = router.model_list
+            if model_list and len(model_list) > 0:
+                return model_list[0].get("litellm_params", {}).get("model")
+        except Exception:
+            pass
+        return None
 
     async def _call_llm_with_retry(
         self,
@@ -1475,8 +1535,9 @@ class LLMProcessor:
         active_router = router or self.router
         last_exception: Exception | None = None
 
-        # Calculate dynamic max_tokens based on input size
-        max_tokens = self._calculate_dynamic_max_tokens(messages)
+        # Calculate dynamic max_tokens based on input size and target model
+        target_model_id = self._get_router_primary_model(active_router)
+        max_tokens = self._calculate_dynamic_max_tokens(messages, target_model_id)
 
         for attempt in range(max_retries + 1):
             start_time = time.perf_counter()
@@ -2141,41 +2202,23 @@ class LLMProcessor:
                     # Don't append orphan slides to the end - they look wrong
                 result = "\n".join(lines)
 
-            # Restore missing page number markers
-            # Page number markers should be at the beginning of each page's content
+            # Log missing page number markers but do NOT restore them
+            # Reason: If LLM removed a page marker, we should respect that decision
+            # Programmatic restoration often inserts markers at wrong positions
             missing_page_nums = [
                 p for p in protected.get("page_numbers", []) if p not in result
             ]
             if missing_page_nums:
-                # Sort by page number
-                page_info = []
+                # Extract page numbers for logging
+                missing_nums = []
                 for page_marker in missing_page_nums:
                     match = re.search(r"Page number:\s*(\d+)", page_marker)
                     if match:
-                        page_info.append((int(match.group(1)), page_marker))
-                page_info.sort()
-
-                # Find major content boundaries (H1/H2 headings) as insertion points
-                lines = result.split("\n")
-                heading_positions = []
-                for i, line in enumerate(lines):
-                    if line.startswith("# ") or line.startswith("## "):
-                        heading_positions.append(i)
-
-                # Insert missing page markers before headings
-                # Only when there are enough heading positions
-                inserted_count = 0
-                for idx, (page_num, marker) in enumerate(page_info):
-                    if idx < len(heading_positions):
-                        insert_pos = heading_positions[idx] + inserted_count * 2
-                        lines.insert(insert_pos, marker)
-                        lines.insert(insert_pos + 1, "")
-                        inserted_count += 1
-                        logger.debug(
-                            f"Restored page number {page_num} before heading at line {insert_pos}"
-                        )
-
-                result = "\n".join(lines)
+                        missing_nums.append(match.group(1))
+                if missing_nums:
+                    logger.debug(
+                        f"Page markers not restored (respecting LLM output): {missing_nums}"
+                    )
 
             # Restore missing page comments at end
             # Only restore if not already present (avoid duplicates)
@@ -2334,11 +2377,18 @@ class LLMProcessor:
         protected = self.extract_protected_content(content)
         protected_content, mapping = self._protect_content(content)
 
-        prompt = self._prompt_manager.get_prompt("cleaner", content=protected_content)
+        # Use separated system/user prompts to prevent prompt leakage
+        system_prompt = self._prompt_manager.get_prompt("cleaner_system")
+        user_prompt = self._prompt_manager.get_prompt(
+            "cleaner_user", content=protected_content
+        )
 
         response = await self._call_llm(
             model="default",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
             context=context,
         )
 
@@ -2394,8 +2444,10 @@ class LLMProcessor:
         # 3. Detect document language
         language = get_language_name(detect_language(content))
 
-        prompt = self._prompt_manager.get_prompt(
-            "frontmatter",
+        # Use separated system/user prompts to prevent prompt leakage
+        system_prompt = self._prompt_manager.get_prompt("frontmatter_system")
+        user_prompt = self._prompt_manager.get_prompt(
+            "frontmatter_user",
             content=self._smart_truncate(content, 4000),
             source=source,
             language=language,
@@ -2403,7 +2455,10 @@ class LLMProcessor:
 
         response = await self._call_llm(
             model="default",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
             context=source,
         )
 
@@ -2467,30 +2522,28 @@ class LLMProcessor:
         # Determine MIME type
         mime_type = get_mime_type(image_path.suffix)
 
-        # Language instruction
-        lang_instruction = (
-            "Output in English." if language == "en" else "使用中文输出。"
-        )
+        # Get language name for prompt
+        lang_name = "English" if language == "en" else "中文"
 
-        # Get combined prompt
-        prompt = self._prompt_manager.get_prompt("image_analysis")
-        prompt = prompt.replace(
-            "**输出语言必须与源文档保持一致** - 英文文档用英文，中文文档用中文",
-            lang_instruction,
+        # Use separated system/user prompts to improve instruction following
+        system_prompt = self._prompt_manager.get_prompt(
+            "image_analysis_system", language=lang_name
         )
+        user_prompt = self._prompt_manager.get_prompt("image_analysis_user")
 
-        # Build message with image
+        # Build message with system role and user role with image
         messages = [
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt},
+                    {"type": "text", "text": user_prompt},
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
                     },
                 ],
-            }
+            },
         ]
 
         # Use "default" model name - smart router will auto-select vision-capable model
@@ -2693,26 +2746,25 @@ class LLMProcessor:
             f"{len(uncached_indices)} misses"
         )
 
-        # Get base prompt from template (same as single image analysis)
-        lang_instruction = (
-            "Output in English." if language == "en" else "使用中文输出。"
-        )
-        base_prompt = self._prompt_manager.get_prompt("image_analysis")
-        base_prompt = base_prompt.replace(
-            "**输出语言必须与源文档保持一致** - 英文文档用英文，中文文档用中文",
-            lang_instruction,
+        # Get language name for prompt
+        lang_name = "English" if language == "en" else "中文"
+
+        # Use separated system/user prompts to improve instruction following
+        system_prompt = self._prompt_manager.get_prompt(
+            "image_analysis_system", language=lang_name
         )
 
-        # Build batch prompt with the same base prompt
+        # Build batch user prompt
         batch_header = (
-            f"请依次分析以下 {len(uncached_paths)} 张图片。对每张图片，"
+            f"请依次分析以下 {len(uncached_paths)} 张图片。"
             if language == "zh"
-            else f"Analyze the following {len(uncached_paths)} images in order. For each image, "
+            else f"Analyze the following {len(uncached_paths)} images in order."
         )
-        prompt = f"{batch_header}{base_prompt}\n\nReturn a JSON object with an 'images' array containing results for each image in order."
+        batch_footer = "\n\nReturn a JSON object with an 'images' array containing results for each image in order."
+        user_prompt = f"{batch_header}{batch_footer}"
 
         # Build content parts with uncached images only
-        content_parts: list[dict] = [{"type": "text", "text": prompt}]
+        content_parts: list[dict] = [{"type": "text", "text": user_prompt}]
 
         for i, image_path in enumerate(uncached_paths, 1):
             _, base64_image = self._get_cached_image(image_path)
@@ -2731,9 +2783,14 @@ class LLMProcessor:
 
         try:
             async with self.semaphore:
-                # Calculate dynamic max_tokens
-                messages = [{"role": "user", "content": content_parts}]
-                max_tokens = self._calculate_dynamic_max_tokens(messages)
+                # Calculate dynamic max_tokens using minimum across all vision router models
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": content_parts},
+                ]
+                max_tokens = self._calculate_dynamic_max_tokens(
+                    messages, router=self.vision_router
+                )
 
                 client = instructor.from_litellm(
                     self.vision_router.acompletion, mode=instructor.Mode.JSON
@@ -2937,8 +2994,10 @@ class LLMProcessor:
     ) -> ImageAnalysis:
         """Analyze using Instructor for structured output."""
         async with self.semaphore:
-            # Calculate dynamic max_tokens
-            max_tokens = self._calculate_dynamic_max_tokens(messages)
+            # Calculate dynamic max_tokens using minimum across all vision router models
+            max_tokens = self._calculate_dynamic_max_tokens(
+                messages, router=self.vision_router
+            )
 
             # Create instructor client from vision router for load balancing
             client = instructor.from_litellm(
@@ -3024,8 +3083,10 @@ class LLMProcessor:
         }
 
         async with self.semaphore:
-            # Calculate dynamic max_tokens for vision request
-            max_tokens = self._calculate_dynamic_max_tokens(json_messages)
+            # Calculate dynamic max_tokens using minimum across all vision router models
+            max_tokens = self._calculate_dynamic_max_tokens(
+                json_messages, router=self.vision_router
+            )
 
             # Use vision_router for image analysis (not main router)
             response = await self.vision_router.acompletion(
@@ -3080,47 +3141,59 @@ class LLMProcessor:
         context: str = "",
     ) -> ImageAnalysis:
         """Original two-call method as final fallback."""
-        # Extract original prompt and image from messages
-        original_content = messages[0]["content"]
-        image_content = original_content[1]  # The image part
+        # Extract image from messages (handle both old and new format)
+        # New format: [system_msg, user_msg_with_image]
+        # Old format: [user_msg_with_image]
+        if messages[0].get("role") == "system":
+            user_content = messages[1]["content"]
+            system_content = messages[0]["content"]
+        else:
+            user_content = messages[0]["content"]
+            system_content = ""
 
-        # Language instruction (extract from original prompt)
-        lang_instruction = "Output in English."
-        if "使用中文输出" in original_content[0]["text"]:
-            lang_instruction = "使用中文输出。"
+        image_content = user_content[1]  # The image part
 
-        # Generate caption
-        caption_prompt = self._prompt_manager.get_prompt("image_caption")
-        caption_prompt = caption_prompt.replace(
-            "**输出语言必须与源文档保持一致** - 英文文档用英文，中文文档用中文",
-            lang_instruction,
+        # Detect language from system prompt
+        lang_name = "English"
+        if isinstance(system_content, str) and "中文" in system_content:
+            lang_name = "中文"
+
+        # Generate caption using system/user prompts
+        caption_system = self._prompt_manager.get_prompt(
+            "image_caption_system", language=lang_name
         )
+        caption_user = self._prompt_manager.get_prompt("image_caption_user")
         caption_response = await self._call_llm(
             model="default",
             messages=[
+                {"role": "system", "content": caption_system},
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": caption_prompt},
+                        {"type": "text", "text": caption_user},
                         image_content,
                     ],
-                }
+                },
             ],
             context=context,
         )
 
-        # Generate description
-        desc_prompt = self._prompt_manager.get_prompt("image_description")
+        # Generate description using system/user prompts
+        desc_system = self._prompt_manager.get_prompt(
+            "image_description_system", language=lang_name
+        )
+        desc_user = self._prompt_manager.get_prompt("image_description_user")
         desc_response = await self._call_llm(
             model="default",
             messages=[
+                {"role": "system", "content": desc_system},
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": desc_prompt},
+                        {"type": "text", "text": desc_user},
                         image_content,
                     ],
-                }
+                },
             ],
             context=context,
         )
@@ -3169,8 +3242,12 @@ class LLMProcessor:
         # Determine MIME type
         mime_type = get_mime_type(image_path.suffix)
 
-        # Get page content extraction prompt
-        prompt = self._prompt_manager.get_prompt("page_content")
+        # Use separated system/user prompts to improve instruction following
+        # Language is set to "与源文档一致" (match source document)
+        system_prompt = self._prompt_manager.get_prompt(
+            "page_content_system", language="与源文档一致"
+        )
+        user_prompt = self._prompt_manager.get_prompt("page_content_user")
 
         # Use image_path.name as context if not provided
         call_context = context or image_path.name
@@ -3178,10 +3255,11 @@ class LLMProcessor:
         response = await self._call_llm(
             model="default",
             messages=[
+                {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": prompt},
+                        {"type": "text", "text": user_prompt},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -3189,7 +3267,7 @@ class LLMProcessor:
                             },
                         },
                     ],
-                }
+                },
             ],
             context=call_context,
         )
@@ -3220,7 +3298,7 @@ class LLMProcessor:
             # Skip screenshot placeholders (handled separately)
             if "screenshots/" in img_ref:
                 continue
-            marker = f"<!-- IMG_MARKER: {i} -->"
+            marker = f"__MARKITAI_IMG_{i}__"
             mapping[marker] = img_ref
             result = result.replace(img_ref, marker, 1)
 
@@ -3285,18 +3363,19 @@ class LLMProcessor:
         # Only protect image references, NOT slide/page markers (URLs don't have them)
         protected_text, img_mapping = self._protect_image_positions(content)
 
-        # Get URL-specific prompt (not document_enhance_complete which has slide/page markers)
-        prompt = self._prompt_manager.get_prompt(
-            "url_enhance",
+        # Use separated system/user prompts to improve instruction following
+        system_prompt = self._prompt_manager.get_prompt(
+            "url_enhance_system",
             source=context,
         )
+        user_prompt = self._prompt_manager.get_prompt(
+            "url_enhance_user",
+            content=protected_text,
+        )
 
-        # Build content parts
+        # Build content parts with user prompt and screenshot
         content_parts: list[dict] = [
-            {
-                "type": "text",
-                "text": f"{prompt}\n\n## URL Content:\n\n{protected_text}",
-            },
+            {"type": "text", "text": user_prompt},
         ]
 
         # Add screenshot
@@ -3311,9 +3390,14 @@ class LLMProcessor:
         )
 
         async with self.semaphore:
-            # Calculate dynamic max_tokens
-            messages = [{"role": "user", "content": content_parts}]
-            max_tokens = self._calculate_dynamic_max_tokens(messages)
+            # Calculate dynamic max_tokens using minimum across all vision router models
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content_parts},
+            ]
+            max_tokens = self._calculate_dynamic_max_tokens(
+                messages, router=self.vision_router
+            )
 
             client = instructor.from_litellm(
                 self.vision_router.acompletion, mode=instructor.Mode.JSON
@@ -3457,15 +3541,15 @@ class LLMProcessor:
         protected = self.extract_protected_content(extracted_text)
         protected_content, mapping = self._protect_content(extracted_text)
 
-        # Build message with text + images
-        prompt = self._prompt_manager.get_prompt("document_enhance")
+        # Use separated system/user prompts to improve instruction following
+        system_prompt = self._prompt_manager.get_prompt("document_enhance_system")
+        user_prompt = self._prompt_manager.get_prompt(
+            "document_enhance_user", content=protected_content
+        )
 
-        # Prepare content parts
+        # Prepare content parts with user prompt and images
         content_parts: list[dict] = [
-            {
-                "type": "text",
-                "text": f"{prompt}\n\n## Extracted Text:\n\n{protected_content}",
-            },
+            {"type": "text", "text": user_prompt},
         ]
 
         # Add page images (using cache to avoid repeated reads)
@@ -3489,7 +3573,10 @@ class LLMProcessor:
 
         response = await self._call_llm(
             model="default",
-            messages=[{"role": "user", "content": content_parts}],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content_parts},
+            ],
             context=context,
         )
 
@@ -3624,18 +3711,19 @@ class LLMProcessor:
         # Protect slide comments and images with placeholders before LLM processing
         protected_text, mapping = self._protect_content(extracted_text)
 
-        # Get combined prompt
-        prompt = self._prompt_manager.get_prompt(
-            "document_enhance_complete",
+        # Use separated system/user prompts to improve instruction following
+        system_prompt = self._prompt_manager.get_prompt(
+            "document_enhance_complete_system",
             source=source,
         )
+        user_prompt = self._prompt_manager.get_prompt(
+            "document_enhance_complete_user",
+            content=protected_text,
+        )
 
-        # Build content parts
+        # Build content parts with user prompt and images
         content_parts: list[dict] = [
-            {
-                "type": "text",
-                "text": f"{prompt}\n\n## Extracted Text:\n\n{protected_text}",
-            },
+            {"type": "text", "text": user_prompt},
         ]
 
         # Add page images
@@ -3654,9 +3742,15 @@ class LLMProcessor:
             )
 
         async with self.semaphore:
-            # Calculate dynamic max_tokens
-            messages = [{"role": "user", "content": content_parts}]
-            max_tokens = self._calculate_dynamic_max_tokens(messages)
+            # Calculate dynamic max_tokens using minimum across all vision router models
+            # This ensures compatibility with any model the router might select
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content_parts},
+            ]
+            max_tokens = self._calculate_dynamic_max_tokens(
+                messages, router=self.vision_router
+            )
 
             client = instructor.from_litellm(
                 self.vision_router.acompletion, mode=instructor.Mode.JSON
@@ -4014,9 +4108,10 @@ class LLMProcessor:
                 f"(limit: {DEFAULT_MAX_CONTENT_CHARS}). Some content may be lost."
             )
 
-        # Get combined prompt with language
-        prompt = self._prompt_manager.get_prompt(
-            "document_process",
+        # 获取分离的 system 和 user prompt
+        system_prompt = self._prompt_manager.get_prompt("document_process_system")
+        user_prompt = self._prompt_manager.get_prompt(
+            "document_process_user",
             content=truncated_content,
             source=source,
             language=language,
@@ -4025,12 +4120,17 @@ class LLMProcessor:
         async with self.semaphore:
             start_time = time.perf_counter()
 
-            # Calculate dynamic max_tokens
+            # 构建消息：分离 system 和 user role
             messages = cast(
                 list[ChatCompletionMessageParam],
-                [{"role": "user", "content": prompt}],
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
             )
-            max_tokens = self._calculate_dynamic_max_tokens(messages)
+            # Calculate dynamic max_tokens using main router's model
+            target_model_id = self._get_router_primary_model(self.router)
+            max_tokens = self._calculate_dynamic_max_tokens(messages, target_model_id)
 
             # Create instructor client from router for load balancing
             client = instructor.from_litellm(
@@ -4084,6 +4184,17 @@ class LLMProcessor:
                 f"time={elapsed_ms:.0f}ms cost=${cost:.6f}"
             )
 
+            # 验证并清理 prompt 泄漏
+            validated_markdown = self._validate_no_prompt_leakage(
+                response.cleaned_markdown, source
+            )
+            # 如果验证后内容有变化，更新 response
+            if validated_markdown != response.cleaned_markdown:
+                response = DocumentProcessResult(
+                    cleaned_markdown=validated_markdown,
+                    frontmatter=response.frontmatter,
+                )
+
             # Store in both cache layers
             cache_value = {
                 "cleaned_markdown": response.cleaned_markdown,
@@ -4097,6 +4208,30 @@ class LLMProcessor:
             )
 
             return response
+
+    def _validate_no_prompt_leakage(self, cleaned: str, source: str) -> str:
+        """检测并处理 prompt 泄漏。"""
+        prompt_markers = [
+            "## 任务 1:",
+            "## 任务 2:",
+            "【核心原则】",
+            "【清理规范】",
+            "请处理以下",
+            "你是一个专业的",
+        ]
+
+        for marker in prompt_markers:
+            if marker in cleaned:
+                logger.warning(
+                    f"[{source}] Prompt leakage detected, attempting recovery"
+                )
+                if "---" in cleaned:
+                    parts = cleaned.split("---", 2)
+                    if len(parts) > 2:
+                        return parts[2].strip()
+                raise ValueError("LLM returned prompt text in cleaned_markdown")
+
+        return cleaned
 
     def format_llm_output(
         self,
