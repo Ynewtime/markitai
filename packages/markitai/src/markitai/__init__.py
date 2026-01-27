@@ -1,3 +1,3 @@
-"""Markitai - Document to Markdown converter with LLM enhancement."""
+"""Markitai - Opinionated Markdown converter with native LLM enhancement support."""
 
 __version__ = "0.3.2"
