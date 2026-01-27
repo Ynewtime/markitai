@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 
 # Module-level function for multiprocessing (must be picklable)
-def _compress_image_worker(
+def _compress_image_cv2(
     image_data: bytes,
     quality: int,
     max_size: tuple[int, int],
@@ -43,7 +43,99 @@ def _compress_image_worker(
     min_height: int,
     min_area: int,
 ) -> tuple[bytes, int, int] | None:
-    """Compress a single image in a worker process.
+    """Compress a single image using OpenCV (releases GIL in C++ layer).
+
+    OpenCV performs image operations in C++ which releases Python's GIL,
+    making it more efficient for multi-threaded processing compared to Pillow.
+
+    Args:
+        image_data: Raw image bytes
+        quality: JPEG/WEBP quality (1-100)
+        max_size: Maximum dimensions (width, height)
+        output_format: Output format (JPEG, PNG, WEBP)
+        min_width: Minimum width filter
+        min_height: Minimum height filter
+        min_area: Minimum area filter
+
+    Returns:
+        Tuple of (compressed_data, final_width, final_height) or None if filtered
+    """
+    import cv2
+    import numpy as np
+
+    try:
+        # Decode image from bytes
+        nparr = np.frombuffer(image_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            return None
+
+        # Get dimensions (OpenCV uses height, width order)
+        if len(img.shape) == 2:
+            height, width = img.shape
+            channels = 1
+        else:
+            height, width = img.shape[:2]
+            channels = img.shape[2] if len(img.shape) > 2 else 1
+
+        # Apply size filter
+        if width < min_width or height < min_height or width * height < min_area:
+            return None
+
+        # Resize if needed (maintain aspect ratio like Pillow's thumbnail)
+        max_w, max_h = max_size
+        if width > max_w or height > max_h:
+            scale = min(max_w / width, max_h / height)
+            new_w, new_h = int(width * scale), int(height * scale)
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+            width, height = new_w, new_h
+
+        # Handle alpha channel for JPEG (convert BGRA/RGBA to BGR)
+        fmt_upper = output_format.upper()
+        if fmt_upper == "JPEG" and channels == 4:
+            # Create white background and blend
+            if img.shape[2] == 4:  # BGRA
+                alpha = img[:, :, 3:4] / 255.0
+                bgr = img[:, :, :3]
+                white_bg = np.ones_like(bgr, dtype=np.uint8) * 255
+                img = (bgr * alpha + white_bg * (1 - alpha)).astype(np.uint8)
+
+        # Encode to bytes
+        if fmt_upper == "JPEG":
+            encode_param = [cv2.IMWRITE_JPEG_QUALITY, quality]
+            success, buffer = cv2.imencode(".jpg", img, encode_param)
+        elif fmt_upper == "PNG":
+            # PNG compression level 0-9, map quality 100->0, 0->9
+            compression = max(0, min(9, 9 - quality // 11))
+            encode_param = [cv2.IMWRITE_PNG_COMPRESSION, compression]
+            success, buffer = cv2.imencode(".png", img, encode_param)
+        elif fmt_upper == "WEBP":
+            encode_param = [cv2.IMWRITE_WEBP_QUALITY, quality]
+            success, buffer = cv2.imencode(".webp", img, encode_param)
+        else:
+            # Fallback to JPEG
+            encode_param = [cv2.IMWRITE_JPEG_QUALITY, quality]
+            success, buffer = cv2.imencode(".jpg", img, encode_param)
+
+        if not success:
+            return None
+
+        return buffer.tobytes(), width, height
+
+    except Exception:
+        return None
+
+
+def _compress_image_pillow(
+    image_data: bytes,
+    quality: int,
+    max_size: tuple[int, int],
+    output_format: str,
+    min_width: int,
+    min_height: int,
+    min_area: int,
+) -> tuple[bytes, int, int] | None:
+    """Compress a single image using Pillow (fallback implementation).
 
     Args:
         image_data: Raw image bytes
@@ -93,6 +185,56 @@ def _compress_image_worker(
             return out_buffer.getvalue(), img.size[0], img.size[1]
     except Exception:
         return None
+
+
+def _compress_image_worker(
+    image_data: bytes,
+    quality: int,
+    max_size: tuple[int, int],
+    output_format: str,
+    min_width: int,
+    min_height: int,
+    min_area: int,
+) -> tuple[bytes, int, int] | None:
+    """Compress a single image in a worker process.
+
+    Prefers OpenCV for better multi-threaded performance (releases GIL),
+    falls back to Pillow if OpenCV fails.
+
+    Args:
+        image_data: Raw image bytes
+        quality: JPEG quality (1-100)
+        max_size: Maximum dimensions (width, height)
+        output_format: Output format (JPEG, PNG, WEBP)
+        min_width: Minimum width filter
+        min_height: Minimum height filter
+        min_area: Minimum area filter
+
+    Returns:
+        Tuple of (compressed_data, final_width, final_height) or None if filtered
+    """
+    # Try OpenCV first (releases GIL, better for multi-threading)
+    try:
+        result = _compress_image_cv2(
+            image_data,
+            quality,
+            max_size,
+            output_format,
+            min_width,
+            min_height,
+            min_area,
+        )
+        if result is not None:
+            return result
+    except ImportError:
+        pass  # OpenCV not installed, fall through to Pillow
+    except Exception:
+        pass  # OpenCV failed, fall through to Pillow
+
+    # Fallback to Pillow
+    return _compress_image_pillow(
+        image_data, quality, max_size, output_format, min_width, min_height, min_area
+    )
 
 
 @dataclass
@@ -1313,7 +1455,7 @@ async def download_url_images(
     # Download all images concurrently
     async with httpx.AsyncClient(
         headers={
-            "User-Agent": "Mozilla/5.0 (compatible; markitai/0.3.0; +https://github.com/Ynewtime/markitai)"
+            "User-Agent": "Mozilla/5.0 (compatible; markitai/0.3.1; +https://github.com/Ynewtime/markitai)"
         },
         follow_redirects=True,
     ) as client:

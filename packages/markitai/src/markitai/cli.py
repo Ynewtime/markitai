@@ -978,9 +978,16 @@ def app(
             # Cleanup shared resources
             await close_shared_clients()  # Close httpx.AsyncClient for Jina
             shutdown_converter_executor()  # Shutdown ThreadPoolExecutor
-            # Note: FetchCache cleanup happens automatically when process exits
-            # as SQLite handles connection cleanup. For explicit cleanup, the
-            # global _fetch_cache.close() could be called, but it's not critical.
+
+            # Close LiteLLM's aiohttp sessions to prevent "Unclosed connection" warning
+            try:
+                from litellm.llms.custom_httpx.async_client_cleanup import (
+                    close_litellm_async_clients,
+                )
+
+                await close_litellm_async_clients()
+            except Exception:
+                pass  # Ignore cleanup errors
 
     asyncio.run(run_workflow_with_cleanup())
 
@@ -1345,12 +1352,17 @@ def cache_stats(as_json: bool, verbose: bool, limit: int, scope: str) -> None:
     help="Which cache to clear (default: project).",
 )
 @click.option(
+    "--include-spa-domains",
+    is_flag=True,
+    help="Also clear learned SPA domains.",
+)
+@click.option(
     "--yes",
     "-y",
     is_flag=True,
     help="Skip confirmation prompt.",
 )
-def cache_clear(scope: str, yes: bool) -> None:
+def cache_clear(scope: str, include_spa_domains: bool, yes: bool) -> None:
     """Clear cache entries."""
     from markitai.constants import (
         DEFAULT_CACHE_DB_FILENAME,
@@ -1368,11 +1380,14 @@ def cache_clear(scope: str, yes: bool) -> None:
             "global": "global cache (~/.markitai)",
             "all": "ALL caches (project + global)",
         }
-        if not click.confirm(f"Clear {scope_desc[scope]}?"):
+        desc = scope_desc[scope]
+        if include_spa_domains:
+            desc += " + learned SPA domains"
+        if not click.confirm(f"Clear {desc}?"):
             console.print("[yellow]Aborted[/yellow]")
             return
 
-    result = {"project": 0, "global": 0}
+    result = {"project": 0, "global": 0, "spa_domains": 0}
 
     # Clear project cache
     if scope in ("project", "all"):
@@ -1400,16 +1415,103 @@ def cache_clear(scope: str, yes: bool) -> None:
             except Exception as e:
                 console.print(f"[red]Failed to clear global cache:[/red] {e}")
 
+    # Clear SPA domains if requested
+    if include_spa_domains:
+        from markitai.fetch import get_spa_domain_cache
+
+        try:
+            spa_cache = get_spa_domain_cache()
+            result["spa_domains"] = spa_cache.clear()
+        except Exception as e:
+            console.print(f"[red]Failed to clear SPA domains:[/red] {e}")
+
     # Report results
     total = result["project"] + result["global"]
-    if total > 0:
+    if total > 0 or result["spa_domains"] > 0:
         console.print(f"[green]Cleared {total} cache entries[/green]")
         if result["project"] > 0:
             console.print(f"  Project: {result['project']}")
         if result["global"] > 0:
             console.print(f"  Global: {result['global']}")
+        if result["spa_domains"] > 0:
+            console.print(f"  SPA domains: {result['spa_domains']}")
     else:
         console.print("[dim]No cache entries to clear[/dim]")
+
+
+@cache.command("spa-domains")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Output as JSON.",
+)
+@click.option(
+    "--clear",
+    is_flag=True,
+    help="Clear all learned SPA domains.",
+)
+def cache_spa_domains(as_json: bool, clear: bool) -> None:
+    """View or manage learned SPA domains.
+
+    Shows domains that were automatically detected as requiring browser
+    rendering (JavaScript-heavy sites). These domains will use browser
+    strategy directly on future requests, avoiding wasted static fetch attempts.
+    """
+    from rich.table import Table
+
+    from markitai.fetch import get_spa_domain_cache
+
+    spa_cache = get_spa_domain_cache()
+
+    if clear:
+        count = spa_cache.clear()
+        if as_json:
+            console.print(json.dumps({"cleared": count}))
+        else:
+            console.print(f"[green]Cleared {count} learned SPA domains[/green]")
+        return
+
+    domains = spa_cache.list_domains()
+
+    if as_json:
+        console.print(json.dumps(domains, indent=2, ensure_ascii=False), soft_wrap=True)
+        return
+
+    if not domains:
+        console.print("[dim]No learned SPA domains yet[/dim]")
+        console.print(
+            "\n[dim]Domains are learned automatically when static fetch "
+            "detects JavaScript requirement.[/dim]"
+        )
+        return
+
+    console.print(f"[bold]Learned SPA Domains[/bold] ({len(domains)} total)\n")
+
+    table = Table()
+    table.add_column("Domain", style="cyan")
+    table.add_column("Hits", justify="right")
+    table.add_column("Learned At", style="dim")
+    table.add_column("Last Hit", style="dim")
+    table.add_column("Status")
+
+    for d in domains:
+        status = "[red]Expired[/red]" if d.get("expired") else "[green]Active[/green]"
+        learned_at = d.get("learned_at", "")[:10] if d.get("learned_at") else "-"
+        last_hit = d.get("last_hit", "")[:10] if d.get("last_hit") else "-"
+        table.add_row(
+            d["domain"],
+            str(d.get("hits", 0)),
+            learned_at,
+            last_hit,
+            status,
+        )
+
+    console.print(table)
+    console.print(
+        "\n[dim]Tip: Use --clear to reset learned domains, "
+        "or configure fallback_patterns in config file for permanent rules.[/dim]"
+    )
 
 
 # =============================================================================
@@ -3097,7 +3199,7 @@ def _check_agent_browser_for_urls(cfg: Any, console: Any) -> None:
         from rich.panel import Panel
 
         warning_text = (
-            f"[yellow]⚠ {message}[/yellow]\n\n"
+            f"[yellow]{message}[/yellow]\n\n"
             "[dim]URL processing will fall back to static fetch strategy.\n"
             "For JavaScript-rendered pages (Twitter/X, etc.), browser support is recommended.\n\n"
             "To install browser support:[/dim]\n"

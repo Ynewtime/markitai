@@ -1,7 +1,7 @@
 # Markitai 技术规格文档
 
-> 版本: 0.3.0
-> 最后更新: 2026-01-26
+> 版本: 0.3.1
+> 最后更新: 2026-01-27
 
 ---
 
@@ -83,7 +83,7 @@ dev = ["pytest-cov>=7.0.0"]
 ```toml
 [project]
 name = "markitai"
-version = "0.3.0"
+version = "0.3.1"
 requires-python = ">=3.11"
 dependencies = [
     "pymupdf4llm>=0.2.9",
@@ -229,6 +229,7 @@ packages = ["src/markitai"]
 | `BatchProcessor` | 批量处理与断点恢复 (batch.py) |
 | `FetchModule` | URL 抓取模块 - static/browser/jina 三策略 (fetch.py) |
 | `FetchCache` | URL 抓取结果缓存（SQLite） |
+| `SPADomainCache` | SPA 域名学习缓存（自动检测需要浏览器渲染的网站） |
 | `UrlParser` | .urls 文件解析（JSON/纯文本格式）(urls.py) |
 | `Logger` | 日志系统 (Loguru) |
 
@@ -476,13 +477,24 @@ markitai doc.pdf --preset rich --no-desc  # rich 但不生成描述文件
   },
   "prompts": {
     "dir": "~/.markitai/prompts",
-    "cleaner": null,
-    "frontmatter": null,
-    "image_caption": null,
-    "image_description": null,
-    "image_analysis": null,
-    "page_content": null,
-    "document_enhance": null
+    "cleaner_system": null,
+    "cleaner_user": null,
+    "frontmatter_system": null,
+    "frontmatter_user": null,
+    "image_caption_system": null,
+    "image_caption_user": null,
+    "image_description_system": null,
+    "image_description_user": null,
+    "image_analysis_system": null,
+    "image_analysis_user": null,
+    "page_content_system": null,
+    "page_content_user": null,
+    "document_enhance_system": null,
+    "document_enhance_user": null,
+    "document_process_system": null,
+    "document_process_user": null,
+    "url_enhance_system": null,
+    "url_enhance_user": null
   },
   "batch": {
     "concurrency": 10,
@@ -606,17 +618,36 @@ markitai doc.pdf --preset rich --no-desc  # rich 但不生成描述文件
 
 #### prompts 配置
 
+所有 prompt 均拆分为 `*_system` (系统角色定义) 和 `*_user` (用户内容模板) 两部分，以避免 LLM 输出中的 Prompt 泄漏问题。
+
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `dir` | string | `~/.markitai/prompts` | 提示词目录 |
-| `cleaner` | string | null | 清洗提示词文件路径 |
-| `frontmatter` | string | null | frontmatter 生成提示词 |
-| `image_caption` | string | null | 图片 alt 文本提示词 |
-| `image_description` | string | null | 图片描述提示词 |
-| `image_analysis` | string | null | 图片分析提示词（caption + description 组合） |
-| `page_content` | string | null | 页面内容提取提示词 |
-| `document_enhance` | string | null | 文档增强提示词（OCR+LLM/PPTX+LLM 模式） |
-| `url_enhance` | string | null | URL/网页内容增强提示词 |
+| `cleaner_system` | string | null | 清洗系统提示词 |
+| `cleaner_user` | string | null | 清洗用户提示词 |
+| `frontmatter_system` | string | null | frontmatter 系统提示词 |
+| `frontmatter_user` | string | null | frontmatter 用户提示词 |
+| `image_caption_system` | string | null | 图片 alt 文本系统提示词 |
+| `image_caption_user` | string | null | 图片 alt 文本用户提示词 |
+| `image_description_system` | string | null | 图片描述系统提示词 |
+| `image_description_user` | string | null | 图片描述用户提示词 |
+| `image_analysis_system` | string | null | 图片分析系统提示词 |
+| `image_analysis_user` | string | null | 图片分析用户提示词 |
+| `page_content_system` | string | null | 页面内容提取系统提示词 |
+| `page_content_user` | string | null | 页面内容提取用户提示词 |
+| `document_enhance_system` | string | null | 文档增强系统提示词 |
+| `document_enhance_user` | string | null | 文档增强用户提示词 |
+| `document_process_system` | string | null | 文档处理系统提示词 |
+| `document_process_user` | string | null | 文档处理用户提示词 |
+| `url_enhance_system` | string | null | URL 增强系统提示词 |
+| `url_enhance_user` | string | null | URL 增强用户提示词 |
+
+**Prompt 拆分说明**：
+
+- **system**: 定义 LLM 的角色、任务规则和输出格式约束
+- **user**: 包含实际要处理的内容和上下文变量（如 `{content}`, `{source}`, `{language}`）
+
+这种拆分确保 LLM 能够清晰区分"指令"和"内容"，避免将处理规则复制到输出中。
 
 #### batch 配置
 
@@ -706,7 +737,30 @@ URL 抓取配置，用于处理静态页面和 JS 渲染页面。
 | `strategy` | string | `auto` | 抓取策略（auto/static/browser/jina） |
 | `agent_browser` | object | {} | agent-browser 配置 |
 | `jina` | object | {} | Jina Reader API 配置 |
-| `fallback_patterns` | array | `["x.com", "twitter.com"]` | 需要浏览器渲染的域名模式 |
+| `fallback_patterns` | array | `["x.com", "twitter.com", ...]` | 需要浏览器渲染的域名模式 |
+
+**SPA 域名学习**：
+
+系统会自动检测并记忆需要浏览器渲染的网站（SPA）。当静态抓取检测到 JavaScript 依赖时，会将该域名记录到学习缓存中，后续请求将直接使用浏览器策略，避免浪费的静态抓取尝试。
+
+```bash
+# 查看已学习的 SPA 域名
+markitai cache spa-domains
+
+# 清理学习缓存
+markitai cache spa-domains --clear
+
+# 清理所有缓存（包括 SPA 域名）
+markitai cache clear --include-spa-domains
+```
+
+**代理自动检测**：
+
+系统会自动检测代理设置，优先级：
+1. 环境变量：`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`
+2. 本地代理端口探测：7890 (Clash), 10808 (V2Ray), 1080 (SOCKS5), 8080, 8118, 9050
+
+检测到的代理会自动应用到 Jina API 和浏览器抓取。
 
 **strategy 策略说明**：
 
@@ -1390,26 +1444,35 @@ async def analyze_with_llm(image_path: Path, prompt: str) -> str:
 
 ## 10. 提示词管理
 
-### 10.1 内置提示词
+### 10.1 System/User 拆分架构
+
+所有提示词均拆分为两部分：
+
+- **`*_system.md`**：定义 LLM 的角色、任务规则和输出格式约束
+- **`*_user.md`**：包含实际要处理的内容和上下文变量
+
+这种拆分确保 LLM 能够清晰区分"指令"和"内容"，避免将处理规则复制到输出中（Prompt 泄漏问题）。
+
+### 10.2 内置提示词
 
 系统内置以下提示词：
 
 | 名称 | 文件 | 用途 |
 |------|------|------|
-| `cleaner` | `cleaner.md` | Markdown 清洗和格式优化 |
-| `frontmatter` | `frontmatter.md` | 生成 YAML frontmatter 元数据 |
-| `image_caption` | `image_caption.md` | 生成图片 alt 文本（简短描述） |
-| `image_description` | `image_description.md` | 生成图片详细描述 |
-| `image_analysis` | `image_analysis.md` | 合并的图片分析（caption + description） |
-| `page_content` | `page_content.md` | OCR 页面内容提取 |
-| `document_process` | `document_process.md` | 文档处理（cleaner + frontmatter 合并调用） |
-| `document_enhance` | `document_enhance.md` | 文档增强（结合提取文本和页面截图） |
-| `document_enhance_complete` | `document_enhance_complete.md` | 完整文档增强（含 frontmatter 生成） |
-| `url_enhance` | `url_enhance.md` | URL/网页内容增强（多源内容合并） |
+| `cleaner` | `cleaner_system.md` + `cleaner_user.md` | Markdown 清洗和格式优化 |
+| `frontmatter` | `frontmatter_system.md` + `frontmatter_user.md` | 生成 YAML frontmatter 元数据 |
+| `image_caption` | `image_caption_system.md` + `image_caption_user.md` | 生成图片 alt 文本（简短描述） |
+| `image_description` | `image_description_system.md` + `image_description_user.md` | 生成图片详细描述 |
+| `image_analysis` | `image_analysis_system.md` + `image_analysis_user.md` | 合并的图片分析（caption + description） |
+| `page_content` | `page_content_system.md` + `page_content_user.md` | OCR 页面内容提取 |
+| `document_process` | `document_process_system.md` + `document_process_user.md` | 文档处理（cleaner + frontmatter 合并调用） |
+| `document_enhance` | `document_enhance_system.md` + `document_enhance_user.md` | 文档增强（结合提取文本和页面截图） |
+| `document_enhance_complete` | `document_enhance_complete_system.md` + `document_enhance_complete_user.md` | 完整文档增强（含 frontmatter 生成） |
+| `url_enhance` | `url_enhance_system.md` + `url_enhance_user.md` | URL/网页内容增强（多源内容合并） |
 
 > 内置提示词路径：`packages/markitai/src/markitai/prompts/`
 
-### 10.2 自定义覆盖
+### 10.3 自定义覆盖
 
 用户可以通过以下方式覆盖默认提示词：
 
@@ -1418,7 +1481,8 @@ async def analyze_with_llm(image_path: Path, prompt: str) -> str:
 ```json
 {
   "prompts": {
-    "cleaner": "/path/to/custom/cleaner.md"
+    "cleaner_system": "/path/to/custom/cleaner_system.md",
+    "cleaner_user": "/path/to/custom/cleaner_user.md"
   }
 }
 ```
@@ -1427,19 +1491,26 @@ async def analyze_with_llm(image_path: Path, prompt: str) -> str:
 
 ```
 ~/.markitai/prompts/
-├── cleaner.md          # 覆盖 cleaner 提示词
-├── frontmatter.md      # 覆盖 frontmatter 提示词
-├── image_caption.md    # 覆盖 image_caption 提示词
-└── image_description.md # 覆盖 image_description 提示词
+├── cleaner_system.md          # 覆盖 cleaner 系统提示词
+├── cleaner_user.md            # 覆盖 cleaner 用户提示词
+├── frontmatter_system.md      # 覆盖 frontmatter 系统提示词
+├── frontmatter_user.md        # 覆盖 frontmatter 用户提示词
+├── image_caption_system.md    # 覆盖 image_caption 系统提示词
+└── image_caption_user.md      # 覆盖 image_caption 用户提示词
 ```
 
-### 10.3 提示词模板变量
+### 10.4 提示词模板变量
+
+**User 提示词支持的变量**：
 
 | 变量 | 说明 | 可用于 |
 |------|------|--------|
-| `{content}` | 文档内容 | cleaner, frontmatter |
-| `{source}` | 源文件名 | frontmatter |
-| `{timestamp}` | 处理时间 | frontmatter |
+| `{content}` | 文档内容 | cleaner_user, frontmatter_user, document_process_user |
+| `{source}` | 源文件名 | frontmatter_user, document_process_user |
+| `{language}` | 检测到的语言 | document_process_user, frontmatter_user |
+| `{timestamp}` | 处理时间 | frontmatter_user |
+
+**System 提示词**通常不包含变量，仅定义固定的角色和规则。
 
 ---
 

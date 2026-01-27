@@ -1,4 +1,4 @@
-# Markitai 环境配置脚本 (用户版)
+﻿# Markitai 环境配置脚本 (用户版)
 # PowerShell 5.1+
 
 $ErrorActionPreference = "Stop"
@@ -114,13 +114,17 @@ function Test-Python {
 function Test-UV {
     Write-Step 2 4 "检测 UV 包管理器..."
 
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     try {
-        $version = & uv --version 2>$null
-        if ($version) {
-            Write-Success "$version 已安装"
-            return $true
-        }
-    } catch {}
+        $version = & uv --version 2>&1 | Select-Object -First 1
+    } finally {
+        $ErrorActionPreference = $oldErrorAction
+    }
+    if ($version -and $version -notmatch "error") {
+        Write-Success "$version 已安装"
+        return $true
+    }
 
     Write-Error2 "UV 未安装"
 
@@ -133,8 +137,14 @@ function Test-UV {
             # 刷新 PATH
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
-            $version = & uv --version 2>$null
-            if ($version) {
+            $oldErrorAction = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                $version = & uv --version 2>&1 | Select-Object -First 1
+            } finally {
+                $ErrorActionPreference = $oldErrorAction
+            }
+            if ($version -and $version -notmatch "error") {
                 Write-Success "$version 安装成功"
                 return $true
             } else {
@@ -161,46 +171,61 @@ function Install-Markitai {
     Write-Info "正在安装..."
 
     # 优先使用 uv tool install（推荐方式）
-    try {
-        $uvExists = Get-Command uv -ErrorAction SilentlyContinue
-        if ($uvExists) {
-            & uv tool install "markitai[all]" 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                # 刷新 PATH
-                $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
-                $version = & markitai --version 2>$null
-                if (-not $version) { $version = "已安装" }
-                Write-Success "markitai $version 安装成功"
-                return $true
-            }
+    $uvExists = Get-Command uv -ErrorAction SilentlyContinue
+    if ($uvExists) {
+        $oldErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $null = & uv tool install "markitai[all]" 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $oldErrorAction
         }
-    } catch {}
-
-    # 回退到 pipx
-    try {
-        $pipxExists = Get-Command pipx -ErrorAction SilentlyContinue
-        if ($pipxExists) {
-            & pipx install "markitai[all]"
-            if ($LASTEXITCODE -eq 0) {
-                $version = & markitai --version 2>$null
-                if (-not $version) { $version = "已安装" }
-                Write-Success "markitai $version 安装成功"
-                return $true
-            }
-        }
-    } catch {}
-
-    # 回退到 pip --user
-    try {
-        & pip install --user "markitai[all]"
-        if ($LASTEXITCODE -eq 0) {
-            $version = & markitai --version 2>$null
+        if ($exitCode -eq 0) {
+            # 刷新 PATH
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+            $version = & markitai --version 2>&1 | Select-Object -First 1
             if (-not $version) { $version = "已安装" }
             Write-Success "markitai $version 安装成功"
-            Write-Warning2 "可能需要将 Python Scripts 目录添加到 PATH"
             return $true
         }
-    } catch {}
+    }
+
+    # 回退到 pipx
+    $pipxExists = Get-Command pipx -ErrorAction SilentlyContinue
+    if ($pipxExists) {
+        $oldErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $null = & pipx install "markitai[all]" 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $oldErrorAction
+        }
+        if ($exitCode -eq 0) {
+            $version = & markitai --version 2>&1 | Select-Object -First 1
+            if (-not $version) { $version = "已安装" }
+            Write-Success "markitai $version 安装成功"
+            return $true
+        }
+    }
+
+    # 回退到 pip --user
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $null = & pip install --user "markitai[all]" 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $oldErrorAction
+    }
+    if ($exitCode -eq 0) {
+        $version = & markitai --version 2>&1 | Select-Object -First 1
+        if (-not $version) { $version = "已安装" }
+        Write-Success "markitai $version 安装成功"
+        Write-Warning2 "可能需要将 Python Scripts 目录添加到 PATH"
+        return $true
+    }
 
     Write-Error2 "markitai 安装失败"
     Write-Info "请手动安装: uv tool install markitai"

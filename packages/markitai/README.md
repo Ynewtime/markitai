@@ -9,6 +9,7 @@ Opinionated Markdown converter with native LLM enhancement support.
 - **Batch Processing** - Concurrent conversion, resume capability, progress display
 - **OCR Recognition** - Text extraction from scanned PDFs and images
 - **URL Conversion** - Direct webpage conversion with SPA browser rendering support
+- **Smart Caching** - LLM result caching, SPA domain learning, auto-proxy detection
 
 ## Installation
 

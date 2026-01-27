@@ -17,18 +17,34 @@ BUILTIN_PROMPTS_DIR = Path(__file__).parent
 class PromptManager:
     """Manager for loading and rendering prompts."""
 
-    # Available prompt names
+    # Available prompt names (system/user pairs only)
     PROMPT_NAMES = (
-        "cleaner",
-        "frontmatter",
-        "image_caption",
-        "image_description",
-        "image_analysis",
-        "page_content",
-        "document_enhance",
-        "document_process",
-        "document_enhance_complete",
-        "url_enhance",
+        # Cleaner prompts
+        "cleaner_system",
+        "cleaner_user",
+        # Frontmatter prompts
+        "frontmatter_system",
+        "frontmatter_user",
+        # Image prompts
+        "image_caption_system",
+        "image_caption_user",
+        "image_description_system",
+        "image_description_user",
+        "image_analysis_system",
+        "image_analysis_user",
+        # Page content prompts
+        "page_content_system",
+        "page_content_user",
+        # Document prompts
+        "document_enhance_system",
+        "document_enhance_user",
+        "document_process_system",
+        "document_process_user",
+        "document_enhance_complete_system",
+        "document_enhance_complete_user",
+        # URL prompts
+        "url_enhance_system",
+        "url_enhance_user",
     )
 
     def __init__(self, config: PromptsConfig | None = None) -> None:

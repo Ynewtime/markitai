@@ -67,20 +67,20 @@ markitai config set llm.enabled true
     "alt_enabled": false,
     "desc_enabled": false,
     "compress": true,
-    "quality": 85,
+    "quality": 75,
     "format": "jpeg",
     "max_width": 1920,
-    "max_height": 1080,
+    "max_height": 99999,
     "filter": {
       "min_width": 50,
       "min_height": 50,
-      "min_area": 2500,
+      "min_area": 5000,
       "deduplicate": true
     }
   },
   "ocr": {
     "enabled": false,
-    "lang": "eng+chi_sim"
+    "lang": "en"
   },
   "screenshot": {
     "enabled": false,
@@ -97,8 +97,8 @@ markitai config set llm.enabled true
   },
   "batch": {
     "concurrency": 10,
-    "url_concurrency": 3,
-    "scan_max_depth": 10,
+    "url_concurrency": 5,
+    "scan_max_depth": 5,
     "scan_max_files": 10000
   },
   "fetch": {
@@ -107,13 +107,13 @@ markitai config set llm.enabled true
       "command": "agent-browser",
       "timeout": 30000,
       "wait_for": "domcontentloaded",
-      "extra_wait_ms": 2000
+      "extra_wait_ms": 1000
     },
     "jina": {
       "api_key": null,
       "timeout": 30
     },
-    "fallback_patterns": ["x.com", "twitter.com"]
+    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   },
   "output": {
     "on_conflict": "rename"
@@ -250,7 +250,7 @@ Control how images are processed and compressed:
     "filter": {
       "min_width": 50,
       "min_height": 50,
-      "min_area": 2500,
+      "min_area": 5000,
       "deduplicate": true
     }
   }
@@ -262,13 +262,13 @@ Control how images are processed and compressed:
 | `alt_enabled` | `false` | Generate alt text via LLM |
 | `desc_enabled` | `false` | Generate description files |
 | `compress` | `true` | Compress images |
-| `quality` | `85` | JPEG/WebP quality (1-100) |
+| `quality` | `75` | JPEG/WebP quality (1-100) |
 | `format` | `jpeg` | Output format: `jpeg`, `png`, `webp` |
 | `max_width` | `1920` | Max width in pixels |
-| `max_height` | `1080` | Max height in pixels |
+| `max_height` | `99999` | Max height in pixels (effectively unlimited) |
 | `filter.min_width` | `50` | Skip images smaller than this |
 | `filter.min_height` | `50` | Skip images shorter than this |
-| `filter.min_area` | `2500` | Skip images with area below this |
+| `filter.min_area` | `5000` | Skip images with area below this |
 | `filter.deduplicate` | `true` | Remove duplicate images |
 
 ## Screenshot Configuration
@@ -281,7 +281,7 @@ Enable screenshot capture for documents and URLs:
     "enabled": false,
     "viewport_width": 1920,
     "viewport_height": 1080,
-    "quality": 85,
+    "quality": 75,
     "max_height": 10000
   }
 }
@@ -297,7 +297,7 @@ When enabled (`--screenshot` or `--preset rich`):
 | `enabled` | `false` | Enable screenshot capture |
 | `viewport_width` | `1920` | Browser viewport width for URL screenshots |
 | `viewport_height` | `1080` | Browser viewport height for URL screenshots |
-| `quality` | `85` | JPEG compression quality (1-100) |
+| `quality` | `75` | JPEG compression quality (1-100) |
 | `max_height` | `10000` | Maximum screenshot height in pixels |
 
 Screenshots are saved to `output/screenshots/` directory.
@@ -308,13 +308,13 @@ For URLs, enabling `--screenshot` automatically upgrades the fetch strategy to `
 
 ## OCR Configuration
 
-Configure Optical Character Recognition for scanned documents:
+Configure Optical Character Recognition for scanned documents. Markitai uses [RapidOCR](https://github.com/RapidAI/RapidOCR) (ONNX Runtime + OpenCV) for OCR processing.
 
 ```json
 {
   "ocr": {
     "enabled": false,
-    "lang": "eng+chi_sim"
+    "lang": "en"
   }
 }
 ```
@@ -322,17 +322,19 @@ Configure Optical Character Recognition for scanned documents:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `false` | Enable OCR for PDF |
-| `lang` | `eng+chi_sim` | Tesseract language codes |
+| `lang` | `en` | RapidOCR language code |
 
-Common language codes:
-- `eng` - English
-- `chi_sim` - Simplified Chinese
-- `chi_tra` - Traditional Chinese
-- `jpn` - Japanese
-- `kor` - Korean
+Supported language codes:
+- `en` - English
+- `zh` / `ch` - Chinese (Simplified)
+- `ja` / `japan` - Japanese
+- `ko` / `korean` - Korean
+- `ar` / `arabic` - Arabic
+- `th` - Thai
+- `latin` - Latin languages
 
-::: warning
-OCR requires Tesseract to be installed. See [Getting Started](/guide/getting-started#optional-dependencies).
+::: tip
+RapidOCR is included as a dependency and works out of the box. No additional installation required.
 :::
 
 ## Batch Configuration
@@ -343,8 +345,8 @@ Control parallel processing:
 {
   "batch": {
     "concurrency": 10,
-    "url_concurrency": 3,
-    "scan_max_depth": 10,
+    "url_concurrency": 5,
+    "scan_max_depth": 5,
     "scan_max_files": 10000
   }
 }
@@ -353,8 +355,8 @@ Control parallel processing:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `concurrency` | `10` | Max concurrent file conversions |
-| `url_concurrency` | `3` | Max concurrent URL fetches (separate from files) |
-| `scan_max_depth` | `10` | Max directory depth to scan |
+| `url_concurrency` | `5` | Max concurrent URL fetches (separate from files) |
+| `scan_max_depth` | `5` | Max directory depth to scan |
 | `scan_max_files` | `10000` | Max files to process in one run |
 
 ::: tip
@@ -373,13 +375,13 @@ Configure how URLs are fetched:
       "command": "agent-browser",
       "timeout": 30000,
       "wait_for": "domcontentloaded",
-      "extra_wait_ms": 2000
+      "extra_wait_ms": 1000
     },
     "jina": {
       "api_key": "env:JINA_API_KEY",
       "timeout": 30
     },
-    "fallback_patterns": ["x.com", "twitter.com"]
+    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   }
 }
 ```
@@ -400,7 +402,7 @@ Configure how URLs are fetched:
 | `command` | `agent-browser` | Path to agent-browser |
 | `timeout` | `30000` | Page load timeout (ms) |
 | `wait_for` | `domcontentloaded` | Wait condition: `load`, `domcontentloaded`, `networkidle` |
-| `extra_wait_ms` | `2000` | Extra wait time for JS rendering |
+| `extra_wait_ms` | `1000` | Extra wait time for JS rendering |
 
 ### Fallback Patterns
 
@@ -409,7 +411,7 @@ Sites matching these patterns automatically use browser strategy:
 ```json
 {
   "fetch": {
-    "fallback_patterns": ["x.com", "twitter.com", "spa-site.com"]
+    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   }
 }
 ```
@@ -509,19 +511,22 @@ Configure logging behavior:
 
 ## Custom Prompts
 
-Customize LLM prompts for different tasks:
+Customize LLM prompts for different tasks. Each prompt is split into **system** (role definition) and **user** (content template) parts:
 
 ```json
 {
   "prompts": {
     "dir": "~/.markitai/prompts",
-    "cleaner": null,
-    "frontmatter": null,
-    "image_caption": null,
-    "image_description": null,
-    "image_analysis": null,
-    "page_content": null,
-    "document_enhance": null
+    "cleaner_system": null,
+    "cleaner_user": null,
+    "frontmatter_system": null,
+    "frontmatter_user": null,
+    "image_caption_system": null,
+    "image_caption_user": null,
+    "image_description_system": null,
+    "image_description_user": null,
+    "document_process_system": null,
+    "document_process_user": null
   }
 }
 ```
@@ -530,11 +535,13 @@ Create custom prompt files in the prompts directory:
 
 ```
 ~/.markitai/prompts/
-├── cleaner.md          # Document cleaning prompt
-├── frontmatter.md      # Metadata extraction prompt
-├── image_caption.md    # Alt text generation
-├── image_description.md # Image description
-└── document_enhance.md # Vision-based enhancement
+├── cleaner_system.md          # Document cleaning role & rules
+├── cleaner_user.md            # Document cleaning content template
+├── frontmatter_system.md      # Metadata extraction role
+├── frontmatter_user.md        # Metadata extraction template
+├── image_caption_system.md    # Alt text generation role
+├── image_caption_user.md      # Alt text content template
+└── document_enhance_system.md # Vision enhancement role
 ```
 
 Set a specific prompt file path:
@@ -542,7 +549,12 @@ Set a specific prompt file path:
 ```json
 {
   "prompts": {
-    "cleaner": "/path/to/my-cleaner.md"
+    "cleaner_system": "/path/to/my-cleaner-system.md",
+    "cleaner_user": "/path/to/my-cleaner-user.md"
   }
 }
 ```
+
+::: tip
+The system/user split prevents LLM from accidentally including prompt instructions in its output. System prompts define the role and rules, while user prompts contain the actual content to process.
+:::

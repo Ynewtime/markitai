@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-01-27
+
+### Fixed
+
+#### Prompt Leakage Prevention
+- Split all prompts into `*_system.md` (role definition) and `*_user.md` (content template)
+- Added `_validate_no_prompt_leakage()` to detect and handle prompt leakage in LLM output
+- Updated LLM calls to use proper `[{"role": "system"}, {"role": "user"}]` message structure
+
+#### LLM Compatibility
+- Fixed `max_tokens` exceeding deepseek limit by using minimum across all router models
+- Fixed terminal window popup on Windows when running agent-browser verification
+
+#### URL Fetching
+- Improved error messages for browser fetch timeout (no longer suggests installing when already attempted)
+- Added auto-proxy detection for Jina API and browser fetching
+  - Checks environment variables: `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`
+  - Auto-detects local proxy ports: 7890 (Clash), 10808 (V2Ray), 1080 (SOCKS5), etc.
+
+### Added
+
+#### SPA Domain Learning
+- New `SPADomainCache` for automatic detection and caching of JavaScript-heavy sites
+- `markitai cache spa-domains` command to view/manage learned domains
+- `markitai cache clear --include-spa-domains` option
+
+#### Windows Performance Optimizations
+- Thread pool optimization: Windows defaults to 4 workers (vs 8 on Linux/macOS)
+- ONNX Runtime global singleton with preheat for OCR engine
+- OpenCV-based image compression (releases GIL, 20-40% faster)
+- Batch subprocess execution for agent-browser commands
+
+### Changed
+
+- Default image quality: 85 → 75
+- Default image max_height: 1080 → 99999 (effectively unlimited)
+- Default image min_area filter: 2500 → 5000
+- Default URL concurrency: 3 → 5
+- Default scan_max_depth: 10 → 5
+- Extended fallback_patterns with more social media domains
+
 ## [0.3.0] - 2026-01-26
 
 ### Added
@@ -347,6 +388,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.3.1]: https://github.com/Ynewtime/markitai/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Ynewtime/markitai/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/Ynewtime/markitai/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/Ynewtime/markitai/compare/v0.2.2...v0.2.3

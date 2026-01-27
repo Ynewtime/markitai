@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -24,7 +25,18 @@ class OCRResult:
 
 
 class OCRProcessor:
-    """OCR processor using RapidOCR."""
+    """OCR processor using RapidOCR.
+
+    Implements global singleton pattern for engine to avoid cold start
+    delays on subsequent calls. ONNX Runtime initialization is expensive
+    (1-8s depending on backend), so sharing the engine across instances
+    significantly improves batch processing performance.
+    """
+
+    # Global singleton engine with thread-safe initialization
+    _global_engine: Any = None
+    _global_config: OCRConfig | None = None
+    _init_lock = threading.Lock()
 
     def __init__(self, config: OCRConfig | None = None) -> None:
         """
@@ -36,34 +48,68 @@ class OCRProcessor:
         self.config = config
         self._engine = None
 
-    @property
-    def engine(self):
-        """Get or create the RapidOCR engine (lazy loading)."""
-        if self._engine is None:
-            self._engine = self._create_engine()
-        return self._engine
+    @classmethod
+    def get_shared_engine(cls, config: OCRConfig | None = None) -> Any:
+        """Get or create global singleton engine (thread-safe).
 
-    def _get_lang_enum(self, lang_code: str):
-        """Map language code to RapidOCR LangRec enum."""
-        from rapidocr import LangRec
+        Uses double-checked locking for thread-safe lazy initialization.
+        The engine is shared across all OCRProcessor instances to avoid
+        repeated ONNX Runtime cold starts.
 
-        lang_map = {
-            "zh": LangRec.CH,
-            "ch": LangRec.CH,
-            "en": LangRec.EN,
-            "ja": LangRec.JAPAN,
-            "japan": LangRec.JAPAN,
-            "ko": LangRec.KOREAN,
-            "korean": LangRec.KOREAN,
-            "ar": LangRec.ARABIC,
-            "arabic": LangRec.ARABIC,
-            "th": LangRec.TH,
-            "latin": LangRec.LATIN,
-        }
-        return lang_map.get(lang_code.lower(), LangRec.CH)
+        Args:
+            config: Optional OCR configuration for engine creation
 
-    def _create_engine(self):
-        """Create RapidOCR engine with configuration."""
+        Returns:
+            Shared RapidOCR engine instance
+        """
+        if cls._global_engine is None:
+            with cls._init_lock:
+                if cls._global_engine is None:
+                    logger.debug("Creating global shared OCR engine")
+                    cls._global_config = config
+                    cls._global_engine = cls._create_engine_impl(config)
+        return cls._global_engine
+
+    @classmethod
+    def preheat(cls, config: OCRConfig | None = None) -> Any:
+        """Preheat OCR engine at application startup.
+
+        Call this during batch processing initialization to eliminate
+        cold start delay from the first actual OCR call. Performs a
+        dummy inference to complete GPU compilation (DirectML/CUDA).
+
+        Args:
+            config: Optional OCR configuration
+
+        Returns:
+            Preheated RapidOCR engine instance
+        """
+        import numpy as np
+
+        logger.info("Preheating OCR engine...")
+        engine = cls.get_shared_engine(config)
+
+        # Execute dummy inference to complete GPU compilation
+        dummy_image = np.zeros((100, 100, 3), dtype=np.uint8)
+        try:
+            engine(dummy_image)
+            logger.debug("OCR engine preheat completed")
+        except Exception as e:
+            # Ignore errors from dummy image (empty image may not be recognized)
+            logger.debug(f"OCR preheat inference ignored: {e}")
+
+        return engine
+
+    @classmethod
+    def _create_engine_impl(cls, config: OCRConfig | None = None) -> Any:
+        """Create RapidOCR engine with configuration (implementation).
+
+        Args:
+            config: Optional OCR configuration
+
+        Returns:
+            New RapidOCR engine instance
+        """
         try:
             from rapidocr import RapidOCR
         except ImportError as e:
@@ -73,16 +119,41 @@ class OCRProcessor:
             ) from e
 
         # Build params
-        params = {
+        params: dict[str, Any] = {
             "Global.log_level": "warning",  # Reduce logging noise
         }
 
         # Set language if configured (must use LangRec enum)
-        # Note: RapidOCR params dict expects specific types, type checker doesn't recognize LangRec enum
-        if self.config and self.config.lang:
-            params["Rec.lang_type"] = self._get_lang_enum(self.config.lang)  # type: ignore[assignment]
+        if config and config.lang:
+            from rapidocr import LangRec
+
+            lang_map = {
+                "zh": LangRec.CH,
+                "ch": LangRec.CH,
+                "en": LangRec.EN,
+                "ja": LangRec.JAPAN,
+                "japan": LangRec.JAPAN,
+                "ko": LangRec.KOREAN,
+                "korean": LangRec.KOREAN,
+                "ar": LangRec.ARABIC,
+                "arabic": LangRec.ARABIC,
+                "th": LangRec.TH,
+                "latin": LangRec.LATIN,
+            }
+            lang_enum = lang_map.get(config.lang.lower(), LangRec.CH)
+            params["Rec.lang_type"] = lang_enum  # type: ignore[assignment]
 
         return RapidOCR(params=params)
+
+    @property
+    def engine(self) -> Any:
+        """Get or create the RapidOCR engine.
+
+        Uses the global shared engine by default to avoid cold start delays.
+        Falls back to instance-specific engine only if configs differ.
+        """
+        # Use global shared engine for better performance
+        return self.get_shared_engine(self.config)
 
     def recognize(self, image_path: Path | str) -> OCRResult:
         """

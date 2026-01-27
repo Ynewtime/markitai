@@ -62,20 +62,18 @@ class TestSchemaSync:
         assert "enabled" in screenshot_config
         assert screenshot_config["enabled"]["default"] is False
 
-    def test_prompts_config_image_analysis_in_schema(self, schema: dict) -> None:
-        """Verify PromptsConfig.image_analysis is in schema."""
+    def test_prompts_config_system_user_pairs_in_schema(self, schema: dict) -> None:
+        """Verify PromptsConfig has system/user prompt pairs in schema."""
         prompts_config = schema["$defs"]["PromptsConfig"]["properties"]
-        assert "image_analysis" in prompts_config
-
-    def test_prompts_config_page_content_in_schema(self, schema: dict) -> None:
-        """Verify PromptsConfig.page_content is in schema."""
-        prompts_config = schema["$defs"]["PromptsConfig"]["properties"]
-        assert "page_content" in prompts_config
-
-    def test_prompts_config_document_enhance_in_schema(self, schema: dict) -> None:
-        """Verify PromptsConfig.document_enhance is in schema."""
-        prompts_config = schema["$defs"]["PromptsConfig"]["properties"]
-        assert "document_enhance" in prompts_config
+        # Check key system/user pairs exist
+        assert "image_analysis_system" in prompts_config
+        assert "image_analysis_user" in prompts_config
+        assert "page_content_system" in prompts_config
+        assert "page_content_user" in prompts_config
+        assert "document_enhance_system" in prompts_config
+        assert "document_enhance_user" in prompts_config
+        assert "cleaner_system" in prompts_config
+        assert "cleaner_user" in prompts_config
 
     def test_preset_config_definition_in_schema(self, schema: dict) -> None:
         """Verify PresetConfig is defined in schema."""

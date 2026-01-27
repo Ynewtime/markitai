@@ -116,7 +116,7 @@ markitai ./docs --llm --llm-concurrency 10
 
 ### `-j, --batch-concurrency <n>`
 
-Number of concurrent file processing tasks (default: 15).
+Number of concurrent file processing tasks (default: 10).
 
 ```bash
 markitai ./docs -o ./output -j 4
@@ -170,7 +170,7 @@ https://example.com/page2
 
 ### `--url-concurrency <n>`
 
-Number of concurrent URL fetch operations (default: 3). This is separate from `--batch-concurrency` to prevent slow URLs from blocking file processing.
+Number of concurrent URL fetch operations (default: 5). This is separate from `--batch-concurrency` to prevent slow URLs from blocking file processing.
 
 ```bash
 markitai ./docs -o ./output --url-concurrency 5
@@ -281,7 +281,39 @@ Clear cached data.
 markitai cache clear
 markitai cache clear --scope project  # Clear project cache only
 markitai cache clear --scope global   # Clear global cache only
+markitai cache clear --include-spa-domains  # Also clear learned SPA domains
 ```
+
+### `markitai cache spa-domains`
+
+View or manage learned SPA domains. These are domains automatically detected as requiring browser rendering.
+
+```bash
+markitai cache spa-domains             # List learned domains
+markitai cache spa-domains --json      # JSON output
+markitai cache spa-domains --clear     # Clear all learned domains
+```
+
+::: tip
+SPA domains are learned automatically when static fetch detects JavaScript requirement. This speeds up subsequent requests by skipping wasted static fetch attempts.
+:::
+
+## Diagnostic Commands
+
+### `markitai check-deps`
+
+Check all optional dependencies and their status. Useful for diagnosing setup issues.
+
+```bash
+markitai check-deps
+markitai check-deps --json    # JSON output
+```
+
+This command verifies:
+- **agent-browser**: For dynamic URL fetching (SPA rendering)
+- **LibreOffice**: For Office document conversion (doc, docx, xls, xlsx, ppt, pptx)
+- **Tesseract OCR**: For scanned document processing (optional, RapidOCR is built-in)
+- **LLM API**: Configuration and connectivity status
 
 ## Other Options
 
