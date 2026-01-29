@@ -13,7 +13,7 @@ $LIB_BASE_URL = "https://raw.githubusercontent.com/Ynewtime/markitai/main/script
 
 # 在脚本级别获取脚本目录（不在函数内，避免作用域问题）
 $script:ScriptDir = $PSScriptRoot
-if (-not $script:ScriptDir) {
+if (-not $script:ScriptDir -and $MyInvocation.MyCommand.Path) {
     $script:ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 
@@ -109,7 +109,7 @@ function Write-SummaryDevZh {
         Write-Host ""
     }
 
-    Write-Host "  文档: https://markitai.dev"
+    Write-Host "  文档: https://markitai.ynewtime.com"
     Write-Host "  问题反馈: https://github.com/Ynewtime/markitai/issues"
     Write-Host ""
 }

@@ -13,7 +13,7 @@ $LIB_BASE_URL = "https://raw.githubusercontent.com/Ynewtime/markitai/main/script
 
 # 在脚本级别获取脚本目录（不在函数内，避免作用域问题）
 $script:ScriptDir = $PSScriptRoot
-if (-not $script:ScriptDir) {
+if (-not $script:ScriptDir -and $MyInvocation.MyCommand.Path) {
     $script:ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 
@@ -99,7 +99,7 @@ function Write-SummaryZh {
         Write-Host ""
     }
 
-    Write-Host "  文档: https://markitai.dev"
+    Write-Host "  文档: https://markitai.ynewtime.com"
     Write-Host "  问题反馈: https://github.com/Ynewtime/markitai/issues"
     Write-Host ""
 }
@@ -418,7 +418,8 @@ function Install-MarkitaiZh {
         $oldErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            $null = & uv tool install $pkg --python $pythonArg 2>&1
+            # 使用 --upgrade 确保安装最新版本
+            $null = & uv tool install $pkg --python $pythonArg --upgrade 2>&1
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $oldErrorAction
@@ -438,7 +439,8 @@ function Install-MarkitaiZh {
         $oldErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            $null = & pipx install $pkg --python $pythonArg 2>&1
+            # 使用 --force 确保安装最新版本
+            $null = & pipx install $pkg --python $pythonArg --force 2>&1
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $oldErrorAction
@@ -458,7 +460,8 @@ function Install-MarkitaiZh {
         $cmdParts = $script:PYTHON_CMD -split " "
         $exe = $cmdParts[0]
         $baseArgs = if ($cmdParts.Length -gt 1) { $cmdParts[1..($cmdParts.Length-1)] } else { @() }
-        $pipArgs = $baseArgs + @("-m", "pip", "install", "--user", $pkg)
+        # 使用 --upgrade 确保安装最新版本
+        $pipArgs = $baseArgs + @("-m", "pip", "install", "--user", "--upgrade", $pkg)
         $null = & $exe @pipArgs 2>&1
         $exitCode = $LASTEXITCODE
     } finally {

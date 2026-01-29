@@ -106,9 +106,10 @@ zh_print_summary_dev() {
         printf "\n"
     fi
 
-    printf "  ${BOLD}文档:${NC} https://markitai.dev\n"
+    printf "  ${BOLD}文档:${NC} https://markitai.ynewtime.com\n"
     printf "  ${BOLD}问题反馈:${NC} https://github.com/Ynewtime/markitai/issues\n"
     printf "\n"
+    return 0
 }
 
 # 中文 root 警告
@@ -132,6 +133,7 @@ zh_warn_if_root() {
             exit 1
         fi
     fi
+    return 0
 }
 
 # 中文远程脚本确认

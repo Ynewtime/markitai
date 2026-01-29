@@ -569,7 +569,8 @@ function Install-Markitai {
         $oldErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            $null = & uv tool install $pkg --python $pythonArg 2>&1
+            # Use --upgrade to ensure latest version is installed
+            $null = & uv tool install $pkg --python $pythonArg --upgrade 2>&1
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $oldErrorAction
@@ -591,7 +592,8 @@ function Install-Markitai {
         $oldErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            $null = & pipx install $pkg --python $pythonArg 2>&1
+            # Use --force to ensure latest version is installed
+            $null = & pipx install $pkg --python $pythonArg --force 2>&1
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $oldErrorAction
@@ -612,7 +614,8 @@ function Install-Markitai {
         $cmdParts = $script:PYTHON_CMD -split " "
         $exe = $cmdParts[0]
         $baseArgs = if ($cmdParts.Length -gt 1) { $cmdParts[1..($cmdParts.Length-1)] } else { @() }
-        $pipArgs = $baseArgs + @("-m", "pip", "install", "--user", $pkg)
+        # Use --upgrade to ensure latest version is installed
+        $pipArgs = $baseArgs + @("-m", "pip", "install", "--user", "--upgrade", $pkg)
         $null = & $exe @pipArgs 2>&1
         $exitCode = $LASTEXITCODE
     } finally {
@@ -1075,7 +1078,7 @@ function Write-Summary {
         Write-Host ""
     }
 
-    Write-Host "  Documentation: https://markitai.dev"
+    Write-Host "  Documentation: https://markitai.ynewtime.com"
     Write-Host "  Issues: https://github.com/Ynewtime/markitai/issues"
     Write-Host ""
 }

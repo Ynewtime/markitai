@@ -375,6 +375,7 @@ dev_install_llm_clis() {
     else
         track_install "Copilot CLI" "skipped"
     fi
+    return 0
 }
 
 # Install LLM provider SDKs (optional extras)
@@ -411,6 +412,7 @@ dev_install_provider_sdks() {
     else
         track_install "Copilot SDK" "skipped"
     fi
+    return 0
 }
 
 # Print completion message
@@ -429,6 +431,7 @@ dev_print_completion() {
     printf "  ${BOLD}Run CLI:${NC}\n"
     printf "    ${YELLOW}uv run markitai --help${NC}\n"
     printf "\n"
+    return 0
 }
 
 # ============================================================

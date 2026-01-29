@@ -13,7 +13,7 @@ $LIB_BASE_URL = "https://raw.githubusercontent.com/Ynewtime/markitai/main/script
 
 # Get script directory at script level (not inside a function to avoid scope issues)
 $script:ScriptDir = $PSScriptRoot
-if (-not $script:ScriptDir) {
+if (-not $script:ScriptDir -and $MyInvocation.MyCommand.Path) {
     $script:ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 
