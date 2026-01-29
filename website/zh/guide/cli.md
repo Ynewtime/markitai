@@ -270,7 +270,6 @@ markitai config validate
 markitai cache stats
 markitai cache stats -v           # 详细模式
 markitai cache stats --json       # JSON 输出
-markitai cache stats --scope project  # 仅项目缓存
 ```
 
 ### `markitai cache clear`
@@ -279,9 +278,8 @@ markitai cache stats --scope project  # 仅项目缓存
 
 ```bash
 markitai cache clear
-markitai cache clear --scope project  # 只清除项目缓存
-markitai cache clear --scope global   # 只清除全局缓存
-markitai cache clear --include-spa-domains  # 同时清除已学习的 SPA 域名
+markitai cache clear -y                       # 跳过确认
+markitai cache clear --include-spa-domains    # 同时清除已学习的 SPA 域名
 ```
 
 ### `markitai cache spa-domains`
@@ -312,8 +310,9 @@ markitai check-deps --json    # JSON 输出
 此命令验证：
 - **agent-browser**: 用于动态 URL 抓取（SPA 渲染）
 - **LibreOffice**: 用于 Office 文档转换（doc, docx, xls, xlsx, ppt, pptx）
-- **Tesseract OCR**: 用于扫描文档处理（可选，RapidOCR 已内置）
+- **RapidOCR**: 用于扫描文档 OCR（内置，无需外部依赖）
 - **LLM API**: 配置和连接状态
+- **Vision Model**: 用于图像分析（从 litellm 自动检测）
 
 ## 其他选项
 

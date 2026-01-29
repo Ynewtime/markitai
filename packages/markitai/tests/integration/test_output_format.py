@@ -443,7 +443,7 @@ class TestCheckDepsCommand:
         data = json.loads(output)
         assert "agent-browser" in data
         assert "libreoffice" in data
-        assert "tesseract" in data
+        assert "rapidocr" in data
         assert "llm-api" in data
 
     def test_check_deps_shows_components(self, runner: CliRunner) -> None:
@@ -454,5 +454,5 @@ class TestCheckDepsCommand:
         # Should show all major components
         assert "agent-browser" in result.output
         assert "LibreOffice" in result.output
-        assert "Tesseract" in result.output
+        assert "RapidOCR" in result.output
         assert "LLM" in result.output

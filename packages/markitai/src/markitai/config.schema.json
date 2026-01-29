@@ -542,16 +542,6 @@
           "default": null,
           "title": "Cleaner User"
         },
-        "frontmatter_system": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
-          "default": null,
-          "title": "Frontmatter System"
-        },
-        "frontmatter_user": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
-          "default": null,
-          "title": "Frontmatter User"
-        },
         "image_caption_system": {
           "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,

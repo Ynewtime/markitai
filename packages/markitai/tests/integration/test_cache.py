@@ -120,91 +120,37 @@ class TestSQLiteCacheIntegration:
 
 
 # =============================================================================
-# PersistentCache (Dual-Layer) Integration Tests
+# PersistentCache Integration Tests
 # =============================================================================
 
 
 class TestPersistentCacheIntegration:
-    """Integration tests for PersistentCache dual-layer caching."""
+    """Integration tests for PersistentCache global caching."""
 
-    def test_dual_layer_lookup_order(self, tmp_path: Path):
-        """Test that project cache is checked before global cache."""
-        project_dir = tmp_path / "project"
+    def test_global_cache_get_set(self, tmp_path: Path):
+        """Test basic get/set operations with global cache."""
         global_dir = tmp_path / "global"
-        project_dir.mkdir()
         global_dir.mkdir()
 
-        # Initialize cache
         cache = PersistentCache(
-            project_dir=project_dir,
             global_dir=global_dir,
             enabled=True,
         )
 
-        # Set different values in each layer directly
-        assert cache._project_cache is not None
-        assert cache._global_cache is not None
-        cache._project_cache.set("prompt", "content", '{"source": "project"}')
-        cache._global_cache.set("prompt", "content", '{"source": "global"}')
-
-        # Should get project cache value (checked first)
-        result = cache.get("prompt", "content")
-        assert result == {"source": "project"}
-
-    def test_global_fallback(self, tmp_path: Path):
-        """Test fallback to global cache when project cache misses."""
-        project_dir = tmp_path / "project"
-        global_dir = tmp_path / "global"
-        project_dir.mkdir()
-        global_dir.mkdir()
-
-        cache = PersistentCache(
-            project_dir=project_dir,
-            global_dir=global_dir,
-            enabled=True,
-        )
-
-        # Set only in global cache
-        assert cache._global_cache is not None
-        cache._global_cache.set("prompt", "content", '{"source": "global"}')
-
-        # Should get global cache value
-        result = cache.get("prompt", "content")
-        assert result == {"source": "global"}
-
-    def test_write_to_both_layers(self, tmp_path: Path):
-        """Test that set() writes to both project and global caches."""
-        project_dir = tmp_path / "project"
-        global_dir = tmp_path / "global"
-        project_dir.mkdir()
-        global_dir.mkdir()
-
-        cache = PersistentCache(
-            project_dir=project_dir,
-            global_dir=global_dir,
-            enabled=True,
-        )
-
+        # Set a value
         cache.set("prompt", "content", {"result": "test"})
 
-        # Both caches should have the value
-        assert cache._project_cache is not None
-        assert cache._global_cache is not None
-        project_result = cache._project_cache.get("prompt", "content")
-        global_result = cache._global_cache.get("prompt", "content")
-
-        assert project_result is not None
-        assert global_result is not None
-        assert json.loads(project_result) == {"result": "test"}
-        assert json.loads(global_result) == {"result": "test"}
+        # Should get the value back
+        result = cache.get("prompt", "content")
+        assert result == {"result": "test"}
 
     def test_cache_disabled(self, tmp_path: Path):
         """Test that disabled cache returns None and doesn't write."""
-        project_dir = tmp_path / "project"
-        project_dir.mkdir()
+        global_dir = tmp_path / "global"
+        global_dir.mkdir()
 
         cache = PersistentCache(
-            project_dir=project_dir,
+            global_dir=global_dir,
             enabled=False,
         )
 
@@ -212,19 +158,13 @@ class TestPersistentCacheIntegration:
         result = cache.get("prompt", "content")
 
         assert result is None
-        # Project cache directory should not be created
-        assert not (project_dir / ".markitai" / "cache.db").exists()
 
     def test_hit_miss_tracking(self, tmp_path: Path):
         """Test cache hit/miss counter tracking."""
-        project_dir = tmp_path / "project"
         global_dir = tmp_path / "global"
-        project_dir.mkdir()
         global_dir.mkdir()
 
-        # Use isolated global dir to avoid hitting real global cache
         cache = PersistentCache(
-            project_dir=project_dir,
             global_dir=global_dir,
             enabled=True,
         )
@@ -233,7 +173,7 @@ class TestPersistentCacheIntegration:
         assert cache._hits == 0
         assert cache._misses == 0
 
-        # Miss (neither project nor global cache has this entry)
+        # Miss (cache does not have this entry)
         cache.get("unique_prompt_12345", "unique_content_12345")
         assert cache._misses == 1
 
@@ -257,24 +197,7 @@ class TestCacheCLICommands:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(app, ["cache", "stats"])
             assert result.exit_code == 0
-            assert (
-                "No project cache" in result.output
-                or "Cache Statistics" in result.output
-            )
-
-    def test_cache_stats_with_project_cache(self, runner: CliRunner, tmp_path: Path):
-        """Test cache stats with existing project cache."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create project cache
-            cache_dir = Path.cwd() / ".markitai"
-            cache_dir.mkdir()
-            cache = SQLiteCache(cache_dir / "cache.db")
-            cache.set("prompt", "content", '{"test": "data"}')
-
-            result = runner.invoke(app, ["cache", "stats"])
-            assert result.exit_code == 0
-            assert "Project Cache" in result.output
-            assert "Entries: 1" in result.output
+            assert "No cache" in result.output or "Cache Statistics" in result.output
 
     def test_cache_stats_json_output(self, runner: CliRunner, tmp_path: Path):
         """Test cache stats with JSON output format."""
@@ -284,141 +207,15 @@ class TestCacheCLICommands:
             # Should be valid JSON
             data = json.loads(result.output)
             assert "enabled" in data
-            assert "project" in data
-            assert "global" in data
-
-    def test_cache_clear_project(self, runner: CliRunner, tmp_path: Path):
-        """Test clearing project cache."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create project cache with entries
-            cache_dir = Path.cwd() / ".markitai"
-            cache_dir.mkdir()
-            cache = SQLiteCache(cache_dir / "cache.db")
-            cache.set("prompt1", "content1", '{"test": "data1"}')
-            cache.set("prompt2", "content2", '{"test": "data2"}')
-
-            result = runner.invoke(app, ["cache", "clear", "--scope", "project", "-y"])
-            assert result.exit_code == 0
-            assert "Cleared 2" in result.output or "project" in result.output.lower()
-
-            # Verify cache is empty
-            stats = cache.stats()
-            assert stats["count"] == 0
+            assert "cache" in data
 
     def test_cache_clear_requires_confirmation(self, runner: CliRunner, tmp_path: Path):
         """Test that cache clear requires confirmation without -y flag."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create project cache
-            cache_dir = Path.cwd() / ".markitai"
-            cache_dir.mkdir()
-            cache = SQLiteCache(cache_dir / "cache.db")
-            cache.set("prompt", "content", '{"test": "data"}')
-
             # Without -y, should prompt and abort on 'n'
-            result = runner.invoke(
-                app, ["cache", "clear", "--scope", "project"], input="n\n"
-            )
+            result = runner.invoke(app, ["cache", "clear"], input="n\n")
             assert result.exit_code == 0
             assert "Aborted" in result.output
-
-            # Cache should still have entries
-            stats = cache.stats()
-            assert stats["count"] == 1
-
-    def test_cache_stats_verbose(self, runner: CliRunner, tmp_path: Path):
-        """Test cache stats with -v verbose mode."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create project cache with multiple models
-            cache_dir = Path.cwd() / ".markitai"
-            cache_dir.mkdir()
-            cache = SQLiteCache(cache_dir / "cache.db")
-            cache.set(
-                "prompt1",
-                "content1",
-                '{"caption": "Test image"}',
-                model="gemini/gemini-2.5-flash",
-            )
-            cache.set(
-                "prompt2", "content2", '{"title": "Test doc"}', model="openai/gpt-4o"
-            )
-
-            result = runner.invoke(app, ["cache", "stats", "-v"])
-            assert result.exit_code == 0
-            assert "By Model" in result.output
-            assert "Recent Entries" in result.output
-            assert "gemini/gemini-2.5-flash" in result.output
-            assert "openai/gpt-4o" in result.output
-
-    def test_cache_stats_verbose_with_limit(self, runner: CliRunner, tmp_path: Path):
-        """Test cache stats verbose mode with --limit option."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create project cache with multiple entries
-            cache_dir = Path.cwd() / ".markitai"
-            cache_dir.mkdir()
-            cache = SQLiteCache(cache_dir / "cache.db")
-            for i in range(10):
-                cache.set(
-                    f"prompt{i}",
-                    f"content{i}",
-                    f'{{"test": "data{i}"}}',
-                    model="test/model",
-                )
-
-            result = runner.invoke(app, ["cache", "stats", "-v", "--limit", "3"])
-            assert result.exit_code == 0
-            # Should only show limited entries (table truncated)
-            assert "Recent Entries" in result.output
-
-    def test_cache_stats_scope_project(self, runner: CliRunner, tmp_path: Path):
-        """Test cache stats with --scope project."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create project cache
-            cache_dir = Path.cwd() / ".markitai"
-            cache_dir.mkdir()
-            cache = SQLiteCache(cache_dir / "cache.db")
-            cache.set("prompt", "content", '{"test": "data"}')
-
-            result = runner.invoke(app, ["cache", "stats", "--scope", "project"])
-            assert result.exit_code == 0
-            assert "Project Cache" in result.output
-            # Should not mention global cache when scope is project
-            assert (
-                "Global Cache" not in result.output
-                or "No global cache" in result.output
-            )
-
-    def test_cache_stats_scope_global(self, runner: CliRunner, tmp_path: Path):
-        """Test cache stats with --scope global."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(app, ["cache", "stats", "--scope", "global"])
-            assert result.exit_code == 0
-            # Should not mention project cache when scope is global
-            assert "No project cache" not in result.output
-
-    def test_cache_stats_verbose_json(self, runner: CliRunner, tmp_path: Path):
-        """Test cache stats verbose mode with JSON output."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create project cache
-            cache_dir = Path.cwd() / ".markitai"
-            cache_dir.mkdir()
-            cache = SQLiteCache(cache_dir / "cache.db")
-            cache.set(
-                "prompt1",
-                "content1",
-                '{"caption": "Test"}',
-                model="gemini/gemini-2.5-flash",
-            )
-
-            result = runner.invoke(
-                app, ["cache", "stats", "-v", "--json", "--scope", "project"]
-            )
-            assert result.exit_code == 0
-            data = json.loads(result.output)
-            assert "project" in data
-            assert data["project"] is not None
-            assert "by_model" in data["project"]
-            assert "entries" in data["project"]
-            assert "gemini/gemini-2.5-flash" in data["project"]["by_model"]
 
 
 class TestSQLiteCacheVerboseMethods:
@@ -808,7 +605,7 @@ class TestNoCachePatterns:
     def cache(self, tmp_path: Path) -> PersistentCache:
         """Create a PersistentCache for testing."""
         return PersistentCache(
-            project_dir=tmp_path,
+            global_dir=tmp_path,
             no_cache_patterns=["*.pdf", "reports/**", "specific.docx"],
         )
 
@@ -831,7 +628,7 @@ class TestNoCachePatterns:
 
     def test_should_skip_cache_no_patterns(self, tmp_path: Path):
         """Test that empty patterns never skip."""
-        cache = PersistentCache(project_dir=tmp_path, no_cache_patterns=[])
+        cache = PersistentCache(global_dir=tmp_path, no_cache_patterns=[])
         assert cache._should_skip_cache("any/file.pdf") is False
 
     def test_should_skip_cache_empty_context(self, cache: PersistentCache):
@@ -841,13 +638,13 @@ class TestNoCachePatterns:
     def test_get_respects_patterns(self, tmp_path: Path):
         """Test that get() returns None for matching patterns."""
         cache = PersistentCache(
-            project_dir=tmp_path,
+            global_dir=tmp_path,
             no_cache_patterns=["*.pdf"],
         )
 
         # Manually set a value in the underlying cache
-        if cache._project_cache:
-            cache._project_cache.set("test_prompt", "test_content", '{"cached": true}')
+        if cache._global_cache:
+            cache._global_cache.set("test_prompt", "test_content", '{"cached": true}')
 
         # Normal file should return cached value
         result = cache.get("test_prompt", "test_content", context="file.docx")
@@ -864,7 +661,7 @@ class TestGlobMatchEdgeCases:
     def test_double_star_prefix_matches_root_file(self, tmp_path: Path):
         """Test **/*.ext matches files in root directory."""
         cache = PersistentCache(
-            project_dir=tmp_path,
+            global_dir=tmp_path,
             no_cache_patterns=["**/*.pdf"],
         )
         # Should match root level file (zero directories)
@@ -878,7 +675,7 @@ class TestGlobMatchEdgeCases:
     def test_double_star_middle_matches_direct_child(self, tmp_path: Path):
         """Test src/**/test.py matches src/test.py (zero directories between)."""
         cache = PersistentCache(
-            project_dir=tmp_path,
+            global_dir=tmp_path,
             no_cache_patterns=["src/**/test.py"],
         )
         # Zero directories between src/ and test.py
@@ -892,7 +689,7 @@ class TestGlobMatchEdgeCases:
     def test_double_star_prefix_with_subdir(self, tmp_path: Path):
         """Test **/reports/*.pdf matches reports/ at any level including root."""
         cache = PersistentCache(
-            project_dir=tmp_path,
+            global_dir=tmp_path,
             no_cache_patterns=["**/reports/*.pdf"],
         )
         # reports/ at root level
@@ -906,7 +703,7 @@ class TestGlobMatchEdgeCases:
     def test_windows_path_separators(self, tmp_path: Path):
         """Test that Windows backslash paths are normalized."""
         cache = PersistentCache(
-            project_dir=tmp_path,
+            global_dir=tmp_path,
             no_cache_patterns=["**/*.pdf"],
         )
         # Windows-style paths should be normalized
@@ -916,7 +713,7 @@ class TestGlobMatchEdgeCases:
     def test_multiple_double_star_patterns(self, tmp_path: Path):
         """Test multiple ** patterns work together."""
         cache = PersistentCache(
-            project_dir=tmp_path,
+            global_dir=tmp_path,
             no_cache_patterns=["**/*.pdf", "**/temp/*", "logs/**/*.log"],
         )
         # **/*.pdf
@@ -936,7 +733,7 @@ class TestContextPathExtraction:
     def test_absolute_path_with_suffix(self, tmp_path: Path):
         """Test matching against absolute paths with :suffix (e.g., from image analysis)."""
         cache = PersistentCache(
-            project_dir=tmp_path,
+            global_dir=tmp_path,
             no_cache_patterns=["*.JPG", "*.pdf"],
         )
         # Absolute path with :images suffix (common in image analysis)
@@ -963,7 +760,7 @@ class TestContextPathExtraction:
     def test_absolute_path_without_suffix(self, tmp_path: Path):
         """Test matching against absolute paths without suffix."""
         cache = PersistentCache(
-            project_dir=tmp_path,
+            global_dir=tmp_path,
             no_cache_patterns=["*.JPG"],
         )
         # Absolute path without suffix
@@ -975,7 +772,7 @@ class TestContextPathExtraction:
     def test_relative_path_still_works(self, tmp_path: Path):
         """Test that relative paths still work correctly."""
         cache = PersistentCache(
-            project_dir=tmp_path,
+            global_dir=tmp_path,
             no_cache_patterns=["sub_dir/*.doc", "*.JPG"],
         )
         # Relative paths should work as before
@@ -986,7 +783,7 @@ class TestContextPathExtraction:
     def test_glob_pattern_with_absolute_path(self, tmp_path: Path):
         """Test glob patterns against absolute paths."""
         cache = PersistentCache(
-            project_dir=tmp_path,
+            global_dir=tmp_path,
             no_cache_patterns=["**/*.xls"],
         )
         # Filename should be extracted and matched
@@ -1005,7 +802,7 @@ class TestContextPathExtraction:
 
     def test_extract_matchable_path(self, tmp_path: Path):
         """Test _extract_matchable_path helper directly."""
-        cache = PersistentCache(project_dir=tmp_path)
+        cache = PersistentCache(global_dir=tmp_path)
 
         # Simple filename
         assert cache._extract_matchable_path("candy.JPG") == "candy.JPG"

@@ -1,10 +1,16 @@
 [project]
 name = "markitai-workspace"
-version = "0.3.2"
+version = "0.4.0"
 requires-python = "==3.13.*"
 dependencies = [
     "markitai",
 ]
+
+[project.optional-dependencies]
+# LLM provider SDKs (same as packages/markitai/pyproject.toml)
+claude-agent = ["claude-agent-sdk>=0.1.0"]
+copilot = ["github-copilot-sdk>=0.1.0"]
+all = ["claude-agent-sdk>=0.1.0", "github-copilot-sdk>=0.1.0"]
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -21,12 +27,56 @@ dev = [
     "ruff>=0.9.0",
     "pyright>=1.1.400",
     "pre-commit>=4.5.1",
+    "bandit>=1.8.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/markitai/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "network: marks tests that require network access (deselect with '-m \"not network\"')",
+]
+
+[tool.coverage.run]
+source = ["packages/markitai/src/markitai"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+fail_under = 0
+show_missing = true
+skip_covered = false
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.bandit]
+exclude_dirs = ["tests", "docs"]
+skips = [
+    "B101",  # assert - used in tests
+    "B110",  # try/except/pass - intentional fallback patterns
+    "B112",  # try/except/continue - intentional skip patterns
+    "B311",  # random - non-cryptographic use (load balancing)
+    "B404",  # subprocess import - required for system integration
+    "B603",  # subprocess calls - validated inputs from config
+    "B607",  # partial path - system commands (powershell, scutil)
+]
 
 [tool.pyright]
 pythonVersion = "3.13"
@@ -35,7 +85,9 @@ include = ["packages/markitai/src"]
 exclude = ["**/tests", "**/__pycache__", "docs/reference"]
 venvPath = "."
 venv = ".venv"
-reportMissingImports = true
+# Allow optional dependencies to be missing (claude-agent-sdk)
+# These are runtime-checked before import using importlib.util.find_spec
+reportMissingImports = "warning"
 reportMissingTypeStubs = false
 reportUnusedImport = true
 reportUnusedVariable = "warning"

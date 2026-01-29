@@ -22,9 +22,6 @@ class PromptManager:
         # Cleaner prompts
         "cleaner_system",
         "cleaner_user",
-        # Frontmatter prompts
-        "frontmatter_system",
-        "frontmatter_user",
         # Image prompts
         "image_caption_system",
         "image_caption_user",

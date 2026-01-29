@@ -44,11 +44,37 @@ irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps
 ```
 :::
 
+::: warning 安全提示
+- 以 root/管理员 身份运行时脚本会发出警告
+- 所有安装操作都需要明确确认（默认: 否）
+- 远程脚本执行需要两步确认
+:::
+
 脚本会：
 - 检测 Python 3.11-3.13
 - 安装 [uv](https://docs.astral.sh/uv/) 包管理器（需要确认）
 - 安装 markitai 及所有可选依赖
 - 可选安装 `agent-browser` 用于浏览器自动化
+
+#### 版本固定
+
+使用环境变量固定特定版本：
+
+::: code-group
+```bash [Linux/macOS]
+export MARKITAI_VERSION="0.4.0"
+export UV_VERSION="0.9.27"
+export AGENT_BROWSER_VERSION="0.5.0"
+curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.sh | sh
+```
+
+```powershell [Windows]
+$env:MARKITAI_VERSION = "0.4.0"
+$env:UV_VERSION = "0.9.27"
+$env:AGENT_BROWSER_VERSION = "0.5.0"
+irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps1 | iex
+```
+:::
 
 ### 手动安装
 
@@ -145,6 +171,60 @@ output/
 | 文本 | `.txt`, `.md` |
 | 图片 | `.jpg`, `.jpeg`, `.png`, `.webp` |
 | URL | `http://`, `https://` |
+
+## 平台特定功能
+
+部分功能在不同平台上有差异：
+
+### Windows
+
+| 功能 | 支持 | 说明 |
+|------|------|------|
+| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ✅ 完全支持 | 使用 COM 自动化 |
+| PPTX 幻灯片渲染 | ✅ 完全支持 | 优先使用 MS Office，LibreOffice 备选 |
+| EMF/WMF 图片 | ✅ 完全支持 | 原生支持 |
+| 浏览器自动化 | ✅ 完全支持 | 隐藏窗口模式 |
+
+::: tip Windows 性能
+在 Windows 上，markitai 自动将并发数限制为 4 个线程，以应对较高的线程切换开销。
+:::
+
+### Linux
+
+| 功能 | 支持 | 说明 |
+|------|------|------|
+| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ❌ 不支持 | 需要 Windows COM |
+| PPTX 幻灯片渲染 | ✅ 完全支持 | 需要 LibreOffice |
+| EMF/WMF 图片 | ❌ 不支持 | Windows 专有格式 |
+| 浏览器自动化 | ✅ 完全支持 | 需要系统依赖 |
+
+**安装 LibreOffice：**
+```bash
+# Ubuntu/Debian
+sudo apt-get install libreoffice
+
+# Fedora/RHEL
+sudo dnf install libreoffice
+```
+
+**安装浏览器依赖：**
+```bash
+agent-browser install --with-deps
+```
+
+### macOS
+
+| 功能 | 支持 | 说明 |
+|------|------|------|
+| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ❌ 不支持 | 需要 Windows COM |
+| PPTX 幻灯片渲染 | ✅ 完全支持 | 需要 LibreOffice |
+| EMF/WMF 图片 | ❌ 不支持 | Windows 专有格式 |
+| 浏览器自动化 | ✅ 完全支持 | - |
+
+**安装 LibreOffice：**
+```bash
+brew install --cask libreoffice
+```
 
 ## 下一步
 

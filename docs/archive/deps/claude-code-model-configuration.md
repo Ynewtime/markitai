@@ -1,0 +1,241 @@
+---
+source:
+- https://code.claude.com/docs/en/model-config.md
+---
+
+你说得对，我之前的信息有误。根据官方文档：
+
+## 正确信息
+
+**模型别名会自动指向最新版本**，所以：
+
+| 别名 | 当前指向 |
+|-----|---------|
+| `haiku` | `claude-haiku-4-5-20251001` (Haiku 4.5) |
+| `sonnet` | `claude-sonnet-4-5-20250929` (Sonnet 4.5) |
+| `opus` | `claude-opus-4-5-20251101` (Opus 4.5) |
+
+---
+
+## Claude Code 支持的完整模型列表
+
+根据 [Claude Help Center](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)：
+
+```bash
+# Haiku 4.5 (最新)
+claude --model claude-haiku-4-5-20251001
+
+# Haiku 3.5 (旧版)
+claude --model claude-3-5-haiku-20241022
+
+# Sonnet 4.5
+claude --model claude-sonnet-4-5-20250929
+
+# Sonnet 4
+claude --model claude-sonnet-4-20250514
+
+# Opus 4.5
+claude --model claude-opus-4-5-20251101
+```
+
+---
+
+## 官方信源
+
+- https://support.claude.com/en/articles/11940350-claude-code-model-configuration
+- https://platform.claude.com/docs/en/about-claude/models/overview
+
+> "Aliases automatically point to the most recent model snapshot. When we release new model snapshots, we migrate aliases to point to the newest version of a model."
+
+感谢指正！
+
+
+---
+
+
+根据官方文档，**Claude Code** 支持以下模型：
+
+## 支持的模型
+
+| 模型别名 | 完整模型名 | 说明 |
+|---------|-----------|------|
+| `default` | - | 根据订阅类型自动选择，Max 用户使用 Opus 4.5 并在限额后回退到 Sonnet |
+| `opus` | `claude-opus-4-5-20251101` | 最新 Opus 4.5，顶级软件工程能力 |
+| `opusplan` | - | 混合模式：规划用 Opus，执行用 Sonnet |
+| `sonnet` | `claude-sonnet-4-5-20250929` | Sonnet 4.5，平衡性能与速度 |
+| `haiku` | `claude-haiku-4-5-20251001` | Haiku 4.5，快速低成本 |
+
+### 其他可用版本
+- `claude-opus-4-20250514` (Opus 4)
+- `claude-opus-4-1-20250805` (Opus 4.1)
+
+---
+
+## 配置方式（优先级从高到低）
+
+1. **会话中切换**：`/model <别名|模型名>`
+2. **启动时指定**：`claude --model <别名|模型名>`
+3. **环境变量**：`export ANTHROPIC_MODEL=<别名|模型名>`
+4. **设置文件**：在 settings 中配置 `model` 字段
+
+```bash
+# 示例
+claude --model claude-opus-4-5-20251101
+claude --model sonnet
+claude --model haiku
+```
+
+---
+
+## 订阅限制
+
+| 订阅类型 | 可用模型 |
+|---------|---------|
+| **Pro** | Sonnet 4.5（Opus 需额外付费） |
+| **Max** | Opus 4.5 + Sonnet 4.5（自动回退） |
+| **API Key** | 所有模型（按 API 计费） |
+
+---
+
+## 官方信源
+
+- **Claude Code Model Configuration**: https://support.claude.com/en/articles/11940350-claude-code-model-configuration
+- **Model configuration - Claude Code Docs**: https://code.claude.com/docs/en/model-config
+
+
+---
+
+
+> ## Documentation Index
+> Fetch the complete documentation index at: https://code.claude.com/docs/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Model configuration
+
+> Learn about the Claude Code model configuration, including model aliases like `opusplan`
+
+## Available models
+
+For the `model` setting in Claude Code, you can configure either:
+
+* A **model alias**
+* A **model name**
+  * Anthropic API: A full **[model name](https://docs.claude.com/en/docs/about-claude/models/overview#model-names)**
+  * Bedrock: an inference profile ARN
+  * Foundry: a deployment name
+  * Vertex: a version name
+
+### Model aliases
+
+Model aliases provide a convenient way to select model settings without
+remembering exact version numbers:
+
+| Model alias      | Behavior                                                                                                                                                                |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`default`**    | Recommended model setting, depending on your account type                                                                                                               |
+| **`sonnet`**     | Uses the latest Sonnet model (currently Sonnet 4.5) for daily coding tasks                                                                                              |
+| **`opus`**       | Uses Opus model (currently Opus 4.5) for specialized complex reasoning tasks                                                                                            |
+| **`haiku`**      | Uses the fast and efficient Haiku model for simple tasks                                                                                                                |
+| **`sonnet[1m]`** | Uses Sonnet with a [1 million token context window](https://docs.claude.com/en/docs/build-with-claude/context-windows#1m-token-context-window) window for long sessions |
+| **`opusplan`**   | Special mode that uses `opus` during plan mode, then switches to `sonnet` for execution                                                                                 |
+
+### Setting your model
+
+You can configure your model in several ways, listed in order of priority:
+
+1. **During session** - Use `/model <alias|name>` to switch models mid-session
+2. **At startup** - Launch with `claude --model <alias|name>`
+3. **Environment variable** - Set `ANTHROPIC_MODEL=<alias|name>`
+4. **Settings** - Configure permanently in your settings file using the `model`
+   field.
+
+Example usage:
+
+```bash  theme={null}
+# Start with Opus
+claude --model opus
+
+# Switch to Sonnet during session
+/model sonnet
+```
+
+Example settings file:
+
+```
+{
+    "permissions": {
+        ...
+    },
+    "model": "opus"
+}
+```
+
+## Special model behavior
+
+### `default` model setting
+
+The behavior of `default` depends on your account type.
+
+For certain Max users, Claude Code will automatically fall back to Sonnet if you
+hit a usage threshold with Opus.
+
+### `opusplan` model setting
+
+The `opusplan` model alias provides an automated hybrid approach:
+
+* **In plan mode** - Uses `opus` for complex reasoning and architecture
+  decisions
+* **In execution mode** - Automatically switches to `sonnet` for code generation
+  and implementation
+
+This gives you the best of both worlds: Opus's superior reasoning for planning,
+and Sonnet's efficiency for execution.
+
+### Extended context with \[1m]
+
+For Console/API users, the `[1m]` suffix can be added to full model names to
+enable a
+[1 million token context window](https://docs.claude.com/en/docs/build-with-claude/context-windows#1m-token-context-window).
+
+```bash  theme={null}
+# Example of using a full model name with the [1m] suffix
+/model anthropic.claude-sonnet-4-5-20250929-v1:0[1m]
+```
+
+Note: Extended context models have
+[different pricing](https://docs.claude.com/en/docs/about-claude/pricing#long-context-pricing).
+
+## Checking your current model
+
+You can see which model you're currently using in several ways:
+
+1. In [status line](/en/statusline) (if configured)
+2. In `/status`, which also displays your account information.
+
+## Environment variables
+
+You can use the following environment variables, which must be full **model
+names** (or equivalent for your API provider), to control the model names that the aliases map to.
+
+| Environment variable             | Description                                                                                   |
+| -------------------------------- | --------------------------------------------------------------------------------------------- |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL`   | The model to use for `opus`, or for `opusplan` when Plan Mode is active.                      |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | The model to use for `sonnet`, or for `opusplan` when Plan Mode is not active.                |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL`  | The model to use for `haiku`, or [background functionality](/en/costs#background-token-usage) |
+| `CLAUDE_CODE_SUBAGENT_MODEL`     | The model to use for [subagents](/en/sub-agents)                                              |
+
+Note: `ANTHROPIC_SMALL_FAST_MODEL` is deprecated in favor of
+`ANTHROPIC_DEFAULT_HAIKU_MODEL`.
+
+### Prompt caching configuration
+
+Claude Code automatically uses [prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching) to optimize performance and reduce costs. You can disable prompt caching globally or for specific model tiers:
+
+| Environment variable            | Description                                                                                    |
+| ------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `DISABLE_PROMPT_CACHING`        | Set to `1` to disable prompt caching for all models (takes precedence over per-model settings) |
+| `DISABLE_PROMPT_CACHING_HAIKU`  | Set to `1` to disable prompt caching for Haiku models only                                     |
+| `DISABLE_PROMPT_CACHING_SONNET` | Set to `1` to disable prompt caching for Sonnet models only                                    |
+| `DISABLE_PROMPT_CACHING_OPUS`   | Set to `1` to disable prompt caching for Opus models only                                      |
+
+These environment variables give you fine-grained control over prompt caching behavior. The global `DISABLE_PROMPT_CACHING` setting takes precedence over the model-specific settings, allowing you to quickly disable all caching when needed. The per-model settings are useful for selective control, such as when debugging specific models or working with cloud providers that may have different caching implementations.

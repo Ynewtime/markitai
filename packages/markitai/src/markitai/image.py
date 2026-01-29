@@ -727,7 +727,7 @@ class ImageProcessor:
         if not self.config or not self.config.filter.deduplicate:
             return False
 
-        image_hash = hashlib.md5(image_data).hexdigest()
+        image_hash = hashlib.md5(image_data, usedforsecurity=False).hexdigest()
         if image_hash in self._seen_hashes:
             return True
 
@@ -1455,7 +1455,7 @@ async def download_url_images(
     # Download all images concurrently
     async with httpx.AsyncClient(
         headers={
-            "User-Agent": "Mozilla/5.0 (compatible; markitai/0.3.2; +https://github.com/Ynewtime/markitai)"
+            "User-Agent": "Mozilla/5.0 (compatible; markitai/0.4.0; +https://github.com/Ynewtime/markitai)"
         },
         follow_redirects=True,
     ) as client:

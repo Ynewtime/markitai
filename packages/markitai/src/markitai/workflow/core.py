@@ -25,6 +25,7 @@ from markitai.security import (
     validate_file_size,
 )
 from markitai.utils.paths import ensure_dir
+from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import add_basic_frontmatter, merge_llm_usage
 
 if TYPE_CHECKING:
@@ -50,7 +51,6 @@ class ConversionContext:
     # Optional inputs
     actual_file: Path | None = None  # For pre-converted files (batch COM)
     shared_processor: LLMProcessor | None = None
-    project_dir: Path | None = None
 
     # Processing flags
     use_multiprocess_images: bool = False
@@ -406,12 +406,11 @@ async def process_with_vision_llm(
     # Use shared processor or create new one
     processor = ctx.shared_processor
     if processor is None:
-        processor = create_llm_processor(ctx.config, project_dir=ctx.project_dir)
+        processor = create_llm_processor(ctx.config)
 
     workflow = SingleFileWorkflow(
         ctx.config,
         processor=processor,
-        project_dir=ctx.project_dir,
     )
 
     # Get extracted text (use markdown which has base64 replaced)
@@ -460,7 +459,7 @@ async def process_with_vision_llm(
     # Write LLM version
     llm_output = ctx.output_file.with_suffix(".llm.md")
     llm_content = processor.format_llm_output(
-        ctx.conversion_result.markdown, frontmatter
+        ctx.conversion_result.markdown, frontmatter, source=ctx.input_path.name
     )
     atomic_write_text(llm_output, llm_content)
     logger.info(f"Written LLM version: {llm_output}")
@@ -492,12 +491,11 @@ async def process_with_standard_llm(
     # Use shared processor or create new one
     processor = ctx.shared_processor
     if processor is None:
-        processor = create_llm_processor(ctx.config, project_dir=ctx.project_dir)
+        processor = create_llm_processor(ctx.config)
 
     workflow = SingleFileWorkflow(
         ctx.config,
         processor=processor,
-        project_dir=ctx.project_dir,
     )
 
     if is_standalone_image and saved_images:
@@ -617,12 +615,11 @@ async def analyze_embedded_images(ctx: ConversionContext) -> ConversionStepResul
 
     processor = ctx.shared_processor
     if processor is None:
-        processor = create_llm_processor(ctx.config, project_dir=ctx.project_dir)
+        processor = create_llm_processor(ctx.config)
 
     workflow = SingleFileWorkflow(
         ctx.config,
         processor=processor,
-        project_dir=ctx.project_dir,
     )
 
     logger.info(
@@ -715,9 +712,7 @@ async def convert_document_core(
         if ctx.shared_processor is None:
             from markitai.workflow.helpers import create_llm_processor
 
-            ctx.shared_processor = create_llm_processor(
-                ctx.config, project_dir=ctx.project_dir
-            )
+            ctx.shared_processor = create_llm_processor(ctx.config)
 
         page_images = ctx.conversion_result.metadata.get("page_images", [])
         has_page_images = len(page_images) > 0
@@ -736,7 +731,8 @@ async def convert_document_core(
             # Check vision result (critical)
             if isinstance(vision_result_raw, BaseException):
                 return ConversionStepResult(
-                    success=False, error=f"Vision LLM failed: {vision_result_raw}"
+                    success=False,
+                    error=f"Vision LLM failed: {format_error_message(vision_result_raw)}",
                 )
             vision_result: ConversionStepResult = vision_result_raw
             if not vision_result.success:
@@ -744,7 +740,10 @@ async def convert_document_core(
 
             # Check embed result (non-critical, log warning)
             if isinstance(embed_result_raw, BaseException):
-                logger.warning(f"Embedded image analysis failed: {embed_result_raw}")
+                logger.warning(
+                    f"Embedded image analysis failed: "
+                    f"{format_error_message(embed_result_raw)}"
+                )
             else:
                 embed_result: ConversionStepResult = embed_result_raw
                 if not embed_result.success:

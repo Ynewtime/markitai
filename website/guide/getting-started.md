@@ -44,11 +44,37 @@ irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 |
 ```
 :::
 
+::: warning Security Notice
+- The script will warn you if running as root/Administrator
+- All installations require explicit confirmation (default: No)
+- Remote script execution requires two-step confirmation
+:::
+
 The script will:
 - Check for Python 3.11-3.13
-- Install [uv](https://docs.astral.sh/uv/) package manager (with your permission)
+- Install [uv](https://docs.astral.sh/uv/) package manager (requires confirmation)
 - Install markitai with all optional dependencies
 - Optionally install `agent-browser` for browser automation
+
+#### Version Pinning
+
+Pin specific versions using environment variables:
+
+::: code-group
+```bash [Linux/macOS]
+export MARKITAI_VERSION="0.4.0"
+export UV_VERSION="0.9.27"
+export AGENT_BROWSER_VERSION="0.5.0"
+curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
+```
+
+```powershell [Windows]
+$env:MARKITAI_VERSION = "0.4.0"
+$env:UV_VERSION = "0.9.27"
+$env:AGENT_BROWSER_VERSION = "0.5.0"
+irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
+```
+:::
 
 ### Manual Installation
 
@@ -145,6 +171,60 @@ output/
 | Text | `.txt`, `.md` |
 | Images | `.jpg`, `.jpeg`, `.png`, `.webp` |
 | URLs | `http://`, `https://` |
+
+## Platform-Specific Features
+
+Some features have platform-specific behavior or limitations:
+
+### Windows
+
+| Feature | Support | Notes |
+|---------|---------|-------|
+| Legacy Office (`.doc`, `.xls`, `.ppt`) | ✅ Full | Uses COM automation |
+| PPTX Slide Rendering | ✅ Full | MS Office preferred, LibreOffice fallback |
+| EMF/WMF Images | ✅ Full | Native support |
+| Browser Automation | ✅ Full | Hidden window mode |
+
+::: tip Windows Performance
+On Windows, markitai automatically limits concurrency to 4 threads due to higher thread-switching overhead.
+:::
+
+### Linux
+
+| Feature | Support | Notes |
+|---------|---------|-------|
+| Legacy Office (`.doc`, `.xls`, `.ppt`) | ❌ No | Requires Windows COM |
+| PPTX Slide Rendering | ✅ Full | Requires LibreOffice |
+| EMF/WMF Images | ❌ No | Windows-only format |
+| Browser Automation | ✅ Full | Requires system dependencies |
+
+**Install LibreOffice:**
+```bash
+# Ubuntu/Debian
+sudo apt-get install libreoffice
+
+# Fedora/RHEL
+sudo dnf install libreoffice
+```
+
+**Install browser dependencies:**
+```bash
+agent-browser install --with-deps
+```
+
+### macOS
+
+| Feature | Support | Notes |
+|---------|---------|-------|
+| Legacy Office (`.doc`, `.xls`, `.ppt`) | ❌ No | Requires Windows COM |
+| PPTX Slide Rendering | ✅ Full | Requires LibreOffice |
+| EMF/WMF Images | ❌ No | Windows-only format |
+| Browser Automation | ✅ Full | - |
+
+**Install LibreOffice:**
+```bash
+brew install --cask libreoffice
+```
 
 ## Next Steps
 

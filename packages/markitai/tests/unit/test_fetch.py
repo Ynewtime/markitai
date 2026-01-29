@@ -251,7 +251,7 @@ class TestFetchErrors:
 
         error = AgentBrowserNotFoundError()
         assert "agent-browser is not installed" in str(error)
-        assert "npm install -g agent-browser" in str(error)
+        assert "pnpm add -g agent-browser" in str(error)
 
     def test_jina_rate_limit_error(self) -> None:
         """Test JinaRateLimitError."""
@@ -787,3 +787,198 @@ class TestSPADomainCache:
 
             assert expired_entry is not None
             assert expired_entry["expired"] is True
+
+
+class TestFetchCacheWithValidators:
+    """Tests for FetchCache HTTP conditional caching (ETag/Last-Modified)."""
+
+    def test_db_migration_adds_columns(self, tmp_path: Path) -> None:
+        """Test that database migration adds etag and last_modified columns."""
+        from markitai.fetch import FetchCache
+
+        db_path = tmp_path / "test_cache.db"
+
+        # Create old-style cache without validators
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("""
+            CREATE TABLE fetch_cache (
+                key TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                content TEXT NOT NULL,
+                strategy_used TEXT NOT NULL,
+                title TEXT,
+                final_url TEXT,
+                metadata TEXT,
+                created_at INTEGER NOT NULL,
+                accessed_at INTEGER NOT NULL,
+                size_bytes INTEGER NOT NULL
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+        # Initialize FetchCache - should trigger migration
+        cache = FetchCache(db_path)
+
+        # Verify columns exist
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.execute("PRAGMA table_info(fetch_cache)")
+        columns = {row[1] for row in cursor.fetchall()}
+        conn.close()
+
+        assert "etag" in columns
+        assert "last_modified" in columns
+        cache.close()
+
+    def test_get_with_validators_no_cache(self, tmp_path: Path) -> None:
+        """Test get_with_validators returns None for missing URL."""
+        from markitai.fetch import FetchCache
+
+        cache = FetchCache(tmp_path / "test_cache.db")
+        result, etag, last_modified = cache.get_with_validators(
+            "https://example.com/missing"
+        )
+
+        assert result is None
+        assert etag is None
+        assert last_modified is None
+        cache.close()
+
+    def test_set_and_get_with_validators(self, tmp_path: Path) -> None:
+        """Test storing and retrieving validators."""
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test_cache.db")
+        url = "https://example.com/page"
+
+        # Create result with validators
+        result = FetchResult(
+            content="# Test Content",
+            strategy_used="static",
+            url=url,
+        )
+
+        cache.set_with_validators(
+            url,
+            result,
+            etag='"abc123"',
+            last_modified="Mon, 27 Jan 2026 12:00:00 GMT",
+        )
+
+        # Retrieve and verify
+        cached_result, etag, last_modified = cache.get_with_validators(url)
+
+        assert cached_result is not None
+        assert cached_result.content == "# Test Content"
+        assert etag == '"abc123"'
+        assert last_modified == "Mon, 27 Jan 2026 12:00:00 GMT"
+        cache.close()
+
+    def test_set_with_validators_no_validators(self, tmp_path: Path) -> None:
+        """Test storing result without validators."""
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test_cache.db")
+        url = "https://example.com/no-validators"
+
+        result = FetchResult(
+            content="# Content",
+            strategy_used="static",
+            url=url,
+        )
+
+        # Store without validators
+        cache.set_with_validators(url, result, etag=None, last_modified=None)
+
+        # Retrieve
+        cached_result, etag, last_modified = cache.get_with_validators(url)
+
+        assert cached_result is not None
+        assert etag is None
+        assert last_modified is None
+        cache.close()
+
+    def test_update_accessed_at(self, tmp_path: Path) -> None:
+        """Test updating accessed_at timestamp."""
+        import time
+
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test_cache.db")
+        url = "https://example.com/page"
+
+        result = FetchResult(
+            content="# Test",
+            strategy_used="static",
+            url=url,
+        )
+        cache.set_with_validators(url, result, etag='"123"', last_modified=None)
+
+        # Get initial accessed_at
+        import sqlite3
+
+        conn = sqlite3.connect(str(tmp_path / "test_cache.db"))
+        row = conn.execute(
+            "SELECT accessed_at FROM fetch_cache WHERE url = ?", (url,)
+        ).fetchone()
+        initial_accessed = row[0]
+        conn.close()
+
+        # Wait briefly and update
+        time.sleep(0.1)
+        cache.update_accessed_at(url)
+
+        # Verify accessed_at was updated
+        conn = sqlite3.connect(str(tmp_path / "test_cache.db"))
+        row = conn.execute(
+            "SELECT accessed_at FROM fetch_cache WHERE url = ?", (url,)
+        ).fetchone()
+        updated_accessed = row[0]
+        conn.close()
+
+        assert updated_accessed >= initial_accessed
+        cache.close()
+
+
+class TestConditionalFetchResult:
+    """Tests for ConditionalFetchResult dataclass."""
+
+    def test_not_modified_result(self) -> None:
+        """Test creating a 304 Not Modified result."""
+        from markitai.fetch import ConditionalFetchResult
+
+        result = ConditionalFetchResult(
+            result=None,
+            not_modified=True,
+            etag='"abc123"',
+            last_modified="Mon, 27 Jan 2026 12:00:00 GMT",
+        )
+
+        assert result.result is None
+        assert result.not_modified is True
+        assert result.etag == '"abc123"'
+        assert result.last_modified == "Mon, 27 Jan 2026 12:00:00 GMT"
+
+    def test_modified_result(self) -> None:
+        """Test creating a 200 OK result with new content."""
+        from markitai.fetch import ConditionalFetchResult, FetchResult
+
+        fetch_result = FetchResult(
+            content="# New Content",
+            strategy_used="static",
+            url="https://example.com",
+        )
+
+        result = ConditionalFetchResult(
+            result=fetch_result,
+            not_modified=False,
+            etag='"def456"',
+            last_modified="Tue, 28 Jan 2026 12:00:00 GMT",
+        )
+
+        assert result.result is not None
+        assert result.result.content == "# New Content"
+        assert result.not_modified is False
+        assert result.etag == '"def456"'

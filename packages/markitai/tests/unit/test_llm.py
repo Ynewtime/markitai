@@ -98,7 +98,7 @@ class TestLLMProcessor:
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.instructor.from_litellm") as mock_from_litellm:
+        with patch("markitai.llm.vision.instructor.from_litellm") as mock_from_litellm:
             mock_client = MagicMock()
             # create_with_completion returns (model, raw_response)
             mock_client.chat.completions.create_with_completion = AsyncMock(
@@ -150,68 +150,50 @@ class TestLLMProcessorAsync:
             assert result == "Cleaned markdown"
             mock_router.acompletion.assert_called_once()
 
-    async def test_generate_frontmatter(
-        self, llm_config: LLMConfig, prompts_config: PromptsConfig
-    ):
-        """Test frontmatter generation."""
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-
-        mock_response = MagicMock()
-        mock_response.choices = [
-            MagicMock(message=MagicMock(content="title: Test\nsource: test.md"))
-        ]
-        mock_response.model = "test-model"
-        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-
-        with patch.object(processor, "_router") as mock_router:
-            mock_router.acompletion = AsyncMock(return_value=mock_response)
-            processor._router = mock_router
-
-            result = await processor.generate_frontmatter("# Test", "test.md")
-
-            assert "title: Test" in result
-            assert "source: test.md" in result
-
     async def test_process_document(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
-        """Test full document processing with fallback to parallel mode."""
+        """Test full document processing with fallback to parallel mode.
+
+        When combined Instructor call fails, fallback uses:
+        - clean_markdown() for cleaning (one LLM call)
+        - _build_fallback_frontmatter() for programmatic frontmatter (no LLM call)
+        """
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
-        # Set different responses for clean and frontmatter
+        # Set response for clean_markdown only (frontmatter is generated programmatically)
         clean_response = MagicMock()
         clean_response.choices = [
-            MagicMock(message=MagicMock(content="Cleaned content"))
+            MagicMock(message=MagicMock(content="# Test Heading\n\nCleaned content"))
         ]
         clean_response.model = "test-model"
         clean_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
 
-        frontmatter_response = MagicMock()
-        frontmatter_response.choices = [
-            MagicMock(message=MagicMock(content="title: Test\nsource: test.md"))
-        ]
-        frontmatter_response.model = "test-model"
-        frontmatter_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-
         # Mock the router
         mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock(
-            side_effect=[clean_response, frontmatter_response]
-        )
+        mock_router.acompletion = AsyncMock(return_value=clean_response)
         processor._router = mock_router
 
         # Mock instructor to fail, forcing fallback to parallel mode
-        with patch("markitai.llm.instructor.from_litellm") as mock_from_litellm:
+        with patch(
+            "markitai.llm.document.instructor.from_litellm"
+        ) as mock_from_litellm:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 side_effect=Exception("Instructor not available")
             )
             mock_from_litellm.return_value = mock_client
 
-            cleaned, frontmatter = await processor.process_document("# Test", "test.md")
+            cleaned, frontmatter = await processor.process_document(
+                "# Test Heading\n\nSome content", "test.md"
+            )
 
-            assert cleaned == "Cleaned content"
-            assert "title: Test" in frontmatter
+            # Cleaned content should be from LLM
+            assert "Cleaned content" in cleaned
+            # Frontmatter is now generated programmatically (title extracted from content)
+            assert "title: Test Heading" in frontmatter
+            assert "source: test.md" in frontmatter
+            assert "markitai_processed:" in frontmatter
 
     async def test_process_document_combined_success(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
@@ -223,7 +205,6 @@ class TestLLMProcessorAsync:
         mock_result = DocumentProcessResult(
             cleaned_markdown="# Cleaned Title\n\nClean content.",
             frontmatter=Frontmatter(
-                title="Test Document",
                 description="A test document for testing",
                 tags=["test", "document", "sample"],
             ),
@@ -239,7 +220,9 @@ class TestLLMProcessorAsync:
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.instructor.from_litellm") as mock_from_litellm:
+        with patch(
+            "markitai.llm.document.instructor.from_litellm"
+        ) as mock_from_litellm:
             mock_client = MagicMock()
             # create_with_completion returns (model, raw_response) tuple
             mock_client.chat.completions.create_with_completion = AsyncMock(
@@ -250,7 +233,6 @@ class TestLLMProcessorAsync:
             result = await processor._process_document_combined("# Raw Test", "test.md")
 
             assert result.cleaned_markdown == "# Cleaned Title\n\nClean content."
-            assert result.frontmatter.title == "Test Document"
             assert result.frontmatter.description == "A test document for testing"
             assert "test" in result.frontmatter.tags
 
@@ -261,7 +243,9 @@ class TestLLMProcessorAsync:
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
         # Mock instructor to fail
-        with patch("markitai.llm.instructor.from_litellm") as mock_from_litellm:
+        with patch(
+            "markitai.llm.document.instructor.from_litellm"
+        ) as mock_from_litellm:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 side_effect=Exception("Instructor failed")
@@ -366,7 +350,7 @@ class TestCleanFrontmatter:
         """Test cleaning plain YAML."""
         processor = LLMProcessor(llm_config, prompts_config)
 
-        result = processor._clean_frontmatter("title: Test\nsource: test.md")
+        result = processor.clean_frontmatter("title: Test\nsource: test.md")
         assert result == "title: Test\nsource: test.md"
 
     def test_clean_yaml_code_block(
@@ -375,7 +359,7 @@ class TestCleanFrontmatter:
         """Test cleaning YAML in code block."""
         processor = LLMProcessor(llm_config, prompts_config)
 
-        result = processor._clean_frontmatter("```yaml\ntitle: Test\n```")
+        result = processor.clean_frontmatter("```yaml\ntitle: Test\n```")
         assert result == "title: Test"
 
     def test_clean_yml_code_block(
@@ -384,7 +368,7 @@ class TestCleanFrontmatter:
         """Test cleaning YAML with yml code block."""
         processor = LLMProcessor(llm_config, prompts_config)
 
-        result = processor._clean_frontmatter("```yml\ntitle: Test\n```")
+        result = processor.clean_frontmatter("```yml\ntitle: Test\n```")
         assert result == "title: Test"
 
     def test_clean_with_dashes(
@@ -393,14 +377,14 @@ class TestCleanFrontmatter:
         """Test cleaning with --- markers."""
         processor = LLMProcessor(llm_config, prompts_config)
 
-        result = processor._clean_frontmatter("---\ntitle: Test\n---")
+        result = processor.clean_frontmatter("---\ntitle: Test\n---")
         assert result == "title: Test"
 
     def test_clean_combined(self, llm_config: LLMConfig, prompts_config: PromptsConfig):
         """Test cleaning with both code block and dashes."""
         processor = LLMProcessor(llm_config, prompts_config)
 
-        result = processor._clean_frontmatter("```yaml\n---\ntitle: Test\n---\n```")
+        result = processor.clean_frontmatter("```yaml\n---\ntitle: Test\n---\n```")
         assert result == "title: Test"
 
 
@@ -471,7 +455,7 @@ class TestPlaceholderProtection:
         their positions.
         """
         content = "Text\n![Alt](path/to/image.jpg)\nMore text"
-        protected, mapping = LLMProcessor._protect_content(content)
+        protected, mapping = LLMProcessor.protect_content(content)
         # Images are NOT protected - they remain as is
         assert "![Alt](path/to/image.jpg)" in protected
         assert "__MARKITAI_IMG_" not in protected
@@ -481,7 +465,7 @@ class TestPlaceholderProtection:
     def test_protect_slide_numbers(self):
         """Test that slide number comments are protected with placeholders."""
         content = "<!-- Slide number: 1 -->\nContent\n<!-- Slide number: 2 -->"
-        protected, mapping = LLMProcessor._protect_content(content)
+        protected, mapping = LLMProcessor.protect_content(content)
         # Slide numbers are protected with placeholders
         assert "__MARKITAI_SLIDENUM_" in protected
         assert "<!-- Slide number: 1 -->" not in protected
@@ -491,7 +475,7 @@ class TestPlaceholderProtection:
     def test_protect_page_numbers(self):
         """Test that page number comments are protected with placeholders."""
         content = "<!-- Page number: 1 -->\nContent\n<!-- Page number: 2 -->"
-        protected, mapping = LLMProcessor._protect_content(content)
+        protected, mapping = LLMProcessor.protect_content(content)
         # Page numbers are protected with placeholders
         assert "__MARKITAI_PAGENUM_" in protected
         assert "<!-- Page number: 1 -->" not in protected
@@ -501,7 +485,7 @@ class TestPlaceholderProtection:
     def test_protect_page_comments(self):
         """Test protecting page image comments with placeholders."""
         content = "<!-- Page images for reference -->\n<!-- ![Page 1](path) -->"
-        protected, mapping = LLMProcessor._protect_content(content)
+        protected, mapping = LLMProcessor.protect_content(content)
         assert "__MARKITAI_PAGE_" in protected
         assert len(mapping) == 2
 
@@ -510,18 +494,18 @@ class TestPlaceholderProtection:
         content = (
             "Start\n<!-- Page images for reference -->\n<!-- ![Page 1](path) -->\nEnd"
         )
-        protected, mapping = LLMProcessor._protect_content(content)
-        restored = LLMProcessor._unprotect_content(protected, mapping)
+        protected, mapping = LLMProcessor.protect_content(content)
+        restored = LLMProcessor.unprotect_content(protected, mapping)
         assert "<!-- Page images for reference -->" in restored
         assert "<!-- ![Page 1](path) -->" in restored
 
     def test_unprotect_preserves_position(self):
         """Test that restored content preserves placeholder position."""
         content = "# Title\n\n<!-- Page images for reference -->\n\nText after"
-        protected, mapping = LLMProcessor._protect_content(content)
+        protected, mapping = LLMProcessor.protect_content(content)
         # Simulate LLM modifying only the text
         modified = protected.replace("# Title", "# New Title")
-        restored = LLMProcessor._unprotect_content(modified, mapping)
+        restored = LLMProcessor.unprotect_content(modified, mapping)
         # Page comment should still be between title and text
         assert "<!-- Page images for reference -->" in restored
         assert restored.index("# New Title") < restored.index("<!-- Page images")
@@ -531,10 +515,10 @@ class TestPlaceholderProtection:
         """Test fallback when LLM removes a page comment placeholder."""
         content = "Text\n<!-- Page images for reference -->\nEnd"
         protected_data = LLMProcessor.extract_protected_content(content)
-        _, mapping = LLMProcessor._protect_content(content)
+        _, mapping = LLMProcessor.protect_content(content)
         # Simulate LLM removing the placeholder
         modified = "Text\nEnd"
-        restored = LLMProcessor._unprotect_content(modified, mapping, protected_data)
+        restored = LLMProcessor.unprotect_content(modified, mapping, protected_data)
         # Page comment should be restored at end (fallback)
         assert "<!-- Page images for reference -->" in restored
 
@@ -548,7 +532,7 @@ class TestPlaceholderProtection:
         content = (
             "<!-- Slide number: 1 -->\n# Title\n<!-- Slide number: 2 -->\n# Title 2"
         )
-        protected, mapping = LLMProcessor._protect_content(content)
+        protected, mapping = LLMProcessor.protect_content(content)
 
         # Simulate LLM adding hallucinated slide comments
         hallucinated = (
@@ -558,7 +542,7 @@ class TestPlaceholderProtection:
             "<!-- Slide number: 1 -->\n"  # Hallucinated!
         )
 
-        restored = LLMProcessor._unprotect_content(hallucinated, mapping)
+        restored = LLMProcessor.unprotect_content(hallucinated, mapping)
 
         # Should have exactly 2 slide comments (the original ones)
         import re
@@ -573,7 +557,7 @@ class TestPlaceholderProtection:
     def test_unprotect_removes_hallucinated_page_comments(self):
         """Test that hallucinated page comments are removed."""
         content = "<!-- Page number: 1 -->\nContent\n<!-- Page number: 2 -->\nMore"
-        protected, mapping = LLMProcessor._protect_content(content)
+        protected, mapping = LLMProcessor.protect_content(content)
 
         # Simulate LLM adding hallucinated page comments
         hallucinated = (
@@ -582,7 +566,7 @@ class TestPlaceholderProtection:
             "__MARKITAI_PAGENUM_1__\nMore"
         )
 
-        restored = LLMProcessor._unprotect_content(hallucinated, mapping)
+        restored = LLMProcessor.unprotect_content(hallucinated, mapping)
 
         # Should have exactly 2 page comments (the original ones)
         import re
@@ -644,67 +628,67 @@ class TestFixMalformedImageRefs:
     def test_fix_extra_single_paren(self):
         """Test fixing single extra closing parenthesis."""
         content = "![alt](path.jpg))"
-        result = LLMProcessor._fix_malformed_image_refs(content)
+        result = LLMProcessor.fix_malformed_image_refs(content)
         assert result == "![alt](path.jpg)"
 
     def test_fix_extra_multiple_parens(self):
         """Test fixing multiple extra closing parentheses."""
         content = "![alt](path.jpg)))"
-        result = LLMProcessor._fix_malformed_image_refs(content)
+        result = LLMProcessor.fix_malformed_image_refs(content)
         assert result == "![alt](path.jpg)"
 
     def test_fix_real_world_case(self):
         """Test fixing a real-world malformed image reference."""
         content = "![Grouped bar chart](assets/file.pdf-0-0.jpg))"
-        result = LLMProcessor._fix_malformed_image_refs(content)
+        result = LLMProcessor.fix_malformed_image_refs(content)
         assert result == "![Grouped bar chart](assets/file.pdf-0-0.jpg)"
 
     def test_preserve_normal_image(self):
         """Test that normal images are not modified."""
         content = "![alt](path.jpg)"
-        result = LLMProcessor._fix_malformed_image_refs(content)
+        result = LLMProcessor.fix_malformed_image_refs(content)
         assert result == "![alt](path.jpg)"
 
     def test_preserve_clickable_image(self):
         """Test that clickable images are not modified."""
         content = "[![alt](img.jpg)](link)"
-        result = LLMProcessor._fix_malformed_image_refs(content)
+        result = LLMProcessor.fix_malformed_image_refs(content)
         assert result == "[![alt](img.jpg)](link)"
 
     def test_preserve_image_in_parens(self):
         """Test that images inside parentheses are preserved."""
         content = "(see ![alt](img.jpg))"
-        result = LLMProcessor._fix_malformed_image_refs(content)
+        result = LLMProcessor.fix_malformed_image_refs(content)
         assert result == "(see ![alt](img.jpg))"
 
     def test_preserve_image_with_text_in_parens(self):
         """Test that images with text inside parentheses are preserved."""
         content = "(text: ![alt](img.jpg))"
-        result = LLMProcessor._fix_malformed_image_refs(content)
+        result = LLMProcessor.fix_malformed_image_refs(content)
         assert result == "(text: ![alt](img.jpg))"
 
     def test_preserve_image_followed_by_caption(self):
         """Test that images followed by caption in parens are preserved."""
         content = "![alt](path.jpg) (caption)"
-        result = LLMProcessor._fix_malformed_image_refs(content)
+        result = LLMProcessor.fix_malformed_image_refs(content)
         assert result == "![alt](path.jpg) (caption)"
 
     def test_preserve_image_with_parens_in_path(self):
         """Test that images with parens in path are preserved."""
         content = "![alt](path(1).jpg)"
-        result = LLMProcessor._fix_malformed_image_refs(content)
+        result = LLMProcessor.fix_malformed_image_refs(content)
         assert result == "![alt](path(1).jpg)"
 
     def test_fix_middle_of_text(self):
         """Test fixing extra paren in the middle of text."""
         content = "text ![alt](path.jpg)) more"
-        result = LLMProcessor._fix_malformed_image_refs(content)
+        result = LLMProcessor.fix_malformed_image_refs(content)
         assert result == "text ![alt](path.jpg) more"
 
     def test_multiple_images_mixed(self):
         """Test handling multiple images with mixed issues."""
         content = "![good](a.jpg) and ![bad](b.jpg)) and [![link](c.jpg)](url)"
-        result = LLMProcessor._fix_malformed_image_refs(content)
+        result = LLMProcessor.fix_malformed_image_refs(content)
         assert result == "![good](a.jpg) and ![bad](b.jpg) and [![link](c.jpg)](url)"
 
 
@@ -719,7 +703,7 @@ class TestSplitTextByPages:
 Content
 <!-- Slide number: 3 -->
 End"""
-        chunks = LLMProcessor._split_text_by_pages(content, 3)
+        chunks = LLMProcessor.split_text_by_pages(content, 3)
         assert len(chunks) == 3
         assert "<!-- Slide number: 1 -->" in chunks[0]
         assert "<!-- Slide number: 2 -->" in chunks[1]
@@ -731,13 +715,13 @@ End"""
 Content
 <!-- Page images for reference -->
 <!-- ![Page 1](screenshots/img.jpg) -->"""
-        chunks = LLMProcessor._split_text_by_pages(content, 1)
+        chunks = LLMProcessor.split_text_by_pages(content, 1)
         assert "<!-- Page images for reference -->" not in chunks[0]
 
     def test_fallback_to_paragraph_split(self):
         """Test fallback to paragraph splitting when no markers."""
         content = "Para 1\n\nPara 2\n\nPara 3\n\nPara 4"
-        chunks = LLMProcessor._split_text_by_pages(content, 2)
+        chunks = LLMProcessor.split_text_by_pages(content, 2)
         assert len(chunks) == 2
         assert "Para 1" in chunks[0]
         assert "Para 3" in chunks[1] or "Para 4" in chunks[1]
@@ -750,7 +734,7 @@ Content
 Content
 <!-- Page number: 3 -->
 End"""
-        chunks = LLMProcessor._split_text_by_pages(content, 3)
+        chunks = LLMProcessor.split_text_by_pages(content, 3)
         assert len(chunks) == 3
         assert "<!-- Page number: 1 -->" in chunks[0]
         assert "<!-- Page number: 2 -->" in chunks[1]
@@ -762,7 +746,7 @@ End"""
 Slide content
 <!-- Page number: 1 -->
 Page content"""
-        chunks = LLMProcessor._split_text_by_pages(content, 1)
+        chunks = LLMProcessor.split_text_by_pages(content, 1)
         assert len(chunks) == 1
         # Should use slide marker, so chunk includes everything
         assert "<!-- Slide number: 1 -->" in chunks[0]

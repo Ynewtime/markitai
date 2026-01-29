@@ -3,6 +3,116 @@
 from __future__ import annotations
 
 import re
+from typing import Any
+
+
+def clean_control_characters(text: str, preserve_whitespace: bool = True) -> str:
+    """Remove control characters from string.
+
+    Control characters (ASCII 0x00-0x1F) can cause JSON parsing errors when
+    LLMs include them in their output. This function removes them while
+    optionally preserving common whitespace characters.
+
+    Args:
+        text: Input text to clean
+        preserve_whitespace: If True, preserve newline, carriage return, and tab
+            characters. If False, remove all control characters.
+
+    Returns:
+        Text with control characters removed
+
+    Example:
+        >>> clean_control_characters("hello\\x00world")
+        'helloworld'
+        >>> clean_control_characters("line1\\nline2")
+        'line1\\nline2'
+    """
+    if preserve_whitespace:
+        # Keep \n (0x0A), \r (0x0D), \t (0x09)
+        return "".join(c for c in text if ord(c) >= 32 or c in "\n\r\t")
+    return "".join(c for c in text if ord(c) >= 32)
+
+
+def format_error_message(error: Any, max_length: int = 200) -> str:
+    """Format an exception for user-friendly logging.
+
+    Extracts the core error message without full traceback.
+    For LiteLLM and other chained exceptions, extracts the most relevant message.
+
+    Args:
+        error: Exception object or any value
+        max_length: Maximum message length before truncation
+
+    Returns:
+        A concise, user-friendly error message without traceback
+    """
+    if error is None:
+        return "Unknown error"
+
+    # Get the exception class name
+    exc_type = type(error).__name__
+
+    # For BaseException and its subclasses, extract just the message
+    if isinstance(error, BaseException):
+        # Get the direct message (args[0] if available)
+        if error.args:
+            msg = str(error.args[0])
+        else:
+            msg = str(error)
+
+        # For chained exceptions, find the root cause message
+        # Check __cause__ first (explicit chaining with 'raise ... from')
+        root_error = error
+        while hasattr(root_error, "__cause__") and root_error.__cause__ is not None:
+            root_error = root_error.__cause__
+        while hasattr(root_error, "__context__") and root_error.__context__ is not None:
+            # Only follow __context__ if it's more specific
+            if root_error.__context__ is not error:
+                root_error = root_error.__context__
+            else:
+                break
+
+        # If we found a root cause, use its message
+        if root_error is not error:
+            root_type = type(root_error).__name__
+            if root_error.args:
+                root_msg = str(root_error.args[0])
+            else:
+                root_msg = str(root_error)
+            # Use root message if it's more informative
+            if root_msg and len(root_msg) < len(msg):
+                msg = root_msg
+                exc_type = root_type
+
+        # Clean up the message - remove traceback if embedded
+        if "Traceback (most recent call last):" in msg:
+            # Keep only the part before the traceback
+            msg = msg.split("Traceback (most recent call last):")[0].strip()
+
+        # Replace newlines with spaces to keep log output on single line
+        msg = re.sub(r"\s*\n\s*", " ", msg)
+        # Collapse multiple spaces into one
+        msg = re.sub(r"\s{2,}", " ", msg).strip()
+
+        # Remove common prefixes that duplicate exception type
+        for prefix in [f"{exc_type}: ", "Error: ", "Exception: "]:
+            if msg.startswith(prefix):
+                msg = msg[len(prefix) :]
+
+        # Truncate if too long
+        if len(msg) > max_length:
+            msg = msg[:max_length] + "..."
+
+        # Return formatted message with exception type
+        if msg:
+            return f"{exc_type}: {msg}"
+        return exc_type
+
+    # For non-exceptions, just convert to string
+    result = str(error)
+    if len(result) > max_length:
+        result = result[:max_length] + "..."
+    return result
 
 
 def clean_residual_placeholders(content: str) -> str:
