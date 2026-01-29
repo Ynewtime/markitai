@@ -99,9 +99,10 @@ zh_print_summary() {
         printf "\n"
     fi
 
-    printf "  ${BOLD}文档:${NC} https://markitai.dev\n"
+    printf "  ${BOLD}文档:${NC} https://markitai.ynewtime.com\n"
     printf "  ${BOLD}问题反馈:${NC} https://github.com/Ynewtime/markitai/issues\n"
     printf "\n"
+    return 0
 }
 
 # 覆盖库函数以使用中文输出
@@ -132,6 +133,7 @@ zh_warn_if_root() {
             exit 1
         fi
     fi
+    return 0
 }
 
 zh_confirm_remote_script() {
@@ -269,7 +271,8 @@ zh_install_markitai() {
     fi
 
     if command -v uv >/dev/null 2>&1; then
-        if uv tool install "$pkg" --python "$PYTHON_CMD" 2>/dev/null; then
+        # 使用 --upgrade 确保安装最新版本
+        if uv tool install "$pkg" --python "$PYTHON_CMD" --upgrade 2>/dev/null; then
             export PATH="$HOME/.local/bin:$PATH"
             version=$(markitai --version 2>/dev/null || echo "已安装")
             print_success "markitai $version 安装成功"
@@ -280,7 +283,8 @@ zh_install_markitai() {
     fi
 
     if command -v pipx >/dev/null 2>&1; then
-        if pipx install "$pkg" --python "$PYTHON_CMD"; then
+        # 使用 --force 确保安装最新版本
+        if pipx install "$pkg" --python "$PYTHON_CMD" --force; then
             version=$(markitai --version 2>/dev/null || echo "已安装")
             print_success "markitai $version 安装成功"
             track_install "markitai" "installed"
@@ -288,7 +292,8 @@ zh_install_markitai() {
         fi
     fi
 
-    if "$PYTHON_CMD" -m pip install --user "$pkg" 2>/dev/null; then
+    # 使用 --upgrade 确保安装最新版本
+    if "$PYTHON_CMD" -m pip install --user --upgrade "$pkg" 2>/dev/null; then
         export PATH="$HOME/.local/bin:$PATH"
         version=$(markitai --version 2>/dev/null || echo "已安装")
         print_success "markitai $version 安装成功"
@@ -544,6 +549,7 @@ zh_init_config() {
             print_success "配置初始化完成"
         fi
     fi
+    return 0
 }
 
 zh_print_completion() {

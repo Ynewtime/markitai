@@ -21,17 +21,17 @@ FAILED_COMPONENTS=""
 # Usage: track_install "component_name" "status"
 # Status: installed, skipped, failed
 track_install() {
-    component="$1"
-    status="$2"
-    case "$status" in
+    _component="$1"
+    _status="$2"
+    case "$_status" in
         installed)
-            INSTALLED_COMPONENTS="${INSTALLED_COMPONENTS}${component}|"
+            INSTALLED_COMPONENTS="${INSTALLED_COMPONENTS}${_component}|"
             ;;
         skipped)
-            SKIPPED_COMPONENTS="${SKIPPED_COMPONENTS}${component}|"
+            SKIPPED_COMPONENTS="${SKIPPED_COMPONENTS}${_component}|"
             ;;
         failed)
-            FAILED_COMPONENTS="${FAILED_COMPONENTS}${component}|"
+            FAILED_COMPONENTS="${FAILED_COMPONENTS}${_component}|"
             ;;
     esac
 }
@@ -172,6 +172,7 @@ warn_if_root() {
             exit 1
         fi
     fi
+    return 0
 }
 
 # Confirm before executing remote script
@@ -433,7 +434,8 @@ lib_install_markitai() {
     # Prefer uv tool install (recommended, installs to ~/.local/bin)
     if command -v uv >/dev/null 2>&1; then
         # CRITICAL: Use --python to specify the detected Python version
-        if uv tool install "$pkg" --python "$PYTHON_CMD" 2>/dev/null; then
+        # Use --upgrade to ensure latest version is installed
+        if uv tool install "$pkg" --python "$PYTHON_CMD" --upgrade 2>/dev/null; then
             export PATH="$HOME/.local/bin:$PATH"
             version=$(markitai --version 2>/dev/null || echo "installed")
             print_success "markitai $version installed successfully"
@@ -445,7 +447,8 @@ lib_install_markitai() {
 
     # Fallback to pipx
     if command -v pipx >/dev/null 2>&1; then
-        if pipx install "$pkg" --python "$PYTHON_CMD"; then
+        # Use --force to ensure latest version is installed
+        if pipx install "$pkg" --python "$PYTHON_CMD" --force; then
             version=$(markitai --version 2>/dev/null || echo "installed")
             print_success "markitai $version installed successfully"
             track_install "markitai" "installed"
@@ -454,7 +457,8 @@ lib_install_markitai() {
     fi
 
     # Fallback to pip --user
-    if "$PYTHON_CMD" -m pip install --user "$pkg" 2>/dev/null; then
+    # Use --upgrade to ensure latest version is installed
+    if "$PYTHON_CMD" -m pip install --user --upgrade "$pkg" 2>/dev/null; then
         export PATH="$HOME/.local/bin:$PATH"
         version=$(markitai --version 2>/dev/null || echo "installed")
         print_success "markitai $version installed successfully"
@@ -716,6 +720,7 @@ lib_init_config() {
             print_success "Configuration initialized"
         fi
     fi
+    return 0
 }
 
 # Print completion message
@@ -849,7 +854,8 @@ print_summary() {
         printf "\n"
     fi
 
-    printf "  ${BOLD}Documentation:${NC} https://markitai.dev\n"
+    printf "  ${BOLD}Documentation:${NC} https://markitai.ynewtime.com\n"
     printf "  ${BOLD}Issues:${NC} https://github.com/Ynewtime/markitai/issues\n"
     printf "\n"
+    return 0
 }
