@@ -70,6 +70,7 @@ def converted_fixtures(tmp_path_factory) -> dict:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestBatchConversionResults:
     """Tests that verify batch conversion results using shared fixture."""
 
@@ -352,6 +353,7 @@ class TestErrorRecovery:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestReportVerification:
     """Tests for report content using shared fixture."""
 

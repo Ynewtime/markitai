@@ -318,6 +318,7 @@ class TestSubdirectoryImagesJson:
         assert (output_dir / "root.txt.md").exists()
         assert (output_dir / "sub" / "nested.txt.md").exists()
 
+    @pytest.mark.slow
     @pytest.mark.skipif(
         not Path("/usr/bin/soffice").exists()
         and not Path("/usr/bin/libreoffice").exists(),

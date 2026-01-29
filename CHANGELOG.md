@@ -9,101 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-#### Claude Agent SDK Integration
-- Native support for Claude Code CLI via `claude-agent-sdk`
-- Model aliases: `claude-agent/sonnet`, `claude-agent/opus`, `claude-agent/haiku`
-- Uses Claude Code subscription quota automatically
-- Install: `uv sync --extra claude-agent`
-
-#### GitHub Copilot SDK Integration
-- Native support for GitHub Copilot via `github-copilot-sdk`
-- Access Claude, GPT-4o, o1 models through Copilot subscription
-- Model format: `copilot/claude-sonnet-4.5`, `copilot/gpt-4o`, `copilot/o1`
-- Install: `uv sync --extra copilot`
-
-#### URL HTTP Conditional Caching
-- ETag/Last-Modified based conditional GET requests for `--static` strategy
-- Single network round-trip: 304 returns cache, 200 updates cache
-- New `FetchCache` fields: `etag`, `last_modified`
-
-#### Quiet Mode
-- New `--quiet` / `-q` flag to suppress console output
-- Auto-enabled for single file mode (unless `--verbose`)
-
-#### Setup Scripts Security Hardening
-- All high-impact operations default to N (UV install, Chromium download, system deps)
-- Two-step confirmation for remote script execution (`curl|sh`, `irm|iex`)
-- Root/Administrator execution warning
-- Version pinning via env vars: `MARKITAI_VERSION`, `UV_VERSION`, `AGENT_BROWSER_VERSION`
-- Shared libraries: `scripts/lib.sh`, `scripts/lib.ps1`
-
-#### Module Refactoring
-- **CLI**: `cli.py` (4,267 lines) → `cli/` package (~1,013 lines main + submodules)
-  - `cli/commands/` - cache, config, deps subcommands
-  - `cli/processors/` - batch, file, llm, url, validators
-  - `cli/framework.py`, `cli/logging_config.py`
-- **LLM**: `llm.py` (4,875 lines) → `llm/` package (~2,320 lines processor + submodules)
-  - `llm/cache.py`, `llm/content.py`, `llm/document.py`
-  - `llm/models.py`, `llm/types.py`, `llm/vision.py`
-- **Providers**: New `providers/` package
-  - `providers/claude_agent.py` - Claude Agent SDK
-  - `providers/copilot.py` - GitHub Copilot SDK
-
-#### Documentation
-- `CONTRIBUTING.md` / `CONTRIBUTING_ZH.md` contribution guidelines
-- `docs/architecture.md` architecture documentation
-- `docs/ai-tools-setup.md` AI tools configuration guide
-- `.cursorrules`, `.github/copilot-instructions.md` for AI-assisted development
-- `.github/dependabot.yml` for automated dependency updates
+- **Claude Agent SDK**: `claude-agent/sonnet|opus|haiku` via Claude Code CLI
+- **GitHub Copilot SDK**: `copilot/claude-sonnet-4.5|gpt-4o|o1` models
+- **URL HTTP caching**: ETag/Last-Modified conditional requests
+- **Quiet mode**: `--quiet` / `-q` flag (auto-enabled for single file)
+- **Module refactoring**: `cli.py` → `cli/`, `llm.py` → `llm/`, new `providers/`
+- **Setup scripts hardening**: default N for high-impact ops, version pinning
+- **Docs**: CONTRIBUTING.md, architecture.md, ai-tools-setup.md, dependabot.yml
 
 ### Changed
 
-- Upgraded tooling to Python 3.13
-- Reorganized docs: `docs/reference/` → `docs/archive/`
-- **agent-browser locked to 0.7.6**: 0.8.x has daemon startup bug on Windows
-- Default `extra_wait_ms` increased: 1000 → 3000 (SPAs need 3-5s for JS rendering)
-- Instructor mode: `JSON` → `MD_JSON` (handles LLMs wrapping JSON in code blocks)
+- Python 3.13, docs reorganized to `docs/archive/`
+- agent-browser locked to 0.7.6 (Windows bug in 0.8.x)
+- Default `extra_wait_ms`: 1000 → 3000, Instructor mode: `JSON` → `MD_JSON`
 
 ### Fixed
 
-#### Windows Compatibility
-- CLI UTF-8 console encoding for Unicode output
-- Use `console.print` instead of `print` for proper Windows Unicode handling
-- Copilot CLI path discovery for npm/pnpm global installations not in PATH
-- Setup scripts: proper argument quoting for paths with spaces
-
-#### LLM Robustness
-- Frontmatter parsing fallback with regex extraction when YAML fails
-- Ensure `source` field in frontmatter (fix nested objects like `{source: {source: null}}`)
-- Added error handling for vision cleaning and frontmatter generation failures
-- Screenshot comment preserved in fallback processing path
-
-#### Prompt Leakage Prevention (Enhanced)
-- Clean Chinese prompt instructions from frontmatter (e.g., "根据文档内容生成 YAML frontmatter")
-- Filter prompt leakage keys from normalized frontmatter output
-- Detect and remove hallucinated task labels ("任务 1", "Task 1")
-
-#### Placeholder Protection (Strengthened)
-- Added explicit "CRITICAL - 占位符保留规则" section in prompts
-- Detailed rules: count must match, position preserved, exact text match
-- Prevents LLM from deleting/modifying `__MARKITAI_*__` placeholders
-
-#### Social Media Content Cleaning
-- New rules for X/Twitter, Facebook, Instagram page cleanup
-- Remove cookie notices, login prompts, navigation elements
-- Remove footer links, duplicate interaction stats, empty section headers
-
-#### Setup Scripts Improvements
-- WSL environment detection with warning and shell script suggestion
-- Improved Python detection: support for pymanager format in `py --list`
-- `Invoke-AgentBrowser` helper to bypass npm shim issues on Windows
-- PATH refresh order: User paths take precedence over Machine paths
-- Added login hints after Claude/Copilot CLI installation
-
-### Removed
-
-- Monolithic `cli.py` and `llm.py` (refactored into packages)
-- `AGENTS.md` (merged into `CLAUDE.md`)
+- **Windows**: UTF-8 console, Copilot CLI path discovery, script argument quoting
+- **LLM**: Frontmatter regex fallback, `source` field fix, vision/frontmatter error handling
+- **Prompts**: Enhanced prompt leakage prevention, placeholder protection rules
+- **Content**: Social media cleanup rules (X/Twitter, Facebook, Instagram)
+- **Setup**: WSL detection, Python pymanager support, PATH refresh order
 
 ## [0.3.2] - 2026-01-27
 
