@@ -51,13 +51,35 @@ from markitai.constants import (
     DEFAULT_URL_CONCURRENCY,
 )
 
+# Environment variable descriptions for user-friendly error messages
+ENV_VAR_DESCRIPTIONS: dict[str, str] = {
+    "OPENAI_API_KEY": "OpenAI API (GPT-4o, GPT-4o-mini)",
+    "ANTHROPIC_API_KEY": "Anthropic API (Claude models)",
+    "GEMINI_API_KEY": "Google Gemini API (Gemini 2.x)",
+    "DEEPSEEK_API_KEY": "DeepSeek API",
+    "OPENROUTER_API_KEY": "OpenRouter API (multi-provider gateway)",
+    "JINA_API_KEY": "Jina Reader API (URL conversion)",
+    "MARKITAI_CONFIG": "Markitai configuration file path",
+    "MARKITAI_LOG_DIR": "Markitai log directory",
+}
+
 
 class EnvVarNotFoundError(ValueError):
     """Raised when an environment variable referenced by env: syntax is not found."""
 
     def __init__(self, var_name: str) -> None:
         self.var_name = var_name
-        super().__init__(f"Environment variable not found: {var_name}")
+        description = ENV_VAR_DESCRIPTIONS.get(var_name, "Required by configuration")
+        message = (
+            f"Environment variable not found: {var_name}\n\n"
+            f"  Purpose: {description}\n\n"
+            f"  To set it:\n"
+            f"    export {var_name}=your_value_here\n\n"
+            f"  Or add to .env file:\n"
+            f"    {var_name}=your_value_here\n\n"
+            f"  See .env.example for all supported variables."
+        )
+        super().__init__(message)
 
 
 def resolve_env_value(value: str, strict: bool = True) -> str | None:
@@ -214,9 +236,6 @@ class PromptsConfig(BaseModel):
     # Cleaner prompts
     cleaner_system: str | None = None
     cleaner_user: str | None = None
-    # Frontmatter prompts
-    frontmatter_system: str | None = None
-    frontmatter_user: str | None = None
     # Image prompts
     image_caption_system: str | None = None
     image_caption_user: str | None = None
@@ -540,21 +559,57 @@ class ConfigManager:
         """
         Get a configuration value by dot-separated key path.
 
-        Example: config_manager.get("llm.enabled")
+        Supports array index notation: llm.model_list[0].model_name
+
+        Example:
+            config_manager.get("llm.enabled")
+            config_manager.get("llm.model_list[0]")
+            config_manager.get("llm.model_list[0].litellm_params.model")
         """
+        import re
+
+        # Split by dots, but preserve array indices
+        # e.g., "llm.model_list[0].name" -> ["llm", "model_list[0]", "name"]
         parts = key.split(".")
         value: Any = self.config
 
         for part in parts:
-            if isinstance(value, BaseModel):
-                value = getattr(value, part, None)
-            elif isinstance(value, dict):
-                value = value.get(part)
-            else:
-                return default
+            # Check for array index notation: "field[N]"
+            array_match = re.match(r"^([^\[]+)\[(\d+)\]$", part)
+            if array_match:
+                field_name = array_match.group(1)
+                index = int(array_match.group(2))
 
-            if value is None:
-                return default
+                # First get the field
+                if isinstance(value, BaseModel):
+                    value = getattr(value, field_name, None)
+                elif isinstance(value, dict):
+                    value = value.get(field_name)
+                else:
+                    return default
+
+                if value is None:
+                    return default
+
+                # Then get the array element
+                if isinstance(value, list):
+                    if 0 <= index < len(value):
+                        value = value[index]
+                    else:
+                        return default
+                else:
+                    return default
+            else:
+                # Regular field access
+                if isinstance(value, BaseModel):
+                    value = getattr(value, part, None)
+                elif isinstance(value, dict):
+                    value = value.get(part)
+                else:
+                    return default
+
+                if value is None:
+                    return default
 
         return value
 

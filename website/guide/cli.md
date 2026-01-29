@@ -270,7 +270,6 @@ Display cache statistics.
 markitai cache stats
 markitai cache stats -v           # Verbose mode
 markitai cache stats --json       # JSON output
-markitai cache stats --scope project  # Project cache only
 ```
 
 ### `markitai cache clear`
@@ -279,9 +278,8 @@ Clear cached data.
 
 ```bash
 markitai cache clear
-markitai cache clear --scope project  # Clear project cache only
-markitai cache clear --scope global   # Clear global cache only
-markitai cache clear --include-spa-domains  # Also clear learned SPA domains
+markitai cache clear -y                       # Skip confirmation
+markitai cache clear --include-spa-domains    # Also clear learned SPA domains
 ```
 
 ### `markitai cache spa-domains`
@@ -312,8 +310,9 @@ markitai check-deps --json    # JSON output
 This command verifies:
 - **agent-browser**: For dynamic URL fetching (SPA rendering)
 - **LibreOffice**: For Office document conversion (doc, docx, xls, xlsx, ppt, pptx)
-- **Tesseract OCR**: For scanned document processing (optional, RapidOCR is built-in)
+- **RapidOCR**: For scanned document OCR (built-in, no external dependencies)
 - **LLM API**: Configuration and connectivity status
+- **Vision Model**: For image analysis (auto-detected from litellm)
 
 ## Other Options
 

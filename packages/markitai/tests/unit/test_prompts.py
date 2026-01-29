@@ -60,26 +60,12 @@ class TestPromptManager:
         manager = PromptManager()
 
         prompt = manager.get_prompt(
-            "frontmatter_user",
+            "cleaner_user",
             content="my content",
             source="test.docx",
         )
 
         assert "my content" in prompt
-
-    def test_source_variable_in_frontmatter_system(self) -> None:
-        """Test source variable substitution in frontmatter system prompt."""
-        manager = PromptManager()
-
-        prompt = manager.get_prompt(
-            "frontmatter_system", source="test.txt", language="English"
-        )
-
-        # Source should be substituted in the prompt
-        assert "test.txt" in prompt
-        # Prompt should contain frontmatter field instructions
-        assert "title" in prompt
-        assert "description" in prompt
 
     def test_custom_prompt_from_config(self, tmp_path: Path) -> None:
         """Test loading custom prompt from config path."""
@@ -138,21 +124,6 @@ class TestBuiltinPrompts:
     def test_cleaner_user_prompt_content(self) -> None:
         """Test cleaner user prompt has content placeholder."""
         path = BUILTIN_PROMPTS_DIR / "cleaner_user.md"
-        content = path.read_text(encoding="utf-8")
-
-        assert "{content}" in content
-
-    def test_frontmatter_system_prompt_content(self) -> None:
-        """Test frontmatter system prompt has required elements."""
-        path = BUILTIN_PROMPTS_DIR / "frontmatter_system.md"
-        content = path.read_text(encoding="utf-8")
-
-        assert "{source}" in content or "源文件" in content
-        assert "YAML" in content or "yaml" in content
-
-    def test_frontmatter_user_prompt_content(self) -> None:
-        """Test frontmatter user prompt has content placeholder."""
-        path = BUILTIN_PROMPTS_DIR / "frontmatter_user.md"
         content = path.read_text(encoding="utf-8")
 
         assert "{content}" in content

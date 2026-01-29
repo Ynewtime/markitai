@@ -29,8 +29,10 @@ DEFAULT_RETRY_MAX_DELAY = 60.0  # seconds
 
 # Instructor retry settings (for structured JSON output validation)
 # When LLM returns malformed JSON, Instructor can retry with validation error
-# feedback, allowing the LLM to fix issues like incorrect escaping
-DEFAULT_INSTRUCTOR_MAX_RETRIES = 1
+# feedback, allowing the LLM to fix issues like incorrect escaping.
+# Common issues: unescaped quotes in Chinese text like "你属于某个单位"
+# Increased to 2 to give model more chances to self-correct
+DEFAULT_INSTRUCTOR_MAX_RETRIES = 2
 
 # Token limits
 DEFAULT_MAX_OUTPUT_TOKENS = 8192  # Conservative default for most models
@@ -84,7 +86,6 @@ DEFAULT_CACHE_TTL_SECONDS = 300  # Cache TTL (5 minutes)
 # Persistent SQLite cache
 DEFAULT_CACHE_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MB per cache file
 DEFAULT_GLOBAL_CACHE_DIR = "~/.markitai"  # Global cache directory
-DEFAULT_PROJECT_CACHE_DIR = ".markitai"  # Project-level cache directory
 DEFAULT_CACHE_DB_FILENAME = "cache.db"  # SQLite database filename
 DEFAULT_CACHE_CONTENT_TRUNCATE = 50000  # Truncate content for hash key (chars)
 
@@ -151,12 +152,14 @@ DEFAULT_LOG_LEVEL = "INFO"
 
 DEFAULT_FETCH_STRATEGY = "auto"  # auto | static | browser | jina
 DEFAULT_AGENT_BROWSER_COMMAND = "agent-browser"
+# Recommended version: 0.7.6 (0.8.x has daemon startup bug on Windows)
+RECOMMENDED_AGENT_BROWSER_VERSION = "0.7.6"
 DEFAULT_AGENT_BROWSER_TIMEOUT = 30000  # ms
 DEFAULT_AGENT_BROWSER_WAIT_FOR = (
     "domcontentloaded"  # load | domcontentloaded | networkidle
 )
 DEFAULT_AGENT_BROWSER_EXTRA_WAIT_MS = (
-    1000  # Extra wait after load state (for JS rendering)
+    3000  # Extra wait after load state (for JS rendering, SPAs need 3-5s)
 )
 DEFAULT_JINA_TIMEOUT = 30  # seconds
 DEFAULT_JINA_BASE_URL = "https://r.jina.ai"
@@ -182,6 +185,48 @@ JS_REQUIRED_PATTERNS: tuple[str, ...] = (
     "enable javascript",
     "requires javascript",
 )
+
+# =============================================================================
+# Local LLM Provider Settings
+# =============================================================================
+
+# Claude Code supported aliases (for validation and dynamic lookup)
+# Actual model resolution is done dynamically via LiteLLM's model database
+# to automatically pick up new model versions without code changes.
+# Source: https://code.claude.com/docs/en/model-config
+CLAUDE_CODE_ALIASES: tuple[str, ...] = ("haiku", "sonnet", "opus", "inherit")
+
+# Copilot model pricing (USD per 1M tokens)
+# Note: These are estimated prices based on public API pricing.
+# Actual costs through Copilot subscription may differ.
+# Format: {"model_prefix": (input_price, output_price)}
+COPILOT_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    # OpenAI models
+    "gpt-4.1": (2.0, 8.0),
+    "gpt-5-mini": (0.15, 0.60),
+    "gpt-5": (5.0, 15.0),
+    "gpt-5.1": (5.0, 15.0),
+    "gpt-5.2": (5.0, 15.0),
+    "gpt-5.1-codex": (7.5, 22.5),
+    "gpt-5.2-codex": (7.5, 22.5),
+    # Anthropic models (via Copilot)
+    "claude-haiku-4.5": (0.80, 4.0),
+    "claude-sonnet-4": (3.0, 15.0),
+    "claude-sonnet-4.5": (3.0, 15.0),
+    "claude-opus-4.5": (15.0, 75.0),
+    # Google models
+    "gemini-2.5-pro": (1.25, 5.0),
+    "gemini-3-flash": (0.10, 0.40),
+    "gemini-3-pro": (2.5, 10.0),
+}
+
+# Default model info when LiteLLM lookup fails
+# Used for local providers (claude-agent/, copilot/) as fallback
+LOCAL_PROVIDER_DEFAULT_MODEL_INFO: dict[str, int | bool] = {
+    "max_input_tokens": 200000,
+    "max_output_tokens": 64000,
+    "supports_vision": True,
+}
 
 # =============================================================================
 # MIME Type Mappings

@@ -15,6 +15,16 @@
 - 删除 PPT/PDF 页眉页脚（每页末尾重复的短文本+页码）
 - 删除图表残留的孤立数字行
 
+## 社交媒体页面清理（X/Twitter, Facebook, Instagram 等）
+删除以下模板内容，只保留实际帖子/文章正文：
+- Cookie 通知和隐私提示
+- 登录/注册提示（"Log in", "Sign up", "Create account"）
+- 导航元素（"Primary", "Post", "Conversation" 等标签）
+- 页脚链接（Terms of Service, Privacy Policy, Cookie Policy 等）
+- 互动统计的重复显示（likes, reposts, views 只保留一次）
+- 空的或占位的章节标题（如单独的 "## X" 或 "## Post"）
+- 广告和推广内容提示
+
 ## 格式规范
 - 标题(#)、代码块、列表块、表格前后各保留一个空行
 - 段落间保留一个空行，删除多余空行

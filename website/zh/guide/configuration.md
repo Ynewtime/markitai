@@ -58,10 +58,10 @@ markitai config set llm.enabled true
     ],
     "router_settings": {
       "routing_strategy": "simple-shuffle",
-      "num_retries": 3,
+      "num_retries": 2,
       "timeout": 120
     },
-    "concurrency": 5
+    "concurrency": 10
   },
   "image": {
     "alt_enabled": false,
@@ -92,7 +92,7 @@ markitai config set llm.enabled true
   "cache": {
     "enabled": true,
     "no_cache_patterns": [],
-    "max_size_bytes": 1073741824,
+    "max_size_bytes": 536870912,
     "global_dir": "~/.markitai"
   },
   "batch": {
@@ -153,7 +153,6 @@ markitai config set llm.enabled true
 |------|------|
 | `MARKITAI_CONFIG` | 配置文件路径 |
 | `MARKITAI_LOG_DIR` | 日志文件目录 |
-| `MARKITAI_PROMPT_DIR` | 自定义提示词目录 |
 
 ## LLM 配置
 
@@ -167,6 +166,17 @@ Markitai 通过 [LiteLLM](https://docs.litellm.ai/) 支持多个 LLM 提供商�
 - DeepSeek
 - OpenRouter
 - Ollama（本地模型）
+
+#### 本地提供商（基于订阅）
+
+Markitai 还支持使用 CLI 认证和订阅额度的本地提供商：
+
+- **Claude Agent** (`claude-agent/`): 使用 [Claude Agent SDK](https://github.com/anthropics/claude-code) 通过 Claude Code CLI 认证
+- **GitHub Copilot** (`copilot/`): 使用 [GitHub Copilot SDK](https://github.com/github/copilot-sdk) 通过 Copilot CLI 认证
+
+这些提供商需要：
+1. 安装并认证对应的 CLI 工具
+2. 可选 SDK 包：`pip install markitai[claude-agent]` 或 `pip install markitai[copilot]`
 
 ### 模型命名
 
@@ -182,6 +192,33 @@ provider/model-name
 - `gemini/gemini-2.5-flash`
 - `deepseek/deepseek-chat`
 - `ollama/llama3.2`
+- `claude-agent/sonnet`（本地，需要 Claude Code CLI）
+- `copilot/gpt-4.1`（本地，需要 Copilot CLI）
+
+Claude Agent SDK 支持的模型：
+- 别名（推荐）：`sonnet`、`opus`、`haiku`、`inherit`
+- 完整模型字符串：`claude-sonnet-4-5-20250929`、`claude-opus-4-5-20251101`、`claude-opus-4-1-20250805`
+
+GitHub Copilot SDK 支持的模型：
+- OpenAI: `gpt-4.1`、`gpt-5.1`、`gpt-5.2`、`gpt-5-mini`、`gpt-5.1-codex`
+- Anthropic: `claude-sonnet-4.5`、`claude-opus-4.5`、`claude-haiku-4.5`
+- Google: `gemini-2.5-pro`、`gemini-3-flash`
+- 可用性取决于您的 Copilot 订阅
+
+::: tip 本地提供商支持 Vision
+本地提供商（`claude-agent/`、`copilot/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-4.1`、`copilot/claude-sonnet-4.5`）。
+:::
+
+::: tip 本地提供商故障排除
+常见错误和解决方案：
+
+| 错误 | 解决方案 |
+|------|----------|
+| "SDK 未安装" | `pip install markitai[copilot]` 或 `pip install markitai[claude-agent]` |
+| "CLI 未找到" | 安装并认证 CLI 工具（[Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli)、[Claude Code](https://claude.ai/code)） |
+| "未认证" | 运行 `copilot auth login` 或 `claude auth login` |
+| "速率限制" | 等待后重试，或检查订阅额度 |
+:::
 
 ### Vision 模型
 
@@ -217,11 +254,11 @@ provider/model-name
   "llm": {
     "router_settings": {
       "routing_strategy": "simple-shuffle",
-      "num_retries": 3,
+      "num_retries": 2,
       "timeout": 120,
       "fallbacks": []
     },
-    "concurrency": 5
+    "concurrency": 10
   }
 }
 ```
@@ -229,9 +266,9 @@ provider/model-name
 | 设置 | 选项 | 默认值 | 说明 |
 |------|------|--------|------|
 | `routing_strategy` | `simple-shuffle`, `least-busy`, `usage-based-routing`, `latency-based-routing` | `simple-shuffle` | 模型选择策略 |
-| `num_retries` | 0-10 | 3 | 失败重试次数 |
+| `num_retries` | 0-10 | 2 | 失败重试次数 |
 | `timeout` | 秒 | 120 | 请求超时时间 |
-| `concurrency` | 1-20 | 5 | 最大并发 LLM 请求数 |
+| `concurrency` | 1-20 | 10 | 最大并发 LLM 请求数 |
 
 ## 图片配置
 
@@ -418,17 +455,14 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 
 ## 缓存配置
 
-Markitai 使用双层缓存系统：
-
-- **项目缓存**：当前目录的 `.markitai/cache/`
-- **全局缓存**：`~/.markitai/cache/`
+Markitai 使用全局缓存，存储在 `~/.markitai/cache.db`。
 
 ```json
 {
   "cache": {
     "enabled": true,
     "no_cache_patterns": [],
-    "max_size_bytes": 1073741824,
+    "max_size_bytes": 536870912,
     "global_dir": "~/.markitai"
   }
 }
@@ -438,7 +472,7 @@ Markitai 使用双层缓存系统：
 |------|--------|------|
 | `enabled` | `true` | 启用 LLM 结果缓存 |
 | `no_cache_patterns` | `[]` | 跳过缓存的 glob 模式 |
-| `max_size_bytes` | `1073741824` (1GB) | 最大缓存大小 |
+| `max_size_bytes` | `536870912` (512MB) | 最大缓存大小 |
 | `global_dir` | `~/.markitai` | 全局缓存目录 |
 
 ### 缓存命令
@@ -453,11 +487,9 @@ markitai cache stats -v
 # 指定显示数量
 markitai cache stats -v --limit 50
 
-# 清除所有缓存
+# 清除缓存
 markitai cache clear
-
-# 只清除项目缓存
-markitai cache clear --scope project
+markitai cache clear -y  # 跳过确认
 ```
 
 ### 禁用缓存

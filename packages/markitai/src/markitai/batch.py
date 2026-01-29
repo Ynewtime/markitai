@@ -31,6 +31,7 @@ from rich.text import Text
 from markitai.constants import DEFAULT_LOG_PANEL_MAX_LINES
 from markitai.json_order import order_report, order_state
 from markitai.security import atomic_write_json
+from markitai.utils.text import format_error_message
 
 if TYPE_CHECKING:
     from markitai.config import BatchConfig
@@ -515,7 +516,7 @@ class BatchProcessor:
             "options": key_options,
         }
         hash_str = json.dumps(hash_params, sort_keys=True)
-        return hashlib.md5(hash_str.encode()).hexdigest()[:6]
+        return hashlib.md5(hash_str.encode(), usedforsecurity=False).hexdigest()[:6]
 
     def _get_state_file_path(self) -> Path:
         """Generate state file path for resume capability.
@@ -1135,8 +1136,10 @@ class BatchProcessor:
 
             except Exception as e:
                 file_state.status = FileStatus.FAILED
-                file_state.error = str(e)
-                logger.error(f"Failed to process {file_path.name}: {e}")
+                file_state.error = format_error_message(e)
+                logger.error(
+                    f"Failed to process {file_path.name}: {format_error_message(e)}"
+                )
 
             finally:
                 end_time = asyncio.get_event_loop().time()

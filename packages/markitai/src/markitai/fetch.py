@@ -73,7 +73,7 @@ class AgentBrowserNotFoundError(FetchError):
 
     def __init__(self) -> None:
         super().__init__(
-            "agent-browser is not installed. Install with: npm install -g agent-browser && agent-browser install"
+            "agent-browser is not installed. Install with: pnpm add -g agent-browser && agent-browser install"
         )
 
 
@@ -179,7 +179,7 @@ class FetchCache:
             self._connection = None
 
     def _init_db(self) -> None:
-        """Initialize database schema."""
+        """Initialize database schema with migration support."""
         with self._lock:
             conn = self._get_connection()
             conn.execute("""
@@ -193,7 +193,9 @@ class FetchCache:
                     metadata TEXT,
                     created_at INTEGER NOT NULL,
                     accessed_at INTEGER NOT NULL,
-                    size_bytes INTEGER NOT NULL
+                    size_bytes INTEGER NOT NULL,
+                    etag TEXT,
+                    last_modified TEXT
                 )
             """)
             conn.execute(
@@ -201,6 +203,24 @@ class FetchCache:
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_fetch_url ON fetch_cache(url)")
             conn.commit()
+
+            # Migration: Add etag and last_modified columns if they don't exist
+            self._migrate_add_http_validators(conn)
+
+    def _migrate_add_http_validators(self, conn: sqlite3.Connection) -> None:
+        """Add etag and last_modified columns if they don't exist (migration)."""
+        cursor = conn.execute("PRAGMA table_info(fetch_cache)")
+        columns = {row[1] for row in cursor.fetchall()}
+
+        if "etag" not in columns:
+            conn.execute("ALTER TABLE fetch_cache ADD COLUMN etag TEXT")
+            logger.debug("[FetchCache] Migration: Added 'etag' column")
+
+        if "last_modified" not in columns:
+            conn.execute("ALTER TABLE fetch_cache ADD COLUMN last_modified TEXT")
+            logger.debug("[FetchCache] Migration: Added 'last_modified' column")
+
+        conn.commit()
 
     def _compute_hash(self, url: str) -> str:
         """Compute hash key from URL."""
@@ -333,6 +353,127 @@ class FetchCache:
             conn.execute("DELETE FROM fetch_cache")
             conn.commit()
         return count
+
+    def get_with_validators(
+        self, url: str
+    ) -> tuple[FetchResult | None, str | None, str | None]:
+        """Get cached result with HTTP validators for conditional requests.
+
+        Args:
+            url: URL to look up
+
+        Returns:
+            Tuple of (cached_result, etag, last_modified)
+            - cached_result: FetchResult if found, None otherwise
+            - etag: ETag header from previous fetch (for If-None-Match)
+            - last_modified: Last-Modified header from previous fetch (for If-Modified-Since)
+        """
+        key = self._compute_hash(url)
+
+        with self._lock:
+            conn = self._get_connection()
+            row = conn.execute(
+                "SELECT * FROM fetch_cache WHERE key = ?", (key,)
+            ).fetchone()
+
+            if row:
+                metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+                result = FetchResult(
+                    content=row["content"],
+                    strategy_used=row["strategy_used"],
+                    title=row["title"],
+                    url=row["url"],
+                    final_url=row["final_url"],
+                    metadata=metadata,
+                    cache_hit=True,
+                )
+                return result, row["etag"], row["last_modified"]
+
+        return None, None, None
+
+    def set_with_validators(
+        self,
+        url: str,
+        result: FetchResult,
+        etag: str | None = None,
+        last_modified: str | None = None,
+    ) -> None:
+        """Cache a fetch result with HTTP validators.
+
+        Args:
+            url: URL that was fetched
+            result: FetchResult to cache
+            etag: ETag response header (for future If-None-Match)
+            last_modified: Last-Modified response header (for future If-Modified-Since)
+        """
+        key = self._compute_hash(url)
+        now = int(time.time())
+        metadata_json = json.dumps(result.metadata) if result.metadata else None
+        size_bytes = len(result.content.encode("utf-8"))
+
+        with self._lock:
+            conn = self._get_connection()
+            # Check current total size
+            total_size = conn.execute(
+                "SELECT COALESCE(SUM(size_bytes), 0) as total FROM fetch_cache"
+            ).fetchone()["total"]
+
+            # Evict LRU entries if needed
+            while total_size + size_bytes > self._max_size_bytes:
+                oldest = conn.execute(
+                    "SELECT key, size_bytes FROM fetch_cache ORDER BY accessed_at ASC LIMIT 1"
+                ).fetchone()
+
+                if oldest is None:
+                    break
+
+                conn.execute("DELETE FROM fetch_cache WHERE key = ?", (oldest["key"],))
+                total_size -= oldest["size_bytes"]
+                logger.debug(f"[FetchCache] Evicted LRU entry: {oldest['key'][:8]}...")
+
+            # Insert or replace
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO fetch_cache
+                (key, url, content, strategy_used, title, final_url, metadata, created_at, accessed_at, size_bytes, etag, last_modified)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    key,
+                    url,
+                    result.content,
+                    result.strategy_used,
+                    result.title,
+                    result.final_url,
+                    metadata_json,
+                    now,
+                    now,
+                    size_bytes,
+                    etag,
+                    last_modified,
+                ),
+            )
+            conn.commit()
+        logger.debug(
+            f"[FetchCache] Cached URL with validators: {url} "
+            f"(etag={etag is not None}, last_modified={last_modified is not None})"
+        )
+
+    def update_accessed_at(self, url: str) -> None:
+        """Update accessed_at timestamp for cache hit (304 response).
+
+        Args:
+            url: URL to update
+        """
+        key = self._compute_hash(url)
+        now = int(time.time())
+
+        with self._lock:
+            conn = self._get_connection()
+            conn.execute(
+                "UPDATE fetch_cache SET accessed_at = ? WHERE key = ?", (now, key)
+            )
+            conn.commit()
 
 
 class SPADomainCache:
@@ -1140,7 +1281,7 @@ def verify_agent_browser_ready(
     if not cmd_path:
         result = (
             False,
-            f"'{command}' command not found. Install with: npm install -g agent-browser",
+            f"'{command}' command not found. Install with: pnpm add -g agent-browser",
         )
         _agent_browser_ready_cache[command] = result
         return result
@@ -1166,7 +1307,7 @@ def verify_agent_browser_ready(
                             False,
                             "agent-browser was installed via pnpm which requires Git Bash. "
                             "Options: 1) Run markitai from Git Bash terminal, "
-                            "2) Reinstall with npm: npm install -g agent-browser && agent-browser install",
+                            "2) Reinstall with pnpm: pnpm add -g agent-browser && agent-browser install",
                         )
                         _agent_browser_ready_cache[command] = result
                         return result
@@ -1208,7 +1349,7 @@ def verify_agent_browser_ready(
                 False,
                 "Cannot execute agent-browser on Windows. "
                 "If installed via pnpm, try running from Git Bash terminal "
-                "or reinstall with npm: npm install -g agent-browser",
+                "or reinstall with pnpm: pnpm add -g agent-browser",
             )
         else:
             result = (False, f"'{command}' command error: {e}")
@@ -1222,19 +1363,19 @@ def verify_agent_browser_ready(
     # Step 4: Quick version check instead of browser launch
     # Launching browser is slow and causes popup windows on Windows
     # The --help check above already validates the command works
+    version = "unknown"
     run_kwargs["timeout"] = 5
     try:
         proc = subprocess.run(
             [effective_command, "--version"],
             **run_kwargs,
         )
-        if proc.returncode == 0:
-            version = proc.stdout.strip() if proc.stdout else "unknown"
-            logger.debug(f"agent-browser version: {version}")
+        if proc.returncode == 0 and proc.stdout:
+            version = proc.stdout.strip()
     except Exception:
         pass  # Version check is optional
 
-    result = (True, "agent-browser is ready")
+    result = (True, f"v{version}" if version != "unknown" else "ready")
     _agent_browser_ready_cache[command] = result
     # Also cache the effective command path for later use
     if effective_command != command:
@@ -1675,6 +1816,151 @@ async def fetch_with_static(url: str) -> FetchResult:
         if "No content extracted" in str(e):
             raise
         raise FetchError(f"Failed to fetch URL: {e}")
+
+
+@dataclass
+class ConditionalFetchResult:
+    """Result of a conditional fetch operation.
+
+    Attributes:
+        result: FetchResult if content was fetched (200 response), None if not modified (304)
+        not_modified: True if server returned 304 Not Modified
+        etag: ETag response header (for future conditional requests)
+        last_modified: Last-Modified response header (for future conditional requests)
+    """
+
+    result: FetchResult | None
+    not_modified: bool
+    etag: str | None = None
+    last_modified: str | None = None
+
+
+async def fetch_with_static_conditional(
+    url: str,
+    cached_etag: str | None = None,
+    cached_last_modified: str | None = None,
+) -> ConditionalFetchResult:
+    """Fetch URL with HTTP conditional request (single network roundtrip).
+
+    Uses If-None-Match and If-Modified-Since headers for cache validation.
+    If the server returns 304 Not Modified, the cached content should be used.
+
+    Args:
+        url: URL to fetch
+        cached_etag: ETag from previous fetch (sent as If-None-Match)
+        cached_last_modified: Last-Modified from previous fetch (sent as If-Modified-Since)
+
+    Returns:
+        ConditionalFetchResult with:
+        - not_modified=True if 304 response (use cached content)
+        - result with new content if 200 response
+        - etag/last_modified for future conditional requests
+    """
+    import tempfile
+
+    import httpx
+
+    logger.debug(
+        f"[ConditionalFetch] URL: {url}, etag={cached_etag is not None}, "
+        f"last_modified={cached_last_modified is not None}"
+    )
+
+    # Build conditional request headers
+    headers: dict[str, str] = {}
+    if cached_etag:
+        headers["If-None-Match"] = cached_etag
+    if cached_last_modified:
+        headers["If-Modified-Since"] = cached_last_modified
+
+    try:
+        # Detect proxy
+        proxy_url = _detect_proxy()
+        proxy_config = proxy_url if proxy_url else None
+
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=30.0,
+            proxy=proxy_config,
+        ) as client:
+            response = await client.get(url, headers=headers)
+
+            # Extract response headers for future conditional requests
+            response_etag = response.headers.get("ETag")
+            response_last_modified = response.headers.get("Last-Modified")
+
+            # 304 Not Modified - use cached content
+            if response.status_code == 304:
+                logger.info(f"[ConditionalFetch] 304 Not Modified: {url}")
+                return ConditionalFetchResult(
+                    result=None,
+                    not_modified=True,
+                    etag=response_etag or cached_etag,
+                    last_modified=response_last_modified or cached_last_modified,
+                )
+
+            # Non-2xx response (except 304)
+            if response.status_code >= 400:
+                raise FetchError(f"HTTP {response.status_code} fetching URL: {url}")
+
+            # 200 OK (or other 2xx) - process new content
+            logger.debug(
+                f"[ConditionalFetch] {response.status_code} response, "
+                f"content-length={len(response.content)}"
+            )
+
+            # Determine file extension from Content-Type or URL
+            content_type = response.headers.get("Content-Type", "")
+            if "text/html" in content_type:
+                suffix = ".html"
+            elif "application/pdf" in content_type:
+                suffix = ".pdf"
+            else:
+                # Fallback to URL extension
+                from urllib.parse import urlparse
+
+                path = urlparse(url).path
+                suffix = Path(path).suffix or ".html"
+
+            # Save response to temp file for markitdown processing
+            with tempfile.NamedTemporaryFile(
+                suffix=suffix, delete=False, mode="wb"
+            ) as f:
+                f.write(response.content)
+                temp_path = Path(f.name)
+
+            try:
+                # Use markitdown to convert
+                md = _get_markitdown()
+                md_result = md.convert(str(temp_path))
+
+                if not md_result.text_content:
+                    raise FetchError(f"No content extracted from URL: {url}")
+
+                fetch_result = FetchResult(
+                    content=md_result.text_content,
+                    strategy_used="static",
+                    title=md_result.title,
+                    url=url,
+                    final_url=str(response.url),
+                    metadata={"converter": "markitdown", "conditional": True},
+                )
+
+                return ConditionalFetchResult(
+                    result=fetch_result,
+                    not_modified=False,
+                    etag=response_etag,
+                    last_modified=response_last_modified,
+                )
+            finally:
+                # Cleanup temp file
+                temp_path.unlink(missing_ok=True)
+
+    except httpx.HTTPError as e:
+        raise FetchError(f"HTTP error fetching URL {url}: {e}")
+    except Exception as e:
+        if isinstance(e, FetchError):
+            raise
+        raise FetchError(f"Failed to fetch URL with conditional request: {e}")
 
 
 async def fetch_with_browser(
@@ -2190,8 +2476,62 @@ async def fetch_url(
             skip_read_cache=skip_read_cache,
         )
 
-    # Check cache first (unless skip_read_cache is True)
-    if cache is not None and not skip_read_cache:
+    # For static strategy with cache, try HTTP conditional request for efficiency
+    # This uses ETag/Last-Modified headers to avoid re-downloading unchanged content
+    use_conditional_cache = (
+        cache is not None
+        and not skip_read_cache
+        and strategy in (FetchStrategy.STATIC, FetchStrategy.AUTO)
+    )
+
+    if use_conditional_cache:
+        # Type narrowing: cache is guaranteed non-None here due to condition above
+        assert cache is not None
+        # Get cached result with HTTP validators
+        cached_result, cached_etag, cached_last_modified = cache.get_with_validators(
+            url
+        )
+
+        # If we have validators, try conditional fetch (static strategy only)
+        if cached_result is not None and (cached_etag or cached_last_modified):
+            # Only use conditional fetch for static strategy
+            # AUTO strategy might need browser fallback, so skip conditional optimization
+            if strategy == FetchStrategy.STATIC or (
+                strategy == FetchStrategy.AUTO
+                and not should_use_browser_for_domain(url, config.fallback_patterns)
+                and not get_spa_domain_cache().is_known_spa(url)
+            ):
+                try:
+                    cond_result = await fetch_with_static_conditional(
+                        url, cached_etag, cached_last_modified
+                    )
+                    if cond_result.not_modified:
+                        # 304 Not Modified - use cached content
+                        logger.info(f"[FetchCache] HTTP 304, using cached: {url}")
+                        cache.update_accessed_at(url)
+                        return cached_result
+                    elif cond_result.result is not None:
+                        # New content received - update cache with new validators
+                        cache.set_with_validators(
+                            url,
+                            cond_result.result,
+                            cond_result.etag,
+                            cond_result.last_modified,
+                        )
+                        return cond_result.result
+                except FetchError:
+                    # Conditional fetch failed, fall through to normal flow
+                    logger.debug(
+                        f"[ConditionalFetch] Failed, falling back to normal fetch: {url}"
+                    )
+
+        # No validators but have cached result - use it directly
+        elif cached_result is not None:
+            logger.info(f"[FetchCache] Using cached content (no validators): {url}")
+            return cached_result
+
+    # Traditional cache check for non-conditional strategies
+    elif cache is not None and not skip_read_cache:
         cached_result = cache.get(url)
         if cached_result is not None:
             logger.info(f"[FetchCache] Using cached content for: {url}")
@@ -2219,7 +2559,17 @@ async def fetch_url(
             api_key = config.jina.get_resolved_api_key()
             result = await fetch_with_jina(url, api_key, config.jina.timeout)
         elif strategy == FetchStrategy.STATIC:
-            result = await fetch_with_static(url)
+            # For fresh fetch, use conditional to capture validators
+            cond_result = await fetch_with_static_conditional(url)
+            if cond_result.result is None:
+                raise FetchError(f"No content from conditional fetch: {url}")
+            result = cond_result.result
+            # Save with validators for future conditional requests
+            if cache is not None:
+                cache.set_with_validators(
+                    url, result, cond_result.etag, cond_result.last_modified
+                )
+                return result
         else:
             # AUTO with explicit=True shouldn't happen, but handle it
             strategy = FetchStrategy.AUTO
@@ -2244,7 +2594,17 @@ async def fetch_url(
             url, config, start_with_browser=use_browser_first, **screenshot_kwargs
         )
     elif strategy == FetchStrategy.STATIC:
-        result = await fetch_with_static(url)
+        # For fresh fetch, use conditional to capture validators
+        cond_result = await fetch_with_static_conditional(url)
+        if cond_result.result is None:
+            raise FetchError(f"No content from conditional fetch: {url}")
+        result = cond_result.result
+        # Save with validators for future conditional requests
+        if cache is not None:
+            cache.set_with_validators(
+                url, result, cond_result.etag, cond_result.last_modified
+            )
+            return result
     elif strategy == FetchStrategy.BROWSER:
         result = await fetch_with_browser(
             url,
@@ -2261,7 +2621,7 @@ async def fetch_url(
     else:
         raise ValueError(f"Unknown fetch strategy: {strategy}")
 
-    # Cache the result
+    # Cache the result (for non-static strategies that don't use conditional caching)
     if cache is not None:
         cache.set(url, result)
 
@@ -2469,7 +2829,7 @@ async def _fetch_multi_source(
                 raise FetchError(
                     f"URL requires browser rendering: {url}. "
                     f"Reason: {static_reason}. "
-                    f"Please install agent-browser: npm install -g agent-browser && agent-browser install"
+                    f"Please install agent-browser: pnpm add -g agent-browser && agent-browser install"
                 )
             else:
                 # Browser available but returned no content

@@ -58,10 +58,10 @@ markitai config set llm.enabled true
     ],
     "router_settings": {
       "routing_strategy": "simple-shuffle",
-      "num_retries": 3,
+      "num_retries": 2,
       "timeout": 120
     },
-    "concurrency": 5
+    "concurrency": 10
   },
   "image": {
     "alt_enabled": false,
@@ -86,13 +86,13 @@ markitai config set llm.enabled true
     "enabled": false,
     "viewport_width": 1920,
     "viewport_height": 1080,
-    "quality": 85,
+    "quality": 75,
     "max_height": 10000
   },
   "cache": {
     "enabled": true,
     "no_cache_patterns": [],
-    "max_size_bytes": 1073741824,
+    "max_size_bytes": 536870912,
     "global_dir": "~/.markitai"
   },
   "batch": {
@@ -153,7 +153,6 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 |----------|-------------|
 | `MARKITAI_CONFIG` | Path to configuration file |
 | `MARKITAI_LOG_DIR` | Directory for log files |
-| `MARKITAI_PROMPT_DIR` | Directory for custom prompts |
 
 ## LLM Configuration
 
@@ -167,6 +166,17 @@ Markitai supports multiple LLM providers through [LiteLLM](https://docs.litellm.
 - DeepSeek
 - OpenRouter
 - Ollama (local models)
+
+#### Local Providers (Subscription-based)
+
+Markitai also supports local providers that use CLI authentication and subscription credits:
+
+- **Claude Agent** (`claude-agent/`): Uses [Claude Agent SDK](https://github.com/anthropics/claude-code) with Claude Code CLI authentication
+- **GitHub Copilot** (`copilot/`): Uses [GitHub Copilot SDK](https://github.com/github/copilot-sdk) with Copilot CLI authentication
+
+These providers require:
+1. The respective CLI tool installed and authenticated
+2. Optional SDK package: `pip install markitai[claude-agent]` or `pip install markitai[copilot]`
 
 ### Model Naming
 
@@ -182,6 +192,33 @@ Examples:
 - `gemini/gemini-2.5-flash`
 - `deepseek/deepseek-chat`
 - `ollama/llama3.2`
+- `claude-agent/sonnet` (local, requires Claude Code CLI)
+- `copilot/gpt-4.1` (local, requires Copilot CLI)
+
+Claude Agent SDK supported models:
+- Aliases (recommended): `sonnet`, `opus`, `haiku`, `inherit`
+- Full model strings: `claude-sonnet-4-5-20250929`, `claude-opus-4-5-20251101`, `claude-opus-4-1-20250805`
+
+GitHub Copilot SDK supported models:
+- OpenAI: `gpt-4.1`, `gpt-5.1`, `gpt-5.2`, `gpt-5-mini`, `gpt-5.1-codex`
+- Anthropic: `claude-sonnet-4.5`, `claude-opus-4.5`, `claude-haiku-4.5`
+- Google: `gemini-2.5-pro`, `gemini-3-flash`
+- Availability depends on your Copilot subscription
+
+::: tip Local Providers Support Vision
+Local providers (`claude-agent/`, `copilot/`) support image analysis (`--alt`, `--desc`) via file attachments. Make sure to use a vision-capable model (e.g., `copilot/gpt-4.1`, `copilot/claude-sonnet-4.5`).
+:::
+
+::: tip Troubleshooting Local Providers
+Common errors and solutions:
+
+| Error | Solution |
+|-------|----------|
+| "SDK not installed" | `pip install markitai[copilot]` or `pip install markitai[claude-agent]` |
+| "CLI not found" | Install and authenticate the CLI tool ([Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli), [Claude Code](https://claude.ai/code)) |
+| "Not authenticated" | Run `copilot auth login` or `claude auth login` |
+| "Rate limit" | Wait and retry, or check your subscription quota |
+:::
 
 ### Vision Models
 
@@ -217,11 +254,11 @@ Configure how Markitai routes requests across multiple models:
   "llm": {
     "router_settings": {
       "routing_strategy": "simple-shuffle",
-      "num_retries": 3,
+      "num_retries": 2,
       "timeout": 120,
       "fallbacks": []
     },
-    "concurrency": 5
+    "concurrency": 10
   }
 }
 ```
@@ -229,9 +266,9 @@ Configure how Markitai routes requests across multiple models:
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
 | `routing_strategy` | `simple-shuffle`, `least-busy`, `usage-based-routing`, `latency-based-routing` | `simple-shuffle` | How to select models |
-| `num_retries` | 0-10 | 3 | Retry count on failure |
+| `num_retries` | 0-10 | 2 | Retry count on failure |
 | `timeout` | seconds | 120 | Request timeout |
-| `concurrency` | 1-20 | 5 | Max concurrent LLM requests |
+| `concurrency` | 1-20 | 10 | Max concurrent LLM requests |
 
 ## Image Configuration
 
@@ -243,10 +280,10 @@ Control how images are processed and compressed:
     "alt_enabled": false,
     "desc_enabled": false,
     "compress": true,
-    "quality": 85,
+    "quality": 75,
     "format": "jpeg",
     "max_width": 1920,
-    "max_height": 1080,
+    "max_height": 99999,
     "filter": {
       "min_width": 50,
       "min_height": 50,
@@ -418,17 +455,14 @@ Sites matching these patterns automatically use browser strategy:
 
 ## Cache Configuration
 
-Markitai uses a two-tier cache system:
-
-- **Project cache**: `.markitai/cache/` in the current directory
-- **Global cache**: `~/.markitai/cache/`
+Markitai uses a global cache stored at `~/.markitai/cache.db`.
 
 ```json
 {
   "cache": {
     "enabled": true,
     "no_cache_patterns": [],
-    "max_size_bytes": 1073741824,
+    "max_size_bytes": 536870912,
     "global_dir": "~/.markitai"
   }
 }
@@ -438,7 +472,7 @@ Markitai uses a two-tier cache system:
 |---------|---------|-------------|
 | `enabled` | `true` | Enable LLM result caching |
 | `no_cache_patterns` | `[]` | Glob patterns to skip cache |
-| `max_size_bytes` | `1073741824` (1GB) | Max cache size |
+| `max_size_bytes` | `536870912` (512MB) | Max cache size |
 | `global_dir` | `~/.markitai` | Global cache directory |
 
 ### Cache Commands
@@ -453,11 +487,9 @@ markitai cache stats -v
 # View with limit
 markitai cache stats -v --limit 50
 
-# Clear all caches
+# Clear cache
 markitai cache clear
-
-# Clear only project cache
-markitai cache clear --scope project
+markitai cache clear -y  # Skip confirmation
 ```
 
 ### Disable Cache

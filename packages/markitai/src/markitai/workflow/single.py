@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from markitai.security import atomic_write_text
+from markitai.utils.text import format_error_message
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -47,7 +48,6 @@ class SingleFileWorkflow:
         self,
         config: MarkitaiConfig,
         processor: LLMProcessor | None = None,
-        project_dir: Path | None = None,
         no_cache: bool = False,
         no_cache_patterns: list[str] | None = None,
     ) -> None:
@@ -56,13 +56,11 @@ class SingleFileWorkflow:
         Args:
             config: Markitai configuration
             processor: Optional shared LLMProcessor (created if not provided)
-            project_dir: Optional project directory for project-level cache
             no_cache: If True, skip reading from cache but still write results
             no_cache_patterns: List of glob patterns to skip cache for specific files
         """
         self.config = config
         self._processor = processor
-        self._project_dir = project_dir
         self._no_cache = no_cache
         self._no_cache_patterns = no_cache_patterns
         self._llm_cost = 0.0
@@ -80,9 +78,7 @@ class SingleFileWorkflow:
             temp_config.cache.no_cache = self._no_cache
             temp_config.cache.no_cache_patterns = self._no_cache_patterns or []
 
-            self._processor = create_llm_processor(
-                temp_config, project_dir=self._project_dir
-            )
+            self._processor = create_llm_processor(temp_config)
         return self._processor
 
     def _merge_usage(self, usage: dict[str, dict[str, Any]]) -> None:
@@ -116,7 +112,9 @@ class SingleFileWorkflow:
 
             # Write LLM version
             llm_output = output_file.with_suffix(".llm.md")
-            llm_content = self.processor.format_llm_output(cleaned, frontmatter)
+            llm_content = self.processor.format_llm_output(
+                cleaned, frontmatter, source=source
+            )
 
             # Append commented image links if provided
             if page_images:
@@ -137,7 +135,7 @@ class SingleFileWorkflow:
             return markdown, cost, usage
 
         except Exception as e:
-            logger.warning(f"LLM processing failed: {e}")
+            logger.error(f"LLM processing failed: {format_error_message(e)}")
             return markdown, 0.0, {}
 
     async def analyze_images(
@@ -146,7 +144,7 @@ class SingleFileWorkflow:
         markdown: str,
         output_file: Path,
         input_path: Path | None = None,
-        concurrency_limit: int | None = None,
+        concurrency_limit: int | None = None,  # noqa: ARG002 - kept for API compat
     ) -> tuple[str, float, dict[str, dict[str, Any]], ImageAnalysisResult | None]:
         """Analyze images with LLM Vision.
 
@@ -155,7 +153,7 @@ class SingleFileWorkflow:
             markdown: Original markdown content
             output_file: Output markdown file path
             input_path: Source input file path
-            concurrency_limit: Max concurrent requests
+            concurrency_limit: Deprecated - concurrency is controlled by processor.semaphore
 
         Returns:
             Tuple of (updated markdown, cost_usd, llm_usage, image_analysis_result)
@@ -187,40 +185,16 @@ class SingleFileWorkflow:
                     )
                     return image_path, analysis, timestamp
                 except Exception as e:
-                    logger.warning(f"Failed to analyze image {image_path.name}: {e}")
+                    logger.warning(
+                        f"Failed to analyze image {image_path.name}: "
+                        f"{format_error_message(e)}"
+                    )
                     return image_path, None, timestamp
 
-            # Queue-based analysis with concurrency limit
+            # Analyze all images concurrently (concurrency controlled by processor.semaphore)
             logger.info(f"Analyzing {len(image_paths)} images...")
-            limit = (
-                concurrency_limit
-                if concurrency_limit is not None
-                else self.config.llm.concurrency
-            )
-            worker_count = min(len(image_paths), max(1, limit))
-            queue: asyncio.Queue[Path] = asyncio.Queue()
-            for image_path in image_paths:
-                queue.put_nowait(image_path)
-
-            results_map: dict[Path, tuple[Path, ImageAnalysis | None, str]] = {}
-
-            async def worker() -> None:
-                while True:
-                    try:
-                        image_path = queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                    result = await analyze_single_image(image_path)
-                    results_map[image_path] = result
-                    queue.task_done()
-
-            workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
-            await queue.join()
-            for task in workers:
-                task.cancel()
-            await asyncio.gather(*workers, return_exceptions=True)
-
-            results = [results_map[p] for p in image_paths if p in results_map]
+            tasks = [analyze_single_image(p) for p in image_paths]
+            results = await asyncio.gather(*tasks)
 
             # Collect asset descriptions for JSON output
             asset_descriptions: list[dict[str, Any]] = []
@@ -317,7 +291,7 @@ class SingleFileWorkflow:
             )
 
         except Exception as e:
-            logger.warning(f"Image analysis failed: {e}")
+            logger.error(f"Image analysis failed: {format_error_message(e)}")
             return markdown, 0.0, {}, None
 
     async def enhance_with_vision(
@@ -367,6 +341,6 @@ class SingleFileWorkflow:
             )
 
         except Exception as e:
-            logger.warning(f"Document enhancement failed: {e}")
+            logger.error(f"Document enhancement failed: {format_error_message(e)}")
             basic_frontmatter = f"title: {source}\nsource: {source}"
             return extracted_text, basic_frontmatter, 0.0, {}

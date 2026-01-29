@@ -38,6 +38,7 @@ ENV/
 # Testing
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 .tox/
 .nox/
@@ -45,6 +46,9 @@ htmlcov/
 # Type checking
 .mypy_cache/
 .pytype/
+
+# Linting
+.ruff_cache/
 
 # Markitai output
 output/
@@ -66,13 +70,8 @@ logs/
 .DS_Store
 Thumbs.db
 
-# SQLite cache (including WAL mode files)
-cache.db
-cache.db-wal
-cache.db-shm
-*.db-wal
-*.db-shm
-fetch_cache.db
+# Markitai cache directory
+.markitai/
 
 # VitePress (website)
 website/node_modules/

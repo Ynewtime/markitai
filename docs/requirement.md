@@ -10,13 +10,7 @@
 
 ## 持续迭代
 
-20260127-已完成:
-1. **Prompt 系统重构**: 将所有 prompt 拆分为 `*_system.md` (角色定义) 和 `*_user.md` (用户内容)，修复了 LLM 输出中的 Prompt 泄漏问题
-2. **Windows 性能优化**: 线程池配置调优、ONNX Runtime 全局单例+预热、OpenCV 图像压缩、子进程批量化
-3. **Bug 修复**: max_tokens 超限、终端窗口隐藏、代理自动检测
-4. **SPA 域名学习**: 自动检测并记忆需要浏览器渲染的网站，后续直接使用 browser 策略
-
-20260126-需求规划:
+20260127-需求规划:
 1. 对 URL/URL File 的缓存策略优化: 是否有办法根据 URL 获取到的 html 更新时间记录缓存？也即，当第一次爬取到某网页时，记录该网页的 html 更新时间（URL Header），第二次时识别到未更新则命中缓存？
 2. LLM 要支持使用 Claude 订阅或 GitHub Copilot 订阅的能力，即在处理 LLM 相关任务时，允许将任务发送到本地 Claude Code 客户端或 GitHub Copilot 客户端执行。实现上需要尽可能的在现有框架能力上迭代。
 

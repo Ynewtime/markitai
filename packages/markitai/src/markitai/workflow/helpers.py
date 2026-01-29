@@ -29,6 +29,18 @@ FRONTMATTER_FIELD_ORDER = [
     "markitai_processed",
 ]
 
+# Patterns to detect prompt leakage in frontmatter keys
+# These are LLM hallucinations where prompt text appears as YAML keys
+PROMPT_LEAKAGE_KEY_PATTERNS = [
+    r"根据.*生成",  # "根据文档内容生成 YAML frontmatter"
+    r"请.*生成",  # "请生成元数据"
+    r"以下是",  # "以下是生成的 frontmatter"
+    r"YAML.*frontmatter",  # "YAML frontmatter"
+    r"元数据",  # "元数据"
+    r"任务\s*\d",  # "任务 1" or "任务1"
+    r"Task\s*\d",  # "Task 1" or "Task1"
+]
+
 
 def normalize_frontmatter(frontmatter: str | dict[str, Any]) -> str:
     """Normalize frontmatter to ensure consistent field order.
@@ -88,9 +100,20 @@ def normalize_frontmatter(frontmatter: str | dict[str, Any]) -> str:
             ordered_lines.append(format_field(field, data[field]))
 
     # Then, add any remaining fields not in the canonical order
+    # But filter out prompt leakage keys (LLM hallucinations)
     for field, value in data.items():
         if field not in FRONTMATTER_FIELD_ORDER:
-            ordered_lines.append(format_field(field, value))
+            # Check if field name matches prompt leakage patterns
+            is_leakage = False
+            for pattern in PROMPT_LEAKAGE_KEY_PATTERNS:
+                if re.search(pattern, field, re.IGNORECASE):
+                    is_leakage = True
+                    logger.debug(
+                        f"Filtered prompt leakage key from frontmatter: {field}"
+                    )
+                    break
+            if not is_leakage:
+                ordered_lines.append(format_field(field, value))
 
     return "\n".join(ordered_lines)
 
@@ -475,7 +498,6 @@ def format_standalone_image_markdown(
 
 def create_llm_processor(
     config: MarkitaiConfig,
-    project_dir: Path | None = None,
     runtime: LLMRuntime | None = None,
 ) -> LLMProcessor:
     """Create an LLMProcessor instance from configuration.
@@ -485,8 +507,6 @@ def create_llm_processor(
 
     Args:
         config: Markitai configuration object
-        project_dir: Optional project directory for project-level cache.
-                     If None, only global cache is used.
         runtime: Optional shared runtime for concurrency control.
                  If provided, uses runtime's semaphore instead of creating one.
 
@@ -494,7 +514,7 @@ def create_llm_processor(
         Configured LLMProcessor instance
 
     Example:
-        >>> processor = create_llm_processor(cfg, project_dir=output_dir.parent)
+        >>> processor = create_llm_processor(cfg)
         >>> result = await processor.process_document(content)
     """
     from markitai.llm import LLMProcessor
@@ -503,7 +523,6 @@ def create_llm_processor(
         config.llm,
         config.prompts,
         runtime=runtime,
-        project_dir=project_dir,
         no_cache=config.cache.no_cache,
         no_cache_patterns=config.cache.no_cache_patterns,
     )

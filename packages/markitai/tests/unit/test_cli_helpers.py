@@ -588,7 +588,7 @@ class TestUrlConversion:
 
         assert result.exit_code == 0
         assert "Would convert URL" in result.output
-        assert "LLM: enabled" in result.output
+        assert "Features: LLM" in result.output
 
     def test_url_dry_run_without_llm(self, tmp_path: Path) -> None:
         """Test URL conversion dry run shows LLM disabled."""
@@ -611,7 +611,7 @@ class TestUrlConversion:
         )
 
         assert result.exit_code == 0
-        assert "LLM: disabled" in result.output
+        assert "Features: none" in result.output
 
     def test_url_dry_run_with_rich_preset(self, tmp_path: Path) -> None:
         """Test URL conversion dry run with rich preset shows correct info."""
@@ -637,7 +637,8 @@ class TestUrlConversion:
         assert result.exit_code == 0
         # Should show dry run panel with LLM enabled (from rich preset)
         assert "Dry Run" in result.output
-        assert "LLM: enabled" in result.output
+        assert "Features:" in result.output
+        assert "LLM" in result.output
 
     @pytest.mark.skip(reason="Requires network access")
     def test_url_conversion_real(self, tmp_path: Path) -> None:
