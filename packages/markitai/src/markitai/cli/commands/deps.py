@@ -32,29 +32,63 @@ def check_deps(as_json: bool) -> None:
     """Check all optional dependencies and their status.
 
     This command helps diagnose setup issues by verifying:
-    - agent-browser (for dynamic URL fetching)
+    - Playwright (for dynamic URL fetching, recommended)
+    - agent-browser (for dynamic URL fetching, legacy)
     - LibreOffice (for Office document conversion)
     - RapidOCR (for scanned document processing)
     - LLM API configuration (for content enhancement)
     """
     from markitai.fetch import verify_agent_browser_ready
+    from markitai.fetch_playwright import (
+        clear_browser_cache,
+        is_playwright_available,
+        is_playwright_browser_installed,
+    )
 
     manager = ConfigManager()
     cfg = manager.load()
 
     results: dict[str, dict[str, Any]] = {}
 
-    # 1. Check agent-browser
+    # 1. Check Playwright (recommended)
+    clear_browser_cache()  # Clear cache for fresh check
+    if is_playwright_available():
+        if is_playwright_browser_installed(use_cache=False):
+            results["playwright"] = {
+                "name": "Playwright",
+                "description": "Browser automation for dynamic URLs (recommended)",
+                "status": "ok",
+                "message": "Playwright and Chromium browser installed",
+                "install_hint": "",
+            }
+        else:
+            results["playwright"] = {
+                "name": "Playwright",
+                "description": "Browser automation for dynamic URLs (recommended)",
+                "status": "warning",
+                "message": "Playwright installed but browser not found",
+                "install_hint": "playwright install chromium",
+            }
+    else:
+        results["playwright"] = {
+            "name": "Playwright",
+            "description": "Browser automation for dynamic URLs (recommended)",
+            "status": "missing",
+            "message": "Playwright not installed",
+            "install_hint": "pip install playwright && playwright install chromium",
+        }
+
+    # 2. Check agent-browser (legacy)
     is_ready, message = verify_agent_browser_ready(use_cache=False)
     results["agent-browser"] = {
-        "name": "agent-browser",
-        "description": "Browser automation for dynamic URLs",
+        "name": "agent-browser (legacy)",
+        "description": "Browser automation for dynamic URLs (requires Node.js)",
         "status": "ok" if is_ready else "missing",
         "message": message,
         "install_hint": "pnpm add -g agent-browser && agent-browser install",
     }
 
-    # 2. Check LibreOffice
+    # 3. Check LibreOffice
     soffice_path = shutil.which("soffice") or shutil.which("libreoffice")
     if soffice_path:
         try:
@@ -93,7 +127,7 @@ def check_deps(as_json: bool) -> None:
             "install_hint": "apt install libreoffice (Linux) / brew install libreoffice (macOS)",
         }
 
-    # 3. Check RapidOCR (Python OCR library with built-in models)
+    # 4. Check RapidOCR (Python OCR library with built-in models)
     try:
         from importlib.metadata import version as get_version
 
@@ -159,7 +193,7 @@ def check_deps(as_json: bool) -> None:
             "install_hint": "pip install rapidocr (included in markitai dependencies)",
         }
 
-    # 4. Check LLM API configuration (check model_list for configured models)
+    # 5. Check LLM API configuration (check model_list for configured models)
     configured_models = cfg.llm.model_list if cfg.llm.model_list else []
     if configured_models:
         # Find first model with api_key to determine provider
@@ -181,7 +215,7 @@ def check_deps(as_json: bool) -> None:
             "install_hint": "Configure llm.model_list in markitai.json",
         }
 
-    # 4a. Check local provider SDKs if configured
+    # 5a. Check local provider SDKs if configured
     uses_claude_agent = any(
         m.litellm_params.model.startswith("claude-agent/") for m in configured_models
     )
@@ -269,7 +303,7 @@ def check_deps(as_json: bool) -> None:
                 "install_hint": "pip install github-copilot-sdk",
             }
 
-    # 5. Check vision model configuration (auto-detect from litellm or config override)
+    # 6. Check vision model configuration (auto-detect from litellm or config override)
     from markitai.llm import get_model_info_cached
 
     def is_vision_model(model_config: Any) -> bool:

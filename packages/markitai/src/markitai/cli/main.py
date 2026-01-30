@@ -170,10 +170,16 @@ stderr_console = Console(stderr=True)
     help="Number of concurrent URL fetches (default from config, separate from file processing).",
 )
 @click.option(
+    "--playwright",
+    "use_playwright",
+    is_flag=True,
+    help="Force browser rendering for URLs via Playwright (recommended).",
+)
+@click.option(
     "--agent-browser",
     "use_agent_browser",
     is_flag=True,
-    help="Force browser rendering for URLs via agent-browser.",
+    help="Force browser rendering for URLs via agent-browser (legacy, requires Node.js).",
 )
 @click.option(
     "--jina",
@@ -224,6 +230,7 @@ def app(
     batch_concurrency: int | None,
     url_concurrency: int | None,
     llm_concurrency: int | None,
+    use_playwright: bool,
     use_agent_browser: bool,
     use_jina: bool,
     verbose: bool,
@@ -409,16 +416,31 @@ def app(
             console.print()
 
     # Validate fetch strategy flags (mutually exclusive)
-    if use_agent_browser and use_jina:
+    browser_flags = [use_playwright, use_agent_browser, use_jina]
+    if sum(browser_flags) > 1:
         console.print(
-            "[red]Error: --agent-browser and --jina are mutually exclusive.[/red]"
+            "[red]Error: --playwright, --agent-browser and --jina are mutually exclusive.[/red]"
         )
         ctx.exit(1)
 
     # Determine fetch strategy
     from markitai.fetch import FetchStrategy
 
-    if use_agent_browser:
+    if use_playwright:
+        fetch_strategy = FetchStrategy.PLAYWRIGHT
+        explicit_fetch_strategy = True
+    elif use_agent_browser:
+        # Deprecation warning for agent-browser
+        console.print(
+            "[yellow]⚠️  --agent-browser is deprecated and will be removed in v0.6.0.[/yellow]"
+        )
+        console.print(
+            "[yellow]   Please migrate to --playwright for browser automation.[/yellow]"
+        )
+        console.print(
+            "[yellow]   Install: pip install playwright && playwright install chromium[/yellow]"
+        )
+        console.print()
         fetch_strategy = FetchStrategy.BROWSER
         explicit_fetch_strategy = True
     elif use_jina:

@@ -3,9 +3,10 @@
 This module provides a unified interface for fetching web pages using different
 strategies:
 - static: Direct HTTP request via markitdown (default, fastest)
-- browser: Headless browser via agent-browser (for JS-rendered pages)
+- playwright: Headless browser via Playwright Python (recommended for JS-rendered pages)
+- browser: Headless browser via agent-browser (legacy, requires Node.js)
 - jina: Jina Reader API (cloud-based, no local dependencies)
-- auto: Auto-detect and fallback (tries static first, then browser/jina)
+- auto: Auto-detect and fallback (tries static first, then playwright/browser/jina)
 
 Example usage:
     from markitai.fetch import fetch_url, FetchStrategy
@@ -49,7 +50,8 @@ class FetchStrategy(Enum):
 
     AUTO = "auto"
     STATIC = "static"
-    BROWSER = "browser"
+    PLAYWRIGHT = "playwright"  # Playwright Python (recommended)
+    BROWSER = "browser"  # agent-browser (legacy, requires Node.js)
     JINA = "jina"
 
 
@@ -2545,7 +2547,38 @@ async def fetch_url(
 
     # Handle explicit strategy (no fallback)
     if explicit_strategy:
-        if strategy == FetchStrategy.BROWSER:
+        if strategy == FetchStrategy.PLAYWRIGHT:
+            from markitai.fetch_playwright import (
+                fetch_with_playwright,
+                is_playwright_available,
+            )
+
+            if not is_playwright_available():
+                raise FetchError(
+                    "playwright is not installed. "
+                    "Install with: pip install playwright && playwright install chromium"
+                )
+
+            pw_result = await fetch_with_playwright(
+                url,
+                timeout=config.agent_browser.timeout,
+                wait_for=config.agent_browser.wait_for,
+                extra_wait_ms=config.agent_browser.extra_wait_ms,
+                proxy=_detect_proxy() if getattr(config, "auto_proxy", True) else None,
+                screenshot_config=screenshot_config,
+                output_dir=screenshot_dir,
+            )
+
+            result = FetchResult(
+                content=pw_result.content,
+                strategy_used="playwright",
+                title=pw_result.title,
+                url=url,
+                final_url=pw_result.final_url,
+                metadata=pw_result.metadata,
+                screenshot_path=pw_result.screenshot_path,
+            )
+        elif strategy == FetchStrategy.BROWSER:
             result = await fetch_with_browser(
                 url,
                 command=config.agent_browser.command,
@@ -2605,6 +2638,37 @@ async def fetch_url(
                 url, result, cond_result.etag, cond_result.last_modified
             )
             return result
+    elif strategy == FetchStrategy.PLAYWRIGHT:
+        from markitai.fetch_playwright import (
+            fetch_with_playwright,
+            is_playwright_available,
+        )
+
+        if not is_playwright_available():
+            raise FetchError(
+                "playwright is not installed. "
+                "Install with: pip install playwright && playwright install chromium"
+            )
+
+        pw_result = await fetch_with_playwright(
+            url,
+            timeout=config.agent_browser.timeout,
+            wait_for=config.agent_browser.wait_for,
+            extra_wait_ms=config.agent_browser.extra_wait_ms,
+            proxy=_detect_proxy() if getattr(config, "auto_proxy", True) else None,
+            screenshot_config=screenshot_config,
+            output_dir=screenshot_dir,
+        )
+
+        result = FetchResult(
+            content=pw_result.content,
+            strategy_used="playwright",
+            title=pw_result.title,
+            url=url,
+            final_url=pw_result.final_url,
+            metadata=pw_result.metadata,
+            screenshot_path=pw_result.screenshot_path,
+        )
     elif strategy == FetchStrategy.BROWSER:
         result = await fetch_with_browser(
             url,
@@ -2904,10 +2968,11 @@ async def _fetch_with_fallback(
 
     if start_with_browser:
         # Try browser first for known JS domains
-        strategies = ["browser", "jina", "static"]
+        # Priority: playwright (Python) > browser (agent-browser) > jina
+        strategies = ["playwright", "browser", "jina", "static"]
     else:
-        # Normal order: static -> browser -> jina
-        strategies = ["static", "browser", "jina"]
+        # Normal order: static -> playwright -> browser -> jina
+        strategies = ["static", "playwright", "browser", "jina"]
 
     for strat in strategies:
         try:
@@ -2924,7 +2989,41 @@ async def _fetch_with_fallback(
                     continue
                 return result
 
+            elif strat == "playwright":
+                # Playwright Python (preferred over agent-browser)
+                from markitai.fetch_playwright import (
+                    fetch_with_playwright,
+                    is_playwright_available,
+                )
+
+                if not is_playwright_available():
+                    logger.debug("playwright not available, trying next strategy")
+                    continue
+
+                pw_result = await fetch_with_playwright(
+                    url,
+                    timeout=config.agent_browser.timeout,
+                    wait_for=config.agent_browser.wait_for,
+                    extra_wait_ms=config.agent_browser.extra_wait_ms,
+                    proxy=_detect_proxy()
+                    if getattr(config, "auto_proxy", True)
+                    else None,
+                    screenshot_config=screenshot_kwargs.get("screenshot_config"),
+                    output_dir=screenshot_kwargs.get("screenshot_dir"),
+                )
+
+                return FetchResult(
+                    content=pw_result.content,
+                    strategy_used="playwright",
+                    title=pw_result.title,
+                    url=url,
+                    final_url=pw_result.final_url,
+                    metadata=pw_result.metadata,
+                    screenshot_path=pw_result.screenshot_path,
+                )
+
             elif strat == "browser":
+                # agent-browser (legacy, fallback if playwright unavailable)
                 if not is_agent_browser_available(config.agent_browser.command):
                     logger.debug("agent-browser not available, skipping")
                     continue
