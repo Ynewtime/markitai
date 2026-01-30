@@ -30,7 +30,7 @@ DEFAULT_RETRY_MAX_DELAY = 60.0  # seconds
 # Instructor retry settings (for structured JSON output validation)
 # When LLM returns malformed JSON, Instructor can retry with validation error
 # feedback, allowing the LLM to fix issues like incorrect escaping.
-# Common issues: unescaped quotes in Chinese text like "你属于某个单位"
+# Common issues: unescaped quotes in CJK text (e.g., Chinese quoted phrases)
 # Increased to 2 to give model more chances to self-correct
 DEFAULT_INSTRUCTOR_MAX_RETRIES = 2
 
