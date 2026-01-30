@@ -27,6 +27,7 @@ class TestFetchStrategy:
         """Test that all strategy values are correct."""
         assert FetchStrategy.AUTO.value == "auto"
         assert FetchStrategy.STATIC.value == "static"
+        assert FetchStrategy.PLAYWRIGHT.value == "playwright"
         assert FetchStrategy.BROWSER.value == "browser"
         assert FetchStrategy.JINA.value == "jina"
 
@@ -34,6 +35,7 @@ class TestFetchStrategy:
         """Test creating strategy from string value."""
         assert FetchStrategy("auto") == FetchStrategy.AUTO
         assert FetchStrategy("static") == FetchStrategy.STATIC
+        assert FetchStrategy("playwright") == FetchStrategy.PLAYWRIGHT
         assert FetchStrategy("browser") == FetchStrategy.BROWSER
         assert FetchStrategy("jina") == FetchStrategy.JINA
 
