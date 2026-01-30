@@ -2777,9 +2777,46 @@ async def _fetch_multi_source(
             logger.debug(f"[URL] Static fetch failed: {e}")
             return None
 
-    # Task 2: Browser fetch with screenshot
+    # Task 2: Browser fetch with screenshot (Playwright preferred over agent-browser)
     async def fetch_browser() -> tuple[FetchResult | None, str | None, bool]:
         """Returns (result, error_message, not_installed)"""
+        # Try Playwright first (preferred)
+        try:
+            from markitai.fetch_playwright import (
+                fetch_with_playwright,
+                is_playwright_available,
+            )
+
+            if is_playwright_available():
+                logger.debug("Using Playwright for browser fetch")
+                pw_result = await fetch_with_playwright(
+                    url,
+                    timeout=config.agent_browser.timeout,
+                    wait_for=config.agent_browser.wait_for,
+                    extra_wait_ms=config.agent_browser.extra_wait_ms,
+                    proxy=_detect_proxy()
+                    if getattr(config, "auto_proxy", True)
+                    else None,
+                    screenshot_config=screenshot_config,
+                    output_dir=screenshot_dir,
+                )
+                result = FetchResult(
+                    content=pw_result.content,
+                    strategy_used="playwright",
+                    title=pw_result.title,
+                    url=url,
+                    final_url=pw_result.final_url,
+                    metadata=pw_result.metadata,
+                    screenshot_path=pw_result.screenshot_path,
+                )
+                logger.debug(
+                    f"[URL] Playwright fetch success: {len(result.content)} chars"
+                )
+                return result, None, False
+        except Exception as e:
+            logger.debug(f"[URL] Playwright fetch failed: {e}, trying agent-browser")
+
+        # Fallback to agent-browser
         try:
             if not is_agent_browser_available(config.agent_browser.command):
                 logger.debug("agent-browser not available")
