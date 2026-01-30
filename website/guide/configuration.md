@@ -160,7 +160,7 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 
 Markitai supports multiple LLM providers through [LiteLLM](https://docs.litellm.ai/):
 
-- OpenAI (GPT-4o, GPT-4o-mini)
+- OpenAI (GPT-5.2, GPT-5-mini)
 - Anthropic (Claude 3.5/4)
 - Google (Gemini 2.x)
 - DeepSeek
@@ -193,20 +193,27 @@ Examples:
 - `deepseek/deepseek-chat`
 - `ollama/llama3.2`
 - `claude-agent/sonnet` (local, requires Claude Code CLI)
-- `copilot/gpt-4.1` (local, requires Copilot CLI)
+- `copilot/gpt-5.2` (local, requires Copilot CLI)
 
 Claude Agent SDK supported models:
 - Aliases (recommended): `sonnet`, `opus`, `haiku`, `inherit`
 - Full model strings: `claude-sonnet-4-5-20250929`, `claude-opus-4-5-20251101`, `claude-opus-4-1-20250805`
 
 GitHub Copilot SDK supported models:
-- OpenAI: `gpt-4.1`, `gpt-5.1`, `gpt-5.2`, `gpt-5-mini`, `gpt-5.1-codex`
+- OpenAI: `gpt-5.2`, `gpt-5.1`, `gpt-5-mini`, `gpt-5.1-codex`
 - Anthropic: `claude-sonnet-4.5`, `claude-opus-4.5`, `claude-haiku-4.5`
 - Google: `gemini-2.5-pro`, `gemini-3-flash`
 - Availability depends on your Copilot subscription
 
+::: warning Model Deprecation Notice
+The following models will be **retired on February 13, 2025**:
+- `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini`, `gpt-5`
+
+Please migrate to `gpt-5.2` or other supported models before the deadline.
+:::
+
 ::: tip Local Providers Support Vision
-Local providers (`claude-agent/`, `copilot/`) support image analysis (`--alt`, `--desc`) via file attachments. Make sure to use a vision-capable model (e.g., `copilot/gpt-4.1`, `copilot/claude-sonnet-4.5`).
+Local providers (`claude-agent/`, `copilot/`) support image analysis (`--alt`, `--desc`) via file attachments. Make sure to use a vision-capable model (e.g., `copilot/gpt-5.2`, `copilot/claude-sonnet-4.5`).
 :::
 
 ::: tip Troubleshooting Local Providers

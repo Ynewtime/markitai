@@ -277,6 +277,48 @@ def calculate_copilot_cost(
     )
 
 
+# Models deprecated on 2025-02-13
+# Key: deprecated model name, Value: recommended replacement
+DEPRECATED_MODELS: dict[str, str] = {
+    "gpt-4o": "gpt-5.2",
+    "gpt-4.1": "gpt-5.2",
+    "gpt-4.1-mini": "gpt-5.2",
+    "o4-mini": "gpt-5.2",
+    "gpt-5": "gpt-5.2",
+}
+
+
+def check_deprecated_models(models: list[str]) -> list[str]:
+    """Check for deprecated models and return warning messages.
+
+    Args:
+        models: List of model identifiers (e.g., ["copilot/gpt-4o", "openai/gpt-4.1"])
+
+    Returns:
+        List of deprecation warning messages
+    """
+    warnings: list[str] = []
+    seen: set[str] = set()
+
+    for model in models:
+        # Extract the actual model name (strip provider prefix)
+        if "/" in model:
+            model_name = model.split("/", 1)[1]
+        else:
+            model_name = model
+
+        # Check if model is deprecated
+        if model_name in DEPRECATED_MODELS and model_name not in seen:
+            seen.add(model_name)
+            replacement = DEPRECATED_MODELS[model_name]
+            warnings.append(
+                f"⚠️  Model '{model_name}' will be retired on February 13, 2025."
+                f"\n   Please migrate to: {replacement}"
+            )
+
+    return warnings
+
+
 def validate_local_provider_deps(models: list[str]) -> list[str]:
     """Validate that required SDKs are installed for configured local providers.
 
@@ -298,14 +340,14 @@ def validate_local_provider_deps(models: list[str]) -> list[str]:
     if uses_claude_agent:
         if not importlib.util.find_spec("claude_agent_sdk"):
             warnings.append(
-                "⚠️  claude-agent/ 模型需要 Claude Agent SDK。"
-                "\n   安装: pip install claude-agent-sdk"
+                "⚠️  claude-agent/ models require Claude Agent SDK."
+                "\n   Install: pip install claude-agent-sdk"
             )
         elif not shutil.which("claude"):
             warnings.append(
-                "⚠️  Claude Code CLI 未安装。claude-agent/ 模型需要 CLI 认证。"
-                "\n   安装: pnpm add -g @anthropic-ai/claude-code"
-                "\n   认证: claude auth login"
+                "⚠️  Claude Code CLI not installed. claude-agent/ models require CLI auth."
+                "\n   Install: pnpm add -g @anthropic-ai/claude-code"
+                "\n   Auth: claude auth login"
             )
 
     # Check for copilot models
@@ -313,14 +355,14 @@ def validate_local_provider_deps(models: list[str]) -> list[str]:
     if uses_copilot:
         if not importlib.util.find_spec("copilot"):
             warnings.append(
-                "⚠️  copilot/ 模型需要 GitHub Copilot SDK。"
-                "\n   安装: pip install github-copilot-sdk"
+                "⚠️  copilot/ models require GitHub Copilot SDK."
+                "\n   Install: pip install github-copilot-sdk"
             )
         elif not shutil.which("copilot"):
             warnings.append(
-                "⚠️  Copilot CLI 未安装。copilot/ 模型需要 CLI 认证。"
-                "\n   安装: pnpm add -g @github/copilot"
-                "\n   认证: copilot auth login"
+                "⚠️  Copilot CLI not installed. copilot/ models require CLI auth."
+                "\n   Install: pnpm add -g @github/copilot"
+                "\n   Auth: copilot auth login"
             )
 
     return warnings
@@ -594,6 +636,8 @@ def get_local_provider_model_info(model: str) -> dict[str, int | bool] | None:
 __all__ = [
     "register_providers",
     "validate_local_provider_deps",
+    "check_deprecated_models",
+    "DEPRECATED_MODELS",
     "get_provider",
     "is_local_provider_model",
     "is_local_provider_available",

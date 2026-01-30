@@ -394,12 +394,17 @@ def app(
 
     # Validate local provider dependencies (claude-agent, copilot)
     if cfg.llm.model_list:
-        from markitai.providers import validate_local_provider_deps
+        from markitai.providers import (
+            check_deprecated_models,
+            validate_local_provider_deps,
+        )
 
         models = [m.litellm_params.model for m in cfg.llm.model_list]
         dep_warnings = validate_local_provider_deps(models)
-        if dep_warnings:
-            for warning in dep_warnings:
+        deprecation_warnings = check_deprecated_models(models)
+        all_warnings = dep_warnings + deprecation_warnings
+        if all_warnings:
+            for warning in all_warnings:
                 console.print(f"[yellow]{warning}[/yellow]")
             console.print()
 

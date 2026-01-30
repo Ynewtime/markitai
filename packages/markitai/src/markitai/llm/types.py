@@ -169,11 +169,13 @@ class DocumentProcessResult(BaseModel):
 
     cleaned_markdown: str = Field(
         description=(
-            "格式优化后的 Markdown 文档内容。"
-            "只包含实际的文档内容，不要包含任何处理指令或 prompt 文本。"
+            "Format-optimized Markdown document content. "
+            "Contains only actual document content, without any processing instructions or prompt text."
         )
     )
-    frontmatter: Frontmatter = Field(description="文档元数据：标题、摘要、标签")
+    frontmatter: Frontmatter = Field(
+        description="Document metadata: title, summary, tags"
+    )
 
     @field_validator("cleaned_markdown", mode="before")
     @classmethod

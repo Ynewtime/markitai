@@ -3,6 +3,83 @@
 from __future__ import annotations
 
 
+class TestCheckDeprecatedModels:
+    """Tests for check_deprecated_models function."""
+
+    def test_detects_deprecated_model(self) -> None:
+        """Test that deprecated models are detected."""
+        from markitai.providers import check_deprecated_models
+
+        warnings = check_deprecated_models(["gpt-4o"])
+        assert len(warnings) == 1
+        assert "gpt-4o" in warnings[0]
+        assert "gpt-5.2" in warnings[0]
+        assert "February 13, 2025" in warnings[0]
+
+    def test_detects_multiple_deprecated_models(self) -> None:
+        """Test that multiple deprecated models are detected."""
+        from markitai.providers import check_deprecated_models
+
+        warnings = check_deprecated_models(["gpt-4o", "gpt-4.1", "o4-mini"])
+        assert len(warnings) == 3
+
+    def test_strips_provider_prefix(self) -> None:
+        """Test that provider prefix is stripped before checking."""
+        from markitai.providers import check_deprecated_models
+
+        warnings = check_deprecated_models(["copilot/gpt-4o", "openai/gpt-4.1"])
+        assert len(warnings) == 2
+        assert "gpt-4o" in warnings[0]
+        assert "gpt-4.1" in warnings[1]
+
+    def test_no_duplicates(self) -> None:
+        """Test that same model doesn't produce duplicate warnings."""
+        from markitai.providers import check_deprecated_models
+
+        warnings = check_deprecated_models(
+            ["gpt-4o", "copilot/gpt-4o", "openai/gpt-4o"]
+        )
+        assert len(warnings) == 1
+
+    def test_non_deprecated_models_no_warning(self) -> None:
+        """Test that non-deprecated models don't produce warnings."""
+        from markitai.providers import check_deprecated_models
+
+        warnings = check_deprecated_models(
+            ["gpt-5.2", "claude-sonnet-4.5", "gemini-2.5-flash"]
+        )
+        assert len(warnings) == 0
+
+    def test_empty_list(self) -> None:
+        """Test with empty model list."""
+        from markitai.providers import check_deprecated_models
+
+        warnings = check_deprecated_models([])
+        assert len(warnings) == 0
+
+
+class TestDeprecatedModelsConstant:
+    """Tests for DEPRECATED_MODELS constant."""
+
+    def test_deprecated_models_defined(self) -> None:
+        """Test that DEPRECATED_MODELS constant is defined."""
+        from markitai.providers import DEPRECATED_MODELS
+
+        assert isinstance(DEPRECATED_MODELS, dict)
+        assert "gpt-4o" in DEPRECATED_MODELS
+        assert "gpt-4.1" in DEPRECATED_MODELS
+        assert "gpt-4.1-mini" in DEPRECATED_MODELS
+        assert "o4-mini" in DEPRECATED_MODELS
+        assert "gpt-5" in DEPRECATED_MODELS
+
+    def test_all_replacements_are_gpt_5_2(self) -> None:
+        """Test that all deprecated models recommend gpt-5.2."""
+        from markitai.providers import DEPRECATED_MODELS
+
+        for replacement in DEPRECATED_MODELS.values():
+            assert replacement == "gpt-5.2"
+
+
 class TestIsLocalProviderModel:
     """Tests for is_local_provider_model function."""
 
@@ -634,8 +711,8 @@ class TestCopilotProvider:
                 )
                 raise AssertionError("Should have raised RuntimeError")
             except RuntimeError as e:
-                # Check for Chinese error message
-                assert "Copilot SDK" in str(e) and "未安装" in str(e)
+                # Check for English error message
+                assert "Copilot SDK" in str(e) and "not installed" in str(e)
 
         asyncio.run(test_async())
 
@@ -659,8 +736,8 @@ class TestCopilotProvider:
             )
             raise AssertionError("Should have raised RuntimeError")
         except RuntimeError as e:
-            # Check for Chinese error message
-            assert "Copilot SDK" in str(e) and "未安装" in str(e)
+            # Check for English error message
+            assert "Copilot SDK" in str(e) and "not installed" in str(e)
 
     def test_unsupported_params_defined(self) -> None:
         """Test that _UNSUPPORTED_PARAMS is defined and contains expected params."""

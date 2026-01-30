@@ -226,12 +226,12 @@ class TestFormatErrorMessageIntegration:
 
         try:
             raise MockAPIConnectionError(
-                "Copilot 请求超时 (120 秒)。请检查网络连接或增加超时时间。"
+                "Copilot request timed out (120s). Check network or increase timeout."
             )
         except Exception as e:
             result = format_error_message(e)
-            assert "请求超时" in result
-            assert "120 秒" in result
+            assert "timed out" in result
+            assert "120s" in result
             assert "Traceback" not in result
 
     def test_timeout_error_chain(self):
@@ -240,9 +240,9 @@ class TestFormatErrorMessageIntegration:
             try:
                 raise TimeoutError("Timeout after 60.0s waiting for session.idle")
             except TimeoutError as e1:
-                raise RuntimeError("Copilot 请求超时 (120 秒)") from e1
+                raise RuntimeError("Copilot request timed out (120s)") from e1
         except Exception as e:
             result = format_error_message(e)
             assert "Traceback" not in result
             # Should get a useful message
-            assert "超时" in result or "Timeout" in result
+            assert "timed out" in result or "Timeout" in result

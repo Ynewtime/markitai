@@ -594,7 +594,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
 
         if not _is_copilot_sdk_available():
             raise RuntimeError(
-                "GitHub Copilot SDK 未安装。请执行: pip install github-copilot-sdk"
+                "GitHub Copilot SDK not installed. Run: pip install github-copilot-sdk"
             )
 
         # Extract model name from provider prefix
@@ -639,7 +639,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         except Exception as e:
             # Clean up temp files if extraction fails
             self._cleanup_temp_files()
-            raise RuntimeError(f"消息预处理失败: {e}")
+            raise RuntimeError(f"Message preprocessing failed: {e}")
 
         start_time = time.time()
         result_text = ""
@@ -677,16 +677,16 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
             # CLI not installed or not found in PATH
             logger.error(f"[Copilot] CLI not found: {e}")
             raise RuntimeError(
-                "Copilot CLI 未安装或不在 PATH 中。"
-                "请参考: https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli"
+                "Copilot CLI not installed or not in PATH. "
+                "See: https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli"
             )
         except ConnectionError as e:
             # Server connection failed
             logger.error(f"[Copilot] Connection failed: {e}")
-            raise RuntimeError(f"无法连接 Copilot 服务器: {e}")
+            raise RuntimeError(f"Cannot connect to Copilot server: {e}")
         except TimeoutError:
             raise RuntimeError(
-                f"Copilot 请求超时 ({self.timeout} 秒)。请检查网络连接或增加超时时间。"
+                f"Copilot request timed out ({self.timeout}s). Check network or increase timeout."
             )
         except Exception as e:
             # Log and re-raise with context
@@ -696,12 +696,14 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
             # Check for common error patterns
             if "not authenticated" in error_msg.lower():
                 raise RuntimeError(
-                    "Copilot CLI 未认证。请执行 'copilot auth login' 进行登录。"
+                    "Copilot CLI not authenticated. Run 'copilot auth login' to sign in."
                 )
             elif "rate limit" in error_msg.lower():
-                raise RuntimeError("已达到 Copilot API 速率限制，请稍后重试。")
+                raise RuntimeError(
+                    "Copilot API rate limit reached. Please try again later."
+                )
 
-            raise RuntimeError(f"GitHub Copilot SDK 错误: {e}")
+            raise RuntimeError(f"GitHub Copilot SDK error: {e}")
         finally:
             # Clean up session (release resources)
             if session is not None:

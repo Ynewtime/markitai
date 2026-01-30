@@ -160,7 +160,7 @@ markitai config set llm.enabled true
 
 Markitai 通过 [LiteLLM](https://docs.litellm.ai/) 支持多个 LLM 提供商：
 
-- OpenAI (GPT-4o, GPT-4o-mini)
+- OpenAI (GPT-5.2, GPT-5-mini)
 - Anthropic (Claude 3.5/4)
 - Google (Gemini 2.x)
 - DeepSeek
@@ -193,20 +193,27 @@ provider/model-name
 - `deepseek/deepseek-chat`
 - `ollama/llama3.2`
 - `claude-agent/sonnet`（本地，需要 Claude Code CLI）
-- `copilot/gpt-4.1`（本地，需要 Copilot CLI）
+- `copilot/gpt-5.2`（本地，需要 Copilot CLI）
 
 Claude Agent SDK 支持的模型：
 - 别名（推荐）：`sonnet`、`opus`、`haiku`、`inherit`
 - 完整模型字符串：`claude-sonnet-4-5-20250929`、`claude-opus-4-5-20251101`、`claude-opus-4-1-20250805`
 
 GitHub Copilot SDK 支持的模型：
-- OpenAI: `gpt-4.1`、`gpt-5.1`、`gpt-5.2`、`gpt-5-mini`、`gpt-5.1-codex`
+- OpenAI: `gpt-5.2`、`gpt-5.1`、`gpt-5-mini`、`gpt-5.1-codex`
 - Anthropic: `claude-sonnet-4.5`、`claude-opus-4.5`、`claude-haiku-4.5`
 - Google: `gemini-2.5-pro`、`gemini-3-flash`
 - 可用性取决于您的 Copilot 订阅
 
+::: warning 模型下线通知
+以下模型将于 **2025年2月13日** 下线：
+- `gpt-4o`、`gpt-4.1`、`gpt-4.1-mini`、`o4-mini`、`gpt-5`
+
+请在截止日期前迁移到 `gpt-5.2` 或其他支持的模型。
+:::
+
 ::: tip 本地提供商支持 Vision
-本地提供商（`claude-agent/`、`copilot/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-4.1`、`copilot/claude-sonnet-4.5`）。
+本地提供商（`claude-agent/`、`copilot/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-5.2`、`copilot/claude-sonnet-4.5`）。
 :::
 
 ::: tip 本地提供商故障排除
