@@ -33,7 +33,7 @@ Known Limitations:
       Use non-GPT-5 models or direct OpenAI API for these models.
 
 Requirements:
-    - github-copilot-sdk package: pip install github-copilot-sdk
+    - github-copilot-sdk package: uv add github-copilot-sdk
     - Copilot CLI installed and authenticated: https://docs.github.com/en/copilot
 
 Error Handling:
@@ -63,6 +63,8 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.providers.timeout import calculate_timeout_from_messages
+
 # PIL for image resizing (optional, graceful fallback)
 try:
     from PIL import Image
@@ -76,6 +78,7 @@ if TYPE_CHECKING:
 
 try:
     import litellm
+    from litellm.exceptions import AuthenticationError, RateLimitError
     from litellm.llms.custom_llm import CustomLLM
     from litellm.types.utils import Usage
 
@@ -83,6 +86,8 @@ try:
 except ImportError:
     LITELLM_AVAILABLE = False
     CustomLLM = object  # type: ignore[misc, assignment]
+    AuthenticationError = Exception  # type: ignore[misc, assignment]
+    RateLimitError = Exception  # type: ignore[misc, assignment]
 
 
 def _is_copilot_sdk_available() -> bool:
@@ -216,12 +221,21 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
             timeout: Request timeout in seconds
         """
         if not LITELLM_AVAILABLE:
-            raise RuntimeError(
-                "LiteLLM not available. Install with: pip install litellm"
-            )
+            raise RuntimeError("LiteLLM not available. Install with: uv add litellm")
         self.timeout = timeout
         self._client: Any = None
         self._temp_files: list[str] = []
+
+    def _calculate_adaptive_timeout(self, messages: list[dict[str, Any]]) -> int:
+        """Calculate adaptive timeout based on message content.
+
+        Args:
+            messages: OpenAI-style messages
+
+        Returns:
+            Timeout in seconds
+        """
+        return calculate_timeout_from_messages(messages)
 
     def _resize_image_if_needed(self, image_path: str) -> str:
         """Resize image if it exceeds Copilot's dimension limit.
@@ -594,7 +608,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
 
         if not _is_copilot_sdk_available():
             raise RuntimeError(
-                "GitHub Copilot SDK not installed. Run: pip install github-copilot-sdk"
+                "GitHub Copilot SDK not installed. Run: uv add github-copilot-sdk"
             )
 
         # Extract model name from provider prefix
@@ -645,6 +659,9 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         result_text = ""
         session = None
 
+        # Calculate adaptive timeout based on message content
+        timeout = self._calculate_adaptive_timeout(messages)
+
         try:
             client = await self._get_client()
 
@@ -664,7 +681,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
             # Send prompt and wait for response
             response = await asyncio.wait_for(
                 session.send_and_wait(request_payload),
-                timeout=self.timeout,
+                timeout=timeout,
             )
 
             # Extract content from response
@@ -686,21 +703,46 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
             raise RuntimeError(f"Cannot connect to Copilot server: {e}")
         except TimeoutError:
             raise RuntimeError(
-                f"Copilot request timed out ({self.timeout}s). Check network or increase timeout."
+                f"Copilot request timed out ({timeout}s). Check network or increase timeout."
             )
         except Exception as e:
             # Log and re-raise with context
             error_msg = str(e)
+            error_msg_lower = error_msg.lower()
             logger.error(f"[Copilot] Error: {error_msg}")
 
-            # Check for common error patterns
-            if "not authenticated" in error_msg.lower():
-                raise RuntimeError(
-                    "Copilot CLI not authenticated. Run 'copilot auth login' to sign in."
+            # Check for quota/billing errors (should NOT be retried)
+            # These are non-recoverable without user action (upgrade plan, add payment)
+            quota_patterns = [
+                "quota exceeded",
+                "no quota",
+                "402",
+                "billing",
+                "payment required",
+                "subscription",
+                "upgrade to increase",
+            ]
+            if any(pattern in error_msg_lower for pattern in quota_patterns):
+                raise AuthenticationError(
+                    f"Copilot quota/billing error: {error_msg}",
+                    "copilot",
+                    model_name,
                 )
-            elif "rate limit" in error_msg.lower():
-                raise RuntimeError(
-                    "Copilot API rate limit reached. Please try again later."
+
+            # Check for authentication errors (should NOT be retried)
+            if "not authenticated" in error_msg_lower:
+                raise AuthenticationError(
+                    "Copilot CLI not authenticated. Run 'copilot auth login' to sign in.",
+                    "copilot",
+                    model_name,
+                )
+
+            # Rate limit errors (LiteLLM will handle retry via RateLimitError)
+            if "rate limit" in error_msg_lower:
+                raise RateLimitError(
+                    "Copilot API rate limit reached. Please try again later.",
+                    "copilot",
+                    model_name,
                 )
 
             raise RuntimeError(f"GitHub Copilot SDK error: {e}")
