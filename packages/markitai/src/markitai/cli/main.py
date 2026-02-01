@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import sys
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,14 +21,8 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # Suppress noisy messages before imports
+# Note: Most warning filters are now centralized in logging_config.setup_logging()
 os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
-warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
-# Suppress litellm async client cleanup warning (harmless, occurs at exit)
-warnings.filterwarnings(
-    "ignore",
-    message="coroutine 'close_litellm_async_clients' was never awaited",
-    category=RuntimeWarning,
-)
 
 import click
 from dotenv import load_dotenv
@@ -39,9 +32,9 @@ load_dotenv()
 
 from click import Context
 from loguru import logger
-from rich.console import Console
 from rich.syntax import Syntax
 
+from markitai.cli.console import get_console, get_stderr_console
 from markitai.cli.framework import MarkitaiGroup
 from markitai.cli.logging_config import (
     print_version,
@@ -66,9 +59,9 @@ from markitai.utils.cli_helpers import (
 )
 from markitai.utils.executor import shutdown_converter_executor
 
-console = Console()
+console = get_console()
 # Separate stderr console for status/progress (doesn't mix with stdout output)
-stderr_console = Console(stderr=True)
+stderr_console = get_stderr_console()
 
 
 # =============================================================================
@@ -129,6 +122,12 @@ stderr_console = Console(stderr=True)
     help="Enable/disable screenshots (PDF/PPTX pages; full-page for URLs).",
 )
 @click.option(
+    "--screenshot-only",
+    is_flag=True,
+    help="Capture screenshots only. Without --llm: saves only screenshots. "
+    "With --llm: LLM extracts content purely from screenshots.",
+)
+@click.option(
     "--resume",
     is_flag=True,
     help="Resume interrupted batch processing.",
@@ -173,13 +172,7 @@ stderr_console = Console(stderr=True)
     "--playwright",
     "use_playwright",
     is_flag=True,
-    help="Force browser rendering for URLs via Playwright (recommended).",
-)
-@click.option(
-    "--agent-browser",
-    "use_agent_browser",
-    is_flag=True,
-    help="Force browser rendering for URLs via agent-browser (legacy, requires Node.js).",
+    help="Force browser rendering for URLs via Playwright.",
 )
 @click.option(
     "--jina",
@@ -223,6 +216,7 @@ def app(
     desc: bool | None,
     ocr: bool | None,
     screenshot: bool | None,
+    screenshot_only: bool,
     resume: bool,
     no_compress: bool,
     no_cache: bool,
@@ -231,7 +225,6 @@ def app(
     url_concurrency: int | None,
     llm_concurrency: int | None,
     use_playwright: bool,
-    use_agent_browser: bool,
     use_jina: bool,
     verbose: bool,
     quiet: bool,
@@ -380,6 +373,12 @@ def app(
         cfg.ocr.enabled = ocr
     if screenshot is not None:
         cfg.screenshot.enabled = screenshot
+    if screenshot_only:
+        # screenshot_only enables screenshot capture but NOT implicitly LLM
+        # --screenshot-only alone: just capture screenshots (no .md output)
+        # --llm --screenshot-only: capture + LLM extraction
+        cfg.screenshot.screenshot_only = True
+        cfg.screenshot.enabled = True  # Implicitly enable screenshot
     if no_compress:
         cfg.image.compress = False
     if no_cache:
@@ -416,10 +415,9 @@ def app(
             console.print()
 
     # Validate fetch strategy flags (mutually exclusive)
-    browser_flags = [use_playwright, use_agent_browser, use_jina]
-    if sum(browser_flags) > 1:
+    if use_playwright and use_jina:
         console.print(
-            "[red]Error: --playwright, --agent-browser and --jina are mutually exclusive.[/red]"
+            "[red]Error: --playwright and --jina are mutually exclusive.[/red]"
         )
         ctx.exit(1)
 
@@ -428,20 +426,6 @@ def app(
 
     if use_playwright:
         fetch_strategy = FetchStrategy.PLAYWRIGHT
-        explicit_fetch_strategy = True
-    elif use_agent_browser:
-        # Deprecation warning for agent-browser
-        console.print(
-            "[yellow]⚠️  --agent-browser is deprecated and will be removed in v0.6.0.[/yellow]"
-        )
-        console.print(
-            "[yellow]   Please migrate to --playwright for browser automation.[/yellow]"
-        )
-        console.print(
-            "[yellow]   Install: pip install playwright && playwright install chromium[/yellow]"
-        )
-        console.print()
-        fetch_strategy = FetchStrategy.BROWSER
         explicit_fetch_strategy = True
     elif use_jina:
         fetch_strategy = FetchStrategy.JINA
@@ -586,7 +570,7 @@ def config_list(output_format: str) -> None:
             syntax = Syntax(config_yaml, "yaml", theme="monokai", line_numbers=False)
             console.print(syntax)
         except ImportError:
-            console.print("[red]YAML output requires PyYAML: pip install pyyaml[/red]")
+            console.print("[red]YAML output requires PyYAML: uv add pyyaml[/red]")
             raise SystemExit(1)
     elif output_format == "table":
         table = Table(title="Markitai Configuration", show_header=True)
@@ -1038,9 +1022,10 @@ def cache_spa_domains(as_json: bool, clear: bool) -> None:
     )
 
 
-# Register check-deps command from deps.py
-from markitai.cli.commands.deps import check_deps
+# Register doctor command and check-deps alias
+from markitai.cli.commands.doctor import check_deps, doctor
 
+app.add_command(doctor)
 app.add_command(check_deps)
 
 

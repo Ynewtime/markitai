@@ -1,44 +1,105 @@
-"""Dependency checking CLI command.
+"""Doctor CLI command for system health checking.
 
-This module provides the check-deps command for verifying
-all optional dependencies and their status.
+This module provides the doctor command for verifying all optional dependencies,
+authentication status, and overall system health. The check-deps command is
+retained as an alias for backward compatibility.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import subprocess
 from typing import Any
 
 import click
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from markitai.cli.console import get_console
 from markitai.config import ConfigManager
+from markitai.providers.auth import AuthManager, get_auth_resolution_hint
 
-console = Console()
+console = get_console()
 
 
-@click.command("check-deps")
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Output as JSON.",
-)
-def check_deps(as_json: bool) -> None:
-    """Check all optional dependencies and their status.
+def _check_copilot_auth() -> dict[str, str]:
+    """Check Copilot authentication status.
 
-    This command helps diagnose setup issues by verifying:
-    - Playwright (for dynamic URL fetching, recommended)
-    - agent-browser (for dynamic URL fetching, legacy)
-    - LibreOffice (for Office document conversion)
-    - RapidOCR (for scanned document processing)
-    - LLM API configuration (for content enhancement)
+    Returns:
+        Result dict with status, message, install_hint
     """
-    from markitai.fetch import verify_agent_browser_ready
+    auth_manager = AuthManager()
+    try:
+        status = asyncio.run(auth_manager.check_auth("copilot"))
+        if status.authenticated:
+            user_info = f" ({status.user})" if status.user else ""
+            return {
+                "name": "Copilot Auth",
+                "description": "GitHub Copilot authentication status",
+                "status": "ok",
+                "message": f"Authenticated{user_info}",
+                "install_hint": "",
+            }
+        else:
+            return {
+                "name": "Copilot Auth",
+                "description": "GitHub Copilot authentication status",
+                "status": "error",
+                "message": status.error or "Not authenticated",
+                "install_hint": get_auth_resolution_hint("copilot"),
+            }
+    except Exception as e:
+        return {
+            "name": "Copilot Auth",
+            "description": "GitHub Copilot authentication status",
+            "status": "error",
+            "message": f"Failed to check auth: {e}",
+            "install_hint": get_auth_resolution_hint("copilot"),
+        }
+
+
+def _check_claude_auth() -> dict[str, str]:
+    """Check Claude Agent authentication status.
+
+    Returns:
+        Result dict with status, message, install_hint
+    """
+    auth_manager = AuthManager()
+    try:
+        status = asyncio.run(auth_manager.check_auth("claude-agent"))
+        if status.authenticated:
+            return {
+                "name": "Claude Agent Auth",
+                "description": "Claude Code CLI authentication status",
+                "status": "ok",
+                "message": "Authenticated (claude doctor passed)",
+                "install_hint": "",
+            }
+        else:
+            return {
+                "name": "Claude Agent Auth",
+                "description": "Claude Code CLI authentication status",
+                "status": "error",
+                "message": status.error or "Not authenticated",
+                "install_hint": get_auth_resolution_hint("claude-agent"),
+            }
+    except Exception as e:
+        return {
+            "name": "Claude Agent Auth",
+            "description": "Claude Code CLI authentication status",
+            "status": "error",
+            "message": f"Failed to check auth: {e}",
+            "install_hint": get_auth_resolution_hint("claude-agent"),
+        }
+
+
+def _doctor_impl(as_json: bool) -> None:
+    """Implementation of the doctor command.
+
+    This function contains the core logic shared by both doctor and check_deps.
+    """
     from markitai.fetch_playwright import (
         clear_browser_cache,
         is_playwright_available,
@@ -50,13 +111,13 @@ def check_deps(as_json: bool) -> None:
 
     results: dict[str, dict[str, Any]] = {}
 
-    # 1. Check Playwright (recommended)
+    # 1. Check Playwright
     clear_browser_cache()  # Clear cache for fresh check
     if is_playwright_available():
         if is_playwright_browser_installed(use_cache=False):
             results["playwright"] = {
                 "name": "Playwright",
-                "description": "Browser automation for dynamic URLs (recommended)",
+                "description": "Browser automation for dynamic URLs",
                 "status": "ok",
                 "message": "Playwright and Chromium browser installed",
                 "install_hint": "",
@@ -64,31 +125,21 @@ def check_deps(as_json: bool) -> None:
         else:
             results["playwright"] = {
                 "name": "Playwright",
-                "description": "Browser automation for dynamic URLs (recommended)",
+                "description": "Browser automation for dynamic URLs",
                 "status": "warning",
                 "message": "Playwright installed but browser not found",
-                "install_hint": "playwright install chromium",
+                "install_hint": "uv run playwright install chromium (Linux: also run 'playwright install-deps chromium')",
             }
     else:
         results["playwright"] = {
             "name": "Playwright",
-            "description": "Browser automation for dynamic URLs (recommended)",
+            "description": "Browser automation for dynamic URLs",
             "status": "missing",
             "message": "Playwright not installed",
-            "install_hint": "pip install playwright && playwright install chromium",
+            "install_hint": "uv add playwright && uv run playwright install chromium (Linux: also run 'playwright install-deps chromium')",
         }
 
-    # 2. Check agent-browser (legacy)
-    is_ready, message = verify_agent_browser_ready(use_cache=False)
-    results["agent-browser"] = {
-        "name": "agent-browser (legacy)",
-        "description": "Browser automation for dynamic URLs (requires Node.js)",
-        "status": "ok" if is_ready else "missing",
-        "message": message,
-        "install_hint": "pnpm add -g agent-browser && agent-browser install",
-    }
-
-    # 3. Check LibreOffice
+    # 2. Check LibreOffice
     soffice_path = shutil.which("soffice") or shutil.which("libreoffice")
     if soffice_path:
         try:
@@ -125,6 +176,45 @@ def check_deps(as_json: bool) -> None:
             "status": "missing",
             "message": "soffice/libreoffice command not found",
             "install_hint": "apt install libreoffice (Linux) / brew install libreoffice (macOS)",
+        }
+
+    # 3. Check FFmpeg (for audio/video processing)
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path:
+        try:
+            proc = subprocess.run(
+                [ffmpeg_path, "-version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            version = (
+                proc.stdout.strip().split("\n")[0]
+                if proc.returncode == 0
+                else "unknown"
+            )
+            results["ffmpeg"] = {
+                "name": "FFmpeg",
+                "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
+                "status": "ok",
+                "message": f"Found at {ffmpeg_path} ({version})",
+                "install_hint": "",
+            }
+        except Exception as e:
+            results["ffmpeg"] = {
+                "name": "FFmpeg",
+                "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
+                "status": "error",
+                "message": f"Found but failed to run: {e}",
+                "install_hint": "Reinstall FFmpeg",
+            }
+    else:
+        results["ffmpeg"] = {
+            "name": "FFmpeg",
+            "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
+            "status": "missing",
+            "message": "ffmpeg command not found",
+            "install_hint": "apt install ffmpeg (Linux) / brew install ffmpeg (macOS) / winget/scoop/choco install ffmpeg (Windows)",
         }
 
     # 4. Check RapidOCR (Python OCR library with built-in models)
@@ -190,7 +280,7 @@ def check_deps(as_json: bool) -> None:
             "description": "OCR for scanned documents (built-in models)",
             "status": "missing",
             "message": "RapidOCR not installed",
-            "install_hint": "pip install rapidocr (included in markitai dependencies)",
+            "install_hint": "uv add rapidocr (included in markitai dependencies)",
         }
 
     # 5. Check LLM API configuration (check model_list for configured models)
@@ -244,7 +334,7 @@ def check_deps(as_json: bool) -> None:
                         "description": "Claude Code CLI integration",
                         "status": "warning",
                         "message": "SDK installed but 'claude' CLI not found",
-                        "install_hint": "Install Claude Code CLI: pnpm add -g @anthropic-ai/claude-code",
+                        "install_hint": "Install Claude Code CLI: curl -fsSL https://claude.ai/install.sh | bash (or irm https://claude.ai/install.ps1 | iex on Windows)",
                     }
             else:
                 results["claude-agent-sdk"] = {
@@ -252,7 +342,7 @@ def check_deps(as_json: bool) -> None:
                     "description": "Claude Code CLI integration",
                     "status": "missing",
                     "message": "claude-agent-sdk not installed",
-                    "install_hint": "pip install claude-agent-sdk",
+                    "install_hint": "uv add claude-agent-sdk && curl -fsSL https://claude.ai/install.sh | bash",
                 }
         except Exception as e:
             results["claude-agent-sdk"] = {
@@ -260,8 +350,11 @@ def check_deps(as_json: bool) -> None:
                 "description": "Claude Code CLI integration",
                 "status": "error",
                 "message": f"Check failed: {e}",
-                "install_hint": "pip install claude-agent-sdk",
+                "install_hint": "uv add claude-agent-sdk",
             }
+
+        # 5b. Check Claude Agent authentication status
+        results["claude-agent-auth"] = _check_claude_auth()
 
     if uses_copilot:
         try:
@@ -284,7 +377,7 @@ def check_deps(as_json: bool) -> None:
                         "description": "GitHub Copilot CLI integration",
                         "status": "warning",
                         "message": "SDK installed but 'copilot' CLI not found",
-                        "install_hint": "Install Copilot CLI: pnpm add -g @github/copilot",
+                        "install_hint": "Install Copilot CLI: curl -fsSL https://gh.io/copilot-install | bash (or winget install GitHub.Copilot on Windows)",
                     }
             else:
                 results["copilot-sdk"] = {
@@ -292,7 +385,7 @@ def check_deps(as_json: bool) -> None:
                     "description": "GitHub Copilot CLI integration",
                     "status": "missing",
                     "message": "github-copilot-sdk not installed",
-                    "install_hint": "pip install github-copilot-sdk",
+                    "install_hint": "uv add github-copilot-sdk && curl -fsSL https://gh.io/copilot-install | bash",
                 }
         except Exception as e:
             results["copilot-sdk"] = {
@@ -300,8 +393,11 @@ def check_deps(as_json: bool) -> None:
                 "description": "GitHub Copilot CLI integration",
                 "status": "error",
                 "message": f"Check failed: {e}",
-                "install_hint": "pip install github-copilot-sdk",
+                "install_hint": "uv add github-copilot-sdk",
             }
+
+        # 5c. Check Copilot authentication status
+        results["copilot-auth"] = _check_copilot_auth()
 
     # 6. Check vision model configuration (auto-detect from litellm or config override)
     from markitai.llm import get_model_info_cached
@@ -389,7 +485,7 @@ def check_deps(as_json: bool) -> None:
     ]
 
     if hints:
-        hint_text = "\n".join([f"  • {name}: {hint}" for name, hint in hints])
+        hint_text = "\n".join([f"  * {name}: {hint}" for name, hint in hints])
         console.print(
             Panel(
                 f"[yellow]To fix missing dependencies:[/yellow]\n{hint_text}",
@@ -399,3 +495,44 @@ def check_deps(as_json: bool) -> None:
         )
     else:
         console.print("[green]All dependencies are properly configured![/green]")
+
+
+@click.command("doctor")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Output as JSON.",
+)
+def doctor(as_json: bool) -> None:
+    """Check system health, dependencies, and authentication status.
+
+    This command helps diagnose setup issues by verifying:
+    - Playwright (for dynamic URL fetching)
+    - LibreOffice (for Office document conversion)
+    - RapidOCR (for scanned document processing)
+    - LLM API configuration (for content enhancement)
+    - Authentication status for local providers (Claude Agent, Copilot)
+    """
+    _doctor_impl(as_json)
+
+
+@click.command("check-deps")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Output as JSON.",
+)
+def check_deps(as_json: bool) -> None:
+    """Check all optional dependencies and their status.
+
+    This is an alias for 'doctor' command, kept for backward compatibility.
+
+    This command helps diagnose setup issues by verifying:
+    - Playwright (for dynamic URL fetching)
+    - LibreOffice (for Office document conversion)
+    - RapidOCR (for scanned document processing)
+    - LLM API configuration (for content enhancement)
+    """
+    _doctor_impl(as_json)
