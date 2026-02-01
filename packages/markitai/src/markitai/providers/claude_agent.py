@@ -32,7 +32,7 @@ Supported API providers (via environment variables):
     - Microsoft Foundry: CLAUDE_CODE_USE_FOUNDRY=1
 
 Requirements:
-    - claude-agent-sdk package: pip install claude-agent-sdk
+    - claude-agent-sdk package: uv add claude-agent-sdk
     - Claude Code CLI installed and authenticated: https://docs.anthropic.com/claude-code
 
 Limitations:
@@ -52,11 +52,14 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.providers.timeout import calculate_timeout_from_messages
+
 if TYPE_CHECKING:
     from litellm.types.utils import ModelResponse
 
 try:
     import litellm
+    from litellm.exceptions import AuthenticationError, RateLimitError
     from litellm.llms.custom_llm import CustomLLM
     from litellm.types.utils import Usage
 
@@ -64,6 +67,8 @@ try:
 except ImportError:
     LITELLM_AVAILABLE = False
     CustomLLM = object  # type: ignore[misc, assignment]
+    AuthenticationError = Exception  # type: ignore[misc, assignment]
+    RateLimitError = Exception  # type: ignore[misc, assignment]
 
 
 def _is_claude_agent_sdk_available() -> bool:
@@ -94,9 +99,7 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
             timeout: Request timeout in seconds
         """
         if not LITELLM_AVAILABLE:
-            raise RuntimeError(
-                "LiteLLM not available. Install with: pip install litellm"
-            )
+            raise RuntimeError("LiteLLM not available. Install with: uv add litellm")
         self.timeout = timeout
 
     def _has_images(self, messages: list[dict[str, Any]]) -> bool:
@@ -115,6 +118,20 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
                     if isinstance(part, dict) and part.get("type") == "image_url":
                         return True
         return False
+
+    def _calculate_adaptive_timeout(self, messages: list[dict[str, Any]]) -> int:
+        """Calculate adaptive timeout based on message content.
+
+        Uses the timeout module to estimate appropriate timeout based on
+        prompt length, image count, and other factors.
+
+        Args:
+            messages: OpenAI-style messages
+
+        Returns:
+            Timeout in seconds
+        """
+        return calculate_timeout_from_messages(messages)
 
     def _messages_to_prompt(self, messages: list[dict[str, Any]]) -> str:
         """Convert OpenAI-style messages to a single prompt string (text only).
@@ -371,8 +388,7 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
 
         if not _is_claude_agent_sdk_available():
             raise RuntimeError(
-                "Claude Agent SDK not installed. "
-                "Install with: pip install claude-agent-sdk"
+                "Claude Agent SDK not installed. Install with: uv add claude-agent-sdk"
             )
 
         # Import SDK components only when needed (lazy import for optional dependency)
@@ -402,6 +418,10 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         response_format = kwargs.get("response_format")
         output_format = self._convert_response_format(response_format)
 
+        # Calculate adaptive timeout based on message content
+        timeout = self._calculate_adaptive_timeout(messages)
+        logger.debug(f"[ClaudeAgent] Using adaptive timeout: {timeout}s")
+
         start_time = time.time()
         result_text = ""
         structured_output: dict[str, Any] | None = None
@@ -415,6 +435,7 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
                 "permission_mode": "bypassPermissions",
                 "max_turns": 1,
                 "model": model_name,
+                "timeout": timeout,
             }
 
             # Add output_format if structured output is requested
@@ -447,7 +468,50 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
                             structured_output = message.structured_output
 
         except Exception as e:
-            logger.error(f"[ClaudeAgent] Error: {e}")
+            error_msg = str(e)
+            error_msg_lower = error_msg.lower()
+            logger.error(f"[ClaudeAgent] Error: {error_msg}")
+
+            # Check for quota/billing errors (should NOT be retried)
+            quota_patterns = [
+                "quota",
+                "billing",
+                "payment",
+                "subscription",
+                "402",
+                "insufficient",
+                "credit",
+            ]
+            if any(pattern in error_msg_lower for pattern in quota_patterns):
+                raise AuthenticationError(
+                    f"Claude Agent quota/billing error: {error_msg}",
+                    "claude-agent",
+                    model_name,
+                )
+
+            # Check for authentication errors (should NOT be retried)
+            auth_patterns = [
+                "not authenticated",
+                "authentication",
+                "unauthorized",
+                "401",
+                "api key",
+            ]
+            if any(pattern in error_msg_lower for pattern in auth_patterns):
+                raise AuthenticationError(
+                    f"Claude Agent authentication error: {error_msg}",
+                    "claude-agent",
+                    model_name,
+                )
+
+            # Rate limit errors (LiteLLM will handle retry)
+            if "rate limit" in error_msg_lower or "429" in error_msg_lower:
+                raise RateLimitError(
+                    f"Claude Agent rate limit: {error_msg}",
+                    "claude-agent",
+                    model_name,
+                )
+
             raise RuntimeError(f"Claude Agent SDK error: {e}")
 
         elapsed = time.time() - start_time
