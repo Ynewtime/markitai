@@ -55,7 +55,7 @@ markitai document.pdf --desc
 
 Enable screenshot capture:
 - **PDF/PPTX**: Renders pages/slides as JPEG images
-- **URLs**: Captures full-page screenshots using agent-browser
+- **URLs**: Captures full-page screenshots using Playwright
 
 ```bash
 # Document screenshots
@@ -67,7 +67,28 @@ markitai https://example.com --screenshot
 ```
 
 ::: tip
-For URLs, `--screenshot` automatically upgrades the fetch strategy to `browser` if needed. The screenshot is saved as `{domain}_path.full.jpg` in the `screenshots/` subdirectory.
+For URLs, `--screenshot` automatically upgrades the fetch strategy to `playwright` if needed. The screenshot is saved as `{domain}_path.full.jpg` in the `screenshots/` subdirectory.
+:::
+
+### `--screenshot-only`
+
+Capture screenshots only without extracting content. Behavior depends on `--llm`:
+
+| Command | Output |
+|---------|--------|
+| `--screenshot-only` | Screenshots only (no .md files) |
+| `--llm --screenshot-only` | .md + .llm.md + screenshots (LLM extracts from screenshots) |
+
+```bash
+# Just capture screenshots
+markitai https://example.com --screenshot-only
+
+# LLM extracts content purely from screenshots
+markitai https://example.com --llm --screenshot-only
+```
+
+::: tip
+Use `--llm --screenshot-only` for pages where traditional content extraction fails (e.g., heavy JavaScript sites, social media).
 :::
 
 ### `--ocr`
@@ -176,22 +197,21 @@ Number of concurrent URL fetch operations (default: 5). This is separate from `-
 markitai ./docs -o ./output --url-concurrency 5
 ```
 
-### `--agent-browser`
+### `--playwright`
 
-Force browser rendering for URL fetching. Useful for JavaScript-heavy SPA websites (e.g., x.com, dynamic web apps).
+Force browser rendering for URL fetching using Playwright. Useful for JavaScript-heavy SPA websites (e.g., x.com, dynamic web apps).
 
 ```bash
-markitai https://x.com/user/status/123 --agent-browser
+markitai https://x.com/user/status/123 --playwright
 ```
 
 ::: tip
-Requires `agent-browser` to be installed:
+To pre-install Playwright browsers:
 ```bash
-pnpm add -g agent-browser
-agent-browser install           # Download Chromium
-agent-browser install --with-deps  # Linux: also install system deps
+uv run playwright install chromium
+# Linux also requires system dependencies:
+uv run playwright install-deps chromium
 ```
-See [agent-browser documentation](https://github.com/vercel-labs/agent-browser) for details.
 :::
 
 ### `--jina`
@@ -203,7 +223,7 @@ markitai https://example.com --jina
 ```
 
 ::: warning
-`--agent-browser` and `--jina` are mutually exclusive. You can only use one at a time.
+`--playwright` and `--jina` are mutually exclusive. You can only use one at a time.
 :::
 
 ## Configuration Commands
@@ -298,21 +318,53 @@ SPA domains are learned automatically when static fetch detects JavaScript requi
 
 ## Diagnostic Commands
 
+### `markitai doctor`
+
+Check system health, dependencies, and authentication status. This is the primary diagnostic command.
+
+```bash
+markitai doctor
+markitai doctor --json    # JSON output
+```
+
+This command verifies:
+- **Playwright**: For dynamic URL fetching (SPA rendering)
+- **LibreOffice**: For Office document conversion (doc, docx, xls, xlsx, ppt, pptx)
+- **FFmpeg**: For audio/video file processing (mp3, mp4, wav, etc.)
+- **RapidOCR**: For scanned document OCR (built-in, no external dependencies)
+- **LLM API**: Configuration and model status
+- **Vision Model**: For image analysis (auto-detected from litellm)
+- **Local Provider Auth**: Authentication status for Claude Agent and GitHub Copilot (if configured)
+
+Example output:
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           Dependency Status                               │
+├─────────────────────┬────────┬──────────────────────────────┬────────────┤
+│ Component           │ Status │ Description                  │ Details    │
+├─────────────────────┼────────┼──────────────────────────────┼────────────┤
+│ Playwright          │   ✓    │ Browser automation           │ Installed  │
+│ LibreOffice         │   ✓    │ Office document conversion   │ v7.6.4     │
+│ FFmpeg              │   ✓    │ Audio/video processing       │ v6.0       │
+│ RapidOCR            │   ✓    │ OCR for scanned documents    │ v1.4.0     │
+│ LLM API (copilot)   │   ✓    │ Content enhancement          │ 1 model(s) │
+│ Copilot Auth        │   ✓    │ GitHub Copilot auth status   │ Authenticated │
+│ Vision Model        │   ✓    │ Image analysis               │ 1 detected │
+└─────────────────────┴────────┴──────────────────────────────┴────────────┘
+```
+
+::: tip
+When using local providers (`claude-agent/` or `copilot/`), the doctor command also checks authentication status and provides resolution hints if authentication fails.
+:::
+
 ### `markitai check-deps`
 
-Check all optional dependencies and their status. Useful for diagnosing setup issues.
+Alias for `markitai doctor`. Kept for backward compatibility.
 
 ```bash
 markitai check-deps
 markitai check-deps --json    # JSON output
 ```
-
-This command verifies:
-- **agent-browser**: For dynamic URL fetching (SPA rendering)
-- **LibreOffice**: For Office document conversion (doc, docx, xls, xlsx, ppt, pptx)
-- **RapidOCR**: For scanned document OCR (built-in, no external dependencies)
-- **LLM API**: Configuration and connectivity status
-- **Vision Model**: For image analysis (auto-detected from litellm)
 
 ## Other Options
 

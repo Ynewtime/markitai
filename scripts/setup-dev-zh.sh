@@ -63,7 +63,7 @@ zh_print_welcome_dev() {
     printf "    ${GREEN}•${NC} pre-commit hooks 代码质量检查\n"
     printf "\n"
     printf "  可选组件:\n"
-    printf "    ${YELLOW}•${NC} agent-browser - 浏览器自动化\n"
+    printf "    ${YELLOW}•${NC} Playwright - 浏览器自动化\n"
     printf "    ${YELLOW}•${NC} LLM CLI 工具 - Claude Code / Copilot\n"
     printf "    ${YELLOW}•${NC} LLM Python SDKs - 程序化 LLM 访问\n"
     printf "\n"
@@ -339,89 +339,6 @@ zh_detect_node() {
     fi
 }
 
-# 安装 agent-browser
-zh_install_agent_browser() {
-    print_info "检测 Node.js..."
-
-    if ! zh_detect_node; then
-        print_warning "跳过 agent-browser 安装 (需要 Node.js)"
-        track_install "agent-browser" "skipped"
-        return 1
-    fi
-
-    print_info "正在安装 agent-browser..."
-
-    # 构建包名（支持版本固定）
-    if [ -n "$AGENT_BROWSER_VERSION" ]; then
-        pkg="agent-browser@$AGENT_BROWSER_VERSION"
-        print_info "安装版本: $AGENT_BROWSER_VERSION"
-    else
-        pkg="agent-browser"
-    fi
-
-    # 优先 npm，备选 pnpm
-    install_success=false
-    if command -v npm >/dev/null 2>&1; then
-        print_info "通过 npm 安装..."
-        if npm install -g "$pkg"; then
-            install_success=true
-        fi
-    fi
-
-    if [ "$install_success" = false ] && command -v pnpm >/dev/null 2>&1; then
-        print_info "通过 pnpm 安装..."
-        if pnpm add -g "$pkg"; then
-            install_success=true
-        fi
-    fi
-
-    if [ "$install_success" = true ]; then
-        # 验证安装
-        if ! command -v agent-browser >/dev/null 2>&1; then
-            print_warning "agent-browser 已安装但不在 PATH 中"
-            print_info "可能需要将全局 bin 目录添加到 PATH:"
-            print_info "  pnpm bin -g  # 或: npm config get prefix"
-            track_install "agent-browser" "installed"
-            return 1
-        fi
-
-        print_success "agent-browser 安装成功"
-        track_install "agent-browser" "installed"
-
-        # Chromium 下载（默认: 否）
-        if ask_yes_no "是否下载 Chromium 浏览器?" "n"; then
-            print_info "正在下载 Chromium..."
-
-            os_type=$(uname -s)
-
-            if [ "$os_type" = "Linux" ]; then
-                # Linux: 系统依赖（默认: 否）
-                if ask_yes_no "是否同时安装系统依赖 (需要 sudo)?" "n"; then
-                    agent-browser install --with-deps
-                else
-                    agent-browser install
-                fi
-            else
-                agent-browser install
-            fi
-
-            print_success "Chromium 下载完成"
-            track_install "Chromium" "installed"
-        else
-            print_info "跳过 Chromium 下载"
-            print_info "稍后可运行: agent-browser install"
-            track_install "Chromium" "skipped"
-        fi
-
-        return 0
-    else
-        print_error "agent-browser 安装失败"
-        print_info "请手动安装: npm install -g agent-browser"
-        track_install "agent-browser" "failed"
-        return 1
-    fi
-}
-
 # 安装 Claude Code CLI
 zh_install_claude_cli() {
     print_info "正在安装 Claude Code CLI..."
@@ -551,40 +468,261 @@ zh_install_llm_clis() {
     fi
 }
 
-# 安装 LLM 提供商 SDKs（可选 extras）
-zh_install_provider_sdks() {
+# 安装 Playwright 浏览器 (Chromium) 及系统依赖 - 开发环境
+# 优先使用 uv run，回退到 python 模块
+# 返回: 0 成功, 1 失败, 2 跳过
+zh_dev_install_playwright_browser() {
+    print_info "Playwright 浏览器 (Chromium):"
+    print_info "  用途: 浏览器自动化，用于 JavaScript 渲染页面 (Twitter, SPA)"
+
     project_root=$(get_project_root)
     cd "$project_root"
 
-    print_info "Python SDK 提供程序化 LLM 访问:"
-    print_info "  - Claude Agent SDK (需要 Claude Code CLI)"
-    print_info "  - GitHub Copilot SDK (需要 Copilot CLI)"
-
-    if ask_yes_no "是否安装 Claude Agent SDK?" "n"; then
-        print_info "正在安装 claude-agent-sdk..."
-        if uv sync --extra claude-agent; then
-            print_success "Claude Agent SDK 安装成功"
-            track_install "Claude Agent SDK" "installed"
-        else
-            print_warning "Claude Agent SDK 安装失败"
-            track_install "Claude Agent SDK" "failed"
-        fi
-    else
-        track_install "Claude Agent SDK" "skipped"
+    # 下载前先征询用户同意
+    if ! ask_yes_no "是否下载 Chromium 浏览器？" "y"; then
+        print_info "跳过 Playwright 浏览器安装"
+        track_install "Playwright Browser" "skipped"
+        return 2
     fi
 
-    if ask_yes_no "是否安装 GitHub Copilot SDK?" "n"; then
-        print_info "正在安装 github-copilot-sdk..."
-        if uv sync --extra copilot; then
-            print_success "GitHub Copilot SDK 安装成功"
-            track_install "Copilot SDK" "installed"
-        else
-            print_warning "GitHub Copilot SDK 安装失败"
-            track_install "Copilot SDK" "failed"
+    print_info "正在下载 Chromium 浏览器..."
+    browser_installed=false
+
+    # 优先使用 uv run（开发环境使用 .venv）
+    if command -v uv >/dev/null 2>&1; then
+        if uv run playwright install chromium 2>/dev/null; then
+            print_success "Chromium 浏览器下载成功"
+            browser_installed=true
         fi
-    else
-        track_install "Copilot SDK" "skipped"
     fi
+
+    # 回退到 Python 模块
+    if [ "$browser_installed" = false ] && [ -n "$PYTHON_CMD" ]; then
+        if "$PYTHON_CMD" -m playwright install chromium 2>/dev/null; then
+            print_success "Chromium 浏览器下载成功"
+            browser_installed=true
+        fi
+    fi
+
+    if [ "$browser_installed" = false ]; then
+        print_warning "Playwright 浏览器安装失败"
+        print_info "稍后可手动安装: uv run playwright install chromium"
+        track_install "Playwright Browser" "failed"
+        return 1
+    fi
+
+    # 在 Linux 上安装系统依赖（需要 sudo）
+    if [ "$(uname)" = "Linux" ]; then
+        print_info "Chromium 在 Linux 上需要系统依赖"
+        if ask_yes_no "是否安装系统依赖（需要 sudo）？" "y"; then
+            print_info "正在安装系统依赖..."
+            if command -v uv >/dev/null 2>&1; then
+                if uv run playwright install-deps chromium 2>/dev/null; then
+                    print_success "系统依赖安装成功"
+                    track_install "Playwright Browser" "installed"
+                    return 0
+                fi
+            fi
+            # 回退到 Python 模块
+            if [ -n "$PYTHON_CMD" ]; then
+                if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
+                    print_success "系统依赖安装成功"
+                    track_install "Playwright Browser" "installed"
+                    return 0
+                fi
+            fi
+            print_warning "系统依赖安装失败"
+            print_info "可手动安装: sudo playwright install-deps chromium"
+            track_install "Playwright Browser" "installed"
+            return 0
+        else
+            print_warning "已跳过系统依赖安装"
+            print_info "Chromium 可能无法运行。稍后安装: sudo playwright install-deps chromium"
+            track_install "Playwright Browser" "installed"
+            return 0
+        fi
+    fi
+
+    track_install "Playwright Browser" "installed"
+    return 0
+}
+
+# 安装 LibreOffice（可选，用于旧版 Office 文件）
+zh_dev_install_libreoffice() {
+    print_info "正在检测 LibreOffice..."
+    print_info "  用途: 转换旧版 Office 文件 (.doc, .ppt, .xls)"
+
+    if command -v soffice >/dev/null 2>&1; then
+        version=$(soffice --version 2>/dev/null | head -n1)
+        print_success "LibreOffice 已安装: $version"
+        track_install "LibreOffice" "installed"
+        return 0
+    fi
+
+    if command -v libreoffice >/dev/null 2>&1; then
+        version=$(libreoffice --version 2>/dev/null | head -n1)
+        print_success "LibreOffice 已安装: $version"
+        track_install "LibreOffice" "installed"
+        return 0
+    fi
+
+    print_warning "LibreOffice 未安装（可选）"
+    print_info "  若未安装，无法转换 .doc/.ppt/.xls 文件"
+    print_info "  新版格式 (.docx/.pptx/.xlsx) 无需 LibreOffice"
+
+    if ! ask_yes_no "是否安装 LibreOffice？" "n"; then
+        print_info "跳过 LibreOffice 安装"
+        track_install "LibreOffice" "skipped"
+        return 2
+    fi
+
+    print_info "正在安装 LibreOffice..."
+
+    case "$(uname)" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                if brew install --cask libreoffice; then
+                    print_success "LibreOffice 通过 Homebrew 安装成功"
+                    track_install "LibreOffice" "installed"
+                    return 0
+                fi
+            else
+                print_error "未找到 Homebrew"
+                print_info "请先安装 Homebrew: https://brew.sh"
+            fi
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                print_info "通过 apt 安装（需要 sudo）..."
+                if sudo apt update && sudo apt install -y libreoffice; then
+                    print_success "LibreOffice 通过 apt 安装成功"
+                    track_install "LibreOffice" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/fedora-release ]; then
+                print_info "通过 dnf 安装（需要 sudo）..."
+                if sudo dnf install -y libreoffice; then
+                    print_success "LibreOffice 通过 dnf 安装成功"
+                    track_install "LibreOffice" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/arch-release ]; then
+                print_info "通过 pacman 安装（需要 sudo）..."
+                if sudo pacman -S --noconfirm libreoffice-fresh; then
+                    print_success "LibreOffice 通过 pacman 安装成功"
+                    track_install "LibreOffice" "installed"
+                    return 0
+                fi
+            else
+                print_error "未知的 Linux 发行版"
+                print_info "请手动安装 LibreOffice"
+            fi
+            ;;
+    esac
+
+    print_warning "LibreOffice 安装失败"
+    print_info "手动安装方式:"
+    case "$(uname)" in
+        Darwin)
+            print_info "  brew install --cask libreoffice"
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                print_info "  sudo apt install libreoffice"
+            else
+                print_info "  使用包管理器安装 libreoffice"
+            fi
+            ;;
+    esac
+    track_install "LibreOffice" "failed"
+    return 1
+}
+
+# 安装 FFmpeg（可选，用于音视频文件处理）
+zh_dev_install_ffmpeg() {
+    print_info "正在检测 FFmpeg..."
+    print_info "  用途: 处理音视频文件 (.mp3, .mp4, .wav 等)"
+
+    if command -v ffmpeg >/dev/null 2>&1; then
+        version=$(ffmpeg -version 2>/dev/null | head -n1)
+        print_success "FFmpeg 已安装: $version"
+        track_install "FFmpeg" "installed"
+        return 0
+    fi
+
+    print_warning "FFmpeg 未安装（可选）"
+    print_info "  若未安装，无法处理音视频文件"
+
+    if ! ask_yes_no "是否安装 FFmpeg？" "n"; then
+        print_info "跳过 FFmpeg 安装"
+        track_install "FFmpeg" "skipped"
+        return 2
+    fi
+
+    print_info "正在安装 FFmpeg..."
+
+    case "$(uname)" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                if brew install ffmpeg; then
+                    print_success "FFmpeg 通过 Homebrew 安装成功"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            else
+                print_error "未找到 Homebrew"
+                print_info "请先安装 Homebrew: https://brew.sh"
+            fi
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                print_info "通过 apt 安装（需要 sudo）..."
+                if sudo apt update && sudo apt install -y ffmpeg; then
+                    print_success "FFmpeg 通过 apt 安装成功"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/fedora-release ]; then
+                print_info "通过 dnf 安装（需要 sudo）..."
+                if sudo dnf install -y ffmpeg; then
+                    print_success "FFmpeg 通过 dnf 安装成功"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/arch-release ]; then
+                print_info "通过 pacman 安装（需要 sudo）..."
+                if sudo pacman -S --noconfirm ffmpeg; then
+                    print_success "FFmpeg 通过 pacman 安装成功"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            else
+                print_error "未知的 Linux 发行版"
+                print_info "请手动安装 FFmpeg"
+            fi
+            ;;
+    esac
+
+    print_warning "FFmpeg 安装失败"
+    print_info "手动安装方式:"
+    case "$(uname)" in
+        Darwin)
+            print_info "  brew install ffmpeg"
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                print_info "  sudo apt install ffmpeg"
+            elif [ -f /etc/fedora-release ]; then
+                print_info "  sudo dnf install ffmpeg"
+            elif [ -f /etc/arch-release ]; then
+                print_info "  sudo pacman -S ffmpeg"
+            else
+                print_info "  使用包管理器安装 ffmpeg"
+            fi
+            ;;
+    esac
+    track_install "FFmpeg" "failed"
+    return 1
 }
 
 # 打印完成信息
@@ -619,60 +757,51 @@ main() {
     print_header "Markitai 开发环境配置向导"
 
     # 步骤 1: 检测 Python
-    print_step 1 7 "检测 Python..."
+    print_step 1 5 "检测 Python..."
     if ! zh_detect_python; then
         exit 1
     fi
 
     # 步骤 2: 检测/安装 UV（开发者版必需）
-    print_step 2 7 "检测 UV 包管理器..."
+    print_step 2 5 "检测 UV 包管理器..."
     if ! zh_install_uv; then
         zh_print_summary_dev
         exit 1
     fi
 
-    # 步骤 3: 同步依赖
-    print_step 3 7 "同步开发依赖..."
+    # 步骤 3: 同步依赖（包含所有 extras: browser, claude-agent, copilot）
+    print_step 3 5 "同步开发依赖..."
     if ! zh_sync_dependencies; then
         zh_print_summary_dev
         exit 1
     fi
     track_install "Python 依赖" "installed"
+    track_install "Claude Agent SDK" "installed"
+    track_install "Copilot SDK" "installed"
+
+    # 安装 Playwright 浏览器（SPA/JS 渲染页面需要）
+    zh_dev_install_playwright_browser
+
+    # 安装 LibreOffice（可选，用于旧版 Office 文件）
+    zh_dev_install_libreoffice
+
+    # 安装 FFmpeg（可选，用于音视频文件）
+    zh_dev_install_ffmpeg
 
     # 步骤 4: 安装 pre-commit
-    print_step 4 7 "配置 pre-commit..."
+    print_step 4 5 "配置 pre-commit..."
     if zh_install_precommit; then
         track_install "pre-commit hooks" "installed"
     fi
 
-    # 步骤 5: 可选组件 - agent-browser
-    print_step 5 7 "可选: 浏览器自动化"
-    if ask_yes_no "是否安装浏览器自动化支持 (agent-browser)?" "n"; then
-        zh_install_agent_browser
-    else
-        print_info "跳过 agent-browser 安装"
-        track_install "agent-browser" "skipped"
-    fi
-
-    # 步骤 6: 可选组件 - LLM CLI 工具
-    print_step 6 7 "可选: LLM CLI 工具"
+    # 步骤 5: 可选组件 - LLM CLI 工具
+    print_step 5 5 "可选: LLM CLI 工具"
     if ask_yes_no "是否安装 LLM CLI 工具 (Claude Code / Copilot)?" "n"; then
         zh_install_llm_clis
     else
         print_info "跳过 LLM CLI 安装"
         track_install "Claude Code CLI" "skipped"
         track_install "Copilot CLI" "skipped"
-    fi
-
-    # 步骤 7: 可选组件 - LLM Python SDKs
-    print_step 7 7 "可选: LLM Python SDKs"
-    if ask_yes_no "是否安装 LLM Python SDKs (claude-agent-sdk / github-copilot-sdk)?" "n"; then
-        zh_install_provider_sdks
-    else
-        print_info "跳过 LLM Python SDK 安装"
-        print_info "稍后可运行: uv sync --all-extras"
-        track_install "Claude Agent SDK" "skipped"
-        track_install "Copilot SDK" "skipped"
     fi
 
     # 打印总结

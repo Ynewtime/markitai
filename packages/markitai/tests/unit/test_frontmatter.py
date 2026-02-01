@@ -243,6 +243,88 @@ class TestBuildFrontmatterDict:
 
         assert result["description"] == ""
 
+    def test_title_newlines_normalized(self) -> None:
+        """Newlines in title should be replaced with spaces."""
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description="Description",
+            title="Title with\nnewline\ncharacters",
+        )
+
+        assert "\n" not in result["title"]
+        assert result["title"] == "Title with newline characters"
+
+    def test_title_truncated_at_200_chars(self) -> None:
+        """Title longer than 200 chars should be truncated."""
+        long_title = "A" * 250
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description="Description",
+            title=long_title,
+        )
+
+        assert len(result["title"]) <= 200
+        assert result["title"].endswith("...")
+
+    def test_description_newlines_normalized(self) -> None:
+        """Newlines in description should be replaced with spaces."""
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description="Line 1\nLine 2\nLine 3",
+        )
+
+        assert "\n" not in result["description"]
+        assert result["description"] == "Line 1 Line 2 Line 3"
+
+    def test_description_truncated_at_150_chars(self) -> None:
+        """Description longer than 150 chars should be truncated."""
+        long_desc = "B" * 200
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description=long_desc,
+        )
+
+        assert len(result["description"]) <= 150
+        assert result["description"].endswith("...")
+
+    def test_tags_spaces_replaced_with_hyphens(self) -> None:
+        """Spaces in tags should be replaced with hyphens."""
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description="Description",
+            tags=["machine learning", "web development", "AI"],
+        )
+
+        assert "machine learning" not in result["tags"]
+        assert "machine-learning" in result["tags"]
+        assert "web-development" in result["tags"]
+        assert "AI" in result["tags"]
+
+    def test_tags_truncated_at_30_chars(self) -> None:
+        """Tags longer than 30 chars should be truncated."""
+        long_tag = "C" * 50
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description="Description",
+            tags=[long_tag, "short"],
+        )
+
+        for tag in result["tags"]:
+            assert len(tag) <= 30
+
+    def test_tags_special_chars_removed(self) -> None:
+        """Special characters in tags should be handled."""
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description="Description",
+            tags=["tag:with:colon", "tag'quote", 'tag"double'],
+        )
+
+        for tag in result["tags"]:
+            assert ":" not in tag or tag.count("-") >= tag.count(":")
+            assert "'" not in tag
+            assert '"' not in tag
+
 
 class TestFrontmatterToYaml:
     """Tests for frontmatter_to_yaml function."""

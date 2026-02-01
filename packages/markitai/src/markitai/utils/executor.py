@@ -54,6 +54,19 @@ def get_converter_executor() -> ThreadPoolExecutor:
     return _CONVERTER_EXECUTOR
 
 
+# Global heavy task semaphore to prevent OOM from LibreOffice/Playwright/etc.
+_HEAVY_TASK_SEMAPHORE: asyncio.Semaphore | None = None
+_HEAVY_TASK_LIMIT = 2  # Aggressive limit for extremely heavy processes
+
+
+def get_heavy_task_semaphore() -> asyncio.Semaphore:
+    """Get the global semaphore for heavyweight tasks (LibreOffice, etc.)."""
+    global _HEAVY_TASK_SEMAPHORE
+    if _HEAVY_TASK_SEMAPHORE is None:
+        _HEAVY_TASK_SEMAPHORE = asyncio.Semaphore(_HEAVY_TASK_LIMIT)
+    return _HEAVY_TASK_SEMAPHORE
+
+
 async def run_in_converter_thread(
     func: Callable[..., T], *args: Any, **kwargs: Any
 ) -> T:

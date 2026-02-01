@@ -40,7 +40,7 @@ Markitai 支持多种 LLM 提供商：
    ```bash
    uv sync --extra claude-agent
    # 或
-   pip install claude-agent-sdk
+   uv add claude-agent-sdk
    ```
 
 ### 配置
@@ -111,7 +111,7 @@ LLM 成本报告:
    ```bash
    uv sync --extra copilot
    # 或
-   pip install github-copilot-sdk
+   uv add github-copilot-sdk
    ```
 
 ### 配置
@@ -290,7 +290,7 @@ Markitai 按以下优先级加载配置：
 ```bash
 uv sync --extra claude-agent
 # 或
-pip install claude-agent-sdk
+uv add claude-agent-sdk
 ```
 
 ### Claude Code CLI 未认证
@@ -314,7 +314,7 @@ claude login
 ```bash
 uv sync --extra copilot
 # 或
-pip install github-copilot-sdk
+uv add github-copilot-sdk
 ```
 
 ### API 密钥无效

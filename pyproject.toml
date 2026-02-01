@@ -29,6 +29,7 @@ dev = [
     "pyright>=1.1.400",
     "pre-commit>=4.5.1",
     "bandit>=1.8.0",
+    "lxml-stubs>=0.5.1",
 ]
 
 [tool.pytest.ini_options]
@@ -57,7 +58,7 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
 ]
-fail_under = 0
+fail_under = 40
 show_missing = true
 skip_covered = false
 

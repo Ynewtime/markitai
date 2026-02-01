@@ -8,6 +8,8 @@ from __future__ import annotations
 from rich.console import Console
 
 # Separate stderr console for status/progress (doesn't mix with stdout output)
+# Note: Using direct Console() instead of cli.console to avoid circular import
+# (utils -> cli.console -> cli.__init__ -> cli.main -> cli.processors -> utils)
 stderr_console = Console(stderr=True)
 
 

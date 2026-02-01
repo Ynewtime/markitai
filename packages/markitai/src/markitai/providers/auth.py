@@ -104,9 +104,9 @@ def _get_copilot_client() -> object:
     Raises:
         ImportError: If copilot SDK is not installed
     """
-    import copilot
+    from copilot import CopilotClient
 
-    return copilot.Client()
+    return CopilotClient()
 
 
 async def _check_copilot_sdk_auth() -> AuthStatus:

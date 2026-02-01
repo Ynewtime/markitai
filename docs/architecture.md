@@ -70,7 +70,8 @@ cli/
 │   └── fetch.py               # URL 抓取
 └── commands/                  # 子命令组
     ├── config.py              # config 子命令
-    └── cache.py               # cache 子命令
+    ├── cache.py               # cache 子命令
+    └── doctor.py              # doctor 诊断命令
 
 llm/
 ├── __init__.py                # 包导出
@@ -82,7 +83,11 @@ llm/
 providers/
 ├── __init__.py                # 提供商注册
 ├── claude_agent.py            # Claude Code CLI 提供商
-└── copilot.py                 # GitHub Copilot CLI 提供商
+├── copilot.py                 # GitHub Copilot CLI 提供商
+├── errors.py                  # 结构化错误类
+├── auth.py                    # 认证管理器
+├── timeout.py                 # 自适应超时计算
+└── json_mode.py               # 统一 JSON 提取处理
 
 workflow/
 ├── __init__.py                # 工作流导出
@@ -242,6 +247,12 @@ def register_providers() -> None:
 - `validate_local_provider_deps()`: 依赖检查
 - `get_local_provider_model_info()`: 获取模型信息
 
+**可靠性模块**:
+- `errors.py`: 结构化错误类（`ProviderError`, `AuthenticationError`, `QuotaError`, `ProviderTimeoutError`）
+- `auth.py`: `AuthManager` 单例，缓存认证状态检查
+- `timeout.py`: 基于请求复杂度的自适应超时计算
+- `json_mode.py`: `StructuredOutputHandler` 统一 JSON 提取和验证
+
 ### 6. URL 抓取 (`fetch.py`)
 
 **职责**: Web 内容获取
@@ -250,7 +261,7 @@ def register_providers() -> None:
 ```
 AUTO（默认）
 ├── STATIC: 静态 HTML（requests + BeautifulSoup）
-├── BROWSER: 动态渲染（agent-browser）
+├── PLAYWRIGHT: 动态渲染（Playwright）
 └── JINA: Jina Reader API
 ```
 
@@ -260,9 +271,9 @@ AUTO（默认）
 - 智能策略选择
 
 **配置选项**:
-- `strategy`: 抓取策略（auto/static/browser/jina）
+- `strategy`: 抓取策略（auto/static/playwright/jina）
 - `fallback_patterns`: 回退策略的 URL 模式匹配
-- `agent_browser`: 浏览器自动化配置
+- `playwright`: Playwright 浏览器配置
 - `jina`: Jina API 配置
 
 ### 7. 批量处理 (`batch.py`)
@@ -358,7 +369,7 @@ URL Input
         |
         +---> STATIC ---> requests ---> HTML
         |
-        +---> BROWSER ---> agent-browser ---> Rendered HTML
+        +---> PLAYWRIGHT ---> Playwright ---> Rendered HTML
         |
         +---> JINA ---> Jina API ---> Markdown
         |

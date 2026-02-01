@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from rich.console import Console, Group
+from rich.console import Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import (
@@ -28,6 +28,7 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
+from markitai.cli.console import get_console
 from markitai.constants import DEFAULT_LOG_PANEL_MAX_LINES
 from markitai.json_order import order_report, order_state
 from markitai.security import atomic_write_json
@@ -465,9 +466,14 @@ class BatchProcessor:
         self.state_file = self._get_state_file_path()
         self.report_file = self._get_report_file_path()
         self.state: BatchState | None = None
-        self.console = Console()
+        self.console = get_console()
         # Collect image analysis results for JSON aggregation
         self.image_analysis_results: list[ImageAnalysisResult] = []
+
+        # Optimization: Lock for state saving to prevent IO congestion
+        import threading
+
+        self._save_lock = threading.Lock()
 
         # Live display state (managed by start_live_display/stop_live_display)
         self._live: Live | None = None
@@ -544,11 +550,17 @@ class BatchProcessor:
             return base_path
         else:  # rename
             seq = 2
-            while True:
+            max_seq = 9999  # Safety limit to prevent infinite loop
+            while seq <= max_seq:
                 new_path = reports_dir / f"markitai.{self.task_hash}.v{seq}.report.json"
                 if not new_path.exists():
                     return new_path
                 seq += 1
+            # Fallback: use timestamp if too many versions exist
+            import time
+
+            ts = int(time.time())
+            return reports_dir / f"markitai.{self.task_hash}.{ts}.report.json"
 
     def start_live_display(
         self,
@@ -808,6 +820,7 @@ class BatchProcessor:
         Optimized with interval-based throttling:
         - Checks interval BEFORE serialization to avoid unnecessary work
         - Uses minimal serialization when possible
+        - Uses thread lock to prevent concurrent disk writes
 
         Args:
             force: Force save even if interval hasn't passed
@@ -817,27 +830,35 @@ class BatchProcessor:
             return
 
         now = datetime.now().astimezone()
-        interval = getattr(self.config, "state_flush_interval_seconds", 0) or 0
+        # Default to 5 seconds if not specified in config to prevent $O(N^2)$ IO
+        interval = getattr(self.config, "state_flush_interval_seconds", 5) or 5
 
         # Check interval BEFORE any serialization work (optimization)
-        if not force and interval > 0:
+        if not force:
             last_saved = getattr(self, "_last_state_save", None)
             if last_saved and (now - last_saved).total_seconds() < interval:
                 return  # Skip: interval not passed, no work done
 
-        self.state.updated_at = now.isoformat()
+        # Ensure only one thread is writing at a time
+        if not self._save_lock.acquire(blocking=force):
+            return  # Skip if another thread is already saving, unless forced
 
-        # Build minimal state document (only what's needed for resume)
-        state_data = self.state.to_minimal_dict()
+        try:
+            self.state.updated_at = now.isoformat()
 
-        # Ensure states directory exists
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            # Build minimal state document (only what's needed for resume)
+            state_data = self.state.to_minimal_dict()
 
-        atomic_write_json(self.state_file, state_data, order_func=order_state)
-        self._last_state_save = now
+            # Ensure states directory exists
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
-        if log:
-            logger.info(f"State file saved: {self.state_file.resolve()}")
+            atomic_write_json(self.state_file, state_data, order_func=order_state)
+            self._last_state_save = now
+
+            if log:
+                logger.info(f"State file saved: {self.state_file.resolve()}")
+        finally:
+            self._save_lock.release()
 
     def _compute_summary(self) -> dict[str, Any]:
         """Compute summary statistics for report."""

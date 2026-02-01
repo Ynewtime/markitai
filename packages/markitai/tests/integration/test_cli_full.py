@@ -431,14 +431,12 @@ class TestConcurrencyOptions:
 class TestURLFetchStrategyOptions:
     """Tests for URL fetch strategy options."""
 
-    def test_agent_browser_flag(
-        self, runner: CliRunner, sample_txt: Path, tmp_path: Path
-    ):
-        """Test --agent-browser flag is accepted."""
+    def test_playwright_flag(self, runner: CliRunner, sample_txt: Path, tmp_path: Path):
+        """Test --playwright flag is accepted."""
         output_dir = tmp_path / "output"
         result = runner.invoke(
             app,
-            [str(sample_txt), "-o", str(output_dir), "--agent-browser"],
+            [str(sample_txt), "-o", str(output_dir), "--playwright"],
         )
         assert result.exit_code == 0
 
@@ -454,11 +452,11 @@ class TestURLFetchStrategyOptions:
     def test_mutually_exclusive_fetch_strategies(
         self, runner: CliRunner, sample_txt: Path, tmp_path: Path
     ):
-        """Test --agent-browser and --jina are mutually exclusive."""
+        """Test --playwright and --jina are mutually exclusive."""
         output_dir = tmp_path / "output"
         result = runner.invoke(
             app,
-            [str(sample_txt), "-o", str(output_dir), "--agent-browser", "--jina"],
+            [str(sample_txt), "-o", str(output_dir), "--playwright", "--jina"],
         )
         assert result.exit_code != 0
         assert "mutually exclusive" in result.output.lower()
@@ -643,8 +641,7 @@ class TestCheckDepsSubcommand:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert any(
-            key in data
-            for key in ["agent-browser", "libreoffice", "rapidocr", "llm-api"]
+            key in data for key in ["playwright", "libreoffice", "rapidocr", "llm-api"]
         )
 
 

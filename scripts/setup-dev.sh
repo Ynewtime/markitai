@@ -161,89 +161,6 @@ install_precommit() {
     return 0
 }
 
-# Install agent-browser for development
-dev_install_agent_browser() {
-    print_info "Detecting Node.js..."
-
-    if ! lib_detect_node; then
-        print_warning "Skipping agent-browser installation (requires Node.js)"
-        track_install "agent-browser" "skipped"
-        return 1
-    fi
-
-    print_info "Installing agent-browser..."
-
-    # Build package spec with optional version
-    if [ -n "$AGENT_BROWSER_VERSION" ]; then
-        pkg="agent-browser@$AGENT_BROWSER_VERSION"
-        print_info "Installing version: $AGENT_BROWSER_VERSION"
-    else
-        pkg="agent-browser"
-    fi
-
-    # Try npm first, then pnpm
-    install_success=false
-    if command -v npm >/dev/null 2>&1; then
-        print_info "Installing via npm..."
-        if npm install -g "$pkg"; then
-            install_success=true
-        fi
-    fi
-
-    if [ "$install_success" = false ] && command -v pnpm >/dev/null 2>&1; then
-        print_info "Installing via pnpm..."
-        if pnpm add -g "$pkg"; then
-            install_success=true
-        fi
-    fi
-
-    if [ "$install_success" = true ]; then
-        # Verify installation
-        if ! command -v agent-browser >/dev/null 2>&1; then
-            print_warning "agent-browser installed but not in PATH"
-            print_info "You may need to add global bin to PATH:"
-            print_info "  pnpm bin -g  # or: npm config get prefix"
-            track_install "agent-browser" "installed"
-            return 1
-        fi
-
-        print_success "agent-browser installed successfully"
-        track_install "agent-browser" "installed"
-
-        # Chromium download (default: No)
-        if ask_yes_no "Download Chromium browser?" "n"; then
-            print_info "Downloading Chromium..."
-
-            os_type=$(uname -s)
-
-            if [ "$os_type" = "Linux" ]; then
-                # Linux: system dependencies (default: No)
-                if ask_yes_no "Also install system dependencies (requires sudo)?" "n"; then
-                    agent-browser install --with-deps
-                else
-                    agent-browser install
-                fi
-            else
-                agent-browser install
-            fi
-
-            print_success "Chromium download complete"
-            track_install "Chromium" "installed"
-        else
-            print_info "Skipping Chromium download"
-            print_info "You can install later: agent-browser install"
-            track_install "Chromium" "skipped"
-        fi
-
-        return 0
-    else
-        print_error "agent-browser installation failed"
-        print_info "Manual install: npm install -g agent-browser"
-        track_install "agent-browser" "failed"
-        return 1
-    fi
-}
-
 # Install Claude Code CLI
 dev_install_claude_cli() {
     print_info "Installing Claude Code CLI..."
@@ -378,41 +295,261 @@ dev_install_llm_clis() {
     return 0
 }
 
-# Install LLM provider SDKs (optional extras)
-dev_install_provider_sdks() {
+# Install Playwright browser (Chromium) and system dependencies for development
+# Uses uv run (preferred) with fallback to python module
+# Returns: 0 on success, 1 on failure, 2 if skipped
+dev_install_playwright_browser() {
+    print_info "Playwright browser (Chromium):"
+    print_info "  Purpose: Browser automation for JavaScript-rendered pages (Twitter, SPAs)"
+
     project_root=$(get_project_root)
     cd "$project_root"
 
-    print_info "Python SDKs for programmatic LLM access:"
-    print_info "  - Claude Agent SDK (requires Claude Code CLI)"
-    print_info "  - GitHub Copilot SDK (requires Copilot CLI)"
-
-    if ask_yes_no "Install Claude Agent SDK?" "n"; then
-        print_info "Installing claude-agent-sdk..."
-        if uv sync --extra claude-agent; then
-            print_success "Claude Agent SDK installed"
-            track_install "Claude Agent SDK" "installed"
-        else
-            print_warning "Claude Agent SDK installation failed"
-            track_install "Claude Agent SDK" "failed"
-        fi
-    else
-        track_install "Claude Agent SDK" "skipped"
+    # Ask user consent before downloading
+    if ! ask_yes_no "Download Chromium browser?" "y"; then
+        print_info "Skipping Playwright browser installation"
+        track_install "Playwright Browser" "skipped"
+        return 2
     fi
 
-    if ask_yes_no "Install GitHub Copilot SDK?" "n"; then
-        print_info "Installing github-copilot-sdk..."
-        if uv sync --extra copilot; then
-            print_success "GitHub Copilot SDK installed"
-            track_install "Copilot SDK" "installed"
-        else
-            print_warning "GitHub Copilot SDK installation failed"
-            track_install "Copilot SDK" "failed"
+    print_info "Downloading Chromium browser..."
+    browser_installed=false
+
+    # Prefer uv run in dev environment (uses .venv)
+    if command -v uv >/dev/null 2>&1; then
+        if uv run playwright install chromium 2>/dev/null; then
+            print_success "Chromium browser downloaded successfully"
+            browser_installed=true
         fi
-    else
-        track_install "Copilot SDK" "skipped"
     fi
+
+    # Fallback to Python module
+    if [ "$browser_installed" = false ] && [ -n "$PYTHON_CMD" ]; then
+        if "$PYTHON_CMD" -m playwright install chromium 2>/dev/null; then
+            print_success "Chromium browser downloaded successfully"
+            browser_installed=true
+        fi
+    fi
+
+    if [ "$browser_installed" = false ]; then
+        print_warning "Playwright browser installation failed"
+        print_info "You can install later with: uv run playwright install chromium"
+        track_install "Playwright Browser" "failed"
+        return 1
+    fi
+
+    # On Linux, install system dependencies (requires sudo)
+    if [ "$(uname)" = "Linux" ]; then
+        print_info "Chromium requires system dependencies on Linux"
+        if ask_yes_no "Install system dependencies (requires sudo)?" "y"; then
+            print_info "Installing system dependencies..."
+            if command -v uv >/dev/null 2>&1; then
+                if uv run playwright install-deps chromium 2>/dev/null; then
+                    print_success "System dependencies installed successfully"
+                    track_install "Playwright Browser" "installed"
+                    return 0
+                fi
+            fi
+            # Fallback to Python module
+            if [ -n "$PYTHON_CMD" ]; then
+                if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
+                    print_success "System dependencies installed successfully"
+                    track_install "Playwright Browser" "installed"
+                    return 0
+                fi
+            fi
+            print_warning "System dependencies installation failed"
+            print_info "You can install manually with: sudo playwright install-deps chromium"
+            track_install "Playwright Browser" "installed"
+            return 0
+        else
+            print_warning "Skipped system dependencies installation"
+            print_info "Chromium may not work. Install later with: sudo playwright install-deps chromium"
+            track_install "Playwright Browser" "installed"
+            return 0
+        fi
+    fi
+
+    track_install "Playwright Browser" "installed"
     return 0
+}
+
+# Install LibreOffice (optional, for legacy Office files)
+dev_install_libreoffice() {
+    print_info "Checking LibreOffice installation..."
+    print_info "  Purpose: Convert legacy Office files (.doc, .ppt, .xls)"
+
+    if command -v soffice >/dev/null 2>&1; then
+        version=$(soffice --version 2>/dev/null | head -n1)
+        print_success "LibreOffice installed: $version"
+        track_install "LibreOffice" "installed"
+        return 0
+    fi
+
+    if command -v libreoffice >/dev/null 2>&1; then
+        version=$(libreoffice --version 2>/dev/null | head -n1)
+        print_success "LibreOffice installed: $version"
+        track_install "LibreOffice" "installed"
+        return 0
+    fi
+
+    print_warning "LibreOffice not installed (optional)"
+    print_info "  Without LibreOffice, .doc/.ppt/.xls files cannot be converted"
+    print_info "  Modern formats (.docx/.pptx/.xlsx) work without LibreOffice"
+
+    if ! ask_yes_no "Install LibreOffice?" "n"; then
+        print_info "Skipping LibreOffice installation"
+        track_install "LibreOffice" "skipped"
+        return 2
+    fi
+
+    print_info "Installing LibreOffice..."
+
+    case "$(uname)" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                if brew install --cask libreoffice; then
+                    print_success "LibreOffice installed via Homebrew"
+                    track_install "LibreOffice" "installed"
+                    return 0
+                fi
+            else
+                print_error "Homebrew not found"
+                print_info "Install Homebrew first: https://brew.sh"
+            fi
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                print_info "Installing via apt (requires sudo)..."
+                if sudo apt update && sudo apt install -y libreoffice; then
+                    print_success "LibreOffice installed via apt"
+                    track_install "LibreOffice" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/fedora-release ]; then
+                print_info "Installing via dnf (requires sudo)..."
+                if sudo dnf install -y libreoffice; then
+                    print_success "LibreOffice installed via dnf"
+                    track_install "LibreOffice" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/arch-release ]; then
+                print_info "Installing via pacman (requires sudo)..."
+                if sudo pacman -S --noconfirm libreoffice-fresh; then
+                    print_success "LibreOffice installed via pacman"
+                    track_install "LibreOffice" "installed"
+                    return 0
+                fi
+            else
+                print_error "Unknown Linux distribution"
+                print_info "Please install LibreOffice manually"
+            fi
+            ;;
+    esac
+
+    print_warning "LibreOffice installation failed"
+    print_info "Manual install options:"
+    case "$(uname)" in
+        Darwin)
+            print_info "  brew install --cask libreoffice"
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                print_info "  sudo apt install libreoffice"
+            else
+                print_info "  Use your package manager to install libreoffice"
+            fi
+            ;;
+    esac
+    track_install "LibreOffice" "failed"
+    return 1
+}
+
+# Install FFmpeg (optional, for audio/video file processing)
+dev_install_ffmpeg() {
+    print_info "Checking FFmpeg installation..."
+    print_info "  Purpose: Process audio/video files (.mp3, .mp4, .wav, etc.)"
+
+    if command -v ffmpeg >/dev/null 2>&1; then
+        version=$(ffmpeg -version 2>/dev/null | head -n1)
+        print_success "FFmpeg installed: $version"
+        track_install "FFmpeg" "installed"
+        return 0
+    fi
+
+    print_warning "FFmpeg not installed (optional)"
+    print_info "  Without FFmpeg, audio/video files cannot be processed"
+
+    if ! ask_yes_no "Install FFmpeg?" "n"; then
+        print_info "Skipping FFmpeg installation"
+        track_install "FFmpeg" "skipped"
+        return 2
+    fi
+
+    print_info "Installing FFmpeg..."
+
+    case "$(uname)" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                if brew install ffmpeg; then
+                    print_success "FFmpeg installed via Homebrew"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            else
+                print_error "Homebrew not found"
+                print_info "Install Homebrew first: https://brew.sh"
+            fi
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                print_info "Installing via apt (requires sudo)..."
+                if sudo apt update && sudo apt install -y ffmpeg; then
+                    print_success "FFmpeg installed via apt"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/fedora-release ]; then
+                print_info "Installing via dnf (requires sudo)..."
+                if sudo dnf install -y ffmpeg; then
+                    print_success "FFmpeg installed via dnf"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/arch-release ]; then
+                print_info "Installing via pacman (requires sudo)..."
+                if sudo pacman -S --noconfirm ffmpeg; then
+                    print_success "FFmpeg installed via pacman"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            else
+                print_error "Unknown Linux distribution"
+                print_info "Please install FFmpeg manually"
+            fi
+            ;;
+    esac
+
+    print_warning "FFmpeg installation failed"
+    print_info "Manual install options:"
+    case "$(uname)" in
+        Darwin)
+            print_info "  brew install ffmpeg"
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                print_info "  sudo apt install ffmpeg"
+            elif [ -f /etc/fedora-release ]; then
+                print_info "  sudo dnf install ffmpeg"
+            elif [ -f /etc/arch-release ]; then
+                print_info "  sudo pacman -S ffmpeg"
+            else
+                print_info "  Use your package manager to install ffmpeg"
+            fi
+            ;;
+    esac
+    track_install "FFmpeg" "failed"
+    return 1
 }
 
 # Print completion message
@@ -448,58 +585,51 @@ main() {
     print_header "Markitai Dev Environment Setup"
 
     # Step 1: Detect Python
-    print_step 1 7 "Detecting Python..."
+    print_step 1 5 "Detecting Python..."
     if ! lib_detect_python; then
         exit 1
     fi
 
     # Step 2: Detect/install UV (required for developer edition)
-    print_step 2 7 "Detecting UV package manager..."
+    print_step 2 5 "Detecting UV package manager..."
     if ! dev_install_uv; then
         print_summary
         exit 1
     fi
 
-    # Step 3: Sync dependencies
-    print_step 3 7 "Syncing development dependencies..."
+    # Step 3: Sync dependencies (includes all extras: browser, claude-agent, copilot)
+    print_step 3 5 "Syncing development dependencies..."
     if ! sync_dependencies; then
         print_summary
         exit 1
     fi
     track_install "Python dependencies" "installed"
+    track_install "Claude Agent SDK" "installed"
+    track_install "Copilot SDK" "installed"
+
+    # Install Playwright browser (required for SPA/JS-rendered pages)
+    dev_install_playwright_browser
+
+    # Install LibreOffice (optional, for legacy Office files)
+    dev_install_libreoffice
+
+    # Install FFmpeg (optional, for audio/video files)
+    dev_install_ffmpeg
 
     # Step 4: Install pre-commit
-    print_step 4 7 "Configuring pre-commit..."
+    print_step 4 5 "Configuring pre-commit..."
     if install_precommit; then
         track_install "pre-commit hooks" "installed"
     fi
 
-    # Step 5: Optional components - agent-browser
-    print_step 5 7 "Optional: Browser automation"
-    if ask_yes_no "Install browser automation support (agent-browser)?" "n"; then
-        dev_install_agent_browser
-    else
-        print_info "Skipping agent-browser installation"
-        track_install "agent-browser" "skipped"
-    fi
-
-    # Step 6: Optional components - LLM CLI tools
-    print_step 6 7 "Optional: LLM CLI tools"
+    # Step 5: Optional components - LLM CLI tools
+    print_step 5 5 "Optional: LLM CLI tools"
     if ask_yes_no "Install LLM CLI tools (Claude Code / Copilot)?" "n"; then
         dev_install_llm_clis
     else
         print_info "Skipping LLM CLI installation"
         track_install "Claude Code CLI" "skipped"
         track_install "Copilot CLI" "skipped"
-    fi
-
-    # Step 7: Optional components - LLM provider SDKs
-    print_step 7 7 "Optional: LLM Python SDKs"
-    if ask_yes_no "Install LLM Python SDKs (claude-agent-sdk / github-copilot-sdk)?" "n"; then
-        dev_install_provider_sdks
-    else
-        print_info "Skipping LLM Python SDK installation"
-        print_info "Install later: uv sync --all-extras"
     fi
 
     # Print summary

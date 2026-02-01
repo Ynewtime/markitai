@@ -154,18 +154,12 @@ class DocumentMixin:
         cached = self._cache.get(cache_key, content)
         if cached is not None:
             self._cache_hits += 1
-            logger.debug(
-                f"[{_context_display_name(context)}] Memory cache hit for clean_markdown"
-            )
             return cached
 
         # 2. Check persistent cache (cross-session)
         cached = self._persistent_cache.get(cache_key, content, context=context)
         if cached is not None:
             self._cache_hits += 1
-            logger.debug(
-                f"[{_context_display_name(context)}] Persistent cache hit for clean_markdown"
-            )
             # Also populate in-memory cache for faster subsequent access
             self._cache.set(cache_key, content, cached)
             return cached
@@ -244,11 +238,147 @@ class DocumentMixin:
             result = result.replace(marker, original)
         return result
 
+    async def extract_from_screenshot(
+        self,
+        screenshot_path: Path,
+        context: str = "",
+        original_title: str | None = None,
+    ) -> tuple[str, str]:
+        """
+        Extract content purely from screenshot (screenshot-only mode).
+
+        This method does NOT use any pre-extracted text - it relies entirely
+        on Vision LLM to extract content from the screenshot.
+
+        Args:
+            screenshot_path: Path to full-page screenshot
+            context: Source URL/filename for logging
+            original_title: Optional title to preserve in frontmatter
+
+        Returns:
+            Tuple of (extracted_markdown, frontmatter_yaml)
+        """
+        start_time = time.perf_counter()
+
+        # Check persistent cache
+        cache_key = f"screenshot_extract:{context}"
+        cache_content = f"{screenshot_path.name}"
+        cached = self._persistent_cache.get(cache_key, cache_content, context=context)
+        if cached is not None:
+            return cached.get("cleaned_markdown", ""), cached.get(
+                "frontmatter_yaml", ""
+            )
+
+        # Use screenshot extraction prompts
+        system_prompt = self._prompt_manager.get_prompt(
+            "screenshot_extract_system",
+            source=context,
+        )
+        user_prompt = self._prompt_manager.get_prompt(
+            "screenshot_extract_user",
+        )
+
+        # Build content parts with user prompt and screenshot only
+        content_parts: list[dict] = [
+            {"type": "text", "text": user_prompt},
+        ]
+
+        # Add screenshot
+        _, base64_image = self._get_cached_image(screenshot_path)  # type: ignore[attr-defined]
+        mime_type = get_mime_type(screenshot_path.suffix)
+        content_parts.append({"type": "text", "text": "\n__MARKITAI_SCREENSHOT__"})
+        content_parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+            }
+        )
+
+        async with self.semaphore:
+            # Calculate dynamic max_tokens
+            # Build messages as dict for _calculate_dynamic_max_tokens compatibility
+            messages_dict: list[dict[str, Any]] = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content_parts},
+            ]
+            max_tokens = self._calculate_dynamic_max_tokens(  # type: ignore[attr-defined]
+                messages_dict, router=self.vision_router
+            )
+
+            # Use MD_JSON mode for structured output
+            client = instructor.from_litellm(
+                self.vision_router.acompletion, mode=instructor.Mode.MD_JSON
+            )
+            # Cast to ChatCompletionMessageParam for instructor API
+            messages = cast(list[ChatCompletionMessageParam], messages_dict)
+            response, raw_response = await cast(
+                Awaitable[tuple[EnhancedDocumentResult, Any]],
+                client.chat.completions.create_with_completion(
+                    model="default",
+                    response_model=EnhancedDocumentResult,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
+                ),
+            )
+
+            # Track usage and log completion
+            elapsed = time.perf_counter() - start_time
+            actual_model = getattr(raw_response, "model", None) or "default"
+            input_tokens = 0
+            output_tokens = 0
+            cost = 0.0
+
+            if hasattr(raw_response, "usage") and raw_response.usage is not None:
+                input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
+                output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
+                cost = get_response_cost(raw_response)
+                self._track_usage(  # type: ignore[attr-defined]
+                    actual_model,
+                    input_tokens,
+                    output_tokens,
+                    cost,
+                    context,
+                )
+
+            logger.info(
+                f"[LLM:{context}] screenshot_extract: {actual_model} "
+                f"tokens={input_tokens}+{output_tokens} "
+                f"time={int(elapsed * 1000)}ms cost=${cost:.6f}"
+            )
+
+        # Build frontmatter using utility function
+        from markitai.utils.frontmatter import (
+            build_frontmatter_dict,
+            frontmatter_to_yaml,
+        )
+
+        frontmatter_dict = build_frontmatter_dict(
+            source=context,
+            description=response.frontmatter.description,
+            tags=response.frontmatter.tags,
+            title=original_title,  # Preserve original title if provided
+            content=response.cleaned_markdown,
+        )
+        frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
+
+        # Cache result
+        cache_value = {
+            "cleaned_markdown": response.cleaned_markdown,
+            "frontmatter_yaml": frontmatter_yaml,
+        }
+        self._persistent_cache.set(
+            cache_key, cache_content, cache_value, model="vision"
+        )
+
+        return response.cleaned_markdown, frontmatter_yaml
+
     async def enhance_url_with_vision(
         self,
         content: str,
         screenshot_path: Path,
         context: str = "",
+        original_title: str | None = None,
     ) -> tuple[str, str]:
         """
         Enhance URL content using screenshot as visual reference.
@@ -262,20 +392,24 @@ class DocumentMixin:
             content: URL content (may be multi-source combined)
             screenshot_path: Path to full-page screenshot
             context: Source URL for logging
+            original_title: Optional page title from fetch result (preferred)
 
         Returns:
             Tuple of (cleaned_markdown, frontmatter_yaml)
         """
         start_time = time.perf_counter()
 
+        # Use provided title, or try to extract from content frontmatter
+        from markitai.utils.frontmatter import extract_frontmatter_title
+
+        if original_title is None:
+            original_title = extract_frontmatter_title(content)
+
         # Check persistent cache
         cache_key = f"enhance_url:{context}"
         cache_content = f"{screenshot_path.name}|{content[:1000]}"
         cached = self._persistent_cache.get(cache_key, cache_content, context=context)
         if cached is not None:
-            logger.debug(
-                f"[{context}] Persistent cache hit for enhance_url_with_vision"
-            )
             return cached.get("cleaned_markdown", content), cached.get(
                 "frontmatter_yaml", ""
             )
@@ -402,6 +536,7 @@ class DocumentMixin:
             source=context,
             description=response.frontmatter.description,
             tags=response.frontmatter.tags,
+            title=original_title,  # Preserve original title
             content=cleaned_markdown,
         )
         frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
@@ -450,9 +585,6 @@ class DocumentMixin:
         cache_content = f"{page_names}|{extracted_text[:1000]}"
         cached = self._persistent_cache.get(cache_key, cache_content, context=context)
         if cached is not None:
-            logger.debug(
-                f"[{_context_display_name(context)}] Persistent cache hit for enhance_document_with_vision"
-            )
             # Fix malformed image refs even for cached content (handles old cache entries)
             return self._fix_malformed_image_refs(cached)
 
@@ -460,10 +592,14 @@ class DocumentMixin:
         protected = self.extract_protected_content(extracted_text)
         protected_content, mapping = self._protect_content(extracted_text)
 
-        # Use separated system/user prompts to improve instruction following
-        system_prompt = self._prompt_manager.get_prompt("document_enhance_system")
+        # Use unified document_vision prompt (no metadata section for cleaning-only)
+        system_prompt = self._prompt_manager.get_prompt(
+            "document_vision_system",
+            source=context or "unknown",
+            metadata_section="",  # No metadata generation for cleaning-only
+        )
         user_prompt = self._prompt_manager.get_prompt(
-            "document_enhance_user", content=protected_content
+            "document_vision_user", content=protected_content
         )
 
         # Prepare content parts with user prompt and images
@@ -672,9 +808,6 @@ class DocumentMixin:
         cache_content = f"{page_names}|{extracted_text[:1000]}"
         cached = self._persistent_cache.get(cache_key, cache_content, context=source)
         if cached is not None:
-            logger.debug(
-                f"[{source}] Persistent cache hit for _enhance_with_frontmatter"
-            )
             # Fix malformed image refs even for cached content (handles old cache entries)
             cleaned = self._fix_malformed_image_refs(cached.get("cleaned_markdown", ""))
             return cleaned, cached.get("frontmatter_yaml", "")
@@ -685,13 +818,28 @@ class DocumentMixin:
         # Protect slide comments and images with placeholders before LLM processing
         protected_text, mapping = self._protect_content(extracted_text)
 
-        # Use separated system/user prompts to improve instruction following
+        # Metadata section to inject into unified document_vision prompt
+        metadata_section = """
+## 任务 2: 元数据生成
+
+生成以下字段：
+
+- description: 全文摘要（100字以内，简洁概括，单行）
+- tags: 相关标签数组（3-5个，用于分类和检索）
+  - **标签不能有空格** - 用连字符替代：`机器学习` 或 `machine-learning`，不是 `machine learning`
+  - 每个标签不超过30字符
+  - 示例：`AI`、`软件工程`、`web-development`、`人工智能`
+
+**输出语言必须与源文档保持一致**（英文文档→英文元数据，中文文档→中文元数据）
+"""
+        # Use unified document_vision prompt with metadata section
         system_prompt = self._prompt_manager.get_prompt(
-            "document_enhance_complete_system",
+            "document_vision_system",
             source=source,
+            metadata_section=metadata_section,
         )
         user_prompt = self._prompt_manager.get_prompt(
-            "document_enhance_complete_user",
+            "document_vision_user",
             content=protected_text,
         )
 
@@ -806,7 +954,9 @@ class DocumentMixin:
 
             return cleaned_markdown, frontmatter_yaml
 
-    def _build_fallback_frontmatter(self, source: str, content: str) -> str:
+    def _build_fallback_frontmatter(
+        self, source: str, content: str, title: str | None = None
+    ) -> str:
         """Build fallback frontmatter when LLM fails.
 
         Uses programmatic utilities to generate consistent frontmatter structure.
@@ -814,6 +964,7 @@ class DocumentMixin:
         Args:
             source: Source filename
             content: Document content for title extraction
+            title: Optional pre-extracted title to preserve
 
         Returns:
             YAML frontmatter string (without --- markers)
@@ -827,6 +978,7 @@ class DocumentMixin:
             source=source,
             description="",
             tags=[],
+            title=title,
             content=content,
         )
         return frontmatter_to_yaml(frontmatter_dict).strip()
@@ -945,6 +1097,12 @@ class DocumentMixin:
         Returns:
             Tuple of (cleaned_markdown, frontmatter_yaml)
         """
+        # Extract original title from frontmatter before processing
+        # This ensures title is preserved even if LLM clears the content
+        from markitai.utils.frontmatter import extract_frontmatter_title
+
+        original_title = extract_frontmatter_title(markdown)
+
         # Extract and protect content before LLM processing
         protected = self.extract_protected_content(markdown)
         protected_content, mapping = self._protect_content(markdown)
@@ -968,15 +1126,13 @@ class DocumentMixin:
                 source=source,
                 description=result.frontmatter.description,
                 tags=result.frontmatter.tags,
+                title=original_title,  # Preserve original title
                 content=cleaned,
             )
             frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
-            logger.debug(f"[{source}] Used combined document processing")
             return cleaned, frontmatter_yaml
-        except Exception as e:
-            logger.debug(
-                f"[{source}] Combined processing failed: {e}, using parallel fallback"
-            )
+        except Exception:
+            pass  # Fall through to fallback
 
         # Fallback: Run cleaning only (no longer use generate_frontmatter)
         # Use clean_markdown which has its own protection mechanism
@@ -988,8 +1144,8 @@ class DocumentMixin:
             )
             cleaned = markdown
 
-        # Build fallback frontmatter programmatically
-        frontmatter = self._build_fallback_frontmatter(source, cleaned)
+        # Build fallback frontmatter programmatically, preserving original title
+        frontmatter = self._build_fallback_frontmatter(source, cleaned, original_title)
 
         return cleaned, frontmatter
 
@@ -1029,16 +1185,12 @@ class DocumentMixin:
         cached = self._cache.get(cache_key, markdown)
         if cached is not None:
             self._cache_hits += 1
-            logger.debug(f"[{source}] Memory cache hit for _process_document_combined")
             return _from_cache(cached)
 
         # 2. Check persistent cache (cross-session)
         cached = self._persistent_cache.get(cache_key, markdown, context=source)
         if cached is not None:
             self._cache_hits += 1
-            logger.debug(
-                f"[{source}] Persistent cache hit for _process_document_combined"
-            )
             # Also populate in-memory cache for faster subsequent access
             self._cache.set(cache_key, markdown, cached)
             return _from_cache(cached)

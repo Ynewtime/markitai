@@ -51,6 +51,35 @@ def extract_title_from_content(content: str, fallback: str = "") -> str:
     return fallback
 
 
+def extract_frontmatter_title(content: str) -> str | None:
+    """Extract title from existing YAML frontmatter.
+
+    Args:
+        content: Markdown content with potential frontmatter
+
+    Returns:
+        Title string if found in frontmatter, None otherwise
+    """
+    if not content or not content.strip():
+        return None
+
+    # Match frontmatter block
+    frontmatter_pattern = r"^\s*---\s*\n(.*?)\n---"
+    match = re.match(frontmatter_pattern, content, flags=re.DOTALL)
+    if not match:
+        return None
+
+    try:
+        frontmatter_yaml = match.group(1)
+        data = yaml.safe_load(frontmatter_yaml)
+        if isinstance(data, dict) and "title" in data:
+            return str(data["title"])
+    except yaml.YAMLError:
+        pass
+
+    return None
+
+
 def _strip_frontmatter(content: str) -> str:
     """Remove YAML frontmatter from content.
 
@@ -101,13 +130,19 @@ def _find_heading(content: str, level: int) -> str | None:
 
 
 def _find_first_content_line(content: str) -> str | None:
-    """Find first non-empty, non-comment line.
+    """Find first non-empty, non-comment line suitable as title.
+
+    Skips lines that are not suitable for titles:
+    - Empty lines
+    - HTML comments
+    - Image-only lines (![...] or [![...])
+    - Horizontal rules (---, ***, ___)
 
     Args:
         content: Markdown content
 
     Returns:
-        First content line or None
+        First suitable content line or None
     """
     lines = content.split("\n")
 
@@ -131,7 +166,15 @@ def _find_first_content_line(content: str) -> str | None:
         if stripped.startswith("-->"):
             continue
 
-        # Found a content line
+        # Skip image-only lines (not suitable as titles)
+        if stripped.startswith("![") or stripped.startswith("[!["):
+            continue
+
+        # Skip horizontal rules
+        if stripped in ("---", "***", "___"):
+            continue
+
+        # Found a suitable content line
         return stripped
 
     return None
@@ -192,6 +235,34 @@ def build_frontmatter_dict(
         # No content, use source filename
         final_title = _filename_to_title(source)
 
+    # Normalize title: replace newlines with spaces, collapse whitespace, limit length
+    if final_title:
+        final_title = " ".join(final_title.split())
+        # Truncate to avoid YAML line-wrapping issues in parsers like Obsidian
+        if len(final_title) > 200:
+            final_title = final_title[:197] + "..."
+
+    # Normalize description: single line, limited length
+    normalized_desc = ""
+    if description:
+        normalized_desc = " ".join(description.split())
+        if len(normalized_desc) > 150:
+            normalized_desc = normalized_desc[:147] + "..."
+
+    # Normalize tags: replace spaces with hyphens, remove special chars
+    normalized_tags: list[str] = []
+    if tags:
+        for tag in tags:
+            # Collapse whitespace and replace with hyphen
+            tag = "-".join(tag.split())
+            # Remove any remaining problematic characters for YAML
+            tag = tag.replace('"', "").replace("'", "").replace(":", "-")
+            # Limit tag length
+            if len(tag) > 30:
+                tag = tag[:30]
+            if tag:  # Only add non-empty tags
+                normalized_tags.append(tag)
+
     # Generate timestamp
     timestamp = datetime.now().isoformat(timespec="seconds")
 
@@ -199,11 +270,11 @@ def build_frontmatter_dict(
     result: dict[str, Any] = OrderedDict()
     result["title"] = final_title
     result["source"] = source
-    result["description"] = description
+    result["description"] = normalized_desc
 
     # Only include tags if non-empty
-    if tags:
-        result["tags"] = tags
+    if normalized_tags:
+        result["tags"] = normalized_tags
 
     result["markitai_processed"] = timestamp
 

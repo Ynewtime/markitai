@@ -13,14 +13,14 @@ from pathlib import Path
 from typing import Any
 
 import click
-from rich.console import Console
 from rich.table import Table
 
+from markitai.cli.console import get_console
 from markitai.config import ConfigManager
 from markitai.constants import DEFAULT_CACHE_DB_FILENAME
 from markitai.llm import SQLiteCache
 
-console = Console()
+console = get_console()
 
 
 def format_size(size_bytes: int) -> str:

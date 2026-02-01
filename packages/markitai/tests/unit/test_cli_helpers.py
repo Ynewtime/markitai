@@ -106,11 +106,18 @@ class TestResolveOutputPath:
 class TestReportGeneration:
     """Tests for report generation in single file mode."""
 
-    def test_report_file_created(self, tmp_path: Path) -> None:
+    def test_report_file_created(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that report file is created for single file conversion."""
         from click.testing import CliRunner
 
+        # Isolate from global state by clearing caches
+        import markitai.fetch as fetch_module
         from markitai.cli import app
+
+        monkeypatch.setattr(fetch_module, "_jina_client", None)
+        monkeypatch.setattr(fetch_module, "_fetch_cache", None)
 
         # Create test file
         test_file = tmp_path / "test.txt"
@@ -128,7 +135,7 @@ class TestReportGeneration:
             ],
         )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 0, f"CLI failed: {result.output}"
         # Report file is now named markitai.<hash>.report.json
         reports = find_report_files(output_dir / "reports")
         assert len(reports) == 1

@@ -344,3 +344,77 @@ class SingleFileWorkflow:
             logger.error(f"Document enhancement failed: {format_error_message(e)}")
             basic_frontmatter = f"title: {source}\nsource: {source}"
             return extracted_text, basic_frontmatter, 0.0, {}
+
+    async def extract_from_screenshots(
+        self,
+        page_images: list[dict],
+        source: str = "document",
+    ) -> tuple[str, str, float, dict[str, dict[str, Any]]]:
+        """Extract content purely from page screenshots (screenshot-only mode).
+
+        This method ignores pre-extracted text and relies entirely on
+        Vision LLM to extract content from screenshots.
+
+        Args:
+            page_images: List of page image info dicts with 'path' key
+            source: Source file name for logging context
+
+        Returns:
+            Tuple of (extracted_markdown, frontmatter_yaml, cost_usd, llm_usage)
+        """
+        try:
+            # Sort images by page number
+            def get_page_num(img_info: dict) -> int:
+                return img_info.get("page", 0)
+
+            sorted_images = sorted(page_images, key=get_page_num)
+            image_paths = [Path(img["path"]) for img in sorted_images]
+
+            if not image_paths:
+                logger.warning(
+                    f"[{source}] No page images for screenshot-only extraction"
+                )
+                basic_frontmatter = f"title: {source}\nsource: {source}"
+                return "", basic_frontmatter, 0.0, {}
+
+            # Use the screenshot extraction method for each page
+            # For documents with multiple pages, we extract each page and merge
+            all_content = []
+            for i, image_path in enumerate(image_paths, 1):
+                page_source = f"{source}:page{i}"
+                cleaned, _ = await self.processor.extract_from_screenshot(
+                    image_path, context=page_source
+                )
+                if cleaned.strip():
+                    all_content.append(f"<!-- Page {i} -->\n\n{cleaned}")
+
+            # Merge all page content
+            merged_content = "\n\n".join(all_content)
+
+            # Generate frontmatter for the merged content
+            from markitai.utils.frontmatter import (
+                build_frontmatter_dict,
+                frontmatter_to_yaml,
+            )
+
+            frontmatter_dict = build_frontmatter_dict(
+                source=source,
+                description="",  # Will be empty, could be enhanced
+                tags=[],
+                content=merged_content,
+            )
+            frontmatter = frontmatter_to_yaml(frontmatter_dict).strip()
+
+            return (
+                merged_content,
+                frontmatter,
+                self.processor.get_context_cost(source),
+                self.processor.get_context_usage(source),
+            )
+
+        except Exception as e:
+            logger.error(
+                f"Screenshot-only extraction failed: {format_error_message(e)}"
+            )
+            basic_frontmatter = f"title: {source}\nsource: {source}"
+            return "", basic_frontmatter, 0.0, {}
