@@ -92,6 +92,9 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
     Supports multimodal input (text and images) via streaming input.
     """
 
+    # Threshold for enabling prompt caching (~1024 tokens ≈ 4096 chars)
+    _CACHE_THRESHOLD_CHARS: int = 4096
+
     def __init__(self, timeout: int = 120) -> None:
         """Initialize the provider.
 
@@ -118,6 +121,48 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
                     if isinstance(part, dict) and part.get("type") == "image_url":
                         return True
         return False
+
+    def _add_cache_control(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Add cache_control to eligible messages for prompt caching.
+
+        Anthropic's prompt caching caches content marked with cache_control.
+        We add it to long system prompts to reduce compute costs.
+
+        Args:
+            messages: OpenAI-style messages
+
+        Returns:
+            Messages with cache_control added where beneficial
+        """
+        result = []
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+
+            # Only cache long system messages
+            if role == "system" and isinstance(content, str):
+                if len(content) >= self._CACHE_THRESHOLD_CHARS:
+                    # Convert to content blocks format with cache_control
+                    result.append(
+                        {
+                            "role": "system",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": content,
+                                    "cache_control": {"type": "ephemeral"},
+                                }
+                            ],
+                        }
+                    )
+                    continue
+
+            result.append(msg.copy())
+
+        return result
 
     def _calculate_adaptive_timeout(self, messages: list[dict[str, Any]]) -> int:
         """Calculate adaptive timeout based on message content.
@@ -398,6 +443,9 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
 
         # Extract model name from provider prefix
         model_name = model.replace("claude-agent/", "")
+
+        # Add cache_control to eligible messages for prompt caching
+        messages = self._add_cache_control(messages)
 
         # Check if messages contain images
         has_images = self._has_images(messages)
