@@ -42,6 +42,29 @@ from markitai.constants import (
     LOCAL_PROVIDER_DEFAULT_MODEL_INFO,
 )
 
+# Import auth module for public API
+from markitai.providers.auth import (
+    AuthManager,
+    AuthStatus,
+    get_auth_resolution_hint,
+)
+
+# Import error classes for public API
+from markitai.providers.errors import (
+    AuthenticationError,
+    ProviderError,
+    ProviderTimeoutError,
+    QuotaError,
+    SDKNotAvailableError,
+)
+
+# Import timeout module for public API
+from markitai.providers.timeout import (
+    TimeoutConfig,
+    calculate_timeout,
+    calculate_timeout_from_messages,
+)
+
 if TYPE_CHECKING:
     from litellm.llms.custom_llm import CustomLLM
 
@@ -341,7 +364,7 @@ def validate_local_provider_deps(models: list[str]) -> list[str]:
         if not importlib.util.find_spec("claude_agent_sdk"):
             warnings.append(
                 "⚠️  claude-agent/ models require Claude Agent SDK."
-                "\n   Install: pip install claude-agent-sdk"
+                "\n   Install: uv add claude-agent-sdk"
             )
         elif not shutil.which("claude"):
             warnings.append(
@@ -356,7 +379,7 @@ def validate_local_provider_deps(models: list[str]) -> list[str]:
         if not importlib.util.find_spec("copilot"):
             warnings.append(
                 "⚠️  copilot/ models require GitHub Copilot SDK."
-                "\n   Install: pip install github-copilot-sdk"
+                "\n   Install: uv add github-copilot-sdk"
             )
         elif not shutil.which("copilot"):
             warnings.append(
@@ -634,6 +657,7 @@ def get_local_provider_model_info(model: str) -> dict[str, int | bool] | None:
 
 
 __all__ = [
+    # Core provider functions
     "register_providers",
     "validate_local_provider_deps",
     "check_deprecated_models",
@@ -645,4 +669,18 @@ __all__ = [
     "count_tokens",
     "calculate_copilot_cost",
     "CopilotCostResult",
+    # Error classes
+    "ProviderError",
+    "AuthenticationError",
+    "QuotaError",
+    "ProviderTimeoutError",
+    "SDKNotAvailableError",
+    # Auth module
+    "AuthManager",
+    "AuthStatus",
+    "get_auth_resolution_hint",
+    # Timeout module
+    "TimeoutConfig",
+    "calculate_timeout",
+    "calculate_timeout_from_messages",
 ]
