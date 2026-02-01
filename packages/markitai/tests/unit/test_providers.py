@@ -1110,3 +1110,165 @@ class TestCopilotAdaptiveTimeout:
         timeout = provider._calculate_adaptive_timeout(messages)
 
         assert timeout >= 60
+
+
+class TestClaudeAgentPromptCaching:
+    """Tests for ClaudeAgentProvider prompt caching support."""
+
+    def test_cache_threshold_constant_defined(self) -> None:
+        """Test that _CACHE_THRESHOLD_CHARS constant is defined."""
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        assert hasattr(ClaudeAgentProvider, "_CACHE_THRESHOLD_CHARS")
+        assert ClaudeAgentProvider._CACHE_THRESHOLD_CHARS == 4096
+
+    def test_add_cache_control_method_exists(self) -> None:
+        """Test that _add_cache_control method exists."""
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+        assert hasattr(provider, "_add_cache_control")
+        assert callable(provider._add_cache_control)
+
+    def test_long_system_prompt_gets_cache_control(self) -> None:
+        """Test that long system prompts get cache_control added."""
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        # Create a long system prompt (>= 4096 chars)
+        long_system_content = "x" * 5000
+        messages = [
+            {"role": "system", "content": long_system_content},
+            {"role": "user", "content": "Hello!"},
+        ]
+
+        result = provider._add_cache_control(messages)
+
+        # System message should be converted to content blocks format
+        assert result[0]["role"] == "system"
+        assert isinstance(result[0]["content"], list)
+        assert len(result[0]["content"]) == 1
+        assert result[0]["content"][0]["type"] == "text"
+        assert result[0]["content"][0]["text"] == long_system_content
+        assert result[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+        # User message should be unchanged
+        assert result[1]["role"] == "user"
+        assert result[1]["content"] == "Hello!"
+
+    def test_short_system_prompt_not_modified(self) -> None:
+        """Test that short system prompts are not modified."""
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        # Create a short system prompt (< 4096 chars)
+        short_system_content = "You are a helpful assistant."
+        messages = [
+            {"role": "system", "content": short_system_content},
+            {"role": "user", "content": "Hello!"},
+        ]
+
+        result = provider._add_cache_control(messages)
+
+        # System message should remain as string content
+        assert result[0]["role"] == "system"
+        assert result[0]["content"] == short_system_content
+
+        # User message should be unchanged
+        assert result[1]["role"] == "user"
+        assert result[1]["content"] == "Hello!"
+
+    def test_non_system_messages_not_modified(self) -> None:
+        """Test that non-system messages are not modified."""
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        # Create a long user message
+        long_user_content = "x" * 5000
+        messages = [
+            {"role": "user", "content": long_user_content},
+            {"role": "assistant", "content": "y" * 5000},
+        ]
+
+        result = provider._add_cache_control(messages)
+
+        # Both messages should remain unchanged (as copies)
+        assert result[0]["role"] == "user"
+        assert result[0]["content"] == long_user_content
+        assert result[1]["role"] == "assistant"
+        assert result[1]["content"] == "y" * 5000
+
+    def test_exact_threshold_gets_cache_control(self) -> None:
+        """Test that content exactly at threshold gets cache_control."""
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        # Create content exactly at threshold
+        exact_content = "x" * 4096
+        messages = [{"role": "system", "content": exact_content}]
+
+        result = provider._add_cache_control(messages)
+
+        # Should get cache_control
+        assert isinstance(result[0]["content"], list)
+        assert result[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_just_below_threshold_not_modified(self) -> None:
+        """Test that content just below threshold is not modified."""
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        # Create content just below threshold
+        below_content = "x" * 4095
+        messages = [{"role": "system", "content": below_content}]
+
+        result = provider._add_cache_control(messages)
+
+        # Should NOT get cache_control
+        assert result[0]["content"] == below_content
+
+    def test_non_string_system_content_not_modified(self) -> None:
+        """Test that system messages with non-string content are not modified."""
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        # System message with list content (already in content blocks format)
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": "x" * 5000}],
+            }
+        ]
+
+        result = provider._add_cache_control(messages)
+
+        # Should be copied but not modified (content is not a string)
+        assert result[0]["content"] == messages[0]["content"]
+
+    def test_original_messages_not_mutated(self) -> None:
+        """Test that original messages list is not mutated."""
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        long_content = "x" * 5000
+        messages = [
+            {"role": "system", "content": long_content},
+            {"role": "user", "content": "Hello!"},
+        ]
+
+        # Store original references
+        original_system = messages[0].copy()
+        original_user = messages[1].copy()
+
+        provider._add_cache_control(messages)
+
+        # Original messages should not be modified
+        assert messages[0] == original_system
+        assert messages[1] == original_user
