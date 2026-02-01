@@ -74,25 +74,31 @@ function Main {
         exit 1
     }
 
-    # Step 4: Optional - agent-browser
-    Write-Step 4 5 "Optional: Browser automation"
-    if (Ask-YesNo "Install browser automation support (agent-browser)?" $false) {
-        Install-AgentBrowser | Out-Null
-    } else {
-        Write-Info "Skipping agent-browser installation"
-        Track-Install -Component "agent-browser" -Status "skipped"
-    }
+    # Install Playwright browser (required for SPA/JS-rendered pages)
+    Install-PlaywrightBrowser | Out-Null
 
-    # Step 5: Optional - LLM CLI tools
-    Write-Step 5 5 "Optional: LLM CLI tools"
+    # Install LibreOffice (optional, for legacy Office files)
+    Install-LibreOffice | Out-Null
+
+    # Detect FFmpeg (optional, for audio/video files)
+    Install-FFmpeg | Out-Null
+
+    # Step 4: Optional - LLM CLI tools
+    Write-Step 4 5 "Optional: LLM CLI tools"
     Write-Info "LLM CLI tools provide local authentication for AI providers"
     if (Ask-YesNo "Install Claude Code CLI?" $false) {
-        Install-ClaudeCLI | Out-Null
+        if (Install-ClaudeCLI) {
+            # Install Claude Agent SDK for programmatic access
+            Install-MarkitaiExtra -ExtraName "claude-agent" | Out-Null
+        }
     } else {
         Track-Install -Component "Claude Code CLI" -Status "skipped"
     }
     if (Ask-YesNo "Install GitHub Copilot CLI?" $false) {
-        Install-CopilotCLI | Out-Null
+        if (Install-CopilotCLI) {
+            # Install Copilot SDK for programmatic access
+            Install-MarkitaiExtra -ExtraName "copilot" | Out-Null
+        }
     } else {
         Track-Install -Component "Copilot CLI" -Status "skipped"
     }

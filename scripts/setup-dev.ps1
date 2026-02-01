@@ -172,148 +172,6 @@ function Install-PreCommit {
     }
 }
 
-# Helper function to run agent-browser command (Dev version)
-# Works around npm shim issues on Windows (both .ps1 and .cmd reference /bin/sh)
-# See: https://github.com/vercel-labs/agent-browser/issues/262
-function Invoke-AgentBrowserDev {
-    param([string[]]$Arguments)
-
-    $npmPrefix = & npm config get prefix 2>$null
-    if ($npmPrefix) {
-        $npmPrefix = $npmPrefix.Trim()
-
-        # Try native Windows binary first (most reliable)
-        $nativeBinPath = Join-Path $npmPrefix "node_modules\agent-browser\bin\agent-browser-win32-x64.exe"
-        if (Test-Path $nativeBinPath) {
-            & $nativeBinPath @Arguments
-            return $LASTEXITCODE
-        }
-    }
-
-    # Fallback: try global node_modules path
-    $globalRoot = & npm root -g 2>$null
-    if ($globalRoot) {
-        $globalRoot = $globalRoot.Trim()
-
-        # Try native binary in global node_modules
-        $nativeBinPath = Join-Path $globalRoot "agent-browser\bin\agent-browser-win32-x64.exe"
-        if (Test-Path $nativeBinPath) {
-            & $nativeBinPath @Arguments
-            return $LASTEXITCODE
-        }
-
-        # Fallback: run via node
-        $jsPath = Join-Path $globalRoot "agent-browser\bin\agent-browser.js"
-        if (Test-Path $jsPath) {
-            & node $jsPath @Arguments
-            return $LASTEXITCODE
-        }
-    }
-
-    # Last resort: try the command directly (will likely fail due to shim bug)
-    & agent-browser @Arguments
-    return $LASTEXITCODE
-}
-
-function Install-AgentBrowserDev {
-    if (-not (Test-NodeJS)) {
-        Write-Warning2 "Skipping agent-browser installation (requires Node.js)"
-        Track-Install -Component "agent-browser" -Status "skipped"
-        return $false
-    }
-
-    Write-Info "Installing agent-browser..."
-
-    # Build package spec with optional version
-    if ($script:AgentBrowserVersion) {
-        $pkg = "agent-browser@$($script:AgentBrowserVersion)"
-        Write-Info "Installing version: $($script:AgentBrowserVersion)"
-    } else {
-        $pkg = "agent-browser"
-    }
-
-    # Try npm first, then pnpm
-    $installSuccess = $false
-    $npmExists = Get-Command npm -ErrorAction SilentlyContinue
-    $pnpmExists = Get-Command pnpm -ErrorAction SilentlyContinue
-
-    if ($npmExists) {
-        Write-Info "Installing via npm..."
-        try {
-            & npm install -g $pkg
-            if ($LASTEXITCODE -eq 0) {
-                $installSuccess = $true
-            }
-        } catch {
-            Write-Warning2 "npm installation failed, trying pnpm..."
-        }
-    }
-
-    if (-not $installSuccess -and $pnpmExists) {
-        Write-Info "Installing via pnpm..."
-        try {
-            & pnpm add -g $pkg
-            if ($LASTEXITCODE -eq 0) {
-                $installSuccess = $true
-            }
-        } catch {
-            Write-Error2 "pnpm installation failed: $_"
-        }
-    }
-
-    if ($installSuccess) {
-        # Verify installation - check for native binary or node_modules
-        $abExists = Get-Command agent-browser -ErrorAction SilentlyContinue
-        $nativeBinExists = $false
-
-        $npmPrefix = & npm config get prefix 2>$null
-        if ($npmPrefix) {
-            $npmPrefix = $npmPrefix.Trim()
-            $nativeBinPath = Join-Path $npmPrefix "node_modules\agent-browser\bin\agent-browser-win32-x64.exe"
-            $nativeBinExists = Test-Path $nativeBinPath
-        }
-
-        if (-not $nativeBinExists) {
-            # Also check global node_modules
-            $globalRoot = & npm root -g 2>$null
-            if ($globalRoot) {
-                $globalRoot = $globalRoot.Trim()
-                $nativeBinPath = Join-Path $globalRoot "agent-browser\bin\agent-browser-win32-x64.exe"
-                $nativeBinExists = Test-Path $nativeBinPath
-            }
-        }
-
-        if (-not $abExists -and -not $nativeBinExists) {
-            Write-Warning2 "agent-browser installed but not in PATH"
-            Write-Info "You may need to add global bin to PATH:"
-            Write-Info "  pnpm bin -g  # or: npm config get prefix"
-            Track-Install -Component "agent-browser" -Status "installed"
-            return $false
-        }
-
-        Write-Success "agent-browser installed successfully"
-        Track-Install -Component "agent-browser" -Status "installed"
-
-        # Chromium download (default: No)
-        if (Ask-YesNo "Download Chromium browser?" $false) {
-            Write-Info "Downloading Chromium..."
-            $null = Invoke-AgentBrowserDev -Arguments @("install")
-            Write-Success "Chromium download complete"
-            Track-Install -Component "Chromium" -Status "installed"
-        } else {
-            Write-Info "Skipping Chromium download"
-            Write-Info "You can install later: agent-browser install"
-            Track-Install -Component "Chromium" -Status "skipped"
-        }
-
-        return $true
-    }
-
-    Write-Info "Manual install: npm install -g agent-browser"
-    Track-Install -Component "agent-browser" -Status "failed"
-    return $false
-}
-
 # Install Claude Code CLI
 function Install-ClaudeCLI {
     Write-Info "Installing Claude Code CLI..."
@@ -450,46 +308,223 @@ function Install-LLMCLIs {
     }
 }
 
-# Install LLM provider SDKs
-function Install-ProviderSDKs {
+# Install Playwright browser (Chromium) for development
+# Uses uv run (preferred) with fallback to python module
+# Returns: $true on success, $false on failure/skip
+function Install-PlaywrightBrowserDev {
+    Write-Info "Playwright browser (Chromium):"
+    Write-Info "  Purpose: Browser automation for JavaScript-rendered pages (Twitter, SPAs)"
+
+    # Ask user consent before downloading
+    if (-not (Ask-YesNo "Download Chromium browser?" $true)) {
+        Write-Info "Skipping Playwright browser installation"
+        Track-Install -Component "Playwright Browser" -Status "skipped"
+        return $false
+    }
+
+    Write-Info "Downloading Chromium browser..."
+
     $projectRoot = Get-ProjectRoot
     Push-Location $projectRoot
 
-    try {
-        Write-Info "Python SDKs for programmatic LLM access:"
-        Write-Info "  - Claude Agent SDK (requires Claude Code CLI)"
-        Write-Info "  - GitHub Copilot SDK (requires Copilot CLI)"
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
 
-        if (Ask-YesNo "Install Claude Agent SDK?" $false) {
-            Write-Info "Installing claude-agent-sdk..."
-            & uv sync --extra claude-agent
+    try {
+        # Prefer uv run in dev environment
+        $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+        if ($uvCmd) {
+            & uv run playwright install chromium 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
-                Write-Success "Claude Agent SDK installed"
-                Track-Install -Component "Claude Agent SDK" -Status "installed"
-            } else {
-                Write-Warning2 "Claude Agent SDK installation failed"
-                Track-Install -Component "Claude Agent SDK" -Status "failed"
+                $ErrorActionPreference = $oldErrorAction
+                Write-Success "Chromium browser installed successfully"
+                Track-Install -Component "Playwright Browser" -Status "installed"
+                return $true
             }
-        } else {
-            Track-Install -Component "Claude Agent SDK" -Status "skipped"
         }
 
-        if (Ask-YesNo "Install GitHub Copilot SDK?" $false) {
-            Write-Info "Installing github-copilot-sdk..."
-            & uv sync --extra copilot
+        # Fallback to Python module
+        if ($script:PYTHON_CMD) {
+            $cmdParts = $script:PYTHON_CMD -split " "
+            $exe = $cmdParts[0]
+            $baseArgs = if ($cmdParts.Length -gt 1) { $cmdParts[1..($cmdParts.Length-1)] } else { @() }
+            $pwArgs = $baseArgs + @("-m", "playwright", "install", "chromium")
+
+            & $exe @pwArgs 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
-                Write-Success "GitHub Copilot SDK installed"
-                Track-Install -Component "Copilot SDK" -Status "installed"
-            } else {
-                Write-Warning2 "GitHub Copilot SDK installation failed"
-                Track-Install -Component "Copilot SDK" -Status "failed"
+                $ErrorActionPreference = $oldErrorAction
+                Write-Success "Chromium browser installed successfully"
+                Track-Install -Component "Playwright Browser" -Status "installed"
+                return $true
             }
-        } else {
-            Track-Install -Component "Copilot SDK" -Status "skipped"
         }
     } finally {
         Pop-Location
+        $ErrorActionPreference = $oldErrorAction
     }
+
+    Write-Warning2 "Playwright browser installation failed"
+    Write-Info "You can install later with: uv run playwright install chromium"
+    Track-Install -Component "Playwright Browser" -Status "failed"
+    return $false
+}
+
+# Detect LibreOffice installation (for legacy Office files)
+function Install-LibreOfficeDev {
+    Write-Info "Checking LibreOffice installation..."
+    Write-Info "  Purpose: Convert legacy Office files (.doc, .ppt, .xls)"
+
+    $soffice = Get-Command soffice -ErrorAction SilentlyContinue
+    if ($soffice) {
+        try {
+            $version = & soffice --version 2>&1 | Select-Object -First 1
+            Write-Success "LibreOffice installed: $version"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        } catch {}
+    }
+
+    $commonPaths = @(
+        "${env:ProgramFiles}\LibreOffice\program\soffice.exe",
+        "${env:ProgramFiles(x86)}\LibreOffice\program\soffice.exe"
+    )
+
+    foreach ($path in $commonPaths) {
+        if (Test-Path $path) {
+            Write-Success "LibreOffice found at: $path"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        }
+    }
+
+    Write-Warning2 "LibreOffice not installed (optional)"
+    Write-Info "  Without LibreOffice, .doc/.ppt/.xls files cannot be converted"
+    Write-Info "  Modern formats (.docx/.pptx/.xlsx) work without LibreOffice"
+
+    if (-not (Ask-YesNo "Install LibreOffice?" $false)) {
+        Write-Info "Skipping LibreOffice installation"
+        Track-Install -Component "LibreOffice" -Status "skipped"
+        return $false
+    }
+
+    Write-Info "Installing LibreOffice..."
+
+    # Priority: winget > scoop > choco
+    # Try WinGet first
+    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wingetCmd) {
+        Write-Info "Installing via WinGet..."
+        & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "LibreOffice installed via WinGet"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        }
+    }
+
+    # Try Scoop as second option
+    $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
+    if ($scoopCmd) {
+        Write-Info "Installing via Scoop..."
+        & scoop bucket add extras 2>$null
+        & scoop install extras/libreoffice
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "LibreOffice installed via Scoop"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        }
+    }
+
+    # Try Chocolatey as last fallback
+    $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
+    if ($chocoCmd) {
+        Write-Info "Installing via Chocolatey..."
+        & choco install libreoffice-fresh -y
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "LibreOffice installed via Chocolatey"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        }
+    }
+
+    Write-Warning2 "LibreOffice installation failed"
+    Write-Info "Manual install options:"
+    Write-Info "  winget: winget install TheDocumentFoundation.LibreOffice"
+    Write-Info "  scoop: scoop install extras/libreoffice"
+    Write-Info "  choco: choco install libreoffice-fresh"
+    Write-Info "  Download: https://www.libreoffice.org/download/"
+    Track-Install -Component "LibreOffice" -Status "failed"
+    return $false
+}
+
+# Install FFmpeg (optional, for audio/video file processing)
+function Install-FFmpegDev {
+    Write-Info "Checking FFmpeg installation..."
+    Write-Info "  Purpose: Process audio/video files (.mp3, .mp4, .wav, etc.)"
+
+    $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    if ($ffmpegCmd) {
+        try {
+            $version = & ffmpeg -version 2>&1 | Select-Object -First 1
+            Write-Success "FFmpeg installed: $version"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        } catch {}
+    }
+
+    Write-Warning2 "FFmpeg not installed (optional)"
+    Write-Info "  Without FFmpeg, audio/video files cannot be processed"
+
+    if (-not (Ask-YesNo "Install FFmpeg?" $false)) {
+        Write-Info "Skipping FFmpeg installation"
+        Track-Install -Component "FFmpeg" -Status "skipped"
+        return $false
+    }
+
+    Write-Info "Installing FFmpeg..."
+
+    # Priority: winget > scoop > choco
+    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wingetCmd) {
+        Write-Info "Installing via WinGet..."
+        & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "FFmpeg installed via WinGet"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        }
+    }
+
+    $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
+    if ($scoopCmd) {
+        Write-Info "Installing via Scoop..."
+        & scoop install ffmpeg
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "FFmpeg installed via Scoop"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        }
+    }
+
+    $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
+    if ($chocoCmd) {
+        Write-Info "Installing via Chocolatey..."
+        & choco install ffmpeg -y
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "FFmpeg installed via Chocolatey"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        }
+    }
+
+    Write-Warning2 "FFmpeg installation failed"
+    Write-Info "Manual install options:"
+    Write-Info "  winget: winget install Gyan.FFmpeg"
+    Write-Info "  scoop: scoop install ffmpeg"
+    Write-Info "  choco: choco install ffmpeg"
+    Write-Info "  Download: https://ffmpeg.org/download.html"
+    Track-Install -Component "FFmpeg" -Status "failed"
+    return $false
 }
 
 function Write-CompletionDev {
@@ -532,57 +567,50 @@ function Main {
     Write-Header "Markitai Dev Environment Setup"
 
     # Step 1: Detect Python
-    Write-Step 1 7 "Detecting Python..."
+    Write-Step 1 5 "Detecting Python..."
     if (-not (Test-Python)) {
         exit 1
     }
 
     # Step 2: Detect/install UV (required for developer edition)
-    Write-Step 2 7 "Detecting UV package manager..."
+    Write-Step 2 5 "Detecting UV package manager..."
     if (-not (Install-UVDev)) {
         Write-Summary
         exit 1
     }
 
-    # Step 3: Sync dependencies
-    Write-Step 3 7 "Syncing development dependencies..."
+    # Step 3: Sync dependencies (includes all extras: browser, claude-agent, copilot)
+    Write-Step 3 5 "Syncing development dependencies..."
     if (-not (Sync-Dependencies)) {
         Write-Summary
         exit 1
     }
     Track-Install -Component "Python dependencies" -Status "installed"
+    Track-Install -Component "Claude Agent SDK" -Status "installed"
+    Track-Install -Component "Copilot SDK" -Status "installed"
+
+    # Install Playwright browser (required for SPA/JS-rendered pages)
+    Install-PlaywrightBrowserDev | Out-Null
+
+    # Install LibreOffice (optional, for legacy Office files)
+    Install-LibreOfficeDev | Out-Null
+
+    # Install FFmpeg (optional, for audio/video files)
+    Install-FFmpegDev | Out-Null
 
     # Step 4: Install pre-commit
-    Write-Step 4 7 "Configuring pre-commit..."
+    Write-Step 4 5 "Configuring pre-commit..."
     Install-PreCommit
     Track-Install -Component "pre-commit hooks" -Status "installed"
 
-    # Step 5: Optional - agent-browser
-    Write-Step 5 7 "Optional: Browser automation"
-    if (Ask-YesNo "Install browser automation support (agent-browser)?" $false) {
-        Install-AgentBrowserDev | Out-Null
-    } else {
-        Write-Info "Skipping agent-browser installation"
-        Track-Install -Component "agent-browser" -Status "skipped"
-    }
-
-    # Step 6: Optional - LLM CLI tools
-    Write-Step 6 7 "Optional: LLM CLI tools"
+    # Step 5: Optional - LLM CLI tools
+    Write-Step 5 5 "Optional: LLM CLI tools"
     if (Ask-YesNo "Install LLM CLI tools (Claude Code / Copilot)?" $false) {
         Install-LLMCLIs
     } else {
         Write-Info "Skipping LLM CLI installation"
         Track-Install -Component "Claude Code CLI" -Status "skipped"
         Track-Install -Component "Copilot CLI" -Status "skipped"
-    }
-
-    # Step 7: Optional - LLM Python SDKs
-    Write-Step 7 7 "Optional: LLM Python SDKs"
-    if (Ask-YesNo "Install LLM Python SDKs (claude-agent-sdk / github-copilot-sdk)?" $false) {
-        Install-ProviderSDKs
-    } else {
-        Write-Info "Skipping LLM Python SDK installation"
-        Write-Info "Install later: uv sync --all-extras"
     }
 
     # Print summary

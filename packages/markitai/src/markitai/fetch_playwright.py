@@ -20,10 +20,8 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
 from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -101,62 +99,63 @@ class PlaywrightFetchResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-async def fetch_with_playwright(
-    url: str,
-    timeout: int = 30000,
-    wait_for: str = "domcontentloaded",
-    extra_wait_ms: int = 3000,
-    proxy: str | None = None,
-    screenshot_config: ScreenshotConfig | None = None,
-    output_dir: Path | None = None,
-) -> PlaywrightFetchResult:
-    """Fetch URL using Playwright headless browser.
+class PlaywrightRenderer:
+    """Reusable Playwright renderer to avoid browser cold starts."""
 
-    Args:
-        url: URL to fetch
-        timeout: Page load timeout in milliseconds
-        wait_for: Wait condition (load, domcontentloaded, networkidle)
-        extra_wait_ms: Extra wait after load state for JS rendering
-        proxy: Proxy URL (e.g., http://127.0.0.1:7890)
-        screenshot_config: Screenshot settings
-        output_dir: Directory for screenshots
+    def __init__(self, proxy: str | None = None) -> None:
+        self.proxy = proxy
+        self._playwright: Any = None
+        self._browser: Any = None
+        self._lock = asyncio.Lock()
 
-    Returns:
-        PlaywrightFetchResult with markdown content
+    async def __aenter__(self) -> PlaywrightRenderer:
+        return self
 
-    Raises:
-        ImportError: If playwright is not installed
-        RuntimeError: If browser is not installed or launch fails
-    """
-    if not is_playwright_available():
-        raise ImportError(
-            "playwright is not installed. "
-            "Install with: pip install playwright && playwright install chromium"
-        )
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.close()
 
-    from playwright.async_api import async_playwright
+    async def _ensure_browser(self) -> Any:
+        if self._browser is not None:
+            return self._browser
 
-    async with async_playwright() as p:
-        # Configure browser launch options
-        launch_options: dict[str, Any] = {
-            "headless": True,
-        }
+        from playwright.async_api import async_playwright
 
-        if proxy:
-            launch_options["proxy"] = {"server": proxy}
+        async with self._lock:
+            if self._browser is not None:
+                return self._browser
 
+            self._playwright = await async_playwright().start()
+            launch_options: dict[str, Any] = {"headless": True}
+            if self.proxy:
+                launch_options["proxy"] = {"server": self.proxy}
+
+            try:
+                self._browser = await self._playwright.chromium.launch(**launch_options)
+            except Exception as e:
+                await self._playwright.stop()
+                self._playwright = None
+                raise RuntimeError(
+                    f"Failed to launch Chromium browser: {e}. "
+                    "Install browser with: uv run playwright install chromium "
+                    "(Linux: also run 'uv run playwright install-deps chromium')"
+                )
+            return self._browser
+
+    async def fetch(
+        self,
+        url: str,
+        timeout: int = 30000,
+        wait_for: str = "domcontentloaded",
+        extra_wait_ms: int = 3000,
+        screenshot_config: ScreenshotConfig | None = None,
+        output_dir: Path | None = None,
+    ) -> PlaywrightFetchResult:
+        """Fetch URL using a persistent browser instance."""
+        browser = await self._ensure_browser()
+        context = await browser.new_context()
         try:
-            browser = await p.chromium.launch(**launch_options)
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to launch Chromium browser: {e}. "
-                "Install browser with: playwright install chromium"
-            )
+            page = await context.new_page()
 
-        try:
-            page = await browser.new_page()
-
-            # Navigate to URL
             # Map wait_for string to Playwright's literal type
             wait_until_map = {
                 "load": "load",
@@ -165,24 +164,28 @@ async def fetch_with_playwright(
             }
             wait_until = wait_until_map.get(wait_for, "domcontentloaded")
 
-            await page.goto(url, timeout=timeout, wait_until=wait_until)  # type: ignore[arg-type]
+            await page.goto(url, timeout=timeout, wait_until=wait_until)
 
-            # Extra wait for JS rendering
             if extra_wait_ms > 0:
                 await asyncio.sleep(extra_wait_ms / 1000)
 
-            # Get page info
             title = await page.title()
             final_url = page.url
-
-            # Get page content as HTML and convert to markdown
             html_content = await page.content()
             markdown_content = _html_to_markdown(html_content)
 
-            # Capture screenshot if requested
+            if _is_content_incomplete(markdown_content):
+                try:
+                    rendered_text = await page.inner_text("body")
+                    if rendered_text and len(rendered_text.strip()) > len(
+                        markdown_content.strip()
+                    ):
+                        markdown_content = _format_inner_text(rendered_text)
+                except Exception:
+                    pass
+
             screenshot_path = None
             if screenshot_config and output_dir:
-                # Check if screenshot is enabled (handle both attribute and dict access)
                 enabled = getattr(screenshot_config, "enabled", True)
                 if enabled:
                     screenshot_path = await _capture_screenshot(
@@ -197,7 +200,112 @@ async def fetch_with_playwright(
                 metadata={"renderer": "playwright", "wait_for": wait_for},
             )
         finally:
-            await browser.close()
+            await context.close()
+
+    async def close(self) -> None:
+        """Close browser and playwright instances."""
+        async with self._lock:
+            if self._browser:
+                await self._browser.close()
+                self._browser = None
+            if self._playwright:
+                await self._playwright.stop()
+                self._playwright = None
+
+
+async def fetch_with_playwright(
+    url: str,
+    timeout: int = 30000,
+    wait_for: str = "domcontentloaded",
+    extra_wait_ms: int = 3000,
+    proxy: str | None = None,
+    screenshot_config: ScreenshotConfig | None = None,
+    output_dir: Path | None = None,
+    renderer: PlaywrightRenderer | None = None,
+) -> PlaywrightFetchResult:
+    """Fetch URL using Playwright (reuses renderer if provided)."""
+    if renderer:
+        return await renderer.fetch(
+            url,
+            timeout=timeout,
+            wait_for=wait_for,
+            extra_wait_ms=extra_wait_ms,
+            screenshot_config=screenshot_config,
+            output_dir=output_dir,
+        )
+
+    # Legacy one-off path
+    async with PlaywrightRenderer(proxy=proxy) as standalone_renderer:
+        return await standalone_renderer.fetch(
+            url,
+            timeout=timeout,
+            wait_for=wait_for,
+            extra_wait_ms=extra_wait_ms,
+            screenshot_config=screenshot_config,
+            output_dir=output_dir,
+        )
+
+
+def _is_content_incomplete(content: str) -> bool:
+    """Check if content appears incomplete (likely Shadow DOM or JS rendering issue).
+
+    Args:
+        content: Markdown content to check
+
+    Returns:
+        True if content appears incomplete
+    """
+    if not content:
+        return True
+
+    # Remove markdown syntax and whitespace
+    clean = re.sub(r"[#\-*_>\[\]`|()!]", "", content)
+    clean = re.sub(r"\[.*?\]\(.*?\)", "", clean)  # Remove links
+    clean = " ".join(clean.split())
+
+    # Check for common incomplete content patterns
+    incomplete_patterns = [
+        r"Don't miss what's happening",  # X.com login prompt
+        r"Accept all cookies",  # Cookie consent
+        r"Log in.*Sign up",  # Login/signup only
+        r"Terms of Service.*Privacy Policy",  # Footer only
+    ]
+
+    # Content is mostly boilerplate
+    for pattern in incomplete_patterns:
+        if re.search(pattern, content, re.IGNORECASE | re.DOTALL):
+            # Check if there's substantial other content
+            if len(clean) < 500:
+                return True
+
+    # Too short to be meaningful content
+    return len(clean) < 200
+
+
+def _format_inner_text(text: str) -> str:
+    """Format inner_text content as basic markdown.
+
+    Args:
+        text: Raw text from page.inner_text()
+
+    Returns:
+        Formatted markdown content
+    """
+    if not text:
+        return ""
+
+    lines = text.split("\n")
+    formatted_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Preserve the line with basic cleanup
+        formatted_lines.append(stripped)
+
+    # Join with double newlines for paragraph separation
+    return "\n\n".join(formatted_lines)
 
 
 def _html_to_markdown(html: str) -> str:
@@ -211,6 +319,12 @@ def _html_to_markdown(html: str) -> str:
     Returns:
         Markdown content
     """
+    # Remove <noscript> tags - Playwright has JS enabled, so these are irrelevant
+    # and often contain fallback messages like "JavaScript is not available"
+    html = re.sub(
+        r"<noscript[^>]*>.*?</noscript>", "", html, flags=re.DOTALL | re.IGNORECASE
+    )
+
     try:
         import io
 
@@ -236,11 +350,14 @@ def _strip_html_tags(html: str) -> str:
     Returns:
         Plain text with HTML tags removed
     """
-    # Remove script and style elements
+    # Remove script, style, and noscript elements
     html = re.sub(
         r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE
     )
     html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(
+        r"<noscript[^>]*>.*?</noscript>", "", html, flags=re.DOTALL | re.IGNORECASE
+    )
 
     # Remove HTML tags
     text = re.sub(r"<[^>]+>", "", html)
@@ -277,23 +394,29 @@ async def _capture_screenshot(
     Returns:
         Path to screenshot file, or None on failure
     """
+    from markitai.fetch import _compress_screenshot, _url_to_screenshot_filename
+
     try:
-        # Generate filename
-        url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"screenshot_{timestamp}_{url_hash}.png"
+        # Generate filename using the same logic as fetch.py
+        filename = _url_to_screenshot_filename(url)
 
         output_dir.mkdir(parents=True, exist_ok=True)
         screenshot_path = output_dir / filename
 
-        # Get full_page setting
+        # Get settings from config
         full_page = getattr(config, "full_page", True)
+        quality = getattr(config, "quality", 85)
+        max_height = getattr(config, "max_height", 10000)
 
         await page.screenshot(
             path=str(screenshot_path),
             full_page=full_page,
-            type="png",
+            type="jpeg",
+            quality=quality,
         )
+
+        # Compress and resize if needed (handles max_height limit)
+        _compress_screenshot(screenshot_path, quality=quality, max_height=max_height)
 
         logger.debug(f"Screenshot saved: {screenshot_path}")
         return screenshot_path

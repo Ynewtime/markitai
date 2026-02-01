@@ -2044,6 +2044,30 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                     last_exception = e
 
+                    # Check for quota/billing errors that should NOT be retried
+                    # These errors are wrapped by LiteLLM as APIConnectionError but
+                    # are actually non-recoverable without user action
+                    error_msg_lower = str(e).lower()
+                    non_retryable_patterns = (
+                        "quota",
+                        "billing",
+                        "payment",
+                        "subscription",
+                        "402",
+                        "insufficient_quota",
+                        "exceeded your current quota",
+                    )
+                    if any(
+                        pattern in error_msg_lower for pattern in non_retryable_patterns
+                    ):
+                        status_code = getattr(e, "status_code", "N/A")
+                        logger.error(
+                            f"[LLM:{call_id}] Quota/billing error (not retrying): "
+                            f"status={status_code} {format_error_message(e)} "
+                            f"time={elapsed_ms:.0f}ms"
+                        )
+                        raise
+
                     if attempt == max_retries:
                         # Final failure after all retries
                         error_type = type(e).__name__

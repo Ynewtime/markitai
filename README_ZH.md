@@ -31,8 +31,8 @@ irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps
 # 需要 Python 3.11-3.13（暂不支持 3.14）
 uv tool install markitai
 
-# 或使用 pip
-pip install --user markitai
+# 或使用 uv pip（用于虚拟环境）
+uv pip install markitai
 ```
 
 ## 快速开始
@@ -91,9 +91,33 @@ markitai cache stats
 
 # 清除缓存
 markitai cache clear
+
+# 检查系统健康状态和依赖
+markitai doctor
 ```
 
 配置文件位置：`./markitai.json` 或 `~/.markitai/config.json`
+
+### 本地 Provider（基于订阅）
+
+使用您现有的 Claude Code 或 GitHub Copilot 订阅：
+
+```bash
+# Claude Agent（需要 Claude Code CLI）
+markitai document.pdf --llm  # 在配置中设置 claude-agent/sonnet
+
+# GitHub Copilot（需要 Copilot CLI）
+markitai document.pdf --llm  # 在配置中设置 copilot/gpt-5.2
+```
+
+安装 CLI 工具：
+```bash
+# Claude Code CLI
+curl -fsSL https://claude.ai/install.sh | bash
+
+# GitHub Copilot CLI
+curl -fsSL https://gh.io/copilot-install | bash
+```
 
 ## 环境变量
 

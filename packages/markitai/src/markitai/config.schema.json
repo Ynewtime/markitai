@@ -1,13 +1,8 @@
 {
   "$defs": {
-    "AgentBrowserConfig": {
-      "description": "agent-browser configuration for JS-rendered pages.",
+    "PlaywrightConfig": {
+      "description": "Playwright configuration for JS-rendered pages.",
       "properties": {
-        "command": {
-          "default": "agent-browser",
-          "title": "Command",
-          "type": "string"
-        },
         "timeout": {
           "default": 30000,
           "title": "Timeout",
@@ -24,24 +19,12 @@
           "type": "string"
         },
         "extra_wait_ms": {
-          "default": 1000,
+          "default": 3000,
           "title": "Extra Wait Ms",
           "type": "integer"
-        },
-        "session": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Session"
         }
       },
-      "title": "AgentBrowserConfig",
+      "title": "PlaywrightConfig",
       "type": "object"
     },
     "BatchConfig": {
@@ -123,14 +106,14 @@
           "enum": [
             "auto",
             "static",
-            "browser",
+            "playwright",
             "jina"
           ],
           "title": "Strategy",
           "type": "string"
         },
-        "agent_browser": {
-          "$ref": "#/$defs/AgentBrowserConfig"
+        "playwright": {
+          "$ref": "#/$defs/PlaywrightConfig"
         },
         "jina": {
           "$ref": "#/$defs/JinaConfig"
@@ -612,6 +595,16 @@
           "default": null,
           "title": "Document Process User"
         },
+        "document_vision_system": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Document Vision System"
+        },
+        "document_vision_user": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Document Vision User"
+        },
         "url_enhance_system": {
           "anyOf": [{"type": "string"}, {"type": "null"}],
           "default": null,
@@ -663,7 +656,7 @@
       "type": "object"
     },
     "ScreenshotConfig": {
-      "description": "Screenshot rendering configuration.\n\nFor PDF/PPTX: Renders pages as JPEG images.\nFor URLs: Captures full-page screenshots using agent-browser.",
+      "description": "Screenshot rendering configuration.\n\nFor PDF/PPTX: Renders pages as JPEG images.\nFor URLs: Captures full-page screenshots using Playwright.",
       "properties": {
         "enabled": {
           "default": false,
@@ -691,6 +684,11 @@
           "default": 10000,
           "title": "Max Height",
           "type": "integer"
+        },
+        "screenshot_only": {
+          "default": false,
+          "title": "Screenshot Only",
+          "type": "boolean"
         }
       },
       "title": "ScreenshotConfig",

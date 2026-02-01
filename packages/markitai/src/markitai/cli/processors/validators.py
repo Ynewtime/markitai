@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from rich.console import Console
 from rich.panel import Panel
 
-if TYPE_CHECKING:
-    pass
+from markitai.cli.console import get_console
 
-console = Console()
+if TYPE_CHECKING:
+    from rich.console import Console
+
+console = get_console()
 
 
 def check_vision_model_config(
@@ -149,14 +150,14 @@ def _check_copilot_unsupported_models(model_list: list[Any], console: Console) -
         )
 
 
-def check_agent_browser_for_urls(cfg: Any, console: Console) -> None:
-    """Check agent-browser availability and warn if not ready for URL processing.
+def check_playwright_for_urls(cfg: Any, console: Console) -> None:
+    """Check Playwright availability and warn if not ready for URL processing.
 
     Args:
         cfg: Configuration object
         console: Rich console for output
     """
-    from markitai.fetch import FetchStrategy, verify_agent_browser_ready
+    from markitai.fetch import FetchStrategy
 
     # Only check if strategy might use browser
     strategy = (
@@ -165,24 +166,32 @@ def check_agent_browser_for_urls(cfg: Any, console: Console) -> None:
     if strategy == FetchStrategy.STATIC or strategy == FetchStrategy.JINA:
         return  # No browser needed
 
-    # Get command from config
-    command = "agent-browser"
-    if hasattr(cfg, "agent_browser") and hasattr(cfg.agent_browser, "command"):
-        command = cfg.agent_browser.command
+    # Check Playwright availability
+    try:
+        from markitai.fetch_playwright import is_playwright_available
 
-    is_ready, message = verify_agent_browser_ready(command, use_cache=True)
+        if is_playwright_available():
+            return  # Playwright is available
+    except ImportError:
+        pass  # Playwright not installed
 
-    if not is_ready:
-        warning_text = (
-            f"[yellow]{message}[/yellow]\n\n"
-            "[dim]URL processing will fall back to static fetch strategy.\n"
-            "For JavaScript-rendered pages (Twitter/X, etc.), browser support is recommended.\n\n"
-            "To install browser support:[/dim]\n"
-            "  [cyan]agent-browser install[/cyan]  [dim]or[/dim]  [cyan]npx playwright install chromium[/cyan]"
-        )
-        console.print(
-            Panel(warning_text, title="Browser Not Available", border_style="yellow")
-        )
+    warning_text = (
+        "[yellow]Playwright is not installed or Chromium browser is missing.[/yellow]\n\n"
+        "[dim]URL processing will fall back to static fetch strategy.\n"
+        "For JavaScript-rendered pages (Twitter/X, etc.), Playwright is recommended.\n\n"
+        "To install:[/dim]\n"
+        "  [cyan]uv add playwright && uv run playwright install chromium[/cyan]\n"
+        "  [dim]Linux: also run 'uv run playwright install-deps chromium' for system dependencies[/dim]"
+    )
+    console.print(
+        Panel(warning_text, title="Browser Not Available", border_style="yellow")
+    )
+
+
+# Backward compatibility alias
+def check_agent_browser_for_urls(cfg: Any, console: Console) -> None:
+    """Deprecated: Use check_playwright_for_urls instead."""
+    check_playwright_for_urls(cfg, console)
 
 
 def warn_case_sensitivity_mismatches(
@@ -251,5 +260,6 @@ def warn_case_sensitivity_mismatches(
 
 # Backward compatibility aliases
 _check_vision_model_config = check_vision_model_config
-_check_agent_browser_for_urls = check_agent_browser_for_urls
+_check_playwright_for_urls = check_playwright_for_urls
+_check_agent_browser_for_urls = check_agent_browser_for_urls  # Deprecated
 _warn_case_sensitivity_mismatches = warn_case_sensitivity_mismatches

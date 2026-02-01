@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from rich.console import Console
 from rich.panel import Panel
 
+from markitai.cli.console import get_console
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
 from markitai.converter.base import EXTENSION_MAP
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from markitai.fetch import FetchStrategy
     from markitai.llm import LLMProcessor
 
-console = Console()
+console = get_console()
 
 
 def create_process_file(
@@ -152,6 +152,7 @@ def create_url_processor(
     fetch_strategy: FetchStrategy | None,
     explicit_fetch_strategy: bool,
     shared_processor: LLMProcessor | None = None,
+    renderer: Any | None = None,
 ) -> Callable:
     """Create a URL processing function for batch processing.
 
@@ -161,6 +162,7 @@ def create_url_processor(
         fetch_strategy: Fetch strategy to use
         explicit_fetch_strategy: Whether strategy was explicitly specified
         shared_processor: Optional shared LLMProcessor
+        renderer: Optional shared PlaywrightRenderer
 
     Returns:
         Async function that processes a single URL and returns ProcessResult
@@ -175,7 +177,6 @@ def create_url_processor(
         process_url_with_vision,
     )
     from markitai.fetch import (
-        AgentBrowserNotFoundError,
         FetchError,
         FetchStrategy,
         JinaRateLimitError,
@@ -245,6 +246,7 @@ def create_url_processor(
                     screenshot_config=cfg.screenshot
                     if cfg.screenshot.enabled
                     else None,
+                    renderer=renderer,
                 )
                 extra_info["fetch_strategy"] = fetch_result.strategy_used
                 original_markdown = fetch_result.content
@@ -253,12 +255,6 @@ def create_url_processor(
                 logger.debug(
                     f"[URL] Fetched via {fetch_result.strategy_used}{cache_status}: {url}"
                 )
-            except AgentBrowserNotFoundError:
-                logger.error(f"[URL] agent-browser not installed for: {url}")
-                return ProcessResult(
-                    success=False,
-                    error="agent-browser not installed",
-                ), extra_info
             except JinaRateLimitError:
                 logger.error(f"[URL] Jina rate limit exceeded for: {url}")
                 return ProcessResult(
@@ -332,6 +328,7 @@ def create_url_processor(
                 fetch_strategy=fetch_result.strategy_used if fetch_result else None,
                 screenshot_path=screenshot_path,
                 output_dir=output_dir,
+                title=fetch_result.title if fetch_result else None,
             )
             atomic_write_text(output_file, base_content)
 
@@ -375,6 +372,7 @@ def create_url_processor(
                         cfg,
                         output_file,
                         processor=shared_processor,
+                        original_title=fetch_result.title if fetch_result else None,
                     )
                     llm_cost = cost
 
@@ -485,7 +483,7 @@ async def process_batch(
 
     from markitai.batch import BatchProcessor, FileStatus, UrlState
     from markitai.cli.processors.validators import (
-        check_agent_browser_for_urls,
+        check_playwright_for_urls,
         warn_case_sensitivity_mismatches,
     )
     from markitai.security import check_symlink_safety
@@ -531,9 +529,9 @@ async def process_batch(
         except Exception as e:
             logger.warning(f"Failed to parse URL list {url_file}: {e}")
 
-    # Check agent-browser availability if URLs will be processed
+    # Check Playwright availability if URLs will be processed
     if url_entries_from_files:
-        check_agent_browser_for_urls(cfg, console)
+        check_playwright_for_urls(cfg, console)
 
     if not files and not url_entries_from_files:
         console.print("[yellow]No supported files or URL lists found.[/yellow]")
@@ -637,6 +635,17 @@ async def process_batch(
             f"Created shared LLMProcessor with concurrency={cfg.llm.concurrency}"
         )
 
+    # Create shared Playwright renderer for batch URL processing
+    shared_renderer = None
+    if url_entries_from_files:
+        from markitai.fetch import _detect_proxy, _get_playwright_renderer
+
+        # Only initialize if browser strategy might be needed
+        # We initialize it here to reuse across all URLs in the batch
+        proxy = _detect_proxy() if getattr(cfg.fetch, "auto_proxy", True) else None
+        shared_renderer = await _get_playwright_renderer(proxy=proxy)
+        logger.info("Created shared PlaywrightRenderer for batch URL processing")
+
     # Create process_file using workflow/core implementation
     process_file = create_process_file(
         cfg=cfg,
@@ -681,6 +690,7 @@ async def process_batch(
             fetch_strategy=fetch_strategy,
             explicit_fetch_strategy=explicit_fetch_strategy,
             shared_processor=shared_processor,
+            renderer=shared_renderer,
         )
 
     # Create separate semaphores for file and URL processing

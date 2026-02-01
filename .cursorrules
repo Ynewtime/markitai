@@ -11,31 +11,6 @@ Markitai 是一个带有原生 LLM 增强支持的专业 Markdown 转换器。
 
 ---
 
-## 环境检测
-
-- 开始工作前，先确认好你所在的系统（Windows|Linux|MacOS），选择对应的执行命令
-- Linux/macOS 使用 `.sh` 脚本，Windows 使用 `.ps1` 脚本
-
----
-
-## 开发偏好
-
-- Keep plan mode concise, remove unnecessary grammar
-- Ask me questions about design/implementation decisions before coding
-- Use only English for ASCII arts
-- 请尽可能使用最新的依赖，如果对依赖是否是最新版本（结合当下的时间戳）有疑义，请调用 agent-browser 查询最新版本信息
-
----
-
-## 语言规则
-
-- 始终使用中文回复用户
-- 错误信息和解释都用中文输出
-- 代码注释使用英文
-- 文档字符串使用英文（Google 风格）
-
----
-
 ## 代码规范
 
 ### 类型标注
@@ -124,21 +99,6 @@ uv run markitai --help      # 查看帮助
 uv run markitai <file>      # 转换文件
 uv run markitai --llm       # 启用 LLM 增强
 ```
-
----
-
-## 工具
-
-### 浏览器自动化（web/url fetch）
-
-Use `agent-browser` for web automation. Run `agent-browser --help` for all commands.
-
-Core workflow:
-
-1. `agent-browser open <url>` - Navigate to page
-2. `agent-browser snapshot -i` - Get interactive elements with refs (@e1, @e2)
-3. `agent-browser click @e1` / `fill @e2 "text"` - Interact using refs
-4. Re-snapshot after page changes
 
 ---
 

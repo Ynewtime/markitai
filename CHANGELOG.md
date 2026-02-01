@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-02-01
+
+### Added
+
+- **`markitai doctor`**: New diagnostic command for system health and auth status checking
+- **Adaptive timeout**: Local providers auto-adjust timeout based on request complexity
+- **Prompt caching**: Claude Agent caches long system prompts (>4KB) for cost reduction
+
+### Changed
+
+- `check-deps` renamed to `doctor` (old name kept as alias)
+- Improved error messages with resolution hints for local providers
+
+### Fixed
+
+- Request timeouts on large documents with Claude Agent / Copilot
+- JSON extraction issues with control characters and markdown code blocks
+
 ## [0.4.0] - 2026-01-28
 
 ### Added
@@ -427,6 +445,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.4.1]: https://github.com/Ynewtime/markitai/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Ynewtime/markitai/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/Ynewtime/markitai/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Ynewtime/markitai/compare/v0.3.0...v0.3.1

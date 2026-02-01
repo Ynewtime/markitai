@@ -180,6 +180,7 @@ def add_basic_frontmatter(
     screenshot_path: Path | None = None,
     output_dir: Path | None = None,
     dedupe: bool = True,
+    title: str | None = None,
 ) -> str:
     """Add basic frontmatter (title, source, markitai_processed) to markdown content.
 
@@ -192,6 +193,7 @@ def add_basic_frontmatter(
         screenshot_path: Optional path to page screenshot
         output_dir: Optional output directory (for relative screenshot path)
         dedupe: Whether to deduplicate paragraphs (default True)
+        title: Optional title from fetch result (takes precedence over extraction)
 
     Returns:
         Content with basic frontmatter prepended
@@ -205,18 +207,27 @@ def add_basic_frontmatter(
         # Second pass: long text block deduplication (for social media content)
         content = dedupe_long_text_blocks(content)
 
-    # Extract title from first heading or use source name
-    title = source
-    lines = content.strip().split("\n")
-    for line in lines:
-        if line.startswith("#"):
-            # Remove # and ** markers, strip whitespace
-            title = line.lstrip("#").strip()
-            title = title.replace("**", "").strip()
-            if title:
-                break
+    # Use provided title, or extract from first heading, or fallback to source
+    if not title:
+        title = source
+        lines = content.strip().split("\n")
+        for line in lines:
+            # Match markdown headings (# followed by space), not hashtags
+            if line.startswith("# ") or (
+                len(line) > 1 and line[0] == "#" and line[1] in "# "
+            ):
+                # Remove # and ** markers, strip whitespace
+                extracted = line.lstrip("#").strip()
+                extracted = extracted.replace("**", "").strip()
+                if extracted:
+                    title = extracted
+                    break
 
     timestamp = datetime.now().astimezone().isoformat()
+
+    # Normalize title: replace newlines with spaces and collapse whitespace
+    if title:
+        title = " ".join(title.split())
 
     frontmatter_dict: dict[str, Any] = {
         "title": title,

@@ -11,9 +11,9 @@ from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
-from rich.console import Console
 from rich.panel import Panel
 
+from markitai.cli.console import get_console
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
 from markitai.converter import FileFormat, detect_format
@@ -23,7 +23,7 @@ from markitai.utils.cli_helpers import compute_task_hash, get_report_file_path
 from markitai.utils.progress import ProgressReporter
 from markitai.workflow.helpers import write_images_json
 
-console = Console()
+console = get_console()
 
 
 async def process_single_file(

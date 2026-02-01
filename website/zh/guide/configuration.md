@@ -103,8 +103,7 @@ markitai config set llm.enabled true
   },
   "fetch": {
     "strategy": "auto",
-    "agent_browser": {
-      "command": "agent-browser",
+    "playwright": {
       "timeout": 30000,
       "wait_for": "domcontentloaded",
       "extra_wait_ms": 1000
@@ -176,7 +175,25 @@ Markitai 还支持使用 CLI 认证和订阅额度的本地提供商：
 
 这些提供商需要：
 1. 安装并认证对应的 CLI 工具
-2. 可选 SDK 包：`pip install markitai[claude-agent]` 或 `pip install markitai[copilot]`
+2. 可选 SDK 包：`uv add markitai[claude-agent]` 或 `uv add markitai[copilot]`
+
+**安装 Claude Code CLI：**
+```bash
+# macOS/Linux/WSL
+curl -fsSL https://claude.ai/install.sh | bash
+
+# Windows PowerShell
+irm https://claude.ai/install.ps1 | iex
+```
+
+**安装 GitHub Copilot CLI：**
+```bash
+# macOS/Linux/WSL
+curl -fsSL https://gh.io/copilot-install | bash
+
+# Windows
+winget install GitHub.Copilot
+```
 
 ### 模型命名
 
@@ -221,10 +238,13 @@ GitHub Copilot SDK 支持的模型：
 
 | 错误 | 解决方案 |
 |------|----------|
-| "SDK 未安装" | `pip install markitai[copilot]` 或 `pip install markitai[claude-agent]` |
+| "SDK 未安装" | `uv add markitai[copilot]` 或 `uv add markitai[claude-agent]` |
 | "CLI 未找到" | 安装并认证 CLI 工具（[Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli)、[Claude Code](https://claude.ai/code)） |
 | "未认证" | 运行 `copilot auth login` 或 `claude auth login` |
 | "速率限制" | 等待后重试，或检查订阅额度 |
+| "请求超时" | 超时是自适应的；处理非常大的文档可能需要更长时间 |
+
+使用 `markitai doctor` 检查认证状态并获取解决方案提示。
 :::
 
 ### Vision 模型
@@ -274,8 +294,26 @@ GitHub Copilot SDK 支持的模型：
 |------|------|--------|------|
 | `routing_strategy` | `simple-shuffle`, `least-busy`, `usage-based-routing`, `latency-based-routing` | `simple-shuffle` | 模型选择策略 |
 | `num_retries` | 0-10 | 2 | 失败重试次数 |
-| `timeout` | 秒 | 120 | 请求超时时间 |
+| `timeout` | 秒 | 120 | 请求超时时间（自适应计算的基础值） |
 | `concurrency` | 1-20 | 10 | 最大并发 LLM 请求数 |
+
+### 自适应超时
+
+本地 provider（`claude-agent/`、`copilot/`）使用基于请求复杂度的**自适应超时计算**：
+
+- 基础超时：最小 60 秒，最大 600 秒
+- 考虑因素：提示词长度、图片数量、预期输出长度
+- 计算公式：`基础超时 + (提示词字符数 / 500) + (图片数 * 30) + (预期输出 / 200)`
+
+这可以防止大文档处理超时，同时保持短请求的响应速度。
+
+### 提示缓存（Claude Agent）
+
+Claude Agent provider 对超过 4KB 的系统提示词自动启用**提示缓存**。这通过缓存常用的系统提示词前缀来降低 API 成本。
+
+::: tip
+提示缓存是透明的——无需配置。使用 `markitai cache stats -v` 查看缓存统计。
+:::
 
 ## 图片配置
 
@@ -334,7 +372,7 @@ GitHub Copilot SDK 支持的模型：
 启用后（`--screenshot` 或 `--preset rich`）：
 
 - **PDF/PPTX**: 将每个页面/幻灯片渲染为 JPEG 图片
-- **URL**: 使用 agent-browser 捕获全页面截图
+- **URL**: 使用 Playwright 捕获全页面截图
 
 | 设置 | 默认值 | 描述 |
 |------|--------|------|
@@ -347,7 +385,7 @@ GitHub Copilot SDK 支持的模型：
 截图保存在 `output/screenshots/` 目录。
 
 ::: tip
-对于 URL，启用 `--screenshot` 会在需要时自动将抓取策略升级为 `browser`，确保页面完全渲染后再捕获。
+对于 URL，启用 `--screenshot` 会在需要时自动将抓取策略升级为 `playwright`，确保页面完全渲染后再捕获。
 :::
 
 ## OCR 配置
@@ -415,8 +453,7 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 {
   "fetch": {
     "strategy": "auto",
-    "agent_browser": {
-      "command": "agent-browser",
+    "playwright": {
       "timeout": 30000,
       "wait_for": "domcontentloaded",
       "extra_wait_ms": 1000
@@ -434,16 +471,15 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 
 | 策略 | 说明 |
 |------|------|
-| `auto` | 自动检测：对 `fallback_patterns` 中的模式使用浏览器，否则使用静态 |
+| `auto` | 自动检测：对 `fallback_patterns` 中的模式使用 Playwright，否则使用静态 |
 | `static` | 使用 MarkItDown 内置的 URL 转换器（快速，无 JS） |
-| `browser` | 使用 agent-browser 处理 JS 渲染的页面（支持 SPA） |
+| `playwright` | 使用 Playwright 处理 JS 渲染的页面（支持 SPA） |
 | `jina` | 使用 Jina Reader API |
 
-### 浏览器设置
+### Playwright 设置
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `command` | `agent-browser` | agent-browser 路径 |
 | `timeout` | `30000` | 页面加载超时（毫秒） |
 | `wait_for` | `domcontentloaded` | 等待条件：`load`, `domcontentloaded`, `networkidle` |
 | `extra_wait_ms` | `1000` | JS 渲染额外等待时间 |

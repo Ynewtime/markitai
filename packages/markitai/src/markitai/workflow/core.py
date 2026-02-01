@@ -178,19 +178,36 @@ def prepare_output_directory(ctx: ConversionContext) -> ConversionStepResult:
 async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
     """Execute document conversion.
 
-    Args:
-        ctx: Conversion context
-
-    Returns:
-        ConversionStepResult indicating success or failure
+    Uses heavy task semaphore for memory-intensive formats (PPT, PDF with screenshots)
+    to prevent OOM in concurrent environments.
     """
+    from markitai.utils.executor import get_heavy_task_semaphore
+
     try:
-        logger.info(f"Converting {ctx.input_path.name}...")
-        ctx.conversion_result = await run_in_converter_thread(
-            ctx.converter.convert,
-            ctx.effective_input,
-            output_dir=ctx.output_dir,
+        # Determine if this is a heavy conversion task
+        heavy_extensions = {".ppt", ".pptx", ".pdf", ".doc", ".docx"}
+        is_heavy = (
+            ctx.input_path.suffix.lower() in heavy_extensions
+            and ctx.config.screenshot.enabled
+        ) or (ctx.input_path.suffix.lower() in {".ppt", ".doc", ".xls"})
+
+        logger.info(
+            f"Converting {ctx.input_path.name}..." + (" [HEAVY]" if is_heavy else "")
         )
+
+        if is_heavy:
+            async with get_heavy_task_semaphore():
+                ctx.conversion_result = await run_in_converter_thread(
+                    ctx.converter.convert,
+                    ctx.effective_input,
+                    output_dir=ctx.output_dir,
+                )
+        else:
+            ctx.conversion_result = await run_in_converter_thread(
+                ctx.converter.convert,
+                ctx.effective_input,
+                output_dir=ctx.output_dir,
+            )
         return ConversionStepResult(success=True)
     except Exception as e:
         return ConversionStepResult(success=False, error=f"Conversion failed: {e}")
@@ -413,20 +430,36 @@ async def process_with_vision_llm(
         processor=processor,
     )
 
-    # Get extracted text (use markdown which has base64 replaced)
-    extracted_text = ctx.conversion_result.markdown
+    # Check for screenshot-only mode
+    use_screenshot_only = ctx.config.screenshot.screenshot_only
 
-    # Enhance with vision
-    (
-        cleaned_content,
-        frontmatter,
-        enhance_cost,
-        enhance_usage,
-    ) = await workflow.enhance_with_vision(
-        extracted_text,
-        page_images,
-        source=ctx.input_path.name,
-    )
+    if use_screenshot_only:
+        # Screenshot-only mode: extract content purely from screenshots
+        (
+            cleaned_content,
+            frontmatter,
+            enhance_cost,
+            enhance_usage,
+        ) = await workflow.extract_from_screenshots(
+            page_images,
+            source=ctx.input_path.name,
+        )
+    else:
+        # Standard mode: use extracted text + screenshots for enhancement
+        # Get extracted text (use markdown which has base64 replaced)
+        extracted_text = ctx.conversion_result.markdown
+
+        # Enhance with vision
+        (
+            cleaned_content,
+            frontmatter,
+            enhance_cost,
+            enhance_usage,
+        ) = await workflow.enhance_with_vision(
+            extracted_text,
+            page_images,
+            source=ctx.input_path.name,
+        )
     ctx.llm_cost += enhance_cost
     merge_llm_usage(ctx.llm_usage, enhance_usage)
 

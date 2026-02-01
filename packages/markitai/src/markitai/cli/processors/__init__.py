@@ -20,7 +20,8 @@ from markitai.cli.processors.llm import (
 )
 from markitai.cli.processors.url import process_url, process_url_batch
 from markitai.cli.processors.validators import (
-    check_agent_browser_for_urls,
+    check_agent_browser_for_urls,  # Deprecated alias
+    check_playwright_for_urls,
     check_vision_model_config,
     warn_case_sensitivity_mismatches,
 )
@@ -38,7 +39,8 @@ __all__ = [
     "format_standalone_image_markdown",
     # Validators
     "check_vision_model_config",
-    "check_agent_browser_for_urls",
+    "check_playwright_for_urls",
+    "check_agent_browser_for_urls",  # Deprecated
     "warn_case_sensitivity_mismatches",
     # Batch processing
     "process_batch",

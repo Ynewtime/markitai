@@ -12,8 +12,6 @@ if (-not $script:EncodingSet) {
 # Version Variables (can be overridden via environment)
 # ============================================================
 $script:MarkitaiVersion = $env:MARKITAI_VERSION
-# Lock agent-browser to 0.7.6 due to daemon startup bug in 0.8.x on Windows
-$script:AgentBrowserVersion = if ($env:AGENT_BROWSER_VERSION) { $env:AGENT_BROWSER_VERSION } else { "0.7.6" }
 $script:UvVersion = $env:UV_VERSION
 
 # ============================================================
@@ -61,7 +59,7 @@ function Write-WelcomeUser {
     Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Green -NoNewline; Write-Host "markitai - Markdown converter with LLM support"
     Write-Host ""
     Write-Host "  Optional components:"
-    Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "agent-browser - Browser automation for JS-rendered pages"
+    Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "Playwright - Browser automation for JS-rendered pages"
     Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "Claude Code CLI - Use your Claude subscription"
     Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "Copilot CLI - Use your GitHub Copilot subscription"
     Write-Host ""
@@ -81,7 +79,7 @@ function Write-WelcomeDev {
     Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Green -NoNewline; Write-Host "pre-commit hooks for code quality"
     Write-Host ""
     Write-Host "  Optional components:"
-    Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "agent-browser - Browser automation"
+    Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "Playwright - Browser automation"
     Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "LLM CLI tools - Claude Code / Copilot"
     Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "LLM Python SDKs - Programmatic LLM access"
     Write-Host ""
@@ -366,8 +364,8 @@ function Test-Python {
         Write-Host ""
         Write-Warning2 "Please install Python 3.13 (recommended) or 3.11/3.12:"
         Write-Info "Download: https://www.python.org/downloads/"
-        Write-Info "scoop: scoop install python@3.13"
         Write-Info "winget: winget install Python.Python.3.13"
+        Write-Info "scoop: scoop install python@3.13"
         Write-Info "Note: onnxruntime doesn't support Python 3.14 yet"
         return $false
     }
@@ -451,8 +449,8 @@ function Test-NodeJS {
     Write-Warning2 "Please install Node.js 18+:"
     Write-Info "Download: https://nodejs.org/"
     Write-Info "winget: winget install OpenJS.NodeJS.LTS"
-    Write-Info "Chocolatey: choco install nodejs-lts"
-    Write-Info "fnm: winget install Schniz.fnm"
+    Write-Info "scoop: scoop install nodejs-lts"
+    Write-Info "choco: choco install nodejs-lts"
     return $false
 }
 
@@ -550,11 +548,13 @@ function Install-Markitai {
     Write-Info "Installing markitai..."
 
     # Build package spec with optional version
+    # Note: Use [browser] instead of [all] to avoid installing unnecessary SDK packages
+    # SDK packages (claude-agent, copilot) will be installed when user selects CLI tools
     if ($script:MarkitaiVersion) {
-        $pkg = "markitai[all]==$($script:MarkitaiVersion)"
+        $pkg = "markitai[browser]==$($script:MarkitaiVersion)"
         Write-Info "Installing version: $($script:MarkitaiVersion)"
     } else {
-        $pkg = "markitai[all]"
+        $pkg = "markitai[browser]"
     }
 
     # Build Python command for --python argument
@@ -640,166 +640,287 @@ function Install-Markitai {
     return $false
 }
 
-# Helper function to run agent-browser command
-# Works around npm shim issues on Windows (both .ps1 and .cmd reference /bin/sh)
-# See: https://github.com/vercel-labs/agent-browser/issues/262
-function Invoke-AgentBrowser {
-    param([string[]]$Arguments)
+# Install Playwright browser (Chromium)
+# Security: Use uv run or python module to ensure correct playwright
+# Returns: $true on success, $false on failure/skip
+function Install-PlaywrightBrowser {
+    Write-Info "Playwright browser (Chromium):"
+    Write-Info "  Purpose: Browser automation for JavaScript-rendered pages (Twitter, SPAs)"
 
-    $npmPrefix = & npm config get prefix 2>$null
-    if ($npmPrefix) {
-        $npmPrefix = $npmPrefix.Trim()
-
-        # Try native Windows binary first (most reliable)
-        $nativeBinPath = Join-Path $npmPrefix "node_modules\agent-browser\bin\agent-browser-win32-x64.exe"
-        if (Test-Path $nativeBinPath) {
-            & $nativeBinPath @Arguments
-            return $LASTEXITCODE
-        }
-    }
-
-    # Fallback: try global node_modules path
-    $globalRoot = & npm root -g 2>$null
-    if ($globalRoot) {
-        $globalRoot = $globalRoot.Trim()
-
-        # Try native binary in global node_modules
-        $nativeBinPath = Join-Path $globalRoot "agent-browser\bin\agent-browser-win32-x64.exe"
-        if (Test-Path $nativeBinPath) {
-            & $nativeBinPath @Arguments
-            return $LASTEXITCODE
-        }
-
-        # Fallback: run via node
-        $jsPath = Join-Path $globalRoot "agent-browser\bin\agent-browser.js"
-        if (Test-Path $jsPath) {
-            & node $jsPath @Arguments
-            return $LASTEXITCODE
-        }
-    }
-
-    # Last resort: try the command directly (will likely fail due to shim bug)
-    & agent-browser @Arguments
-    return $LASTEXITCODE
-}
-
-function Install-AgentBrowser {
-    if (-not (Test-NodeJS)) {
-        Write-Warning2 "Skipping agent-browser installation (requires Node.js)"
-        Track-Install -Component "agent-browser" -Status "skipped"
+    # Ask user consent before downloading
+    if (-not (Ask-YesNo "Download Chromium browser?" $true)) {
+        Write-Info "Skipping Playwright browser installation"
+        Track-Install -Component "Playwright Browser" -Status "skipped"
         return $false
     }
 
-    Write-Info "Installing agent-browser..."
-    Write-Info "  Purpose: Browser automation for JavaScript-rendered pages"
-    Write-Info "  Size: ~150MB (includes Chromium)"
+    Write-Info "Downloading Chromium browser..."
 
-    # Build package spec with optional version
-    if ($script:AgentBrowserVersion) {
-        $pkg = "agent-browser@$($script:AgentBrowserVersion)"
-        Write-Info "Installing version: $($script:AgentBrowserVersion)"
-    } else {
-        $pkg = "agent-browser"
-    }
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
 
-    # Try npm first, then pnpm
-    $installSuccess = $false
-    $npmExists = Get-Command npm -ErrorAction SilentlyContinue
-    $pnpmExists = Get-Command pnpm -ErrorAction SilentlyContinue
-
-    if ($npmExists) {
-        Write-Info "Installing via npm..."
+    # Prefer uv run (for uv tool installed packages)
+    $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+    if ($uvCmd) {
         try {
-            & npm install -g $pkg
+            & uv run playwright install chromium 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
-                $installSuccess = $true
+                $ErrorActionPreference = $oldErrorAction
+                Write-Success "Chromium browser installed successfully"
+                Track-Install -Component "Playwright Browser" -Status "installed"
+                return $true
             }
-        } catch {
-            Write-Warning2 "npm installation failed, trying pnpm..."
-        }
+        } catch {}
     }
 
-    if (-not $installSuccess -and $pnpmExists) {
-        Write-Info "Installing via pnpm..."
+    # Fallback to Python module
+    if ($script:PYTHON_CMD) {
+        $cmdParts = $script:PYTHON_CMD -split " "
+        $exe = $cmdParts[0]
+        $baseArgs = if ($cmdParts.Length -gt 1) { $cmdParts[1..($cmdParts.Length-1)] } else { @() }
+        $pwArgs = $baseArgs + @("-m", "playwright", "install", "chromium")
+
         try {
-            & pnpm add -g $pkg
+            & $exe @pwArgs 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
-                $installSuccess = $true
+                $ErrorActionPreference = $oldErrorAction
+                Write-Success "Chromium browser installed successfully"
+                Track-Install -Component "Playwright Browser" -Status "installed"
+                return $true
             }
-        } catch {
-            Write-Error2 "pnpm installation failed: $_"
+        } catch {}
+    }
+
+    $ErrorActionPreference = $oldErrorAction
+    Write-Warning2 "Playwright browser installation failed"
+    Write-Info "You can install later with: uv run playwright install chromium"
+    Track-Install -Component "Playwright Browser" -Status "failed"
+    return $false
+}
+
+# Install LibreOffice (optional)
+# LibreOffice is required for converting .doc, .ppt, .xls files
+function Install-LibreOffice {
+    Write-Info "Checking LibreOffice installation..."
+    Write-Info "  Purpose: Convert legacy Office files (.doc, .ppt, .xls)"
+
+    # Check for soffice (LibreOffice command)
+    $soffice = Get-Command soffice -ErrorAction SilentlyContinue
+    if ($soffice) {
+        try {
+            $version = & soffice --version 2>&1 | Select-Object -First 1
+            Write-Success "LibreOffice installed: $version"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        } catch {}
+    }
+
+    # On Windows, check common install paths
+    $commonPaths = @(
+        "${env:ProgramFiles}\LibreOffice\program\soffice.exe",
+        "${env:ProgramFiles(x86)}\LibreOffice\program\soffice.exe"
+    )
+
+    foreach ($path in $commonPaths) {
+        if (Test-Path $path) {
+            Write-Success "LibreOffice found at: $path"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
         }
     }
 
-    if ($installSuccess) {
-        # Verify installation - check for native binary or node_modules
-        $abExists = Get-Command agent-browser -ErrorAction SilentlyContinue
-        $nativeBinExists = $false
+    Write-Warning2 "LibreOffice not installed (optional)"
+    Write-Info "  Without LibreOffice, .doc/.ppt/.xls files cannot be converted"
+    Write-Info "  Modern formats (.docx/.pptx/.xlsx) work without LibreOffice"
 
-        $npmPrefix = & npm config get prefix 2>$null
-        if ($npmPrefix) {
-            $npmPrefix = $npmPrefix.Trim()
-            $nativeBinPath = Join-Path $npmPrefix "node_modules\agent-browser\bin\agent-browser-win32-x64.exe"
-            $nativeBinExists = Test-Path $nativeBinPath
-        }
-
-        if (-not $nativeBinExists) {
-            # Also check global node_modules
-            $globalRoot = & npm root -g 2>$null
-            if ($globalRoot) {
-                $globalRoot = $globalRoot.Trim()
-                $nativeBinPath = Join-Path $globalRoot "agent-browser\bin\agent-browser-win32-x64.exe"
-                $nativeBinExists = Test-Path $nativeBinPath
-            }
-        }
-
-        if (-not $abExists -and -not $nativeBinExists) {
-            Write-Warning2 "agent-browser installed but not in PATH"
-            # Get global bin directory for PATH help
-            $globalBin = $null
-            if ($pnpmExists) {
-                $globalBin = & pnpm config get global-bin-dir 2>$null
-                if (-not $globalBin) {
-                    # Fallback: pnpm bin -g returns the actual bin directory
-                    $globalBin = & pnpm bin -g 2>$null
-                }
-            }
-            if (-not $globalBin -and $npmExists) {
-                if ($npmPrefix) {
-                    $globalBin = $npmPrefix
-                }
-            }
-            if ($globalBin) {
-                Write-PathHelp $globalBin
-            }
-            Track-Install -Component "agent-browser" -Status "installed"
-            return $false
-        }
-
-        Write-Success "agent-browser installed successfully"
-        Track-Install -Component "agent-browser" -Status "installed"
-
-        # Chromium download (default: No)
-        if (Ask-YesNo "Download Chromium browser?" $false) {
-            Write-Info "Downloading Chromium..."
-            $null = Invoke-AgentBrowser -Arguments @("install")
-            Write-Success "Chromium download complete"
-            Track-Install -Component "Chromium" -Status "installed"
-        } else {
-            Write-Info "Skipping Chromium download"
-            Write-Info "You can install later: agent-browser install"
-            Track-Install -Component "Chromium" -Status "skipped"
-        }
-
-        return $true
+    if (-not (Ask-YesNo -Prompt "Install LibreOffice?" -Default "n")) {
+        Write-Info "Skipping LibreOffice installation"
+        Track-Install -Component "LibreOffice" -Status "skipped"
+        return $false
     }
 
-    if (-not (Test-Network)) {
-        Write-NetworkError
-    } else {
-        Write-Info "Manual install: npm install -g agent-browser"
+    Write-Info "Installing LibreOffice..."
+
+    # Priority: winget > scoop > choco
+    # Try WinGet first
+    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wingetCmd) {
+        Write-Info "Installing via WinGet..."
+        & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "LibreOffice installed via WinGet"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        }
     }
-    Track-Install -Component "agent-browser" -Status "failed"
+
+    # Try Scoop as second option
+    $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
+    if ($scoopCmd) {
+        Write-Info "Installing via Scoop..."
+        & scoop bucket add extras 2>$null
+        & scoop install extras/libreoffice
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "LibreOffice installed via Scoop"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        }
+    }
+
+    # Try Chocolatey as last fallback
+    $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
+    if ($chocoCmd) {
+        Write-Info "Installing via Chocolatey..."
+        & choco install libreoffice-fresh -y
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "LibreOffice installed via Chocolatey"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        }
+    }
+
+    Write-Warning2 "LibreOffice installation failed"
+    Write-Info "Manual install options:"
+    Write-Info "  winget: winget install TheDocumentFoundation.LibreOffice"
+    Write-Info "  scoop: scoop install extras/libreoffice"
+    Write-Info "  choco: choco install libreoffice-fresh"
+    Write-Info "  Download: https://www.libreoffice.org/download/"
+    Track-Install -Component "LibreOffice" -Status "failed"
+    return $false
+}
+
+# Install FFmpeg (optional)
+# FFmpeg is required for audio/video file processing
+function Install-FFmpeg {
+    Write-Info "Checking FFmpeg installation..."
+    Write-Info "  Purpose: Process audio/video files (.mp3, .mp4, .wav, etc.)"
+
+    $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    if ($ffmpegCmd) {
+        try {
+            $version = & ffmpeg -version 2>&1 | Select-Object -First 1
+            Write-Success "FFmpeg installed: $version"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        } catch {}
+    }
+
+    Write-Warning2 "FFmpeg not installed (optional)"
+    Write-Info "  Without FFmpeg, audio/video files cannot be processed"
+
+    if (-not (Ask-YesNo "Install FFmpeg?" $false)) {
+        Write-Info "Skipping FFmpeg installation"
+        Track-Install -Component "FFmpeg" -Status "skipped"
+        return $false
+    }
+
+    Write-Info "Installing FFmpeg..."
+
+    # Priority: winget > scoop > choco
+    # Try WinGet first
+    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wingetCmd) {
+        Write-Info "Installing via WinGet..."
+        & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "FFmpeg installed via WinGet"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        }
+    }
+
+    # Try Scoop as second option
+    $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
+    if ($scoopCmd) {
+        Write-Info "Installing via Scoop..."
+        & scoop install ffmpeg
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "FFmpeg installed via Scoop"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        }
+    }
+
+    # Try Chocolatey as last fallback
+    $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
+    if ($chocoCmd) {
+        Write-Info "Installing via Chocolatey..."
+        & choco install ffmpeg -y
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "FFmpeg installed via Chocolatey"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        }
+    }
+
+    Write-Warning2 "FFmpeg installation failed"
+    Write-Info "Manual install options:"
+    Write-Info "  winget: winget install Gyan.FFmpeg"
+    Write-Info "  scoop: scoop install ffmpeg"
+    Write-Info "  choco: choco install ffmpeg"
+    Write-Info "  Download: https://ffmpeg.org/download.html"
+    Track-Install -Component "FFmpeg" -Status "failed"
+    return $false
+}
+
+# Install markitai extra package
+# Usage: Install-MarkitaiExtra -ExtraName "claude-agent"
+function Install-MarkitaiExtra {
+    param([string]$ExtraName)
+
+    $pkg = "markitai[$ExtraName]"
+
+    # Build Python command for --python argument
+    $pythonArg = $script:PYTHON_CMD
+    if ($pythonArg -match "^py\s+-(\d+\.\d+)$") {
+        $pythonArg = $Matches[1]
+    }
+
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
+    # Prefer uv tool install
+    $uvExists = Get-Command uv -ErrorAction SilentlyContinue
+    if ($uvExists) {
+        try {
+            $null = & uv tool install $pkg --python $pythonArg --upgrade 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $ErrorActionPreference = $oldErrorAction
+                Write-Success "markitai[$ExtraName] installed"
+                return $true
+            }
+        } catch {}
+    }
+
+    # Fallback to pipx
+    $pipxExists = Get-Command pipx -ErrorAction SilentlyContinue
+    if ($pipxExists) {
+        try {
+            $null = & pipx install $pkg --python $pythonArg --force 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $ErrorActionPreference = $oldErrorAction
+                Write-Success "markitai[$ExtraName] installed"
+                return $true
+            }
+        } catch {}
+    }
+
+    # Fallback to pip --user
+    try {
+        $cmdParts = $script:PYTHON_CMD -split " "
+        $exe = $cmdParts[0]
+        $baseArgs = if ($cmdParts.Length -gt 1) { $cmdParts[1..($cmdParts.Length-1)] } else { @() }
+        $pipArgs = $baseArgs + @("-m", "pip", "install", "--user", "--upgrade", $pkg)
+        $null = & $exe @pipArgs 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $ErrorActionPreference = $oldErrorAction
+            Write-Success "markitai[$ExtraName] installed"
+            return $true
+        }
+    } catch {}
+
+    $ErrorActionPreference = $oldErrorAction
+    Write-Warning2 "markitai[$ExtraName] installation failed"
     return $false
 }
 
@@ -817,7 +938,26 @@ function Install-ClaudeCLI {
         return $true
     }
 
-    # Try npm/pnpm
+    # Prefer official install script (PowerShell)
+    $claudeUrl = "https://claude.ai/install.ps1"
+    if (Confirm-RemoteScript -Url $claudeUrl -Name "Claude Code CLI") {
+        Write-Info "Installing via official script..."
+        try {
+            Invoke-Expression (Invoke-RestMethod -Uri $claudeUrl)
+            # Check if installation succeeded
+            $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
+            if ($claudeCmd) {
+                Write-Success "Claude Code CLI installed via official script"
+                Write-Info "Run 'claude /login' to authenticate with your Claude subscription or API key"
+                Track-Install -Component "Claude Code CLI" -Status "installed"
+                return $true
+            }
+        } catch {
+            Write-Info "Official script failed: $_"
+        }
+    }
+
+    # Fallback: npm/pnpm
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
@@ -841,27 +981,14 @@ function Install-ClaudeCLI {
         }
     }
 
-    # Try WinGet (Windows)
-    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
-    if ($wingetCmd) {
-        Write-Info "Installing via WinGet..."
-        & winget install Anthropic.ClaudeCode
-        if ($LASTEXITCODE -eq 0) {
-            Write-Success "Claude Code CLI installed via WinGet"
-            Write-Info "Run 'claude /login' to authenticate with your Claude subscription or API key"
-            Track-Install -Component "Claude Code CLI" -Status "installed"
-            return $true
-        }
-    }
-
     Write-Warning2 "Claude Code CLI installation failed"
     if (-not (Test-Network)) {
         Write-NetworkError
     } else {
         Write-Info "Manual install options:"
+        Write-Info "  PowerShell: irm https://claude.ai/install.ps1 | iex"
         Write-Info "  pnpm: pnpm add -g @anthropic-ai/claude-code"
-        Write-Info "  winget: winget install Anthropic.ClaudeCode"
-        Write-Info "  Docs: https://code.claude.com/docs/en/setup"
+        Write-Info "  Docs: https://docs.anthropic.com/en/docs/claude-code"
     }
     Track-Install -Component "Claude Code CLI" -Status "failed"
     return $false
@@ -881,7 +1008,20 @@ function Install-CopilotCLI {
         return $true
     }
 
-    # Try npm/pnpm
+    # Prefer WinGet on Windows
+    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wingetCmd) {
+        Write-Info "Installing via WinGet..."
+        & winget install GitHub.Copilot --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Copilot CLI installed via WinGet"
+            Write-Info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
+            Track-Install -Component "Copilot CLI" -Status "installed"
+            return $true
+        }
+    }
+
+    # Fallback: npm/pnpm
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
@@ -905,26 +1045,13 @@ function Install-CopilotCLI {
         }
     }
 
-    # Try WinGet (Windows)
-    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
-    if ($wingetCmd) {
-        Write-Info "Installing via WinGet..."
-        & winget install GitHub.Copilot
-        if ($LASTEXITCODE -eq 0) {
-            Write-Success "Copilot CLI installed via WinGet"
-            Write-Info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
-            Track-Install -Component "Copilot CLI" -Status "installed"
-            return $true
-        }
-    }
-
     Write-Warning2 "Copilot CLI installation failed"
     if (-not (Test-Network)) {
         Write-NetworkError
     } else {
         Write-Info "Manual install options:"
-        Write-Info "  pnpm: pnpm add -g @github/copilot"
         Write-Info "  winget: winget install GitHub.Copilot"
+        Write-Info "  pnpm: pnpm add -g @github/copilot"
     }
     Track-Install -Component "Copilot CLI" -Status "failed"
     return $false

@@ -5,7 +5,7 @@
 ### Required
 
 - **Python 3.11-3.13** - Required runtime (3.14 not yet supported due to onnxruntime)
-- **[uv](https://docs.astral.sh/uv/)** - Package manager (recommended) or pip
+- **[uv](https://docs.astral.sh/uv/)** - Package manager (recommended)
 
 ### Optional Dependencies
 
@@ -13,19 +13,19 @@ These are required for specific features:
 
 | Dependency | Required For | Installation |
 |------------|--------------|--------------|
-| **[Node.js 22+](https://nodejs.org/)** | `--agent-browser` (SPA rendering) | See [nodejs.org](https://nodejs.org/) |
-| **[agent-browser](https://www.npmjs.com/package/agent-browser)** | `--agent-browser` | `pnpm add -g agent-browser && agent-browser install` |
+| **Playwright** | `--playwright` (SPA rendering) | Package auto-installed, browser requires `uv run playwright install chromium` |
+| **FFmpeg** | Audio/video processing | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
 | **Jina API Key** | `--jina` (URL conversion) | Set `JINA_API_KEY` env var |
 | **LLM API Key** | `--llm` (AI enhancement) | Set `OPENAI_API_KEY` or provider-specific key |
 
 ::: tip Browser Automation
-For SPA websites (Twitter, React apps, etc.), install `agent-browser`:
+For SPA websites (Twitter, React apps, etc.), Playwright is used automatically. Before first use, install the browser:
 ```bash
-pnpm add -g agent-browser
-agent-browser install              # Download Chromium browser
-agent-browser install --with-deps  # Linux: also install system dependencies
+uv run playwright install chromium
+# Linux also requires system dependencies:
+uv run playwright install-deps chromium
 ```
-Then use `--agent-browser` flag to enable browser rendering.
+Then use `--playwright` flag to force browser rendering.
 :::
 
 ## Installation
@@ -54,7 +54,6 @@ The script will:
 - Check for Python 3.11-3.13
 - Install [uv](https://docs.astral.sh/uv/) package manager (requires confirmation)
 - Install markitai with all optional dependencies
-- Optionally install `agent-browser` for browser automation
 
 #### Version Pinning
 
@@ -64,14 +63,12 @@ Pin specific versions using environment variables:
 ```bash [Linux/macOS]
 export MARKITAI_VERSION="0.4.0"
 export UV_VERSION="0.9.27"
-export AGENT_BROWSER_VERSION="0.5.0"
 curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 ```
 
 ```powershell [Windows]
 $env:MARKITAI_VERSION = "0.4.0"
 $env:UV_VERSION = "0.9.27"
-$env:AGENT_BROWSER_VERSION = "0.5.0"
 irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
 ```
 :::
@@ -82,8 +79,8 @@ irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 |
 # Using uv (recommended)
 uv tool install markitai
 
-# Or using pip
-pip install --user markitai
+# Or using uv pip (for virtual environment)
+uv pip install markitai
 ```
 
 ## Quick Start
@@ -207,9 +204,10 @@ sudo apt-get install libreoffice
 sudo dnf install libreoffice
 ```
 
-**Install browser dependencies:**
+**Install Playwright browsers:**
 ```bash
-agent-browser install --with-deps
+uv run playwright install chromium
+uv run playwright install-deps chromium  # Install system dependencies
 ```
 
 ### macOS

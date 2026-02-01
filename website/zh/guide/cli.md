@@ -55,7 +55,7 @@ markitai document.pdf --desc
 
 启用截图捕获：
 - **PDF/PPTX**: 将页面/幻灯片渲染为 JPEG 图片
-- **URL**: 使用 agent-browser 捕获全页面截图
+- **URL**: 使用 Playwright 捕获全页面截图
 
 ```bash
 # 文档截图
@@ -67,7 +67,28 @@ markitai https://example.com --screenshot
 ```
 
 ::: tip
-对于 URL，`--screenshot` 会在需要时自动将抓取策略升级为 `browser`。截图将保存为 `screenshots/{域名}_路径.full.jpg`。
+对于 URL，`--screenshot` 会在需要时自动将抓取策略升级为 `playwright`。截图将保存为 `screenshots/{域名}_路径.full.jpg`。
+:::
+
+### `--screenshot-only`
+
+仅捕获截图，不提取内容。行为取决于是否启用 `--llm`：
+
+| 命令 | 输出 |
+|------|------|
+| `--screenshot-only` | 仅截图（不生成 .md 文件） |
+| `--llm --screenshot-only` | .md + .llm.md + 截图（LLM 从截图提取内容） |
+
+```bash
+# 仅捕获截图
+markitai https://example.com --screenshot-only
+
+# LLM 纯粹从截图提取内容
+markitai https://example.com --llm --screenshot-only
+```
+
+::: tip
+当传统内容提取失败时（如重 JavaScript 网站、社交媒体），使用 `--llm --screenshot-only` 模式。
 :::
 
 ### `--ocr`
@@ -176,22 +197,21 @@ URL 抓取并发数（默认：5）。与 `--batch-concurrency` 独立，防止�
 markitai ./docs -o ./output --url-concurrency 5
 ```
 
-### `--agent-browser`
+### `--playwright`
 
-强制使用浏览器渲染抓取 URL。适用于 JavaScript 重度依赖的 SPA 网站（如 x.com、动态 Web 应用）。
+强制使用 Playwright 浏览器渲染抓取 URL。适用于 JavaScript 重度依赖的 SPA 网站（如 x.com、动态 Web 应用）。
 
 ```bash
-markitai https://x.com/user/status/123 --agent-browser
+markitai https://x.com/user/status/123 --playwright
 ```
 
 ::: tip
-需要安装 `agent-browser`：
+如需预先安装 Playwright 浏览器：
 ```bash
-pnpm add -g agent-browser
-agent-browser install           # 下载 Chromium
-agent-browser install --with-deps  # Linux: 同时安装系统依赖
+uv run playwright install chromium
+# Linux 还需安装系统依赖：
+uv run playwright install-deps chromium
 ```
-详见 [agent-browser 文档](https://github.com/vercel-labs/agent-browser)。
 :::
 
 ### `--jina`
@@ -203,7 +223,7 @@ markitai https://example.com --jina
 ```
 
 ::: warning
-`--agent-browser` 和 `--jina` 互斥，同时只能使用一个。
+`--playwright` 和 `--jina` 互斥，同时只能使用一个。
 :::
 
 ## 配置命令
@@ -298,21 +318,53 @@ SPA 域名会在静态抓取检测到 JavaScript 依赖时自动学习。这可�
 
 ## 诊断命令
 
+### `markitai doctor`
+
+检查系统健康状态、依赖项和认证状态。这是主要的诊断命令。
+
+```bash
+markitai doctor
+markitai doctor --json    # JSON 输出
+```
+
+此命令验证：
+- **Playwright**: 用于动态 URL 抓取（SPA 渲染）
+- **LibreOffice**: 用于 Office 文档转换（doc, docx, xls, xlsx, ppt, pptx）
+- **FFmpeg**: 用于音视频文件处理（mp3, mp4, wav 等）
+- **RapidOCR**: 用于扫描文档 OCR（内置，无需外部依赖）
+- **LLM API**: 配置和模型状态
+- **Vision Model**: 用于图像分析（从 litellm 自动检测）
+- **本地 Provider 认证**: Claude Agent 和 GitHub Copilot 的认证状态（如果已配置）
+
+输出示例：
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           Dependency Status                               │
+├─────────────────────┬────────┬──────────────────────────────┬────────────┤
+│ Component           │ Status │ Description                  │ Details    │
+├─────────────────────┼────────┼──────────────────────────────┼────────────┤
+│ Playwright          │   ✓    │ Browser automation           │ Installed  │
+│ LibreOffice         │   ✓    │ Office document conversion   │ v7.6.4     │
+│ FFmpeg              │   ✓    │ Audio/video processing       │ v6.0       │
+│ RapidOCR            │   ✓    │ OCR for scanned documents    │ v1.4.0     │
+│ LLM API (copilot)   │   ✓    │ Content enhancement          │ 1 model(s) │
+│ Copilot Auth        │   ✓    │ GitHub Copilot auth status   │ Authenticated │
+│ Vision Model        │   ✓    │ Image analysis               │ 1 detected │
+└─────────────────────┴────────┴──────────────────────────────┴────────────┘
+```
+
+::: tip
+当使用本地 provider（`claude-agent/` 或 `copilot/`）时，doctor 命令还会检查认证状态，如果认证失败会提供解决方案提示。
+:::
+
 ### `markitai check-deps`
 
-检查所有可选依赖及其状态。用于诊断安装问题。
+`markitai doctor` 的别名，保留用于向后兼容。
 
 ```bash
 markitai check-deps
 markitai check-deps --json    # JSON 输出
 ```
-
-此命令验证：
-- **agent-browser**: 用于动态 URL 抓取（SPA 渲染）
-- **LibreOffice**: 用于 Office 文档转换（doc, docx, xls, xlsx, ppt, pptx）
-- **RapidOCR**: 用于扫描文档 OCR（内置，无需外部依赖）
-- **LLM API**: 配置和连接状态
-- **Vision Model**: 用于图像分析（从 litellm 自动检测）
 
 ## 其他选项
 

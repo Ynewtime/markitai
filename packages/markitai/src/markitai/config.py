@@ -11,10 +11,6 @@ from pydantic import BaseModel, Field
 
 from markitai.constants import (
     CONFIG_FILENAME,
-    DEFAULT_AGENT_BROWSER_COMMAND,
-    DEFAULT_AGENT_BROWSER_EXTRA_WAIT_MS,
-    DEFAULT_AGENT_BROWSER_TIMEOUT,
-    DEFAULT_AGENT_BROWSER_WAIT_FOR,
     DEFAULT_BATCH_CONCURRENCY,
     DEFAULT_CACHE_SIZE_LIMIT,
     DEFAULT_FETCH_FALLBACK_PATTERNS,
@@ -37,6 +33,9 @@ from markitai.constants import (
     DEFAULT_OCR_LANG,
     DEFAULT_ON_CONFLICT,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS,
+    DEFAULT_PLAYWRIGHT_TIMEOUT,
+    DEFAULT_PLAYWRIGHT_WAIT_FOR,
     DEFAULT_PROMPTS_DIR,
     DEFAULT_ROUTER_NUM_RETRIES,
     DEFAULT_ROUTER_TIMEOUT,
@@ -211,7 +210,7 @@ class ScreenshotConfig(BaseModel):
     """Screenshot rendering configuration.
 
     For PDF/PPTX: Renders pages as JPEG images.
-    For URLs: Captures full-page screenshots using agent-browser.
+    For URLs: Captures full-page screenshots using Playwright.
     """
 
     enabled: bool = False
@@ -222,6 +221,9 @@ class ScreenshotConfig(BaseModel):
     max_height: int = (
         DEFAULT_SCREENSHOT_MAX_HEIGHT  # Max height for full-page URL screenshots
     )
+    # Screenshot-only mode: LLM extracts content purely from screenshots
+    # without using pre-extracted text from Playwright/markitdown
+    screenshot_only: bool = False
 
 
 class PromptsConfig(BaseModel):
@@ -253,6 +255,9 @@ class PromptsConfig(BaseModel):
     document_enhance_complete_user: str | None = None
     document_process_system: str | None = None
     document_process_user: str | None = None
+    # Unified document vision prompt
+    document_vision_system: str | None = None
+    document_vision_user: str | None = None
     # URL prompts
     url_enhance_system: str | None = None
     url_enhance_user: str | None = None
@@ -291,16 +296,14 @@ class CacheConfig(BaseModel):
     global_dir: str = DEFAULT_GLOBAL_CACHE_DIR
 
 
-class AgentBrowserConfig(BaseModel):
-    """agent-browser configuration for JS-rendered pages."""
+class PlaywrightConfig(BaseModel):
+    """Playwright configuration for JS-rendered pages."""
 
-    command: str = DEFAULT_AGENT_BROWSER_COMMAND
-    timeout: int = DEFAULT_AGENT_BROWSER_TIMEOUT  # milliseconds
+    timeout: int = DEFAULT_PLAYWRIGHT_TIMEOUT  # milliseconds
     wait_for: Literal["load", "domcontentloaded", "networkidle"] = (
-        DEFAULT_AGENT_BROWSER_WAIT_FOR
+        DEFAULT_PLAYWRIGHT_WAIT_FOR
     )
-    extra_wait_ms: int = DEFAULT_AGENT_BROWSER_EXTRA_WAIT_MS  # Extra wait after load
-    session: str | None = None  # Optional session name for isolated browser instances
+    extra_wait_ms: int = DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS  # Extra wait after load
 
 
 class JinaConfig(BaseModel):
@@ -327,8 +330,8 @@ class JinaConfig(BaseModel):
 class FetchConfig(BaseModel):
     """URL fetch configuration for handling static and JS-rendered pages."""
 
-    strategy: Literal["auto", "static", "browser", "jina"] = DEFAULT_FETCH_STRATEGY
-    agent_browser: AgentBrowserConfig = Field(default_factory=AgentBrowserConfig)
+    strategy: Literal["auto", "static", "playwright", "jina"] = DEFAULT_FETCH_STRATEGY
+    playwright: PlaywrightConfig = Field(default_factory=PlaywrightConfig)
     jina: JinaConfig = Field(default_factory=JinaConfig)
     fallback_patterns: list[str] = Field(
         default_factory=lambda: list(DEFAULT_FETCH_FALLBACK_PATTERNS)
