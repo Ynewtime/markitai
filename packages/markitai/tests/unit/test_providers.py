@@ -901,6 +901,92 @@ class TestClaudeAgentAdaptiveTimeout:
         assert timeout >= 60
 
 
+class TestCopilotJsonExtraction:
+    """Tests for CopilotProvider JSON extraction using StructuredOutputHandler."""
+
+    def test_extract_json_from_markdown_code_block(self) -> None:
+        """Test extracting JSON from markdown code blocks."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        text = '```json\n{"name": "test", "value": 123}\n```'
+        result = provider._extract_json_from_response(text)
+
+        assert isinstance(result, dict)
+        assert result["name"] == "test"
+        assert result["value"] == 123
+
+    def test_extract_json_from_plain_text(self) -> None:
+        """Test extracting JSON from plain text response."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        text = '{"name": "test"}'
+        result = provider._extract_json_from_response(text)
+
+        assert isinstance(result, dict)
+        assert result["name"] == "test"
+
+    def test_extract_json_array(self) -> None:
+        """Test extracting JSON array from response."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        text = '[1, 2, 3, "four"]'
+        result = provider._extract_json_from_response(text)
+
+        assert isinstance(result, list)
+        assert result == [1, 2, 3, "four"]
+
+    def test_extract_json_cleans_control_characters(self) -> None:
+        """Test that control characters are cleaned before JSON parsing."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        # Text with control character (bell character \x07)
+        text = '{"name": "test\x07value"}'
+        result = provider._extract_json_from_response(text)
+
+        assert isinstance(result, dict)
+        assert result["name"] == "testvalue"  # Control char removed
+
+    def test_extract_json_returns_original_on_failure(self) -> None:
+        """Test that original text is returned when no JSON found."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        text = "This is just plain text without JSON."
+        result = provider._extract_json_from_response(text)
+
+        assert result == text
+
+    def test_extract_json_with_surrounding_text(self) -> None:
+        """Test extracting JSON embedded in surrounding text."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        text = 'Here is the data: {"key": "value"} That was it.'
+        result = provider._extract_json_from_response(text)
+
+        assert isinstance(result, dict)
+        assert result["key"] == "value"
+
+    def test_json_handler_instance_exists(self) -> None:
+        """Test that _json_handler is initialized as StructuredOutputHandler."""
+        from markitai.providers.copilot import CopilotProvider
+        from markitai.providers.json_mode import StructuredOutputHandler
+
+        provider = CopilotProvider()
+        assert hasattr(provider, "_json_handler")
+        assert isinstance(provider._json_handler, StructuredOutputHandler)
+
+
 class TestCopilotAdaptiveTimeout:
     """Tests for CopilotProvider adaptive timeout calculation."""
 
