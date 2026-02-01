@@ -899,3 +899,128 @@ class TestClaudeAgentAdaptiveTimeout:
         timeout = provider._calculate_adaptive_timeout(messages)
 
         assert timeout >= 60
+
+
+class TestCopilotAdaptiveTimeout:
+    """Tests for CopilotProvider adaptive timeout calculation."""
+
+    def test_calculate_adaptive_timeout_exists(self) -> None:
+        """Test that _calculate_adaptive_timeout method exists."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+        assert hasattr(provider, "_calculate_adaptive_timeout")
+        assert callable(provider._calculate_adaptive_timeout)
+
+    def test_longer_messages_return_higher_timeout(self) -> None:
+        """Test that longer messages result in higher timeout values."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        # Short message
+        short_messages = [{"role": "user", "content": "Hello!"}]
+        short_timeout = provider._calculate_adaptive_timeout(short_messages)
+
+        # Long message (100K chars)
+        long_content = "x" * 100000
+        long_messages = [{"role": "user", "content": long_content}]
+        long_timeout = provider._calculate_adaptive_timeout(long_messages)
+
+        # Long messages should have higher timeout
+        assert long_timeout > short_timeout
+
+    def test_images_increase_timeout(self) -> None:
+        """Test that messages with images have higher timeout."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        # Text-only message
+        text_messages = [{"role": "user", "content": "Describe this."}]
+        text_timeout = provider._calculate_adaptive_timeout(text_messages)
+
+        # Message with image
+        image_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/jpeg;base64,abc123"},
+                    },
+                ],
+            }
+        ]
+        image_timeout = provider._calculate_adaptive_timeout(image_messages)
+
+        # Image messages should have higher timeout
+        assert image_timeout > text_timeout
+
+    def test_multiple_images_increase_timeout(self) -> None:
+        """Test that multiple images result in higher timeout than single image."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        # Single image
+        single_image_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What's this?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/jpeg;base64,abc"},
+                    },
+                ],
+            }
+        ]
+        single_timeout = provider._calculate_adaptive_timeout(single_image_messages)
+
+        # Multiple images
+        multi_image_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Compare these images."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/jpeg;base64,abc"},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,def"},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/jpeg;base64,ghi"},
+                    },
+                ],
+            }
+        ]
+        multi_timeout = provider._calculate_adaptive_timeout(multi_image_messages)
+
+        # Multiple images should have higher timeout
+        assert multi_timeout > single_timeout
+
+    def test_returns_integer(self) -> None:
+        """Test that _calculate_adaptive_timeout returns an integer."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+        messages = [{"role": "user", "content": "Hello!"}]
+        timeout = provider._calculate_adaptive_timeout(messages)
+
+        assert isinstance(timeout, int)
+
+    def test_minimum_timeout_is_60_seconds(self) -> None:
+        """Test that minimum timeout is at least 60 seconds (base timeout)."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+        messages = [{"role": "user", "content": "Hi"}]
+        timeout = provider._calculate_adaptive_timeout(messages)
+
+        assert timeout >= 60
