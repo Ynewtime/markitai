@@ -55,7 +55,6 @@ import base64
 import importlib.util
 import json
 import os
-import re
 import tempfile
 import time
 import uuid
@@ -63,6 +62,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.providers.json_mode import StructuredOutputHandler
 from markitai.providers.timeout import calculate_timeout_from_messages
 
 # PIL for image resizing (optional, graceful fallback)
@@ -225,6 +225,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         self.timeout = timeout
         self._client: Any = None
         self._temp_files: list[str] = []
+        self._json_handler = StructuredOutputHandler()
 
     def _calculate_adaptive_timeout(self, messages: list[dict[str, Any]]) -> int:
         """Calculate adaptive timeout based on message content.
@@ -482,55 +483,23 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
 
         return None
 
-    def _extract_json_from_response(self, text: str) -> str:
-        """Extract JSON from response text.
+    def _extract_json_from_response(
+        self, text: str
+    ) -> dict[str, Any] | list[Any] | str:
+        """Extract JSON from response text using unified handler.
 
         Handles cases where the model wraps JSON in markdown code blocks
-        or includes extra text.
+        or includes extra text. Also cleans control characters that break
+        JSON parsing.
 
         Args:
             text: Raw response text
 
         Returns:
-            Extracted JSON string (or original text if extraction fails)
+            Parsed JSON (dict or list) or original text if extraction fails
         """
-        # Try to extract from markdown code block first
-        # Match ```json ... ``` or ``` ... ```
-        code_block_match = re.search(
-            r"```(?:json)?\s*\n?([\s\S]*?)\n?```", text, re.IGNORECASE
-        )
-        if code_block_match:
-            extracted = code_block_match.group(1).strip()
-            # Validate it's valid JSON
-            try:
-                json.loads(extracted)
-                return extracted
-            except json.JSONDecodeError:
-                pass
-
-        # Try to find JSON object or array directly
-        # Look for { ... } or [ ... ]
-        text_stripped = text.strip()
-
-        # If starts with { or [, try to parse as-is
-        if text_stripped.startswith(("{", "[")):
-            try:
-                json.loads(text_stripped)
-                return text_stripped
-            except json.JSONDecodeError:
-                pass
-
-        # Try to find embedded JSON object
-        json_match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", text)
-        if json_match:
-            try:
-                json.loads(json_match.group(1))
-                return json_match.group(1)
-            except json.JSONDecodeError:
-                pass
-
-        # Return original text if no JSON found
-        return text
+        result = self._json_handler.extract_json(text)
+        return result if result is not None else text
 
     async def _get_client(self) -> Any:
         """Get or create Copilot client.
@@ -764,10 +733,15 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         )
 
         # Extract JSON if JSON mode was requested
-        response_content = result_text
+        response_content: str = result_text
         if is_json_mode:
-            response_content = self._extract_json_from_response(result_text)
-            if response_content != result_text:
+            extracted = self._extract_json_from_response(result_text)
+            if isinstance(extracted, (dict, list)):
+                # Convert back to string for LiteLLM response
+                response_content = json.dumps(extracted, ensure_ascii=False)
+                logger.debug("[Copilot] Extracted JSON from response")
+            elif extracted != result_text:
+                response_content = extracted
                 logger.debug("[Copilot] Extracted JSON from response")
 
         # Count tokens using tiktoken (for OpenAI models) or estimation (for others)
