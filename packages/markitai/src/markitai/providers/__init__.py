@@ -58,6 +58,12 @@ from markitai.providers.errors import (
     SDKNotAvailableError,
 )
 
+# Import JSON mode module for public API
+from markitai.providers.json_mode import (
+    StructuredOutputHandler,
+    clean_control_characters,
+)
+
 # Import timeout module for public API
 from markitai.providers.timeout import (
     TimeoutConfig,
@@ -683,4 +689,7 @@ __all__ = [
     "TimeoutConfig",
     "calculate_timeout",
     "calculate_timeout_from_messages",
+    # JSON mode module
+    "StructuredOutputHandler",
+    "clean_control_characters",
 ]
