@@ -711,7 +711,8 @@ function Install-PlaywrightBrowser {
 
     if (Test-Path $markitaiPlaywright) {
         try {
-            & $markitaiPlaywright install chromium 2>&1 | Out-Null
+            # Show download progress to user (Chromium is ~200MB)
+            & $markitaiPlaywright install chromium
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Write-Success "Chromium browser installed successfully"
@@ -729,7 +730,8 @@ function Install-PlaywrightBrowser {
         $pwArgs = $baseArgs + @("-m", "playwright", "install", "chromium")
 
         try {
-            & $exe @pwArgs 2>&1 | Out-Null
+            # Show download progress to user
+            & $exe @pwArgs
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Write-Success "Chromium browser installed successfully"

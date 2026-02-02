@@ -348,7 +348,8 @@ function Install-PlaywrightBrowserDev {
         # Prefer uv run in dev environment
         $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
         if ($uvCmd) {
-            & uv run playwright install chromium 2>&1 | Out-Null
+            # Show download progress (Chromium is ~200MB)
+            & uv run playwright install chromium
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Write-Success "Chromium browser installed successfully"
@@ -364,7 +365,8 @@ function Install-PlaywrightBrowserDev {
             $baseArgs = if ($cmdParts.Length -gt 1) { $cmdParts[1..($cmdParts.Length-1)] } else { @() }
             $pwArgs = $baseArgs + @("-m", "playwright", "install", "chromium")
 
-            & $exe @pwArgs 2>&1 | Out-Null
+            # Show download progress
+            & $exe @pwArgs
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Write-Success "Chromium browser installed successfully"
