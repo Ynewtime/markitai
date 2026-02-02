@@ -943,10 +943,25 @@ lib_install_copilot_cli() {
 lib_init_config() {
     print_info "Initializing configuration..."
 
-    if command -v markitai >/dev/null 2>&1; then
-        if markitai config init 2>/dev/null; then
-            print_success "Configuration initialized"
+    if ! command -v markitai >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local config_path="$HOME/.markitai/config.json"
+    local yes_flag=""
+
+    # Check if config exists and ask user (using ask_yes_no for piped execution)
+    if [ -f "$config_path" ]; then
+        if ask_yes_no "$config_path already exists. Overwrite?" "n"; then
+            yes_flag="--yes"
+        else
+            print_info "Keeping existing configuration"
+            return 0
         fi
+    fi
+
+    if markitai config init $yes_flag 2>/dev/null; then
+        print_success "Configuration initialized"
     fi
     return 0
 }

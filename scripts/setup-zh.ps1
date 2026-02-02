@@ -907,12 +907,31 @@ function Install-CopilotCLIZh {
 function Initialize-ConfigZh {
     Write-InfoZh "初始化配置..."
 
-    try {
-        $markitaiExists = Get-Command markitai -ErrorAction SilentlyContinue
-        if ($markitaiExists) {
-            & markitai config init 2>$null
-            Write-SuccessZh "配置初始化完成"
+    $markitaiExists = Get-Command markitai -ErrorAction SilentlyContinue
+    if (-not $markitaiExists) {
+        return
+    }
+
+    $configPath = Join-Path $env:USERPROFILE ".markitai\config.json"
+    $yesFlag = ""
+
+    # Check if config exists and ask user
+    if (Test-Path $configPath) {
+        if (Ask-YesNo "$configPath 已存在，是否覆盖？" $false) {
+            $yesFlag = "--yes"
+        } else {
+            Write-InfoZh "保留现有配置"
+            return
         }
+    }
+
+    try {
+        if ($yesFlag) {
+            & markitai config init $yesFlag 2>$null
+        } else {
+            & markitai config init 2>$null
+        }
+        Write-SuccessZh "配置初始化完成"
     } catch {}
 }
 
