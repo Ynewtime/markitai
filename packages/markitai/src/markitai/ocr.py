@@ -114,8 +114,7 @@ class OCRProcessor:
             from rapidocr import RapidOCR
         except ImportError as e:
             raise ImportError(
-                "RapidOCR is not installed. "
-                "Install with: pip install rapidocr onnxruntime"
+                "RapidOCR is not installed. Install with: uv add rapidocr"
             ) from e
 
         # Build params
@@ -296,7 +295,7 @@ class OCRProcessor:
             import fitz  # pymupdf
         except ImportError as e:
             raise ImportError(
-                "PyMuPDF is not installed. Install with: pip install pymupdf"
+                "PyMuPDF is not installed. Install with: uv add pymupdf"
             ) from e
 
         doc = fitz.open(pdf_path)

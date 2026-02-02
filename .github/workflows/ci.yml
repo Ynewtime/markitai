@@ -75,7 +75,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync --frozen --extra browser
 
       - name: Install LibreOffice (Linux)
         if: runner.os == 'Linux'

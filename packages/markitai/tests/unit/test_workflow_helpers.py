@@ -432,3 +432,281 @@ class TestFormatStandaloneImageMarkdown:
         # Should not have "## Image Description" since description starts with #
         assert "## Custom Section" in result
         assert "## Image Description" not in result
+
+
+class TestNormalizeFrontmatterPromptLeakage:
+    """Tests for prompt leakage filtering in normalize_frontmatter."""
+
+    def test_filters_chinese_prompt_leakage(self):
+        """Test that Chinese prompt leakage keys are filtered."""
+        data = {
+            "title": "Valid Title",
+            "根据文档内容生成元数据": "Invalid key",
+            "source": "file.pdf",
+        }
+        result = normalize_frontmatter(data)
+
+        assert "title: Valid Title" in result
+        assert "source: file.pdf" in result
+        assert "根据文档内容生成" not in result
+
+    def test_filters_task_number_leakage(self):
+        """Test that task number patterns are filtered."""
+        data = {
+            "title": "Valid Title",
+            "任务 1": "Do something",
+            "Task 2": "Do something else",
+            "source": "file.pdf",
+        }
+        result = normalize_frontmatter(data)
+
+        assert "title: Valid Title" in result
+        assert "任务" not in result
+        assert "Task 2" not in result
+
+    def test_filters_yaml_frontmatter_leakage(self):
+        """Test that YAML frontmatter pattern is filtered."""
+        data = {
+            "title": "Test",
+            "YAML frontmatter 格式": "invalid",
+        }
+        result = normalize_frontmatter(data)
+
+        assert "title: Test" in result
+        assert "YAML frontmatter" not in result
+
+    def test_preserves_valid_custom_fields(self):
+        """Test that valid custom fields are preserved."""
+        data = {
+            "title": "Test",
+            "author": "John Doe",
+            "version": "1.0",
+        }
+        result = normalize_frontmatter(data)
+
+        assert "title: Test" in result
+        assert "author: John Doe" in result
+        assert "version: '1.0'" in result or "version: 1.0" in result
+
+
+class TestDetectLanguageEdgeCases:
+    """Edge case tests for detect_language function."""
+
+    def test_japanese_kanji_detected_as_cjk(self):
+        """Test that Japanese kanji are detected as CJK."""
+        # Japanese uses some of the same CJK characters
+        assert detect_language("日本語のテストです") == "zh"
+
+    def test_korean_not_detected_as_chinese(self):
+        """Test that Korean Hangul is not detected as Chinese."""
+        # Korean Hangul is in a different Unicode range
+        assert detect_language("한글 테스트입니다") == "en"
+
+    def test_threshold_boundary_10_percent(self):
+        """Test the 10% CJK threshold boundary."""
+        # Exactly 10% should be English (not > 10%)
+        # 10 chars total, 1 Chinese = 10%
+        content = "abcdefghi中"  # 9 English letters + 1 Chinese
+        assert detect_language(content) == "en"
+
+        # Just over 10%: 9 chars, 1 Chinese = 11.1%
+        content = "abcdefgh中"  # 8 English letters + 1 Chinese
+        assert detect_language(content) == "zh"
+
+    def test_punctuation_and_numbers_ignored(self):
+        """Test that punctuation and numbers don't affect the ratio."""
+        # Only alphabetic characters should be counted
+        content = "Hello, 世界! 123"
+        # 5 English letters (Hello) + 2 Chinese (世界) = 7 alphabetic
+        # 2/7 = 28.5% CJK, should be detected as Chinese
+        assert detect_language(content) == "zh"
+
+
+class TestAddBasicFrontmatterAdvanced:
+    """Advanced tests for add_basic_frontmatter function."""
+
+    def test_explicit_title_takes_precedence(self):
+        """Test that explicit title parameter overrides heading extraction."""
+        content = "# Heading Title\n\nContent"
+        result = add_basic_frontmatter(content, "file.txt", title="Explicit Title")
+
+        assert "title: Explicit Title" in result
+        assert "Heading Title" not in result.split("---")[1]  # Not in frontmatter
+
+    def test_fetch_strategy_added(self):
+        """Test that fetch_strategy is added when provided."""
+        content = "# Test\n\nContent"
+        result = add_basic_frontmatter(content, "file.txt", fetch_strategy="browser")
+
+        assert "fetch_strategy: browser" in result
+
+    def test_fetch_strategy_not_added_when_none(self):
+        """Test that fetch_strategy is omitted when None."""
+        content = "# Test\n\nContent"
+        result = add_basic_frontmatter(content, "file.txt", fetch_strategy=None)
+
+        assert "fetch_strategy" not in result
+
+    def test_screenshot_path_added(self, tmp_path: Path):
+        """Test that screenshot path is added as comment."""
+        content = "# Test\n\nContent"
+        screenshot = tmp_path / "screenshot.png"
+        screenshot.write_text("fake image")
+
+        result = add_basic_frontmatter(
+            content,
+            "file.txt",
+            screenshot_path=screenshot,
+            output_dir=tmp_path,
+        )
+
+        assert "<!-- Screenshot for reference -->" in result
+        assert "screenshot.png" in result
+
+    def test_screenshot_path_skipped_if_not_exists(self, tmp_path: Path):
+        """Test that non-existent screenshot path is ignored."""
+        content = "# Test\n\nContent"
+        screenshot = tmp_path / "nonexistent.png"
+
+        result = add_basic_frontmatter(
+            content,
+            "file.txt",
+            screenshot_path=screenshot,
+            output_dir=tmp_path,
+        )
+
+        assert "Screenshot" not in result
+
+    def test_dedupe_false_preserves_duplicates(self):
+        """Test that dedupe=False preserves duplicate paragraphs."""
+        content = "Paragraph one.\n\nParagraph one.\n\nParagraph two."
+        result = add_basic_frontmatter(content, "file.txt", dedupe=False)
+
+        # Count occurrences of "Paragraph one"
+        count = result.count("Paragraph one.")
+        assert count == 2  # Both preserved
+
+    def test_title_with_newlines_normalized(self):
+        """Test that title with newlines is normalized."""
+        # Explicitly pass title with newlines
+        result = add_basic_frontmatter(
+            "Content",
+            "file.txt",
+            title="Title with\nnewline",
+        )
+
+        # Title should have newline replaced with space
+        assert "title: Title with newline" in result
+        assert "\n" not in result.split("---")[1].split("title:")[1].split("\n")[0]
+
+    def test_h2_heading_extracted(self):
+        """Test that H2 heading is extracted when no H1."""
+        content = "## Section Title\n\nContent"
+        result = add_basic_frontmatter(content, "file.txt")
+
+        assert "title: Section Title" in result
+
+
+class TestMergeLlmUsageEdgeCases:
+    """Edge case tests for merge_llm_usage function."""
+
+    def test_merge_with_incomplete_target_fields(self):
+        """Test merging when target has incomplete fields."""
+        target = {
+            "gpt-4": {
+                "requests": 1,
+                # Missing other fields
+            }
+        }
+        source = {
+            "gpt-4": {
+                "requests": 2,
+                "input_tokens": 500,
+                "output_tokens": 200,
+                "cost_usd": 0.05,
+            }
+        }
+        merge_llm_usage(target, source)
+
+        assert target["gpt-4"]["requests"] == 3
+        assert target["gpt-4"]["input_tokens"] == 500
+        assert target["gpt-4"]["output_tokens"] == 200
+        assert target["gpt-4"]["cost_usd"] == 0.05
+
+    def test_merge_with_incomplete_source_fields(self):
+        """Test merging when source has incomplete fields."""
+        target = {
+            "gpt-4": {
+                "requests": 1,
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cost_usd": 0.01,
+            }
+        }
+        source = {
+            "gpt-4": {
+                "requests": 2,
+                # Missing other fields
+            }
+        }
+        merge_llm_usage(target, source)
+
+        assert target["gpt-4"]["requests"] == 3
+        assert target["gpt-4"]["input_tokens"] == 100  # Unchanged
+        assert target["gpt-4"]["output_tokens"] == 50  # Unchanged
+        assert target["gpt-4"]["cost_usd"] == 0.01  # Unchanged
+
+    def test_merge_empty_source(self):
+        """Test merging with empty source doesn't change target."""
+        target = {
+            "gpt-4": {
+                "requests": 5,
+                "input_tokens": 1000,
+            }
+        }
+        source: dict = {}
+        merge_llm_usage(target, source)
+
+        assert target["gpt-4"]["requests"] == 5
+        assert target["gpt-4"]["input_tokens"] == 1000
+
+
+class TestLLMUsageAccumulatorEdgeCases:
+    """Edge case tests for LLMUsageAccumulator class."""
+
+    def test_add_with_none_usage(self):
+        """Test adding with None usage is handled gracefully."""
+        acc = LLMUsageAccumulator()
+        acc.add(cost=0.05, usage=None)
+
+        assert acc.total_cost == 0.05
+        assert acc.usage == {}
+
+    def test_add_multiple_models(self):
+        """Test accumulating usage from multiple models."""
+        acc = LLMUsageAccumulator()
+        acc.add(
+            cost=0.05,
+            usage={"gpt-4": {"requests": 1, "input_tokens": 100}},
+        )
+        acc.add(
+            cost=0.03,
+            usage={"claude-3": {"requests": 2, "input_tokens": 200}},
+        )
+
+        assert acc.total_cost == 0.08
+        assert "gpt-4" in acc.usage
+        assert "claude-3" in acc.usage
+        assert acc.usage["gpt-4"]["requests"] == 1
+        assert acc.usage["claude-3"]["requests"] == 2
+
+    def test_reset_then_add(self):
+        """Test that add works correctly after reset."""
+        acc = LLMUsageAccumulator()
+        acc.add(cost=0.10, usage={"gpt-4": {"requests": 5}})
+        acc.reset()
+        acc.add(cost=0.02, usage={"claude-3": {"requests": 1}})
+
+        assert acc.total_cost == 0.02
+        assert "gpt-4" not in acc.usage
+        assert "claude-3" in acc.usage

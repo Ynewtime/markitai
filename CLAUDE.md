@@ -1,19 +1,4 @@
-原则：
-1. 慢即是快。先读完代码、抽丝剥茧，从系统架构师的角度去分析，找到某个 <需求点> 所在的业务流程，思考 <变更> 会带来哪些状态的变化，结合最终系统的设计目标和需求价值优先级，去设计实施方案。
-
-依赖：
-1. 涉及前端 / UI / UX 相关任务，请调用 frontend-design、ui-ux-pro-max 和 web-design-guidelines 这几个 SKILLS 进行辅助。
-
-感知：
-1. 开始工作前，先确认好你所在的系统（Windows|Linux|MacOS），选择对应的执行命令
-
-偏好
-1. Keep plan mode concise, remove unnecessary grammar
-2. Use only English for ASCII arts
-
-语言
-1. 始终使用中文回复用户
-2. 代码、注释、文档字符串使用英文
+参考 ~/.claude/CLAUDE.md
 
 ---
 
@@ -121,30 +106,6 @@ uv run markitai --llm       # 启用 LLM 增强
 
 ---
 
-## 工具
-
-### 浏览器自动化（web/url fetch）
-
-Use `agent-browser` for web automation. Run `agent-browser --help` for all commands.
-
-**版本要求**: 锁定使用 **0.7.6** 版本（0.8.x 在 Windows 上存在 daemon 启动 bug）
-
-```bash
-# 安装指定版本
-npm install -g agent-browser@0.7.6
-# 或
-pnpm add -g agent-browser@0.7.6
-```
-
-Core workflow:
-
-1. `agent-browser open <url>` - Navigate to page
-2. `agent-browser snapshot -i` - Get interactive elements with refs (@e1, @e2)
-3. `agent-browser click @e1` / `fill @e2 "text"` - Interact using refs
-4. Re-snapshot after page changes
-
----
-
 ## AI 工具集成
 
 ### Claude Code CLI
@@ -184,6 +145,26 @@ Core workflow:
     }]
   }
 }
+```
+
+### 安装 CLI 工具
+
+**Claude Code CLI**:
+```bash
+# macOS/Linux/WSL
+curl -fsSL https://claude.ai/install.sh | bash
+
+# Windows PowerShell
+irm https://claude.ai/install.ps1 | iex
+```
+
+**GitHub Copilot CLI**:
+```bash
+# macOS/Linux/WSL
+curl -fsSL https://gh.io/copilot-install | bash
+
+# Windows
+winget install GitHub.Copilot
 ```
 
 ### 安装可选依赖

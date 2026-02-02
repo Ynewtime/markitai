@@ -1,6 +1,6 @@
 [project]
 name = "markitai"
-version = "0.4.0"
+version = "0.4.1"
 description = "Opinionated Markdown converter with native LLM enhancement support"
 license = "MIT"
 readme = "README.md"

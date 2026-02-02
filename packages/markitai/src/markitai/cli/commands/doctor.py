@@ -141,34 +141,49 @@ def _doctor_impl(as_json: bool) -> None:
 
     # 2. Check LibreOffice
     soffice_path = shutil.which("soffice") or shutil.which("libreoffice")
+
+    # Check common installation paths if not in PATH
+    if not soffice_path:
+        import os
+        import sys
+
+        common_paths: list[str] = []
+        if sys.platform == "win32":
+            # Windows: Check Program Files
+            for prog_dir in [
+                os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+                os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
+            ]:
+                common_paths.extend(
+                    [
+                        os.path.join(prog_dir, "LibreOffice", "program", "soffice.exe"),
+                        os.path.join(
+                            prog_dir, "LibreOffice 7", "program", "soffice.exe"
+                        ),
+                        os.path.join(
+                            prog_dir, "LibreOffice 24", "program", "soffice.exe"
+                        ),
+                    ]
+                )
+        elif sys.platform == "darwin":
+            # macOS: Check Applications
+            common_paths.append("/Applications/LibreOffice.app/Contents/MacOS/soffice")
+
+        for path in common_paths:
+            if os.path.isfile(path):
+                soffice_path = path
+                break
+
     if soffice_path:
-        try:
-            proc = subprocess.run(
-                [soffice_path, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            version = (
-                proc.stdout.strip().split("\n")[0]
-                if proc.returncode == 0
-                else "unknown"
-            )
-            results["libreoffice"] = {
-                "name": "LibreOffice",
-                "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
-                "status": "ok",
-                "message": f"Found at {soffice_path} ({version})",
-                "install_hint": "",
-            }
-        except Exception as e:
-            results["libreoffice"] = {
-                "name": "LibreOffice",
-                "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
-                "status": "error",
-                "message": f"Found but failed to run: {e}",
-                "install_hint": "Reinstall LibreOffice",
-            }
+        # LibreOffice found - just report the path without running --version
+        # Running soffice --version can hang on Windows in non-interactive mode
+        results["libreoffice"] = {
+            "name": "LibreOffice",
+            "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
+            "status": "ok",
+            "message": f"Found at {soffice_path}",
+            "install_hint": "",
+        }
     else:
         results["libreoffice"] = {
             "name": "LibreOffice",
@@ -514,7 +529,14 @@ def doctor(as_json: bool) -> None:
     - LLM API configuration (for content enhancement)
     - Authentication status for local providers (Claude Agent, Copilot)
     """
-    _doctor_impl(as_json)
+    # Suppress debug logs during doctor command
+    from loguru import logger
+
+    logger.disable("markitai")
+    try:
+        _doctor_impl(as_json)
+    finally:
+        logger.enable("markitai")
 
 
 @click.command("check-deps")
@@ -528,11 +550,12 @@ def check_deps(as_json: bool) -> None:
     """Check all optional dependencies and their status.
 
     This is an alias for 'doctor' command, kept for backward compatibility.
-
-    This command helps diagnose setup issues by verifying:
-    - Playwright (for dynamic URL fetching)
-    - LibreOffice (for Office document conversion)
-    - RapidOCR (for scanned document processing)
-    - LLM API configuration (for content enhancement)
     """
-    _doctor_impl(as_json)
+    # Suppress debug logs during check-deps command
+    from loguru import logger
+
+    logger.disable("markitai")
+    try:
+        _doctor_impl(as_json)
+    finally:
+        logger.enable("markitai")

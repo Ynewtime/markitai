@@ -39,9 +39,15 @@ class PromptManager:
         "document_process_user",
         "document_enhance_complete_system",
         "document_enhance_complete_user",
+        # Unified document vision prompt (replaces document_enhance + document_enhance_complete)
+        "document_vision_system",
+        "document_vision_user",
         # URL prompts
         "url_enhance_system",
         "url_enhance_user",
+        # Screenshot-only extraction prompts
+        "screenshot_extract_system",
+        "screenshot_extract_user",
     )
 
     def __init__(self, config: PromptsConfig | None = None) -> None:

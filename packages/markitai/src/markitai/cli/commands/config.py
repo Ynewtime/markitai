@@ -15,12 +15,12 @@ import json
 from pathlib import Path
 
 import click
-from rich.console import Console
 from rich.syntax import Syntax
 
+from markitai.cli.console import get_console
 from markitai.config import ConfigManager, MarkitaiConfig
 
-console = Console()
+console = get_console()
 
 
 @click.group()
@@ -62,7 +62,7 @@ def config_list(output_format: str) -> None:
             syntax = Syntax(config_yaml, "yaml", theme="monokai", line_numbers=False)
             console.print(syntax)
         except ImportError:
-            console.print("[red]YAML output requires PyYAML: pip install pyyaml[/red]")
+            console.print("[red]YAML output requires PyYAML: uv add pyyaml[/red]")
             raise SystemExit(1)
     elif output_format == "table":
         from rich.table import Table

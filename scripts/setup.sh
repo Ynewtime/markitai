@@ -75,25 +75,31 @@ main() {
         exit 1
     fi
 
-    # Step 4: Optional - agent-browser
-    print_step 4 5 "Optional: Browser automation"
-    if ask_yes_no "Install browser automation support (agent-browser)?" "n"; then
-        lib_install_agent_browser
-    else
-        print_info "Skipping agent-browser installation"
-        track_install "agent-browser" "skipped"
-    fi
+    # Install Playwright browser (required for SPA/JS-rendered pages)
+    lib_install_playwright_browser
 
-    # Step 5: Optional - LLM CLI tools
-    print_step 5 5 "Optional: LLM CLI tools"
+    # Install LibreOffice (optional, for legacy Office files)
+    lib_install_libreoffice
+
+    # Install FFmpeg (optional, for audio/video files)
+    lib_install_ffmpeg
+
+    # Step 4: Optional - LLM CLI tools
+    print_step 4 5 "Optional: LLM CLI tools"
     print_info "LLM CLI tools provide local authentication for AI providers"
     if ask_yes_no "Install Claude Code CLI?" "n"; then
-        lib_install_claude_cli
+        if lib_install_claude_cli; then
+            # Install Claude Agent SDK for programmatic access
+            lib_install_markitai_extra "claude-agent"
+        fi
     else
         track_install "Claude Code CLI" "skipped"
     fi
     if ask_yes_no "Install GitHub Copilot CLI?" "n"; then
-        lib_install_copilot_cli
+        if lib_install_copilot_cli; then
+            # Install Copilot SDK for programmatic access
+            lib_install_markitai_extra "copilot"
+        fi
     else
         track_install "Copilot CLI" "skipped"
     fi

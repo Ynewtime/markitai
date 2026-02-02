@@ -6,8 +6,6 @@
 # Version Variables (can be overridden via environment)
 # ============================================================
 MARKITAI_VERSION="${MARKITAI_VERSION:-}"
-# Lock agent-browser to 0.7.6 due to daemon startup bug in 0.8.x on Windows
-AGENT_BROWSER_VERSION="${AGENT_BROWSER_VERSION:-0.7.6}"
 UV_VERSION="${UV_VERSION:-}"
 
 # ============================================================
@@ -69,7 +67,7 @@ print_welcome_user() {
     printf "    ${GREEN}•${NC} markitai - Markdown converter with LLM support\n"
     printf "\n"
     printf "  Optional components:\n"
-    printf "    ${YELLOW}•${NC} agent-browser - Browser automation for JS-rendered pages\n"
+    printf "    ${YELLOW}•${NC} Playwright - Browser automation for JS-rendered pages\n"
     printf "    ${YELLOW}•${NC} Claude Code CLI - Use your Claude subscription\n"
     printf "    ${YELLOW}•${NC} Copilot CLI - Use your GitHub Copilot subscription\n"
     printf "\n"
@@ -90,7 +88,7 @@ print_welcome_dev() {
     printf "    ${GREEN}•${NC} pre-commit hooks for code quality\n"
     printf "\n"
     printf "  Optional components:\n"
-    printf "    ${YELLOW}•${NC} agent-browser - Browser automation\n"
+    printf "    ${YELLOW}•${NC} Playwright - Browser automation\n"
     printf "    ${YELLOW}•${NC} LLM CLI tools - Claude Code / Copilot\n"
     printf "    ${YELLOW}•${NC} LLM Python SDKs - Programmatic LLM access\n"
     printf "\n"
@@ -424,11 +422,13 @@ lib_install_markitai() {
     print_info "Installing markitai..."
 
     # Build package spec with optional version
+    # Note: Use [browser] instead of [all] to avoid installing unnecessary SDK packages
+    # SDK packages (claude-agent, copilot) will be installed when user selects CLI tools
     if [ -n "$MARKITAI_VERSION" ]; then
-        pkg="markitai[all]==$MARKITAI_VERSION"
+        pkg="markitai[browser]==$MARKITAI_VERSION"
         print_info "Installing version: $MARKITAI_VERSION"
     else
-        pkg="markitai[all]"
+        pkg="markitai[browser]"
     fi
 
     # Prefer uv tool install (recommended, installs to ~/.local/bin)
@@ -478,111 +478,323 @@ lib_install_markitai() {
     return 1
 }
 
-# Install agent-browser
-# Returns: 0 on success, 1 on failure
-lib_install_agent_browser() {
-    print_info "Detecting Node.js..."
+# Install Playwright browser (Chromium) and system dependencies
+# Requires: markitai/playwright to be installed
+# Security: Use uv run or python module to ensure correct playwright
+# Returns: 0 on success, 1 on failure, 2 if skipped
+lib_install_playwright_browser() {
+    print_info "Playwright browser (Chromium):"
+    print_info "  Purpose: Browser automation for JavaScript-rendered pages (Twitter, SPAs)"
 
-    if ! lib_detect_node; then
-        print_warning "Skipping agent-browser installation (requires Node.js)"
-        track_install "agent-browser" "skipped"
+    # Ask user consent before downloading
+    if ! ask_yes_no "Download Chromium browser?" "y"; then
+        print_info "Skipping Playwright browser installation"
+        track_install "Playwright Browser" "skipped"
+        return 2
+    fi
+
+    print_info "Downloading Chromium browser..."
+    browser_installed=false
+
+    # Prefer uv run (for uv tool installed packages)
+    if command -v uv >/dev/null 2>&1; then
+        if uv run playwright install chromium 2>/dev/null; then
+            print_success "Chromium browser downloaded successfully"
+            browser_installed=true
+        fi
+    fi
+
+    # Fallback to Python module
+    if [ "$browser_installed" = false ] && [ -n "$PYTHON_CMD" ]; then
+        if "$PYTHON_CMD" -m playwright install chromium 2>/dev/null; then
+            print_success "Chromium browser downloaded successfully"
+            browser_installed=true
+        fi
+    fi
+
+    if [ "$browser_installed" = false ]; then
+        print_warning "Playwright browser installation failed"
+        print_info "You can install later with: uv run playwright install chromium"
+        track_install "Playwright Browser" "failed"
         return 1
     fi
 
-    print_info "Installing agent-browser..."
-    print_info "  Purpose: Browser automation for JavaScript-rendered pages"
-    print_info "  Size: ~150MB (includes Chromium)"
-
-    # Build package spec with optional version
-    if [ -n "$AGENT_BROWSER_VERSION" ]; then
-        pkg="agent-browser@$AGENT_BROWSER_VERSION"
-        print_info "Installing version: $AGENT_BROWSER_VERSION"
-    else
-        pkg="agent-browser"
-    fi
-
-    # Try npm first, then pnpm
-    install_success=false
-    if command -v npm >/dev/null 2>&1; then
-        print_info "Installing via npm..."
-        if npm install -g "$pkg"; then
-            install_success=true
-        fi
-    fi
-
-    if [ "$install_success" = false ] && command -v pnpm >/dev/null 2>&1; then
-        print_info "Installing via pnpm..."
-        if pnpm add -g "$pkg"; then
-            install_success=true
-        fi
-    fi
-
-    if [ "$install_success" = true ]; then
-        # Verify installation
-        if ! command -v agent-browser >/dev/null 2>&1; then
-            print_warning "agent-browser installed but not in PATH"
-            # Get global bin directory for PATH help
-            global_bin=""
-            if command -v pnpm >/dev/null 2>&1; then
-                global_bin=$(pnpm config get global-bin-dir 2>/dev/null)
-                if [ -z "$global_bin" ]; then
-                    # pnpm bin -g returns the actual bin directory
-                    global_bin=$(pnpm bin -g 2>/dev/null)
+    # On Linux, install system dependencies (requires sudo)
+    if [ "$(uname)" = "Linux" ]; then
+        print_info "Chromium requires system dependencies on Linux"
+        if ask_yes_no "Install system dependencies (requires sudo)?" "y"; then
+            print_info "Installing system dependencies..."
+            if command -v uv >/dev/null 2>&1; then
+                if uv run playwright install-deps chromium 2>/dev/null; then
+                    print_success "System dependencies installed successfully"
+                    track_install "Playwright Browser" "installed"
+                    return 0
                 fi
             fi
-            if [ -z "$global_bin" ] && command -v npm >/dev/null 2>&1; then
-                npm_prefix=$(npm config get prefix 2>/dev/null)
-                if [ -n "$npm_prefix" ]; then
-                    global_bin="$npm_prefix/bin"
+            # Fallback to Python module
+            if [ -n "$PYTHON_CMD" ]; then
+                if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
+                    print_success "System dependencies installed successfully"
+                    track_install "Playwright Browser" "installed"
+                    return 0
                 fi
             fi
-            if [ -n "$global_bin" ]; then
-                print_path_help "$global_bin"
-            fi
-            track_install "agent-browser" "installed"
-            return 1
+            print_warning "System dependencies installation failed"
+            print_info "You can install manually with: sudo playwright install-deps chromium"
+            print_info "Or install packages: sudo apt install libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxkbcommon0 libxdamage1 libgbm1 libpango-1.0-0 libcairo2 libasound2"
+            track_install "Playwright Browser" "installed"
+            return 0
+        else
+            print_warning "Skipped system dependencies installation"
+            print_info "Chromium may not work. Install later with: sudo playwright install-deps chromium"
+            track_install "Playwright Browser" "installed"
+            return 0
         fi
+    fi
 
-        print_success "agent-browser installed successfully"
-        track_install "agent-browser" "installed"
+    track_install "Playwright Browser" "installed"
+    return 0
+}
 
-        # Chromium download (default: No)
-        if ask_yes_no "Download Chromium browser?" "n"; then
-            print_info "Downloading Chromium..."
+# Install LibreOffice (optional)
+# LibreOffice is required for converting .doc, .ppt, .xls files
+# Returns: 0 on success, 1 on failure, 2 if skipped
+lib_install_libreoffice() {
+    print_info "Checking LibreOffice installation..."
+    print_info "  Purpose: Convert legacy Office files (.doc, .ppt, .xls)"
 
-            # Detect OS
-            os_type=$(uname -s)
+    # Check for soffice (LibreOffice command)
+    if command -v soffice >/dev/null 2>&1; then
+        version=$(soffice --version 2>/dev/null | head -n1)
+        print_success "LibreOffice installed: $version"
+        track_install "LibreOffice" "installed"
+        return 0
+    fi
 
-            if [ "$os_type" = "Linux" ]; then
-                # Linux: system dependencies (default: No)
-                if ask_yes_no "Also install system dependencies (requires sudo)?" "n"; then
-                    agent-browser install --with-deps
-                else
-                    agent-browser install
+    # Check for libreoffice command (alternative)
+    if command -v libreoffice >/dev/null 2>&1; then
+        version=$(libreoffice --version 2>/dev/null | head -n1)
+        print_success "LibreOffice installed: $version"
+        track_install "LibreOffice" "installed"
+        return 0
+    fi
+
+    print_warning "LibreOffice not installed (optional)"
+    print_info "  Without LibreOffice, .doc/.ppt/.xls files cannot be converted"
+    print_info "  Modern formats (.docx/.pptx/.xlsx) work without LibreOffice"
+
+    if ! ask_yes_no "Install LibreOffice?" "n"; then
+        print_info "Skipping LibreOffice installation"
+        track_install "LibreOffice" "skipped"
+        return 2  # Skipped
+    fi
+
+    print_info "Installing LibreOffice..."
+
+    case "$(uname)" in
+        Darwin)
+            # macOS: use Homebrew
+            if command -v brew >/dev/null 2>&1; then
+                if brew install --cask libreoffice; then
+                    print_success "LibreOffice installed via Homebrew"
+                    track_install "LibreOffice" "installed"
+                    return 0
                 fi
             else
-                agent-browser install
+                print_error "Homebrew not found"
+                print_info "Install Homebrew first: https://brew.sh"
+                print_info "Then run: brew install --cask libreoffice"
             fi
+            ;;
+        Linux)
+            # Linux: use package manager
+            if [ -f /etc/debian_version ]; then
+                # Debian/Ubuntu
+                print_info "Installing via apt (requires sudo)..."
+                if sudo apt update && sudo apt install -y libreoffice; then
+                    print_success "LibreOffice installed via apt"
+                    track_install "LibreOffice" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/fedora-release ]; then
+                # Fedora
+                print_info "Installing via dnf (requires sudo)..."
+                if sudo dnf install -y libreoffice; then
+                    print_success "LibreOffice installed via dnf"
+                    track_install "LibreOffice" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/arch-release ]; then
+                # Arch Linux
+                print_info "Installing via pacman (requires sudo)..."
+                if sudo pacman -S --noconfirm libreoffice-fresh; then
+                    print_success "LibreOffice installed via pacman"
+                    track_install "LibreOffice" "installed"
+                    return 0
+                fi
+            else
+                print_error "Unknown Linux distribution"
+                print_info "Please install LibreOffice manually using your package manager"
+            fi
+            ;;
+        *)
+            print_error "Automatic installation not supported on this platform"
+            print_info "Download from: https://www.libreoffice.org/download/"
+            ;;
+    esac
 
-            print_success "Chromium download complete"
-            track_install "Chromium" "installed"
-        else
-            print_info "Skipping Chromium download"
-            print_info "You can install later: agent-browser install"
-            track_install "Chromium" "skipped"
-        fi
+    print_warning "LibreOffice installation failed"
+    print_info "Manual install options:"
+    case "$(uname)" in
+        Darwin)
+            print_info "  brew install --cask libreoffice"
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                print_info "  sudo apt install libreoffice"
+            elif [ -f /etc/fedora-release ]; then
+                print_info "  sudo dnf install libreoffice"
+            elif [ -f /etc/arch-release ]; then
+                print_info "  sudo pacman -S libreoffice-fresh"
+            else
+                print_info "  Use your package manager to install libreoffice"
+            fi
+            ;;
+        *)
+            print_info "  Download from: https://www.libreoffice.org/download/"
+            ;;
+    esac
+    track_install "LibreOffice" "failed"
+    return 1
+}
 
+# Install FFmpeg (optional)
+# FFmpeg is required for audio/video file processing
+# Returns: 0 on success, 1 on failure, 2 if skipped
+lib_install_ffmpeg() {
+    print_info "Checking FFmpeg installation..."
+    print_info "  Purpose: Process audio/video files (.mp3, .mp4, .wav, etc.)"
+
+    if command -v ffmpeg >/dev/null 2>&1; then
+        version=$(ffmpeg -version 2>/dev/null | head -n1)
+        print_success "FFmpeg installed: $version"
+        track_install "FFmpeg" "installed"
         return 0
-    else
-        print_error "agent-browser installation failed"
-        if ! check_network; then
-            print_network_error
-        else
-            print_info "Manual install: npm install -g agent-browser"
-        fi
-        track_install "agent-browser" "failed"
-        return 1
     fi
+
+    print_warning "FFmpeg not installed (optional)"
+    print_info "  Without FFmpeg, audio/video files cannot be processed"
+
+    if ! ask_yes_no "Install FFmpeg?" "n"; then
+        print_info "Skipping FFmpeg installation"
+        track_install "FFmpeg" "skipped"
+        return 2
+    fi
+
+    print_info "Installing FFmpeg..."
+
+    case "$(uname)" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                if brew install ffmpeg; then
+                    print_success "FFmpeg installed via Homebrew"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            else
+                print_error "Homebrew not found"
+                print_info "Install Homebrew first: https://brew.sh"
+            fi
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                print_info "Installing via apt (requires sudo)..."
+                if sudo apt update && sudo apt install -y ffmpeg; then
+                    print_success "FFmpeg installed via apt"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/fedora-release ]; then
+                print_info "Installing via dnf (requires sudo)..."
+                if sudo dnf install -y ffmpeg; then
+                    print_success "FFmpeg installed via dnf"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/arch-release ]; then
+                print_info "Installing via pacman (requires sudo)..."
+                if sudo pacman -S --noconfirm ffmpeg; then
+                    print_success "FFmpeg installed via pacman"
+                    track_install "FFmpeg" "installed"
+                    return 0
+                fi
+            else
+                print_error "Unknown Linux distribution"
+                print_info "Please install FFmpeg manually using your package manager"
+            fi
+            ;;
+        *)
+            print_error "Automatic installation not supported on this platform"
+            print_info "Download from: https://ffmpeg.org/download.html"
+            ;;
+    esac
+
+    print_warning "FFmpeg installation failed"
+    print_info "Manual install options:"
+    case "$(uname)" in
+        Darwin)
+            print_info "  brew install ffmpeg"
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                print_info "  sudo apt install ffmpeg"
+            elif [ -f /etc/fedora-release ]; then
+                print_info "  sudo dnf install ffmpeg"
+            elif [ -f /etc/arch-release ]; then
+                print_info "  sudo pacman -S ffmpeg"
+            else
+                print_info "  Use your package manager to install ffmpeg"
+            fi
+            ;;
+        *)
+            print_info "  Download from: https://ffmpeg.org/download.html"
+            ;;
+    esac
+    track_install "FFmpeg" "failed"
+    return 1
+}
+
+# Install markitai extra package
+# Usage: lib_install_markitai_extra "claude-agent"
+# Returns: 0 on success, 1 on failure
+lib_install_markitai_extra() {
+    extra_name="$1"
+    pkg="markitai[$extra_name]"
+
+    # Prefer uv tool install
+    if command -v uv >/dev/null 2>&1; then
+        if uv tool install "$pkg" --python "$PYTHON_CMD" --upgrade 2>/dev/null; then
+            print_success "markitai[$extra_name] installed"
+            return 0
+        fi
+    fi
+
+    # Fallback to pipx
+    if command -v pipx >/dev/null 2>&1; then
+        if pipx install "$pkg" --python "$PYTHON_CMD" --force 2>/dev/null; then
+            print_success "markitai[$extra_name] installed"
+            return 0
+        fi
+    fi
+
+    # Fallback to pip --user
+    if "$PYTHON_CMD" -m pip install --user --upgrade "$pkg" 2>/dev/null; then
+        print_success "markitai[$extra_name] installed"
+        return 0
+    fi
+
+    print_warning "markitai[$extra_name] installation failed"
+    return 1
 }
 
 # Install Claude Code CLI
@@ -599,7 +811,19 @@ lib_install_claude_cli() {
         return 0
     fi
 
-    # Prefer npm/pnpm if Node.js available
+    # Prefer official install script (macOS/Linux/WSL)
+    claude_url="https://claude.ai/install.sh"
+    if confirm_remote_script "$claude_url" "Claude Code CLI"; then
+        print_info "Installing via official script..."
+        if curl -fsSL "$claude_url" | bash; then
+            print_success "Claude Code CLI installed via official script"
+            print_info "Run 'claude /login' to authenticate with your Claude subscription or API key"
+            track_install "Claude Code CLI" "installed"
+            return 0
+        fi
+    fi
+
+    # Fallback: npm/pnpm if Node.js available
     if command -v pnpm >/dev/null 2>&1; then
         print_info "Installing via pnpm..."
         if pnpm add -g @anthropic-ai/claude-code; then
@@ -618,25 +842,14 @@ lib_install_claude_cli() {
         fi
     fi
 
-    # Fallback: Homebrew (macOS/Linux)
-    if command -v brew >/dev/null 2>&1; then
-        print_info "Installing via Homebrew..."
-        if brew install claude-code; then
-            print_success "Claude Code CLI installed via Homebrew"
-            print_info "Run 'claude /login' to authenticate with your Claude subscription or API key"
-            track_install "Claude Code CLI" "installed"
-            return 0
-        fi
-    fi
-
     print_warning "Claude Code CLI installation failed"
     if ! check_network; then
         print_network_error
     else
         print_info "Manual install options:"
+        print_info "  curl: curl -fsSL https://claude.ai/install.sh | bash"
         print_info "  pnpm: pnpm add -g @anthropic-ai/claude-code"
-        print_info "  brew: brew install claude-code"
-        print_info "  Docs: https://code.claude.com/docs/en/setup"
+        print_info "  Docs: https://docs.anthropic.com/en/docs/claude-code"
     fi
     track_install "Claude Code CLI" "failed"
     return 1
@@ -656,7 +869,19 @@ lib_install_copilot_cli() {
         return 0
     fi
 
-    # Prefer npm/pnpm if Node.js available
+    # Prefer official install script (macOS/Linux/WSL)
+    copilot_url="https://gh.io/copilot-install"
+    if confirm_remote_script "$copilot_url" "GitHub Copilot CLI"; then
+        print_info "Installing via official script..."
+        if curl -fsSL "$copilot_url" | bash; then
+            print_success "Copilot CLI installed via official script"
+            print_info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
+            track_install "Copilot CLI" "installed"
+            return 0
+        fi
+    fi
+
+    # Fallback: npm/pnpm if Node.js available
     if command -v pnpm >/dev/null 2>&1; then
         print_info "Installing via pnpm..."
         if pnpm add -g @github/copilot; then
@@ -675,37 +900,13 @@ lib_install_copilot_cli() {
         fi
     fi
 
-    # Fallback: Homebrew (macOS/Linux)
-    if command -v brew >/dev/null 2>&1; then
-        print_info "Installing via Homebrew..."
-        if brew install copilot-cli; then
-            print_success "Copilot CLI installed via Homebrew"
-            print_info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
-            track_install "Copilot CLI" "installed"
-            return 0
-        fi
-    fi
-
-    # Fallback: Install script (requires confirmation)
-    copilot_url="https://gh.io/copilot-install"
-    if confirm_remote_script "$copilot_url" "GitHub Copilot CLI"; then
-        print_info "Trying install script..."
-        if curl -fsSL "$copilot_url" | bash; then
-            print_success "Copilot CLI installed via install script"
-            print_info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
-            track_install "Copilot CLI" "installed"
-            return 0
-        fi
-    fi
-
     print_warning "Copilot CLI installation failed"
     if ! check_network; then
         print_network_error
     else
         print_info "Manual install options:"
-        print_info "  pnpm: pnpm add -g @github/copilot"
-        print_info "  brew: brew install copilot-cli"
         print_info "  curl: curl -fsSL https://gh.io/copilot-install | bash"
+        print_info "  pnpm: pnpm add -g @github/copilot"
     fi
     track_install "Copilot CLI" "failed"
     return 1

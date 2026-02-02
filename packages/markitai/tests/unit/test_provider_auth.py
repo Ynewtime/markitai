@@ -6,8 +6,10 @@ for local LLM providers (claude-agent and copilot).
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -107,116 +109,118 @@ class TestAuthManagerCheckAuth:
         AuthManager._instance = None  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_check_auth_copilot_authenticated(self) -> None:
-        """Test check_auth for copilot when authenticated via SDK."""
-        from markitai.providers.auth import AuthManager, AuthStatus
+    async def test_check_auth_copilot_authenticated(self, tmp_path: Path) -> None:
+        """Test check_auth for copilot when authenticated via config file."""
+        from markitai.providers.auth import AuthManager
 
         manager = AuthManager()
 
-        mock_auth_status = MagicMock()
-        mock_auth_status.authenticated = True
-        mock_auth_status.user = "user@github.com"
-        mock_auth_status.expires_at = None
+        # Create mock config file
+        config_dir = tmp_path / ".copilot"
+        config_dir.mkdir()
+        config_file = config_dir / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "logged_in_users": [
+                        {"host": "https://github.com", "login": "testuser"}
+                    ]
+                }
+            )
+        )
 
-        with (
-            patch(
-                "markitai.providers.auth._is_copilot_sdk_available", return_value=True
-            ),
-            patch(
-                "markitai.providers.auth._check_copilot_sdk_auth",
-                new_callable=AsyncMock,
-                return_value=AuthStatus(
-                    provider="copilot",
-                    authenticated=True,
-                    user="user@github.com",
-                    expires_at=None,
-                    error=None,
-                ),
-            ),
-        ):
+        with patch("pathlib.Path.home", return_value=tmp_path):
             status = await manager.check_auth("copilot")
 
         assert status.provider == "copilot"
         assert status.authenticated is True
-        assert status.user == "user@github.com"
+        assert status.user == "testuser"
 
     @pytest.mark.asyncio
-    async def test_check_auth_copilot_not_authenticated(self) -> None:
+    async def test_check_auth_copilot_not_authenticated(self, tmp_path: Path) -> None:
         """Test check_auth for copilot when not authenticated."""
-        from markitai.providers.auth import AuthManager, AuthStatus
+        from markitai.providers.auth import AuthManager
 
         manager = AuthManager()
 
-        with (
-            patch(
-                "markitai.providers.auth._is_copilot_sdk_available", return_value=True
-            ),
-            patch(
-                "markitai.providers.auth._check_copilot_sdk_auth",
-                new_callable=AsyncMock,
-                return_value=AuthStatus(
-                    provider="copilot",
-                    authenticated=False,
-                    user=None,
-                    expires_at=None,
-                    error="Not authenticated",
-                ),
-            ),
-        ):
+        # Create mock config file with no logged in users
+        config_dir = tmp_path / ".copilot"
+        config_dir.mkdir()
+        config_file = config_dir / "config.json"
+        config_file.write_text(json.dumps({"logged_in_users": []}))
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
             status = await manager.check_auth("copilot")
 
         assert status.authenticated is False
-        assert status.error == "Not authenticated"
+        assert "No logged in users" in (status.error or "")
 
     @pytest.mark.asyncio
-    async def test_check_auth_claude_authenticated(self) -> None:
+    async def test_check_auth_claude_authenticated(self, tmp_path: Path) -> None:
         """Test check_auth for claude when authenticated."""
         from markitai.providers.auth import AuthManager
 
         manager = AuthManager()
 
-        with (
-            patch(
-                "markitai.providers.auth._is_claude_agent_sdk_available",
-                return_value=True,
-            ),
-            patch(
-                "markitai.providers.auth._run_claude_doctor",
-                new_callable=AsyncMock,
-                return_value=(True, None),
-            ),
-        ):
+        # Create mock credentials file
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        creds_file = claude_dir / ".credentials.json"
+        # Token expires in 1 hour
+        expires_at = int((datetime.now().timestamp() + 3600) * 1000)
+        creds_file.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "test-token",
+                        "subscriptionType": "max",
+                        "expiresAt": expires_at,
+                    }
+                }
+            )
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
             status = await manager.check_auth("claude-agent")
 
         assert status.provider == "claude-agent"
         assert status.authenticated is True
+        assert "max" in (status.user or "")
 
     @pytest.mark.asyncio
-    async def test_check_auth_claude_not_authenticated(self) -> None:
-        """Test check_auth for claude when not authenticated."""
+    async def test_check_auth_claude_token_expired(self, tmp_path: Path) -> None:
+        """Test check_auth for claude when token is expired."""
         from markitai.providers.auth import AuthManager
 
         manager = AuthManager()
 
-        with (
-            patch(
-                "markitai.providers.auth._is_claude_agent_sdk_available",
-                return_value=True,
-            ),
-            patch(
-                "markitai.providers.auth._run_claude_doctor",
-                new_callable=AsyncMock,
-                return_value=(False, "Authentication required"),
-            ),
-        ):
+        # Create mock credentials file with expired token
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        creds_file = claude_dir / ".credentials.json"
+        # Token expired 1 hour ago
+        expires_at = int((datetime.now().timestamp() - 3600) * 1000)
+        creds_file.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "test-token",
+                        "subscriptionType": "max",
+                        "expiresAt": expires_at,
+                    }
+                }
+            )
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
             status = await manager.check_auth("claude-agent")
 
         assert status.authenticated is False
-        assert status.error is not None
+        assert "expired" in (status.error or "").lower()
 
 
-class TestAuthManagerSDKNotInstalled:
-    """Tests for SDK not installed scenarios."""
+class TestAuthManagerNoConfigFile:
+    """Tests for scenarios where config files don't exist."""
 
     @pytest.fixture(autouse=True)
     def reset_auth_manager(self) -> None:
@@ -226,36 +230,30 @@ class TestAuthManagerSDKNotInstalled:
         AuthManager._instance = None  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_check_auth_copilot_sdk_not_installed(self) -> None:
-        """Test check_auth when Copilot SDK is not installed."""
+    async def test_check_auth_copilot_no_config(self, tmp_path: Path) -> None:
+        """Test check_auth when Copilot config file doesn't exist."""
         from markitai.providers.auth import AuthManager
 
         manager = AuthManager()
 
-        with patch(
-            "markitai.providers.auth._is_copilot_sdk_available", return_value=False
-        ):
+        with patch("pathlib.Path.home", return_value=tmp_path):
             status = await manager.check_auth("copilot")
 
         assert status.authenticated is False
-        assert status.error is not None
-        assert "SDK" in status.error or "not installed" in status.error.lower()
+        assert "not found" in (status.error or "").lower()
 
     @pytest.mark.asyncio
-    async def test_check_auth_claude_sdk_not_installed(self) -> None:
-        """Test check_auth when Claude Agent SDK is not installed."""
+    async def test_check_auth_claude_no_credentials(self, tmp_path: Path) -> None:
+        """Test check_auth when Claude credentials file doesn't exist."""
         from markitai.providers.auth import AuthManager
 
         manager = AuthManager()
 
-        with patch(
-            "markitai.providers.auth._is_claude_agent_sdk_available", return_value=False
-        ):
+        with patch("pathlib.Path.home", return_value=tmp_path):
             status = await manager.check_auth("claude-agent")
 
         assert status.authenticated is False
-        assert status.error is not None
-        assert "SDK" in status.error or "not installed" in status.error.lower()
+        assert "not found" in (status.error or "").lower()
 
 
 class TestAuthManagerCache:
@@ -269,64 +267,52 @@ class TestAuthManagerCache:
         AuthManager._instance = None  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_check_auth_uses_cache(self) -> None:
+    async def test_check_auth_uses_cache(self, tmp_path: Path) -> None:
         """Test that check_auth uses cached result on second call."""
-        from markitai.providers.auth import AuthManager, AuthStatus
+        from markitai.providers.auth import AuthManager
 
         manager = AuthManager()
 
-        mock_check = AsyncMock(
-            return_value=AuthStatus(
-                provider="copilot",
-                authenticated=True,
-                user="user@github.com",
-                expires_at=None,
-                error=None,
-            )
-        )
+        # Create mock config file
+        config_dir = tmp_path / ".copilot"
+        config_dir.mkdir()
+        config_file = config_dir / "config.json"
+        config_file.write_text(json.dumps({"logged_in_users": [{"login": "testuser"}]}))
 
-        with (
-            patch(
-                "markitai.providers.auth._is_copilot_sdk_available", return_value=True
-            ),
-            patch("markitai.providers.auth._check_copilot_sdk_auth", mock_check),
-        ):
+        with patch("pathlib.Path.home", return_value=tmp_path):
             status1 = await manager.check_auth("copilot")
+            # Modify the config file
+            config_file.write_text(json.dumps({"logged_in_users": []}))
             status2 = await manager.check_auth("copilot")
 
-        # Should only call the check function once (cached on second call)
-        assert mock_check.call_count == 1
+        # Second call should return cached result (still authenticated)
         assert status1.authenticated is True
         assert status2.authenticated is True
 
     @pytest.mark.asyncio
-    async def test_check_auth_force_refresh_bypasses_cache(self) -> None:
+    async def test_check_auth_force_refresh_bypasses_cache(
+        self, tmp_path: Path
+    ) -> None:
         """Test that force_refresh bypasses the cache."""
-        from markitai.providers.auth import AuthManager, AuthStatus
+        from markitai.providers.auth import AuthManager
 
         manager = AuthManager()
 
-        mock_check = AsyncMock(
-            return_value=AuthStatus(
-                provider="copilot",
-                authenticated=True,
-                user="user@github.com",
-                expires_at=None,
-                error=None,
-            )
-        )
+        # Create mock config file
+        config_dir = tmp_path / ".copilot"
+        config_dir.mkdir()
+        config_file = config_dir / "config.json"
+        config_file.write_text(json.dumps({"logged_in_users": [{"login": "testuser"}]}))
 
-        with (
-            patch(
-                "markitai.providers.auth._is_copilot_sdk_available", return_value=True
-            ),
-            patch("markitai.providers.auth._check_copilot_sdk_auth", mock_check),
-        ):
-            await manager.check_auth("copilot")
-            await manager.check_auth("copilot", force_refresh=True)
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status1 = await manager.check_auth("copilot")
+            # Modify the config file
+            config_file.write_text(json.dumps({"logged_in_users": []}))
+            status2 = await manager.check_auth("copilot", force_refresh=True)
 
-        # Should call the check function twice (force refresh)
-        assert mock_check.call_count == 2
+        # Second call with force_refresh should read new config
+        assert status1.authenticated is True
+        assert status2.authenticated is False
 
     def test_clear_cache_single_provider(self) -> None:
         """Test clear_cache for a single provider."""
@@ -438,112 +424,89 @@ class TestSDKAvailabilityHelpers:
             assert _is_claude_agent_sdk_available() is False
 
 
-class TestClaudeDoctor:
-    """Tests for _run_claude_doctor helper."""
+class TestConfigFileAuth:
+    """Tests for config file based authentication checks."""
 
-    @pytest.mark.asyncio
-    async def test_run_claude_doctor_success(self) -> None:
-        """Test _run_claude_doctor when claude doctor succeeds."""
-        from markitai.providers.auth import _run_claude_doctor
+    def test_check_copilot_config_auth_authenticated(self, tmp_path: Path) -> None:
+        """Test _check_copilot_config_auth when authenticated."""
+        from markitai.providers.auth import _check_copilot_config_auth
 
-        mock_process = AsyncMock()
-        mock_process.returncode = 0
-        mock_process.communicate = AsyncMock(return_value=(b"All checks passed", b""))
-
-        with patch(
-            "asyncio.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=mock_process,
-        ):
-            success, error = await _run_claude_doctor()
-
-        assert success is True
-        assert error is None
-
-    @pytest.mark.asyncio
-    async def test_run_claude_doctor_failure(self) -> None:
-        """Test _run_claude_doctor when claude doctor fails."""
-        from markitai.providers.auth import _run_claude_doctor
-
-        mock_process = AsyncMock()
-        mock_process.returncode = 1
-        mock_process.communicate = AsyncMock(
-            return_value=(b"", b"Authentication failed")
+        # Create mock config file
+        config_dir = tmp_path / ".copilot"
+        config_dir.mkdir()
+        config_file = config_dir / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "logged_in_users": [
+                        {"host": "https://github.com", "login": "testuser"}
+                    ]
+                }
+            )
         )
 
-        with patch(
-            "asyncio.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=mock_process,
-        ):
-            success, error = await _run_claude_doctor()
-
-        assert success is False
-        assert error is not None
-
-    @pytest.mark.asyncio
-    async def test_run_claude_doctor_command_not_found(self) -> None:
-        """Test _run_claude_doctor when claude command is not found."""
-        from markitai.providers.auth import _run_claude_doctor
-
-        with patch(
-            "asyncio.create_subprocess_exec",
-            new_callable=AsyncMock,
-            side_effect=FileNotFoundError("claude not found"),
-        ):
-            success, error = await _run_claude_doctor()
-
-        assert success is False
-        assert error is not None
-        assert "not found" in error.lower() or "not installed" in error.lower()
-
-
-class TestCopilotSDKAuth:
-    """Tests for _check_copilot_sdk_auth helper."""
-
-    @pytest.mark.asyncio
-    async def test_check_copilot_sdk_auth_authenticated(self) -> None:
-        """Test _check_copilot_sdk_auth when authenticated."""
-        from markitai.providers.auth import _check_copilot_sdk_auth
-
-        mock_client = MagicMock()
-        mock_auth_status = MagicMock()
-        mock_auth_status.authenticated = True
-        mock_auth_status.user = "user@github.com"
-        mock_auth_status.expires_at = None
-        mock_client.get_auth_status = MagicMock(return_value=mock_auth_status)
-
-        with (
-            patch.dict(
-                "sys.modules", {"copilot": MagicMock(Client=lambda: mock_client)}
-            ),
-            patch(
-                "markitai.providers.auth._get_copilot_client",
-                return_value=mock_client,
-            ),
-        ):
-            status = await _check_copilot_sdk_auth()
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_copilot_config_auth()
 
         assert status.provider == "copilot"
         assert status.authenticated is True
-        assert status.user == "user@github.com"
+        assert status.user == "testuser"
 
-    @pytest.mark.asyncio
-    async def test_check_copilot_sdk_auth_not_authenticated(self) -> None:
-        """Test _check_copilot_sdk_auth when not authenticated."""
-        from markitai.providers.auth import _check_copilot_sdk_auth
+    def test_check_copilot_config_auth_not_authenticated(self, tmp_path: Path) -> None:
+        """Test _check_copilot_config_auth when not authenticated."""
+        from markitai.providers.auth import _check_copilot_config_auth
 
-        mock_client = MagicMock()
-        mock_auth_status = MagicMock()
-        mock_auth_status.authenticated = False
-        mock_auth_status.user = None
-        mock_auth_status.expires_at = None
-        mock_client.get_auth_status = MagicMock(return_value=mock_auth_status)
+        # Create mock config file with empty users
+        config_dir = tmp_path / ".copilot"
+        config_dir.mkdir()
+        config_file = config_dir / "config.json"
+        config_file.write_text(json.dumps({"logged_in_users": []}))
 
-        with patch(
-            "markitai.providers.auth._get_copilot_client",
-            return_value=mock_client,
-        ):
-            status = await _check_copilot_sdk_auth()
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_copilot_config_auth()
 
         assert status.authenticated is False
+
+    def test_check_claude_credentials_auth_authenticated(self, tmp_path: Path) -> None:
+        """Test _check_claude_credentials_auth when authenticated."""
+        from markitai.providers.auth import _check_claude_credentials_auth
+
+        # Create mock credentials file
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        creds_file = claude_dir / ".credentials.json"
+        expires_at = int((datetime.now().timestamp() + 3600) * 1000)
+        creds_file.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "test-token",
+                        "subscriptionType": "pro",
+                        "expiresAt": expires_at,
+                    }
+                }
+            )
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_claude_credentials_auth()
+
+        assert status.provider == "claude-agent"
+        assert status.authenticated is True
+        assert "pro" in (status.user or "")
+
+    def test_check_claude_credentials_auth_no_token(self, tmp_path: Path) -> None:
+        """Test _check_claude_credentials_auth when no token."""
+        from markitai.providers.auth import _check_claude_credentials_auth
+
+        # Create mock credentials file without token
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        creds_file = claude_dir / ".credentials.json"
+        creds_file.write_text(json.dumps({"claudeAiOauth": {}}))
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_claude_credentials_auth()
+
+        assert status.authenticated is False
+        assert "No access token" in (status.error or "")

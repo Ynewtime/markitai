@@ -50,7 +50,7 @@ function Write-WelcomeUserZh {
     Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Green -NoNewline; Write-Host "markitai - 支持 LLM 的 Markdown 转换器"
     Write-Host ""
     Write-Host "  可选组件:"
-    Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "agent-browser - 浏览器自动化（JS 渲染页面）"
+    Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "Playwright - 浏览器自动化（JS 渲染页面）"
     Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "Claude Code CLI - 使用 Claude 订阅"
     Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "Copilot CLI - 使用 GitHub Copilot 订阅"
     Write-Host ""
@@ -291,8 +291,8 @@ function Test-PythonZh {
         Write-Host ""
         Write-WarningZh "请安装 Python 3.13 (推荐) 或 3.11/3.12:"
         Write-InfoZh "官网下载: https://www.python.org/downloads/"
-        Write-InfoZh "scoop: scoop install python@3.13"
         Write-InfoZh "winget: winget install Python.Python.3.13"
+        Write-InfoZh "scoop: scoop install python@3.13"
         Write-InfoZh "提示: onnxruntime 暂不支持 Python 3.14"
         return $false
     }
@@ -371,7 +371,16 @@ function Install-UVZh {
     try {
         Invoke-RestMethod $uvUrl | Invoke-Expression
 
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+
+        # Check if uv command exists after PATH refresh
+        $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+        if (-not $uvCmd) {
+            Write-WarningZh "UV 已安装，但需要重新打开 PowerShell"
+            Write-InfoZh "请重新打开 PowerShell 后再次运行此脚本"
+            Track-Install -Component "uv" -Status "installed"
+            return 1
+        }
 
         $oldErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
@@ -401,11 +410,13 @@ function Install-UVZh {
 function Install-MarkitaiZh {
     Write-InfoZh "正在安装 markitai..."
 
+    # 注意: 使用 [browser] 而非 [all] 避免安装不必要的 SDK 包
+    # SDK 包 (claude-agent, copilot) 将在用户选择安装 CLI 工具时安装
     if ($script:MarkitaiVersion) {
-        $pkg = "markitai[all]==$($script:MarkitaiVersion)"
+        $pkg = "markitai[browser]==$($script:MarkitaiVersion)"
         Write-InfoZh "安装版本: $($script:MarkitaiVersion)"
     } else {
-        $pkg = "markitai[all]"
+        $pkg = "markitai[browser]"
     }
 
     $pythonArg = $script:PYTHON_CMD
@@ -426,7 +437,9 @@ function Install-MarkitaiZh {
         }
         if ($exitCode -eq 0) {
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
-            $version = & markitai --version 2>&1 | Select-Object -First 1
+            
+            $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
+            $version = if ($markitaiCmd) { & markitai --version 2>&1 | Select-Object -First 1 } else { "已安装" }
             if (-not $version) { $version = "已安装" }
             Write-SuccessZh "markitai $version 安装成功 (使用 Python $pythonArg)"
             Track-Install -Component "markitai" -Status "installed"
@@ -446,7 +459,8 @@ function Install-MarkitaiZh {
             $ErrorActionPreference = $oldErrorAction
         }
         if ($exitCode -eq 0) {
-            $version = & markitai --version 2>&1 | Select-Object -First 1
+            $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
+            $version = if ($markitaiCmd) { & markitai --version 2>&1 | Select-Object -First 1 } else { "已安装" }
             if (-not $version) { $version = "已安装" }
             Write-SuccessZh "markitai $version 安装成功"
             Track-Install -Component "markitai" -Status "installed"
@@ -468,7 +482,8 @@ function Install-MarkitaiZh {
         $ErrorActionPreference = $oldErrorAction
     }
     if ($exitCode -eq 0) {
-        $version = & markitai --version 2>&1 | Select-Object -First 1
+        $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
+        $version = if ($markitaiCmd) { & markitai --version 2>&1 | Select-Object -First 1 } else { "已安装" }
         if (-not $version) { $version = "已安装" }
         Write-SuccessZh "markitai $version 安装成功"
         Write-WarningZh "可能需要将 Python Scripts 目录添加到 PATH"
@@ -482,8 +497,243 @@ function Install-MarkitaiZh {
     return $false
 }
 
+# 安装 Playwright 浏览器 (Chromium)
+# 安全性: 使用 uv run 或 python 模块确保使用正确的 playwright
+# 返回: $true 成功, $false 失败/跳过
+function Install-PlaywrightBrowserZh {
+    Write-InfoZh "Playwright 浏览器 (Chromium):"
+    Write-InfoZh "  用途: 浏览器自动化，用于 JavaScript 渲染页面 (Twitter, SPA)"
+
+    # 下载前先征询用户同意
+    if (-not (Ask-YesNo "是否下载 Chromium 浏览器？" $true)) {
+        Write-InfoZh "跳过 Playwright 浏览器安装"
+        Track-Install -Component "Playwright Browser" -Status "skipped"
+        return $false
+    }
+
+    Write-InfoZh "正在下载 Chromium 浏览器..."
+
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
+    # 优先使用 uv run（用于 uv tool 安装的包）
+    $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+    if ($uvCmd) {
+        try {
+            & uv run playwright install chromium 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                $ErrorActionPreference = $oldErrorAction
+                Write-SuccessZh "Chromium 浏览器安装成功"
+                Track-Install -Component "Playwright Browser" -Status "installed"
+                return $true
+            }
+        } catch {}
+    }
+
+    # 回退到 Python 模块
+    if ($script:PYTHON_CMD) {
+        $cmdParts = $script:PYTHON_CMD -split " "
+        $exe = $cmdParts[0]
+        $baseArgs = if ($cmdParts.Length -gt 1) { $cmdParts[1..($cmdParts.Length-1)] } else { @() }
+        $pwArgs = $baseArgs + @("-m", "playwright", "install", "chromium")
+
+        try {
+            & $exe @pwArgs 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                $ErrorActionPreference = $oldErrorAction
+                Write-SuccessZh "Chromium 浏览器安装成功"
+                Track-Install -Component "Playwright Browser" -Status "installed"
+                return $true
+            }
+        } catch {}
+    }
+
+    $ErrorActionPreference = $oldErrorAction
+    Write-WarningZh "Playwright 浏览器安装失败"
+    Write-InfoZh "稍后可手动安装: uv run playwright install chromium"
+    Track-Install -Component "Playwright Browser" -Status "failed"
+    return $false
+}
+
+# 检测 LibreOffice 安装
+# LibreOffice 用于转换 .doc, .ppt, .xls 文件
+function Install-LibreOfficeZh {
+    Write-InfoZh "正在检测 LibreOffice..."
+    Write-InfoZh "  用途: 转换旧版 Office 文件 (.doc, .ppt, .xls)"
+
+    # 检测 soffice 命令
+    $soffice = Get-Command soffice -ErrorAction SilentlyContinue
+    if ($soffice) {
+        try {
+            $version = & soffice --version 2>&1 | Select-Object -First 1
+            Write-SuccessZh "LibreOffice 已安装: $version"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        } catch {}
+    }
+
+    # Windows 常见安装路径
+    $commonPaths = @(
+        "${env:ProgramFiles}\LibreOffice\program\soffice.exe",
+        "${env:ProgramFiles(x86)}\LibreOffice\program\soffice.exe"
+    )
+
+    foreach ($path in $commonPaths) {
+        if (Test-Path $path) {
+            Write-SuccessZh "LibreOffice 已安装: $path"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        }
+    }
+
+    Write-WarningZh "LibreOffice 未安装（可选）"
+    Write-InfoZh "  若未安装，无法转换 .doc/.ppt/.xls 文件"
+    Write-InfoZh "  新版格式 (.docx/.pptx/.xlsx) 无需 LibreOffice"
+
+    if (-not (Ask-YesNo "是否安装 LibreOffice？" $false)) {
+        Write-InfoZh "跳过 LibreOffice 安装"
+        Track-Install -Component "LibreOffice" -Status "skipped"
+        return $false
+    }
+
+    Write-InfoZh "正在安装 LibreOffice..."
+
+    # 优先级: winget > scoop > choco
+    # 优先使用 WinGet
+    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wingetCmd) {
+        Write-InfoZh "通过 WinGet 安装..."
+        & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Write-SuccessZh "LibreOffice 通过 WinGet 安装成功"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        }
+    }
+
+    # 备选：Scoop
+    $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
+    if ($scoopCmd) {
+        Write-InfoZh "通过 Scoop 安装..."
+        & scoop bucket add extras 2>$null
+        & scoop install extras/libreoffice
+        if ($LASTEXITCODE -eq 0) {
+            Write-SuccessZh "LibreOffice 通过 Scoop 安装成功"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        }
+    }
+
+    # 备选：Chocolatey
+    $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
+    if ($chocoCmd) {
+        Write-InfoZh "通过 Chocolatey 安装..."
+        & choco install libreoffice-fresh -y
+        if ($LASTEXITCODE -eq 0) {
+            Write-SuccessZh "LibreOffice 通过 Chocolatey 安装成功"
+            Track-Install -Component "LibreOffice" -Status "installed"
+            return $true
+        }
+    }
+
+    Write-WarningZh "LibreOffice 安装失败"
+    Write-InfoZh "手动安装方式:"
+    Write-InfoZh "  winget: winget install TheDocumentFoundation.LibreOffice"
+    Write-InfoZh "  scoop: scoop install extras/libreoffice"
+    Write-InfoZh "  choco: choco install libreoffice-fresh"
+    Write-InfoZh "  下载: https://www.libreoffice.org/download/"
+    Track-Install -Component "LibreOffice" -Status "failed"
+    return $false
+}
+
+# 检测 FFmpeg 安装
+# FFmpeg 用于处理音视频文件
+function Install-FFmpegZh {
+    Write-InfoZh "正在检测 FFmpeg..."
+    Write-InfoZh "  用途: 处理音视频文件 (.mp3, .mp4, .wav 等)"
+
+    $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    if ($ffmpegCmd) {
+        try {
+            $version = & ffmpeg -version 2>&1 | Select-Object -First 1
+            Write-SuccessZh "FFmpeg 已安装: $version"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        } catch {}
+    }
+
+    Write-WarningZh "FFmpeg 未安装（可选）"
+    Write-InfoZh "  若未安装，无法处理音视频文件"
+
+    if (-not (Ask-YesNo "是否安装 FFmpeg？" $false)) {
+        Write-InfoZh "跳过 FFmpeg 安装"
+        Track-Install -Component "FFmpeg" -Status "skipped"
+        return $false
+    }
+
+    Write-InfoZh "正在安装 FFmpeg..."
+
+    # 优先级: winget > scoop > choco
+    # 优先使用 WinGet
+    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wingetCmd) {
+        Write-InfoZh "通过 WinGet 安装..."
+        & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            Write-SuccessZh "FFmpeg 通过 WinGet 安装成功"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        }
+    }
+
+    # 备选：Scoop
+    $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
+    if ($scoopCmd) {
+        Write-InfoZh "通过 Scoop 安装..."
+        & scoop install ffmpeg
+        if ($LASTEXITCODE -eq 0) {
+            Write-SuccessZh "FFmpeg 通过 Scoop 安装成功"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        }
+    }
+
+    # 备选：Chocolatey
+    $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
+    if ($chocoCmd) {
+        Write-InfoZh "通过 Chocolatey 安装..."
+        & choco install ffmpeg -y
+        if ($LASTEXITCODE -eq 0) {
+            Write-SuccessZh "FFmpeg 通过 Chocolatey 安装成功"
+            Track-Install -Component "FFmpeg" -Status "installed"
+            return $true
+        }
+    }
+
+    Write-WarningZh "FFmpeg 安装失败"
+    Write-InfoZh "手动安装方式:"
+    Write-InfoZh "  winget: winget install Gyan.FFmpeg"
+    Write-InfoZh "  scoop: scoop install ffmpeg"
+    Write-InfoZh "  choco: choco install ffmpeg"
+    Write-InfoZh "  下载: https://ffmpeg.org/download.html"
+    Track-Install -Component "FFmpeg" -Status "failed"
+    return $false
+}
+
 function Test-NodeJSZh {
     Write-InfoZh "检测 Node.js..."
+
+    $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $nodeCmd) {
+        Write-ErrorZh "未找到 Node.js"
+        Write-Host ""
+        Write-WarningZh "请安装 Node.js 18+:"
+        Write-InfoZh "官网下载: https://nodejs.org/"
+        Write-InfoZh "winget: winget install OpenJS.NodeJS.LTS"
+        Write-InfoZh "scoop: scoop install nodejs-lts"
+        Write-InfoZh "choco: choco install nodejs-lts"
+        return $false
+    }
 
     try {
         $version = & node --version 2>$null
@@ -513,148 +763,8 @@ function Test-NodeJSZh {
     Write-WarningZh "请安装 Node.js 18+:"
     Write-InfoZh "官网下载: https://nodejs.org/"
     Write-InfoZh "winget: winget install OpenJS.NodeJS.LTS"
-    Write-InfoZh "Chocolatey: choco install nodejs-lts"
-    Write-InfoZh "fnm: winget install Schniz.fnm"
-    return $false
-}
-
-# Helper function to run agent-browser command (Chinese version)
-# Works around npm shim issues on Windows (both .ps1 and .cmd reference /bin/sh)
-# See: https://github.com/vercel-labs/agent-browser/issues/262
-function Invoke-AgentBrowserZh {
-    param([string[]]$Arguments)
-
-    $npmPrefix = & npm config get prefix 2>$null
-    if ($npmPrefix) {
-        $npmPrefix = $npmPrefix.Trim()
-
-        # Try native Windows binary first (most reliable)
-        $nativeBinPath = Join-Path $npmPrefix "node_modules\agent-browser\bin\agent-browser-win32-x64.exe"
-        if (Test-Path $nativeBinPath) {
-            & $nativeBinPath @Arguments
-            return $LASTEXITCODE
-        }
-    }
-
-    # Fallback: try global node_modules path
-    $globalRoot = & npm root -g 2>$null
-    if ($globalRoot) {
-        $globalRoot = $globalRoot.Trim()
-
-        # Try native binary in global node_modules
-        $nativeBinPath = Join-Path $globalRoot "agent-browser\bin\agent-browser-win32-x64.exe"
-        if (Test-Path $nativeBinPath) {
-            & $nativeBinPath @Arguments
-            return $LASTEXITCODE
-        }
-
-        # Fallback: run via node
-        $jsPath = Join-Path $globalRoot "agent-browser\bin\agent-browser.js"
-        if (Test-Path $jsPath) {
-            & node $jsPath @Arguments
-            return $LASTEXITCODE
-        }
-    }
-
-    # Last resort: try the command directly (will likely fail due to shim bug)
-    & agent-browser @Arguments
-    return $LASTEXITCODE
-}
-
-function Install-AgentBrowserZh {
-    if (-not (Test-NodeJSZh)) {
-        Write-WarningZh "跳过 agent-browser 安装 (需要 Node.js)"
-        Track-Install -Component "agent-browser" -Status "skipped"
-        return $false
-    }
-
-    Write-InfoZh "正在安装 agent-browser..."
-
-    if ($script:AgentBrowserVersion) {
-        $pkg = "agent-browser@$($script:AgentBrowserVersion)"
-        Write-InfoZh "安装版本: $($script:AgentBrowserVersion)"
-    } else {
-        $pkg = "agent-browser"
-    }
-
-    # 优先 npm，备选 pnpm
-    $installSuccess = $false
-    $npmExists = Get-Command npm -ErrorAction SilentlyContinue
-    $pnpmExists = Get-Command pnpm -ErrorAction SilentlyContinue
-
-    if ($npmExists) {
-        Write-InfoZh "通过 npm 安装..."
-        try {
-            & npm install -g $pkg
-            if ($LASTEXITCODE -eq 0) {
-                $installSuccess = $true
-            }
-        } catch {
-            Write-WarningZh "npm 安装失败，尝试 pnpm..."
-        }
-    }
-
-    if (-not $installSuccess -and $pnpmExists) {
-        Write-InfoZh "通过 pnpm 安装..."
-        try {
-            & pnpm add -g $pkg
-            if ($LASTEXITCODE -eq 0) {
-                $installSuccess = $true
-            }
-        } catch {
-            Write-ErrorZh "pnpm 安装失败: $_"
-        }
-    }
-
-    if ($installSuccess) {
-        # Verify installation - check for native binary or node_modules
-        $abExists = Get-Command agent-browser -ErrorAction SilentlyContinue
-        $nativeBinExists = $false
-
-        $npmPrefix = & npm config get prefix 2>$null
-        if ($npmPrefix) {
-            $npmPrefix = $npmPrefix.Trim()
-            $nativeBinPath = Join-Path $npmPrefix "node_modules\agent-browser\bin\agent-browser-win32-x64.exe"
-            $nativeBinExists = Test-Path $nativeBinPath
-        }
-
-        if (-not $nativeBinExists) {
-            # Also check global node_modules
-            $globalRoot = & npm root -g 2>$null
-            if ($globalRoot) {
-                $globalRoot = $globalRoot.Trim()
-                $nativeBinPath = Join-Path $globalRoot "agent-browser\bin\agent-browser-win32-x64.exe"
-                $nativeBinExists = Test-Path $nativeBinPath
-            }
-        }
-
-        if (-not $abExists -and -not $nativeBinExists) {
-            Write-WarningZh "agent-browser 已安装但不在 PATH 中"
-            Write-InfoZh "可能需要将全局 bin 目录添加到 PATH:"
-            Write-InfoZh "  pnpm bin -g  # 或: npm config get prefix"
-            Track-Install -Component "agent-browser" -Status "installed"
-            return $false
-        }
-
-        Write-SuccessZh "agent-browser 安装成功"
-        Track-Install -Component "agent-browser" -Status "installed"
-
-        if (Ask-YesNo "是否下载 Chromium 浏览器?" $false) {
-            Write-InfoZh "正在下载 Chromium..."
-            $null = Invoke-AgentBrowserZh -Arguments @("install")
-            Write-SuccessZh "Chromium 下载完成"
-            Track-Install -Component "Chromium" -Status "installed"
-        } else {
-            Write-InfoZh "跳过 Chromium 下载"
-            Write-InfoZh "稍后可运行: agent-browser install"
-            Track-Install -Component "Chromium" -Status "skipped"
-        }
-
-        return $true
-    }
-
-    Write-InfoZh "请手动安装: npm install -g agent-browser"
-    Track-Install -Component "agent-browser" -Status "failed"
+    Write-InfoZh "scoop: scoop install nodejs-lts"
+    Write-InfoZh "choco: choco install nodejs-lts"
     return $false
 }
 
@@ -836,25 +946,31 @@ function Main {
         exit 1
     }
 
-    # 步骤 4: 可选 - agent-browser
-    Write-Step 4 5 "可选: 浏览器自动化"
-    if (Ask-YesNo "是否安装浏览器自动化支持 (agent-browser)?" $false) {
-        Install-AgentBrowserZh | Out-Null
-    } else {
-        Write-InfoZh "跳过 agent-browser 安装"
-        Track-Install -Component "agent-browser" -Status "skipped"
-    }
+    # 安装 Playwright 浏览器 (SPA/JS 渲染页面需要)
+    Install-PlaywrightBrowserZh | Out-Null
 
-    # 步骤 5: 可选 - LLM CLI 工具
-    Write-Step 5 5 "可选: LLM CLI 工具"
+    # 安装 LibreOffice（可选，用于旧版 Office 文件）
+    Install-LibreOfficeZh | Out-Null
+
+    # 检测 FFmpeg（可选，用于音视频文件）
+    Install-FFmpegZh | Out-Null
+
+    # 步骤 4: 可选 - LLM CLI 工具
+    Write-Step 4 5 "可选: LLM CLI 工具"
     Write-InfoZh "LLM CLI 工具为 AI 提供商提供本地认证"
     if (Ask-YesNo "是否安装 Claude Code CLI?" $false) {
-        Install-ClaudeCLIZh | Out-Null
+        if (Install-ClaudeCLIZh) {
+            # 安装 Claude Agent SDK 以支持编程式访问
+            Install-MarkitaiExtra -ExtraName "claude-agent" | Out-Null
+        }
     } else {
         Track-Install -Component "Claude Code CLI" -Status "skipped"
     }
     if (Ask-YesNo "是否安装 GitHub Copilot CLI?" $false) {
-        Install-CopilotCLIZh | Out-Null
+        if (Install-CopilotCLIZh) {
+            # 安装 Copilot SDK 以支持编程式访问
+            Install-MarkitaiExtra -ExtraName "copilot" | Out-Null
+        }
     } else {
         Track-Install -Component "Copilot CLI" -Status "skipped"
     }

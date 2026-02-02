@@ -194,7 +194,7 @@ class TestLibreOfficeDependency:
     def test_libreoffice_available(
         self, runner: CliRunner, mock_config: MagicMock
     ) -> None:
-        """Test LibreOffice status when installed."""
+        """Test LibreOffice status when installed (found in PATH)."""
         with (
             patch("markitai.cli.commands.doctor.ConfigManager") as MockConfigManager,
             patch("markitai.fetch_playwright.is_playwright_available") as mock_pw,
@@ -203,7 +203,6 @@ class TestLibreOfficeDependency:
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
             patch("markitai.cli.commands.doctor.shutil.which") as mock_which,
-            patch("markitai.cli.commands.doctor.subprocess.run") as mock_run,
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = False
@@ -216,16 +215,13 @@ class TestLibreOfficeDependency:
 
             mock_which.side_effect = which_side_effect
 
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="LibreOffice 7.5.0\n"
-            )
-
             result = runner.invoke(check_deps, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert data["libreoffice"]["status"] == "ok"
-            assert "LibreOffice 7.5.0" in data["libreoffice"]["message"]
+            # Now we just report path without version (avoids hanging on Windows)
+            assert "/usr/bin/soffice" in data["libreoffice"]["message"]
 
     def test_libreoffice_not_installed(
         self, runner: CliRunner, mock_config: MagicMock
@@ -239,49 +235,19 @@ class TestLibreOfficeDependency:
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
             patch("markitai.cli.commands.doctor.shutil.which") as mock_which,
+            patch("os.path.isfile") as mock_isfile,
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = False
             mock_browser.return_value = False
             mock_which.return_value = None
+            mock_isfile.return_value = False
 
             result = runner.invoke(check_deps, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert data["libreoffice"]["status"] == "missing"
-
-    def test_libreoffice_run_error(
-        self, runner: CliRunner, mock_config: MagicMock
-    ) -> None:
-        """Test LibreOffice status when command fails."""
-        with (
-            patch("markitai.cli.commands.doctor.ConfigManager") as MockConfigManager,
-            patch("markitai.fetch_playwright.is_playwright_available") as mock_pw,
-            patch(
-                "markitai.fetch_playwright.is_playwright_browser_installed"
-            ) as mock_browser,
-            patch("markitai.fetch_playwright.clear_browser_cache"),
-            patch("markitai.cli.commands.doctor.shutil.which") as mock_which,
-            patch("markitai.cli.commands.doctor.subprocess.run") as mock_run,
-        ):
-            MockConfigManager.return_value.load.return_value = mock_config
-            mock_pw.return_value = False
-            mock_browser.return_value = False
-
-            def which_side_effect(cmd: str) -> str | None:
-                if cmd == "soffice":
-                    return "/usr/bin/soffice"
-                return None
-
-            mock_which.side_effect = which_side_effect
-            mock_run.side_effect = Exception("Command failed")
-
-            result = runner.invoke(check_deps, ["--json"])
-
-            assert result.exit_code == 0
-            data = json.loads(result.output)
-            assert data["libreoffice"]["status"] == "error"
 
 
 class TestFFmpegDependency:

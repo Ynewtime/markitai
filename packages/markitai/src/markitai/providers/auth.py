@@ -16,11 +16,12 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import importlib.util
+import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
@@ -95,74 +96,125 @@ def _is_claude_agent_sdk_available() -> bool:
     return importlib.util.find_spec("claude_agent_sdk") is not None
 
 
-def _get_copilot_client() -> object:
-    """Get a Copilot SDK client instance.
+def _check_copilot_config_auth() -> AuthStatus:
+    """Check Copilot authentication by reading config file.
 
-    Returns:
-        Copilot Client instance
-
-    Raises:
-        ImportError: If copilot SDK is not installed
-    """
-    import copilot
-
-    return copilot.Client()
-
-
-async def _check_copilot_sdk_auth() -> AuthStatus:
-    """Check authentication status via Copilot SDK.
+    Copilot CLI stores auth info in ~/.copilot/config.json
 
     Returns:
         AuthStatus with authentication result
     """
-    try:
-        client = _get_copilot_client()
-        auth_status = client.get_auth_status()  # type: ignore[union-attr]
+    config_path = Path.home() / ".copilot" / "config.json"
 
+    if not config_path.exists():
         return AuthStatus(
             provider="copilot",
-            authenticated=auth_status.authenticated,
-            user=getattr(auth_status, "user", None),
-            expires_at=getattr(auth_status, "expires_at", None),
-            error=None if auth_status.authenticated else "Not authenticated",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error="Config file not found (~/.copilot/config.json)",
         )
+
+    try:
+        config: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
+        logged_in_users = config.get("logged_in_users", [])
+
+        if logged_in_users:
+            # Get first logged in user
+            user_info = logged_in_users[0]
+            username = user_info.get("login", "unknown")
+            return AuthStatus(
+                provider="copilot",
+                authenticated=True,
+                user=username,
+                expires_at=None,
+                error=None,
+            )
+        else:
+            return AuthStatus(
+                provider="copilot",
+                authenticated=False,
+                user=None,
+                expires_at=None,
+                error="No logged in users found",
+            )
     except Exception as e:
         return AuthStatus(
             provider="copilot",
             authenticated=False,
             user=None,
             expires_at=None,
-            error=f"Failed to check auth status: {e}",
+            error=f"Failed to read config: {e}",
         )
 
 
-async def _run_claude_doctor() -> tuple[bool, str | None]:
-    """Run 'claude doctor' to check Claude Code CLI health.
+def _check_claude_credentials_auth() -> AuthStatus:
+    """Check Claude authentication by reading credentials file.
+
+    Claude Code CLI stores auth info in ~/.claude/.credentials.json
 
     Returns:
-        Tuple of (success, error_message)
-        - success: True if claude doctor passed
-        - error_message: Error message if failed, None if success
+        AuthStatus with authentication result
     """
-    try:
-        process = await asyncio.create_subprocess_exec(
-            "claude",
-            "doctor",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+    credentials_path = Path.home() / ".claude" / ".credentials.json"
+
+    if not credentials_path.exists():
+        return AuthStatus(
+            provider="claude-agent",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error="Credentials file not found (~/.claude/.credentials.json)",
         )
-        stdout, stderr = await process.communicate()
 
-        if process.returncode == 0:
-            return (True, None)
+    try:
+        creds: dict[str, Any] = json.loads(credentials_path.read_text(encoding="utf-8"))
+        oauth_data = creds.get("claudeAiOauth", {})
+
+        if oauth_data.get("accessToken"):
+            # Check expiration
+            expires_at_ms = oauth_data.get("expiresAt")
+            expires_at = None
+            is_expired = False
+
+            if expires_at_ms:
+                expires_at = datetime.fromtimestamp(expires_at_ms / 1000)
+                is_expired = datetime.now() > expires_at
+
+            if is_expired:
+                return AuthStatus(
+                    provider="claude-agent",
+                    authenticated=False,
+                    user=None,
+                    expires_at=expires_at,
+                    error="Token expired",
+                )
+
+            # Get subscription type as user info
+            subscription = oauth_data.get("subscriptionType", "unknown")
+            return AuthStatus(
+                provider="claude-agent",
+                authenticated=True,
+                user=f"subscription: {subscription}",
+                expires_at=expires_at,
+                error=None,
+            )
         else:
-            error_msg = stderr.decode().strip() or stdout.decode().strip()
-            return (False, error_msg or "claude doctor failed")
-
-    except FileNotFoundError:
-        return (False, "Claude Code CLI not found. Please install it first.")
+            return AuthStatus(
+                provider="claude-agent",
+                authenticated=False,
+                user=None,
+                expires_at=None,
+                error="No access token found",
+            )
     except Exception as e:
-        return (False, f"Failed to run claude doctor: {e}")
+        return AuthStatus(
+            provider="claude-agent",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error=f"Failed to read credentials: {e}",
+        )
 
 
 class AuthManager:
@@ -258,44 +310,22 @@ class AuthManager:
     async def _check_copilot(self) -> AuthStatus:
         """Check authentication status for Copilot provider.
 
+        Checks ~/.copilot/config.json for logged_in_users.
+
         Returns:
             AuthStatus with authentication result
         """
-        if not _is_copilot_sdk_available():
-            return AuthStatus(
-                provider="copilot",
-                authenticated=False,
-                user=None,
-                expires_at=None,
-                error="Copilot SDK not installed. Run: uv add github-copilot-sdk",
-            )
-
-        return await _check_copilot_sdk_auth()
+        return _check_copilot_config_auth()
 
     async def _check_claude(self) -> AuthStatus:
         """Check authentication status for Claude Agent provider.
 
+        Checks ~/.claude/.credentials.json for valid access token.
+
         Returns:
             AuthStatus with authentication result
         """
-        if not _is_claude_agent_sdk_available():
-            return AuthStatus(
-                provider="claude-agent",
-                authenticated=False,
-                user=None,
-                expires_at=None,
-                error="Claude Agent SDK not installed. Run: uv add claude-agent-sdk",
-            )
-
-        success, error = await _run_claude_doctor()
-
-        return AuthStatus(
-            provider="claude-agent",
-            authenticated=success,
-            user=None,  # claude doctor doesn't return user info
-            expires_at=None,
-            error=error,
-        )
+        return _check_claude_credentials_auth()
 
     def clear_cache(self, provider: str | None = None) -> None:
         """Clear the authentication status cache.
@@ -316,6 +346,6 @@ __all__ = [
     "get_auth_resolution_hint",
     "_is_copilot_sdk_available",
     "_is_claude_agent_sdk_available",
-    "_check_copilot_sdk_auth",
-    "_run_claude_doctor",
+    "_check_copilot_config_auth",
+    "_check_claude_credentials_auth",
 ]

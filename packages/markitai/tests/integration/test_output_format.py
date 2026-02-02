@@ -442,7 +442,7 @@ class TestCheckDepsCommand:
 
         # Should be valid JSON
         data = json.loads(output)
-        assert "agent-browser" in data
+        assert "playwright" in data
         assert "libreoffice" in data
         assert "rapidocr" in data
         assert "llm-api" in data
@@ -453,7 +453,7 @@ class TestCheckDepsCommand:
         assert result.exit_code == 0
 
         # Should show all major components
-        assert "agent-browser" in result.output
+        assert "Playwright" in result.output
         assert "LibreOffice" in result.output
         assert "RapidOCR" in result.output
         assert "LLM" in result.output

@@ -351,3 +351,361 @@ class TestSingleFileWorkflowEnhanceWithVision:
         assert mock_processor.enhance_document_complete.called
         assert "Enhanced" in frontmatter
         assert "Enhanced Content" in markdown
+
+    @pytest.mark.asyncio
+    async def test_enhance_with_vision_sorts_by_page(
+        self, mock_config, mock_processor, tmp_path: Path
+    ):
+        """Test that page images are sorted by page number."""
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        # Create temp image files
+        img1 = tmp_path / "page1.png"
+        img1.write_bytes(b"fake image 1")
+        img2 = tmp_path / "page2.png"
+        img2.write_bytes(b"fake image 2")
+        img3 = tmp_path / "page3.png"
+        img3.write_bytes(b"fake image 3")
+
+        # Provide in unsorted order
+        page_images = [
+            {"path": str(img3), "page": 3},
+            {"path": str(img1), "page": 1},
+            {"path": str(img2), "page": 2},
+        ]
+
+        await workflow.enhance_with_vision(
+            extracted_text="Original text",
+            page_images=page_images,
+            source="doc.pdf",
+        )
+
+        # Verify enhance_document_complete was called with sorted paths
+        call_args = mock_processor.enhance_document_complete.call_args
+        image_paths = call_args[0][1]  # Second positional arg
+        assert len(image_paths) == 3
+        assert image_paths[0].name == "page1.png"
+        assert image_paths[1].name == "page2.png"
+        assert image_paths[2].name == "page3.png"
+
+    @pytest.mark.asyncio
+    async def test_enhance_with_vision_handles_error(
+        self, mock_config, mock_processor, tmp_path: Path
+    ):
+        """Test error handling in enhance_with_vision."""
+        # Make processor raise an error
+        mock_processor.enhance_document_complete = AsyncMock(
+            side_effect=RuntimeError("LLM API error")
+        )
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        img1 = tmp_path / "page1.png"
+        img1.write_bytes(b"fake image")
+
+        page_images = [{"path": str(img1), "page": 1}]
+
+        markdown, frontmatter, cost, usage = await workflow.enhance_with_vision(
+            extracted_text="Original text",
+            page_images=page_images,
+            source="doc.pdf",
+        )
+
+        # Should return original text on error
+        assert markdown == "Original text"
+        assert "doc.pdf" in frontmatter
+        assert cost == 0.0
+        assert usage == {}
+
+
+class TestSingleFileWorkflowExtractFromScreenshots:
+    """Tests for SingleFileWorkflow.extract_from_screenshots method."""
+
+    @pytest.fixture
+    def mock_config(self):
+        """Create a mock configuration."""
+        config = MagicMock()
+        config.llm.concurrency = 5
+        config.image.alt_enabled = True
+        config.image.desc_enabled = True
+        config.cache.no_cache = False
+        config.cache.no_cache_patterns = []
+        return config
+
+    @pytest.fixture
+    def mock_processor(self):
+        """Create a mock LLM processor."""
+        processor = MagicMock()
+        processor.extract_from_screenshot = AsyncMock(
+            return_value=("# Page content", "title: Test")
+        )
+        processor.get_context_cost = MagicMock(return_value=0.05)
+        processor.get_context_usage = MagicMock(return_value={"gpt-4": {"requests": 1}})
+        return processor
+
+    @pytest.mark.asyncio
+    async def test_extract_from_screenshots_empty_list(
+        self, mock_config, mock_processor
+    ):
+        """Test extraction with empty page images list."""
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        markdown, frontmatter, cost, usage = await workflow.extract_from_screenshots(
+            page_images=[],
+            source="doc.pdf",
+        )
+
+        assert markdown == ""
+        assert "doc.pdf" in frontmatter
+        assert cost == 0.0
+        assert usage == {}
+
+    @pytest.mark.asyncio
+    async def test_extract_from_screenshots_single_page(
+        self, mock_config, mock_processor, tmp_path: Path
+    ):
+        """Test extraction from a single page."""
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        img1 = tmp_path / "page1.png"
+        img1.write_bytes(b"fake image")
+
+        page_images = [{"path": str(img1), "page": 1}]
+
+        markdown, frontmatter, cost, usage = await workflow.extract_from_screenshots(
+            page_images=page_images,
+            source="doc.pdf",
+        )
+
+        assert mock_processor.extract_from_screenshot.called
+        assert "Page 1" in markdown
+        assert "Page content" in markdown
+
+    @pytest.mark.asyncio
+    async def test_extract_from_screenshots_multiple_pages(
+        self, mock_config, mock_processor, tmp_path: Path
+    ):
+        """Test extraction from multiple pages."""
+        # Make each call return different content
+        call_count = [0]
+
+        async def mock_extract(image_path, context=None):
+            call_count[0] += 1
+            return (f"Content from page {call_count[0]}", "")
+
+        mock_processor.extract_from_screenshot = mock_extract
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        img1 = tmp_path / "page1.png"
+        img1.write_bytes(b"fake image 1")
+        img2 = tmp_path / "page2.png"
+        img2.write_bytes(b"fake image 2")
+        img3 = tmp_path / "page3.png"
+        img3.write_bytes(b"fake image 3")
+
+        page_images = [
+            {"path": str(img2), "page": 2},
+            {"path": str(img1), "page": 1},
+            {"path": str(img3), "page": 3},
+        ]
+
+        markdown, frontmatter, cost, usage = await workflow.extract_from_screenshots(
+            page_images=page_images,
+            source="doc.pdf",
+        )
+
+        # Should contain all page markers (sorted order)
+        assert "Page 1" in markdown
+        assert "Page 2" in markdown
+        assert "Page 3" in markdown
+
+    @pytest.mark.asyncio
+    async def test_extract_from_screenshots_handles_error(
+        self, mock_config, mock_processor, tmp_path: Path
+    ):
+        """Test error handling in extract_from_screenshots."""
+        mock_processor.extract_from_screenshot = AsyncMock(
+            side_effect=RuntimeError("Vision API error")
+        )
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        img1 = tmp_path / "page1.png"
+        img1.write_bytes(b"fake image")
+
+        page_images = [{"path": str(img1), "page": 1}]
+
+        markdown, frontmatter, cost, usage = await workflow.extract_from_screenshots(
+            page_images=page_images,
+            source="doc.pdf",
+        )
+
+        # Should return empty on error
+        assert markdown == ""
+        assert "doc.pdf" in frontmatter
+        assert cost == 0.0
+
+
+class TestSingleFileWorkflowNoCacheOptions:
+    """Tests for SingleFileWorkflow cache options."""
+
+    @pytest.fixture
+    def mock_config(self):
+        """Create a mock configuration."""
+        config = MagicMock()
+        config.llm.concurrency = 5
+        config.image.alt_enabled = False
+        config.image.desc_enabled = False
+        config.cache.no_cache = False
+        config.cache.no_cache_patterns = []
+        config.model_copy = MagicMock(return_value=config)
+        return config
+
+    def test_init_with_no_cache(self, mock_config):
+        """Test initialization with no_cache option."""
+        workflow = SingleFileWorkflow(mock_config, no_cache=True)
+        assert workflow._no_cache is True
+
+    def test_init_with_no_cache_patterns(self, mock_config):
+        """Test initialization with no_cache_patterns."""
+        patterns = ["*.pdf", "docs/*"]
+        workflow = SingleFileWorkflow(mock_config, no_cache_patterns=patterns)
+        assert workflow._no_cache_patterns == patterns
+
+    def test_processor_applies_no_cache_to_config(self, mock_config):
+        """Test that processor creation applies no_cache settings."""
+        with patch("markitai.workflow.helpers.create_llm_processor") as mock_create:
+            mock_processor = MagicMock()
+            mock_create.return_value = mock_processor
+
+            workflow = SingleFileWorkflow(
+                mock_config,
+                no_cache=True,
+                no_cache_patterns=["*.pdf"],
+            )
+
+            # Access processor to trigger creation
+            _ = workflow.processor
+
+            # Verify create_llm_processor was called
+            mock_create.assert_called_once()
+            # The temp_config should have no_cache settings applied
+            call_config = mock_create.call_args[0][0]
+            assert call_config.cache.no_cache is True
+            assert call_config.cache.no_cache_patterns == ["*.pdf"]
+
+
+class TestSingleFileWorkflowAnalyzeImagesAltTextUpdate:
+    """Tests for analyze_images alt text update behavior."""
+
+    @pytest.fixture
+    def mock_config(self):
+        """Create a mock configuration."""
+        config = MagicMock()
+        config.llm.concurrency = 2
+        config.image.alt_enabled = True
+        config.image.desc_enabled = False
+        config.cache.no_cache = False
+        config.cache.no_cache_patterns = []
+        return config
+
+    @pytest.fixture
+    def mock_processor(self):
+        """Create a mock LLM processor."""
+        processor = MagicMock()
+
+        @dataclass
+        class MockImageAnalysis:
+            caption: str = "A beautiful sunset"
+            description: str = "The image shows a sunset"
+            extracted_text: str = ""
+            llm_usage: dict[str, Any] | None = None
+
+        processor.analyze_image = AsyncMock(return_value=MockImageAnalysis())
+        processor.get_context_cost = MagicMock(return_value=0.02)
+        processor.get_context_usage = MagicMock(return_value={"gpt-4": {"requests": 1}})
+        return processor
+
+    @pytest.mark.asyncio
+    async def test_updates_alt_text_in_markdown(
+        self, mock_config, mock_processor, tmp_path: Path
+    ):
+        """Test that alt text is updated in returned markdown."""
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+        image_file = assets_dir / "sunset.png"
+        image_file.write_bytes(b"fake image")
+
+        output_file = tmp_path / "output.md"
+        output_file.write_text("# Content\n\n![](assets/sunset.png)")
+
+        markdown, cost, usage, result = await workflow.analyze_images(
+            markdown="# Content\n\n![](assets/sunset.png)",
+            image_paths=[image_file],
+            output_file=output_file,
+        )
+
+        # Alt text should be updated in the returned markdown
+        assert "![A beautiful sunset](assets/sunset.png)" in markdown
+
+    @pytest.mark.asyncio
+    async def test_handles_failed_analysis(
+        self, mock_config, mock_processor, tmp_path: Path
+    ):
+        """Test handling when image analysis fails."""
+        # Make analysis return None to simulate failure
+        mock_processor.analyze_image = AsyncMock(return_value=None)
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+        image_file = assets_dir / "broken.png"
+        image_file.write_bytes(b"fake")
+
+        output_file = tmp_path / "output.md"
+        output_file.write_text("# Content\n\n![](assets/broken.png)")
+
+        markdown, cost, usage, result = await workflow.analyze_images(
+            markdown="# Content\n\n![](assets/broken.png)",
+            image_paths=[image_file],
+            output_file=output_file,
+        )
+
+        # Should still return result with default values
+        assert result is not None
+        assert len(result.assets) == 1
+        # Default caption should be used
+        assert result.assets[0]["alt"] == "Image"
+
+
+class TestWorkflowResult:
+    """Tests for WorkflowResult dataclass."""
+
+    def test_basic_creation(self):
+        """Test basic WorkflowResult creation."""
+        from markitai.workflow.single import WorkflowResult
+
+        result = WorkflowResult(markdown="# Test")
+        assert result.markdown == "# Test"
+        assert result.llm_cost == 0.0
+        assert result.llm_usage == {}
+        assert result.image_analysis is None
+
+    def test_with_all_fields(self):
+        """Test WorkflowResult with all fields."""
+        from markitai.workflow.single import ImageAnalysisResult, WorkflowResult
+
+        analysis = ImageAnalysisResult(
+            source_file="test.pdf",
+            assets=[{"asset": "img.png", "alt": "Test"}],
+        )
+        result = WorkflowResult(
+            markdown="# Test",
+            llm_cost=0.05,
+            llm_usage={"gpt-4": {"requests": 1}},
+            image_analysis=analysis,
+        )
+
+        assert result.llm_cost == 0.05
+        assert result.llm_usage["gpt-4"]["requests"] == 1
+        assert result.image_analysis.source_file == "test.pdf"

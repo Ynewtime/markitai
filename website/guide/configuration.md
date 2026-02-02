@@ -103,8 +103,7 @@ markitai config set llm.enabled true
   },
   "fetch": {
     "strategy": "auto",
-    "agent_browser": {
-      "command": "agent-browser",
+    "playwright": {
       "timeout": 30000,
       "wait_for": "domcontentloaded",
       "extra_wait_ms": 1000
@@ -176,7 +175,25 @@ Markitai also supports local providers that use CLI authentication and subscript
 
 These providers require:
 1. The respective CLI tool installed and authenticated
-2. Optional SDK package: `pip install markitai[claude-agent]` or `pip install markitai[copilot]`
+2. Optional SDK package: `uv add markitai[claude-agent]` or `uv add markitai[copilot]`
+
+**Install Claude Code CLI:**
+```bash
+# macOS/Linux/WSL
+curl -fsSL https://claude.ai/install.sh | bash
+
+# Windows PowerShell
+irm https://claude.ai/install.ps1 | iex
+```
+
+**Install GitHub Copilot CLI:**
+```bash
+# macOS/Linux/WSL
+curl -fsSL https://gh.io/copilot-install | bash
+
+# Windows
+winget install GitHub.Copilot
+```
 
 ### Model Naming
 
@@ -221,10 +238,13 @@ Common errors and solutions:
 
 | Error | Solution |
 |-------|----------|
-| "SDK not installed" | `pip install markitai[copilot]` or `pip install markitai[claude-agent]` |
+| "SDK not installed" | `uv add markitai[copilot]` or `uv add markitai[claude-agent]` |
 | "CLI not found" | Install and authenticate the CLI tool ([Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli), [Claude Code](https://claude.ai/code)) |
 | "Not authenticated" | Run `copilot auth login` or `claude auth login` |
 | "Rate limit" | Wait and retry, or check your subscription quota |
+| "Request timeout" | Timeout is adaptive; for very large documents, processing may take longer |
+
+Use `markitai doctor` to check authentication status and get resolution hints.
 :::
 
 ### Vision Models
@@ -274,8 +294,26 @@ Configure how Markitai routes requests across multiple models:
 |---------|---------|---------|-------------|
 | `routing_strategy` | `simple-shuffle`, `least-busy`, `usage-based-routing`, `latency-based-routing` | `simple-shuffle` | How to select models |
 | `num_retries` | 0-10 | 2 | Retry count on failure |
-| `timeout` | seconds | 120 | Request timeout |
+| `timeout` | seconds | 120 | Request timeout (base value for adaptive calculation) |
 | `concurrency` | 1-20 | 10 | Max concurrent LLM requests |
+
+### Adaptive Timeout
+
+Local providers (`claude-agent/`, `copilot/`) use **adaptive timeout calculation** based on request complexity:
+
+- Base timeout: 60 seconds minimum, 600 seconds maximum
+- Factors considered: prompt length, number of images, expected output length
+- Formula: `base_timeout + (prompt_chars / 500) + (images * 30) + (expected_output / 200)`
+
+This prevents timeouts on large documents while keeping short requests responsive.
+
+### Prompt Caching (Claude Agent)
+
+Claude Agent provider automatically enables **prompt caching** for system prompts longer than 4KB. This reduces API costs by caching frequently-used system prompt prefixes.
+
+::: tip
+Prompt caching is transparent - no configuration needed. View cache statistics with `markitai cache stats -v`.
+:::
 
 ## Image Configuration
 
@@ -334,7 +372,7 @@ Enable screenshot capture for documents and URLs:
 When enabled (`--screenshot` or `--preset rich`):
 
 - **PDF/PPTX**: Renders each page/slide as a JPEG image
-- **URLs**: Captures full-page screenshots using agent-browser
+- **URLs**: Captures full-page screenshots using Playwright
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -347,7 +385,7 @@ When enabled (`--screenshot` or `--preset rich`):
 Screenshots are saved to `output/screenshots/` directory.
 
 ::: tip
-For URLs, enabling `--screenshot` automatically upgrades the fetch strategy to `browser` if needed. This ensures the page is fully rendered before capturing.
+For URLs, enabling `--screenshot` automatically upgrades the fetch strategy to `playwright` if needed. This ensures the page is fully rendered before capturing.
 :::
 
 ## OCR Configuration
@@ -415,8 +453,7 @@ Configure how URLs are fetched:
 {
   "fetch": {
     "strategy": "auto",
-    "agent_browser": {
-      "command": "agent-browser",
+    "playwright": {
       "timeout": 30000,
       "wait_for": "domcontentloaded",
       "extra_wait_ms": 1000
@@ -434,16 +471,15 @@ Configure how URLs are fetched:
 
 | Strategy | Description |
 |----------|-------------|
-| `auto` | Auto-detect: use browser for patterns in `fallback_patterns`, static otherwise |
+| `auto` | Auto-detect: use playwright for patterns in `fallback_patterns`, static otherwise |
 | `static` | Use MarkItDown's built-in URL converter (fast, no JS) |
-| `browser` | Use agent-browser for JS-rendered pages (SPA support) |
+| `playwright` | Use Playwright for JS-rendered pages (SPA support) |
 | `jina` | Use Jina Reader API |
 
-### Browser Settings
+### Playwright Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `command` | `agent-browser` | Path to agent-browser |
 | `timeout` | `30000` | Page load timeout (ms) |
 | `wait_for` | `domcontentloaded` | Wait condition: `load`, `domcontentloaded`, `networkidle` |
 | `extra_wait_ms` | `1000` | Extra wait time for JS rendering |

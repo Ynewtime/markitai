@@ -546,17 +546,34 @@ def _context_display_name(context: str) -> str:
         'file.pdf' -> 'file.pdf'
         '' -> ''
     """
+    from pathlib import PurePosixPath, PureWindowsPath
+
     if not context:
         return context
+
+    # Check if this is a Windows-style path (with drive letter)
+    is_windows_path = len(context) >= 2 and context[1] == ":" and context[0].isalpha()
+
     # Split context into path part and suffix (e.g., ':images')
-    if (
-        ":" in context and context[1:3] != ":\\"
-    ):  # Avoid splitting Windows drive letters
-        # Find the last colon that's not part of a Windows path
+    # For Windows paths, find suffix after the drive letter portion
+    if is_windows_path:
+        # Find the last colon that's not the drive letter colon
+        rest = context[2:]  # Skip "C:"
+        if ":" in rest:
+            last_colon_pos = context.rfind(":")
+            path_part = context[:last_colon_pos]
+            suffix = context[last_colon_pos + 1 :]
+            # Use PureWindowsPath for proper Windows path handling
+            return f"{PureWindowsPath(path_part).name}:{suffix}"
+        # No suffix, just extract filename
+        return PureWindowsPath(context).name
+    elif ":" in context:
+        # Unix path with suffix
         parts = context.rsplit(":", 1)
-        if len(parts) == 2 and not parts[1].startswith("\\"):
+        if len(parts) == 2:
             path_part, suffix = parts
-            return f"{Path(path_part).name}:{suffix}"
+            return f"{PurePosixPath(path_part).name}:{suffix}"
+    # Simple path without suffix
     return Path(context).name
 
 
@@ -2043,6 +2060,30 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                 except RETRYABLE_ERRORS as e:
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                     last_exception = e
+
+                    # Check for quota/billing errors that should NOT be retried
+                    # These errors are wrapped by LiteLLM as APIConnectionError but
+                    # are actually non-recoverable without user action
+                    error_msg_lower = str(e).lower()
+                    non_retryable_patterns = (
+                        "quota",
+                        "billing",
+                        "payment",
+                        "subscription",
+                        "402",
+                        "insufficient_quota",
+                        "exceeded your current quota",
+                    )
+                    if any(
+                        pattern in error_msg_lower for pattern in non_retryable_patterns
+                    ):
+                        status_code = getattr(e, "status_code", "N/A")
+                        logger.error(
+                            f"[LLM:{call_id}] Quota/billing error (not retrying): "
+                            f"status={status_code} {format_error_message(e)} "
+                            f"time={elapsed_ms:.0f}ms"
+                        )
+                        raise
 
                     if attempt == max_retries:
                         # Final failure after all retries

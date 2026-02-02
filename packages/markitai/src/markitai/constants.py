@@ -150,15 +150,12 @@ DEFAULT_LOG_LEVEL = "INFO"
 # URL Fetch Settings
 # =============================================================================
 
-DEFAULT_FETCH_STRATEGY = "auto"  # auto | static | browser | jina
-DEFAULT_AGENT_BROWSER_COMMAND = "agent-browser"
-# Recommended version: 0.7.6 (0.8.x has daemon startup bug on Windows)
-RECOMMENDED_AGENT_BROWSER_VERSION = "0.7.6"
-DEFAULT_AGENT_BROWSER_TIMEOUT = 30000  # ms
-DEFAULT_AGENT_BROWSER_WAIT_FOR = (
+DEFAULT_FETCH_STRATEGY = "auto"  # auto | static | playwright | jina
+DEFAULT_PLAYWRIGHT_TIMEOUT = 30000  # ms
+DEFAULT_PLAYWRIGHT_WAIT_FOR = (
     "domcontentloaded"  # load | domcontentloaded | networkidle
 )
-DEFAULT_AGENT_BROWSER_EXTRA_WAIT_MS = (
+DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS = (
     3000  # Extra wait after load state (for JS rendering, SPAs need 3-5s)
 )
 DEFAULT_JINA_TIMEOUT = 30  # seconds
