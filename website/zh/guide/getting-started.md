@@ -5,7 +5,7 @@
 ### 必需依赖
 
 - **Python 3.11-3.13** - 运行时环境（由于 onnxruntime 限制，暂不支持 3.14）
-- **[uv](https://docs.astral.sh/uv/)** - 包管理器（推荐）或 pip
+- **[uv](https://docs.astral.sh/uv/)** - 包管理器（推荐）
 
 ### 可选依赖
 
@@ -13,19 +13,19 @@
 
 | 依赖 | 用途 | 安装方式 |
 |------|------|----------|
-| **[Node.js 22+](https://nodejs.org/)** | `--agent-browser`（SPA 渲染） | 参见 [nodejs.org](https://nodejs.org/) |
-| **[agent-browser](https://www.npmjs.com/package/agent-browser)** | `--agent-browser` | `pnpm add -g agent-browser && agent-browser install` |
+| **Playwright** | `--playwright`（SPA 渲染） | 包随 markitai 安装，浏览器需运行 `uv run playwright install chromium` |
+| **FFmpeg** | 音视频处理 | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
 | **Jina API 密钥** | `--jina`（URL 转换） | 设置 `JINA_API_KEY` 环境变量 |
 | **LLM API 密钥** | `--llm`（AI 增强） | 设置 `OPENAI_API_KEY` 或对应提供商的密钥 |
 
 ::: tip 浏览器自动化
-对于 SPA 网站（Twitter、React 应用等），需要安装 `agent-browser`：
+对于 SPA 网站（Twitter、React 应用等），会自动使用 Playwright。首次使用前需安装浏览器：
 ```bash
-pnpm add -g agent-browser
-agent-browser install              # 下载 Chromium 浏览器
-agent-browser install --with-deps  # Linux: 同时安装系统依赖
+uv run playwright install chromium
+# Linux 还需安装系统依赖：
+uv run playwright install-deps chromium
 ```
-然后使用 `--agent-browser` 参数启用浏览器渲染。
+然后使用 `--playwright` 参数强制启用浏览器渲染。
 :::
 
 ## 安装
@@ -54,7 +54,6 @@ irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps
 - 检测 Python 3.11-3.13
 - 安装 [uv](https://docs.astral.sh/uv/) 包管理器（需要确认）
 - 安装 markitai 及所有可选依赖
-- 可选安装 `agent-browser` 用于浏览器自动化
 
 #### 版本固定
 
@@ -62,16 +61,14 @@ irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.4.0"
+export MARKITAI_VERSION="0.4.1"
 export UV_VERSION="0.9.27"
-export AGENT_BROWSER_VERSION="0.5.0"
 curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.4.0"
+$env:MARKITAI_VERSION = "0.4.1"
 $env:UV_VERSION = "0.9.27"
-$env:AGENT_BROWSER_VERSION = "0.5.0"
 irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps1 | iex
 ```
 :::
@@ -82,8 +79,8 @@ irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps
 # 使用 uv（推荐）
 uv tool install markitai
 
-# 或使用 pip
-pip install --user markitai
+# 或使用 uv pip（用于虚拟环境）
+uv pip install markitai
 ```
 
 ## 快速上手
@@ -207,9 +204,10 @@ sudo apt-get install libreoffice
 sudo dnf install libreoffice
 ```
 
-**安装浏览器依赖：**
+**安装 Playwright 浏览器：**
 ```bash
-agent-browser install --with-deps
+uv run playwright install chromium
+uv run playwright install-deps chromium  # 安装系统依赖
 ```
 
 ### macOS

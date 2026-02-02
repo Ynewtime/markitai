@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,70 @@ from typing import Any
 from loguru import logger
 
 from markitai.constants import DEFAULT_JSON_INDENT
+
+# Windows-specific retry settings for file operations
+_WINDOWS_RETRY_COUNT = 5
+_WINDOWS_RETRY_DELAY = 0.05  # 50ms
+
+
+def _replace_with_retry(src: str, dst: Path) -> None:
+    """Replace file with retry logic for Windows file locking.
+
+    On Windows, os.replace() can fail with PermissionError when the target
+    file is briefly locked by another process (e.g., antivirus, indexer,
+    or concurrent writes). This function retries the operation.
+
+    Args:
+        src: Source file path (temp file)
+        dst: Destination file path
+    """
+    if sys.platform != "win32":
+        os.replace(src, dst)
+        return
+
+    last_error: OSError | None = None
+    for attempt in range(_WINDOWS_RETRY_COUNT):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as e:
+            last_error = e
+            if attempt < _WINDOWS_RETRY_COUNT - 1:
+                time.sleep(_WINDOWS_RETRY_DELAY * (attempt + 1))  # Exponential backoff
+
+    # All retries failed
+    if last_error:
+        raise last_error
+
+
+async def _replace_with_retry_async(src: str, dst: Path) -> None:
+    """Async version of _replace_with_retry for Windows file locking.
+
+    Args:
+        src: Source file path (temp file)
+        dst: Destination file path
+    """
+    import asyncio
+
+    import aiofiles.os
+
+    if sys.platform != "win32":
+        await aiofiles.os.replace(src, dst)
+        return
+
+    last_error: OSError | None = None
+    for attempt in range(_WINDOWS_RETRY_COUNT):
+        try:
+            await aiofiles.os.replace(src, dst)
+            return
+        except PermissionError as e:
+            last_error = e
+            if attempt < _WINDOWS_RETRY_COUNT - 1:
+                await asyncio.sleep(_WINDOWS_RETRY_DELAY * (attempt + 1))
+
+    # All retries failed
+    if last_error:
+        raise last_error
 
 
 def atomic_write_text(
@@ -40,17 +106,30 @@ def atomic_write_text(
         prefix=f".{path.name}.",
         dir=parent,
     )
+    fd_closed = False
     try:
         with os.fdopen(fd, "w", encoding=encoding) as f:
+            fd_closed = True  # fdopen takes ownership of fd
             f.write(content)
         # Atomic rename (POSIX guarantees atomicity on same filesystem)
-        os.replace(tmp_path, path)
+        # On Windows, use retry logic to handle file locking
+        _replace_with_retry(tmp_path, path)
     except Exception:
         # Clean up temp file on error
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        # Close fd if fdopen failed (it didn't take ownership)
+        if not fd_closed:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        # On Windows, may need retry for unlink due to file locking
+        for _ in range(_WINDOWS_RETRY_COUNT if sys.platform == "win32" else 1):
+            try:
+                os.unlink(tmp_path)
+                break
+            except OSError:
+                if sys.platform == "win32":
+                    time.sleep(_WINDOWS_RETRY_DELAY)
         raise
 
 
@@ -110,10 +189,13 @@ async def atomic_write_text_async(
         async with aiofiles.open(tmp_path, "w", encoding=encoding) as f:
             await f.write(content)
         # Atomic rename (POSIX guarantees atomicity on same filesystem)
-        await aiofiles.os.replace(tmp_path, path)
+        # On Windows, use retry logic to handle file locking
+        await _replace_with_retry_async(tmp_path, path)
     except Exception:
         # Clean up temp file on error
         try:
+            import aiofiles.os
+
             await aiofiles.os.remove(tmp_path)
         except OSError:
             pass

@@ -478,12 +478,13 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
 
         try:
             # Build options dict
+            # Note: timeout is calculated but SDK v0.1.27+ doesn't support timeout param
+            # The SDK handles timeouts internally
             options_kwargs: dict[str, Any] = {
                 "allowed_tools": [],
                 "permission_mode": "bypassPermissions",
                 "max_turns": 1,
                 "model": model_name,
-                "timeout": timeout,
             }
 
             # Add output_format if structured output is requested

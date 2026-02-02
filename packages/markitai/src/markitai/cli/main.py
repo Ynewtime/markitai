@@ -15,10 +15,12 @@ if TYPE_CHECKING:
 # Fix Windows console encoding for Unicode output
 if sys.platform == "win32":
     # Set UTF-8 mode for Windows console
+    # sys.stdout/stderr are actually io.TextIOWrapper which has reconfigure()
+    # but typed as TextIO for compatibility. hasattr check ensures safety.
     if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     if hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 # Suppress noisy messages before imports
 # Note: Most warning filters are now centralized in logging_config.setup_logging()

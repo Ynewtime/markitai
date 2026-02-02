@@ -31,8 +31,8 @@ irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 |
 # Requires Python 3.11-3.13 (3.14 not yet supported)
 uv tool install markitai
 
-# Or using pip
-pip install --user markitai
+# Or using uv pip (for virtual environment)
+uv pip install markitai
 ```
 
 ## Quick Start
@@ -91,9 +91,33 @@ markitai cache stats
 
 # Clear cache
 markitai cache clear
+
+# Check system health and dependencies
+markitai doctor
 ```
 
 Config file location: `./markitai.json` or `~/.markitai/config.json`
+
+### Local Providers (Subscription-based)
+
+Use your existing Claude Code or GitHub Copilot subscription:
+
+```bash
+# Claude Agent (requires Claude Code CLI)
+markitai document.pdf --llm  # Configure claude-agent/sonnet in config
+
+# GitHub Copilot (requires Copilot CLI)
+markitai document.pdf --llm  # Configure copilot/gpt-5.2 in config
+```
+
+Install CLI tools:
+```bash
+# Claude Code CLI
+curl -fsSL https://claude.ai/install.sh | bash
+
+# GitHub Copilot CLI
+curl -fsSL https://gh.io/copilot-install | bash
+```
 
 ## Environment Variables
 

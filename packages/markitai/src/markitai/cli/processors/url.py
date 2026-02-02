@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from rich.console import Console
 from rich.panel import Panel
 
+from markitai.cli.console import get_console
 from markitai.config import MarkitaiConfig
 from markitai.json_order import order_report
 from markitai.security import atomic_write_json, atomic_write_text
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from markitai.fetch import FetchCache, FetchStrategy
     from markitai.llm import LLMProcessor
 
-console = Console()
+console = get_console()
 
 
 async def process_url(
@@ -59,7 +59,7 @@ async def process_url(
     Supports multiple fetch strategies:
     - auto: Detect JS-required pages and fallback automatically
     - static: Direct HTTP request via markitdown (fastest)
-    - browser: Headless browser via agent-browser (for JS-rendered pages)
+    - playwright: Headless browser via Playwright (for JS-rendered pages)
     - jina: Jina Reader API (cloud-based, no local dependencies)
 
     Also supports:
@@ -83,7 +83,6 @@ async def process_url(
         process_with_llm,
     )
     from markitai.fetch import (
-        AgentBrowserNotFoundError,
         FetchError,
         FetchStrategy,
         JinaRateLimitError,
@@ -190,23 +189,11 @@ async def process_url(
             original_markdown = fetch_result.content
             screenshot_path = fetch_result.screenshot_path
             logger.info(f"Fetched via {used_strategy}: {url}")
-        except AgentBrowserNotFoundError:
-            console.print(
-                Panel(
-                    "[red]agent-browser is not installed.[/red]\n\n"
-                    "Install with:\n"
-                    "  pnpm add -g agent-browser\n"
-                    "  agent-browser install\n\n"
-                    "[dim]Or use --jina for cloud-based rendering.[/dim]",
-                    title="Error",
-                )
-            )
-            raise SystemExit(1)
         except JinaRateLimitError:
             console.print(
                 Panel(
                     "[red]Jina Reader rate limit exceeded (free tier: 20 RPM).[/red]\n\n"
-                    "[dim]Try again later or use --agent-browser for local rendering.[/dim]",
+                    "[dim]Try again later or use --playwright for local rendering.[/dim]",
                     title="Error",
                 )
             )
@@ -274,14 +261,47 @@ async def process_url(
             else:
                 progress.log("No images to download")
 
-        # Write base .md file with original content (no image link replacement)
-        base_content = _add_basic_frontmatter(
-            original_markdown,
-            url,
-            fetch_strategy=used_strategy,
-            screenshot_path=screenshot_path,
-            output_dir=output_dir,
-        )
+        # Check for screenshot-only mode without LLM
+        # --screenshot-only without --llm: just save screenshot, no .md output
+        has_screenshot = screenshot_path is not None and screenshot_path.exists()
+        if cfg.screenshot.screenshot_only and not cfg.llm.enabled:
+            if has_screenshot and screenshot_path is not None:
+                progress.log(f"Screenshot saved: {screenshot_path.name}")
+                console.print(f"[green]Screenshot saved:[/green] {screenshot_path}")
+            else:
+                console.print(
+                    "[yellow]Warning: --screenshot-only but no screenshot captured[/yellow]"
+                )
+            return
+
+        # Write base .md file
+        # For --llm --screenshot-only: .md contains just screenshot reference
+        # Otherwise: .md contains original markdown content
+        if (
+            cfg.screenshot.screenshot_only
+            and cfg.llm.enabled
+            and has_screenshot
+            and screenshot_path is not None
+        ):
+            # .md file just references the screenshot (not as HTML comment)
+            screenshot_ref = f"![Screenshot](screenshots/{screenshot_path.name})"
+            base_content = _add_basic_frontmatter(
+                screenshot_ref,
+                url,
+                fetch_strategy=used_strategy,
+                screenshot_path=None,  # Don't add screenshot again
+                output_dir=output_dir,
+                title=fetch_result.title,
+            )
+        else:
+            base_content = _add_basic_frontmatter(
+                original_markdown,
+                url,
+                fetch_strategy=used_strategy,
+                screenshot_path=screenshot_path,
+                output_dir=output_dir,
+                title=fetch_result.title,
+            )
         atomic_write_text(output_file, base_content)
         logger.info(f"Written output: {output_file}")
 
@@ -295,32 +315,20 @@ async def process_url(
                 cfg.image.alt_enabled or cfg.image.desc_enabled
             ) and downloaded_images
 
-            # Check for multi-source content (static + browser + screenshot)
-            has_multi_source = (
-                fetch_result.static_content is not None
-                or fetch_result.browser_content is not None
-            )
-            has_screenshot = screenshot_path and screenshot_path.exists()
-            use_vision_enhancement = has_multi_source and has_screenshot
+            # Check for screenshot-only mode (extract purely from screenshot)
+            # has_screenshot is already defined above
+            use_screenshot_only = cfg.screenshot.screenshot_only and has_screenshot
 
-            if use_vision_enhancement and screenshot_path:
-                # Multi-source URL with screenshot: use vision LLM
-                progress.start_spinner("Processing with Vision LLM (multi-source)...")
-                multi_source_content = build_multi_source_content(
-                    fetch_result.static_content,
-                    fetch_result.browser_content,
-                    markdown_for_llm,
-                )
-                logger.info(
-                    f"[URL] Using vision enhancement for multi-source URL: {url}"
-                )
+            if use_screenshot_only and screenshot_path:
+                # Screenshot-only mode: extract content purely from screenshot
+                progress.start_spinner("Extracting content from screenshot...")
 
-                _, doc_cost, doc_usage = await process_url_with_vision(
-                    multi_source_content,
+                _, doc_cost, doc_usage = await process_url_screenshot_only(
                     screenshot_path,
                     url,
                     cfg,
                     output_file,
+                    original_title=fetch_result.title,
                 )
                 llm_cost += doc_cost
                 _merge_llm_usage(llm_usage, doc_usage)
@@ -334,7 +342,7 @@ async def process_url(
                         img_analysis,
                     ) = await analyze_images_with_llm(
                         downloaded_images,
-                        multi_source_content,
+                        "",  # No source content in screenshot-only mode
                         output_file,
                         cfg,
                         Path(url),
@@ -342,9 +350,59 @@ async def process_url(
                     )
                     llm_cost += image_cost
                     _merge_llm_usage(llm_usage, image_usage)
-                progress.log("LLM processing complete (vision enhanced)")
+                progress.log("LLM processing complete (screenshot-only)")
+
+            # Check for multi-source content (static + browser + screenshot)
+            elif has_screenshot:
+                has_multi_source = (
+                    fetch_result.static_content is not None
+                    or fetch_result.browser_content is not None
+                )
+                use_vision_enhancement = has_multi_source
+
+                if use_vision_enhancement and screenshot_path:
+                    # Multi-source URL with screenshot: use vision LLM
+                    progress.start_spinner(
+                        "Processing with Vision LLM (multi-source)..."
+                    )
+                    multi_source_content = build_multi_source_content(
+                        fetch_result.static_content,
+                        fetch_result.browser_content,
+                        markdown_for_llm,
+                    )
+
+                    _, doc_cost, doc_usage = await process_url_with_vision(
+                        multi_source_content,
+                        screenshot_path,
+                        url,
+                        cfg,
+                        output_file,
+                        original_title=fetch_result.title,
+                    )
+                    llm_cost += doc_cost
+                    _merge_llm_usage(llm_usage, doc_usage)
+
+                    # Run image analysis if needed
+                    if should_analyze_images:
+                        (
+                            _,
+                            image_cost,
+                            image_usage,
+                            img_analysis,
+                        ) = await analyze_images_with_llm(
+                            downloaded_images,
+                            multi_source_content,
+                            output_file,
+                            cfg,
+                            Path(url),
+                            concurrency_limit=cfg.llm.concurrency,
+                        )
+                        llm_cost += image_cost
+                        _merge_llm_usage(llm_usage, image_usage)
+                    progress.log("LLM processing complete (vision enhanced)")
+
             elif should_analyze_images:
-                # Standard processing with image analysis
+                # Standard processing with image analysis (no screenshot/vision)
                 progress.start_spinner("Processing document and images with LLM...")
 
                 # Create parallel tasks
@@ -375,7 +433,7 @@ async def process_url(
                 _merge_llm_usage(llm_usage, image_usage)
                 progress.log("LLM processing complete (document + images)")
             else:
-                # Only document processing, no images to analyze
+                # Only document processing, no images to analyze, no screenshot
                 progress.start_spinner("Processing with LLM...")
                 _, doc_cost, doc_usage = await process_with_llm(
                     markdown_for_llm,
@@ -526,7 +584,6 @@ async def process_url_batch(
 
     from markitai.cli.processors.llm import process_with_llm
     from markitai.fetch import (
-        AgentBrowserNotFoundError,
         FetchError,
         FetchStrategy,
         JinaRateLimitError,
@@ -631,14 +688,6 @@ async def process_url_batch(
                     logger.info(
                         f"Fetched via {url_fetch_strategy}{cache_status}: {url}"
                     )
-                except AgentBrowserNotFoundError:
-                    logger.error(f"agent-browser not installed for: {url}")
-                    results[url] = {
-                        "status": "failed",
-                        "error": "agent-browser not installed",
-                    }
-                    failed += 1
-                    return
                 except JinaRateLimitError:
                     logger.error(f"Jina Reader rate limit exceeded for: {url}")
                     results[url] = {
@@ -695,6 +744,7 @@ async def process_url_batch(
                     url,
                     fetch_strategy=url_fetch_strategy,
                     output_dir=output_dir,
+                    title=fetch_result.title,
                 )
                 atomic_write_text(output_file, base_content)
 
@@ -839,6 +889,7 @@ async def process_url_with_vision(
     cfg: MarkitaiConfig,
     output_file: Path,
     processor: LLMProcessor | None = None,
+    original_title: str | None = None,
 ) -> tuple[str, float, dict[str, dict[str, Any]]]:
     """Process URL content with vision enhancement using screenshot.
 
@@ -852,6 +903,7 @@ async def process_url_with_vision(
         cfg: Configuration
         output_file: Output file path
         processor: Optional shared LLMProcessor
+        original_title: Optional page title from fetch result
 
     Returns:
         Tuple of (original_content, cost_usd, llm_usage)
@@ -864,7 +916,7 @@ async def process_url_with_vision(
 
         # Use URL-specific vision enhancement (no slide/page marker protection)
         cleaned_content, frontmatter = await processor.enhance_url_with_vision(
-            content, screenshot_path, context=url
+            content, screenshot_path, context=url, original_title=original_title
         )
 
         # Format and write LLM output
@@ -930,6 +982,67 @@ async def process_url_with_vision(
             logger.info(f"Created fallback LLM file with screenshot: {llm_output}")
 
         return result
+
+
+async def process_url_screenshot_only(
+    screenshot_path: Path,
+    url: str,
+    cfg: MarkitaiConfig,
+    output_file: Path,
+    processor: LLMProcessor | None = None,
+    original_title: str | None = None,
+) -> tuple[str, float, dict[str, dict[str, Any]]]:
+    """Process URL using screenshot-only mode (no pre-extracted text).
+
+    This mode relies entirely on Vision LLM to extract content from the
+    screenshot, ignoring any pre-extracted text from Playwright/markitdown.
+
+    Args:
+        screenshot_path: Path to the URL screenshot
+        url: Original URL (used as source identifier)
+        cfg: Configuration
+        output_file: Output file path
+        processor: Optional shared LLMProcessor
+        original_title: Optional title from fetch result to preserve
+
+    Returns:
+        Tuple of (empty_string, cost_usd, llm_usage)
+    """
+    try:
+        if processor is None:
+            processor = create_llm_processor(cfg)
+
+        # Extract content purely from screenshot
+        cleaned_content, frontmatter = await processor.extract_from_screenshot(
+            screenshot_path, context=url, original_title=original_title
+        )
+
+        # Format and write LLM output
+        llm_output = output_file.with_suffix(".llm.md")
+        llm_content = processor.format_llm_output(
+            cleaned_content, frontmatter, source=url
+        )
+
+        # Add screenshot reference as comment
+        screenshot_comment = (
+            f"\n\n<!-- Screenshot for reference -->\n"
+            f"<!-- ![Screenshot](screenshots/{screenshot_path.name}) -->"
+        )
+        llm_content += screenshot_comment
+
+        atomic_write_text(llm_output, llm_content)
+        logger.info(f"Written LLM version (screenshot-only): {llm_output}")
+
+        # Get usage for this URL
+        cost = processor.get_context_cost(url)
+        usage = processor.get_context_usage(url)
+        return "", cost, usage
+
+    except Exception as e:
+        logger.error(
+            f"Screenshot-only extraction failed for {url}: {format_error_message(e)}"
+        )
+        raise
 
 
 # Backward compatibility aliases

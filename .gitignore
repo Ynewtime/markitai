@@ -59,6 +59,7 @@ markitai.json
 
 # Logs
 logs/
+logs_*/
 *.log
 
 # Environment variables (API keys)

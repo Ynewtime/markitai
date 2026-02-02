@@ -4,9 +4,8 @@ This module provides a unified interface for fetching web pages using different
 strategies:
 - static: Direct HTTP request via markitdown (default, fastest)
 - playwright: Headless browser via Playwright Python (recommended for JS-rendered pages)
-- browser: Headless browser via agent-browser (legacy, requires Node.js)
 - jina: Jina Reader API (cloud-based, no local dependencies)
-- auto: Auto-detect and fallback (tries static first, then playwright/browser/jina)
+- auto: Auto-detect and fallback (tries static first, then playwright/jina)
 
 Example usage:
     from markitai.fetch import fetch_url, FetchStrategy
@@ -14,8 +13,8 @@ Example usage:
     # Auto-detect strategy
     result = await fetch_url("https://example.com", FetchStrategy.AUTO, config.fetch)
 
-    # Force browser rendering
-    result = await fetch_url("https://x.com/...", FetchStrategy.BROWSER, config.fetch)
+    # Force Playwright rendering
+    result = await fetch_url("https://x.com/...", FetchStrategy.PLAYWRIGHT, config.fetch)
 """
 
 from __future__ import annotations
@@ -24,10 +23,8 @@ import asyncio
 import hashlib
 import json
 import re
-import shutil
 import sqlite3
 import time
-import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -51,7 +48,6 @@ class FetchStrategy(Enum):
     AUTO = "auto"
     STATIC = "static"
     PLAYWRIGHT = "playwright"  # Playwright Python (recommended)
-    BROWSER = "browser"  # agent-browser (legacy, requires Node.js)
     JINA = "jina"
 
 
@@ -70,22 +66,13 @@ class FetchError(Exception):
     pass
 
 
-class AgentBrowserNotFoundError(FetchError):
-    """Raised when agent-browser is not installed."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            "agent-browser is not installed. Install with: pnpm add -g agent-browser && agent-browser install"
-        )
-
-
 class JinaRateLimitError(FetchError):
     """Raised when Jina Reader API rate limit is exceeded."""
 
     def __init__(self) -> None:
         super().__init__(
             "Jina Reader rate limit exceeded (free tier: 20 RPM). "
-            "Try again later or use --agent-browser for browser rendering."
+            "Try again later or use --playwright for browser rendering."
         )
 
 
@@ -695,6 +682,9 @@ _markitdown_instance: Any = None
 # Global httpx.AsyncClient for Jina fetching (reused to avoid connection overhead)
 _jina_client: Any = None
 
+# Global Playwright renderer (reused to avoid browser cold starts)
+_playwright_renderer: Any = None
+
 # Cached proxy URL (None = not checked, "" = no proxy, "http://..." = proxy URL)
 _detected_proxy: str | None = None
 
@@ -841,12 +831,11 @@ def _get_system_proxy() -> tuple[str, str]:
                         bypass = ""
 
                     if proxy_addr:
-                        logger.debug(
-                            f"[Proxy] Found Windows system proxy: {proxy_addr}"
-                        )
+                        # Silent - system proxy detection is routine
                         return proxy_addr, bypass  # Return raw, normalize at usage
-        except Exception as e:
-            logger.debug(f"[Proxy] Failed to read Windows registry: {e}")
+        except Exception:
+            # Silent - registry read failure is not critical
+            pass
 
     elif system == "Darwin":  # macOS
         try:
@@ -907,10 +896,11 @@ def _get_system_proxy() -> tuple[str, str]:
                     bypass = ",".join(exceptions)
 
                 if proxy_addr:
-                    logger.debug(f"[Proxy] Found macOS system proxy: {proxy_addr}")
+                    # Silent - system proxy detection is routine
                     return proxy_addr, bypass  # Return raw, normalize at usage
-        except Exception as e:
-            logger.debug(f"[Proxy] Failed to read macOS proxy settings: {e}")
+        except Exception:
+            # Silent - scutil failure is not critical
+            pass
 
     return "", ""
 
@@ -952,7 +942,7 @@ def _detect_proxy(force_recheck: bool = False) -> str:
     ]:
         proxy = os.environ.get(var, "").strip()
         if proxy:
-            logger.debug(f"[Proxy] Found proxy from {var}: {proxy}")
+            # Silent - proxy from env is routine, no need to log
             _detected_proxy = proxy
             # Also check NO_PROXY env var
             _detected_proxy_bypass = os.environ.get(
@@ -983,7 +973,7 @@ def _detect_proxy(force_recheck: bool = False) -> str:
         except Exception:
             pass
 
-    logger.debug("[Proxy] No proxy detected")
+    # Silent - no proxy is common, no need to log
     _detected_proxy = ""
     _detected_proxy_bypass = ""
     return ""
@@ -1088,13 +1078,33 @@ async def close_shared_clients() -> None:
 
     Call this during cleanup to release resources.
     """
-    global _jina_client, _fetch_cache
+    global _jina_client, _fetch_cache, _playwright_renderer
     if _jina_client is not None:
         await _jina_client.aclose()
         _jina_client = None
     if _fetch_cache is not None:
         _fetch_cache.close()
         _fetch_cache = None
+    if _playwright_renderer is not None:
+        await _playwright_renderer.close()
+        _playwright_renderer = None
+
+
+async def _get_playwright_renderer(proxy: str | None = None) -> Any:
+    """Get or create the shared PlaywrightRenderer.
+
+    Args:
+        proxy: Optional proxy URL
+
+    Returns:
+        PlaywrightRenderer instance
+    """
+    global _playwright_renderer
+    if _playwright_renderer is None:
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        _playwright_renderer = PlaywrightRenderer(proxy=proxy)
+    return _playwright_renderer
 
 
 def detect_js_required(content: str) -> bool:
@@ -1193,405 +1203,6 @@ def should_use_browser_for_domain(url: str, fallback_patterns: list[str]) -> boo
         pass
 
     return False
-
-
-def is_agent_browser_available(command: str = "agent-browser") -> bool:
-    """Check if agent-browser CLI is installed and available.
-
-    Args:
-        command: Command name or path to check
-
-    Returns:
-        True if agent-browser is available
-    """
-    return shutil.which(command) is not None
-
-
-# Cache for agent-browser readiness check
-_agent_browser_ready_cache: dict[str, tuple[bool, str]] = {}
-
-# Cache for resolved agent-browser executable path (Windows)
-_agent_browser_exe_cache: dict[str, str | None] = {}
-
-
-def _find_windows_agent_browser_exe(cmd_path: str) -> str | None:
-    """Find the Windows native executable for agent-browser.
-
-    On Windows, npm/pnpm-installed agent-browser CMD files depend on /bin/sh,
-    which doesn't exist in native Windows. However, the package includes
-    a native Windows executable (agent-browser-win32-x64.exe) that works directly.
-
-    Args:
-        cmd_path: Path to the agent-browser CMD file
-
-    Returns:
-        Path to the native Windows exe, or None if not found
-    """
-    if cmd_path in _agent_browser_exe_cache:
-        return _agent_browser_exe_cache[cmd_path]
-
-    try:
-        # CMD file is typically at: npm_root/agent-browser.CMD
-        # Native exe is at: npm_root/node_modules/agent-browser/bin/agent-browser-win32-x64.exe
-        cmd_dir = Path(cmd_path).parent
-        exe_path = (
-            cmd_dir
-            / "node_modules"
-            / "agent-browser"
-            / "bin"
-            / "agent-browser-win32-x64.exe"
-        )
-
-        if exe_path.exists():
-            result = str(exe_path)
-            _agent_browser_exe_cache[cmd_path] = result
-            logger.debug(f"Using Windows native agent-browser exe: {result}")
-            return result
-    except Exception as e:
-        logger.debug(f"Failed to find Windows agent-browser exe: {e}")
-
-    _agent_browser_exe_cache[cmd_path] = None
-    return None
-
-
-def verify_agent_browser_ready(
-    command: str = "agent-browser", use_cache: bool = True
-) -> tuple[bool, str]:
-    """Verify that agent-browser is fully ready (command exists + browser installed).
-
-    This performs a more thorough check than is_agent_browser_available() by
-    actually running agent-browser to verify it works.
-
-    Args:
-        command: Command name or path to check
-        use_cache: Whether to use cached result (default True)
-
-    Returns:
-        Tuple of (is_ready, message)
-        - (True, "agent-browser is ready") if fully functional
-        - (False, "error message") if not ready
-    """
-    import subprocess
-    import sys
-
-    # Check cache first
-    if use_cache and command in _agent_browser_ready_cache:
-        return _agent_browser_ready_cache[command]
-
-    # Step 1: Check if command exists
-    cmd_path = shutil.which(command)
-    if not cmd_path:
-        result = (
-            False,
-            f"'{command}' command not found. Install with: pnpm add -g agent-browser",
-        )
-        _agent_browser_ready_cache[command] = result
-        return result
-
-    # Step 2: Windows compatibility check
-    # On Windows, CMD files may not work reliably in Python subprocess.
-    # Always prefer the native Windows executable when available.
-    effective_command = command
-    use_shell = False
-
-    if sys.platform == "win32" and cmd_path.lower().endswith((".cmd", ".cmd")):
-        # Always try to find native exe first on Windows
-        native_exe = _find_windows_agent_browser_exe(cmd_path)
-        if native_exe:
-            effective_command = native_exe
-        else:
-            # Check if CMD file requires /bin/sh (pnpm-style)
-            try:
-                with open(cmd_path, encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
-                    if "/bin/sh" in content and not Path("/bin/sh").exists():
-                        result = (
-                            False,
-                            "agent-browser was installed via pnpm which requires Git Bash. "
-                            "Options: 1) Run markitai from Git Bash terminal, "
-                            "2) Reinstall with pnpm: pnpm add -g agent-browser && agent-browser install",
-                        )
-                        _agent_browser_ready_cache[command] = result
-                        return result
-            except Exception:
-                pass  # Unable to read CMD file, continue with regular checks
-
-    # Step 3: Check if agent-browser responds to --help
-    # Windows: Hide console window completely
-    run_kwargs: dict[str, Any] = {
-        "capture_output": True,
-        "text": True,
-        "timeout": 10,
-        "shell": use_shell,
-    }
-    if sys.platform == "win32":
-        run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        si.wShowWindow = 0  # SW_HIDE
-        run_kwargs["startupinfo"] = si
-
-    try:
-        proc = subprocess.run(
-            [effective_command, "--help"],
-            **run_kwargs,
-        )
-        if proc.returncode != 0:
-            result = (False, f"'{command}' command failed: {proc.stderr.strip()}")
-            _agent_browser_ready_cache[command] = result
-            return result
-    except subprocess.TimeoutExpired:
-        result = (False, f"'{command}' command timed out")
-        _agent_browser_ready_cache[command] = result
-        return result
-    except FileNotFoundError as e:
-        # Windows-specific error message
-        if sys.platform == "win32":
-            result = (
-                False,
-                "Cannot execute agent-browser on Windows. "
-                "If installed via pnpm, try running from Git Bash terminal "
-                "or reinstall with pnpm: pnpm add -g agent-browser",
-            )
-        else:
-            result = (False, f"'{command}' command error: {e}")
-        _agent_browser_ready_cache[command] = result
-        return result
-    except Exception as e:
-        result = (False, f"'{command}' command error: {e}")
-        _agent_browser_ready_cache[command] = result
-        return result
-
-    # Step 4: Quick version check instead of browser launch
-    # Launching browser is slow and causes popup windows on Windows
-    # The --help check above already validates the command works
-    version = "unknown"
-    run_kwargs["timeout"] = 5
-    try:
-        proc = subprocess.run(
-            [effective_command, "--version"],
-            **run_kwargs,
-        )
-        if proc.returncode == 0 and proc.stdout:
-            version = proc.stdout.strip()
-    except Exception:
-        pass  # Version check is optional
-
-    result = (True, f"v{version}" if version != "unknown" else "ready")
-    _agent_browser_ready_cache[command] = result
-    # Also cache the effective command path for later use
-    if effective_command != command:
-        _agent_browser_exe_cache[command] = effective_command
-    return result
-
-
-def clear_agent_browser_cache() -> None:
-    """Clear the agent-browser readiness cache."""
-    _agent_browser_ready_cache.clear()
-
-
-def _get_effective_agent_browser_args(args: list[str]) -> list[str]:
-    """Get effective command args with Windows native exe resolution.
-
-    On Windows, automatically resolves to native exe if available.
-    Caches the resolved path to avoid repeated lookups.
-
-    Args:
-        args: Command arguments (e.g., ["agent-browser", "open", url])
-
-    Returns:
-        Effective args with resolved executable path
-    """
-    import sys
-
-    effective_args = list(args)
-    if (
-        sys.platform == "win32"
-        and args
-        and args[0] in ("agent-browser", "agent-browser.CMD")
-    ):
-        # Check cache for native exe
-        cached_exe = _agent_browser_exe_cache.get(args[0])
-        if cached_exe:
-            effective_args[0] = cached_exe
-        else:
-            # Try to find native exe
-            cmd_path = shutil.which(args[0])
-            if cmd_path:
-                native_exe = _find_windows_agent_browser_exe(cmd_path)
-                if native_exe:
-                    effective_args[0] = native_exe
-                    _agent_browser_exe_cache[args[0]] = native_exe
-    return effective_args
-
-
-async def _run_agent_browser_command(
-    args: list[str], timeout_seconds: float, proxy: str = ""
-) -> tuple[bytes, bytes, int]:
-    """Run an agent-browser command with cross-platform compatibility.
-
-    On Windows, automatically uses native exe if available.
-    On other platforms, uses direct exec.
-
-    Automatically detects and applies proxy settings for Playwright.
-
-    Note: On Windows, uses temp files instead of PIPE to avoid deadlock
-    with agent-browser's ANSI colored output.
-
-    Args:
-        args: Command arguments (e.g., ["agent-browser", "open", url])
-        timeout_seconds: Timeout in seconds
-        proxy: Proxy URL (auto-detected if not provided)
-
-    Returns:
-        Tuple of (stdout, stderr, returncode)
-
-    Raises:
-        asyncio.TimeoutError: If command times out
-    """
-    import os
-    import subprocess
-    import sys
-    import tempfile
-
-    effective_args = _get_effective_agent_browser_args(args)
-
-    # Build kwargs for subprocess
-    kwargs: dict[str, Any] = {}
-
-    # Windows: Use temp files instead of PIPE to avoid deadlock
-    # agent-browser's ANSI colored output causes pipe buffer issues on Windows
-    # that lead to communicate() hanging indefinitely
-    stdout_file = None
-    stderr_file = None
-    use_temp_files = sys.platform == "win32"
-
-    if use_temp_files:
-        stdout_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
-            mode="w+b", delete=False, suffix=".stdout"
-        )
-        stderr_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
-            mode="w+b", delete=False, suffix=".stderr"
-        )
-        kwargs["stdout"] = stdout_file
-        kwargs["stderr"] = stderr_file
-    else:
-        kwargs["stdout"] = asyncio.subprocess.PIPE
-        kwargs["stderr"] = asyncio.subprocess.PIPE
-
-    # Windows: Hide console window completely
-    # CREATE_NO_WINDOW: Don't create console window for the process
-    # DETACHED_PROCESS: Detach from parent's console session
-    # STARTUPINFO with SW_HIDE: Additional window hiding
-    if sys.platform == "win32":
-        kwargs["creationflags"] = (
-            subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
-        )
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        si.wShowWindow = 0  # SW_HIDE
-        kwargs["startupinfo"] = si
-
-    # Set proxy environment for Playwright/agent-browser
-    effective_proxy = proxy or _detect_proxy()
-    if effective_proxy:
-        # Create a copy of current environment with proxy settings
-        env = os.environ.copy()
-        # agent-browser uses AGENT_BROWSER_PROXY (preferred) or standard HTTP_PROXY
-        env["AGENT_BROWSER_PROXY"] = effective_proxy
-        env["HTTPS_PROXY"] = effective_proxy
-        env["HTTP_PROXY"] = effective_proxy
-
-        # Set proxy bypass list
-        bypass = _get_proxy_bypass()
-        if bypass:
-            # AGENT_BROWSER_PROXY_BYPASS: Playwright/Chromium supports wildcards
-            env["AGENT_BROWSER_PROXY_BYPASS"] = bypass
-            # NO_PROXY: Normalize for Linux compatibility (Git Bash, WSL, etc.)
-            env["NO_PROXY"] = _normalize_bypass_list(bypass)
-            logger.debug(f"[agent-browser] Proxy bypass: {bypass}")
-
-        kwargs["env"] = env
-        logger.debug(f"[agent-browser] Using proxy: {effective_proxy}")
-
-    try:
-        proc = await asyncio.create_subprocess_exec(*effective_args, **kwargs)
-
-        if use_temp_files:
-            # Close file handles so subprocess can write
-            assert stdout_file is not None and stderr_file is not None
-            stdout_path = stdout_file.name
-            stderr_path = stderr_file.name
-            stdout_file.close()
-            stderr_file.close()
-
-            # Wait for process with timeout
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=timeout_seconds)
-            except TimeoutError:
-                proc.kill()
-                await proc.wait()
-                raise
-
-            # Read output from temp files
-            with open(stdout_path, "rb") as f:
-                stdout = f.read()
-            with open(stderr_path, "rb") as f:
-                stderr = f.read()
-
-            return stdout, stderr, proc.returncode or 0
-        else:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout_seconds
-            )
-            return stdout or b"", stderr or b"", proc.returncode or 0
-
-    finally:
-        # Cleanup temp files
-        if use_temp_files:
-            try:
-                if stdout_file:
-                    os.unlink(stdout_file.name)
-            except OSError:
-                pass
-            try:
-                if stderr_file:
-                    os.unlink(stderr_file.name)
-            except OSError:
-                pass
-
-
-async def _run_agent_browser_batch(
-    commands: list[tuple[list[str], float]],
-    proxy: str = "",
-) -> list[tuple[bytes, bytes, int]]:
-    """Run multiple agent-browser commands sequentially but efficiently.
-
-    This reduces per-command overhead by reusing the resolved executable path
-    and minimizing repeated path lookups.
-
-    Args:
-        commands: List of (args, timeout_seconds) tuples
-        proxy: Proxy URL (auto-detected if not provided)
-
-    Returns:
-        List of (stdout, stderr, returncode) tuples in same order
-    """
-    # Detect proxy once for all commands
-    effective_proxy = proxy or _detect_proxy()
-
-    results: list[tuple[bytes, bytes, int]] = []
-    for args, timeout_seconds in commands:
-        try:
-            result = await _run_agent_browser_command(
-                args, timeout_seconds, proxy=effective_proxy
-            )
-            results.append(result)
-        except TimeoutError:
-            results.append((b"", b"Timeout", -1))
-        except Exception as e:
-            results.append((b"", str(e).encode(), -1))
-    return results
 
 
 def _url_to_session_id(url: str) -> str:
@@ -1892,7 +1503,6 @@ async def fetch_with_static_conditional(
 
             # 304 Not Modified - use cached content
             if response.status_code == 304:
-                logger.info(f"[ConditionalFetch] 304 Not Modified: {url}")
                 return ConditionalFetchResult(
                     result=None,
                     not_modified=True,
@@ -1965,415 +1575,14 @@ async def fetch_with_static_conditional(
         raise FetchError(f"Failed to fetch URL with conditional request: {e}")
 
 
-async def fetch_with_browser(
-    url: str,
-    command: str = "agent-browser",
-    timeout: int = 30000,
-    wait_for: str = "domcontentloaded",
-    extra_wait_ms: int = 2000,
-    session: str | None = None,
-    *,
-    screenshot: bool = False,
-    screenshot_dir: Path | None = None,
-    screenshot_config: ScreenshotConfig | None = None,
-) -> FetchResult:
-    """Fetch URL using agent-browser (headless browser).
-
-    Args:
-        url: URL to fetch
-        command: agent-browser command name or path
-        timeout: Page load timeout in milliseconds
-        wait_for: Wait condition (load/domcontentloaded/networkidle)
-        extra_wait_ms: Extra wait time after load state (for JS rendering)
-        session: Optional session name for isolated browser
-        screenshot: If True, capture full-page screenshot
-        screenshot_dir: Directory to save screenshot (required if screenshot=True)
-        screenshot_config: Screenshot settings (viewport, quality, etc.)
-
-    Returns:
-        FetchResult with rendered page content and optional screenshot path
-
-    Raises:
-        AgentBrowserNotFoundError: If agent-browser is not installed
-        FetchError: If fetch fails
-    """
-    if not is_agent_browser_available(command):
-        raise AgentBrowserNotFoundError()
-
-    logger.debug(f"Fetching URL with browser strategy: {url}")
-
-    # Generate unique session ID to avoid conflicts with concurrent browser fetches
-    # Each fetch_with_browser call gets its own isolated browser session
-    effective_session = (
-        session if session else f"markitai-fetch-{uuid.uuid4().hex[:12]}"
-    )
-
-    try:
-        # Build command args
-        base_args = [command, "--session", effective_session]
-
-        # Detect proxy - must pass via CLI args, not just env vars
-        # agent-browser daemon ignores env vars once running
-        effective_proxy = _detect_proxy()
-        proxy_bypass = _get_proxy_bypass()
-
-        # Step 1: Open URL and wait for page load
-        # --proxy and --proxy-bypass must be in 'open' command for daemon to use them
-        open_args = [*base_args]
-        if effective_proxy:
-            open_args.extend(["--proxy", effective_proxy])
-            if proxy_bypass:
-                open_args.extend(["--proxy-bypass", proxy_bypass])
-        open_args.extend(["open", url])
-        logger.debug(f"Running: {' '.join(open_args)}")
-
-        stdout, stderr, returncode = await _run_agent_browser_command(
-            open_args, timeout / 1000 + 10
-        )
-
-        if returncode != 0:
-            error_msg = stderr.decode() if stderr else "Unknown error"
-            raise FetchError(f"agent-browser open failed: {error_msg}")
-
-        # Step 2: Wait for load state
-        wait_args = [*base_args, "wait", "--load", wait_for]
-        logger.debug(f"Running: {' '.join(wait_args)}")
-
-        await _run_agent_browser_command(wait_args, timeout / 1000 + 10)
-
-        # Step 2.5: Extra wait for JS rendering (especially for SPAs)
-        if extra_wait_ms > 0:
-            extra_wait_args = [*base_args, "wait", str(extra_wait_ms)]
-            logger.debug(f"Running: {' '.join(extra_wait_args)}")
-            await _run_agent_browser_command(extra_wait_args, extra_wait_ms / 1000 + 5)
-
-        # Step 3: Get page content via snapshot (accessibility tree with text)
-        # Using snapshot -c (compact) to get clean text structure
-        snapshot_args = [*base_args, "snapshot", "-c", "--json"]
-        logger.debug(f"Running: {' '.join(snapshot_args)}")
-
-        stdout, stderr, returncode = await _run_agent_browser_command(
-            snapshot_args, timeout / 1000 + 10
-        )
-
-        if returncode != 0:
-            error_msg = stderr.decode() if stderr else "Unknown error"
-            raise FetchError(f"agent-browser snapshot failed: {error_msg}")
-
-        # Parse snapshot JSON
-        try:
-            snapshot_data = json.loads(stdout.decode())
-            if snapshot_data.get("success"):
-                snapshot_text = snapshot_data.get("data", {}).get("snapshot", "")
-            else:
-                snapshot_text = stdout.decode()
-        except json.JSONDecodeError:
-            snapshot_text = stdout.decode()
-
-        # Step 4, 5 & 6: Get page title, final URL and HTML body in parallel
-        async def get_title() -> str | None:
-            title_args = [*base_args, "get", "title"]
-            stdout, _, returncode = await _run_agent_browser_command(title_args, 10)
-            if returncode == 0 and stdout:
-                return stdout.decode().strip()
-            return None
-
-        async def get_final_url() -> str | None:
-            url_args = [*base_args, "get", "url"]
-            stdout, _, returncode = await _run_agent_browser_command(url_args, 10)
-            if returncode == 0 and stdout:
-                return stdout.decode().strip()
-            return None
-
-        async def get_html_body() -> str | None:
-            """Get HTML body content for text extraction."""
-            html_args = [*base_args, "get", "html", "body"]
-            stdout, _, returncode = await _run_agent_browser_command(html_args, 15)
-            if returncode == 0 and stdout:
-                return stdout.decode()
-            return None
-
-        # Execute title, URL and HTML fetching in parallel
-        title, final_url, html_body = await asyncio.gather(
-            get_title(), get_final_url(), get_html_body()
-        )
-
-        # Convert snapshot to markdown format
-        markdown_content = _snapshot_to_markdown(snapshot_text, title, url)
-
-        # Also extract text from HTML as fallback/supplement
-        html_text_content: str | None = None
-        if html_body:
-            html_text_content = _html_to_text(html_body)
-
-        # Use HTML text if snapshot conversion failed or is too short
-        if not markdown_content.strip() or len(markdown_content.strip()) < 100:
-            if html_text_content and len(html_text_content.strip()) > len(
-                markdown_content.strip()
-            ):
-                logger.debug("Using HTML text extraction as primary content")
-                if title:
-                    markdown_content = f"# {title}\n\n{html_text_content}"
-                else:
-                    markdown_content = html_text_content
-
-        if not markdown_content.strip():
-            raise FetchError(f"No content extracted from URL via browser: {url}")
-
-        # Step 6: Capture full-page screenshot if requested
-        screenshot_path: Path | None = None
-        if screenshot and screenshot_dir:
-            try:
-                screenshot_dir.mkdir(parents=True, exist_ok=True)
-                safe_filename = _url_to_screenshot_filename(url)
-                screenshot_path = screenshot_dir / safe_filename
-
-                # Check if screenshot already exists (simple cache)
-                if not screenshot_path.exists():
-                    # Set viewport if configured
-                    if screenshot_config:
-                        viewport_args = [
-                            *base_args,
-                            "set",
-                            "viewport",
-                            str(screenshot_config.viewport_width),
-                            str(screenshot_config.viewport_height),
-                        ]
-                        logger.debug(f"Running: {' '.join(viewport_args)}")
-                        await _run_agent_browser_command(viewport_args, 10)
-
-                    # Capture full-page screenshot
-                    screenshot_args = [
-                        *base_args,
-                        "screenshot",
-                        "--full",
-                        str(screenshot_path),
-                    ]
-                    logger.debug(f"Running: {' '.join(screenshot_args)}")
-                    stdout, stderr, returncode = await _run_agent_browser_command(
-                        screenshot_args, 60
-                    )
-
-                    if returncode != 0:
-                        error_msg = stderr.decode() if stderr else "Unknown error"
-                        logger.warning(f"Screenshot capture failed: {error_msg}")
-                        screenshot_path = None
-                    elif screenshot_path.exists():
-                        # Compress screenshot
-                        quality = screenshot_config.quality if screenshot_config else 85
-                        max_height = (
-                            screenshot_config.max_height if screenshot_config else 10000
-                        )
-                        _compress_screenshot(screenshot_path, quality, max_height)
-                        logger.debug(f"Screenshot saved: {screenshot_path}")
-                else:
-                    logger.debug(f"Screenshot exists, skipping: {screenshot_path}")
-            except Exception as e:
-                # Screenshot failure should not block the main fetch
-                logger.warning(f"Screenshot failed for {url}: {e}")
-                screenshot_path = None
-
-        return FetchResult(
-            content=markdown_content,
-            strategy_used="browser",
-            title=title,
-            url=url,
-            final_url=final_url,
-            metadata={"renderer": "agent-browser", "wait_for": wait_for},
-            screenshot_path=screenshot_path,
-        )
-
-    except TimeoutError:
-        raise FetchError(f"Browser fetch timed out after {timeout}ms: {url}")
-    except AgentBrowserNotFoundError:
-        raise
-    except FetchError:
-        raise
-    except Exception as e:
-        raise FetchError(f"Browser fetch failed: {e}")
-    finally:
-        # Clean up the browser session to avoid resource leaks
-        # Only close auto-generated sessions (not user-specified ones)
-        if not session:
-            try:
-                close_args = [command, "--session", effective_session, "close"]
-                await _run_agent_browser_command(close_args, 5)
-                logger.debug(f"Closed browser session: {effective_session}")
-            except Exception as e:
-                logger.debug(
-                    f"Failed to close browser session {effective_session}: {e}"
-                )
-
-
-def _snapshot_to_markdown(snapshot: str, title: str | None, url: str) -> str:
-    """Convert agent-browser snapshot to markdown format.
-
-    The snapshot is an accessibility tree with various formats:
-    - heading "Title" [ref=e1] [level=1]
-    - paragraph: Text content here
-    - link "Link text" [ref=e2]:
-        - /url: /path
-    - text: Some text
-
-    Args:
-        snapshot: Accessibility tree snapshot
-        title: Page title
-        url: Original URL
-
-    Returns:
-        Markdown formatted content
-    """
-    lines = []
-
-    # Add title as H1 if available
-    if title:
-        lines.append(f"# {title}")
-        lines.append("")
-
-    # Track current link for multi-line link handling
-    current_link_text: str | None = None
-    current_link_url: str | None = None
-
-    # Parse snapshot and convert to markdown
-    for line in snapshot.split("\n"):
-        stripped = line.lstrip()
-
-        if not stripped:
-            continue
-
-        # Skip structure markers
-        if stripped.startswith("- document:") or stripped.startswith("- navigation:"):
-            continue
-        if stripped.startswith("- main:") or stripped.startswith("- article:"):
-            continue
-        if stripped.startswith("- contentinfo:") or stripped.startswith("- list:"):
-            continue
-        if stripped.startswith("- listitem:"):
-            continue
-
-        # Remove leading "- " if present
-        if stripped.startswith("- "):
-            stripped = stripped[2:]
-
-        # Handle URL lines (part of link)
-        if stripped.startswith("/url:"):
-            current_link_url = stripped[5:].strip()
-            if current_link_text:
-                lines.append(f"[{current_link_text}]({current_link_url})")
-                lines.append("")
-                current_link_text = None
-                current_link_url = None
-            continue
-
-        # Pattern 1: role "content" [attrs] (with or without trailing colon)
-        # e.g., heading "Title" [ref=e1] [level=1]
-        # e.g., link "Text" [ref=e2]:
-        match = re.match(
-            r'(\w+)\s+"([^"]*)"(?:\s*\[([^\]]*(?:\]\s*\[[^\]]*)*)\])?:?$', stripped
-        )
-        if match:
-            role, content, attrs_str = match.groups()
-            attrs_dict = {}
-            if attrs_str:
-                # Parse multiple [key=value] attributes
-                for attr_match in re.finditer(r"\[?([^=\]]+)=([^\]]+)\]?", attrs_str):
-                    k, v = attr_match.groups()
-                    attrs_dict[k.strip()] = v.strip()
-
-            # Convert to markdown based on role
-            if role == "heading":
-                level = int(attrs_dict.get("level", "2"))
-                lines.append(f"{'#' * level} {content}")
-                lines.append("")
-            elif role == "paragraph":
-                if content:
-                    lines.append(content)
-                    lines.append("")
-            elif role == "link":
-                # Link URL might be on next line
-                link_url = attrs_dict.get("url", "")
-                if link_url:
-                    lines.append(f"[{content}]({link_url})")
-                    lines.append("")
-                else:
-                    # Wait for /url: line
-                    current_link_text = content
-            elif role == "image":
-                alt = content or "image"
-                src = attrs_dict.get("url", attrs_dict.get("src", ""))
-                if src:
-                    lines.append(f"![{alt}]({src})")
-                    lines.append("")
-            elif role == "listitem":
-                lines.append(f"- {content}")
-            elif role == "code":
-                lines.append(f"`{content}`")
-            elif role in ("text", "StaticText"):
-                if content:
-                    lines.append(content)
-            elif role == "button":
-                pass  # Skip buttons
-            elif role == "textbox":
-                pass  # Skip form inputs
-            elif role == "switch":
-                pass  # Skip toggles
-            elif content:
-                # Generic fallback - include content
-                lines.append(content)
-            continue
-
-        # Pattern 2: role: content (no quotes)
-        # e.g., paragraph: Text content here
-        # e.g., text: Some text
-        match2 = re.match(r"(\w+):\s*(.+)$", stripped)
-        if match2:
-            role, content = match2.groups()
-            content = content.strip()
-
-            if role == "paragraph":
-                lines.append(content)
-                lines.append("")
-            elif role == "text":
-                # Only add text if it's meaningful (not just punctuation)
-                if content and len(content) > 2:
-                    lines.append(content)
-            elif role == "heading":
-                lines.append(f"## {content}")
-                lines.append("")
-            elif role == "time":
-                lines.append(f"*{content}*")
-                lines.append("")
-            elif role in ("separator",):
-                lines.append("---")
-                lines.append("")
-            continue
-
-        # Pattern 3: Plain text line (not a role definition)
-        # Skip structural elements
-        if stripped and not stripped.endswith(":"):
-            # Check if it looks like content (not a role marker)
-            if not re.match(r"^[a-z]+$", stripped):
-                pass  # Don't add raw structural lines
-
-    # Clean up: remove consecutive empty lines
-    result_lines = []
-    prev_empty = False
-    for line in lines:
-        is_empty = not line.strip()
-        if is_empty and prev_empty:
-            continue
-        result_lines.append(line)
-        prev_empty = is_empty
-
-    return "\n".join(result_lines).strip()
-
-
 async def fetch_with_jina(
     url: str,
     api_key: str | None = None,
     timeout: int = 30,
 ) -> FetchResult:
-    """Fetch URL using Jina Reader API.
+    """Fetch URL using Jina Reader API with JSON mode.
+
+    Uses JSON mode for reliable structured data extraction (title, content).
 
     Args:
         url: URL to fetch
@@ -2381,19 +1590,23 @@ async def fetch_with_jina(
         timeout: Request timeout in seconds
 
     Returns:
-        FetchResult with markdown content
+        FetchResult with markdown content and extracted title
 
     Raises:
         JinaRateLimitError: If rate limit exceeded
         JinaAPIError: If API returns error
         FetchError: If fetch fails
     """
+    import json
+
     import httpx
 
-    logger.debug(f"Fetching URL with Jina Reader: {url}")
+    logger.debug(f"Fetching URL with Jina Reader (JSON mode): {url}")
 
     jina_url = f"{DEFAULT_JINA_BASE_URL}/{url}"
-    headers = {}
+    headers = {
+        "Accept": "application/json",  # Use JSON mode for structured response
+    }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
@@ -2406,29 +1619,60 @@ async def fetch_with_jina(
         elif response.status_code >= 400:
             raise JinaAPIError(response.status_code, response.text[:200])
 
-        content = response.text
+        # Parse JSON response
+        try:
+            json_data = response.json()
+        except json.JSONDecodeError as e:
+            logger.warning(f"Jina API returned invalid JSON: {e}")
+            raise FetchError(f"Jina Reader returned invalid JSON response: {e}")
 
-        if not content.strip():
+        # Extract data from JSON structure
+        # Expected format: {"code": 200, "status": 20000, "data": {...}}
+        if not isinstance(json_data, dict):
+            raise FetchError("Jina Reader returned unexpected response format")
+
+        data = json_data.get("data")
+        if not data or not isinstance(data, dict):
+            # Check if the response indicates an error
+            error_msg = json_data.get("message") or json_data.get("error")
+            if error_msg:
+                raise JinaAPIError(
+                    json_data.get("code", 500),
+                    str(error_msg)[:200],
+                )
+            raise FetchError("Jina Reader returned empty or invalid data structure")
+
+        # Extract title and content from data
+        title = data.get("title")
+        content = data.get("content", "")
+
+        if not content or not content.strip():
             raise FetchError(f"No content returned from Jina Reader: {url}")
 
-        # Extract title from first H1 if present
-        title = None
-        title_match = re.match(r"^#\s+(.+)$", content, re.MULTILINE)
-        if title_match:
-            title = title_match.group(1)
+        # Clean up title if present
+        if title:
+            title = title.strip()
+            if not title:
+                title = None
 
         return FetchResult(
             content=content,
             strategy_used="jina",
             title=title,
             url=url,
-            metadata={"api": "jina-reader"},
+            metadata={
+                "api": "jina-reader",
+                "mode": "json",
+                "source_url": data.get("url", url),
+            },
         )
 
     except (JinaRateLimitError, JinaAPIError):
         raise
     except httpx.TimeoutException:
         raise FetchError(f"Jina Reader request timed out after {timeout}s: {url}")
+    except FetchError:
+        raise
     except Exception as e:
         raise FetchError(f"Jina Reader fetch failed: {e}")
 
@@ -2444,6 +1688,7 @@ async def fetch_url(
     screenshot: bool = False,
     screenshot_dir: Path | None = None,
     screenshot_config: ScreenshotConfig | None = None,
+    renderer: Any | None = None,
 ) -> FetchResult:
     """Fetch URL content using the specified strategy.
 
@@ -2457,15 +1702,26 @@ async def fetch_url(
         screenshot: If True, capture full-page screenshot (requires browser strategy)
         screenshot_dir: Directory to save screenshot
         screenshot_config: Screenshot settings (viewport, quality, etc.)
+        renderer: Optional shared PlaywrightRenderer
 
     Returns:
         FetchResult with content and metadata
 
     Raises:
         FetchError: If fetch fails and no fallback available
-        AgentBrowserNotFoundError: If --agent-browser used but not installed
         JinaRateLimitError: If --jina used and rate limit exceeded
     """
+    # Use provided renderer or get global one if needed
+    _renderer = renderer
+    if _renderer is None and (
+        strategy == FetchStrategy.PLAYWRIGHT
+        or (strategy == FetchStrategy.AUTO and screenshot)
+        or screenshot
+    ):
+        # Only initialize global renderer if browser strategy is likely to be used
+        proxy = _detect_proxy() if getattr(config, "auto_proxy", True) else None
+        _renderer = await _get_playwright_renderer(proxy=proxy)
+
     # When screenshot is enabled, use multi-source fetching strategy
     # This captures both static content and browser-rendered content
     if screenshot:
@@ -2476,6 +1732,7 @@ async def fetch_url(
             screenshot_config=screenshot_config,
             cache=cache,
             skip_read_cache=skip_read_cache,
+            renderer=_renderer,
         )
 
     # For static strategy with cache, try HTTP conditional request for efficiency
@@ -2509,7 +1766,6 @@ async def fetch_url(
                     )
                     if cond_result.not_modified:
                         # 304 Not Modified - use cached content
-                        logger.info(f"[FetchCache] HTTP 304, using cached: {url}")
                         cache.update_accessed_at(url)
                         return cached_result
                     elif cond_result.result is not None:
@@ -2529,18 +1785,16 @@ async def fetch_url(
 
         # No validators but have cached result - use it directly
         elif cached_result is not None:
-            logger.info(f"[FetchCache] Using cached content (no validators): {url}")
             return cached_result
 
     # Traditional cache check for non-conditional strategies
     elif cache is not None and not skip_read_cache:
         cached_result = cache.get(url)
         if cached_result is not None:
-            logger.info(f"[FetchCache] Using cached content for: {url}")
             return cached_result
 
     # Screenshot kwargs for browser fetching
-    screenshot_kwargs: dict[str, Any] = {}
+    screenshot_kwargs: dict[str, Any] = {"renderer": _renderer}
 
     # Fetch the content
     result: FetchResult
@@ -2556,17 +1810,19 @@ async def fetch_url(
             if not is_playwright_available():
                 raise FetchError(
                     "playwright is not installed. "
-                    "Install with: pip install playwright && playwright install chromium"
+                    "Install with: uv add playwright && uv run playwright install chromium "
+                    "(Linux: also run 'uv run playwright install-deps chromium')"
                 )
 
             pw_result = await fetch_with_playwright(
                 url,
-                timeout=config.agent_browser.timeout,
-                wait_for=config.agent_browser.wait_for,
-                extra_wait_ms=config.agent_browser.extra_wait_ms,
+                timeout=config.playwright.timeout,
+                wait_for=config.playwright.wait_for,
+                extra_wait_ms=config.playwright.extra_wait_ms,
                 proxy=_detect_proxy() if getattr(config, "auto_proxy", True) else None,
                 screenshot_config=screenshot_config,
                 output_dir=screenshot_dir,
+                renderer=_renderer,
             )
 
             result = FetchResult(
@@ -2577,16 +1833,6 @@ async def fetch_url(
                 final_url=pw_result.final_url,
                 metadata=pw_result.metadata,
                 screenshot_path=pw_result.screenshot_path,
-            )
-        elif strategy == FetchStrategy.BROWSER:
-            result = await fetch_with_browser(
-                url,
-                command=config.agent_browser.command,
-                timeout=config.agent_browser.timeout,
-                wait_for=config.agent_browser.wait_for,
-                extra_wait_ms=config.agent_browser.extra_wait_ms,
-                session=config.agent_browser.session,
-                **screenshot_kwargs,
             )
         elif strategy == FetchStrategy.JINA:
             api_key = config.jina.get_resolved_api_key()
@@ -2616,10 +1862,8 @@ async def fetch_url(
         use_browser_first = False
 
         if should_use_browser_for_domain(url, config.fallback_patterns):
-            logger.info(f"Domain matches fallback pattern, using browser: {url}")
             use_browser_first = True
         elif spa_cache.is_known_spa(url):
-            logger.info(f"Domain is learned SPA, using browser: {url}")
             spa_cache.record_hit(url)
             use_browser_first = True
 
@@ -2647,17 +1891,19 @@ async def fetch_url(
         if not is_playwright_available():
             raise FetchError(
                 "playwright is not installed. "
-                "Install with: pip install playwright && playwright install chromium"
+                "Install with: uv add playwright && uv run playwright install chromium "
+                "(Linux: also run 'uv run playwright install-deps chromium')"
             )
 
         pw_result = await fetch_with_playwright(
             url,
-            timeout=config.agent_browser.timeout,
-            wait_for=config.agent_browser.wait_for,
-            extra_wait_ms=config.agent_browser.extra_wait_ms,
+            timeout=config.playwright.timeout,
+            wait_for=config.playwright.wait_for,
+            extra_wait_ms=config.playwright.extra_wait_ms,
             proxy=_detect_proxy() if getattr(config, "auto_proxy", True) else None,
             screenshot_config=screenshot_config,
             output_dir=screenshot_dir,
+            renderer=_renderer,
         )
 
         result = FetchResult(
@@ -2668,16 +1914,6 @@ async def fetch_url(
             final_url=pw_result.final_url,
             metadata=pw_result.metadata,
             screenshot_path=pw_result.screenshot_path,
-        )
-    elif strategy == FetchStrategy.BROWSER:
-        result = await fetch_with_browser(
-            url,
-            command=config.agent_browser.command,
-            timeout=config.agent_browser.timeout,
-            wait_for=config.agent_browser.wait_for,
-            extra_wait_ms=config.agent_browser.extra_wait_ms,
-            session=config.agent_browser.session,
-            **screenshot_kwargs,
         )
     elif strategy == FetchStrategy.JINA:
         api_key = config.jina.get_resolved_api_key()
@@ -2739,6 +1975,7 @@ async def _fetch_multi_source(
     screenshot_config: ScreenshotConfig | None = None,
     cache: FetchCache | None = None,
     skip_read_cache: bool = False,
+    renderer: Any | None = None,
 ) -> FetchResult:
     """Fetch URL using static-first strategy with browser fallback.
 
@@ -2758,6 +1995,7 @@ async def _fetch_multi_source(
         screenshot_config: Screenshot settings
         cache: Optional FetchCache for caching results
         skip_read_cache: If True, skip reading from cache
+        renderer: Optional shared PlaywrightRenderer
 
     Returns:
         FetchResult with single-source content (no merging)
@@ -2777,67 +2015,55 @@ async def _fetch_multi_source(
             logger.debug(f"[URL] Static fetch failed: {e}")
             return None
 
-    # Task 2: Browser fetch with screenshot (Playwright preferred over agent-browser)
+    # Task 2: Browser fetch with screenshot (Playwright)
     async def fetch_browser() -> tuple[FetchResult | None, str | None, bool]:
         """Returns (result, error_message, not_installed)"""
-        # Try Playwright first (preferred)
         try:
             from markitai.fetch_playwright import (
                 fetch_with_playwright,
                 is_playwright_available,
             )
 
-            if is_playwright_available():
-                logger.debug("Using Playwright for browser fetch")
-                pw_result = await fetch_with_playwright(
-                    url,
-                    timeout=config.agent_browser.timeout,
-                    wait_for=config.agent_browser.wait_for,
-                    extra_wait_ms=config.agent_browser.extra_wait_ms,
-                    proxy=_detect_proxy()
-                    if getattr(config, "auto_proxy", True)
-                    else None,
-                    screenshot_config=screenshot_config,
-                    output_dir=screenshot_dir,
-                )
-                result = FetchResult(
-                    content=pw_result.content,
-                    strategy_used="playwright",
-                    title=pw_result.title,
-                    url=url,
-                    final_url=pw_result.final_url,
-                    metadata=pw_result.metadata,
-                    screenshot_path=pw_result.screenshot_path,
-                )
-                logger.debug(
-                    f"[URL] Playwright fetch success: {len(result.content)} chars"
-                )
-                return result, None, False
-        except Exception as e:
-            logger.debug(f"[URL] Playwright fetch failed: {e}, trying agent-browser")
+            if not is_playwright_available():
+                logger.debug("Playwright not available")
+                return None, "playwright not installed", True
 
-        # Fallback to agent-browser
-        try:
-            if not is_agent_browser_available(config.agent_browser.command):
-                logger.debug("agent-browser not available")
-                return None, None, True
-
-            result = await fetch_with_browser(
+            logger.debug("Using Playwright for browser fetch")
+            pw_result = await fetch_with_playwright(
                 url,
-                command=config.agent_browser.command,
-                timeout=config.agent_browser.timeout,
-                wait_for=config.agent_browser.wait_for,
-                extra_wait_ms=config.agent_browser.extra_wait_ms,
-                session=config.agent_browser.session,
-                screenshot=True,
-                screenshot_dir=screenshot_dir,
+                timeout=config.playwright.timeout,
+                wait_for=config.playwright.wait_for,
+                extra_wait_ms=config.playwright.extra_wait_ms,
+                proxy=_detect_proxy() if getattr(config, "auto_proxy", True) else None,
                 screenshot_config=screenshot_config,
+                output_dir=screenshot_dir,
+                renderer=renderer,
             )
-            logger.debug(f"[URL] Browser fetch success: {len(result.content)} chars")
+            result = FetchResult(
+                content=pw_result.content,
+                strategy_used="playwright",
+                title=pw_result.title,
+                url=url,
+                final_url=pw_result.final_url,
+                metadata=pw_result.metadata,
+                screenshot_path=pw_result.screenshot_path,
+            )
+            logger.debug(f"[URL] Playwright fetch success: {len(result.content)} chars")
             return result, None, False
         except Exception as e:
-            logger.debug(f"[URL] Browser fetch failed: {e}")
-            return None, str(e), False
+            error_msg = str(e)
+            # Detect browser not installed/available errors
+            not_installed = any(
+                msg in error_msg.lower()
+                for msg in [
+                    "executable doesn't exist",
+                    "browser is not installed",
+                    "failed to launch",
+                    "cannot open shared object",
+                ]
+            )
+            logger.debug(f"[URL] Playwright fetch failed: {e}")
+            return None, error_msg, not_installed
 
     # Execute both fetches in parallel
     static_content, browser_fetch_result = await asyncio.gather(
@@ -2878,17 +2104,12 @@ async def _fetch_multi_source(
         primary_content = static_content
         final_static_content = static_content
         strategy_used = "static"
-        logger.info(f"[URL] Using static content (valid, {len(static_content)} chars)")
     elif not browser_invalid:
         # Static invalid but browser is valid → use browser
         assert browser_content is not None
         primary_content = browser_content
         final_browser_content = browser_content
         strategy_used = "browser"
-        logger.info(
-            f"[URL] Using browser content (static invalid: {static_reason}, "
-            f"browser valid, {len(browser_content)} chars)"
-        )
     elif browser_content:
         # Both invalid, but browser has content → use browser with warning
         primary_content = browser_content
@@ -2906,7 +2127,26 @@ async def _fetch_multi_source(
         # Both invalid, no browser but has static
         # Check if this is a critical invalid reason (content is completely unusable)
         if static_reason in CRITICAL_INVALID_REASONS:
-            # Check browser status to generate accurate error message
+            # Try Jina as fallback before giving up
+            # (screenshot won't be available, but content will be)
+            if browser_error or browser_not_installed:
+                try:
+                    api_key = config.jina.get_resolved_api_key()
+                    jina_result = await fetch_with_jina(
+                        url, api_key, config.jina.timeout
+                    )
+                    # Return Jina result (no screenshot available)
+                    jina_result.metadata["fallback"] = "jina"
+                    jina_result.metadata["browser_error"] = browser_error
+                    if cache is not None:
+                        cache.set(url, jina_result)
+                    return jina_result
+                except JinaRateLimitError:
+                    logger.warning("[URL] Jina fallback failed: rate limit exceeded")
+                except Exception as e:
+                    logger.warning(f"[URL] Jina fallback failed: {e}")
+
+            # Jina also failed or wasn't tried, generate appropriate error
             browser_timed_out = (
                 browser_error is not None and "timed out" in browser_error.lower()
             )
@@ -2923,14 +2163,16 @@ async def _fetch_multi_source(
                 # Browser was attempted but failed with other error
                 raise FetchError(
                     f"URL requires browser rendering: {url}. "
-                    f"Browser fetch failed: {browser_error}"
+                    f"Browser fetch failed: {browser_error}. "
+                    f"Install browser deps: sudo apt install libnspr4 libnss3 libatk1.0-0"
                 )
             elif browser_not_installed:
                 # Browser not installed
                 raise FetchError(
                     f"URL requires browser rendering: {url}. "
                     f"Reason: {static_reason}. "
-                    f"Please install agent-browser: pnpm add -g agent-browser && agent-browser install"
+                    f"Please install Playwright: uv add playwright && uv run playwright install chromium "
+                    f"(Linux: also run 'uv run playwright install-deps chromium')"
                 )
             else:
                 # Browser available but returned no content
@@ -2988,6 +2230,7 @@ async def _fetch_with_fallback(
     url: str,
     config: FetchConfig,
     start_with_browser: bool = False,
+    renderer: Any | None = None,
     **screenshot_kwargs: Any,
 ) -> FetchResult:
     """Fetch URL with automatic fallback between strategies.
@@ -2996,6 +2239,7 @@ async def _fetch_with_fallback(
         url: URL to fetch
         config: Fetch configuration
         start_with_browser: If True, try browser first (for known JS domains)
+        renderer: Optional shared PlaywrightRenderer
         **screenshot_kwargs: Screenshot options (screenshot, screenshot_dir, screenshot_config)
 
     Returns:
@@ -3005,11 +2249,11 @@ async def _fetch_with_fallback(
 
     if start_with_browser:
         # Try browser first for known JS domains
-        # Priority: playwright (Python) > browser (agent-browser) > jina
-        strategies = ["playwright", "browser", "jina", "static"]
+        # Priority: playwright > jina
+        strategies = ["playwright", "jina", "static"]
     else:
-        # Normal order: static -> playwright -> browser -> jina
-        strategies = ["static", "playwright", "browser", "jina"]
+        # Normal order: static -> playwright -> jina
+        strategies = ["static", "playwright", "jina"]
 
     for strat in strategies:
         try:
@@ -3017,9 +2261,6 @@ async def _fetch_with_fallback(
                 result = await fetch_with_static(url)
                 # Check if JS is required
                 if detect_js_required(result.content):
-                    logger.info(
-                        "Static content suggests JS required, trying browser..."
-                    )
                     # Learn this domain for future requests
                     spa_cache = get_spa_domain_cache()
                     spa_cache.record_spa_domain(url)
@@ -3027,7 +2268,6 @@ async def _fetch_with_fallback(
                 return result
 
             elif strat == "playwright":
-                # Playwright Python (preferred over agent-browser)
                 from markitai.fetch_playwright import (
                     fetch_with_playwright,
                     is_playwright_available,
@@ -3039,14 +2279,15 @@ async def _fetch_with_fallback(
 
                 pw_result = await fetch_with_playwright(
                     url,
-                    timeout=config.agent_browser.timeout,
-                    wait_for=config.agent_browser.wait_for,
-                    extra_wait_ms=config.agent_browser.extra_wait_ms,
+                    timeout=config.playwright.timeout,
+                    wait_for=config.playwright.wait_for,
+                    extra_wait_ms=config.playwright.extra_wait_ms,
                     proxy=_detect_proxy()
                     if getattr(config, "auto_proxy", True)
                     else None,
                     screenshot_config=screenshot_kwargs.get("screenshot_config"),
                     output_dir=screenshot_kwargs.get("screenshot_dir"),
+                    renderer=renderer,
                 )
 
                 return FetchResult(
@@ -3059,28 +2300,10 @@ async def _fetch_with_fallback(
                     screenshot_path=pw_result.screenshot_path,
                 )
 
-            elif strat == "browser":
-                # agent-browser (legacy, fallback if playwright unavailable)
-                if not is_agent_browser_available(config.agent_browser.command):
-                    logger.debug("agent-browser not available, skipping")
-                    continue
-                return await fetch_with_browser(
-                    url,
-                    command=config.agent_browser.command,
-                    timeout=config.agent_browser.timeout,
-                    wait_for=config.agent_browser.wait_for,
-                    extra_wait_ms=config.agent_browser.extra_wait_ms,
-                    session=config.agent_browser.session,
-                    **screenshot_kwargs,
-                )
-
             elif strat == "jina":
                 api_key = config.jina.get_resolved_api_key()
                 return await fetch_with_jina(url, api_key, config.jina.timeout)
 
-        except AgentBrowserNotFoundError:
-            logger.debug("agent-browser not installed, trying next strategy")
-            continue
         except JinaRateLimitError as e:
             errors.append(str(e))
             logger.warning(str(e))

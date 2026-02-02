@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import io
+import multiprocessing
 import os
 import re
 from concurrent.futures import ProcessPoolExecutor
@@ -1133,8 +1134,14 @@ class ImageProcessor:
         processed_results: list[tuple[int, bytes, int, int]] = []
         filtered_count = 0
 
-        # Use ProcessPoolExecutor for CPU-bound compression
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # Use ProcessPoolExecutor with 'spawn' context for CPU-bound compression
+        # The 'spawn' context is required because OpenCV (cv2) crashes when imported
+        # in forked processes due to threading issues in its C++ layer.
+        # See: https://github.com/opencv/opencv/issues/5150
+        mp_context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=max_workers, mp_context=mp_context
+        ) as executor:
             futures = []
             for idx, image_data in work_items:
                 if compress_enabled:
@@ -1306,6 +1313,31 @@ def _sanitize_image_filename(name: str, max_length: int = 100) -> str:
     return name.strip() or "image"
 
 
+def _detect_proxy_for_images() -> str | None:
+    """Detect proxy from environment variables for image downloads.
+
+    Checks common environment variables in order of preference:
+    HTTPS_PROXY, HTTP_PROXY, ALL_PROXY (and lowercase variants).
+
+    Returns:
+        Proxy URL string if found, None otherwise
+    """
+    for var in [
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "ALL_PROXY",
+        "https_proxy",
+        "http_proxy",
+        "all_proxy",
+    ]:
+        proxy = os.environ.get(var, "").strip()
+        if proxy:
+            # Silent detection - only log at trace level (below debug)
+            # Proxy usage is routine, no need to clutter logs
+            return proxy
+    return None
+
+
 async def download_url_images(
     markdown: str,
     output_dir: Path,
@@ -1449,15 +1481,23 @@ async def download_url_images(
                 )
                 failed_urls.append(image_url)
             except Exception as e:
-                logger.warning(f"Failed to download image: {image_url[:80]}... - {e}")
+                # Ensure error message is not empty
+                error_msg = str(e) if str(e) else type(e).__name__
+                logger.warning(
+                    f"Failed to download image: {image_url[:80]}... - {error_msg}"
+                )
                 failed_urls.append(image_url)
+
+    # Detect proxy from environment (same as fetch.py)
+    proxy = _detect_proxy_for_images()
 
     # Download all images concurrently
     async with httpx.AsyncClient(
         headers={
-            "User-Agent": "Mozilla/5.0 (compatible; markitai/0.4.0; +https://github.com/Ynewtime/markitai)"
+            "User-Agent": "Mozilla/5.0 (compatible; markitai/0.4.1; +https://github.com/Ynewtime/markitai)"
         },
         follow_redirects=True,
+        proxy=proxy,
     ) as client:
         tasks = [
             download_single(client, match, idx) for idx, match in enumerate(matches)
