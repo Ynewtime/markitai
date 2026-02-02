@@ -683,7 +683,8 @@ function Install-PlaywrightBrowserDevZh {
         # 优先使用 uv run（开发环境使用 .venv）
         $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
         if ($uvCmd) {
-            & uv run playwright install chromium 2>&1 | Out-Null
+            # 显示下载进度（Chromium 约 200MB）
+            & uv run playwright install chromium
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Write-SuccessZh "Chromium 浏览器安装成功"
@@ -699,7 +700,8 @@ function Install-PlaywrightBrowserDevZh {
             $baseArgs = if ($cmdParts.Length -gt 1) { $cmdParts[1..($cmdParts.Length-1)] } else { @() }
             $pwArgs = $baseArgs + @("-m", "playwright", "install", "chromium")
 
-            & $exe @pwArgs 2>&1 | Out-Null
+            # 显示下载进度
+            & $exe @pwArgs
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Write-SuccessZh "Chromium 浏览器安装成功"

@@ -537,7 +537,8 @@ function Install-PlaywrightBrowserZh {
 
     if (Test-Path $markitaiPlaywright) {
         try {
-            & $markitaiPlaywright install chromium 2>&1 | Out-Null
+            # 显示下载进度（Chromium 约 200MB）
+            & $markitaiPlaywright install chromium
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Write-SuccessZh "Chromium 浏览器安装成功"
@@ -555,7 +556,8 @@ function Install-PlaywrightBrowserZh {
         $pwArgs = $baseArgs + @("-m", "playwright", "install", "chromium")
 
         try {
-            & $exe @pwArgs 2>&1 | Out-Null
+            # 显示下载进度
+            & $exe @pwArgs
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Write-SuccessZh "Chromium 浏览器安装成功"

@@ -122,6 +122,7 @@ print_warning() {
 
 # Ask yes/no question with default
 # Usage: ask_yes_no "Question?" "y|n"
+# Note: Uses /dev/tty for input to support 'curl | sh' execution
 ask_yes_no() {
     prompt="$1"
     default="$2"
@@ -133,7 +134,18 @@ ask_yes_no() {
     fi
 
     printf "  ${YELLOW}?${NC} %s %s " "$prompt" "$hint"
-    read -r answer
+
+    # Read from /dev/tty to support piped execution (curl | sh)
+    # When script is piped, stdin is occupied by the pipe, so we read from tty directly
+    if [ -t 0 ]; then
+        # stdin is a terminal, read normally
+        read -r answer
+    else
+        # stdin is not a terminal (piped), read from /dev/tty
+        # Need explicit newline since tty input won't echo to stdout
+        read -r answer < /dev/tty
+        printf "\n"
+    fi
 
     if [ -z "$answer" ]; then
         answer="$default"
