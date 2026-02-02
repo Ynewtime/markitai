@@ -672,7 +672,7 @@ function Install-Markitai {
 }
 
 # Install Playwright browser (Chromium)
-# Security: Use uv run or python module to ensure correct playwright
+# Security: Use markitai's uv tool environment's playwright to ensure correct version
 # Returns: $true on success, $false on failure/skip
 function Install-PlaywrightBrowser {
     Write-Info "Playwright browser (Chromium):"
@@ -690,11 +690,28 @@ function Install-PlaywrightBrowser {
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
 
-    # Prefer uv run (for uv tool installed packages)
+    # Method 1: Use playwright from markitai's uv tool environment (preferred)
+    # This ensures we use the same playwright version that markitai depends on
+    # Check UV_TOOL_DIR first (user override), then use default path
+    $markitaiPlaywright = $null
     $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
     if ($uvCmd) {
         try {
-            & uv run playwright install chromium 2>&1 | Out-Null
+            $uvToolDir = & uv tool dir 2>$null
+            if ($uvToolDir) {
+                $markitaiPlaywright = Join-Path $uvToolDir "markitai\Scripts\playwright.exe"
+            }
+        } catch {}
+    }
+    # Fallback to default path if uv tool dir detection failed
+    # Note: uv uses APPDATA (Roaming) on Windows, not LOCALAPPDATA (Local)
+    if (-not $markitaiPlaywright -or -not (Test-Path $markitaiPlaywright)) {
+        $markitaiPlaywright = Join-Path $env:APPDATA "uv\tools\markitai\Scripts\playwright.exe"
+    }
+
+    if (Test-Path $markitaiPlaywright) {
+        try {
+            & $markitaiPlaywright install chromium 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Write-Success "Chromium browser installed successfully"
@@ -704,7 +721,7 @@ function Install-PlaywrightBrowser {
         } catch {}
     }
 
-    # Fallback to Python module
+    # Method 2: Fallback to Python module (for pip installs)
     if ($script:PYTHON_CMD) {
         $cmdParts = $script:PYTHON_CMD -split " "
         $exe = $cmdParts[0]
@@ -724,7 +741,7 @@ function Install-PlaywrightBrowser {
 
     $ErrorActionPreference = $oldErrorAction
     Write-Warning2 "Playwright browser installation failed"
-    Write-Info "You can install later with: uv run playwright install chromium"
+    Write-Info "You can install later with: playwright install chromium"
     Track-Install -Component "Playwright Browser" -Status "failed"
     return $false
 }

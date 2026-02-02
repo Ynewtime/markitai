@@ -498,7 +498,7 @@ function Install-MarkitaiZh {
 }
 
 # 安装 Playwright 浏览器 (Chromium)
-# 安全性: 使用 uv run 或 python 模块确保使用正确的 playwright
+# 安全性: 使用 markitai 虚拟环境中的 playwright 确保使用正确版本
 # 返回: $true 成功, $false 失败/跳过
 function Install-PlaywrightBrowserZh {
     Write-InfoZh "Playwright 浏览器 (Chromium):"
@@ -516,11 +516,28 @@ function Install-PlaywrightBrowserZh {
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
 
-    # 优先使用 uv run（用于 uv tool 安装的包）
+    # 方法 1: 使用 markitai 的 uv tool 环境中的 playwright（首选）
+    # 确保使用与 markitai 依赖相同的 playwright 版本
+    # 先检查 UV_TOOL_DIR（用户覆盖），然后使用默认路径
+    $markitaiPlaywright = $null
     $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
     if ($uvCmd) {
         try {
-            & uv run playwright install chromium 2>&1 | Out-Null
+            $uvToolDir = & uv tool dir 2>$null
+            if ($uvToolDir) {
+                $markitaiPlaywright = Join-Path $uvToolDir "markitai\Scripts\playwright.exe"
+            }
+        } catch {}
+    }
+    # 如果 uv tool dir 检测失败，回退到默认路径
+    # 注意: uv 在 Windows 上使用 APPDATA (Roaming)，而不是 LOCALAPPDATA (Local)
+    if (-not $markitaiPlaywright -or -not (Test-Path $markitaiPlaywright)) {
+        $markitaiPlaywright = Join-Path $env:APPDATA "uv\tools\markitai\Scripts\playwright.exe"
+    }
+
+    if (Test-Path $markitaiPlaywright) {
+        try {
+            & $markitaiPlaywright install chromium 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Write-SuccessZh "Chromium 浏览器安装成功"
@@ -530,7 +547,7 @@ function Install-PlaywrightBrowserZh {
         } catch {}
     }
 
-    # 回退到 Python 模块
+    # 方法 2: 回退到 Python 模块（用于 pip 安装）
     if ($script:PYTHON_CMD) {
         $cmdParts = $script:PYTHON_CMD -split " "
         $exe = $cmdParts[0]
@@ -550,7 +567,7 @@ function Install-PlaywrightBrowserZh {
 
     $ErrorActionPreference = $oldErrorAction
     Write-WarningZh "Playwright 浏览器安装失败"
-    Write-InfoZh "稍后可手动安装: uv run playwright install chromium"
+    Write-InfoZh "稍后可手动安装: playwright install chromium"
     Track-Install -Component "Playwright Browser" -Status "failed"
     return $false
 }

@@ -480,7 +480,7 @@ lib_install_markitai() {
 
 # Install Playwright browser (Chromium) and system dependencies
 # Requires: markitai/playwright to be installed
-# Security: Use uv run or python module to ensure correct playwright
+# Security: Use uv tool environment's playwright to ensure correct version
 # Returns: 0 on success, 1 on failure, 2 if skipped
 lib_install_playwright_browser() {
     print_info "Playwright browser (Chromium):"
@@ -496,15 +496,29 @@ lib_install_playwright_browser() {
     print_info "Downloading Chromium browser..."
     browser_installed=false
 
-    # Prefer uv run (for uv tool installed packages)
+    # Method 1: Use playwright from markitai's uv tool environment (preferred)
+    # This ensures we use the same playwright version that markitai depends on
+    # Use 'uv tool dir' to get the correct path (respects UV_TOOL_DIR, XDG_DATA_HOME)
+    markitai_playwright=""
     if command -v uv >/dev/null 2>&1; then
-        if uv run playwright install chromium 2>/dev/null; then
+        uv_tool_dir=$(uv tool dir 2>/dev/null)
+        if [ -n "$uv_tool_dir" ]; then
+            markitai_playwright="$uv_tool_dir/markitai/bin/playwright"
+        fi
+    fi
+    # Fallback to default path if uv tool dir detection failed
+    if [ -z "$markitai_playwright" ] || [ ! -x "$markitai_playwright" ]; then
+        markitai_playwright="$HOME/.local/share/uv/tools/markitai/bin/playwright"
+    fi
+
+    if [ -x "$markitai_playwright" ]; then
+        if "$markitai_playwright" install chromium 2>/dev/null; then
             print_success "Chromium browser downloaded successfully"
             browser_installed=true
         fi
     fi
 
-    # Fallback to Python module
+    # Method 2: Fallback to Python module (for pip/pipx installs)
     if [ "$browser_installed" = false ] && [ -n "$PYTHON_CMD" ]; then
         if "$PYTHON_CMD" -m playwright install chromium 2>/dev/null; then
             print_success "Chromium browser downloaded successfully"
@@ -514,7 +528,7 @@ lib_install_playwright_browser() {
 
     if [ "$browser_installed" = false ]; then
         print_warning "Playwright browser installation failed"
-        print_info "You can install later with: uv run playwright install chromium"
+        print_info "You can install later with: playwright install chromium"
         track_install "Playwright Browser" "failed"
         return 1
     fi
@@ -524,14 +538,15 @@ lib_install_playwright_browser() {
         print_info "Chromium requires system dependencies on Linux"
         if ask_yes_no "Install system dependencies (requires sudo)?" "y"; then
             print_info "Installing system dependencies..."
-            if command -v uv >/dev/null 2>&1; then
-                if uv run playwright install-deps chromium 2>/dev/null; then
+            # Method 1: Use playwright from markitai's uv tool environment
+            if [ -x "$markitai_playwright" ]; then
+                if "$markitai_playwright" install-deps chromium 2>/dev/null; then
                     print_success "System dependencies installed successfully"
                     track_install "Playwright Browser" "installed"
                     return 0
                 fi
             fi
-            # Fallback to Python module
+            # Method 2: Fallback to Python module
             if [ -n "$PYTHON_CMD" ]; then
                 if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
                     print_success "System dependencies installed successfully"

@@ -311,7 +311,7 @@ zh_install_markitai() {
 }
 
 # 安装 Playwright 浏览器 (Chromium) 及系统依赖
-# 安全性: 使用 uv run 或 python 模块确保使用正确的 playwright
+# 安全性: 使用 markitai 虚拟环境中的 playwright 确保使用正确版本
 # 返回: 0 成功, 1 失败, 2 跳过
 zh_install_playwright_browser() {
     print_info "Playwright 浏览器 (Chromium):"
@@ -327,15 +327,29 @@ zh_install_playwright_browser() {
     print_info "正在下载 Chromium 浏览器..."
     browser_installed=false
 
-    # 优先使用 uv run（用于 uv tool 安装的包）
+    # 方法 1: 使用 markitai 的 uv tool 环境中的 playwright（首选）
+    # 确保使用与 markitai 依赖相同的 playwright 版本
+    # 使用 'uv tool dir' 获取正确路径（兼容 UV_TOOL_DIR, XDG_DATA_HOME）
+    markitai_playwright=""
     if command -v uv >/dev/null 2>&1; then
-        if uv run playwright install chromium 2>/dev/null; then
+        uv_tool_dir=$(uv tool dir 2>/dev/null)
+        if [ -n "$uv_tool_dir" ]; then
+            markitai_playwright="$uv_tool_dir/markitai/bin/playwright"
+        fi
+    fi
+    # 如果 uv tool dir 检测失败，回退到默认路径
+    if [ -z "$markitai_playwright" ] || [ ! -x "$markitai_playwright" ]; then
+        markitai_playwright="$HOME/.local/share/uv/tools/markitai/bin/playwright"
+    fi
+
+    if [ -x "$markitai_playwright" ]; then
+        if "$markitai_playwright" install chromium 2>/dev/null; then
             print_success "Chromium 浏览器下载成功"
             browser_installed=true
         fi
     fi
 
-    # 回退到 Python 模块
+    # 方法 2: 回退到 Python 模块（用于 pip/pipx 安装）
     if [ "$browser_installed" = false ] && [ -n "$PYTHON_CMD" ]; then
         if "$PYTHON_CMD" -m playwright install chromium 2>/dev/null; then
             print_success "Chromium 浏览器下载成功"
@@ -345,7 +359,7 @@ zh_install_playwright_browser() {
 
     if [ "$browser_installed" = false ]; then
         print_warning "Playwright 浏览器安装失败"
-        print_info "稍后可手动安装: uv run playwright install chromium"
+        print_info "稍后可手动安装: playwright install chromium"
         track_install "Playwright Browser" "failed"
         return 1
     fi
@@ -355,14 +369,15 @@ zh_install_playwright_browser() {
         print_info "Chromium 在 Linux 上需要系统依赖"
         if ask_yes_no "是否安装系统依赖（需要 sudo）？" "y"; then
             print_info "正在安装系统依赖..."
-            if command -v uv >/dev/null 2>&1; then
-                if uv run playwright install-deps chromium 2>/dev/null; then
+            # 方法 1: 使用 markitai 环境中的 playwright
+            if [ -x "$markitai_playwright" ]; then
+                if "$markitai_playwright" install-deps chromium 2>/dev/null; then
                     print_success "系统依赖安装成功"
                     track_install "Playwright Browser" "installed"
                     return 0
                 fi
             fi
-            # 回退到 Python 模块
+            # 方法 2: 回退到 Python 模块
             if [ -n "$PYTHON_CMD" ]; then
                 if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
                     print_success "系统依赖安装成功"
