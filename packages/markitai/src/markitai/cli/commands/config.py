@@ -114,7 +114,14 @@ def config_path_cmd() -> None:
     default=None,
     help="Output path for configuration file.",
 )
-def config_init(output_path: Path | None) -> None:
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    default=False,
+    help="Overwrite existing config without confirmation.",
+)
+def config_init(output_path: Path | None, yes: bool) -> None:
     """Initialize a configuration file with defaults."""
     manager = ConfigManager()
 
@@ -126,7 +133,7 @@ def config_init(output_path: Path | None) -> None:
 
     # Check if file exists (not directory)
     if output_path.exists() and output_path.is_file():
-        if not click.confirm(f"{output_path} already exists. Overwrite?"):
+        if not yes and not click.confirm(f"{output_path} already exists. Overwrite?"):
             raise click.Abort()
 
     # Save minimal template config (essential fields only)

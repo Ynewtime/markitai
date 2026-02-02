@@ -766,10 +766,25 @@ zh_install_copilot_cli() {
 zh_init_config() {
     print_info "初始化配置..."
 
-    if command -v markitai >/dev/null 2>&1; then
-        if markitai config init 2>/dev/null; then
-            print_success "配置初始化完成"
+    if ! command -v markitai >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local config_path="$HOME/.markitai/config.json"
+    local yes_flag=""
+
+    # Check if config exists and ask user (using ask_yes_no for piped execution)
+    if [ -f "$config_path" ]; then
+        if ask_yes_no "$config_path 已存在，是否覆盖？" "n"; then
+            yes_flag="--yes"
+        else
+            print_info "保留现有配置"
+            return 0
         fi
+    fi
+
+    if markitai config init $yes_flag 2>/dev/null; then
+        print_success "配置初始化完成"
     fi
     return 0
 }

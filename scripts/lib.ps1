@@ -1110,12 +1110,31 @@ function Install-CopilotCLI {
 function Initialize-Config {
     Write-Info "Initializing configuration..."
 
-    try {
-        $markitaiExists = Get-Command markitai -ErrorAction SilentlyContinue
-        if ($markitaiExists) {
-            & markitai config init 2>$null
-            Write-Success "Configuration initialized"
+    $markitaiExists = Get-Command markitai -ErrorAction SilentlyContinue
+    if (-not $markitaiExists) {
+        return
+    }
+
+    $configPath = Join-Path $env:USERPROFILE ".markitai\config.json"
+    $yesFlag = ""
+
+    # Check if config exists and ask user
+    if (Test-Path $configPath) {
+        if (Ask-YesNo "$configPath already exists. Overwrite?" $false) {
+            $yesFlag = "--yes"
+        } else {
+            Write-Info "Keeping existing configuration"
+            return
         }
+    }
+
+    try {
+        if ($yesFlag) {
+            & markitai config init $yesFlag 2>$null
+        } else {
+            & markitai config init 2>$null
+        }
+        Write-Success "Configuration initialized"
     } catch {
         # Config initialization is optional, ignore errors
     }
