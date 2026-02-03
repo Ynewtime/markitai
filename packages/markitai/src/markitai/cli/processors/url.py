@@ -159,7 +159,7 @@ async def process_url(
     if cfg.cache.enabled:
         from markitai.fetch import get_fetch_cache
 
-        cache_dir = output_dir.parent / ".markitai"
+        cache_dir = Path(cfg.cache.global_dir).expanduser()
         fetch_cache = get_fetch_cache(cache_dir, cfg.cache.max_size_bytes)
 
     try:
@@ -641,7 +641,7 @@ async def process_url_batch(
     # Initialize fetch cache if caching is enabled
     fetch_cache = None
     if cfg.cache.enabled:
-        cache_dir = output_dir.parent / ".markitai"
+        cache_dir = Path(cfg.cache.global_dir).expanduser()
         fetch_cache = get_fetch_cache(cache_dir, cfg.cache.max_size_bytes)
 
     started_at = datetime.now()

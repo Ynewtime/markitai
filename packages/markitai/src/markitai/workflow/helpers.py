@@ -536,4 +536,5 @@ def create_llm_processor(
         runtime=runtime,
         no_cache=config.cache.no_cache,
         no_cache_patterns=config.cache.no_cache_patterns,
+        cache_global_dir=config.cache.global_dir,
     )
