@@ -232,109 +232,39 @@ function Write-WarningZh {
     Write-Host $Text
 }
 
+# 检测/安装 Python（通过 uv 管理）
 function Test-PythonZh {
-    $pyLauncher = Test-RealCommand "py"
-    $availablePyVersions = @()
+    # 优先使用 uv 管理的 Python 3.13
+    if (Test-CommandExists "uv") {
+        $uvPython = & uv python find 3.13 2>$null
+        if ($uvPython -and (Test-Path $uvPython)) {
+            $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
+            if ($version) {
+                $script:PYTHON_CMD = $uvPython
+                Write-SuccessZh "Python $version (uv 管理)"
+                return $true
+            }
+        }
 
-    if ($pyLauncher) {
-        $listOutput = Invoke-PythonWithTimeout -Exe "py" -Arguments @("--list") -TimeoutSeconds 3
-        if ($listOutput) {
-            # 解析 py --list 输出，支持传统格式和新版 pymanager 格式
-            $lines = $listOutput -split "`n"
-            foreach ($line in $lines) {
-                # 传统 py launcher 格式: -V:3.13
-                if ($line -match "-V:3\.(1[1-3])") {
-                    $minor = $Matches[1]
-                    $availablePyVersions += "py -3.$minor"
+        # 未找到，自动安装
+        Write-InfoZh "正在安装 Python 3.13..."
+        $installResult = & uv python install 3.13 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $uvPython = & uv python find 3.13 2>$null
+            if ($uvPython -and (Test-Path $uvPython)) {
+                $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
+                if ($version) {
+                    $script:PYTHON_CMD = $uvPython
+                    Write-SuccessZh "Python $version 安装成功 (uv 管理)"
+                    return $true
                 }
-                # 新版 pymanager 格式: 3.13[-64] 或 3.13-64
-                elseif ($line -match "^\s*3\.(1[1-3])[\[-]") {
-                    $minor = $Matches[1]
-                    $availablePyVersions += "py -3.$minor"
-                }
             }
         }
+        Write-ErrorZh "Python 3.13 安装失败"
+    } else {
+        Write-ErrorZh "uv 未安装，无法管理 Python"
     }
 
-    $pythonCommands = @()
-    $pythonCommands += $availablePyVersions | Sort-Object -Descending | Select-Object -Unique
-
-    # 尝试版本特定命令 (python3.13, python3.12, python3.11)
-    foreach ($minor in @("13", "12", "11")) {
-        foreach ($cmd in @("python3.$minor", "python3$minor")) {
-            if (Test-RealCommand $cmd) {
-                $pythonCommands += $cmd
-            }
-        }
-    }
-
-    foreach ($cmd in @("python", "python3")) {
-        if (Test-RealCommand $cmd) {
-            $pythonCommands += $cmd
-        }
-    }
-
-    # 如果 py launcher 存在但没找到特定版本，添加通用 py 命令
-    if ($pyLauncher -and $pythonCommands.Count -eq 0) {
-        $pythonCommands += "py"
-    }
-
-    # 最后尝试：即使在 WindowsApps 中，pymanager 配置的 python 也可用
-    if ($pythonCommands.Count -eq 0) {
-        foreach ($cmd in @("python", "python3")) {
-            if (Test-CommandExists $cmd) {
-                $pythonCommands += $cmd
-            }
-        }
-    }
-
-    if ($pythonCommands.Count -eq 0) {
-        Write-ErrorZh "未找到 Python 安装"
-        Write-Host ""
-        Write-WarningZh "请安装 Python 3.13 (推荐) 或 3.11/3.12:"
-        Write-InfoZh "官网下载: https://www.python.org/downloads/"
-        Write-InfoZh "winget: winget install Python.Python.3.13"
-        Write-InfoZh "scoop: scoop install python@3.13"
-        Write-InfoZh "提示: onnxruntime 暂不支持 Python 3.14"
-        return $false
-    }
-
-    foreach ($cmd in $pythonCommands) {
-        $cmdParts = $cmd -split " "
-        $exe = $cmdParts[0]
-        # Force array to prevent string concatenation issues when only one element
-        $baseArgs = @(if ($cmdParts.Length -gt 1) { $cmdParts[1..($cmdParts.Length-1)] } else { @() })
-
-        $versionArgs = $baseArgs + @("-c", "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))")
-        $version = Invoke-PythonWithTimeout -Exe $exe -Arguments $versionArgs -TimeoutSeconds 5
-
-        if (-not $version) { continue }
-
-        $majorArgs = $baseArgs + @("-c", "import sys; print(sys.version_info[0])")
-        $major = Invoke-PythonWithTimeout -Exe $exe -Arguments $majorArgs -TimeoutSeconds 5
-
-        $minorArgs = $baseArgs + @("-c", "import sys; print(sys.version_info[1])")
-        $minor = Invoke-PythonWithTimeout -Exe $exe -Arguments $minorArgs -TimeoutSeconds 5
-
-        if (-not $major -or -not $minor) { continue }
-        if ($major -notmatch '^\d+$' -or $minor -notmatch '^\d+$') { continue }
-
-        if ($major -eq 3 -and $minor -ge 11 -and $minor -le 13) {
-            $script:PYTHON_CMD = $cmd
-            Write-SuccessZh "Python $version 已安装 ($cmd)"
-            return $true
-        } elseif ($major -eq 3 -and $minor -ge 14) {
-            Write-WarningZh "Python $version 检测到，但 onnxruntime 不支持 Python 3.14+"
-        }
-    }
-
-    Write-ErrorZh "未找到 Python 3.11-3.13"
-    Write-Host ""
-    Write-WarningZh "请安装 Python 3.13 (推荐) 或 3.11/3.12:"
-    Write-InfoZh "官网下载: https://www.python.org/downloads/"
-    Write-InfoZh "scoop: scoop install python@3.13"
-    Write-InfoZh "winget: winget install Python.Python.3.13"
-    Write-InfoZh "提示: onnxruntime 暂不支持 Python 3.14"
     return $false
 }
 
@@ -917,16 +847,16 @@ function Main {
 
     Write-Header "Markitai 开发环境配置向导"
 
-    # 步骤 1: 检测 Python
-    Write-Step 1 5 "检测 Python..."
-    if (-not (Test-PythonZh)) {
+    # 步骤 1: 检测/安装 UV（用于管理 Python 和依赖）
+    Write-Step 1 5 "检测 UV 包管理器..."
+    if (-not (Install-UVZh)) {
+        Write-SummaryDevZh
         exit 1
     }
 
-    # 步骤 2: 检测/安装 UV（开发者版必需）
-    Write-Step 2 5 "检测 UV 包管理器..."
-    if (-not (Install-UVZh)) {
-        Write-SummaryDevZh
+    # 步骤 2: 检测/安装 Python（通过 uv 自动安装）
+    Write-Step 2 5 "检测 Python..."
+    if (-not (Test-PythonZh)) {
         exit 1
     }
 

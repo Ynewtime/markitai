@@ -1172,10 +1172,11 @@ class DocumentMixin:
         cache_key = f"document_process:{source}"
 
         # Helper to reconstruct DocumentProcessResult from cached dict
+        # Use model_construct() to bypass validation for cached data
         def _from_cache(cached: dict) -> DocumentProcessResult:
-            return DocumentProcessResult(
+            return DocumentProcessResult.model_construct(
                 cleaned_markdown=cached.get("cleaned_markdown", ""),
-                frontmatter=Frontmatter(
+                frontmatter=Frontmatter.model_construct(
                     description=cached.get("description", ""),
                     tags=cached.get("tags", []),
                 ),

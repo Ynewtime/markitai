@@ -56,16 +56,18 @@ function Main {
 
     Write-Header "Markitai Setup Wizard"
 
-    # Step 1: Detect Python
-    Write-Step 1 5 "Detecting Python..."
-    if (-not (Test-Python)) {
+    # Step 1: Detect/install UV (required, manages Python)
+    Write-Step 1 5 "Detecting UV package manager..."
+    if (-not (Install-UV)) {
+        Write-Summary
         exit 1
     }
 
-    # Step 2: Detect/install UV (optional for user edition)
-    Write-Step 2 5 "Detecting UV package manager..."
-    $uvResult = Install-UV
-    # User edition: UV is optional, continue even if skipped/failed
+    # Step 2: Detect/install Python (auto-installed via uv)
+    Write-Step 2 5 "Detecting Python..."
+    if (-not (Test-Python)) {
+        exit 1
+    }
 
     # Step 3: Install markitai
     Write-Step 3 5 "Installing markitai..."

@@ -105,8 +105,8 @@ markitai config set llm.enabled true
     "strategy": "auto",
     "playwright": {
       "timeout": 30000,
-      "wait_for": "domcontentloaded",
-      "extra_wait_ms": 1000
+      "wait_for": "networkidle",
+      "extra_wait_ms": 5000
     },
     "jina": {
       "api_key": null,
@@ -455,8 +455,8 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
     "strategy": "auto",
     "playwright": {
       "timeout": 30000,
-      "wait_for": "domcontentloaded",
-      "extra_wait_ms": 1000
+      "wait_for": "networkidle",
+      "extra_wait_ms": 5000
     },
     "jina": {
       "api_key": "env:JINA_API_KEY",
@@ -481,8 +481,8 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `timeout` | `30000` | 页面加载超时（毫秒） |
-| `wait_for` | `domcontentloaded` | 等待条件：`load`, `domcontentloaded`, `networkidle` |
-| `extra_wait_ms` | `1000` | JS 渲染额外等待时间 |
+| `wait_for` | `networkidle` | 等待条件：`load`, `domcontentloaded`, `networkidle` |
+| `extra_wait_ms` | `5000` | JS 渲染额外等待时间 |
 
 ### 回退模式
 

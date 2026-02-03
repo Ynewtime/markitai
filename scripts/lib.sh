@@ -230,54 +230,36 @@ detect_platform() {
 # Initialize platform detection
 detect_platform
 
-# Detect Python (requires 3.11-3.13, 3.14+ not supported)
+# Detect/install Python via uv
 # Sets: PYTHON_CMD
 # Returns: 0 if found, 1 if not
 lib_detect_python() {
-    # Try different Python commands (prefer 3.11-3.13)
-    for cmd in python3.13 python3.12 python3.11 python3 python; do
-        if command -v "$cmd" >/dev/null 2>&1; then
-            # Use Python2-compatible syntax (no f-string)
-            ver=$("$cmd" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
-            major=$("$cmd" -c "import sys; print(sys.version_info[0])" 2>/dev/null)
-            minor=$("$cmd" -c "import sys; print(sys.version_info[1])" 2>/dev/null)
+    # Use uv-managed Python 3.13
+    if command -v uv >/dev/null 2>&1; then
+        uv_python=$(uv python find 3.13 2>/dev/null)
+        if [ -n "$uv_python" ] && [ -x "$uv_python" ]; then
+            PYTHON_CMD="$uv_python"
+            ver=$("$uv_python" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
+            print_success "Python $ver (uv managed)"
+            return 0
+        fi
 
-            # Validate: must be numeric
-            case "$major" in
-                ''|*[!0-9]*) continue ;;
-            esac
-            case "$minor" in
-                ''|*[!0-9]*) continue ;;
-            esac
-
-            # Check version range: 3.11 <= version < 3.14
-            if [ "$major" -eq 3 ] && [ "$minor" -ge 11 ] && [ "$minor" -le 13 ]; then
-                PYTHON_CMD="$cmd"
-                print_success "Python $ver installed ($cmd)"
+        # Not found, auto-install
+        print_info "Installing Python 3.13..."
+        if uv python install 3.13; then
+            uv_python=$(uv python find 3.13 2>/dev/null)
+            if [ -n "$uv_python" ] && [ -x "$uv_python" ]; then
+                PYTHON_CMD="$uv_python"
+                ver=$("$uv_python" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
+                print_success "Python $ver installed (uv managed)"
                 return 0
-            elif [ "$major" -eq 3 ] && [ "$minor" -ge 14 ]; then
-                print_warning "Python $ver detected, but onnxruntime doesn't support Python 3.14+"
             fi
         fi
-    done
-
-    print_error "Python 3.11-3.13 not found"
-    printf "\n"
-    print_warning "Please install Python 3.13 (recommended) or 3.11/3.12:"
-    print_info "Download: https://www.python.org/downloads/"
-    if [ "$OS_TYPE" = "Darwin" ]; then
-        if [ "$IS_MACOS_ARM" = true ]; then
-            print_info "macOS (Apple Silicon): brew install python@3.13"
-            print_info "  Homebrew installs native ARM64 binaries"
-        else
-            print_info "macOS (Intel): brew install python@3.13"
-        fi
-    elif [ "$OS_TYPE" = "Linux" ]; then
-        print_info "Ubuntu/Debian: sudo apt install python3.13"
-        print_info "Fedora: sudo dnf install python3.13"
+        print_error "Python 3.13 installation failed"
+    else
+        print_error "uv not installed, cannot manage Python"
     fi
-    print_info "pyenv: pyenv install 3.13"
-    print_info "Note: onnxruntime doesn't support Python 3.14 yet"
+
     return 1
 }
 
@@ -362,13 +344,12 @@ lib_install_uv() {
         return 0
     fi
 
-    print_error "UV not installed"
+    print_info "UV not installed (required for Python and dependency management)"
 
-    if ! ask_yes_no "Install UV automatically?" "n"; then
-        print_info "Skipping UV installation"
-        print_warning "markitai recommends using UV for installation"
-        track_install "uv" "skipped"
-        return 2  # Skipped
+    if ! ask_yes_no "Install UV automatically?" "y"; then
+        print_error "UV is required, cannot continue"
+        track_install "uv" "failed"
+        return 1
     fi
 
     # Check curl availability
@@ -550,30 +531,58 @@ lib_install_playwright_browser() {
         print_info "Chromium requires system dependencies on Linux"
         if ask_yes_no "Install system dependencies (requires sudo)?" "y"; then
             print_info "Installing system dependencies..."
-            # Method 1: Use playwright from markitai's uv tool environment
-            if [ -x "$markitai_playwright" ]; then
-                if "$markitai_playwright" install-deps chromium 2>/dev/null; then
+
+            # Arch Linux: use pacman (playwright install-deps doesn't support Arch)
+            if [ -f /etc/arch-release ]; then
+                print_info "Detected Arch Linux, using pacman..."
+                # Playwright Chromium core dependencies
+                local arch_deps="nss nspr at-spi2-core cups libdrm mesa alsa-lib libxcomposite libxdamage libxrandr libxkbcommon pango cairo"
+                # Optional fonts (better CJK support)
+                local arch_fonts="noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-liberation"
+                if sudo pacman -S --noconfirm --needed $arch_deps $arch_fonts 2>/dev/null; then
                     print_success "System dependencies installed successfully"
                     track_install "Playwright Browser" "installed"
                     return 0
+                else
+                    print_warning "Some dependencies failed to install"
+                    print_info "Manual install: sudo pacman -S $arch_deps"
                 fi
-            fi
-            # Method 2: Fallback to Python module
-            if [ -n "$PYTHON_CMD" ]; then
-                if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
-                    print_success "System dependencies installed successfully"
-                    track_install "Playwright Browser" "installed"
-                    return 0
+            # Debian/Ubuntu: use playwright install-deps
+            elif command -v apt-get >/dev/null 2>&1; then
+                # Method 1: Use playwright from markitai's uv tool environment
+                if [ -x "$markitai_playwright" ]; then
+                    if "$markitai_playwright" install-deps chromium 2>/dev/null; then
+                        print_success "System dependencies installed successfully"
+                        track_install "Playwright Browser" "installed"
+                        return 0
+                    fi
                 fi
+                # Method 2: Fallback to Python module
+                if [ -n "$PYTHON_CMD" ]; then
+                    if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
+                        print_success "System dependencies installed successfully"
+                        track_install "Playwright Browser" "installed"
+                        return 0
+                    fi
+                fi
+                print_warning "System dependencies installation failed"
+                print_info "Manual install: sudo playwright install-deps chromium"
+                print_info "Or: sudo apt install libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxkbcommon0 libxdamage1 libgbm1 libpango-1.0-0 libcairo2 libasound2"
+            # Other distros
+            else
+                print_warning "Unrecognized Linux distribution"
+                print_info "Please install Chromium dependencies manually"
             fi
-            print_warning "System dependencies installation failed"
-            print_info "You can install manually with: sudo playwright install-deps chromium"
-            print_info "Or install packages: sudo apt install libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxkbcommon0 libxdamage1 libgbm1 libpango-1.0-0 libcairo2 libasound2"
             track_install "Playwright Browser" "installed"
             return 0
         else
             print_warning "Skipped system dependencies installation"
-            print_info "Chromium may not work. Install later with: sudo playwright install-deps chromium"
+            print_info "Chromium may not work"
+            if [ -f /etc/arch-release ]; then
+                print_info "Install later: sudo pacman -S nss nspr at-spi2-core cups libdrm mesa alsa-lib"
+            else
+                print_info "Install later: sudo playwright install-deps chromium"
+            fi
             track_install "Playwright Browser" "installed"
             return 0
         fi

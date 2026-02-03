@@ -54,19 +54,18 @@ main() {
 
     print_header "Markitai Setup Wizard"
 
-    # Step 1: Detect Python
-    print_step 1 5 "Detecting Python..."
-    if ! lib_detect_python; then
+    # Step 1: Detect/install UV (required, manages Python)
+    print_step 1 5 "Detecting UV package manager..."
+    if ! lib_install_uv; then
+        print_summary
         exit 1
     fi
 
-    # Step 2: Detect/install UV (optional for user edition)
-    print_step 2 5 "Detecting UV package manager..."
-    # Use || to capture return value without triggering set -e
-    uv_result=0
-    lib_install_uv || uv_result=$?
-    # User edition: UV is optional, continue even if skipped/failed
-    # (lib_install_uv returns 0=success, 1=failure, 2=skipped)
+    # Step 2: Detect/install Python (auto-installed via uv)
+    print_step 2 5 "Detecting Python..."
+    if ! lib_detect_python; then
+        exit 1
+    fi
 
     # Step 3: Install markitai
     print_step 3 5 "Installing markitai..."

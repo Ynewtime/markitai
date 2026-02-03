@@ -343,28 +343,56 @@ dev_install_playwright_browser() {
         print_info "Chromium requires system dependencies on Linux"
         if ask_yes_no "Install system dependencies (requires sudo)?" "y"; then
             print_info "Installing system dependencies..."
-            if command -v uv >/dev/null 2>&1; then
-                if uv run playwright install-deps chromium 2>/dev/null; then
+
+            # Arch Linux: use pacman (playwright install-deps doesn't support Arch)
+            if [ -f /etc/arch-release ]; then
+                print_info "Detected Arch Linux, using pacman..."
+                # Playwright Chromium core dependencies
+                local arch_deps="nss nspr at-spi2-core cups libdrm mesa alsa-lib libxcomposite libxdamage libxrandr libxkbcommon pango cairo"
+                # Optional fonts (better CJK support)
+                local arch_fonts="noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-liberation"
+                if sudo pacman -S --noconfirm --needed $arch_deps $arch_fonts 2>/dev/null; then
                     print_success "System dependencies installed successfully"
                     track_install "Playwright Browser" "installed"
                     return 0
+                else
+                    print_warning "Some dependencies failed to install"
+                    print_info "Manual install: sudo pacman -S $arch_deps"
                 fi
-            fi
-            # Fallback to Python module
-            if [ -n "$PYTHON_CMD" ]; then
-                if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
-                    print_success "System dependencies installed successfully"
-                    track_install "Playwright Browser" "installed"
-                    return 0
+            # Debian/Ubuntu: use playwright install-deps
+            elif command -v apt-get >/dev/null 2>&1; then
+                if command -v uv >/dev/null 2>&1; then
+                    if uv run playwright install-deps chromium 2>/dev/null; then
+                        print_success "System dependencies installed successfully"
+                        track_install "Playwright Browser" "installed"
+                        return 0
+                    fi
                 fi
+                # Fallback to Python module
+                if [ -n "$PYTHON_CMD" ]; then
+                    if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
+                        print_success "System dependencies installed successfully"
+                        track_install "Playwright Browser" "installed"
+                        return 0
+                    fi
+                fi
+                print_warning "System dependencies installation failed"
+                print_info "Manual install: sudo playwright install-deps chromium"
+            # Other distros
+            else
+                print_warning "Unrecognized Linux distribution"
+                print_info "Please install Chromium dependencies manually"
             fi
-            print_warning "System dependencies installation failed"
-            print_info "You can install manually with: sudo playwright install-deps chromium"
             track_install "Playwright Browser" "installed"
             return 0
         else
             print_warning "Skipped system dependencies installation"
-            print_info "Chromium may not work. Install later with: sudo playwright install-deps chromium"
+            print_info "Chromium may not work"
+            if [ -f /etc/arch-release ]; then
+                print_info "Install later: sudo pacman -S nss nspr at-spi2-core cups libdrm mesa alsa-lib"
+            else
+                print_info "Install later: sudo playwright install-deps chromium"
+            fi
             track_install "Playwright Browser" "installed"
             return 0
         fi
@@ -584,16 +612,16 @@ main() {
 
     print_header "Markitai Dev Environment Setup"
 
-    # Step 1: Detect Python
-    print_step 1 5 "Detecting Python..."
-    if ! lib_detect_python; then
+    # Step 1: Detect/install UV (required, also manages Python)
+    print_step 1 5 "Detecting UV package manager..."
+    if ! dev_install_uv; then
+        print_summary
         exit 1
     fi
 
-    # Step 2: Detect/install UV (required for developer edition)
-    print_step 2 5 "Detecting UV package manager..."
-    if ! dev_install_uv; then
-        print_summary
+    # Step 2: Detect/install Python (auto-installed via uv)
+    print_step 2 5 "Detecting Python..."
+    if ! lib_detect_python; then
         exit 1
     fi
 

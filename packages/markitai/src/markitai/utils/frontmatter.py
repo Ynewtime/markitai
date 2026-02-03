@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from loguru import logger
 
 
 def extract_title_from_content(content: str, fallback: str = "") -> str:
@@ -248,6 +249,8 @@ def build_frontmatter_dict(
         normalized_desc = " ".join(description.split())
         if len(normalized_desc) > 150:
             normalized_desc = normalized_desc[:147] + "..."
+    else:
+        logger.warning(f"[{source}] Empty description in frontmatter")
 
     # Normalize tags: replace spaces with hyphens, remove special chars
     normalized_tags: list[str] = []
@@ -275,6 +278,8 @@ def build_frontmatter_dict(
     # Only include tags if non-empty
     if normalized_tags:
         result["tags"] = normalized_tags
+    else:
+        logger.warning(f"[{source}] Empty tags in frontmatter")
 
     result["markitai_processed"] = timestamp
 

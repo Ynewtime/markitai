@@ -149,19 +149,33 @@ class Frontmatter(BaseModel):
 
     @field_validator("description", mode="before")
     @classmethod
-    def clean_control_chars(cls, v: str | None) -> str | None:
-        """Remove control characters that can cause JSON parsing errors."""
+    def clean_control_chars(cls, v: str | None) -> str:
+        """Remove control characters and validate non-empty description."""
         if v is None:
-            return None
-        return clean_control_characters(v)
+            raise ValueError("description is required and cannot be null")
+        cleaned = clean_control_characters(v)
+        if not cleaned or not cleaned.strip():
+            raise ValueError(
+                "description cannot be empty - provide a brief summary of the document"
+            )
+        return cleaned
 
     @field_validator("tags", mode="before")
     @classmethod
-    def clean_tags_control_chars(cls, v: list[str] | None) -> list[str] | None:
-        """Remove control characters from tags."""
+    def clean_tags_control_chars(cls, v: list[str] | None) -> list[str]:
+        """Remove control characters and validate non-empty tags."""
         if v is None:
-            return None
-        return [clean_control_characters(tag) for tag in v]
+            raise ValueError("tags is required and cannot be null")
+        if not v:
+            raise ValueError(
+                "tags cannot be empty - provide 3-5 related tags for the document"
+            )
+        cleaned = [clean_control_characters(tag) for tag in v if tag and tag.strip()]
+        if not cleaned:
+            raise ValueError(
+                "tags cannot be empty after cleaning - provide 3-5 valid tags"
+            )
+        return cleaned
 
 
 class DocumentProcessResult(BaseModel):

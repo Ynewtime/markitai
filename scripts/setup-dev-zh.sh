@@ -160,40 +160,34 @@ zh_confirm_remote_script() {
     fi
 }
 
-# 检测 Python（中文输出，兼容 Python2）
+# 检测/安装 Python（通过 uv 管理）
 zh_detect_python() {
-    for cmd in python3.13 python3.12 python3.11 python3 python; do
-        if command -v "$cmd" >/dev/null 2>&1; then
-            ver=$("$cmd" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
-            major=$("$cmd" -c "import sys; print(sys.version_info[0])" 2>/dev/null)
-            minor=$("$cmd" -c "import sys; print(sys.version_info[1])" 2>/dev/null)
+    # 优先使用 uv 管理的 Python 3.13
+    if command -v uv >/dev/null 2>&1; then
+        uv_python=$(uv python find 3.13 2>/dev/null)
+        if [ -n "$uv_python" ] && [ -x "$uv_python" ]; then
+            PYTHON_CMD="$uv_python"
+            ver=$("$uv_python" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
+            print_success "Python $ver (uv 管理)"
+            return 0
+        fi
 
-            # 校验是否为纯数字
-            case "$major" in
-                ''|*[!0-9]*) continue ;;
-            esac
-            case "$minor" in
-                ''|*[!0-9]*) continue ;;
-            esac
-
-            if [ "$major" -eq 3 ] && [ "$minor" -ge 11 ] && [ "$minor" -le 13 ]; then
-                PYTHON_CMD="$cmd"
-                print_success "Python $ver 已安装 ($cmd)"
+        # 未找到，自动安装
+        print_info "正在安装 Python 3.13..."
+        if uv python install 3.13; then
+            uv_python=$(uv python find 3.13 2>/dev/null)
+            if [ -n "$uv_python" ] && [ -x "$uv_python" ]; then
+                PYTHON_CMD="$uv_python"
+                ver=$("$uv_python" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
+                print_success "Python $ver 安装成功 (uv 管理)"
                 return 0
-            elif [ "$major" -eq 3 ] && [ "$minor" -ge 14 ]; then
-                print_warning "Python $ver 检测到，但 onnxruntime 不支持 Python 3.14+"
             fi
         fi
-    done
+        print_error "Python 3.13 安装失败"
+    else
+        print_error "uv 未安装，无法管理 Python"
+    fi
 
-    print_error "未找到 Python 3.11-3.13"
-    printf "\n"
-    print_warning "请安装 Python 3.13 (推荐) 或 3.11/3.12:"
-    print_info "官网下载: https://www.python.org/downloads/"
-    print_info "Ubuntu/Debian: sudo apt install python3.13"
-    print_info "macOS: brew install python@3.13"
-    print_info "pyenv: pyenv install 3.13"
-    print_info "提示: onnxruntime 暂不支持 Python 3.14"
     return 1
 }
 
@@ -516,28 +510,56 @@ zh_dev_install_playwright_browser() {
         print_info "Chromium 在 Linux 上需要系统依赖"
         if ask_yes_no "是否安装系统依赖（需要 sudo）？" "y"; then
             print_info "正在安装系统依赖..."
-            if command -v uv >/dev/null 2>&1; then
-                if uv run playwright install-deps chromium 2>/dev/null; then
+
+            # Arch Linux: 使用 pacman（playwright install-deps 不支持 Arch）
+            if [ -f /etc/arch-release ]; then
+                print_info "检测到 Arch Linux，使用 pacman 安装依赖..."
+                # Playwright Chromium 核心依赖
+                local arch_deps="nss nspr at-spi2-core cups libdrm mesa alsa-lib libxcomposite libxdamage libxrandr libxkbcommon pango cairo"
+                # 可选字体（提升中文/日文显示）
+                local arch_fonts="noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-liberation"
+                if sudo pacman -S --noconfirm --needed $arch_deps $arch_fonts 2>/dev/null; then
                     print_success "系统依赖安装成功"
                     track_install "Playwright Browser" "installed"
                     return 0
+                else
+                    print_warning "部分依赖安装失败"
+                    print_info "可手动安装: sudo pacman -S $arch_deps"
                 fi
-            fi
-            # 回退到 Python 模块
-            if [ -n "$PYTHON_CMD" ]; then
-                if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
-                    print_success "系统依赖安装成功"
-                    track_install "Playwright Browser" "installed"
-                    return 0
+            # Debian/Ubuntu: 使用 playwright install-deps
+            elif command -v apt-get >/dev/null 2>&1; then
+                if command -v uv >/dev/null 2>&1; then
+                    if uv run playwright install-deps chromium 2>/dev/null; then
+                        print_success "系统依赖安装成功"
+                        track_install "Playwright Browser" "installed"
+                        return 0
+                    fi
                 fi
+                # 回退到 Python 模块
+                if [ -n "$PYTHON_CMD" ]; then
+                    if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
+                        print_success "系统依赖安装成功"
+                        track_install "Playwright Browser" "installed"
+                        return 0
+                    fi
+                fi
+                print_warning "系统依赖安装失败"
+                print_info "可手动安装: sudo playwright install-deps chromium"
+            # 其他发行版
+            else
+                print_warning "未识别的 Linux 发行版"
+                print_info "请手动安装 Chromium 依赖"
             fi
-            print_warning "系统依赖安装失败"
-            print_info "可手动安装: sudo playwright install-deps chromium"
             track_install "Playwright Browser" "installed"
             return 0
         else
             print_warning "已跳过系统依赖安装"
-            print_info "Chromium 可能无法运行。稍后安装: sudo playwright install-deps chromium"
+            print_info "Chromium 可能无法运行"
+            if [ -f /etc/arch-release ]; then
+                print_info "稍后安装: sudo pacman -S nss nspr at-spi2-core cups libdrm mesa alsa-lib"
+            else
+                print_info "稍后安装: sudo playwright install-deps chromium"
+            fi
             track_install "Playwright Browser" "installed"
             return 0
         fi
@@ -756,16 +778,16 @@ main() {
 
     print_header "Markitai 开发环境配置向导"
 
-    # 步骤 1: 检测 Python
-    print_step 1 5 "检测 Python..."
-    if ! zh_detect_python; then
+    # 步骤 1: 检测/安装 UV（开发者版必需，也用于管理 Python）
+    print_step 1 5 "检测 UV 包管理器..."
+    if ! zh_install_uv; then
+        zh_print_summary_dev
         exit 1
     fi
 
-    # 步骤 2: 检测/安装 UV（开发者版必需）
-    print_step 2 5 "检测 UV 包管理器..."
-    if ! zh_install_uv; then
-        zh_print_summary_dev
+    # 步骤 2: 检测/安装 Python（可通过 uv 自动安装）
+    print_step 2 5 "检测 Python..."
+    if ! zh_detect_python; then
         exit 1
     fi
 
