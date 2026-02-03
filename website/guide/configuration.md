@@ -105,8 +105,8 @@ markitai config set llm.enabled true
     "strategy": "auto",
     "playwright": {
       "timeout": 30000,
-      "wait_for": "domcontentloaded",
-      "extra_wait_ms": 1000
+      "wait_for": "networkidle",
+      "extra_wait_ms": 5000
     },
     "jina": {
       "api_key": null,
@@ -455,8 +455,8 @@ Configure how URLs are fetched:
     "strategy": "auto",
     "playwright": {
       "timeout": 30000,
-      "wait_for": "domcontentloaded",
-      "extra_wait_ms": 1000
+      "wait_for": "networkidle",
+      "extra_wait_ms": 5000
     },
     "jina": {
       "api_key": "env:JINA_API_KEY",
@@ -481,8 +481,8 @@ Configure how URLs are fetched:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `timeout` | `30000` | Page load timeout (ms) |
-| `wait_for` | `domcontentloaded` | Wait condition: `load`, `domcontentloaded`, `networkidle` |
-| `extra_wait_ms` | `1000` | Extra wait time for JS rendering |
+| `wait_for` | `networkidle` | Wait condition: `load`, `domcontentloaded`, `networkidle` |
+| `extra_wait_ms` | `5000` | Extra wait time for JS rendering |
 
 ### Fallback Patterns
 

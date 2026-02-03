@@ -582,16 +582,16 @@ function Main {
 
     Write-Header "Markitai Dev Environment Setup"
 
-    # Step 1: Detect Python
-    Write-Step 1 5 "Detecting Python..."
-    if (-not (Test-Python)) {
+    # Step 1: Detect/install UV (required, manages Python)
+    Write-Step 1 5 "Detecting UV package manager..."
+    if (-not (Install-UVDev)) {
+        Write-Summary
         exit 1
     }
 
-    # Step 2: Detect/install UV (required for developer edition)
-    Write-Step 2 5 "Detecting UV package manager..."
-    if (-not (Install-UVDev)) {
-        Write-Summary
+    # Step 2: Detect/install Python (auto-installed via uv)
+    Write-Step 2 5 "Detecting Python..."
+    if (-not (Test-Python)) {
         exit 1
     }
 

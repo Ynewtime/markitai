@@ -300,120 +300,37 @@ function Test-CommandExists {
 # ============================================================
 
 function Test-Python {
-    # First, check if py.exe launcher exists and get available versions
-    $pyLauncher = Test-RealCommand "py"
-    $availablePyVersions = @()
+    # Use uv-managed Python 3.13
+    if (Test-CommandExists "uv") {
+        $uvPython = & uv python find 3.13 2>$null
+        if ($uvPython -and (Test-Path $uvPython)) {
+            $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
+            if ($version) {
+                $script:PYTHON_CMD = $uvPython
+                Write-Success "Python $version (uv managed)"
+                return $true
+            }
+        }
 
-    if ($pyLauncher) {
-        $listOutput = Invoke-PythonWithTimeout -Exe "py" -Arguments @("--list") -TimeoutSeconds 3
-        if ($listOutput) {
-            # Parse py --list output to find available 3.11-3.13 versions
-            # Support both traditional format (-V:3.13) and new pymanager format (3.13[-64])
-            $lines = $listOutput -split "`n"
-            foreach ($line in $lines) {
-                # Traditional py launcher format: -V:3.13
-                if ($line -match "-V:3\.(1[1-3])") {
-                    $minor = $Matches[1]
-                    $availablePyVersions += "py -3.$minor"
+        # Not found, auto-install
+        Write-Info "Installing Python 3.13..."
+        $installResult = & uv python install 3.13 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $uvPython = & uv python find 3.13 2>$null
+            if ($uvPython -and (Test-Path $uvPython)) {
+                $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
+                if ($version) {
+                    $script:PYTHON_CMD = $uvPython
+                    Write-Success "Python $version installed (uv managed)"
+                    return $true
                 }
-                # New pymanager format: 3.13[-64] or 3.13-64
-                elseif ($line -match "^\s*3\.(1[1-3])[\[-]") {
-                    $minor = $Matches[1]
-                    $availablePyVersions += "py -3.$minor"
-                }
             }
         }
+        Write-Error2 "Python 3.13 installation failed"
+    } else {
+        Write-Error2 "uv not installed, cannot manage Python"
     }
 
-    # Build command list: py launcher versions first (if available), then direct commands
-    $pythonCommands = @()
-    $pythonCommands += $availablePyVersions | Sort-Object -Descending | Select-Object -Unique
-
-    # Try version-specific commands (python3.13, python3.12, python3.11)
-    foreach ($minor in @("13", "12", "11")) {
-        foreach ($cmd in @("python3.$minor", "python3$minor")) {
-            if (Test-RealCommand $cmd) {
-                $pythonCommands += $cmd
-            }
-        }
-    }
-
-    # Only add direct python commands if they are real executables (not WindowsApps placeholder)
-    foreach ($cmd in @("python", "python3")) {
-        if (Test-RealCommand $cmd) {
-            $pythonCommands += $cmd
-        }
-    }
-
-    # Add generic py as last resort
-    if ($pyLauncher -and $pythonCommands.Count -eq 0) {
-        $pythonCommands += "py"
-    }
-
-    # Final fallback: try python even if in WindowsApps (pymanager makes it work)
-    if ($pythonCommands.Count -eq 0) {
-        foreach ($cmd in @("python", "python3")) {
-            if (Test-CommandExists $cmd) {
-                $pythonCommands += $cmd
-            }
-        }
-    }
-
-    if ($pythonCommands.Count -eq 0) {
-        Write-Error2 "No Python installation found"
-        Write-Host ""
-        Write-Warning2 "Please install Python 3.13 (recommended) or 3.11/3.12:"
-        Write-Info "Download: https://www.python.org/downloads/"
-        Write-Info "winget: winget install Python.Python.3.13"
-        Write-Info "scoop: scoop install python@3.13"
-        Write-Info "Note: onnxruntime doesn't support Python 3.14 yet"
-        return $false
-    }
-
-    foreach ($cmd in $pythonCommands) {
-        $cmdParts = $cmd -split " "
-        if ($cmdParts.Length -eq 0) { continue }
-        $exe = $cmdParts[0]
-        # Force array to prevent string concatenation issues when only one element
-        $baseArgs = @()
-        if ($cmdParts.Length -gt 1) {
-            $baseArgs = @($cmdParts[1..($cmdParts.Length-1)])
-        }
-
-        # Use Python2-compatible syntax (no f-string)
-        $versionArgs = $baseArgs + @("-c", "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))")
-        $version = Invoke-PythonWithTimeout -Exe $exe -Arguments $versionArgs -TimeoutSeconds 5
-
-        if (-not $version) { continue }
-
-        $majorArgs = $baseArgs + @("-c", "import sys; print(sys.version_info[0])")
-        $major = Invoke-PythonWithTimeout -Exe $exe -Arguments $majorArgs -TimeoutSeconds 5
-
-        $minorArgs = $baseArgs + @("-c", "import sys; print(sys.version_info[1])")
-        $minor = Invoke-PythonWithTimeout -Exe $exe -Arguments $minorArgs -TimeoutSeconds 5
-
-        if (-not $major -or -not $minor) { continue }
-
-        # Validate numeric
-        if ($major -notmatch '^\d+$' -or $minor -notmatch '^\d+$') { continue }
-
-        # Check version range: 3.11 <= version < 3.14
-        if ($major -eq 3 -and $minor -ge 11 -and $minor -le 13) {
-            $script:PYTHON_CMD = $cmd
-            Write-Success "Python $version installed ($cmd)"
-            return $true
-        } elseif ($major -eq 3 -and $minor -ge 14) {
-            Write-Warning2 "Python $version detected, but onnxruntime doesn't support Python 3.14+"
-        }
-    }
-
-    Write-Error2 "Python 3.11-3.13 not found"
-    Write-Host ""
-    Write-Warning2 "Please install Python 3.13 (recommended) or 3.11/3.12:"
-    Write-Info "Download: https://www.python.org/downloads/"
-    Write-Info "scoop: scoop install python@3.13"
-    Write-Info "winget: winget install Python.Python.3.13"
-    Write-Info "Note: onnxruntime doesn't support Python 3.14 yet"
     return $false
 }
 
