@@ -193,7 +193,7 @@ def create_url_processor(
     # Initialize fetch cache for URL processing
     url_fetch_cache = None
     if cfg.cache.enabled:
-        url_cache_dir = output_dir.parent / ".markitai"
+        url_cache_dir = Path(cfg.cache.global_dir).expanduser()
         url_fetch_cache = get_fetch_cache(url_cache_dir, cfg.cache.max_size_bytes)
 
     # Prepare screenshot directory if enabled

@@ -1301,6 +1301,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         runtime: LLMRuntime | None = None,
         no_cache: bool = False,
         no_cache_patterns: list[str] | None = None,
+        cache_global_dir: Path | str | None = None,
     ) -> None:
         """
         Initialize LLM processor.
@@ -1315,6 +1316,8 @@ class LLMProcessor(VisionMixin, DocumentMixin):
             no_cache_patterns: List of glob patterns to skip cache for specific files.
                               Patterns are matched against relative paths from input_dir.
                               E.g., ["*.pdf", "reports/**", "file.docx"]
+            cache_global_dir: Global cache directory. If provided, overrides the default
+                              ~/.markitai directory. Should be passed from config.cache.global_dir.
         """
         self.config = config
         self._runtime = runtime
@@ -1358,7 +1361,12 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         # Persistent cache for cross-session reuse (SQLite-based)
         # no_cache=True: skip reading but still write (Bun semantics)
         # no_cache_patterns: skip reading for specific files matching patterns
+        # Resolve cache_global_dir to Path if provided as string
+        resolved_cache_dir: Path | None = None
+        if cache_global_dir is not None:
+            resolved_cache_dir = Path(cache_global_dir).expanduser()
         self._persistent_cache = PersistentCache(
+            global_dir=resolved_cache_dir,
             skip_read=no_cache,
             no_cache_patterns=no_cache_patterns,
         )
