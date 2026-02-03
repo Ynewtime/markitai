@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-02-03
+
+### Changed
+
+- **Playwright defaults**: `wait_for` changed to `networkidle`, `extra_wait_ms` to 5000ms for better SPA support
+- **Frontmatter validation**: Pydantic validators reject empty description/tags, triggering Instructor auto-retry
+- **VitePress**: Upgraded to 2.0.0-alpha.16
+
+### Fixed
+
+- **X/Twitter content**: Pages now wait for full JS rendering before capture
+- **Cache directories**: All caches now respect `cache.global_dir` config instead of hardcoded paths
+- **Setup scripts**: Improved piped execution (`curl | sh`), proper Playwright installation paths
+- **Config init**: Added `--yes/-y` flag for non-interactive use
+
 ## [0.4.1] - 2026-02-02
 
 ### Added
@@ -445,6 +460,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.4.2]: https://github.com/Ynewtime/markitai/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Ynewtime/markitai/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Ynewtime/markitai/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/Ynewtime/markitai/compare/v0.3.1...v0.3.2
