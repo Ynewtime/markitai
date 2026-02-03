@@ -47,14 +47,29 @@ def converted_fixtures(tmp_path_factory) -> dict:
 
     This session-scoped fixture converts the fixtures directory once
     and returns paths to output files for verification.
+
+    Note: Excludes .urls files to avoid network-dependent URL processing
+    in CI environments. URL processing is tested separately.
     """
+    import shutil
+
     fixtures_dir = Path(__file__).parent.parent / "fixtures"
     output_dir = tmp_path_factory.mktemp("converted")
+
+    # Create temp input dir excluding .urls files (network-dependent)
+    input_dir = tmp_path_factory.mktemp("fixtures_no_urls")
+    for item in fixtures_dir.iterdir():
+        if item.suffix == ".urls":
+            continue
+        if item.is_dir():
+            shutil.copytree(item, input_dir / item.name)
+        else:
+            shutil.copy2(item, input_dir / item.name)
 
     runner = CliRunner()
     result = runner.invoke(
         app,
-        [str(fixtures_dir), "-o", str(output_dir)],
+        [str(input_dir), "-o", str(output_dir)],
     )
 
     return {
