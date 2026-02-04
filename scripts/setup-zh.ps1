@@ -272,7 +272,7 @@ function Install-UVZh {
 
     if (Test-UV) {
         Track-Install -Component "uv" -Status "installed"
-        return 0
+        return $true
     }
 
     Write-ErrorZh "UV 未安装"
@@ -281,7 +281,7 @@ function Install-UVZh {
         Write-InfoZh "跳过 UV 安装"
         Write-WarningZh "markitai 推荐使用 UV 进行安装"
         Track-Install -Component "uv" -Status "skipped"
-        return 2
+        return $false
     }
 
     if ($script:UvVersion) {
@@ -294,7 +294,7 @@ function Install-UVZh {
     if (-not (Confirm-RemoteScriptZh -ScriptUrl $uvUrl -ScriptName "UV")) {
         Write-InfoZh "跳过 UV 安装"
         Track-Install -Component "uv" -Status "skipped"
-        return 2
+        return $false
     }
 
     Write-InfoZh "正在安装 UV..."
@@ -310,7 +310,7 @@ function Install-UVZh {
             Write-WarningZh "UV 已安装，但需要重新打开 PowerShell"
             Write-InfoZh "请重新打开 PowerShell 后再次运行此脚本"
             Track-Install -Component "uv" -Status "installed"
-            return 1
+            return $false
         }
 
         $oldErrorAction = $ErrorActionPreference
@@ -323,18 +323,18 @@ function Install-UVZh {
         if ($version -and $version -notmatch "error") {
             Write-SuccessZh "$version 安装成功"
             Track-Install -Component "uv" -Status "installed"
-            return 0
+            return $true
         } else {
             Write-WarningZh "UV 已安装，但需要重新打开 PowerShell"
             Write-InfoZh "请重新打开 PowerShell 后再次运行此脚本"
             Track-Install -Component "uv" -Status "installed"
-            return 1
+            return $false
         }
     } catch {
         Write-ErrorZh "UV 安装失败: $_"
         Write-InfoZh "手动安装: irm https://astral.sh/uv/install.ps1 | iex"
         Track-Install -Component "uv" -Status "failed"
-        return 1
+        return $false
     }
 }
 

@@ -409,13 +409,13 @@ function Test-UV {
 # ============================================================
 
 # Install UV package manager
-# Returns: 0 = success, 1 = failure, 2 = skipped
+# Returns: $true on success, $false on failure/skip
 function Install-UV {
     Write-Info "Checking UV installation..."
 
     if (Test-UV) {
         Track-Install -Component "uv" -Status "installed"
-        return 0
+        return $true
     }
 
     Write-Error2 "UV not installed"
@@ -424,7 +424,7 @@ function Install-UV {
         Write-Info "Skipping UV installation"
         Write-Warning2 "markitai recommends using UV for installation"
         Track-Install -Component "uv" -Status "skipped"
-        return 2  # Skipped
+        return $false
     }
 
     # Build install URL (with optional version)
@@ -439,7 +439,7 @@ function Install-UV {
     if (-not (Confirm-RemoteScript -ScriptUrl $uvUrl -ScriptName "UV")) {
         Write-Info "Skipping UV installation"
         Track-Install -Component "uv" -Status "skipped"
-        return 2  # Skipped
+        return $false
     }
 
     Write-Info "Installing UV..."
@@ -456,7 +456,7 @@ function Install-UV {
             Write-Warning2 "UV installed, but PowerShell needs to be restarted"
             Write-PathHelp "$env:USERPROFILE\.local\bin"
             Track-Install -Component "uv" -Status "installed"
-            return 1
+            return $false
         }
 
         $oldErrorAction = $ErrorActionPreference
@@ -469,12 +469,12 @@ function Install-UV {
         if ($version -and $version -notmatch "error") {
             Write-Success "$version installed successfully"
             Track-Install -Component "uv" -Status "installed"
-            return 0
+            return $true
         } else {
             Write-Warning2 "UV installed, but PowerShell needs to be restarted"
             Write-PathHelp "$env:USERPROFILE\.local\bin"
             Track-Install -Component "uv" -Status "installed"
-            return 1
+            return $false
         }
     } catch {
         Write-Error2 "UV installation failed: $_"
@@ -484,7 +484,7 @@ function Install-UV {
             Write-Info "Manual install: irm https://astral.sh/uv/install.ps1 | iex"
         }
         Track-Install -Component "uv" -Status "failed"
-        return 1
+        return $false
     }
 }
 
