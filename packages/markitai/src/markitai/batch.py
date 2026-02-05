@@ -25,9 +25,9 @@ from rich.progress import (
     TextColumn,
     TimeElapsedColumn,
 )
-from rich.table import Table
 from rich.text import Text
 
+from markitai.cli import ui
 from markitai.cli.console import get_console
 from markitai.constants import DEFAULT_LOG_PANEL_MAX_LINES
 from markitai.json_order import order_report, order_state
@@ -1282,45 +1282,13 @@ class BatchProcessor:
         if self.state is None:
             return
 
-        table = Table(title="Batch Processing Summary")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="green")
-
-        # Local Files section
-        if self.state.total > 0:
-            table.add_row("Local Files", str(self.state.total))
-            table.add_row("Completed", str(self.state.completed_count))
-            if self.state.failed_count > 0:
-                table.add_row("Failed", str(self.state.failed_count))
-
-            # File cache hits
-            completed_files = [
-                f for f in self.state.files.values() if f.status == FileStatus.COMPLETED
-            ]
-            file_cache_hits = sum(1 for f in completed_files if f.cache_hit)
-            if completed_files:
-                table.add_row("Cache Hits", f"{file_cache_hits}/{len(completed_files)}")
-
-            # Add separator if URLs follow
-            total_urls = url_completed + url_failed
-            if total_urls > 0:
-                table.add_row("", "")  # Empty row as separator
-
-        # URL Files section
-        total_urls = url_completed + url_failed
-        if total_urls > 0:
-            if url_sources > 0:
-                table.add_row("URL Files", str(url_sources))
-            table.add_row("URLs", str(total_urls))
-            table.add_row("Completed", str(url_completed))
-            if url_failed > 0:
-                table.add_row("Failed", str(url_failed))
-            if url_completed > 0:
-                table.add_row("Cache Hits", f"{url_cache_hits}/{url_completed}")
-
-            # Add separator before duration
-            if self.state.total > 0 or total_urls > 0:
-                table.add_row("", "")  # Empty row as separator
+        # Helper function to format duration as human-readable
+        def format_duration(seconds: float) -> str:
+            if seconds < 60:
+                return f"{seconds:.1f}s"
+            minutes = int(seconds // 60)
+            secs = int(seconds % 60)
+            return f"{minutes}m {secs}s"
 
         # Calculate wall-clock duration from started_at to updated_at
         wall_duration = 0.0
@@ -1332,18 +1300,68 @@ class BatchProcessor:
             except ValueError:
                 # Fallback to sum of individual durations
                 wall_duration = sum(f.duration or 0 for f in self.state.files.values())
-        table.add_row("Duration", f"{wall_duration:.1f}s")
 
-        # LLM cost
-        total_cost = sum(f.cost_usd for f in self.state.files.values())
-        if total_cost > 0:
-            table.add_row("LLM Cost", f"${total_cost:.4f}")
+        # LLM cost (from both files and URLs)
+        total_cost = sum(f.cost_usd for f in self.state.files.values()) + sum(
+            u.cost_usd for u in self.state.urls.values()
+        )
 
-        self.console.print(table)
+        # File cache hits
+        completed_files = [
+            f for f in self.state.files.values() if f.status == FileStatus.COMPLETED
+        ]
+        file_cache_hits = sum(1 for f in completed_files if f.cache_hit)
+
+        # Build summary line
+        duration_str = format_duration(wall_duration)
+        cost_str = f"${total_cost:.3f}" if total_cost > 0 else ""
+
+        summary_parts = []
+        if self.state.total > 0:
+            summary_parts.append(f"{self.state.completed_count} files")
+        total_urls = url_completed + url_failed
+        if total_urls > 0:
+            summary_parts.append(f"{url_completed} URLs")
+
+        summary_time = f"({duration_str}"
+        if cost_str:
+            summary_time += f", {cost_str}"
+        summary_time += ")"
+
+        ui.summary(
+            f"Done: {', '.join(summary_parts)} {summary_time}", console=self.console
+        )
+        self.console.print()
+
+        # Files stats
+        if self.state.total > 0:
+            files_status = (
+                f"[green]{ui.MARK_SUCCESS}[/]"
+                if self.state.completed_count == self.state.total
+                else ""
+            )
+            self.console.print(
+                f"  {ui.MARK_INFO} Files: {self.state.completed_count}/{self.state.total} "
+                f"{files_status}  Cache: {file_cache_hits}"
+            )
+
+        # URLs stats (if any)
+        if total_urls > 0:
+            urls_status = (
+                f"[green]{ui.MARK_SUCCESS}[/]" if url_completed == total_urls else ""
+            )
+            self.console.print(
+                f"  {ui.MARK_INFO} URLs:  {url_completed}/{total_urls} "
+                f"{urls_status}  Cache: {url_cache_hits}"
+            )
+
+        self.console.print()
+        self.console.print(f"  Output: {self.output_dir}/")
 
         # Print failed files if any
         failed = [f for f in self.state.files.values() if f.status == FileStatus.FAILED]
         if failed:
-            self.console.print("\n[red]Failed files:[/red]")
+            self.console.print()
+            self.console.print("[red]Failed files:[/red]")
             for f in failed:
-                self.console.print(f" - {Path(f.path).name}: {f.error}")
+                self.console.print(f"  {ui.MARK_ERROR} {Path(f.path).name}: {f.error}")
