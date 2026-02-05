@@ -492,7 +492,7 @@ function Install-ClaudeCLIZh {
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
         Write-InfoZh "使用 WinGet 安装..."
-        & winget install Anthropic.ClaudeCode
+        $null = & winget install Anthropic.ClaudeCode --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-SuccessZh "通过 WinGet 安装 Claude Code CLI 成功"
             Write-InfoZh "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
@@ -529,7 +529,7 @@ function Install-CopilotCLIZh {
 
     if ($pnpmCmd) {
         Write-InfoZh "使用 pnpm 安装..."
-        & pnpm add -g @github/copilot
+        $null = & pnpm add -g @github/copilot 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-SuccessZh "通过 pnpm 安装 Copilot CLI 成功"
             Write-InfoZh "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
@@ -538,7 +538,7 @@ function Install-CopilotCLIZh {
         }
     } elseif ($npmCmd) {
         Write-InfoZh "使用 npm 安装..."
-        & npm install -g @github/copilot
+        $null = & npm install -g @github/copilot 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-SuccessZh "通过 npm 安装 Copilot CLI 成功"
             Write-InfoZh "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
@@ -551,7 +551,7 @@ function Install-CopilotCLIZh {
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
         Write-InfoZh "使用 WinGet 安装..."
-        & winget install GitHub.Copilot
+        $null = & winget install GitHub.Copilot --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-SuccessZh "通过 WinGet 安装 Copilot CLI 成功"
             Write-InfoZh "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
@@ -695,7 +695,7 @@ function Install-LibreOfficeDevZh {
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
         Write-InfoZh "通过 WinGet 安装..."
-        & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements
+        $null = & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-SuccessZh "LibreOffice 通过 WinGet 安装成功"
             Track-Install -Component "LibreOffice" -Status "installed"
@@ -708,7 +708,7 @@ function Install-LibreOfficeDevZh {
     if ($scoopCmd) {
         Write-InfoZh "通过 Scoop 安装..."
         & scoop bucket add extras 2>$null
-        & scoop install extras/libreoffice
+        $null = & scoop install extras/libreoffice 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-SuccessZh "LibreOffice 通过 Scoop 安装成功"
             Track-Install -Component "LibreOffice" -Status "installed"
@@ -720,7 +720,7 @@ function Install-LibreOfficeDevZh {
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
         Write-InfoZh "通过 Chocolatey 安装..."
-        & choco install libreoffice-fresh -y
+        $null = & choco install libreoffice-fresh -y 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-SuccessZh "LibreOffice 通过 Chocolatey 安装成功"
             Track-Install -Component "LibreOffice" -Status "installed"
@@ -768,7 +768,7 @@ function Install-FFmpegDevZh {
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
         Write-InfoZh "通过 WinGet 安装..."
-        & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements
+        $null = & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-SuccessZh "FFmpeg 通过 WinGet 安装成功"
             Track-Install -Component "FFmpeg" -Status "installed"
@@ -779,7 +779,7 @@ function Install-FFmpegDevZh {
     $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
     if ($scoopCmd) {
         Write-InfoZh "通过 Scoop 安装..."
-        & scoop install ffmpeg
+        $null = & scoop install ffmpeg 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-SuccessZh "FFmpeg 通过 Scoop 安装成功"
             Track-Install -Component "FFmpeg" -Status "installed"
@@ -790,7 +790,7 @@ function Install-FFmpegDevZh {
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
         Write-InfoZh "通过 Chocolatey 安装..."
-        & choco install ffmpeg -y
+        $null = & choco install ffmpeg -y 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-SuccessZh "FFmpeg 通过 Chocolatey 安装成功"
             Track-Install -Component "FFmpeg" -Status "installed"

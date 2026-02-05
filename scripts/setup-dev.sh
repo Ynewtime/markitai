@@ -184,7 +184,7 @@ dev_install_claude_cli() {
         fi
     elif command -v npm >/dev/null 2>&1; then
         print_info "Installing via npm..."
-        if npm install -g @anthropic-ai/claude-code; then
+        if npm install -g @anthropic-ai/claude-code >/dev/null 2>&1; then
             print_success "Claude Code CLI installed via npm"
             print_info "Run 'claude /login' to authenticate with your Claude subscription or API key"
             track_install "Claude Code CLI" "installed"
@@ -195,7 +195,7 @@ dev_install_claude_cli() {
     # Fallback: Homebrew (macOS/Linux)
     if command -v brew >/dev/null 2>&1; then
         print_info "Installing via Homebrew..."
-        if brew install claude-code; then
+        if brew install claude-code >/dev/null 2>&1; then
             print_success "Claude Code CLI installed via Homebrew"
             print_info "Run 'claude /login' to authenticate with your Claude subscription or API key"
             track_install "Claude Code CLI" "installed"
@@ -235,7 +235,7 @@ dev_install_copilot_cli() {
         fi
     elif command -v npm >/dev/null 2>&1; then
         print_info "Installing via npm..."
-        if npm install -g @github/copilot; then
+        if npm install -g @github/copilot >/dev/null 2>&1; then
             print_success "Copilot CLI installed via npm"
             print_info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
             track_install "Copilot CLI" "installed"
@@ -246,7 +246,7 @@ dev_install_copilot_cli() {
     # Fallback: Homebrew (macOS/Linux)
     if command -v brew >/dev/null 2>&1; then
         print_info "Installing via Homebrew..."
-        if brew install copilot-cli; then
+        if brew install copilot-cli >/dev/null 2>&1; then
             print_success "Copilot CLI installed via Homebrew"
             print_info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
             track_install "Copilot CLI" "installed"

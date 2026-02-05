@@ -356,7 +356,7 @@ zh_install_claude_cli() {
         fi
     elif command -v npm >/dev/null 2>&1; then
         print_info "使用 npm 安装..."
-        if npm install -g @anthropic-ai/claude-code; then
+        if npm install -g @anthropic-ai/claude-code >/dev/null 2>&1; then
             print_success "通过 npm 安装 Claude Code CLI 成功"
             print_info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
             track_install "Claude Code CLI" "installed"
@@ -367,7 +367,7 @@ zh_install_claude_cli() {
     # 备选: Homebrew (macOS/Linux)
     if command -v brew >/dev/null 2>&1; then
         print_info "使用 Homebrew 安装..."
-        if brew install claude-code; then
+        if brew install claude-code >/dev/null 2>&1; then
             print_success "通过 Homebrew 安装 Claude Code CLI 成功"
             print_info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
             track_install "Claude Code CLI" "installed"
@@ -407,7 +407,7 @@ zh_install_copilot_cli() {
         fi
     elif command -v npm >/dev/null 2>&1; then
         print_info "使用 npm 安装..."
-        if npm install -g @github/copilot; then
+        if npm install -g @github/copilot >/dev/null 2>&1; then
             print_success "通过 npm 安装 Copilot CLI 成功"
             print_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
             track_install "Copilot CLI" "installed"
@@ -418,7 +418,7 @@ zh_install_copilot_cli() {
     # 备选: Homebrew (macOS/Linux)
     if command -v brew >/dev/null 2>&1; then
         print_info "使用 Homebrew 安装..."
-        if brew install copilot-cli; then
+        if brew install copilot-cli >/dev/null 2>&1; then
             print_success "通过 Homebrew 安装 Copilot CLI 成功"
             print_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
             track_install "Copilot CLI" "installed"
@@ -603,7 +603,7 @@ zh_dev_install_libreoffice() {
     case "$(uname)" in
         Darwin)
             if command -v brew >/dev/null 2>&1; then
-                if brew install --cask libreoffice; then
+                if brew install --cask libreoffice >/dev/null 2>&1; then
                     print_success "LibreOffice 通过 Homebrew 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
@@ -616,21 +616,21 @@ zh_dev_install_libreoffice() {
         Linux)
             if [ -f /etc/debian_version ]; then
                 print_info "通过 apt 安装（需要 sudo）..."
-                if sudo apt update && sudo apt install -y libreoffice; then
+                if sudo apt update >/dev/null 2>&1 && sudo apt install -y libreoffice >/dev/null 2>&1; then
                     print_success "LibreOffice 通过 apt 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
                 fi
             elif [ -f /etc/fedora-release ]; then
                 print_info "通过 dnf 安装（需要 sudo）..."
-                if sudo dnf install -y libreoffice; then
+                if sudo dnf install -y libreoffice >/dev/null 2>&1; then
                     print_success "LibreOffice 通过 dnf 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
                 fi
             elif [ -f /etc/arch-release ]; then
                 print_info "通过 pacman 安装（需要 sudo）..."
-                if sudo pacman -S --noconfirm libreoffice-fresh; then
+                if sudo pacman -S --noconfirm libreoffice-fresh >/dev/null 2>&1; then
                     print_success "LibreOffice 通过 pacman 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
@@ -686,7 +686,7 @@ zh_dev_install_ffmpeg() {
     case "$(uname)" in
         Darwin)
             if command -v brew >/dev/null 2>&1; then
-                if brew install ffmpeg; then
+                if brew install ffmpeg >/dev/null 2>&1; then
                     print_success "FFmpeg 通过 Homebrew 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
@@ -699,21 +699,21 @@ zh_dev_install_ffmpeg() {
         Linux)
             if [ -f /etc/debian_version ]; then
                 print_info "通过 apt 安装（需要 sudo）..."
-                if sudo apt update && sudo apt install -y ffmpeg; then
+                if sudo apt update >/dev/null 2>&1 && sudo apt install -y ffmpeg >/dev/null 2>&1; then
                     print_success "FFmpeg 通过 apt 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
             elif [ -f /etc/fedora-release ]; then
                 print_info "通过 dnf 安装（需要 sudo）..."
-                if sudo dnf install -y ffmpeg; then
+                if sudo dnf install -y ffmpeg >/dev/null 2>&1; then
                     print_success "FFmpeg 通过 dnf 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
             elif [ -f /etc/arch-release ]; then
                 print_info "通过 pacman 安装（需要 sudo）..."
-                if sudo pacman -S --noconfirm ffmpeg; then
+                if sudo pacman -S --noconfirm ffmpeg >/dev/null 2>&1; then
                     print_success "FFmpeg 通过 pacman 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
