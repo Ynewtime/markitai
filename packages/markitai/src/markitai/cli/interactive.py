@@ -207,13 +207,13 @@ def prompt_llm_options(session: InteractiveSession) -> None:
         "Select LLM features:",
         choices=[
             questionary.Choice(
-                "Generate alt text for images", value="alt", checked=True
+                "Generate alt text for images", value="alt", checked=False
             ),
             questionary.Choice(
                 "Generate image descriptions (JSON)", value="desc", checked=False
             ),
             questionary.Choice(
-                "Enable OCR for scanned documents", value="ocr", checked=True
+                "Enable OCR for scanned documents", value="ocr", checked=False
             ),
             questionary.Choice(
                 "Take page screenshots", value="screenshot", checked=False
