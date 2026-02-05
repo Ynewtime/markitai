@@ -71,6 +71,34 @@ stderr_console = get_stderr_console()
 # =============================================================================
 
 
+def run_interactive_mode(ctx: click.Context) -> None:
+    """Run interactive mode and execute with gathered options."""
+    from markitai.cli.interactive import run_interactive, session_to_cli_args
+
+    try:
+        session = run_interactive()
+
+        # Ask for confirmation before executing
+        import questionary
+
+        if questionary.confirm(
+            "Execute conversion with these settings?", default=True
+        ).ask():
+            # Re-invoke the CLI with the gathered arguments
+            args = session_to_cli_args(session)
+            # Use subprocess or click's invoke mechanism
+            import subprocess
+            import sys
+
+            subprocess.run([sys.executable, "-m", "markitai"] + args)
+        else:
+            click.echo("Cancelled.")
+        ctx.exit(0)
+    except (KeyboardInterrupt, EOFError):
+        click.echo("\nCancelled.")
+        ctx.exit(0)
+
+
 @click.group(
     cls=MarkitaiGroup,
     invoke_without_command=True,
@@ -197,6 +225,15 @@ stderr_console = get_stderr_console()
     "--dry-run",
     is_flag=True,
     help="Preview conversion without writing files.",
+)
+@click.option(
+    "--interactive",
+    "-I",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=lambda ctx, _param, value: run_interactive_mode(ctx) if value else None,
+    help="Enter interactive mode for guided setup.",
 )
 @click.option(
     "--version",
