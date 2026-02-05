@@ -67,6 +67,17 @@ class TestProviderDetection:
             assert result.provider == "openai"
             assert result.model == "openai/gpt-4o"
 
+    def test_detect_gemini_api_key(self) -> None:
+        """Should detect GEMINI_API_KEY when no other provider available."""
+        with (
+            patch("shutil.which", return_value=None),
+            patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=True),
+        ):
+            result = detect_llm_provider()
+            assert result is not None
+            assert result.provider == "gemini"
+            assert result.model == "gemini/gemini-2.0-flash"
+
     def test_detect_no_provider(self) -> None:
         """Should return None when no provider detected."""
         with (
