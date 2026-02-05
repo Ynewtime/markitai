@@ -1105,9 +1105,69 @@ init_config() {
 }
 
 # ============================================================
-# Main Entry Point (placeholder for future implementation)
+# Main Entry Point
 # ============================================================
 
-# This file provides the foundation for the unified setup script.
-# The main() function will be added in the next task to orchestrate
-# the complete setup flow for both user and dev modes.
+# User mode main flow
+run_user_setup() {
+    clack_intro "$(i18n welcome)"
+    warn_if_root
+
+    clack_section "$(i18n section_core)"
+    install_uv || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
+    detect_python || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
+    install_markitai || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
+
+    clack_section "$(i18n section_optional)"
+    install_optional_playwright
+    install_optional_libreoffice
+    install_optional_ffmpeg
+
+    clack_section "$(i18n section_llm_cli)"
+    install_optional_claude_cli
+    install_optional_copilot_cli
+
+    init_config >/dev/null 2>&1
+
+    print_summary
+    print_user_completion
+    clack_outro "$(i18n setup_complete)"
+}
+
+# Dev mode main flow
+run_dev_setup() {
+    clack_intro "$(i18n welcome)"
+    warn_if_root
+
+    clack_section "$(i18n section_prerequisites)"
+    install_uv || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
+    detect_python || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
+
+    clack_section "$(i18n section_dev_env)"
+    sync_dependencies || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
+    install_precommit
+
+    clack_section "$(i18n section_optional)"
+    install_optional_playwright
+    install_optional_libreoffice
+    install_optional_ffmpeg
+
+    clack_section "$(i18n section_llm_cli)"
+    install_optional_claude_cli
+    install_optional_copilot_cli
+
+    print_summary
+    print_dev_completion
+    clack_outro "$(i18n dev_setup_complete)"
+}
+
+# Main entry point
+main() {
+    if is_dev_mode; then
+        run_dev_setup
+    else
+        run_user_setup
+    fi
+}
+
+main "$@"
