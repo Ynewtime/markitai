@@ -106,8 +106,8 @@ def run_interactive_mode(ctx: click.Context) -> None:
     "--output",
     "-o",
     type=click.Path(path_type=Path),
-    default=Path("./output"),
-    help="Output directory.",
+    default=None,
+    help="Output directory. If not specified, output to stdout.",
 )
 @click.option(
     "--config",
@@ -245,7 +245,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
 @click.pass_context
 def app(
     ctx: Context,
-    output: Path,
+    output: Path | None,
     config_path: Path | None,
     preset: str | None,
     llm: bool | None,
@@ -481,11 +481,17 @@ def app(
     else:
         assert input_path is not None  # Already validated above
         logger.debug(f"Processing: {input_path.resolve()}")
-    logger.debug(f"Output directory: {output.resolve()}")
+    if output:
+        logger.debug(f"Output directory: {output.resolve()}")
 
     async def run_workflow() -> None:
-        # URL list batch mode
+        # URL list batch mode - requires -o
         if is_url_list_mode:
+            if output is None:
+                console.print(
+                    "[red]Error: URL list mode requires -o/--output directory.[/red]"
+                )
+                ctx.exit(1)
             await process_url_batch(
                 url_entries,
                 output,
@@ -499,8 +505,13 @@ def app(
             )
             return
 
-        # Single URL mode
+        # Single URL mode - requires -o
         if is_url_input:
+            if output is None:
+                console.print(
+                    "[red]Error: URL mode requires -o/--output directory.[/red]"
+                )
+                ctx.exit(1)
             assert input_path_str is not None  # Guaranteed when is_url_input is True
             await process_url(
                 input_path_str,
@@ -517,8 +528,13 @@ def app(
         # File/directory mode
         assert input_path is not None  # Already validated above
 
-        # Check if input is directory (batch mode)
+        # Check if input is directory (batch mode) - requires -o
         if input_path.is_dir():
+            if output is None:
+                console.print(
+                    "[red]Error: Batch mode requires -o/--output directory.[/red]"
+                )
+                ctx.exit(1)
             await process_batch(
                 input_path,
                 output,
@@ -533,9 +549,15 @@ def app(
             )
             return
 
-        # Single file mode
+        # Single file mode - output is optional (None means stdout)
         await process_single_file(
-            input_path, output, cfg, dry_run, log_file_path, verbose
+            input_path,
+            output,
+            cfg,
+            dry_run,
+            log_file_path,
+            verbose=verbose,
+            quiet=quiet,
         )
 
     async def run_workflow_with_cleanup() -> None:
