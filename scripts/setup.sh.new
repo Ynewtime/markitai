@@ -483,17 +483,630 @@ is_dev_mode() {
 }
 
 # ============================================================
+# Version Variables (can be overridden via environment)
+# ============================================================
+MARKITAI_VERSION="${MARKITAI_VERSION:-}"
+UV_VERSION="${UV_VERSION:-}"
+
+# Global variable for Python command path
+PYTHON_CMD=""
+
+# ============================================================
+# Platform Detection
+# ============================================================
+
+# Detect OS type
+# Sets: OS_TYPE (Darwin, Linux, etc.)
+detect_os() {
+    OS_TYPE=$(uname -s)
+}
+
+detect_os
+
+# ============================================================
+# Installation Functions
+# ============================================================
+
+# Install uv package manager
+# Returns: 0 on success, 1 on failure
+install_uv() {
+    # Check if already installed
+    if command -v uv >/dev/null 2>&1; then
+        _uv_version=$(uv --version 2>/dev/null | head -n1 | tr -d '\r')
+        clack_success "$(i18n uv): $_uv_version $(i18n already_installed)"
+        track_install "uv" "installed"
+        return 0
+    fi
+
+    # Prompt to install
+    if ! clack_confirm "$(i18n confirm_uv)" "y"; then
+        clack_skip "$(i18n uv)"
+        track_install "uv" "skipped"
+        return 1
+    fi
+
+    # Check curl availability
+    if ! command -v curl >/dev/null 2>&1; then
+        clack_error "curl not found"
+        track_install "uv" "failed"
+        return 1
+    fi
+
+    # Build install URL (with optional version)
+    if [ -n "$UV_VERSION" ]; then
+        _uv_url="https://astral.sh/uv/$UV_VERSION/install.sh"
+    else
+        _uv_url="https://astral.sh/uv/install.sh"
+    fi
+
+    # Install uv
+    if clack_spinner "$(i18n installing) $(i18n uv)..." curl -LsSf "$_uv_url" | sh >/dev/null 2>&1; then
+        export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+        if command -v uv >/dev/null 2>&1; then
+            _uv_version=$(uv --version 2>/dev/null | head -n1 | tr -d '\r')
+            clack_success "$(i18n uv): $_uv_version $(i18n installed)"
+            track_install "uv" "installed"
+            return 0
+        fi
+    fi
+
+    clack_error "$(i18n uv) $(i18n failed)"
+    track_install "uv" "failed"
+    return 1
+}
+
+# Detect/install Python via uv
+# Sets: PYTHON_CMD
+# Returns: 0 on success, 1 on failure
+detect_python() {
+    if ! command -v uv >/dev/null 2>&1; then
+        clack_error "$(i18n error_uv_required)"
+        return 1
+    fi
+
+    # Try to find Python 3.13
+    _py_path=$(uv python find 3.13 2>/dev/null)
+    if [ -n "$_py_path" ] && [ -x "$_py_path" ]; then
+        PYTHON_CMD="$_py_path"
+        _py_ver=$("$_py_path" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
+        clack_success "$(i18n python) $_py_ver"
+        return 0
+    fi
+
+    # Not found, auto-install
+    clack_info "$(i18n installing) $(i18n python) 3.13..."
+    if uv python install 3.13 >/dev/null 2>&1; then
+        _py_path=$(uv python find 3.13 2>/dev/null)
+        if [ -n "$_py_path" ] && [ -x "$_py_path" ]; then
+            PYTHON_CMD="$_py_path"
+            _py_ver=$("$_py_path" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
+            clack_success "$(i18n python) $_py_ver $(i18n installed)"
+            return 0
+        fi
+    fi
+
+    clack_error "$(i18n error_python_required)"
+    return 1
+}
+
+# Install markitai (User mode)
+# Requires: PYTHON_CMD to be set
+# Returns: 0 on success, 1 on failure
+install_markitai() {
+    # Check if already installed
+    if command -v markitai >/dev/null 2>&1; then
+        _mi_version=$(markitai --version 2>/dev/null || echo "")
+        clack_success "$(i18n markitai) $_mi_version $(i18n already_installed)"
+        track_install "markitai" "installed"
+        return 0
+    fi
+
+    # Build package spec with optional version
+    if [ -n "$MARKITAI_VERSION" ]; then
+        _mi_pkg="markitai[browser]==$MARKITAI_VERSION"
+    else
+        _mi_pkg="markitai[browser]"
+    fi
+
+    clack_info "$(i18n installing) $(i18n markitai)..."
+
+    # Install via uv tool
+    if command -v uv >/dev/null 2>&1; then
+        if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --upgrade; then
+            export PATH="$HOME/.local/bin:$PATH"
+            _mi_version=$(markitai --version 2>/dev/null || echo "")
+            clack_success "$(i18n markitai) $_mi_version $(i18n installed)"
+            track_install "markitai" "installed"
+            return 0
+        fi
+    fi
+
+    clack_error "$(i18n markitai) $(i18n failed)"
+    track_install "markitai" "failed"
+    return 1
+}
+
+# Install markitai extra package
+# Usage: install_markitai_extra "claude-agent"
+# Returns: 0 on success, 1 on failure
+install_markitai_extra() {
+    _extra_name="$1"
+    _extra_pkg="markitai[$_extra_name]"
+
+    if command -v uv >/dev/null 2>&1; then
+        if uv tool install "$_extra_pkg" --python "$PYTHON_CMD" --upgrade >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Sync project dependencies (Dev mode)
+# Returns: 0 on success, 1 on failure
+sync_dependencies() {
+    _project_root=$(get_project_root)
+    if [ -z "$_project_root" ]; then
+        clack_error "$(i18n error_setup_failed)"
+        return 1
+    fi
+
+    clack_info "$(i18n info_project_dir): $_project_root"
+
+    cd "$_project_root"
+
+    if clack_spinner "$(i18n info_syncing_deps)" uv sync --all-extras --python "$PYTHON_CMD"; then
+        clack_success "$(i18n info_deps_synced)"
+        track_install "python_deps" "installed"
+        return 0
+    else
+        clack_error "$(i18n python_deps) $(i18n failed)"
+        track_install "python_deps" "failed"
+        return 1
+    fi
+}
+
+# Install pre-commit hooks (Dev mode)
+# Returns: 0 on success, 1 on failure
+install_precommit() {
+    _project_root=$(get_project_root)
+    if [ -z "$_project_root" ]; then
+        return 1
+    fi
+
+    cd "$_project_root"
+
+    if [ ! -f ".pre-commit-config.yaml" ]; then
+        clack_skip "$(i18n precommit)"
+        return 0
+    fi
+
+    if clack_spinner "$(i18n installing) $(i18n precommit)..." uv run pre-commit install; then
+        clack_success "$(i18n info_precommit_installed)"
+        track_install "precommit" "installed"
+        return 0
+    else
+        clack_warn "$(i18n precommit) $(i18n failed)"
+        return 1
+    fi
+}
+
+# Check if Playwright browser is installed
+# Returns: 0 if installed, 1 if not
+detect_playwright_browser() {
+    _pw_cache=""
+    case "$OS_TYPE" in
+        Darwin)
+            _pw_cache="$HOME/Library/Caches/ms-playwright"
+            ;;
+        Linux)
+            _pw_cache="$HOME/.cache/ms-playwright"
+            ;;
+    esac
+
+    if [ -n "$_pw_cache" ] && [ -d "$_pw_cache" ]; then
+        if ls "$_pw_cache"/chromium-* >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Install Playwright browser (Optional)
+# Returns: 0 on success, 1 on failure, 2 if skipped
+install_optional_playwright() {
+    # Check if already installed
+    if detect_playwright_browser; then
+        clack_success "$(i18n playwright) $(i18n already_installed)"
+        track_install "playwright" "installed"
+        return 0
+    fi
+
+    clack_info "$(i18n info_playwright_purpose)"
+
+    if ! clack_confirm "$(i18n confirm_playwright)" "y"; then
+        clack_skip "$(i18n playwright)"
+        track_install "playwright" "skipped"
+        return 2
+    fi
+
+    # Get playwright path from markitai's uv tool environment
+    _pw_cmd=""
+    if command -v uv >/dev/null 2>&1; then
+        _uv_tool_dir=$(uv tool dir 2>/dev/null)
+        if [ -n "$_uv_tool_dir" ] && [ -x "$_uv_tool_dir/markitai/bin/playwright" ]; then
+            _pw_cmd="$_uv_tool_dir/markitai/bin/playwright"
+        fi
+    fi
+
+    # Fallback to default path
+    if [ -z "$_pw_cmd" ] || [ ! -x "$_pw_cmd" ]; then
+        _pw_cmd="$HOME/.local/share/uv/tools/markitai/bin/playwright"
+    fi
+
+    # Install browser
+    _browser_installed=false
+    if [ -x "$_pw_cmd" ]; then
+        if clack_spinner "$(i18n installing) $(i18n playwright)..." "$_pw_cmd" install chromium; then
+            _browser_installed=true
+        fi
+    fi
+
+    # Fallback to Python module
+    if [ "$_browser_installed" = false ] && [ -n "$PYTHON_CMD" ]; then
+        if clack_spinner "$(i18n installing) $(i18n playwright)..." "$PYTHON_CMD" -m playwright install chromium; then
+            _browser_installed=true
+        fi
+    fi
+
+    if [ "$_browser_installed" = false ]; then
+        clack_error "$(i18n playwright) $(i18n failed)"
+        track_install "playwright" "failed"
+        return 1
+    fi
+
+    # On Linux, install system dependencies silently
+    if [ "$OS_TYPE" = "Linux" ]; then
+        if [ -f /etc/arch-release ]; then
+            _arch_deps="nss nspr at-spi2-core cups libdrm mesa alsa-lib libxcomposite libxdamage libxrandr libxkbcommon pango cairo noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-liberation"
+            sudo pacman -S --noconfirm --needed $_arch_deps >/dev/null 2>&1 || true
+        elif command -v apt-get >/dev/null 2>&1; then
+            if [ -x "$_pw_cmd" ]; then
+                "$_pw_cmd" install-deps chromium >/dev/null 2>&1 || true
+            elif [ -n "$PYTHON_CMD" ]; then
+                "$PYTHON_CMD" -m playwright install-deps chromium >/dev/null 2>&1 || true
+            fi
+        fi
+    fi
+
+    clack_success "$(i18n playwright) $(i18n installed)"
+    track_install "playwright" "installed"
+    return 0
+}
+
+# Install LibreOffice (Optional)
+# Returns: 0 on success, 1 on failure, 2 if skipped
+install_optional_libreoffice() {
+    # Check if already installed
+    if command -v soffice >/dev/null 2>&1; then
+        _lo_version=$(soffice --version 2>/dev/null | head -n1)
+        clack_success "$(i18n libreoffice): $_lo_version"
+        track_install "libreoffice" "installed"
+        return 0
+    fi
+
+    if command -v libreoffice >/dev/null 2>&1; then
+        _lo_version=$(libreoffice --version 2>/dev/null | head -n1)
+        clack_success "$(i18n libreoffice): $_lo_version"
+        track_install "libreoffice" "installed"
+        return 0
+    fi
+
+    clack_info "$(i18n info_libreoffice_purpose)"
+
+    if ! clack_confirm "$(i18n confirm_libreoffice)" "n"; then
+        clack_skip "$(i18n libreoffice)"
+        track_install "libreoffice" "skipped"
+        return 2
+    fi
+
+    clack_info "$(i18n installing) $(i18n libreoffice)..."
+
+    case "$OS_TYPE" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                if brew install --cask libreoffice >/dev/null 2>&1; then
+                    clack_success "$(i18n libreoffice) $(i18n installed)"
+                    track_install "libreoffice" "installed"
+                    return 0
+                fi
+            fi
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                if sudo apt update >/dev/null 2>&1 && sudo apt install -y libreoffice >/dev/null 2>&1; then
+                    clack_success "$(i18n libreoffice) $(i18n installed)"
+                    track_install "libreoffice" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/fedora-release ]; then
+                if sudo dnf install -y libreoffice >/dev/null 2>&1; then
+                    clack_success "$(i18n libreoffice) $(i18n installed)"
+                    track_install "libreoffice" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/arch-release ]; then
+                if sudo pacman -S --noconfirm libreoffice-fresh >/dev/null 2>&1; then
+                    clack_success "$(i18n libreoffice) $(i18n installed)"
+                    track_install "libreoffice" "installed"
+                    return 0
+                fi
+            fi
+            ;;
+    esac
+
+    clack_error "$(i18n libreoffice) $(i18n failed)"
+    track_install "libreoffice" "failed"
+    return 1
+}
+
+# Install FFmpeg (Optional)
+# Returns: 0 on success, 1 on failure, 2 if skipped
+install_optional_ffmpeg() {
+    # Check if already installed
+    if command -v ffmpeg >/dev/null 2>&1; then
+        _ff_version=$(ffmpeg -version 2>/dev/null | head -n1 | sed 's/ffmpeg version \([^ ]*\).*/\1/')
+        clack_success "$(i18n ffmpeg): $_ff_version"
+        track_install "ffmpeg" "installed"
+        return 0
+    fi
+
+    clack_info "$(i18n info_ffmpeg_purpose)"
+
+    if ! clack_confirm "$(i18n confirm_ffmpeg)" "n"; then
+        clack_skip "$(i18n ffmpeg)"
+        track_install "ffmpeg" "skipped"
+        return 2
+    fi
+
+    clack_info "$(i18n installing) $(i18n ffmpeg)..."
+
+    case "$OS_TYPE" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                if brew install ffmpeg >/dev/null 2>&1; then
+                    clack_success "$(i18n ffmpeg) $(i18n installed)"
+                    track_install "ffmpeg" "installed"
+                    return 0
+                fi
+            fi
+            ;;
+        Linux)
+            if [ -f /etc/debian_version ]; then
+                if sudo apt update >/dev/null 2>&1 && sudo apt install -y ffmpeg >/dev/null 2>&1; then
+                    clack_success "$(i18n ffmpeg) $(i18n installed)"
+                    track_install "ffmpeg" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/fedora-release ]; then
+                if sudo dnf install -y ffmpeg >/dev/null 2>&1; then
+                    clack_success "$(i18n ffmpeg) $(i18n installed)"
+                    track_install "ffmpeg" "installed"
+                    return 0
+                fi
+            elif [ -f /etc/arch-release ]; then
+                if sudo pacman -S --noconfirm ffmpeg >/dev/null 2>&1; then
+                    clack_success "$(i18n ffmpeg) $(i18n installed)"
+                    track_install "ffmpeg" "installed"
+                    return 0
+                fi
+            fi
+            ;;
+    esac
+
+    clack_error "$(i18n ffmpeg) $(i18n failed)"
+    track_install "ffmpeg" "failed"
+    return 1
+}
+
+# Install Claude Code CLI (Optional)
+# Returns: 0 on success, 1 on failure, 2 if skipped
+install_optional_claude_cli() {
+    # Check if already installed
+    if command -v claude >/dev/null 2>&1; then
+        _cl_version=$(claude --version 2>/dev/null | head -n1)
+        clack_success "$(i18n claude_cli): $_cl_version"
+        track_install "claude_cli" "installed"
+        return 0
+    fi
+
+    if ! clack_confirm "$(i18n confirm_claude_cli)" "n"; then
+        clack_skip "$(i18n claude_cli)"
+        track_install "claude_cli" "skipped"
+        return 2
+    fi
+
+    clack_info "$(i18n installing) $(i18n claude_cli)..."
+
+    # Try official install script
+    if curl -fsSL "https://claude.ai/install.sh" 2>/dev/null | bash >/dev/null 2>&1; then
+        if command -v claude >/dev/null 2>&1; then
+            clack_success "$(i18n claude_cli) $(i18n installed)"
+            # Also install the SDK extra
+            install_markitai_extra "claude-agent" || true
+            track_install "claude_cli" "installed"
+            return 0
+        fi
+    fi
+
+    # Fallback: npm/pnpm
+    if command -v pnpm >/dev/null 2>&1; then
+        if pnpm add -g @anthropic-ai/claude-code >/dev/null 2>&1; then
+            clack_success "$(i18n claude_cli) $(i18n installed)"
+            install_markitai_extra "claude-agent" || true
+            track_install "claude_cli" "installed"
+            return 0
+        fi
+    elif command -v npm >/dev/null 2>&1; then
+        if npm install -g @anthropic-ai/claude-code >/dev/null 2>&1; then
+            clack_success "$(i18n claude_cli) $(i18n installed)"
+            install_markitai_extra "claude-agent" || true
+            track_install "claude_cli" "installed"
+            return 0
+        fi
+    fi
+
+    clack_error "$(i18n claude_cli) $(i18n failed)"
+    track_install "claude_cli" "failed"
+    return 1
+}
+
+# Install Copilot CLI (Optional)
+# Returns: 0 on success, 1 on failure, 2 if skipped
+install_optional_copilot_cli() {
+    # Check if already installed
+    if command -v copilot >/dev/null 2>&1; then
+        _cp_version=$(copilot --version 2>/dev/null | head -n1)
+        clack_success "$(i18n copilot_cli): $_cp_version"
+        track_install "copilot_cli" "installed"
+        return 0
+    fi
+
+    if ! clack_confirm "$(i18n confirm_copilot_cli)" "n"; then
+        clack_skip "$(i18n copilot_cli)"
+        track_install "copilot_cli" "skipped"
+        return 2
+    fi
+
+    clack_info "$(i18n installing) $(i18n copilot_cli)..."
+
+    # Try official install script
+    if curl -fsSL "https://gh.io/copilot-install" 2>/dev/null | bash >/dev/null 2>&1; then
+        if command -v copilot >/dev/null 2>&1; then
+            clack_success "$(i18n copilot_cli) $(i18n installed)"
+            # Also install the SDK extra
+            install_markitai_extra "copilot" || true
+            track_install "copilot_cli" "installed"
+            return 0
+        fi
+    fi
+
+    # Fallback: npm/pnpm
+    if command -v pnpm >/dev/null 2>&1; then
+        if pnpm add -g @github/copilot >/dev/null 2>&1; then
+            clack_success "$(i18n copilot_cli) $(i18n installed)"
+            install_markitai_extra "copilot" || true
+            track_install "copilot_cli" "installed"
+            return 0
+        fi
+    elif command -v npm >/dev/null 2>&1; then
+        if npm install -g @github/copilot >/dev/null 2>&1; then
+            clack_success "$(i18n copilot_cli) $(i18n installed)"
+            install_markitai_extra "copilot" || true
+            track_install "copilot_cli" "installed"
+            return 0
+        fi
+    fi
+
+    clack_error "$(i18n copilot_cli) $(i18n failed)"
+    track_install "copilot_cli" "failed"
+    return 1
+}
+
+# Print installation summary
+# Usage: print_summary
+print_summary() {
+    clack_section "$(i18n section_summary)"
+
+    # Print installed components
+    if [ -n "$INSTALLED_COMPONENTS" ]; then
+        _installed_list=""
+        _ifs_old="$IFS"
+        IFS='|'
+        for _comp in $INSTALLED_COMPONENTS; do
+            [ -n "$_comp" ] && _installed_list="${_installed_list}${GREEN}✓${NC} $(i18n "$_comp")\n"
+        done
+        IFS="$_ifs_old"
+        if [ -n "$_installed_list" ]; then
+            clack_note "$(i18n summary_installed)" "$(printf '%b' "$_installed_list")"
+        fi
+    fi
+
+    # Print skipped components
+    if [ -n "$SKIPPED_COMPONENTS" ]; then
+        _skipped_list=""
+        _ifs_old="$IFS"
+        IFS='|'
+        for _comp in $SKIPPED_COMPONENTS; do
+            [ -n "$_comp" ] && _skipped_list="${_skipped_list}${YELLOW}○${NC} $(i18n "$_comp")\n"
+        done
+        IFS="$_ifs_old"
+        if [ -n "$_skipped_list" ]; then
+            clack_note "$(i18n summary_skipped)" "$(printf '%b' "$_skipped_list")"
+        fi
+    fi
+
+    # Print failed components
+    if [ -n "$FAILED_COMPONENTS" ]; then
+        _failed_list=""
+        _ifs_old="$IFS"
+        IFS='|'
+        for _comp in $FAILED_COMPONENTS; do
+            [ -n "$_comp" ] && _failed_list="${_failed_list}${RED}✗${NC} $(i18n "$_comp")\n"
+        done
+        IFS="$_ifs_old"
+        if [ -n "$_failed_list" ]; then
+            clack_note "$(i18n summary_failed)" "$(printf '%b' "$_failed_list")"
+        fi
+    fi
+
+    clack_info "$(i18n info_docs): https://markitai.ynewtime.com"
+    clack_info "$(i18n info_issues): https://github.com/Ynewtime/markitai/issues"
+}
+
+# Print user mode completion message
+# Usage: print_user_completion
+print_user_completion() {
+    clack_note "$(i18n getting_started)" \
+        "$(i18n interactive_mode):" \
+        "  ${CYAN}markitai -I${NC}" \
+        "" \
+        "$(i18n convert_file):" \
+        "  ${CYAN}markitai file.pdf${NC}" \
+        "" \
+        "$(i18n show_help):" \
+        "  ${CYAN}markitai --help${NC}"
+}
+
+# Print dev mode completion message
+# Usage: print_dev_completion
+print_dev_completion() {
+    _project_root=$(get_project_root)
+    clack_note "$(i18n quick_start)" \
+        "$(i18n activate_venv):" \
+        "  ${CYAN}source $_project_root/.venv/bin/activate${NC}" \
+        "" \
+        "$(i18n run_tests):" \
+        "  ${CYAN}uv run pytest${NC}" \
+        "" \
+        "$(i18n run_cli):" \
+        "  ${CYAN}uv run markitai --help${NC}"
+}
+
+# Initialize markitai config (silent)
+# Returns: 0 always
+init_config() {
+    if command -v markitai >/dev/null 2>&1; then
+        markitai config init --yes >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
+# ============================================================
 # Main Entry Point (placeholder for future implementation)
 # ============================================================
 
 # This file provides the foundation for the unified setup script.
-# The actual installation logic will be added in subsequent tasks.
-#
-# Future structure:
-# - main() function orchestrating the setup
-# - install_prerequisites() for uv and Python
-# - install_core() for markitai
-# - install_optional() for Playwright, LibreOffice, FFmpeg
-# - install_llm_cli() for Claude Code CLI, Copilot CLI
-# - setup_dev_env() for development environment
-# - print_summary() for installation summary
+# The main() function will be added in the next task to orchestrate
+# the complete setup flow for both user and dev modes.
