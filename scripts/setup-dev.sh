@@ -615,6 +615,43 @@ dev_install_ffmpeg() {
 }
 
 # ============================================================
+# Summary Function (clack style)
+# ============================================================
+
+dev_print_summary() {
+    # Installed
+    if [ -n "$INSTALLED_COMPONENTS" ]; then
+        clack_note "Installed" <<EOF
+$(echo "$INSTALLED_COMPONENTS" | tr '|' '\n' | while read -r comp; do
+    [ -n "$comp" ] && printf "✓ %s\n" "$comp"
+done)
+EOF
+    fi
+
+    # Skipped
+    if [ -n "$SKIPPED_COMPONENTS" ]; then
+        clack_note "Skipped" <<EOF
+$(echo "$SKIPPED_COMPONENTS" | tr '|' '\n' | while read -r comp; do
+    [ -n "$comp" ] && printf "○ %s\n" "$comp"
+done)
+EOF
+    fi
+
+    # Failed
+    if [ -n "$FAILED_COMPONENTS" ]; then
+        clack_note "Failed" <<EOF
+$(echo "$FAILED_COMPONENTS" | tr '|' '\n' | while read -r comp; do
+    [ -n "$comp" ] && printf "✗ %s\n" "$comp"
+done)
+EOF
+    fi
+
+    clack_info "Documentation: https://markitai.ynewtime.com"
+    clack_info "Issues: https://github.com/Ynewtime/markitai/issues"
+    return 0
+}
+
+# ============================================================
 # Main Logic
 # ============================================================
 
@@ -630,14 +667,14 @@ main() {
 
     # Detect/install UV (required, also manages Python)
     if ! dev_install_uv; then
-        print_summary
+        dev_print_summary
         clack_cancel "Setup failed: UV is required"
         exit 1
     fi
 
     # Detect/install Python (auto-installed via uv)
     if ! dev_detect_python; then
-        print_summary
+        dev_print_summary
         clack_cancel "Setup failed: Python 3.13 is required"
         exit 1
     fi
@@ -647,7 +684,7 @@ main() {
 
     # Sync dependencies (includes all extras: browser, claude-agent, copilot)
     if ! sync_dependencies; then
-        print_summary
+        dev_print_summary
         clack_cancel "Setup failed: Dependency sync failed"
         exit 1
     fi
@@ -704,7 +741,7 @@ main() {
     fi
 
     # Print summary
-    print_summary
+    dev_print_summary
 
     # Completion message with clack note and outro
     project_root=$(get_project_root)
