@@ -69,6 +69,50 @@ def get_install_hint(component: str, platform: str | None = None) -> str:
     )
 
 
+def _install_component(component: str) -> bool:
+    """Attempt to install a missing component.
+
+    Args:
+        component: Component name to install.
+
+    Returns:
+        True if installation succeeded.
+    """
+    console = get_console()
+    hint = get_install_hint(component)
+
+    console.print(f"[yellow]Installing {component}...[/yellow]")
+
+    # Only auto-install safe components
+    safe_components = {"playwright"}
+
+    if component not in safe_components:
+        console.print("[yellow]Please install manually:[/yellow]")
+        console.print(f"  {hint}")
+        return False
+
+    if component == "playwright":
+        try:
+            # Use uv to run playwright install
+            result = subprocess.run(
+                ["uv", "run", "playwright", "install", "chromium"],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if result.returncode == 0:
+                console.print(f"[green]✓[/green] {component} installed")
+                return True
+            else:
+                console.print(f"[red]✗[/red] Failed: {result.stderr}")
+                return False
+        except Exception as e:
+            console.print(f"[red]✗[/red] Error: {e}")
+            return False
+
+    return False
+
+
 from rich.panel import Panel
 from rich.table import Table
 
@@ -150,10 +194,14 @@ def _check_claude_auth() -> dict[str, str]:
         }
 
 
-def _doctor_impl(as_json: bool) -> None:
+def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     """Implementation of the doctor command.
 
     This function contains the core logic shared by both doctor and check_deps.
+
+    Args:
+        as_json: Output results as JSON.
+        fix: Attempt to install missing components.
     """
     from markitai.fetch_playwright import (
         clear_browser_cache,
@@ -566,6 +614,19 @@ def _doctor_impl(as_json: bool) -> None:
     else:
         console.print("[green]All dependencies are properly configured![/green]")
 
+    # Attempt to fix missing components if --fix flag is set
+    if fix and not as_json:
+        missing = [
+            key
+            for key, info in results.items()
+            if info["status"] in ("missing", "warning")
+        ]
+        if missing:
+            console.print()
+            console.print("[bold]Attempting to fix missing components...[/bold]")
+            for component in missing:
+                _install_component(component)
+
 
 @click.command("doctor")
 @click.option(
@@ -574,7 +635,12 @@ def _doctor_impl(as_json: bool) -> None:
     is_flag=True,
     help="Output as JSON.",
 )
-def doctor(as_json: bool) -> None:
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="Attempt to install missing components.",
+)
+def doctor(as_json: bool, fix: bool) -> None:
     """Check system health, dependencies, and authentication status.
 
     This command helps diagnose setup issues by verifying:
@@ -589,7 +655,7 @@ def doctor(as_json: bool) -> None:
 
     logger.disable("markitai")
     try:
-        _doctor_impl(as_json)
+        _doctor_impl(as_json, fix=fix)
     finally:
         logger.enable("markitai")
 
@@ -601,7 +667,12 @@ def doctor(as_json: bool) -> None:
     is_flag=True,
     help="Output as JSON.",
 )
-def check_deps(as_json: bool) -> None:
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="Attempt to install missing components.",
+)
+def check_deps(as_json: bool, fix: bool) -> None:
     """Check all optional dependencies and their status.
 
     This is an alias for 'doctor' command, kept for backward compatibility.
@@ -611,6 +682,6 @@ def check_deps(as_json: bool) -> None:
 
     logger.disable("markitai")
     try:
-        _doctor_impl(as_json)
+        _doctor_impl(as_json, fix=fix)
     finally:
         logger.enable("markitai")
