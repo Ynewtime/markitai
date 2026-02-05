@@ -222,39 +222,6 @@ zh_install_precommit() {
     return 0
 }
 
-# 检测 Node.js
-zh_detect_node() {
-    if ! command -v node >/dev/null 2>&1; then
-        clack_error "未找到 Node.js"
-        clack_warn "请安装 Node.js 18+:"
-        clack_info "官网下载: https://nodejs.org/"
-        clack_info "使用 nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash"
-        clack_info "使用 fnm: curl -fsSL https://fnm.vercel.app/install | bash"
-        clack_info "Ubuntu/Debian: sudo apt install nodejs npm"
-        clack_info "macOS: brew install node"
-        return 1
-    fi
-
-    version=$(node --version 2>/dev/null)
-    major=$(echo "$version" | sed 's/^v//' | cut -d. -f1)
-
-    # 校验是否为纯数字
-    case "$major" in
-        ''|*[!0-9]*)
-            clack_warn "无法解析 Node 版本: $version"
-            return 1
-            ;;
-    esac
-
-    if [ "$major" -ge 18 ]; then
-        clack_success "Node.js $version 已安装"
-        return 0
-    else
-        clack_warn "Node.js $version 版本较低，建议 18+"
-        return 0
-    fi
-}
-
 # 安装 Claude Code CLI
 zh_install_claude_cli() {
     clack_info "正在安装 Claude Code CLI..."
@@ -748,9 +715,6 @@ main() {
         clack_cancel "配置失败"
         exit 1
     fi
-
-    # 检测 Node.js（可选但推荐）
-    zh_detect_node || true
 
     # 步骤 3: 同步依赖（包含所有 extras: browser, claude-agent, copilot）
     clack_section "配置开发环境"
