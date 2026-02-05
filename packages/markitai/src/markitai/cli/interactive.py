@@ -176,6 +176,19 @@ def prompt_input_path(session: InteractiveSession) -> Path | str | None:
     return None
 
 
+def prompt_output_dir(session: InteractiveSession) -> Path:
+    """Prompt user for output directory."""
+    result = questionary.path(
+        "Enter output directory:",
+        default=str(session.output_dir),
+        only_directories=True,
+    ).ask()
+
+    if result:
+        session.output_dir = Path(result)
+    return session.output_dir
+
+
 def prompt_enable_llm(session: InteractiveSession) -> bool:
     """Prompt user to enable LLM enhancement."""
     # First, detect available providers
@@ -370,15 +383,18 @@ def run_interactive() -> InteractiveSession:
         console.print("[red]✗[/red] No input path provided. Exiting.")
         raise SystemExit(1)
 
-    # 3. LLM enablement
+    # 3. Output directory
+    prompt_output_dir(session)
+
+    # 4. LLM enablement
     prompt_enable_llm(session)
 
-    # 4. Configure provider if needed
+    # 5. Configure provider if needed
     if session.enable_llm and not session.provider_result:
         if not prompt_configure_provider(session):
             session.enable_llm = False
 
-    # 5. LLM options
+    # 6. LLM options
     if session.enable_llm:
         prompt_llm_options(session)
 
