@@ -158,9 +158,8 @@ sync_dependencies() {
     cd "$project_root"
 
     # CRITICAL: Use --python to specify the detected Python version
-    clack_info "Running uv sync --all-extras --python $PYTHON_CMD..."
-    if uv sync --all-extras --python "$PYTHON_CMD"; then
-        clack_success "Dependencies synced successfully (using $PYTHON_CMD)"
+    if clack_spinner "Syncing dependencies..." uv sync --all-extras --python "$PYTHON_CMD"; then
+        clack_success "Dependencies synced"
         return 0
     else
         clack_error "Dependency sync failed"
@@ -174,13 +173,12 @@ install_precommit() {
     cd "$project_root"
 
     if [ -f ".pre-commit-config.yaml" ]; then
-        clack_info "Installing pre-commit hooks..."
-
-        if uv run pre-commit install; then
+        if clack_spinner "Installing pre-commit hooks..." uv run pre-commit install; then
             clack_success "pre-commit hooks installed"
             return 0
         else
-            clack_warn "pre-commit installation failed, please run manually: uv run pre-commit install"
+            clack_warn "pre-commit installation failed"
+            clack_info "Run manually: uv run pre-commit install"
             return 0
         fi
     else

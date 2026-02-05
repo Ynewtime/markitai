@@ -193,8 +193,7 @@ zh_sync_dependencies() {
     cd "$project_root"
 
     # 关键: 使用 --python 指定检测到的 Python 版本
-    clack_info "运行 uv sync --all-extras..."
-    if uv sync --all-extras --python "$PYTHON_CMD"; then
+    if clack_spinner "正在同步依赖..." uv sync --all-extras --python "$PYTHON_CMD"; then
         clack_success "依赖同步完成"
         return 0
     else
@@ -209,9 +208,7 @@ zh_install_precommit() {
     cd "$project_root"
 
     if [ -f ".pre-commit-config.yaml" ]; then
-        clack_info "安装 pre-commit hooks..."
-
-        if uv run pre-commit install; then
+        if clack_spinner "安装 pre-commit hooks..." uv run pre-commit install; then
             clack_success "pre-commit hooks 安装完成"
             return 0
         else
