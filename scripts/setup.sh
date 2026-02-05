@@ -42,6 +42,10 @@ i18n() {
             setup_complete)             echo "安装完成!" ;;
             dev_setup_complete)         echo "开发环境设置完成!" ;;
 
+            # Mode
+            mode_user)                  echo "模式: 用户安装" ;;
+            mode_dev)                   echo "模式: 开发环境" ;;
+
             # Sections
             section_prerequisites)      echo "前置条件" ;;
             section_core)               echo "核心组件" ;;
@@ -124,6 +128,10 @@ i18n() {
             welcome)                    echo "Welcome to Markitai Setup!" ;;
             setup_complete)             echo "Setup complete!" ;;
             dev_setup_complete)         echo "Development environment ready!" ;;
+
+            # Mode
+            mode_user)                  echo "Mode: User Install" ;;
+            mode_dev)                   echo "Mode: Development" ;;
 
             # Sections
             section_prerequisites)      echo "Prerequisites" ;;
@@ -1123,6 +1131,7 @@ init_config() {
 # User mode main flow
 run_user_setup() {
     clack_intro "$(i18n welcome)"
+    clack_info "$(i18n mode_user)"
     warn_if_root
 
     clack_section "$(i18n section_core)"
@@ -1149,6 +1158,7 @@ run_user_setup() {
 # Dev mode main flow
 run_dev_setup() {
     clack_intro "$(i18n welcome)"
+    clack_info "$(i18n mode_dev)"
     warn_if_root
 
     clack_section "$(i18n section_prerequisites)"
