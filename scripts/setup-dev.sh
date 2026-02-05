@@ -326,11 +326,18 @@ dev_install_llm_clis() {
 # Uses uv run (preferred) with fallback to python module
 # Returns: 0 on success, 1 on failure, 2 if skipped
 dev_install_playwright_browser() {
-    clack_info "Playwright browser (Chromium):"
-    clack_log "  Purpose: Browser automation for JavaScript-rendered pages (Twitter, SPAs)"
-
     project_root=$(get_project_root)
     cd "$project_root"
+
+    # Check if already installed
+    if lib_detect_playwright_browser; then
+        clack_success "Playwright browser (Chromium)"
+        track_install "Playwright Browser" "installed"
+        return 0
+    fi
+
+    clack_info "Playwright browser (Chromium):"
+    clack_log "  Purpose: Browser automation for JavaScript-rendered pages (Twitter, SPAs)"
 
     # Ask user consent before downloading
     if ! clack_confirm "Download Chromium browser?" "y"; then
