@@ -12,6 +12,11 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import questionary
+from rich.console import Console
+
+console = Console()
+
 
 @dataclass
 class ProviderDetectionResult:
@@ -121,3 +126,213 @@ class InteractiveSession:
     enable_ocr: bool = False
     enable_screenshot: bool = False
     provider_result: ProviderDetectionResult | None = None
+
+
+def prompt_input_type(session: InteractiveSession) -> str:
+    """Prompt user to select input type."""
+    choices = [
+        questionary.Choice("Single file", value="file"),
+        questionary.Choice("Directory (batch)", value="directory"),
+        questionary.Choice("URL", value="url"),
+    ]
+    result = questionary.select(
+        "What would you like to convert?",
+        choices=choices,
+        style=questionary.Style(
+            [
+                ("highlighted", "bold"),
+                ("selected", "fg:cyan"),
+            ]
+        ),
+    ).ask()
+
+    if result:
+        session.input_type = result
+    return result or "file"
+
+
+def prompt_input_path(session: InteractiveSession) -> Path | None:
+    """Prompt user for input path."""
+    if session.input_type == "url":
+        result = questionary.text(
+            "Enter URL:",
+            validate=lambda x: len(x) > 0 or "URL cannot be empty",
+        ).ask()
+    elif session.input_type == "directory":
+        result = questionary.path(
+            "Enter directory path:",
+            only_directories=True,
+        ).ask()
+    else:
+        result = questionary.path(
+            "Enter file path:",
+        ).ask()
+
+    if result:
+        session.input_path = (
+            Path(result) if session.input_type != "url" else Path(result)
+        )
+        return session.input_path
+    return None
+
+
+def prompt_enable_llm(session: InteractiveSession) -> bool:
+    """Prompt user to enable LLM enhancement."""
+    # First, detect available providers
+    session.provider_result = detect_llm_provider()
+
+    if session.provider_result:
+        provider_info = (
+            f"Detected: {session.provider_result.provider} "
+            f"({session.provider_result.source})"
+        )
+        console.print(f"[green]✓[/green] {provider_info}")
+
+    result = questionary.confirm(
+        "Enable LLM enhancement? (better formatting, metadata)",
+        default=session.provider_result is not None,
+    ).ask()
+
+    if result is not None:
+        session.enable_llm = result
+    return session.enable_llm
+
+
+def prompt_llm_options(session: InteractiveSession) -> None:
+    """Prompt user for LLM-related options."""
+    if not session.enable_llm:
+        return
+
+    choices = questionary.checkbox(
+        "Select LLM features:",
+        choices=[
+            questionary.Choice(
+                "Generate alt text for images", value="alt", checked=True
+            ),
+            questionary.Choice(
+                "Generate image descriptions (JSON)", value="desc", checked=False
+            ),
+            questionary.Choice(
+                "Enable OCR for scanned documents", value="ocr", checked=True
+            ),
+            questionary.Choice(
+                "Take page screenshots", value="screenshot", checked=False
+            ),
+        ],
+    ).ask()
+
+    if choices:
+        session.enable_alt = "alt" in choices
+        session.enable_desc = "desc" in choices
+        session.enable_ocr = "ocr" in choices
+        session.enable_screenshot = "screenshot" in choices
+
+
+def prompt_configure_provider(session: InteractiveSession) -> bool:
+    """Prompt user to configure LLM provider if none detected."""
+    if session.provider_result:
+        return True
+
+    console.print("[yellow]![/yellow] No LLM provider detected.")
+
+    choices = [
+        questionary.Choice("Auto-detect (Claude CLI / Copilot CLI)", value="auto"),
+        questionary.Choice("Enter API key manually", value="manual"),
+        questionary.Choice("Use .env file", value="env"),
+        questionary.Choice("Skip for now", value="skip"),
+    ]
+
+    result = questionary.select(
+        "How would you like to configure LLM?",
+        choices=choices,
+    ).ask()
+
+    if result == "skip":
+        session.enable_llm = False
+        return False
+
+    if result == "manual":
+        return _prompt_manual_api_key(session)
+
+    if result == "env":
+        return _prompt_env_file(session)
+
+    return False
+
+
+def _prompt_manual_api_key(session: InteractiveSession) -> bool:
+    """Prompt for manual API key entry."""
+    provider = questionary.select(
+        "Select provider:",
+        choices=[
+            questionary.Choice("Anthropic (Claude)", value="anthropic"),
+            questionary.Choice("OpenAI (GPT-4o)", value="openai"),
+            questionary.Choice("Google (Gemini)", value="gemini"),
+        ],
+    ).ask()
+
+    if not provider:
+        return False
+
+    api_key = questionary.password(
+        f"Enter {provider.upper()} API key:",
+    ).ask()
+
+    if not api_key:
+        return False
+
+    # Save to config
+    from markitai.config import ConfigManager, LiteLLMParams, ModelConfig
+
+    model_map = {
+        "anthropic": "anthropic/claude-sonnet-4-20250514",
+        "openai": "openai/gpt-4o",
+        "gemini": "gemini/gemini-2.0-flash",
+    }
+
+    manager = ConfigManager()
+    cfg = manager.load()
+    cfg.llm.model_list = [
+        ModelConfig(
+            model_name="default",
+            litellm_params=LiteLLMParams(model=model_map[provider], api_key=api_key),
+        )
+    ]
+    manager.save()
+
+    session.provider_result = ProviderDetectionResult(
+        provider=provider,
+        model=model_map[provider],
+        authenticated=True,
+        source="manual",
+    )
+
+    console.print("[green]✓[/green] API key saved to config")
+    return True
+
+
+def _prompt_env_file(session: InteractiveSession) -> bool:
+    """Prompt for .env file location."""
+    env_path = questionary.path(
+        "Enter .env file path:",
+        default=".env",
+    ).ask()
+
+    if not env_path or not Path(env_path).exists():
+        console.print("[red]✗[/red] .env file not found")
+        return False
+
+    # Load .env file
+    from dotenv import load_dotenv
+
+    load_dotenv(env_path)
+
+    # Re-detect provider
+    session.provider_result = detect_llm_provider()
+
+    if session.provider_result:
+        console.print(f"[green]✓[/green] Detected: {session.provider_result.provider}")
+        return True
+
+    console.print("[red]✗[/red] No API key found in .env file")
+    return False
