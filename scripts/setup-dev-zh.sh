@@ -753,12 +753,33 @@ main() {
 
     # 步骤 5: LLM CLI 工具
     clack_section "LLM CLI 工具"
-    if clack_confirm "是否安装 LLM CLI 工具 (Claude Code / Copilot)?" "n"; then
-        zh_install_llm_clis
+
+    # 自动检测 Claude Code CLI
+    if command -v claude >/dev/null 2>&1; then
+        version=$(claude --version 2>/dev/null | head -n1)
+        clack_success "Claude Code CLI 已安装: $version"
+        track_install "Claude Code CLI" "installed"
     else
-        clack_skip "跳过 LLM CLI 安装"
-        track_install "Claude Code CLI" "skipped"
-        track_install "Copilot CLI" "skipped"
+        if clack_confirm "是否安装 Claude Code CLI?" "n"; then
+            zh_install_claude_cli
+        else
+            clack_skip "Claude Code CLI"
+            track_install "Claude Code CLI" "skipped"
+        fi
+    fi
+
+    # 自动检测 Copilot CLI
+    if command -v copilot >/dev/null 2>&1; then
+        version=$(copilot --version 2>/dev/null | head -n1)
+        clack_success "Copilot CLI 已安装: $version"
+        track_install "Copilot CLI" "installed"
+    else
+        if clack_confirm "是否安装 GitHub Copilot CLI?" "n"; then
+            zh_install_copilot_cli
+        else
+            clack_skip "Copilot CLI"
+            track_install "Copilot CLI" "skipped"
+        fi
     fi
 
     # 打印总结

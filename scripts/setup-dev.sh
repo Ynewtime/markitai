@@ -674,12 +674,33 @@ main() {
 
     # Section: LLM CLI tools
     clack_section "LLM CLI tools"
-    if clack_confirm "Install LLM CLI tools (Claude Code / Copilot)?" "n"; then
-        dev_install_llm_clis
+
+    # Auto-detect Claude Code CLI
+    if command -v claude >/dev/null 2>&1; then
+        version=$(claude --version 2>/dev/null | head -n1)
+        clack_success "Claude Code CLI: $version"
+        track_install "Claude Code CLI" "installed"
     else
-        clack_skip "LLM CLI installation"
-        track_install "Claude Code CLI" "skipped"
-        track_install "Copilot CLI" "skipped"
+        if clack_confirm "Install Claude Code CLI?" "n"; then
+            dev_install_claude_cli
+        else
+            clack_skip "Claude Code CLI"
+            track_install "Claude Code CLI" "skipped"
+        fi
+    fi
+
+    # Auto-detect Copilot CLI
+    if command -v copilot >/dev/null 2>&1; then
+        version=$(copilot --version 2>/dev/null | head -n1)
+        clack_success "Copilot CLI: $version"
+        track_install "Copilot CLI" "installed"
+    else
+        if clack_confirm "Install GitHub Copilot CLI?" "n"; then
+            dev_install_copilot_cli
+        else
+            clack_skip "Copilot CLI"
+            track_install "Copilot CLI" "skipped"
+        fi
     fi
 
     # Print summary
