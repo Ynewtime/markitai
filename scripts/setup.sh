@@ -49,67 +49,60 @@ main() {
     # Security check: warn if running as root
     warn_if_root
 
-    # Welcome message
-    print_welcome_user
+    # Header
+    print_header "Markitai Setup"
 
-    print_header "Markitai Setup Wizard"
+    # Core installation
+    lib_install_uv || exit 1
+    lib_detect_python || exit 1
+    lib_install_markitai || exit 1
 
-    # Step 1: Detect/install UV (required, manages Python)
-    print_step 1 5 "Detecting UV package manager..."
-    if ! lib_install_uv; then
-        print_summary
-        exit 1
-    fi
+    # Optional components
+    printf "\n"
+    printf "  ${BOLD}Optional components:${NC}\n"
 
-    # Step 2: Detect/install Python (auto-installed via uv)
-    print_step 2 5 "Detecting Python..."
-    if ! lib_detect_python; then
-        exit 1
-    fi
-
-    # Step 3: Install markitai
-    print_step 3 5 "Installing markitai..."
-    if ! lib_install_markitai; then
-        print_summary
-        exit 1
-    fi
-
-    # Install Playwright browser (required for SPA/JS-rendered pages)
-    lib_install_playwright_browser
-
-    # Install LibreOffice (optional, for legacy Office files)
-    lib_install_libreoffice
-
-    # Install FFmpeg (optional, for audio/video files)
-    lib_install_ffmpeg
-
-    # Step 4: Optional - LLM CLI tools
-    print_step 4 5 "Optional: LLM CLI tools"
-    print_info "LLM CLI tools provide local authentication for AI providers"
-    if ask_yes_no "Install Claude Code CLI?" "n"; then
-        if lib_install_claude_cli; then
-            # Install Claude Agent SDK for programmatic access
-            lib_install_markitai_extra "claude-agent"
-        fi
+    if ask_yes_no "Playwright browser (for JS-rendered pages)?" "y"; then
+        lib_install_playwright_browser
     else
+        print_status skip "Playwright browser"
+        track_install "Playwright Browser" "skipped"
+    fi
+
+    if ask_yes_no "LibreOffice (for .doc/.xls/.ppt)?" "n"; then
+        lib_install_libreoffice
+    else
+        print_status skip "LibreOffice"
+        track_install "LibreOffice" "skipped"
+    fi
+
+    if ask_yes_no "FFmpeg (for audio/video)?" "n"; then
+        lib_install_ffmpeg
+    else
+        print_status skip "FFmpeg"
+        track_install "FFmpeg" "skipped"
+    fi
+
+    if ask_yes_no "Claude Code CLI?" "n"; then
+        lib_install_claude_cli && lib_install_markitai_extra "claude-agent"
+    else
+        print_status skip "Claude Code CLI"
         track_install "Claude Code CLI" "skipped"
     fi
-    if ask_yes_no "Install GitHub Copilot CLI?" "n"; then
-        if lib_install_copilot_cli; then
-            # Install Copilot SDK for programmatic access
-            lib_install_markitai_extra "copilot"
-        fi
+
+    if ask_yes_no "GitHub Copilot CLI?" "n"; then
+        lib_install_copilot_cli && lib_install_markitai_extra "copilot"
     else
+        print_status skip "Copilot CLI"
         track_install "Copilot CLI" "skipped"
     fi
 
-    # Initialize config
-    lib_init_config
+    # Initialize config silently
+    lib_init_config >/dev/null 2>&1
 
-    # Print summary
+    # Summary
     print_summary
 
-    # Complete
+    # Get started
     lib_print_completion
 }
 

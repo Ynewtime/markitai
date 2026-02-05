@@ -116,6 +116,28 @@ print_warning() {
     printf "  ${YELLOW}!${NC} %s\n" "$1"
 }
 
+# Run command silently, only show output on error
+run_silent() {
+    _rs_output=$("$@" 2>&1)
+    _rs_status=$?
+    if [ $_rs_status -ne 0 ]; then
+        printf "%s\n" "$_rs_output" >&2
+    fi
+    return $_rs_status
+}
+
+# Simplified status output (single line)
+print_status() {
+    _ps_status="$1"
+    _ps_message="$2"
+    case "$_ps_status" in
+        ok)      printf "  ${GREEN}✓${NC} %s\n" "$_ps_message" ;;
+        skip)    printf "  ${YELLOW}○${NC} %s\n" "$_ps_message" ;;
+        fail)    printf "  ${RED}✗${NC} %s\n" "$_ps_message" ;;
+        info)    printf "  ${CYAN}→${NC} %s\n" "$_ps_message" ;;
+    esac
+}
+
 # ============================================================
 # User Interaction
 # ============================================================
@@ -240,24 +262,24 @@ lib_detect_python() {
         if [ -n "$uv_python" ] && [ -x "$uv_python" ]; then
             PYTHON_CMD="$uv_python"
             ver=$("$uv_python" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
-            print_success "Python $ver (uv managed)"
+            print_status ok "Python $ver"
             return 0
         fi
 
         # Not found, auto-install
-        print_info "Installing Python 3.13..."
-        if uv python install 3.13; then
+        print_status info "Installing Python 3.13..."
+        if uv python install 3.13 >/dev/null 2>&1; then
             uv_python=$(uv python find 3.13 2>/dev/null)
             if [ -n "$uv_python" ] && [ -x "$uv_python" ]; then
                 PYTHON_CMD="$uv_python"
                 ver=$("$uv_python" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
-                print_success "Python $ver installed (uv managed)"
+                print_status ok "Python $ver installed"
                 return 0
             fi
         fi
-        print_error "Python 3.13 installation failed"
+        print_status fail "Python 3.13 installation failed"
     else
-        print_error "uv not installed, cannot manage Python"
+        print_status fail "uv not installed"
     fi
 
     return 1
@@ -335,30 +357,20 @@ lib_detect_uv() {
 # ============================================================
 
 # Install UV package manager
-# Returns: 0 on success, 1 on failure, 2 if skipped
+# Returns: 0 on success, 1 on failure
 lib_install_uv() {
-    print_info "Checking UV installation..."
-
-    if lib_detect_uv; then
+    if command -v uv >/dev/null 2>&1; then
+        version=$(uv --version 2>/dev/null | head -n1 | cut -d' ' -f2)
+        print_status ok "uv $version"
         track_install "uv" "installed"
         return 0
     fi
 
-    print_info "UV not installed (required for Python and dependency management)"
-
-    if ! ask_yes_no "Install UV automatically?" "y"; then
-        print_error "UV is required, cannot continue"
-        track_install "uv" "failed"
-        return 1
-    fi
+    print_status info "Installing uv..."
 
     # Check curl availability
     if ! command -v curl >/dev/null 2>&1; then
-        print_error "curl not found, cannot download UV installer"
-        print_info "Please install curl first:"
-        print_info "  Ubuntu/Debian: sudo apt install curl"
-        print_info "  macOS: brew install curl"
-        print_info "  Or install UV manually: https://docs.astral.sh/uv/getting-started/installation/"
+        print_status fail "curl not found"
         track_install "uv" "failed"
         return 1
     fi
@@ -366,73 +378,44 @@ lib_install_uv() {
     # Build install URL (with optional version)
     if [ -n "$UV_VERSION" ]; then
         uv_url="https://astral.sh/uv/$UV_VERSION/install.sh"
-        print_info "Installing UV version: $UV_VERSION"
     else
         uv_url="https://astral.sh/uv/install.sh"
     fi
 
-    # Confirm remote script execution
-    if ! confirm_remote_script "$uv_url" "UV"; then
-        print_info "Skipping UV installation"
-        track_install "uv" "skipped"
-        return 2  # Skipped
-    fi
-
-    print_info "Installing UV..."
-
-    if curl -LsSf "$uv_url" | sh; then
-        # Refresh PATH
+    if curl -LsSf "$uv_url" 2>/dev/null | sh >/dev/null 2>&1; then
         export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-
         if command -v uv >/dev/null 2>&1; then
-            version=$(uv --version 2>/dev/null | head -n1)
-            print_success "$version installed successfully"
+            version=$(uv --version 2>/dev/null | head -n1 | cut -d' ' -f2)
+            print_status ok "uv $version installed"
             track_install "uv" "installed"
             return 0
-        else
-            print_warning "UV installed, but shell needs to be reloaded"
-            print_path_help "$HOME/.local/bin"
-            print_info "Then run this script again"
-            track_install "uv" "installed"
-            return 1
         fi
-    else
-        print_error "UV installation failed"
-        if ! check_network; then
-            print_network_error
-        else
-            print_info "Manual install: curl -LsSf https://astral.sh/uv/install.sh | sh"
-        fi
-        track_install "uv" "failed"
-        return 1
     fi
+
+    print_status fail "uv installation failed"
+    track_install "uv" "failed"
+    return 1
 }
 
 # Install markitai
 # Requires: PYTHON_CMD to be set
 # Returns: 0 on success, 1 on failure
 lib_install_markitai() {
-    print_info "Installing markitai..."
+    print_status info "Installing markitai..."
 
     # Build package spec with optional version
-    # Note: Use [browser] instead of [all] to avoid installing unnecessary SDK packages
-    # SDK packages (claude-agent, copilot) will be installed when user selects CLI tools
     if [ -n "$MARKITAI_VERSION" ]; then
         pkg="markitai[browser]==$MARKITAI_VERSION"
-        print_info "Installing version: $MARKITAI_VERSION"
     else
         pkg="markitai[browser]"
     fi
 
     # Prefer uv tool install (recommended, installs to ~/.local/bin)
     if command -v uv >/dev/null 2>&1; then
-        # CRITICAL: Use --python to specify the detected Python version
-        # Use --upgrade to ensure latest version is installed
-        if uv tool install "$pkg" --python "$PYTHON_CMD" --upgrade 2>/dev/null; then
+        if uv tool install "$pkg" --python "$PYTHON_CMD" --upgrade >/dev/null 2>&1; then
             export PATH="$HOME/.local/bin:$PATH"
             version=$(markitai --version 2>/dev/null || echo "installed")
-            print_success "markitai $version installed successfully"
-            print_info "Installed to ~/.local/bin (using $PYTHON_CMD)"
+            print_status ok "markitai $version"
             track_install "markitai" "installed"
             return 0
         fi
@@ -440,58 +423,35 @@ lib_install_markitai() {
 
     # Fallback to pipx
     if command -v pipx >/dev/null 2>&1; then
-        # Use --force to ensure latest version is installed
-        if pipx install "$pkg" --python "$PYTHON_CMD" --force; then
+        if pipx install "$pkg" --python "$PYTHON_CMD" --force >/dev/null 2>&1; then
             version=$(markitai --version 2>/dev/null || echo "installed")
-            print_success "markitai $version installed successfully"
+            print_status ok "markitai $version"
             track_install "markitai" "installed"
             return 0
         fi
     fi
 
     # Fallback to pip --user
-    # Use --upgrade to ensure latest version is installed
-    if "$PYTHON_CMD" -m pip install --user --upgrade "$pkg" 2>/dev/null; then
+    if "$PYTHON_CMD" -m pip install --user --upgrade "$pkg" >/dev/null 2>&1; then
         export PATH="$HOME/.local/bin:$PATH"
         version=$(markitai --version 2>/dev/null || echo "installed")
-        print_success "markitai $version installed successfully"
-        print_path_help "$HOME/.local/bin"
+        print_status ok "markitai $version"
         track_install "markitai" "installed"
         return 0
     fi
 
-    print_error "markitai installation failed"
-    # Check if network issue
-    if ! check_network; then
-        print_network_error
-    else
-        print_info "Manual install: uv tool install markitai --python $PYTHON_CMD"
-    fi
+    print_status fail "markitai installation failed"
     track_install "markitai" "failed"
     return 1
 }
 
 # Install Playwright browser (Chromium) and system dependencies
 # Requires: markitai/playwright to be installed
-# Security: Use uv tool environment's playwright to ensure correct version
 # Returns: 0 on success, 1 on failure, 2 if skipped
 lib_install_playwright_browser() {
-    print_info "Playwright browser (Chromium):"
-    print_info "  Purpose: Browser automation for JavaScript-rendered pages (Twitter, SPAs)"
-
-    # Ask user consent before downloading
-    if ! ask_yes_no "Download Chromium browser?" "y"; then
-        print_info "Skipping Playwright browser installation"
-        track_install "Playwright Browser" "skipped"
-        return 2
-    fi
-
-    print_info "Downloading Chromium browser..."
     browser_installed=false
 
-    # Method 1: Use playwright from markitai's uv tool environment (preferred)
-    # This ensures we use the same playwright version that markitai depends on
-    # Use 'uv tool dir' to get the correct path (respects UV_TOOL_DIR, XDG_DATA_HOME)
+    # Get playwright path from markitai's uv tool environment
     markitai_playwright=""
     if command -v uv >/dev/null 2>&1; then
         uv_tool_dir=$(uv tool dir 2>/dev/null)
@@ -499,303 +459,144 @@ lib_install_playwright_browser() {
             markitai_playwright="$uv_tool_dir/markitai/bin/playwright"
         fi
     fi
-    # Fallback to default path if uv tool dir detection failed
+    # Fallback to default path
     if [ -z "$markitai_playwright" ] || [ ! -x "$markitai_playwright" ]; then
         markitai_playwright="$HOME/.local/share/uv/tools/markitai/bin/playwright"
     fi
 
+    # Install browser silently
     if [ -x "$markitai_playwright" ]; then
-        if "$markitai_playwright" install chromium 2>/dev/null; then
-            print_success "Chromium browser downloaded successfully"
+        if "$markitai_playwright" install chromium >/dev/null 2>&1; then
             browser_installed=true
         fi
     fi
 
-    # Method 2: Fallback to Python module (for pip/pipx installs)
+    # Fallback to Python module
     if [ "$browser_installed" = false ] && [ -n "$PYTHON_CMD" ]; then
-        if "$PYTHON_CMD" -m playwright install chromium 2>/dev/null; then
-            print_success "Chromium browser downloaded successfully"
+        if "$PYTHON_CMD" -m playwright install chromium >/dev/null 2>&1; then
             browser_installed=true
         fi
     fi
 
     if [ "$browser_installed" = false ]; then
-        print_warning "Playwright browser installation failed"
-        print_info "You can install later with: playwright install chromium"
+        print_status fail "Playwright browser"
         track_install "Playwright Browser" "failed"
         return 1
     fi
 
-    # On Linux, install system dependencies (requires sudo)
+    # On Linux, install system dependencies silently
     if [ "$(uname)" = "Linux" ]; then
-        print_info "Chromium requires system dependencies on Linux"
-        if ask_yes_no "Install system dependencies (requires sudo)?" "y"; then
-            print_info "Installing system dependencies..."
-
-            # Arch Linux: use pacman (playwright install-deps doesn't support Arch)
-            if [ -f /etc/arch-release ]; then
-                print_info "Detected Arch Linux, using pacman..."
-                # Playwright Chromium core dependencies
-                local arch_deps="nss nspr at-spi2-core cups libdrm mesa alsa-lib libxcomposite libxdamage libxrandr libxkbcommon pango cairo"
-                # Optional fonts (better CJK support)
-                local arch_fonts="noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-liberation"
-                if sudo pacman -S --noconfirm --needed $arch_deps $arch_fonts 2>/dev/null; then
-                    print_success "System dependencies installed successfully"
-                    track_install "Playwright Browser" "installed"
-                    return 0
-                else
-                    print_warning "Some dependencies failed to install"
-                    print_info "Manual install: sudo pacman -S $arch_deps"
-                fi
-            # Debian/Ubuntu: use playwright install-deps
-            elif command -v apt-get >/dev/null 2>&1; then
-                # Method 1: Use playwright from markitai's uv tool environment
-                if [ -x "$markitai_playwright" ]; then
-                    if "$markitai_playwright" install-deps chromium 2>/dev/null; then
-                        print_success "System dependencies installed successfully"
-                        track_install "Playwright Browser" "installed"
-                        return 0
-                    fi
-                fi
-                # Method 2: Fallback to Python module
-                if [ -n "$PYTHON_CMD" ]; then
-                    if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
-                        print_success "System dependencies installed successfully"
-                        track_install "Playwright Browser" "installed"
-                        return 0
-                    fi
-                fi
-                print_warning "System dependencies installation failed"
-                print_info "Manual install: sudo playwright install-deps chromium"
-                print_info "Or: sudo apt install libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxkbcommon0 libxdamage1 libgbm1 libpango-1.0-0 libcairo2 libasound2"
-            # Other distros
-            else
-                print_warning "Unrecognized Linux distribution"
-                print_info "Please install Chromium dependencies manually"
+        if [ -f /etc/arch-release ]; then
+            arch_deps="nss nspr at-spi2-core cups libdrm mesa alsa-lib libxcomposite libxdamage libxrandr libxkbcommon pango cairo noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-liberation"
+            sudo pacman -S --noconfirm --needed $arch_deps >/dev/null 2>&1 || true
+        elif command -v apt-get >/dev/null 2>&1; then
+            if [ -x "$markitai_playwright" ]; then
+                "$markitai_playwright" install-deps chromium >/dev/null 2>&1 || true
+            elif [ -n "$PYTHON_CMD" ]; then
+                "$PYTHON_CMD" -m playwright install-deps chromium >/dev/null 2>&1 || true
             fi
-            track_install "Playwright Browser" "installed"
-            return 0
-        else
-            print_warning "Skipped system dependencies installation"
-            print_info "Chromium may not work"
-            if [ -f /etc/arch-release ]; then
-                print_info "Install later: sudo pacman -S nss nspr at-spi2-core cups libdrm mesa alsa-lib"
-            else
-                print_info "Install later: sudo playwright install-deps chromium"
-            fi
-            track_install "Playwright Browser" "installed"
-            return 0
         fi
     fi
 
+    print_status ok "Playwright browser"
     track_install "Playwright Browser" "installed"
     return 0
 }
 
 # Install LibreOffice (optional)
-# LibreOffice is required for converting .doc, .ppt, .xls files
-# Returns: 0 on success, 1 on failure, 2 if skipped
+# Returns: 0 on success, 1 on failure
 lib_install_libreoffice() {
-    print_info "Checking LibreOffice installation..."
-    print_info "  Purpose: Convert legacy Office files (.doc, .ppt, .xls)"
-
-    # Check for soffice (LibreOffice command)
-    if command -v soffice >/dev/null 2>&1; then
-        version=$(soffice --version 2>/dev/null | head -n1)
-        print_success "LibreOffice installed: $version"
+    # Check if already installed
+    if command -v soffice >/dev/null 2>&1 || command -v libreoffice >/dev/null 2>&1; then
+        print_status ok "LibreOffice"
         track_install "LibreOffice" "installed"
         return 0
     fi
 
-    # Check for libreoffice command (alternative)
-    if command -v libreoffice >/dev/null 2>&1; then
-        version=$(libreoffice --version 2>/dev/null | head -n1)
-        print_success "LibreOffice installed: $version"
-        track_install "LibreOffice" "installed"
-        return 0
-    fi
-
-    print_warning "LibreOffice not installed (optional)"
-    print_info "  Without LibreOffice, .doc/.ppt/.xls files cannot be converted"
-    print_info "  Modern formats (.docx/.pptx/.xlsx) work without LibreOffice"
-
-    if ! ask_yes_no "Install LibreOffice?" "n"; then
-        print_info "Skipping LibreOffice installation"
-        track_install "LibreOffice" "skipped"
-        return 2  # Skipped
-    fi
-
-    print_info "Installing LibreOffice..."
-
+    # Install silently based on OS
     case "$(uname)" in
         Darwin)
-            # macOS: use Homebrew
             if command -v brew >/dev/null 2>&1; then
-                if brew install --cask libreoffice; then
-                    print_success "LibreOffice installed via Homebrew"
+                if brew install --cask libreoffice >/dev/null 2>&1; then
+                    print_status ok "LibreOffice"
                     track_install "LibreOffice" "installed"
                     return 0
                 fi
-            else
-                print_error "Homebrew not found"
-                print_info "Install Homebrew first: https://brew.sh"
-                print_info "Then run: brew install --cask libreoffice"
             fi
             ;;
         Linux)
-            # Linux: use package manager
             if [ -f /etc/debian_version ]; then
-                # Debian/Ubuntu
-                print_info "Installing via apt (requires sudo)..."
-                if sudo apt update && sudo apt install -y libreoffice; then
-                    print_success "LibreOffice installed via apt"
+                if sudo apt update >/dev/null 2>&1 && sudo apt install -y libreoffice >/dev/null 2>&1; then
+                    print_status ok "LibreOffice"
                     track_install "LibreOffice" "installed"
                     return 0
                 fi
             elif [ -f /etc/fedora-release ]; then
-                # Fedora
-                print_info "Installing via dnf (requires sudo)..."
-                if sudo dnf install -y libreoffice; then
-                    print_success "LibreOffice installed via dnf"
+                if sudo dnf install -y libreoffice >/dev/null 2>&1; then
+                    print_status ok "LibreOffice"
                     track_install "LibreOffice" "installed"
                     return 0
                 fi
             elif [ -f /etc/arch-release ]; then
-                # Arch Linux
-                print_info "Installing via pacman (requires sudo)..."
-                if sudo pacman -S --noconfirm libreoffice-fresh; then
-                    print_success "LibreOffice installed via pacman"
+                if sudo pacman -S --noconfirm libreoffice-fresh >/dev/null 2>&1; then
+                    print_status ok "LibreOffice"
                     track_install "LibreOffice" "installed"
                     return 0
                 fi
-            else
-                print_error "Unknown Linux distribution"
-                print_info "Please install LibreOffice manually using your package manager"
             fi
-            ;;
-        *)
-            print_error "Automatic installation not supported on this platform"
-            print_info "Download from: https://www.libreoffice.org/download/"
             ;;
     esac
 
-    print_warning "LibreOffice installation failed"
-    print_info "Manual install options:"
-    case "$(uname)" in
-        Darwin)
-            print_info "  brew install --cask libreoffice"
-            ;;
-        Linux)
-            if [ -f /etc/debian_version ]; then
-                print_info "  sudo apt install libreoffice"
-            elif [ -f /etc/fedora-release ]; then
-                print_info "  sudo dnf install libreoffice"
-            elif [ -f /etc/arch-release ]; then
-                print_info "  sudo pacman -S libreoffice-fresh"
-            else
-                print_info "  Use your package manager to install libreoffice"
-            fi
-            ;;
-        *)
-            print_info "  Download from: https://www.libreoffice.org/download/"
-            ;;
-    esac
+    print_status fail "LibreOffice"
     track_install "LibreOffice" "failed"
     return 1
 }
 
 # Install FFmpeg (optional)
-# FFmpeg is required for audio/video file processing
-# Returns: 0 on success, 1 on failure, 2 if skipped
+# Returns: 0 on success, 1 on failure
 lib_install_ffmpeg() {
-    print_info "Checking FFmpeg installation..."
-    print_info "  Purpose: Process audio/video files (.mp3, .mp4, .wav, etc.)"
-
+    # Check if already installed
     if command -v ffmpeg >/dev/null 2>&1; then
-        version=$(ffmpeg -version 2>/dev/null | head -n1)
-        print_success "FFmpeg installed: $version"
+        print_status ok "FFmpeg"
         track_install "FFmpeg" "installed"
         return 0
     fi
 
-    print_warning "FFmpeg not installed (optional)"
-    print_info "  Without FFmpeg, audio/video files cannot be processed"
-
-    if ! ask_yes_no "Install FFmpeg?" "n"; then
-        print_info "Skipping FFmpeg installation"
-        track_install "FFmpeg" "skipped"
-        return 2
-    fi
-
-    print_info "Installing FFmpeg..."
-
+    # Install silently based on OS
     case "$(uname)" in
         Darwin)
             if command -v brew >/dev/null 2>&1; then
-                if brew install ffmpeg; then
-                    print_success "FFmpeg installed via Homebrew"
+                if brew install ffmpeg >/dev/null 2>&1; then
+                    print_status ok "FFmpeg"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
-            else
-                print_error "Homebrew not found"
-                print_info "Install Homebrew first: https://brew.sh"
             fi
             ;;
         Linux)
             if [ -f /etc/debian_version ]; then
-                print_info "Installing via apt (requires sudo)..."
-                if sudo apt update && sudo apt install -y ffmpeg; then
-                    print_success "FFmpeg installed via apt"
+                if sudo apt update >/dev/null 2>&1 && sudo apt install -y ffmpeg >/dev/null 2>&1; then
+                    print_status ok "FFmpeg"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
             elif [ -f /etc/fedora-release ]; then
-                print_info "Installing via dnf (requires sudo)..."
-                if sudo dnf install -y ffmpeg; then
-                    print_success "FFmpeg installed via dnf"
+                if sudo dnf install -y ffmpeg >/dev/null 2>&1; then
+                    print_status ok "FFmpeg"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
             elif [ -f /etc/arch-release ]; then
-                print_info "Installing via pacman (requires sudo)..."
-                if sudo pacman -S --noconfirm ffmpeg; then
-                    print_success "FFmpeg installed via pacman"
+                if sudo pacman -S --noconfirm ffmpeg >/dev/null 2>&1; then
+                    print_status ok "FFmpeg"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
-            else
-                print_error "Unknown Linux distribution"
-                print_info "Please install FFmpeg manually using your package manager"
             fi
-            ;;
-        *)
-            print_error "Automatic installation not supported on this platform"
-            print_info "Download from: https://ffmpeg.org/download.html"
             ;;
     esac
 
-    print_warning "FFmpeg installation failed"
-    print_info "Manual install options:"
-    case "$(uname)" in
-        Darwin)
-            print_info "  brew install ffmpeg"
-            ;;
-        Linux)
-            if [ -f /etc/debian_version ]; then
-                print_info "  sudo apt install ffmpeg"
-            elif [ -f /etc/fedora-release ]; then
-                print_info "  sudo dnf install ffmpeg"
-            elif [ -f /etc/arch-release ]; then
-                print_info "  sudo pacman -S ffmpeg"
-            else
-                print_info "  Use your package manager to install ffmpeg"
-            fi
-            ;;
-        *)
-            print_info "  Download from: https://ffmpeg.org/download.html"
-            ;;
-    esac
+    print_status fail "FFmpeg"
     track_install "FFmpeg" "failed"
     return 1
 }
@@ -809,84 +610,61 @@ lib_install_markitai_extra() {
 
     # Prefer uv tool install
     if command -v uv >/dev/null 2>&1; then
-        if uv tool install "$pkg" --python "$PYTHON_CMD" --upgrade 2>/dev/null; then
-            print_success "markitai[$extra_name] installed"
+        if uv tool install "$pkg" --python "$PYTHON_CMD" --upgrade >/dev/null 2>&1; then
             return 0
         fi
     fi
 
     # Fallback to pipx
     if command -v pipx >/dev/null 2>&1; then
-        if pipx install "$pkg" --python "$PYTHON_CMD" --force 2>/dev/null; then
-            print_success "markitai[$extra_name] installed"
+        if pipx install "$pkg" --python "$PYTHON_CMD" --force >/dev/null 2>&1; then
             return 0
         fi
     fi
 
     # Fallback to pip --user
-    if "$PYTHON_CMD" -m pip install --user --upgrade "$pkg" 2>/dev/null; then
-        print_success "markitai[$extra_name] installed"
+    if "$PYTHON_CMD" -m pip install --user --upgrade "$pkg" >/dev/null 2>&1; then
         return 0
     fi
 
-    print_warning "markitai[$extra_name] installation failed"
     return 1
 }
 
 # Install Claude Code CLI
 # Returns: 0 on success, 1 on failure
 lib_install_claude_cli() {
-    print_info "Installing Claude Code CLI..."
-    print_info "  Purpose: Use your Claude Pro/Team subscription with markitai"
-
     # Check if already installed
     if command -v claude >/dev/null 2>&1; then
-        version=$(claude --version 2>/dev/null | head -n1)
-        print_success "Claude Code CLI already installed: $version"
+        print_status ok "Claude Code CLI"
         track_install "Claude Code CLI" "installed"
         return 0
     fi
 
-    # Prefer official install script (macOS/Linux/WSL)
-    claude_url="https://claude.ai/install.sh"
-    if confirm_remote_script "$claude_url" "Claude Code CLI"; then
-        print_info "Installing via official script..."
-        if curl -fsSL "$claude_url" | bash; then
-            print_success "Claude Code CLI installed via official script"
-            print_info "Run 'claude /login' to authenticate with your Claude subscription or API key"
+    # Try official install script
+    if curl -fsSL "https://claude.ai/install.sh" 2>/dev/null | bash >/dev/null 2>&1; then
+        if command -v claude >/dev/null 2>&1; then
+            print_status ok "Claude Code CLI"
             track_install "Claude Code CLI" "installed"
             return 0
         fi
     fi
 
-    # Fallback: npm/pnpm if Node.js available
+    # Fallback: npm/pnpm
     if command -v pnpm >/dev/null 2>&1; then
-        print_info "Installing via pnpm..."
-        if pnpm add -g @anthropic-ai/claude-code; then
-            print_success "Claude Code CLI installed via pnpm"
-            print_info "Run 'claude /login' to authenticate with your Claude subscription or API key"
+        if pnpm add -g @anthropic-ai/claude-code >/dev/null 2>&1; then
+            print_status ok "Claude Code CLI"
             track_install "Claude Code CLI" "installed"
             return 0
         fi
     elif command -v npm >/dev/null 2>&1; then
-        print_info "Installing via npm..."
-        if npm install -g @anthropic-ai/claude-code; then
-            print_success "Claude Code CLI installed via npm"
-            print_info "Run 'claude /login' to authenticate with your Claude subscription or API key"
+        if npm install -g @anthropic-ai/claude-code >/dev/null 2>&1; then
+            print_status ok "Claude Code CLI"
             track_install "Claude Code CLI" "installed"
             return 0
         fi
     fi
 
-    print_warning "Claude Code CLI installation failed"
-    if ! check_network; then
-        print_network_error
-    else
-        print_info "Manual install options:"
-        print_info "  curl: curl -fsSL https://claude.ai/install.sh | bash"
-        print_info "  pnpm: pnpm add -g @anthropic-ai/claude-code"
-        print_info "  Docs: https://docs.anthropic.com/en/docs/claude-code"
-    fi
+    print_status fail "Claude Code CLI"
     track_install "Claude Code CLI" "failed"
     return 1
 }
@@ -894,56 +672,38 @@ lib_install_claude_cli() {
 # Install GitHub Copilot CLI
 # Returns: 0 on success, 1 on failure
 lib_install_copilot_cli() {
-    print_info "Installing GitHub Copilot CLI..."
-    print_info "  Purpose: Use your GitHub Copilot subscription with markitai"
-
     # Check if already installed
     if command -v copilot >/dev/null 2>&1; then
-        version=$(copilot --version 2>/dev/null | head -n1)
-        print_success "Copilot CLI already installed: $version"
+        print_status ok "Copilot CLI"
         track_install "Copilot CLI" "installed"
         return 0
     fi
 
-    # Prefer official install script (macOS/Linux/WSL)
-    copilot_url="https://gh.io/copilot-install"
-    if confirm_remote_script "$copilot_url" "GitHub Copilot CLI"; then
-        print_info "Installing via official script..."
-        if curl -fsSL "$copilot_url" | bash; then
-            print_success "Copilot CLI installed via official script"
-            print_info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
+    # Try official install script
+    if curl -fsSL "https://gh.io/copilot-install" 2>/dev/null | bash >/dev/null 2>&1; then
+        if command -v copilot >/dev/null 2>&1; then
+            print_status ok "Copilot CLI"
             track_install "Copilot CLI" "installed"
             return 0
         fi
     fi
 
-    # Fallback: npm/pnpm if Node.js available
+    # Fallback: npm/pnpm
     if command -v pnpm >/dev/null 2>&1; then
-        print_info "Installing via pnpm..."
-        if pnpm add -g @github/copilot; then
-            print_success "Copilot CLI installed via pnpm"
-            print_info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
+        if pnpm add -g @github/copilot >/dev/null 2>&1; then
+            print_status ok "Copilot CLI"
             track_install "Copilot CLI" "installed"
             return 0
         fi
     elif command -v npm >/dev/null 2>&1; then
-        print_info "Installing via npm..."
-        if npm install -g @github/copilot; then
-            print_success "Copilot CLI installed via npm"
-            print_info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
+        if npm install -g @github/copilot >/dev/null 2>&1; then
+            print_status ok "Copilot CLI"
             track_install "Copilot CLI" "installed"
             return 0
         fi
     fi
 
-    print_warning "Copilot CLI installation failed"
-    if ! check_network; then
-        print_network_error
-    else
-        print_info "Manual install options:"
-        print_info "  curl: curl -fsSL https://gh.io/copilot-install | bash"
-        print_info "  pnpm: pnpm add -g @github/copilot"
-    fi
+    print_status fail "Copilot CLI"
     track_install "Copilot CLI" "failed"
     return 1
 }
@@ -978,10 +738,10 @@ lib_init_config() {
 # Print completion message
 lib_print_completion() {
     printf "\n"
-    printf "${GREEN}✓${NC} ${BOLD}Setup complete!${NC}\n"
-    printf "\n"
     printf "  ${BOLD}Get started:${NC}\n"
-    printf "    ${YELLOW}markitai --help${NC}\n"
+    printf "    ${CYAN}markitai -I${NC}          Interactive mode\n"
+    printf "    ${CYAN}markitai file.pdf${NC}   Convert a file\n"
+    printf "    ${CYAN}markitai --help${NC}     Show all options\n"
     printf "\n"
 }
 
