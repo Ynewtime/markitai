@@ -56,12 +56,36 @@ function Get-ProjectRoot {
     return Split-Path -Parent $ScriptDir
 }
 
+# Print installation summary (clack style)
+function Print-SummaryDev {
+    # Installed
+    if ($script:INSTALLED_COMPONENTS.Count -gt 0) {
+        $installed = $script:INSTALLED_COMPONENTS | ForEach-Object { "✓ $_" }
+        Clack-Note "Installed" @installed
+    }
+
+    # Skipped
+    if ($script:SKIPPED_COMPONENTS.Count -gt 0) {
+        $skipped = $script:SKIPPED_COMPONENTS | ForEach-Object { "○ $_" }
+        Clack-Note "Skipped" @skipped
+    }
+
+    # Failed
+    if ($script:FAILED_COMPONENTS.Count -gt 0) {
+        $failed = $script:FAILED_COMPONENTS | ForEach-Object { "✗ $_" }
+        Clack-Note "Failed" @failed
+    }
+
+    Clack-Info "Documentation: https://markitai.ynewtime.com"
+    Clack-Info "Issues: https://github.com/Ynewtime/markitai/issues"
+}
+
 # Install UV (required for developer edition)
 # Returns: $true on success, $false on failure
 function Install-UVDev {
     if (Test-UV) {
-        $version = (& uv --version 2>$null).Split(' ')[1]
-        Clack-Success "uv $version"
+        $version = & uv --version 2>$null | Select-Object -First 1
+        Clack-Success "$version installed"
         Track-Install -Component "uv" -Status "installed"
         return $true
     }
@@ -435,6 +459,9 @@ function Install-PlaywrightBrowserDev {
 # Detect LibreOffice installation (for legacy Office files)
 # Returns: $true if installed, $false otherwise
 function Install-LibreOfficeDev {
+    Clack-Info "LibreOffice (optional):"
+    Clack-Info "  Purpose: Convert legacy Office files (.doc, .ppt, .xls)"
+
     # Auto-detect LibreOffice
     $soffice = Get-Command soffice -ErrorAction SilentlyContinue
     if ($soffice) {
@@ -519,6 +546,9 @@ function Install-LibreOfficeDev {
 # Install FFmpeg (optional, for audio/video file processing)
 # Returns: $true if installed, $false otherwise
 function Install-FFmpegDev {
+    Clack-Info "FFmpeg (optional):"
+    Clack-Info "  Purpose: Process audio/video files (.mp3, .mp4, .wav, etc.)"
+
     # Auto-detect FFmpeg
     $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
     if ($ffmpegCmd) {
@@ -695,10 +725,18 @@ function Main {
     # ============================================================
     $projectRoot = Get-ProjectRoot
 
+    # Print installation summary
+    Print-SummaryDev
+
     Clack-Note "Getting started" `
-        "Activate venv:  $projectRoot\.venv\Scripts\Activate.ps1" `
-        "Run tests:      uv run pytest" `
-        "Run CLI:        uv run markitai --help"
+        "Activate venv:" `
+        "  $projectRoot\.venv\Scripts\Activate.ps1" `
+        "" `
+        "Run tests:" `
+        "  uv run pytest" `
+        "" `
+        "Run CLI:" `
+        "  uv run markitai --help"
 
     Clack-Outro "Development environment ready!"
 }

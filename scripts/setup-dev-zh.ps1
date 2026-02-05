@@ -54,6 +54,30 @@ function Get-ProjectRoot {
     return Split-Path -Parent $ScriptDir
 }
 
+# 打印安装总结（使用 clack 样式）
+function Print-SummaryDevZh {
+    # 已安装
+    if ($script:INSTALLED_COMPONENTS.Count -gt 0) {
+        $installed = $script:INSTALLED_COMPONENTS | ForEach-Object { "✓ $_" }
+        Clack-Note "已安装" @installed
+    }
+
+    # 已跳过
+    if ($script:SKIPPED_COMPONENTS.Count -gt 0) {
+        $skipped = $script:SKIPPED_COMPONENTS | ForEach-Object { "○ $_" }
+        Clack-Note "已跳过" @skipped
+    }
+
+    # 安装失败
+    if ($script:FAILED_COMPONENTS.Count -gt 0) {
+        $failed = $script:FAILED_COMPONENTS | ForEach-Object { "✗ $_" }
+        Clack-Note "安装失败" @failed
+    }
+
+    Clack-Info "文档: https://markitai.ynewtime.com"
+    Clack-Info "问题反馈: https://github.com/Ynewtime/markitai/issues"
+}
+
 # 执行策略检查（中文）
 function Test-ExecutionPolicyZh {
     $policy = Get-ExecutionPolicy -Scope CurrentUser
@@ -160,8 +184,8 @@ function Test-PythonZh {
 # 安装 UV（开发者版必需）
 function Install-UVZh {
     if (Test-UV) {
-        $version = (& uv --version 2>$null).Split(' ')[1]
-        Clack-Success "uv $version"
+        $version = & uv --version 2>$null | Select-Object -First 1
+        Clack-Success "$version 已安装"
         Track-Install -Component "uv" -Status "installed"
         return $true
     }
@@ -483,6 +507,9 @@ function Install-PlaywrightBrowserDevZh {
 
 # 检测 LibreOffice 安装（可选，用于旧版 Office 文件）
 function Install-LibreOfficeDevZh {
+    Clack-Info "LibreOffice (可选):"
+    Clack-Info "  用途: 转换旧版 Office 文件 (.doc, .ppt, .xls)"
+
     # 自动检测
     $soffice = Get-Command soffice -ErrorAction SilentlyContinue
     if ($soffice) {
@@ -562,6 +589,9 @@ function Install-LibreOfficeDevZh {
 
 # 安装 FFmpeg（可选，用于音视频文件处理）
 function Install-FFmpegDevZh {
+    Clack-Info "FFmpeg (可选):"
+    Clack-Info "  用途: 处理音视频文件 (.mp3, .mp4, .wav 等)"
+
     # 自动检测
     $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
     if ($ffmpegCmd) {
@@ -732,7 +762,18 @@ function Main {
     # ========================================
     $projectRoot = Get-ProjectRoot
 
-    Clack-Note "快速开始" "激活环境: $projectRoot\.venv\Scripts\Activate.ps1" "运行测试: uv run pytest" "运行 CLI: uv run markitai --help"
+    # 打印安装总结
+    Print-SummaryDevZh
+
+    Clack-Note "快速开始" `
+        "激活虚拟环境:" `
+        "  $projectRoot\.venv\Scripts\Activate.ps1" `
+        "" `
+        "运行测试:" `
+        "  uv run pytest" `
+        "" `
+        "运行 CLI:" `
+        "  uv run markitai --help"
 
     Clack-Outro "开发环境配置完成!"
 }
