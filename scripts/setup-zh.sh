@@ -338,7 +338,7 @@ zh_install_playwright_browser() {
     fi
 
     if [ -x "$markitai_playwright" ]; then
-        if "$markitai_playwright" install chromium 2>/dev/null; then
+        if "$markitai_playwright" install chromium >/dev/null 2>&1; then
             print_success "Chromium 浏览器下载成功"
             browser_installed=true
         fi
@@ -346,7 +346,7 @@ zh_install_playwright_browser() {
 
     # 方法 2: 回退到 Python 模块（用于 pip/pipx 安装）
     if [ "$browser_installed" = false ] && [ -n "$PYTHON_CMD" ]; then
-        if "$PYTHON_CMD" -m playwright install chromium 2>/dev/null; then
+        if "$PYTHON_CMD" -m playwright install chromium >/dev/null 2>&1; then
             print_success "Chromium 浏览器下载成功"
             browser_installed=true
         fi
@@ -372,7 +372,7 @@ zh_install_playwright_browser() {
                 local arch_deps="nss nspr at-spi2-core cups libdrm mesa alsa-lib libxcomposite libxdamage libxrandr libxkbcommon pango cairo"
                 # 可选字体（提升中文/日文显示）
                 local arch_fonts="noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-liberation"
-                if sudo pacman -S --noconfirm --needed $arch_deps $arch_fonts 2>/dev/null; then
+                if sudo pacman -S --noconfirm --needed $arch_deps $arch_fonts >/dev/null 2>&1; then
                     print_success "系统依赖安装成功"
                     track_install "Playwright Browser" "installed"
                     return 0
@@ -384,7 +384,7 @@ zh_install_playwright_browser() {
             elif command -v apt-get >/dev/null 2>&1; then
                 # 方法 1: 使用 markitai 环境中的 playwright
                 if [ -x "$markitai_playwright" ]; then
-                    if "$markitai_playwright" install-deps chromium 2>/dev/null; then
+                    if "$markitai_playwright" install-deps chromium >/dev/null 2>&1; then
                         print_success "系统依赖安装成功"
                         track_install "Playwright Browser" "installed"
                         return 0
@@ -392,7 +392,7 @@ zh_install_playwright_browser() {
                 fi
                 # 方法 2: 回退到 Python 模块
                 if [ -n "$PYTHON_CMD" ]; then
-                    if "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null; then
+                    if "$PYTHON_CMD" -m playwright install-deps chromium >/dev/null 2>&1; then
                         print_success "系统依赖安装成功"
                         track_install "Playwright Browser" "installed"
                         return 0
@@ -463,7 +463,7 @@ zh_install_libreoffice() {
         Darwin)
             # macOS: 使用 Homebrew
             if command -v brew >/dev/null 2>&1; then
-                if brew install --cask libreoffice; then
+                if brew install --cask libreoffice >/dev/null 2>&1; then
                     print_success "LibreOffice 通过 Homebrew 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
@@ -479,7 +479,7 @@ zh_install_libreoffice() {
             if [ -f /etc/debian_version ]; then
                 # Debian/Ubuntu
                 print_info "通过 apt 安装（需要 sudo）..."
-                if sudo apt update && sudo apt install -y libreoffice; then
+                if sudo apt update >/dev/null 2>&1 && sudo apt install -y libreoffice >/dev/null 2>&1; then
                     print_success "LibreOffice 通过 apt 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
@@ -487,7 +487,7 @@ zh_install_libreoffice() {
             elif [ -f /etc/fedora-release ]; then
                 # Fedora
                 print_info "通过 dnf 安装（需要 sudo）..."
-                if sudo dnf install -y libreoffice; then
+                if sudo dnf install -y libreoffice >/dev/null 2>&1; then
                     print_success "LibreOffice 通过 dnf 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
@@ -495,7 +495,7 @@ zh_install_libreoffice() {
             elif [ -f /etc/arch-release ]; then
                 # Arch Linux
                 print_info "通过 pacman 安装（需要 sudo）..."
-                if sudo pacman -S --noconfirm libreoffice-fresh; then
+                if sudo pacman -S --noconfirm libreoffice-fresh >/dev/null 2>&1; then
                     print_success "LibreOffice 通过 pacman 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
@@ -563,7 +563,7 @@ zh_install_ffmpeg() {
     case "$(uname)" in
         Darwin)
             if command -v brew >/dev/null 2>&1; then
-                if brew install ffmpeg; then
+                if brew install ffmpeg >/dev/null 2>&1; then
                     print_success "FFmpeg 通过 Homebrew 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
@@ -576,21 +576,21 @@ zh_install_ffmpeg() {
         Linux)
             if [ -f /etc/debian_version ]; then
                 print_info "通过 apt 安装（需要 sudo）..."
-                if sudo apt update && sudo apt install -y ffmpeg; then
+                if sudo apt update >/dev/null 2>&1 && sudo apt install -y ffmpeg >/dev/null 2>&1; then
                     print_success "FFmpeg 通过 apt 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
             elif [ -f /etc/fedora-release ]; then
                 print_info "通过 dnf 安装（需要 sudo）..."
-                if sudo dnf install -y ffmpeg; then
+                if sudo dnf install -y ffmpeg >/dev/null 2>&1; then
                     print_success "FFmpeg 通过 dnf 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
             elif [ -f /etc/arch-release ]; then
                 print_info "通过 pacman 安装（需要 sudo）..."
-                if sudo pacman -S --noconfirm ffmpeg; then
+                if sudo pacman -S --noconfirm ffmpeg >/dev/null 2>&1; then
                     print_success "FFmpeg 通过 pacman 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
@@ -695,7 +695,7 @@ zh_install_claude_cli() {
         fi
     elif command -v npm >/dev/null 2>&1; then
         print_info "通过 npm 安装..."
-        if npm install -g @anthropic-ai/claude-code; then
+        if npm install -g @anthropic-ai/claude-code >/dev/null 2>&1; then
             print_success "Claude Code CLI 安装成功 (npm)"
             print_info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
             track_install "Claude Code CLI" "installed"
@@ -706,7 +706,7 @@ zh_install_claude_cli() {
     # 备选: Homebrew
     if command -v brew >/dev/null 2>&1; then
         print_info "通过 Homebrew 安装..."
-        if brew install claude-code; then
+        if brew install claude-code >/dev/null 2>&1; then
             print_success "Claude Code CLI 安装成功 (Homebrew)"
             print_info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
             track_install "Claude Code CLI" "installed"
@@ -746,7 +746,7 @@ zh_install_copilot_cli() {
         fi
     elif command -v npm >/dev/null 2>&1; then
         print_info "通过 npm 安装..."
-        if npm install -g @github/copilot; then
+        if npm install -g @github/copilot >/dev/null 2>&1; then
             print_success "Copilot CLI 安装成功 (npm)"
             print_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
             track_install "Copilot CLI" "installed"
@@ -757,7 +757,7 @@ zh_install_copilot_cli() {
     # 备选: Homebrew
     if command -v brew >/dev/null 2>&1; then
         print_info "通过 Homebrew 安装..."
-        if brew install copilot-cli; then
+        if brew install copilot-cli >/dev/null 2>&1; then
             print_success "Copilot CLI 安装成功 (Homebrew)"
             print_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
             track_install "Copilot CLI" "installed"

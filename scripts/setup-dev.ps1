@@ -205,7 +205,7 @@ function Install-ClaudeCLI {
 
     if ($pnpmCmd) {
         Write-Info "Installing via pnpm..."
-        & pnpm add -g @anthropic-ai/claude-code
+        $null = & pnpm add -g @anthropic-ai/claude-code 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Claude Code CLI installed via pnpm"
             Write-Info "Run 'claude /login' to authenticate with your Claude subscription or API key"
@@ -214,7 +214,7 @@ function Install-ClaudeCLI {
         }
     } elseif ($npmCmd) {
         Write-Info "Installing via npm..."
-        & npm install -g @anthropic-ai/claude-code
+        $null = & npm install -g @anthropic-ai/claude-code 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Claude Code CLI installed via npm"
             Write-Info "Run 'claude /login' to authenticate with your Claude subscription or API key"
@@ -227,7 +227,7 @@ function Install-ClaudeCLI {
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
         Write-Info "Installing via WinGet..."
-        & winget install Anthropic.ClaudeCode
+        $null = & winget install Anthropic.ClaudeCode --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Claude Code CLI installed via WinGet"
             Write-Info "Run 'claude /login' to authenticate with your Claude subscription or API key"
@@ -264,7 +264,7 @@ function Install-CopilotCLI {
 
     if ($pnpmCmd) {
         Write-Info "Installing via pnpm..."
-        & pnpm add -g @github/copilot
+        $null = & pnpm add -g @github/copilot 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Copilot CLI installed via pnpm"
             Write-Info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
@@ -273,7 +273,7 @@ function Install-CopilotCLI {
         }
     } elseif ($npmCmd) {
         Write-Info "Installing via npm..."
-        & npm install -g @github/copilot
+        $null = & npm install -g @github/copilot 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Copilot CLI installed via npm"
             Write-Info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
@@ -286,7 +286,7 @@ function Install-CopilotCLI {
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
         Write-Info "Installing via WinGet..."
-        & winget install GitHub.Copilot
+        $null = & winget install GitHub.Copilot --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Copilot CLI installed via WinGet"
             Write-Info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
@@ -430,7 +430,7 @@ function Install-LibreOfficeDev {
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
         Write-Info "Installing via WinGet..."
-        & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements
+        $null = & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "LibreOffice installed via WinGet"
             Track-Install -Component "LibreOffice" -Status "installed"
@@ -443,7 +443,7 @@ function Install-LibreOfficeDev {
     if ($scoopCmd) {
         Write-Info "Installing via Scoop..."
         & scoop bucket add extras 2>$null
-        & scoop install extras/libreoffice
+        $null = & scoop install extras/libreoffice 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "LibreOffice installed via Scoop"
             Track-Install -Component "LibreOffice" -Status "installed"
@@ -455,7 +455,7 @@ function Install-LibreOfficeDev {
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
         Write-Info "Installing via Chocolatey..."
-        & choco install libreoffice-fresh -y
+        $null = & choco install libreoffice-fresh -y 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "LibreOffice installed via Chocolatey"
             Track-Install -Component "LibreOffice" -Status "installed"
@@ -503,7 +503,7 @@ function Install-FFmpegDev {
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
         Write-Info "Installing via WinGet..."
-        & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements
+        $null = & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "FFmpeg installed via WinGet"
             Track-Install -Component "FFmpeg" -Status "installed"
@@ -514,7 +514,7 @@ function Install-FFmpegDev {
     $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
     if ($scoopCmd) {
         Write-Info "Installing via Scoop..."
-        & scoop install ffmpeg
+        $null = & scoop install ffmpeg 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "FFmpeg installed via Scoop"
             Track-Install -Component "FFmpeg" -Status "installed"
@@ -525,7 +525,7 @@ function Install-FFmpegDev {
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
         Write-Info "Installing via Chocolatey..."
-        & choco install ffmpeg -y
+        $null = & choco install ffmpeg -y 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Success "FFmpeg installed via Chocolatey"
             Track-Install -Component "FFmpeg" -Status "installed"
