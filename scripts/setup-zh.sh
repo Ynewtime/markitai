@@ -518,8 +518,8 @@ zh_install_ffmpeg() {
     clack_info "用途: 处理音视频文件 (.mp3, .mp4, .wav 等)"
 
     if command -v ffmpeg >/dev/null 2>&1; then
-        version=$(ffmpeg -version 2>/dev/null | head -n1)
-        clack_success "FFmpeg 已安装: $version"
+        version=$(ffmpeg -version 2>/dev/null | head -n1 | sed 's/ffmpeg version \([^ ]*\).*/\1/')
+        clack_success "FFmpeg $version"
         track_install "FFmpeg" "installed"
         return 0
     fi

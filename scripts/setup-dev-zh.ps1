@@ -411,17 +411,18 @@ function Install-PlaywrightBrowserDevZh {
     Push-Location $projectRoot
 
     try {
-        # 检查 Chromium 是否已安装
+        # 检查 Chromium 是否已安装（通过实际调用 playwright 检测）
         $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
         if ($uvCmd) {
-            $checkResult = & uv run playwright install --dry-run chromium 2>&1
-            if ($checkResult -match "already installed" -or $checkResult -match "Chromium.*is already installed") {
-                Clack-Success "Playwright 浏览器 (Chromium) 已安装"
+            $checkResult = & uv run python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.chromium.executable_path; p.stop()" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Clack-Success "Playwright 浏览器 (Chromium)"
                 Track-Install -Component "Playwright Browser" -Status "installed"
                 return $true
             }
         }
-    } finally {
+    } catch {}
+    finally {
         Pop-Location
     }
 
@@ -566,7 +567,11 @@ function Install-FFmpegDevZh {
     if ($ffmpegCmd) {
         try {
             $version = & ffmpeg -version 2>&1 | Select-Object -First 1
-            Clack-Success "FFmpeg 已安装: $version"
+            if ($version -match "ffmpeg version ([^\s]+)") {
+                Clack-Success "FFmpeg $($Matches[1])"
+            } else {
+                Clack-Success "FFmpeg"
+            }
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         } catch {}
