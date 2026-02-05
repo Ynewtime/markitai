@@ -653,7 +653,7 @@ sync_dependencies() {
 
     clack_info "$(i18n info_project_dir): $_project_root"
 
-    cd "$_project_root"
+    cd "$_project_root" || return 1
 
     if clack_spinner "$(i18n info_syncing_deps)" uv sync --all-extras --python "$PYTHON_CMD"; then
         clack_success "$(i18n info_deps_synced)"
@@ -674,7 +674,7 @@ install_precommit() {
         return 1
     fi
 
-    cd "$_project_root"
+    cd "$_project_root" || return 1
 
     if [ ! -f ".pre-commit-config.yaml" ]; then
         clack_skip "$(i18n precommit)"
@@ -769,6 +769,7 @@ install_optional_playwright() {
     # On Linux, install system dependencies silently
     if [ "$OS_TYPE" = "Linux" ]; then
         if [ -f /etc/arch-release ]; then
+            # shellcheck disable=SC2086 # Word splitting is intentional for package list
             _arch_deps="nss nspr at-spi2-core cups libdrm mesa alsa-lib libxcomposite libxdamage libxrandr libxkbcommon pango cairo noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-liberation"
             sudo pacman -S --noconfirm --needed $_arch_deps >/dev/null 2>&1 || true
         elif command -v apt-get >/dev/null 2>&1; then
