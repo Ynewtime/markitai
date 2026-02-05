@@ -140,3 +140,34 @@ class TestInteractivePrompts:
         result = prompt_enable_llm(session)
 
         assert result is True
+
+
+class TestRunInteractive:
+    """Tests for the main run_interactive function."""
+
+    @patch("markitai.cli.interactive.prompt_input_type")
+    @patch("markitai.cli.interactive.prompt_input_path")
+    @patch("markitai.cli.interactive.prompt_enable_llm")
+    @patch("markitai.cli.interactive.prompt_llm_options")
+    @patch("markitai.cli.interactive.prompt_configure_provider")
+    def test_run_interactive_basic_flow(
+        self,
+        mock_configure: MagicMock,
+        mock_options: MagicMock,
+        mock_llm: MagicMock,
+        mock_path: MagicMock,
+        mock_type: MagicMock,
+    ) -> None:
+        """Should run through all prompts in order."""
+        mock_type.return_value = "file"
+        mock_path.return_value = Path("test.pdf")
+        mock_llm.return_value = False
+
+        from markitai.cli.interactive import run_interactive
+
+        session = run_interactive()
+
+        assert session.input_type == "file"
+        mock_type.assert_called_once()
+        mock_path.assert_called_once()
+        mock_llm.assert_called_once()
