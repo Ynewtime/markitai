@@ -86,11 +86,11 @@ def run_interactive_mode(ctx: click.Context) -> None:
         ).ask():
             # Re-invoke the CLI with the gathered arguments
             args = session_to_cli_args(session)
-            # Use subprocess or click's invoke mechanism
+            # Use sys.argv[0] which is the actual invoked script/executable
+            # This works for both installed (markitai) and development (uv run markitai)
             import subprocess
-            import sys
 
-            subprocess.run([sys.executable, "-m", "markitai"] + args)
+            subprocess.run([sys.argv[0]] + args)
         else:
             click.echo("Cancelled.")
         ctx.exit(0)
