@@ -352,6 +352,7 @@ def app(
         verbose=verbose,
         log_dir=cfg.log.dir,
         log_level=cfg.log.level,
+        log_format=cfg.log.format,
         rotation=cfg.log.rotation,
         retention=cfg.log.retention,
         quiet=quiet_console,

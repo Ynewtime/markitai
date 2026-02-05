@@ -350,6 +350,15 @@
           "default": "7 days",
           "title": "Retention",
           "type": "string"
+        },
+        "format": {
+          "default": "text",
+          "enum": [
+            "text",
+            "json"
+          ],
+          "title": "Format",
+          "type": "string"
         }
       },
       "title": "LogConfig",
