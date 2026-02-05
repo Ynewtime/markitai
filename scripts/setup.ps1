@@ -38,6 +38,10 @@ function i18n {
             "setup_complete"            { return "安装完成!" }
             "dev_setup_complete"        { return "开发环境设置完成!" }
 
+            # Mode
+            "mode_user"                 { return "模式: 用户安装" }
+            "mode_dev"                  { return "模式: 开发环境" }
+
             # Sections
             "section_prerequisites"     { return "前置条件" }
             "section_core"              { return "核心组件" }
@@ -122,6 +126,10 @@ function i18n {
             "welcome"                   { return "Welcome to Markitai Setup!" }
             "setup_complete"            { return "Setup complete!" }
             "dev_setup_complete"        { return "Development environment ready!" }
+
+            # Mode
+            "mode_user"                 { return "Mode: User Install" }
+            "mode_dev"                  { return "Mode: Development" }
 
             # Sections
             "section_prerequisites"     { return "Prerequisites" }
@@ -1167,6 +1175,7 @@ function Initialize-Config {
 # User mode main flow
 function Run-UserSetup {
     Clack-Intro (i18n "welcome")
+    Clack-Info (i18n "mode_user")
     Test-ExecutionPolicy | Out-Null
     Test-AdminWarning
     Test-WSLWarning
@@ -1195,6 +1204,7 @@ function Run-UserSetup {
 # Dev mode main flow
 function Run-DevSetup {
     Clack-Intro (i18n "welcome")
+    Clack-Info (i18n "mode_dev")
     Test-ExecutionPolicy | Out-Null
     Test-AdminWarning
     Test-WSLWarning
