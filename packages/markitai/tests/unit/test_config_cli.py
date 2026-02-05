@@ -100,6 +100,19 @@ class TestConfigPathCommand:
                 str(config_file) in result.output or "Currently using" in result.output
             )
 
+    def test_path_unified_ui(self, runner: CliRunner) -> None:
+        """Test config path uses unified UI."""
+        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
+            mock_manager = MagicMock()
+            mock_manager.config_path = None
+            mock_manager.DEFAULT_USER_CONFIG_DIR = Path.home() / ".markitai"
+            MockManager.return_value = mock_manager
+
+            result = runner.invoke(config_path_cmd)
+
+            assert result.exit_code == 0
+            assert "\u25c6" in result.output  # Title marker (diamond)
+
 
 class TestConfigInitCommand:
     """Tests for config init CLI command."""

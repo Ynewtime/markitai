@@ -718,7 +718,12 @@ class TestConfigSubcommand:
         """Test config path shows search order."""
         result = cli_runner.invoke(app, ["config", "path"])
         assert result.exit_code == 0
-        assert "Configuration file search order" in result.output
+        # Supports both English and Chinese UI
+        assert (
+            "Configuration" in result.output
+            or "配置来源" in result.output
+            or "◆" in result.output  # Unified UI title marker
+        )
 
     def test_config_init(self, tmp_path: Path, cli_runner: CliRunner) -> None:
         """Test config init creates config file."""
@@ -771,7 +776,12 @@ class TestCacheSubcommand:
         """Test cache stats displays without error."""
         result = cli_runner.invoke(app, ["cache", "stats"])
         assert result.exit_code == 0
-        assert "Cache" in result.output or "cache" in result.output.lower()
+        # Support both English and Chinese output
+        assert (
+            "Cache" in result.output
+            or "cache" in result.output.lower()
+            or "缓存" in result.output
+        )
 
     def test_cache_stats_json(self, cli_runner: CliRunner) -> None:
         """Test cache stats with JSON output."""

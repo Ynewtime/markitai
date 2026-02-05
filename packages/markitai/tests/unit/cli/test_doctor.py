@@ -2,7 +2,64 @@
 
 from __future__ import annotations
 
-from markitai.cli.commands.doctor import get_install_hint
+from unittest.mock import patch
+
+import pytest
+from click.testing import CliRunner
+
+from markitai.cli.commands.doctor import doctor, get_install_hint
+
+
+@pytest.fixture
+def cli_runner() -> CliRunner:
+    """Provide a Click CLI runner."""
+    return CliRunner()
+
+
+class TestDoctorUnifiedUI:
+    """Tests for unified UI output in doctor command."""
+
+    def test_doctor_unified_ui_output(self, cli_runner: CliRunner) -> None:
+        """Test doctor command uses unified UI components."""
+        # Mock dependencies as OK
+        with (
+            patch("shutil.which", return_value="/usr/bin/soffice"),
+            patch(
+                "markitai.fetch_playwright.is_playwright_available", return_value=True
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed",
+                return_value=True,
+            ),
+        ):
+            result = cli_runner.invoke(doctor)
+
+            # Should use unified symbols
+            assert "\u25c6" in result.output  # Title marker (diamond)
+            assert "\u2713" in result.output  # Success marker (checkmark)
+            # Should NOT use Rich table format
+            assert "Dependency Status" not in result.output
+
+    def test_doctor_shows_sections(self, cli_runner: CliRunner) -> None:
+        """Test doctor command shows section headers."""
+        with (
+            patch("shutil.which", return_value="/usr/bin/soffice"),
+            patch(
+                "markitai.fetch_playwright.is_playwright_available", return_value=True
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed",
+                return_value=True,
+            ),
+        ):
+            result = cli_runner.invoke(doctor)
+
+            # Should contain section headers (in English or Chinese)
+            # Check for "Required" or Chinese equivalent
+            assert (
+                "Required Dependencies" in result.output
+                or "\u5fc5\u9700\u4f9d\u8d56" in result.output
+            )
 
 
 class TestInstallHints:
@@ -36,11 +93,7 @@ class TestInstallHints:
         assert "playwright install" in hint
 
 
-from unittest.mock import MagicMock, patch
-
-from click.testing import CliRunner
-
-from markitai.cli.commands.doctor import doctor
+from unittest.mock import MagicMock
 
 
 class TestDoctorFix:

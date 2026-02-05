@@ -17,7 +17,9 @@ from pathlib import Path
 import click
 from rich.syntax import Syntax
 
+from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.i18n import t
 from markitai.config import ConfigManager, MarkitaiConfig
 
 console = get_console()
@@ -90,19 +92,35 @@ def config_path_cmd() -> None:
     manager = ConfigManager()
     manager.load()
 
-    console.print("[bold]Configuration file search order:[/bold]")
-    console.print("  1. --config CLI argument")
-    console.print("  2. MARKITAI_CONFIG environment variable")
-    console.print("  3. ./markitai.json (current directory)")
-    console.print(f"  4. {manager.DEFAULT_USER_CONFIG_DIR / 'config.json'}")
+    ui.title(t("config.title"))
+
+    console.print(
+        f"  1. {t('config.cli_args')}      [dim]{ui.MARK_LINE} {t('config.highest')}[/]"
+    )
+    console.print(f"  2. {t('config.env_vars')}  [dim]{ui.MARK_LINE}[/]")
+
+    # Check local config file
+    local_status = ""
+    if manager.config_path and "markitai.json" in str(manager.config_path):
+        local_status = f" [green]{ui.MARK_SUCCESS} {t('config.loaded')}[/]"
+    console.print(f"  3. ./markitai.json{local_status}")
+
+    # Check user config file
+    user_config_path = manager.DEFAULT_USER_CONFIG_DIR / "config.json"
+    user_status = ""
+    if manager.config_path and str(user_config_path) in str(manager.config_path):
+        user_status = f" [green]{ui.MARK_SUCCESS} {t('config.loaded')}[/]"
+    console.print(f"  4. {user_config_path}{user_status}")
+
+    console.print(
+        f"  5. {t('config.defaults')}        [dim]{ui.MARK_LINE} {t('config.lowest')}[/]"
+    )
     console.print()
 
     if manager.config_path:
-        console.print(f"[green]Currently using:[/green] {manager.config_path}")
+        ui.success(f"Currently using: {manager.config_path}")
     else:
-        console.print(
-            "[yellow]Using default configuration (no config file found)[/yellow]"
-        )
+        ui.warning("Using default configuration (no config file found)")
 
 
 @config.command("init")
@@ -138,8 +156,9 @@ def config_init(output_path: Path | None, yes: bool) -> None:
 
     # Save minimal template config (essential fields only)
     saved_path = manager.save(output_path, minimal=True)
-    console.print(f"[green]Configuration file created:[/green] {saved_path}")
-    console.print("\nEdit this file to customize your settings.")
+    ui.summary(f"{t('config.created')}: {saved_path}")
+    console.print()
+    console.print("Edit this file to customize your settings.")
     console.print(
         "[dim]Note: max_tokens, supports_vision are auto-detected from litellm.[/dim]"
     )
@@ -159,7 +178,7 @@ def config_validate(config_file: Path | None) -> None:
     try:
         manager.load(config_path=config_file)
 
-        console.print("[green]Configuration is valid![/green]")
+        ui.summary(t("config.valid"))
 
         if manager.config_path:
             console.print(f"[dim]Validated: {manager.config_path}[/dim]")
