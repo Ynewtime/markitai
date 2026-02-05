@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections import deque
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,9 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from rich.console import Group
 from rich.live import Live
-from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     Progress,
@@ -23,11 +20,9 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
 )
-from rich.text import Text
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
-from markitai.constants import DEFAULT_LOG_PANEL_MAX_LINES
 from markitai.json_order import order_report, order_state
 from markitai.security import atomic_write_json
 from markitai.utils.text import format_error_message
@@ -413,24 +408,6 @@ class ProcessResult:
 ProcessFunc = Callable[[Path], Coroutine[Any, Any, ProcessResult]]
 
 
-class LogPanel:
-    """Log panel for verbose mode, displays scrolling log messages."""
-
-    def __init__(self, max_lines: int = DEFAULT_LOG_PANEL_MAX_LINES):
-        self.logs: deque[str] = deque(maxlen=max_lines)
-
-    def add(self, message: str) -> None:
-        """Add a log message to the panel."""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.logs.append(f"{timestamp} | {message}")
-
-    def __rich__(self) -> Panel:
-        """Render the log panel."""
-        content = "\n".join(self.logs) if self.logs else "(waiting for logs...)"
-        # Use Text object to prevent markup parsing (paths like [/foo/bar] would be misinterpreted)
-        return Panel(Text(content), title="Logs", border_style="dim")
-
-
 class BatchProcessor:
     """Batch processor with concurrent execution and progress display."""
 
@@ -475,8 +452,6 @@ class BatchProcessor:
 
         # Live display state (managed by start_live_display/stop_live_display)
         self._live: Live | None = None
-        self._log_panel: LogPanel | None = None
-        self._panel_handler_id: int | None = None
         self._console_handler_id: int | None = None
         self._verbose: bool = False
         self._progress: Progress | None = None
@@ -567,13 +542,13 @@ class BatchProcessor:
         total_files: int = 0,
         total_urls: int = 0,
     ) -> None:
-        """Start Live display with progress bar and optional log panel.
+        """Start Live display with progress bar.
 
-        Call this before any processing (including pre-conversion) to capture
-        all logs in the panel instead of printing to console.
+        Call this before any processing (including pre-conversion).
+        In verbose mode, logs are printed directly to console with │ prefix.
 
         Args:
-            verbose: Whether to show log panel
+            verbose: Whether to show verbose log output
             console_handler_id: Loguru console handler ID to disable
             total_files: Total number of files (for progress bar)
             total_urls: Total number of URLs to process
@@ -614,23 +589,6 @@ class BatchProcessor:
             current="",
         )
 
-        # Create log panel for verbose mode
-        if verbose:
-            self._log_panel = LogPanel()
-
-            def panel_sink(message: Any) -> None:
-                """Sink function to write logs to the panel."""
-                if self._log_panel is not None:
-                    self._log_panel.add(message.record["message"])
-
-            # Add a handler that writes to the log panel
-            self._panel_handler_id = logger.add(
-                panel_sink,
-                level="INFO",
-                format="{message}",
-                filter=lambda record: record["level"].no >= 20,  # INFO and above
-            )
-
         # Disable console handler to avoid conflict with progress bar
         if console_handler_id is not None:
             try:
@@ -638,15 +596,8 @@ class BatchProcessor:
             except ValueError:
                 pass  # Handler already removed
 
-        # Start Live display
-        if verbose and self._log_panel is not None:
-            display = Group(self._progress, self._log_panel)
-            self._live = Live(display, console=self.console, refresh_per_second=4)
-        else:
-            self._live = Live(
-                self._progress, console=self.console, refresh_per_second=4
-            )
-
+        # Start Live display (progress bar only, no panel)
+        self._live = Live(self._progress, console=self.console, refresh_per_second=4)
         self._live.start()
 
     def stop_live_display(self) -> None:
@@ -657,14 +608,6 @@ class BatchProcessor:
         if self._live is not None:
             self._live.stop()
             self._live = None
-
-        # Remove panel handler if added
-        if self._panel_handler_id is not None:
-            try:
-                logger.remove(self._panel_handler_id)
-            except ValueError:
-                pass
-            self._panel_handler_id = None
 
         # Re-add console handler (restore original state)
         if self._console_handler_id is not None:
@@ -1087,7 +1030,6 @@ class BatchProcessor:
             assert overall_task is not None  # Guaranteed when _progress is set
             # Update total in case it changed
             progress.update(overall_task, total=len(files))
-            log_panel = self._log_panel
         else:
             # Create progress display (legacy path for backwards compatibility)
             # Format: "Files  ━━━━━━━━━━━━━  5/7  (example.pdf)"
@@ -1104,24 +1046,6 @@ class BatchProcessor:
                 total=len(files),
                 current="",
             )
-            log_panel = None
-
-            # Create log panel for verbose mode (if not already created)
-            if verbose:
-                log_panel = LogPanel()
-
-                def panel_sink(message: Any) -> None:
-                    """Sink function to write logs to the panel."""
-                    if log_panel is not None:
-                        log_panel.add(message.record["message"])
-
-                # Add a handler that writes to the log panel
-                self._panel_handler_id = logger.add(
-                    panel_sink,
-                    level="INFO",
-                    format="{message}",
-                    filter=lambda record: record["level"].no >= 20,  # INFO and above
-                )
 
         async def process_with_limit(file_path: Path) -> None:
             """Process a file with semaphore limit.
@@ -1199,26 +1123,11 @@ class BatchProcessor:
                     pass  # Handler already removed
 
             try:
-                if verbose and log_panel is not None:
-                    # Verbose mode: show progress + log panel
-                    display = Group(progress, log_panel)
-                    with Live(display, console=self.console, refresh_per_second=4):
-                        tasks = [process_with_limit(f) for f in files]
-                        await asyncio.gather(*tasks, return_exceptions=True)
-                else:
-                    # Normal mode: progress bar only
-                    with Live(progress, console=self.console, refresh_per_second=4):
-                        tasks = [process_with_limit(f) for f in files]
-                        await asyncio.gather(*tasks, return_exceptions=True)
+                # Progress bar only (verbose logs handled by loguru)
+                with Live(progress, console=self.console, refresh_per_second=4):
+                    tasks = [process_with_limit(f) for f in files]
+                    await asyncio.gather(*tasks, return_exceptions=True)
             finally:
-                # Remove panel handler if added
-                if self._panel_handler_id is not None:
-                    try:
-                        logger.remove(self._panel_handler_id)
-                    except ValueError:
-                        pass
-                    self._panel_handler_id = None
-
                 # Re-add console handler (restore original state)
                 if console_handler_id is not None:
                     import sys
