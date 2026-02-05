@@ -142,6 +142,43 @@ print_status() {
 # User Interaction
 # ============================================================
 
+# Run command with spinner animation
+# Usage: run_with_spinner "message" command args...
+# Shows spinner while command runs, replaces with result when done
+run_with_spinner() {
+    _rws_message="$1"
+    shift
+
+    # Spinner characters (POSIX compatible)
+    _rws_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    _rws_pid=""
+
+    # Start spinner in background
+    (
+        _rws_i=0
+        while true; do
+            _rws_char=$(printf '%s' "$_rws_chars" | cut -c$((_rws_i % 10 + 1)))
+            printf "\r  ${CYAN}%s${NC} %s" "$_rws_char" "$_rws_message"
+            _rws_i=$((_rws_i + 1))
+            sleep 0.1 2>/dev/null || sleep 1
+        done
+    ) &
+    _rws_pid=$!
+
+    # Run the actual command
+    "$@" >/dev/null 2>&1
+    _rws_status=$?
+
+    # Stop spinner
+    kill $_rws_pid 2>/dev/null
+    wait $_rws_pid 2>/dev/null
+
+    # Clear spinner line
+    printf "\r\033[K"
+
+    return $_rws_status
+}
+
 # Ask yes/no question with default
 # Usage: ask_yes_no "Question?" "y|n"
 # Note: Uses /dev/tty for input to support 'curl | sh' execution
@@ -445,6 +482,34 @@ lib_install_markitai() {
     return 1
 }
 
+# Check if Playwright Chromium browser is installed
+# Returns: 0 if installed, 1 if not
+lib_detect_playwright_browser() {
+    # Check common Playwright browser locations
+    # macOS: ~/Library/Caches/ms-playwright
+    # Linux: ~/.cache/ms-playwright
+    # Windows: %LOCALAPPDATA%\ms-playwright (not applicable in shell)
+
+    playwright_cache=""
+    case "$(uname)" in
+        Darwin)
+            playwright_cache="$HOME/Library/Caches/ms-playwright"
+            ;;
+        Linux)
+            playwright_cache="$HOME/.cache/ms-playwright"
+            ;;
+    esac
+
+    if [ -n "$playwright_cache" ] && [ -d "$playwright_cache" ]; then
+        # Check for chromium directory
+        if ls "$playwright_cache"/chromium-* >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 # Install Playwright browser (Chromium) and system dependencies
 # Requires: markitai/playwright to be installed
 # Returns: 0 on success, 1 on failure, 2 if skipped
@@ -464,16 +529,16 @@ lib_install_playwright_browser() {
         markitai_playwright="$HOME/.local/share/uv/tools/markitai/bin/playwright"
     fi
 
-    # Install browser silently
+    # Install browser with spinner (network operation can be slow)
     if [ -x "$markitai_playwright" ]; then
-        if "$markitai_playwright" install chromium >/dev/null 2>&1; then
+        if run_with_spinner "Downloading Chromium..." "$markitai_playwright" install chromium; then
             browser_installed=true
         fi
     fi
 
     # Fallback to Python module
     if [ "$browser_installed" = false ] && [ -n "$PYTHON_CMD" ]; then
-        if "$PYTHON_CMD" -m playwright install chromium >/dev/null 2>&1; then
+        if run_with_spinner "Downloading Chromium..." "$PYTHON_CMD" -m playwright install chromium; then
             browser_installed=true
         fi
     fi

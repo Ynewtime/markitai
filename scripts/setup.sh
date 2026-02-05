@@ -61,35 +61,57 @@ main() {
     printf "\n"
     printf "  ${BOLD}Optional components:${NC}\n"
 
-    if ask_yes_no "Playwright browser (for JS-rendered pages)?" "y"; then
+    # Playwright browser - auto-detect first
+    if lib_detect_playwright_browser; then
+        print_status ok "Playwright browser (already installed)"
+        track_install "Playwright Browser" "installed"
+    elif ask_yes_no "Playwright browser (for JS-rendered pages)?" "y"; then
         lib_install_playwright_browser
     else
         print_status skip "Playwright browser"
         track_install "Playwright Browser" "skipped"
     fi
 
-    if ask_yes_no "LibreOffice (for .doc/.xls/.ppt)?" "n"; then
+    # LibreOffice - auto-detect first
+    if command -v soffice >/dev/null 2>&1 || command -v libreoffice >/dev/null 2>&1; then
+        print_status ok "LibreOffice (already installed)"
+        track_install "LibreOffice" "installed"
+    elif ask_yes_no "LibreOffice (for .doc/.xls/.ppt)?" "n"; then
         lib_install_libreoffice
     else
         print_status skip "LibreOffice"
         track_install "LibreOffice" "skipped"
     fi
 
-    if ask_yes_no "FFmpeg (for audio/video)?" "n"; then
+    # FFmpeg - auto-detect first
+    if command -v ffmpeg >/dev/null 2>&1; then
+        print_status ok "FFmpeg (already installed)"
+        track_install "FFmpeg" "installed"
+    elif ask_yes_no "FFmpeg (for audio/video)?" "n"; then
         lib_install_ffmpeg
     else
         print_status skip "FFmpeg"
         track_install "FFmpeg" "skipped"
     fi
 
-    if ask_yes_no "Claude Code CLI?" "n"; then
+    # Claude Code CLI - auto-detect first
+    if command -v claude >/dev/null 2>&1; then
+        version=$(claude --version 2>/dev/null | head -n1)
+        print_status ok "Claude Code CLI: $version"
+        track_install "Claude Code CLI" "installed"
+    elif ask_yes_no "Claude Code CLI?" "n"; then
         lib_install_claude_cli && lib_install_markitai_extra "claude-agent"
     else
         print_status skip "Claude Code CLI"
         track_install "Claude Code CLI" "skipped"
     fi
 
-    if ask_yes_no "GitHub Copilot CLI?" "n"; then
+    # Copilot CLI - auto-detect first
+    if command -v copilot >/dev/null 2>&1; then
+        version=$(copilot --version 2>/dev/null | head -n1)
+        print_status ok "Copilot CLI: $version"
+        track_install "Copilot CLI" "installed"
+    elif ask_yes_no "GitHub Copilot CLI?" "n"; then
         lib_install_copilot_cli && lib_install_markitai_extra "copilot"
     else
         print_status skip "Copilot CLI"
