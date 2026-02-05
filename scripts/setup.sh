@@ -42,6 +42,42 @@ load_library() {
 load_library
 
 # ============================================================
+# Summary Function
+# ============================================================
+
+print_summary() {
+    clack_section "Summary"
+
+    # Installed
+    if [ -n "$INSTALLED_COMPONENTS" ]; then
+        clack_log "Installed:"
+        echo "$INSTALLED_COMPONENTS" | tr '|' '\n' | while read -r comp; do
+            [ -n "$comp" ] && clack_success "$comp"
+        done
+    fi
+
+    # Skipped
+    if [ -n "$SKIPPED_COMPONENTS" ]; then
+        clack_log "Skipped:"
+        echo "$SKIPPED_COMPONENTS" | tr '|' '\n' | while read -r comp; do
+            [ -n "$comp" ] && clack_skip "$comp"
+        done
+    fi
+
+    # Failed
+    if [ -n "$FAILED_COMPONENTS" ]; then
+        clack_log "Failed:"
+        echo "$FAILED_COMPONENTS" | tr '|' '\n' | while read -r comp; do
+            [ -n "$comp" ] && clack_error "$comp"
+        done
+    fi
+
+    clack_log ""
+    clack_log "Documentation: https://markitai.ynewtime.com"
+    clack_log "Issues: https://github.com/Ynewtime/markitai/issues"
+}
+
+# ============================================================
 # Main Logic
 # ============================================================
 
@@ -121,7 +157,10 @@ main() {
     # Initialize config silently
     lib_init_config >/dev/null 2>&1
 
-    # Summary note
+    # Print summary
+    print_summary
+
+    # Getting started note
     clack_note "Get started" \
         "markitai -I          Interactive mode" \
         "markitai file.pdf   Convert a file" \

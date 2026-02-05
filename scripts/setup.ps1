@@ -36,6 +36,42 @@ if ($script:ScriptDir -and (Test-Path "$script:ScriptDir\lib.ps1" -ErrorAction S
 }
 
 # ============================================================
+# Summary Function
+# ============================================================
+
+function Print-Summary {
+    Clack-Section "Summary"
+
+    # Installed
+    if ($script:INSTALLED_COMPONENTS.Count -gt 0) {
+        Clack-Log "Installed:"
+        foreach ($comp in $script:INSTALLED_COMPONENTS) {
+            Clack-Success $comp
+        }
+    }
+
+    # Skipped
+    if ($script:SKIPPED_COMPONENTS.Count -gt 0) {
+        Clack-Log "Skipped:"
+        foreach ($comp in $script:SKIPPED_COMPONENTS) {
+            Clack-Skip $comp
+        }
+    }
+
+    # Failed
+    if ($script:FAILED_COMPONENTS.Count -gt 0) {
+        Clack-Log "Failed:"
+        foreach ($comp in $script:FAILED_COMPONENTS) {
+            Clack-Error $comp
+        }
+    }
+
+    Clack-Log ""
+    Clack-Log "Documentation: https://markitai.ynewtime.com"
+    Clack-Log "Issues: https://github.com/Ynewtime/markitai/issues"
+}
+
+# ============================================================
 # Detection Helpers for Optional Components
 # ============================================================
 
@@ -619,8 +655,14 @@ function Main {
     # Config
     Initialize-Config 2>$null | Out-Null
 
+    # Print summary
+    Print-Summary
+
     # Getting started note
-    Clack-Note "Getting started" "markitai -I          Interactive mode" "markitai file.pdf   Convert a file" "markitai --help     Show all options"
+    Clack-Note "Getting started" `
+        "markitai -I          Interactive mode" `
+        "markitai file.pdf   Convert a file" `
+        "markitai --help     Show all options"
 
     # Outro
     Clack-Outro "Setup complete!"

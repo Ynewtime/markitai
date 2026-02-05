@@ -36,6 +36,42 @@ if ($script:ScriptDir -and (Test-Path "$script:ScriptDir\lib.ps1" -ErrorAction S
 }
 
 # ============================================================
+# 安装总结函数
+# ============================================================
+
+function Print-SummaryZh {
+    Clack-Section "安装总结"
+
+    # 已安装
+    if ($script:INSTALLED_COMPONENTS.Count -gt 0) {
+        Clack-Log "已安装:"
+        foreach ($comp in $script:INSTALLED_COMPONENTS) {
+            Clack-Success $comp
+        }
+    }
+
+    # 已跳过
+    if ($script:SKIPPED_COMPONENTS.Count -gt 0) {
+        Clack-Log "已跳过:"
+        foreach ($comp in $script:SKIPPED_COMPONENTS) {
+            Clack-Skip $comp
+        }
+    }
+
+    # 安装失败
+    if ($script:FAILED_COMPONENTS.Count -gt 0) {
+        Clack-Log "安装失败:"
+        foreach ($comp in $script:FAILED_COMPONENTS) {
+            Clack-Error $comp
+        }
+    }
+
+    Clack-Log ""
+    Clack-Log "文档: https://markitai.ynewtime.com"
+    Clack-Log "问题反馈: https://github.com/Ynewtime/markitai/issues"
+}
+
+# ============================================================
 # 可选组件检测辅助函数
 # ============================================================
 
@@ -743,13 +779,14 @@ function Main {
     # 初始化配置
     Initialize-ConfigZh
 
+    # 打印安装总结
+    Print-SummaryZh
+
     # 使用提示
     Clack-Note "开始使用" `
         "markitai -I          交互模式" `
         "markitai file.pdf   转换文件" `
-        "markitai --help     查看帮助" `
-        "" `
-        "文档: https://markitai.ynewtime.com"
+        "markitai --help     查看帮助"
 
     # 完成
     Clack-Outro "配置完成!"
