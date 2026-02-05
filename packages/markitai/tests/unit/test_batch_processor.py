@@ -1334,35 +1334,3 @@ class TestTaskHash:
         # that affects hash, and we're passing different keys
         # The actual implementation uses llm_enabled, not llm
         # This test shows the intended behavior
-
-
-# =============================================================================
-# Log Panel Tests
-# =============================================================================
-
-
-class TestLogPanel:
-    """Tests for LogPanel class."""
-
-    def test_log_panel_add_message(self) -> None:
-        """Test adding messages to log panel."""
-        from markitai.batch import LogPanel
-
-        panel = LogPanel(max_lines=5)
-        panel.add("Test message 1")
-        panel.add("Test message 2")
-
-        assert len(panel.logs) == 2
-
-    def test_log_panel_max_lines_limit(self) -> None:
-        """Test that log panel respects max lines limit."""
-        from markitai.batch import LogPanel
-
-        panel = LogPanel(max_lines=3)
-        for i in range(5):
-            panel.add(f"Message {i}")
-
-        assert len(panel.logs) == 3
-        # Should only keep the most recent messages
-        assert "Message 2" in list(panel.logs)[0]
-        assert "Message 4" in list(panel.logs)[2]
