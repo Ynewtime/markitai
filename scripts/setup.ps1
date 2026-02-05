@@ -40,78 +40,67 @@ if ($script:ScriptDir -and (Test-Path "$script:ScriptDir\lib.ps1" -ErrorAction S
 # ============================================================
 
 function Main {
-    # Check execution policy
-    if (-not (Test-ExecutionPolicy)) {
-        # Continue anyway, but warn was shown
-    }
-
-    # Security check: warn if running as Administrator
+    # Security checks
+    if (-not (Test-ExecutionPolicy)) {}
     Test-AdminWarning
-
-    # Environment check: warn if running in WSL
     Test-WSLWarning
 
-    # Welcome message
-    Write-WelcomeUser
+    # Header
+    Write-Header "Markitai Setup"
 
-    Write-Header "Markitai Setup Wizard"
+    # Core installation
+    if (-not (Install-UV)) { exit 1 }
+    if (-not (Test-Python)) { exit 1 }
+    if (-not (Install-Markitai)) { exit 1 }
 
-    # Step 1: Detect/install UV (required, manages Python)
-    Write-Step 1 5 "Detecting UV package manager..."
-    if (-not (Install-UV)) {
-        Write-Summary
-        exit 1
+    # Optional components
+    Write-Host ""
+    Write-Host "  Optional components:" -ForegroundColor White
+
+    if (Ask-YesNo "Playwright browser (for JS-rendered pages)?" $true) {
+        Install-PlaywrightBrowser | Out-Null
+    } else {
+        Write-Status -Status "skip" -Message "Playwright browser"
+        Track-Install -Component "Playwright Browser" -Status "skipped"
     }
 
-    # Step 2: Detect/install Python (auto-installed via uv)
-    Write-Step 2 5 "Detecting Python..."
-    if (-not (Test-Python)) {
-        exit 1
+    if (Ask-YesNo "LibreOffice (for .doc/.xls/.ppt)?" $false) {
+        Install-LibreOffice | Out-Null
+    } else {
+        Write-Status -Status "skip" -Message "LibreOffice"
+        Track-Install -Component "LibreOffice" -Status "skipped"
     }
 
-    # Step 3: Install markitai
-    Write-Step 3 5 "Installing markitai..."
-    if (-not (Install-Markitai)) {
-        Write-Summary
-        exit 1
+    if (Ask-YesNo "FFmpeg (for audio/video)?" $false) {
+        Install-FFmpeg | Out-Null
+    } else {
+        Write-Status -Status "skip" -Message "FFmpeg"
+        Track-Install -Component "FFmpeg" -Status "skipped"
     }
 
-    # Install Playwright browser (required for SPA/JS-rendered pages)
-    Install-PlaywrightBrowser | Out-Null
-
-    # Install LibreOffice (optional, for legacy Office files)
-    Install-LibreOffice | Out-Null
-
-    # Detect FFmpeg (optional, for audio/video files)
-    Install-FFmpeg | Out-Null
-
-    # Step 4: Optional - LLM CLI tools
-    Write-Step 4 5 "Optional: LLM CLI tools"
-    Write-Info "LLM CLI tools provide local authentication for AI providers"
-    if (Ask-YesNo "Install Claude Code CLI?" $false) {
+    if (Ask-YesNo "Claude Code CLI?" $false) {
         if (Install-ClaudeCLI) {
-            # Install Claude Agent SDK for programmatic access
             Install-MarkitaiExtra -ExtraName "claude-agent" | Out-Null
         }
     } else {
+        Write-Status -Status "skip" -Message "Claude CLI"
         Track-Install -Component "Claude Code CLI" -Status "skipped"
     }
-    if (Ask-YesNo "Install GitHub Copilot CLI?" $false) {
+
+    if (Ask-YesNo "GitHub Copilot CLI?" $false) {
         if (Install-CopilotCLI) {
-            # Install Copilot SDK for programmatic access
             Install-MarkitaiExtra -ExtraName "copilot" | Out-Null
         }
     } else {
+        Write-Status -Status "skip" -Message "Copilot CLI"
         Track-Install -Component "Copilot CLI" -Status "skipped"
     }
 
-    # Initialize config
-    Initialize-Config
+    # Config
+    Initialize-Config 2>$null | Out-Null
 
-    # Print summary
+    # Summary and completion
     Write-Summary
-
-    # Complete
     Write-Completion
 }
 
