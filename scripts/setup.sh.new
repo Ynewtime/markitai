@@ -1021,48 +1021,59 @@ install_optional_copilot_cli() {
 print_summary() {
     clack_section "$(i18n section_summary)"
 
-    # Print installed components
+    # Print installed components using heredoc
     if [ -n "$INSTALLED_COMPONENTS" ]; then
-        _installed_list=""
         _ifs_old="$IFS"
         IFS='|'
-        for _comp in $INSTALLED_COMPONENTS; do
-            [ -n "$_comp" ] && _installed_list="${_installed_list}${GREEN}✓${NC} $(i18n "$_comp")\n"
-        done
+        # shellcheck disable=SC2086
+        set -- $INSTALLED_COMPONENTS
         IFS="$_ifs_old"
-        if [ -n "$_installed_list" ]; then
-            clack_note "$(i18n summary_installed)" "$(printf '%b' "$_installed_list")"
+        if [ $# -gt 0 ]; then
+            printf "${GRAY}│${NC}\n"
+            printf "${GRAY}│${NC}  ${GRAY}╭─${NC} ${BOLD}%s${NC}\n" "$(i18n summary_installed)"
+            for _comp in "$@"; do
+                [ -n "$_comp" ] && printf "${GRAY}│${NC}  ${GRAY}│${NC}  ${GREEN}✓${NC} %s\n" "$(i18n "$_comp")"
+            done
+            printf "${GRAY}│${NC}  ${GRAY}╰─${NC}\n"
         fi
     fi
 
     # Print skipped components
     if [ -n "$SKIPPED_COMPONENTS" ]; then
-        _skipped_list=""
         _ifs_old="$IFS"
         IFS='|'
-        for _comp in $SKIPPED_COMPONENTS; do
-            [ -n "$_comp" ] && _skipped_list="${_skipped_list}${YELLOW}○${NC} $(i18n "$_comp")\n"
-        done
+        # shellcheck disable=SC2086
+        set -- $SKIPPED_COMPONENTS
         IFS="$_ifs_old"
-        if [ -n "$_skipped_list" ]; then
-            clack_note "$(i18n summary_skipped)" "$(printf '%b' "$_skipped_list")"
+        if [ $# -gt 0 ]; then
+            printf "${GRAY}│${NC}\n"
+            printf "${GRAY}│${NC}  ${GRAY}╭─${NC} ${BOLD}%s${NC}\n" "$(i18n summary_skipped)"
+            for _comp in "$@"; do
+                [ -n "$_comp" ] && printf "${GRAY}│${NC}  ${GRAY}│${NC}  ${YELLOW}○${NC} %s\n" "$(i18n "$_comp")"
+            done
+            printf "${GRAY}│${NC}  ${GRAY}╰─${NC}\n"
         fi
     fi
 
     # Print failed components
     if [ -n "$FAILED_COMPONENTS" ]; then
-        _failed_list=""
         _ifs_old="$IFS"
         IFS='|'
-        for _comp in $FAILED_COMPONENTS; do
-            [ -n "$_comp" ] && _failed_list="${_failed_list}${RED}✗${NC} $(i18n "$_comp")\n"
-        done
+        # shellcheck disable=SC2086
+        set -- $FAILED_COMPONENTS
         IFS="$_ifs_old"
-        if [ -n "$_failed_list" ]; then
-            clack_note "$(i18n summary_failed)" "$(printf '%b' "$_failed_list")"
+        if [ $# -gt 0 ]; then
+            printf "${GRAY}│${NC}\n"
+            printf "${GRAY}│${NC}  ${GRAY}╭─${NC} ${BOLD}%s${NC}\n" "$(i18n summary_failed)"
+            for _comp in "$@"; do
+                [ -n "$_comp" ] && printf "${GRAY}│${NC}  ${GRAY}│${NC}  ${RED}✗${NC} %s\n" "$(i18n "$_comp")"
+            done
+            printf "${GRAY}│${NC}  ${GRAY}╰─${NC}\n"
         fi
     fi
 
+    # Empty line before docs link
+    clack_log ""
     clack_info "$(i18n info_docs): https://markitai.ynewtime.com"
     clack_info "$(i18n info_issues): https://github.com/Ynewtime/markitai/issues"
 }
