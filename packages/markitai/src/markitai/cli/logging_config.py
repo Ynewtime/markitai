@@ -185,6 +185,7 @@ def setup_logging(
     verbose: bool,
     log_dir: str | None = None,
     log_level: str = "DEBUG",
+    log_format: str = "text",
     rotation: str = "10 MB",
     retention: str = "7 days",
     quiet: bool = False,
@@ -246,13 +247,24 @@ def setup_logging(
         # Generate log filename with current timestamp (matching loguru's format)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         log_file_path = log_path / f"markitai_{timestamp}.log"
-        logger.add(
-            log_file_path,
-            level=log_level,
-            rotation=rotation,
-            retention=retention,
-            serialize=True,
-        )
+        if log_format == "json":
+            # Compact JSON format
+            logger.add(
+                log_file_path,
+                level=log_level,
+                rotation=rotation,
+                retention=retention,
+                format='{{"ts":"{time:YYYY-MM-DDTHH:mm:ss}","lvl":"{level.name}","src":"{module}:{line}","msg":"{message}"}}',
+            )
+        else:
+            # Human-readable format (default)
+            logger.add(
+                log_file_path,
+                level=log_level,
+                rotation=rotation,
+                retention=retention,
+                format="{time:YYYY-MM-DD HH:mm:ss} | {level: <5} | {module}:{line: <3} | {message}",
+            )
 
     # Intercept standard logging from all third-party dependencies
     # and route to loguru for unified log handling

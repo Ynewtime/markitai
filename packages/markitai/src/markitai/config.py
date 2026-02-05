@@ -282,6 +282,7 @@ class LogConfig(BaseModel):
     dir: str | None = DEFAULT_LOG_DIR
     rotation: str = DEFAULT_LOG_ROTATION
     retention: str = DEFAULT_LOG_RETENTION
+    format: Literal["text", "json"] = "text"
 
 
 class CacheConfig(BaseModel):
