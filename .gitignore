@@ -1,6 +1,9 @@
 # Archive
 .archive
 
+# Git worktrees
+.worktrees/
+
 # Python
 __pycache__/
 *.py[cod]
