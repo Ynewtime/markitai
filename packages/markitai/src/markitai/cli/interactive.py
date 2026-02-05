@@ -13,9 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import questionary
-from rich.console import Console
 
-console = Console()
+from markitai.cli.console import get_console
 
 
 @dataclass
@@ -117,7 +116,7 @@ def detect_llm_provider() -> ProviderDetectionResult | None:
 class InteractiveSession:
     """State for an interactive CLI session."""
 
-    input_path: Path | None = None
+    input_path: Path | str | None = None
     input_type: str = "file"  # "file", "directory", "url"
     output_dir: Path = field(default_factory=lambda: Path("./output"))
     enable_llm: bool = False
@@ -151,7 +150,7 @@ def prompt_input_type(session: InteractiveSession) -> str:
     return result or "file"
 
 
-def prompt_input_path(session: InteractiveSession) -> Path | None:
+def prompt_input_path(session: InteractiveSession) -> Path | str | None:
     """Prompt user for input path."""
     if session.input_type == "url":
         result = questionary.text(
@@ -169,9 +168,10 @@ def prompt_input_path(session: InteractiveSession) -> Path | None:
         ).ask()
 
     if result:
-        session.input_path = (
-            Path(result) if session.input_type != "url" else Path(result)
-        )
+        if session.input_type == "url":
+            session.input_path = result  # Keep as string for URLs
+        else:
+            session.input_path = Path(result)
         return session.input_path
     return None
 
@@ -186,7 +186,7 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
             f"Detected: {session.provider_result.provider} "
             f"({session.provider_result.source})"
         )
-        console.print(f"[green]✓[/green] {provider_info}")
+        get_console().print(f"[green]✓[/green] {provider_info}")
 
     result = questionary.confirm(
         "Enable LLM enhancement? (better formatting, metadata)",
@@ -233,7 +233,7 @@ def prompt_configure_provider(session: InteractiveSession) -> bool:
     if session.provider_result:
         return True
 
-    console.print("[yellow]![/yellow] No LLM provider detected.")
+    get_console().print("[yellow]![/yellow] No LLM provider detected.")
 
     choices = [
         questionary.Choice("Auto-detect (Claude CLI / Copilot CLI)", value="auto"),
@@ -307,7 +307,7 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
         source="manual",
     )
 
-    console.print("[green]✓[/green] API key saved to config")
+    get_console().print("[green]✓[/green] API key saved to config")
     return True
 
 
@@ -319,7 +319,7 @@ def _prompt_env_file(session: InteractiveSession) -> bool:
     ).ask()
 
     if not env_path or not Path(env_path).exists():
-        console.print("[red]✗[/red] .env file not found")
+        get_console().print("[red]✗[/red] .env file not found")
         return False
 
     # Load .env file
@@ -331,8 +331,10 @@ def _prompt_env_file(session: InteractiveSession) -> bool:
     session.provider_result = detect_llm_provider()
 
     if session.provider_result:
-        console.print(f"[green]✓[/green] Detected: {session.provider_result.provider}")
+        get_console().print(
+            f"[green]✓[/green] Detected: {session.provider_result.provider}"
+        )
         return True
 
-    console.print("[red]✗[/red] No API key found in .env file")
+    get_console().print("[red]✗[/red] No API key found in .env file")
     return False
