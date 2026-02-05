@@ -251,13 +251,13 @@ function Sync-DependenciesZh {
     Push-Location $projectRoot
 
     try {
-        Clack-Info "运行 uv sync --all-extras --python $pythonArg..."
-        & uv sync --all-extras --python $pythonArg
+        $syncResult = & uv sync --all-extras --python $pythonArg 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Clack-Success "依赖同步完成 (使用 Python $pythonArg)"
+            Clack-Success "依赖同步完成"
             return $true
         } else {
             Clack-Error "依赖同步失败"
+            Clack-Log ($syncResult | Out-String)
             return $false
         }
     } finally {
@@ -271,11 +271,9 @@ function Install-PreCommitZh {
 
     try {
         if (Test-Path ".pre-commit-config.yaml") {
-            Clack-Info "安装 pre-commit hooks..."
-
             $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
             if ($uvCmd) {
-                & uv run pre-commit install
+                $precommitResult = & uv run pre-commit install 2>&1
                 if ($LASTEXITCODE -eq 0) {
                     Clack-Success "pre-commit hooks 安装完成"
                 } else {

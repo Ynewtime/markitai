@@ -190,13 +190,13 @@ function Sync-Dependencies {
     Push-Location $projectRoot
 
     try {
-        Clack-Info "Running uv sync --all-extras --python $pythonArg..."
-        & uv sync --all-extras --python $pythonArg
+        $syncResult = & uv sync --all-extras --python $pythonArg 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Clack-Success "Dependencies synced (Python $pythonArg)"
+            Clack-Success "Dependencies synced"
             return $true
         } else {
             Clack-Error "Dependency sync failed"
+            Clack-Log ($syncResult | Out-String)
             return $false
         }
     } finally {
@@ -210,11 +210,9 @@ function Install-PreCommit {
 
     try {
         if (Test-Path ".pre-commit-config.yaml") {
-            Clack-Info "Installing pre-commit hooks..."
-
             $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
             if ($uvCmd) {
-                & uv run pre-commit install 2>$null
+                $precommitResult = & uv run pre-commit install 2>&1
                 if ($LASTEXITCODE -eq 0) {
                     Clack-Success "Pre-commit hooks installed"
                     return $true
