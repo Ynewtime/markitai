@@ -11,9 +11,64 @@ import asyncio
 import json
 import shutil
 import subprocess
+import sys
 from typing import Any
 
 import click
+
+# Cross-platform installation hints
+INSTALL_HINTS: dict[str, dict[str, str]] = {
+    "libreoffice": {
+        "darwin": "brew install --cask libreoffice",
+        "linux": "sudo apt install libreoffice  # Ubuntu/Debian\nsudo dnf install libreoffice  # Fedora\nsudo pacman -S libreoffice-fresh  # Arch",
+        "win32": "winget install LibreOffice.LibreOffice",
+    },
+    "ffmpeg": {
+        "darwin": "brew install ffmpeg",
+        "linux": "sudo apt install ffmpeg  # Ubuntu/Debian\nsudo dnf install ffmpeg  # Fedora\nsudo pacman -S ffmpeg  # Arch",
+        "win32": "winget install FFmpeg.FFmpeg\n# Or: scoop install ffmpeg\n# Or: choco install ffmpeg",
+    },
+    "playwright": {
+        "darwin": "uv run playwright install chromium",
+        "linux": "uv run playwright install chromium && uv run playwright install-deps chromium",
+        "win32": "uv run playwright install chromium",
+    },
+    "claude-cli": {
+        "darwin": "curl -fsSL https://claude.ai/install.sh | bash",
+        "linux": "curl -fsSL https://claude.ai/install.sh | bash",
+        "win32": "irm https://claude.ai/install.ps1 | iex",
+    },
+    "copilot-cli": {
+        "darwin": "curl -fsSL https://gh.io/copilot-install | bash",
+        "linux": "curl -fsSL https://gh.io/copilot-install | bash",
+        "win32": "winget install GitHub.Copilot",
+    },
+}
+
+
+def get_install_hint(component: str, platform: str | None = None) -> str:
+    """Get platform-specific installation hint for a component.
+
+    Args:
+        component: Component name (e.g., "libreoffice", "ffmpeg")
+        platform: Target platform. If None, uses current sys.platform.
+
+    Returns:
+        Installation command(s) for the platform.
+    """
+    if platform is None:
+        platform = sys.platform
+
+    # Normalize platform
+    if platform.startswith("linux"):
+        platform = "linux"
+
+    hints = INSTALL_HINTS.get(component, {})
+    return hints.get(
+        platform, hints.get("linux", f"Install {component} using your package manager")
+    )
+
+
 from rich.panel import Panel
 from rich.table import Table
 
@@ -128,7 +183,7 @@ def _doctor_impl(as_json: bool) -> None:
                 "description": "Browser automation for dynamic URLs",
                 "status": "warning",
                 "message": "Playwright installed but browser not found",
-                "install_hint": "uv run playwright install chromium (Linux: also run 'playwright install-deps chromium')",
+                "install_hint": get_install_hint("playwright"),
             }
     else:
         results["playwright"] = {
@@ -136,7 +191,7 @@ def _doctor_impl(as_json: bool) -> None:
             "description": "Browser automation for dynamic URLs",
             "status": "missing",
             "message": "Playwright not installed",
-            "install_hint": "uv add playwright && uv run playwright install chromium (Linux: also run 'playwright install-deps chromium')",
+            "install_hint": f"uv add playwright && {get_install_hint('playwright')}",
         }
 
     # 2. Check LibreOffice
@@ -190,7 +245,7 @@ def _doctor_impl(as_json: bool) -> None:
             "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
             "status": "missing",
             "message": "soffice/libreoffice command not found",
-            "install_hint": "apt install libreoffice (Linux) / brew install libreoffice (macOS)",
+            "install_hint": get_install_hint("libreoffice"),
         }
 
     # 3. Check FFmpeg (for audio/video processing)
@@ -229,7 +284,7 @@ def _doctor_impl(as_json: bool) -> None:
             "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
             "status": "missing",
             "message": "ffmpeg command not found",
-            "install_hint": "apt install ffmpeg (Linux) / brew install ffmpeg (macOS) / winget/scoop/choco install ffmpeg (Windows)",
+            "install_hint": get_install_hint("ffmpeg"),
         }
 
     # 4. Check RapidOCR (Python OCR library with built-in models)
@@ -349,7 +404,7 @@ def _doctor_impl(as_json: bool) -> None:
                         "description": "Claude Code CLI integration",
                         "status": "warning",
                         "message": "SDK installed but 'claude' CLI not found",
-                        "install_hint": "Install Claude Code CLI: curl -fsSL https://claude.ai/install.sh | bash (or irm https://claude.ai/install.ps1 | iex on Windows)",
+                        "install_hint": f"Install Claude Code CLI: {get_install_hint('claude-cli')}",
                     }
             else:
                 results["claude-agent-sdk"] = {
@@ -357,7 +412,7 @@ def _doctor_impl(as_json: bool) -> None:
                     "description": "Claude Code CLI integration",
                     "status": "missing",
                     "message": "claude-agent-sdk not installed",
-                    "install_hint": "uv add claude-agent-sdk && curl -fsSL https://claude.ai/install.sh | bash",
+                    "install_hint": f"uv add claude-agent-sdk && {get_install_hint('claude-cli')}",
                 }
         except Exception as e:
             results["claude-agent-sdk"] = {
@@ -392,7 +447,7 @@ def _doctor_impl(as_json: bool) -> None:
                         "description": "GitHub Copilot CLI integration",
                         "status": "warning",
                         "message": "SDK installed but 'copilot' CLI not found",
-                        "install_hint": "Install Copilot CLI: curl -fsSL https://gh.io/copilot-install | bash (or winget install GitHub.Copilot on Windows)",
+                        "install_hint": f"Install Copilot CLI: {get_install_hint('copilot-cli')}",
                     }
             else:
                 results["copilot-sdk"] = {
@@ -400,7 +455,7 @@ def _doctor_impl(as_json: bool) -> None:
                     "description": "GitHub Copilot CLI integration",
                     "status": "missing",
                     "message": "github-copilot-sdk not installed",
-                    "install_hint": "uv add github-copilot-sdk && curl -fsSL https://gh.io/copilot-install | bash",
+                    "install_hint": f"uv add github-copilot-sdk && {get_install_hint('copilot-cli')}",
                 }
         except Exception as e:
             results["copilot-sdk"] = {
