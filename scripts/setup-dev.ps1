@@ -23,19 +23,27 @@ if ($script:ScriptDir -and (Test-Path "$script:ScriptDir\lib.ps1" -ErrorAction S
 } else {
     # Remote execution - Developer edition requires local clone
     Write-Host ""
-    Write-Host ("=" * 48) -ForegroundColor Cyan
-    Write-Host "  Developer Edition requires local repository" -ForegroundColor White
-    Write-Host ("=" * 48) -ForegroundColor Cyan
-    Write-Host ""
+    Write-Host ([char]0x250C) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  Developer Edition requires local repository" -ForegroundColor Red
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "  Please clone the repository first:"
-    Write-Host ""
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "    git clone https://github.com/Ynewtime/markitai.git" -ForegroundColor Yellow
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "    cd markitai" -ForegroundColor Yellow
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "    .\scripts\setup-dev.ps1" -ForegroundColor Yellow
-    Write-Host ""
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "  Or use the user edition for quick install:"
-    Write-Host ""
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "    irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex" -ForegroundColor Yellow
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x2514) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  Exiting." -ForegroundColor Red
     Write-Host ""
     exit 1
 }
@@ -49,18 +57,19 @@ function Get-ProjectRoot {
 }
 
 # Install UV (required for developer edition)
+# Returns: $true on success, $false on failure
 function Install-UVDev {
-    Write-Info "Checking UV installation..."
-
     if (Test-UV) {
+        $version = (& uv --version 2>$null).Split(' ')[1]
+        Clack-Success "uv $version"
         Track-Install -Component "uv" -Status "installed"
         return $true
     }
 
-    Write-Error2 "UV not installed"
+    Clack-Warn "uv not installed"
 
-    if (-not (Ask-YesNo "Install UV automatically?" $false)) {
-        Write-Error2 "UV is required for development"
+    if (-not (Clack-Confirm "Install uv automatically?" "n")) {
+        Clack-Error "uv is required for development"
         Track-Install -Component "uv" -Status "failed"
         return $false
     }
@@ -68,19 +77,19 @@ function Install-UVDev {
     # Build install URL (with optional version)
     if ($script:UvVersion) {
         $uvUrl = "https://astral.sh/uv/$($script:UvVersion)/install.ps1"
-        Write-Info "Installing UV version: $($script:UvVersion)"
+        Clack-Info "Installing uv version: $($script:UvVersion)"
     } else {
         $uvUrl = "https://astral.sh/uv/install.ps1"
     }
 
     # Confirm remote script execution
     if (-not (Confirm-RemoteScript -ScriptUrl $uvUrl -ScriptName "UV")) {
-        Write-Error2 "UV is required for development"
+        Clack-Error "uv is required for development"
         Track-Install -Component "uv" -Status "failed"
         return $false
     }
 
-    Write-Info "Installing UV..."
+    Clack-Info "Installing uv..."
 
     try {
         Invoke-RestMethod $uvUrl | Invoke-Expression
@@ -91,8 +100,8 @@ function Install-UVDev {
         # Check if uv command exists after PATH refresh
         $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
         if (-not $uvCmd) {
-            Write-Warning2 "UV installed, but PowerShell needs to be restarted"
-            Write-Info "Please restart PowerShell and run this script again"
+            Clack-Warn "uv installed, but PowerShell needs to be restarted"
+            Clack-Info "Please restart PowerShell and run this script again"
             Track-Install -Component "uv" -Status "installed"
             return $false
         }
@@ -105,26 +114,62 @@ function Install-UVDev {
             $ErrorActionPreference = $oldErrorAction
         }
         if ($version -and $version -notmatch "error") {
-            Write-Success "$version installed successfully"
+            Clack-Success "$version installed"
             Track-Install -Component "uv" -Status "installed"
             return $true
         } else {
-            Write-Warning2 "UV installed, but PowerShell needs to be restarted"
-            Write-Info "Please restart PowerShell and run this script again"
+            Clack-Warn "uv installed, but PowerShell needs to be restarted"
+            Clack-Info "Please restart PowerShell and run this script again"
             Track-Install -Component "uv" -Status "installed"
             return $false
         }
     } catch {
-        Write-Error2 "UV installation failed: $_"
-        Write-Info "Manual install: irm https://astral.sh/uv/install.ps1 | iex"
+        Clack-Error "uv installation failed: $_"
+        Clack-Info "Manual install: irm https://astral.sh/uv/install.ps1 | iex"
         Track-Install -Component "uv" -Status "failed"
         return $false
     }
 }
 
+# Test Python with clack-style output
+# Returns: $true on success, $false on failure
+function Test-PythonDev {
+    # Use uv-managed Python 3.13
+    if (Test-CommandExists "uv") {
+        $uvPython = & uv python find 3.13 2>$null
+        if ($uvPython -and (Test-Path $uvPython)) {
+            $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
+            if ($version) {
+                $script:PYTHON_CMD = $uvPython
+                Clack-Success "Python $version"
+                return $true
+            }
+        }
+
+        # Not found, auto-install
+        Clack-Info "Installing Python 3.13..."
+        $null = & uv python install 3.13 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $uvPython = & uv python find 3.13 2>$null
+            if ($uvPython -and (Test-Path $uvPython)) {
+                $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
+                if ($version) {
+                    $script:PYTHON_CMD = $uvPython
+                    Clack-Success "Python $version installed"
+                    return $true
+                }
+            }
+        }
+        Clack-Error "Python 3.13 installation failed"
+    } else {
+        Clack-Error "uv not installed"
+    }
+
+    return $false
+}
+
 function Sync-Dependencies {
     $projectRoot = Get-ProjectRoot
-    Write-Info "Project directory: $projectRoot"
 
     # Build Python argument for --python (need version number, not command name)
     $pythonArg = $script:PYTHON_CMD
@@ -145,13 +190,13 @@ function Sync-Dependencies {
     Push-Location $projectRoot
 
     try {
-        Write-Info "Running uv sync --all-extras --python $pythonArg..."
+        Clack-Info "Running uv sync --all-extras --python $pythonArg..."
         & uv sync --all-extras --python $pythonArg
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Dependencies synced successfully (using Python $pythonArg)"
+            Clack-Success "Dependencies synced (Python $pythonArg)"
             return $true
         } else {
-            Write-Error2 "Dependency sync failed"
+            Clack-Error "Dependency sync failed"
             return $false
         }
     } finally {
@@ -165,21 +210,26 @@ function Install-PreCommit {
 
     try {
         if (Test-Path ".pre-commit-config.yaml") {
-            Write-Info "Installing pre-commit hooks..."
+            Clack-Info "Installing pre-commit hooks..."
 
             $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
             if ($uvCmd) {
-                & uv run pre-commit install
+                & uv run pre-commit install 2>$null
                 if ($LASTEXITCODE -eq 0) {
-                    Write-Success "pre-commit hooks installed successfully"
+                    Clack-Success "Pre-commit hooks installed"
+                    return $true
                 } else {
-                    Write-Warning2 "pre-commit installation failed, please run manually: uv run pre-commit install"
+                    Clack-Warn "Pre-commit installation failed"
+                    Clack-Info "Run manually: uv run pre-commit install"
+                    return $false
                 }
             } else {
-                Write-Warning2 "uv command not found, skipping pre-commit install"
+                Clack-Warn "uv command not found, skipping pre-commit install"
+                return $false
             }
         } else {
-            Write-Info ".pre-commit-config.yaml not found, skipping"
+            Clack-Skip ".pre-commit-config.yaml not found"
+            return $false
         }
     } finally {
         Pop-Location
@@ -187,37 +237,38 @@ function Install-PreCommit {
 }
 
 # Install Claude Code CLI
-function Install-ClaudeCLI {
-    Write-Info "Installing Claude Code CLI..."
-
+# Returns: $true on success, $false on failure/skip
+function Install-ClaudeCodeDev {
     # Check if already installed
     $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
     if ($claudeCmd) {
         $version = & claude --version 2>&1 | Select-Object -First 1
-        Write-Success "Claude Code CLI already installed: $version"
+        Clack-Success "Claude Code CLI $version"
         Track-Install -Component "Claude Code CLI" -Status "installed"
         return $true
     }
+
+    Clack-Info "Installing Claude Code CLI..."
 
     # Try npm/pnpm
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
     if ($pnpmCmd) {
-        Write-Info "Installing via pnpm..."
+        Clack-Info "Installing via pnpm..."
         $null = & pnpm add -g @anthropic-ai/claude-code 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Claude Code CLI installed via pnpm"
-            Write-Info "Run 'claude /login' to authenticate with your Claude subscription or API key"
+            Clack-Success "Claude Code CLI installed"
+            Clack-Info "Run 'claude /login' to authenticate"
             Track-Install -Component "Claude Code CLI" -Status "installed"
             return $true
         }
     } elseif ($npmCmd) {
-        Write-Info "Installing via npm..."
+        Clack-Info "Installing via npm..."
         $null = & npm install -g @anthropic-ai/claude-code 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Claude Code CLI installed via npm"
-            Write-Info "Run 'claude /login' to authenticate with your Claude subscription or API key"
+            Clack-Success "Claude Code CLI installed"
+            Clack-Info "Run 'claude /login' to authenticate"
             Track-Install -Component "Claude Code CLI" -Status "installed"
             return $true
         }
@@ -226,57 +277,58 @@ function Install-ClaudeCLI {
     # Try WinGet (Windows)
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-Info "Installing via WinGet..."
+        Clack-Info "Installing via WinGet..."
         $null = & winget install Anthropic.ClaudeCode --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Claude Code CLI installed via WinGet"
-            Write-Info "Run 'claude /login' to authenticate with your Claude subscription or API key"
+            Clack-Success "Claude Code CLI installed"
+            Clack-Info "Run 'claude /login' to authenticate"
             Track-Install -Component "Claude Code CLI" -Status "installed"
             return $true
         }
     }
 
-    Write-Warning2 "Claude Code CLI installation failed"
-    Write-Info "Manual install options:"
-    Write-Info "  pnpm: pnpm add -g @anthropic-ai/claude-code"
-    Write-Info "  winget: winget install Anthropic.ClaudeCode"
-    Write-Info "  Docs: https://code.claude.com/docs/en/setup"
+    Clack-Error "Claude Code CLI installation failed"
+    Clack-Note "Manual install options" `
+        "pnpm: pnpm add -g @anthropic-ai/claude-code" `
+        "winget: winget install Anthropic.ClaudeCode" `
+        "Docs: https://code.claude.com/docs/en/setup"
     Track-Install -Component "Claude Code CLI" -Status "failed"
     return $false
 }
 
 # Install GitHub Copilot CLI
-function Install-CopilotCLI {
-    Write-Info "Installing GitHub Copilot CLI..."
-
+# Returns: $true on success, $false on failure/skip
+function Install-CopilotCLIDev {
     # Check if already installed
     $copilotCmd = Get-Command copilot -ErrorAction SilentlyContinue
     if ($copilotCmd) {
         $version = & copilot --version 2>&1 | Select-Object -First 1
-        Write-Success "Copilot CLI already installed: $version"
+        Clack-Success "Copilot CLI $version"
         Track-Install -Component "Copilot CLI" -Status "installed"
         return $true
     }
+
+    Clack-Info "Installing Copilot CLI..."
 
     # Try npm/pnpm
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
     if ($pnpmCmd) {
-        Write-Info "Installing via pnpm..."
+        Clack-Info "Installing via pnpm..."
         $null = & pnpm add -g @github/copilot 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Copilot CLI installed via pnpm"
-            Write-Info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
+            Clack-Success "Copilot CLI installed"
+            Clack-Info "Run 'copilot /login' to authenticate"
             Track-Install -Component "Copilot CLI" -Status "installed"
             return $true
         }
     } elseif ($npmCmd) {
-        Write-Info "Installing via npm..."
+        Clack-Info "Installing via npm..."
         $null = & npm install -g @github/copilot 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Copilot CLI installed via npm"
-            Write-Info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
+            Clack-Success "Copilot CLI installed"
+            Clack-Info "Run 'copilot /login' to authenticate"
             Track-Install -Component "Copilot CLI" -Status "installed"
             return $true
         }
@@ -285,60 +337,57 @@ function Install-CopilotCLI {
     # Try WinGet (Windows)
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-Info "Installing via WinGet..."
+        Clack-Info "Installing via WinGet..."
         $null = & winget install GitHub.Copilot --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Copilot CLI installed via WinGet"
-            Write-Info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
+            Clack-Success "Copilot CLI installed"
+            Clack-Info "Run 'copilot /login' to authenticate"
             Track-Install -Component "Copilot CLI" -Status "installed"
             return $true
         }
     }
 
-    Write-Warning2 "Copilot CLI installation failed"
-    Write-Info "Manual install options:"
-    Write-Info "  pnpm: pnpm add -g @github/copilot"
-    Write-Info "  winget: winget install GitHub.Copilot"
+    Clack-Error "Copilot CLI installation failed"
+    Clack-Note "Manual install options" `
+        "pnpm: pnpm add -g @github/copilot" `
+        "winget: winget install GitHub.Copilot"
     Track-Install -Component "Copilot CLI" -Status "failed"
     return $false
-}
-
-# Install LLM CLI tools
-function Install-LLMCLIs {
-    Write-Info "LLM CLI tools provide local authentication for AI providers:"
-    Write-Info "  - Claude Code CLI: Use your Claude subscription"
-    Write-Info "  - Copilot CLI: Use your GitHub Copilot subscription"
-
-    if (Ask-YesNo "Install Claude Code CLI?" $false) {
-        Install-ClaudeCLI | Out-Null
-    } else {
-        Track-Install -Component "Claude Code CLI" -Status "skipped"
-    }
-
-    if (Ask-YesNo "Install GitHub Copilot CLI?" $false) {
-        Install-CopilotCLI | Out-Null
-    } else {
-        Track-Install -Component "Copilot CLI" -Status "skipped"
-    }
 }
 
 # Install Playwright browser (Chromium) for development
 # Uses uv run (preferred) with fallback to python module
 # Returns: $true on success, $false on failure/skip
 function Install-PlaywrightBrowserDev {
-    Write-Info "Playwright browser (Chromium):"
-    Write-Info "  Purpose: Browser automation for JavaScript-rendered pages (Twitter, SPAs)"
+    # Auto-detect if Playwright is already installed
+    $projectRoot = Get-ProjectRoot
+    Push-Location $projectRoot
+
+    try {
+        $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+        if ($uvCmd) {
+            # Check if chromium is already installed by testing if playwright can find it
+            $checkResult = & uv run python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.chromium.executable_path; p.stop()" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Clack-Success "Playwright browser (Chromium)"
+                Track-Install -Component "Playwright Browser" -Status "installed"
+                return $true
+            }
+        }
+    } catch {}
+    finally {
+        Pop-Location
+    }
 
     # Ask user consent before downloading
-    if (-not (Ask-YesNo "Download Chromium browser?" $true)) {
-        Write-Info "Skipping Playwright browser installation"
+    if (-not (Clack-Confirm "Install Playwright browser (Chromium)?" "y")) {
+        Clack-Skip "Playwright browser"
         Track-Install -Component "Playwright Browser" -Status "skipped"
         return $false
     }
 
-    Write-Info "Downloading Chromium browser..."
+    Clack-Info "Downloading Chromium browser..."
 
-    $projectRoot = Get-ProjectRoot
     Push-Location $projectRoot
 
     $oldErrorAction = $ErrorActionPreference
@@ -352,7 +401,7 @@ function Install-PlaywrightBrowserDev {
             & uv run playwright install chromium
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
-                Write-Success "Chromium browser installed successfully"
+                Clack-Success "Chromium browser installed"
                 Track-Install -Component "Playwright Browser" -Status "installed"
                 return $true
             }
@@ -369,7 +418,7 @@ function Install-PlaywrightBrowserDev {
             & $exe @pwArgs
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
-                Write-Success "Chromium browser installed successfully"
+                Clack-Success "Chromium browser installed"
                 Track-Install -Component "Playwright Browser" -Status "installed"
                 return $true
             }
@@ -379,22 +428,21 @@ function Install-PlaywrightBrowserDev {
         $ErrorActionPreference = $oldErrorAction
     }
 
-    Write-Warning2 "Playwright browser installation failed"
-    Write-Info "You can install later with: uv run playwright install chromium"
+    Clack-Error "Playwright browser installation failed"
+    Clack-Info "You can install later with: uv run playwright install chromium"
     Track-Install -Component "Playwright Browser" -Status "failed"
     return $false
 }
 
 # Detect LibreOffice installation (for legacy Office files)
+# Returns: $true if installed, $false otherwise
 function Install-LibreOfficeDev {
-    Write-Info "Checking LibreOffice installation..."
-    Write-Info "  Purpose: Convert legacy Office files (.doc, .ppt, .xls)"
-
+    # Auto-detect LibreOffice
     $soffice = Get-Command soffice -ErrorAction SilentlyContinue
     if ($soffice) {
         try {
             $version = & soffice --version 2>&1 | Select-Object -First 1
-            Write-Success "LibreOffice installed: $version"
+            Clack-Success "LibreOffice $version"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         } catch {}
@@ -407,32 +455,29 @@ function Install-LibreOfficeDev {
 
     foreach ($path in $commonPaths) {
         if (Test-Path $path) {
-            Write-Success "LibreOffice found at: $path"
+            Clack-Success "LibreOffice found"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
     }
 
-    Write-Warning2 "LibreOffice not installed (optional)"
-    Write-Info "  Without LibreOffice, .doc/.ppt/.xls files cannot be converted"
-    Write-Info "  Modern formats (.docx/.pptx/.xlsx) work without LibreOffice"
-
-    if (-not (Ask-YesNo "Install LibreOffice?" $false)) {
-        Write-Info "Skipping LibreOffice installation"
+    # Not installed - ask user
+    if (-not (Clack-Confirm "Install LibreOffice (for .doc/.ppt/.xls files)?" "n")) {
+        Clack-Skip "LibreOffice"
         Track-Install -Component "LibreOffice" -Status "skipped"
         return $false
     }
 
-    Write-Info "Installing LibreOffice..."
+    Clack-Info "Installing LibreOffice..."
 
     # Priority: winget > scoop > choco
     # Try WinGet first
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-Info "Installing via WinGet..."
+        Clack-Info "Installing via WinGet..."
         $null = & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "LibreOffice installed via WinGet"
+            Clack-Success "LibreOffice installed"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
@@ -441,11 +486,11 @@ function Install-LibreOfficeDev {
     # Try Scoop as second option
     $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
     if ($scoopCmd) {
-        Write-Info "Installing via Scoop..."
+        Clack-Info "Installing via Scoop..."
         & scoop bucket add extras 2>$null
         $null = & scoop install extras/libreoffice 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "LibreOffice installed via Scoop"
+            Clack-Success "LibreOffice installed"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
@@ -454,58 +499,59 @@ function Install-LibreOfficeDev {
     # Try Chocolatey as last fallback
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
-        Write-Info "Installing via Chocolatey..."
+        Clack-Info "Installing via Chocolatey..."
         $null = & choco install libreoffice-fresh -y 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "LibreOffice installed via Chocolatey"
+            Clack-Success "LibreOffice installed"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
     }
 
-    Write-Warning2 "LibreOffice installation failed"
-    Write-Info "Manual install options:"
-    Write-Info "  winget: winget install TheDocumentFoundation.LibreOffice"
-    Write-Info "  scoop: scoop install extras/libreoffice"
-    Write-Info "  choco: choco install libreoffice-fresh"
-    Write-Info "  Download: https://www.libreoffice.org/download/"
+    Clack-Error "LibreOffice installation failed"
+    Clack-Note "Manual install options" `
+        "winget: winget install TheDocumentFoundation.LibreOffice" `
+        "scoop: scoop install extras/libreoffice" `
+        "choco: choco install libreoffice-fresh" `
+        "Download: https://www.libreoffice.org/download/"
     Track-Install -Component "LibreOffice" -Status "failed"
     return $false
 }
 
 # Install FFmpeg (optional, for audio/video file processing)
+# Returns: $true if installed, $false otherwise
 function Install-FFmpegDev {
-    Write-Info "Checking FFmpeg installation..."
-    Write-Info "  Purpose: Process audio/video files (.mp3, .mp4, .wav, etc.)"
-
+    # Auto-detect FFmpeg
     $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
     if ($ffmpegCmd) {
         try {
             $version = & ffmpeg -version 2>&1 | Select-Object -First 1
-            Write-Success "FFmpeg installed: $version"
+            if ($version -match "ffmpeg version ([^\s]+)") {
+                Clack-Success "FFmpeg $($Matches[1])"
+            } else {
+                Clack-Success "FFmpeg installed"
+            }
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         } catch {}
     }
 
-    Write-Warning2 "FFmpeg not installed (optional)"
-    Write-Info "  Without FFmpeg, audio/video files cannot be processed"
-
-    if (-not (Ask-YesNo "Install FFmpeg?" $false)) {
-        Write-Info "Skipping FFmpeg installation"
+    # Not installed - ask user
+    if (-not (Clack-Confirm "Install FFmpeg (for audio/video files)?" "n")) {
+        Clack-Skip "FFmpeg"
         Track-Install -Component "FFmpeg" -Status "skipped"
         return $false
     }
 
-    Write-Info "Installing FFmpeg..."
+    Clack-Info "Installing FFmpeg..."
 
     # Priority: winget > scoop > choco
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-Info "Installing via WinGet..."
+        Clack-Info "Installing via WinGet..."
         $null = & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "FFmpeg installed via WinGet"
+            Clack-Success "FFmpeg installed"
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         }
@@ -513,10 +559,10 @@ function Install-FFmpegDev {
 
     $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
     if ($scoopCmd) {
-        Write-Info "Installing via Scoop..."
+        Clack-Info "Installing via Scoop..."
         $null = & scoop install ffmpeg 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "FFmpeg installed via Scoop"
+            Clack-Success "FFmpeg installed"
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         }
@@ -524,41 +570,23 @@ function Install-FFmpegDev {
 
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
-        Write-Info "Installing via Chocolatey..."
+        Clack-Info "Installing via Chocolatey..."
         $null = & choco install ffmpeg -y 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "FFmpeg installed via Chocolatey"
+            Clack-Success "FFmpeg installed"
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         }
     }
 
-    Write-Warning2 "FFmpeg installation failed"
-    Write-Info "Manual install options:"
-    Write-Info "  winget: winget install Gyan.FFmpeg"
-    Write-Info "  scoop: scoop install ffmpeg"
-    Write-Info "  choco: choco install ffmpeg"
-    Write-Info "  Download: https://ffmpeg.org/download.html"
+    Clack-Error "FFmpeg installation failed"
+    Clack-Note "Manual install options" `
+        "winget: winget install Gyan.FFmpeg" `
+        "scoop: scoop install ffmpeg" `
+        "choco: choco install ffmpeg" `
+        "Download: https://ffmpeg.org/download.html"
     Track-Install -Component "FFmpeg" -Status "failed"
     return $false
-}
-
-function Write-CompletionDev {
-    $projectRoot = Get-ProjectRoot
-
-    Write-Host ""
-    Write-Host "[OK] " -ForegroundColor Green -NoNewline
-    Write-Host "Development environment setup complete!" -ForegroundColor White
-    Write-Host ""
-    Write-Host "  Activate virtual environment:" -ForegroundColor White
-    Write-Host "    $projectRoot\.venv\Scripts\Activate.ps1" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  Run tests:" -ForegroundColor White
-    Write-Host "    uv run pytest" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  Run CLI:" -ForegroundColor White
-    Write-Host "    uv run markitai --help" -ForegroundColor Yellow
-    Write-Host ""
 }
 
 # ============================================================
@@ -577,33 +605,48 @@ function Main {
     # Environment check: warn if running in WSL
     Test-WSLWarning
 
-    # Welcome message
-    Write-WelcomeDev
+    # Welcome message with clack-style intro
+    Clack-Intro "Markitai Development Environment Setup"
 
-    Write-Header "Markitai Dev Environment Setup"
+    # ============================================================
+    # Section 1: Prerequisites
+    # ============================================================
+    Clack-Section "Checking prerequisites"
 
     # Step 1: Detect/install UV (required, manages Python)
-    Write-Step 1 5 "Detecting UV package manager..."
     if (-not (Install-UVDev)) {
-        Write-Summary
+        Clack-Cancel "Setup failed: uv is required"
         exit 1
     }
 
     # Step 2: Detect/install Python (auto-installed via uv)
-    Write-Step 2 5 "Detecting Python..."
-    if (-not (Test-Python)) {
+    if (-not (Test-PythonDev)) {
+        Clack-Cancel "Setup failed: Python is required"
         exit 1
     }
 
+    # ============================================================
+    # Section 2: Development Environment
+    # ============================================================
+    Clack-Section "Setting up development environment"
+
     # Step 3: Sync dependencies (includes all extras: browser, claude-agent, copilot)
-    Write-Step 3 5 "Syncing development dependencies..."
     if (-not (Sync-Dependencies)) {
-        Write-Summary
+        Clack-Cancel "Setup failed: dependency sync failed"
         exit 1
     }
     Track-Install -Component "Python dependencies" -Status "installed"
     Track-Install -Component "Claude Agent SDK" -Status "installed"
     Track-Install -Component "Copilot SDK" -Status "installed"
+
+    # Step 4: Install pre-commit
+    Install-PreCommit | Out-Null
+    Track-Install -Component "pre-commit hooks" -Status "installed"
+
+    # ============================================================
+    # Section 3: Optional Components (with auto-detection)
+    # ============================================================
+    Clack-Section "Optional components"
 
     # Install Playwright browser (required for SPA/JS-rendered pages)
     Install-PlaywrightBrowserDev | Out-Null
@@ -614,26 +657,52 @@ function Main {
     # Install FFmpeg (optional, for audio/video files)
     Install-FFmpegDev | Out-Null
 
-    # Step 4: Install pre-commit
-    Write-Step 4 5 "Configuring pre-commit..."
-    Install-PreCommit
-    Track-Install -Component "pre-commit hooks" -Status "installed"
+    # ============================================================
+    # Section 4: LLM CLI Tools
+    # ============================================================
+    Clack-Section "LLM CLI tools"
 
-    # Step 5: Optional - LLM CLI tools
-    Write-Step 5 5 "Optional: LLM CLI tools"
-    if (Ask-YesNo "Install LLM CLI tools (Claude Code / Copilot)?" $false) {
-        Install-LLMCLIs
+    # Auto-detect Claude Code CLI
+    $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
+    if ($claudeCmd) {
+        $version = & claude --version 2>&1 | Select-Object -First 1
+        Clack-Success "Claude Code CLI $version"
+        Track-Install -Component "Claude Code CLI" -Status "installed"
     } else {
-        Write-Info "Skipping LLM CLI installation"
-        Track-Install -Component "Claude Code CLI" -Status "skipped"
-        Track-Install -Component "Copilot CLI" -Status "skipped"
+        if (Clack-Confirm "Install Claude Code CLI?" "n") {
+            Install-ClaudeCodeDev | Out-Null
+        } else {
+            Clack-Skip "Claude Code CLI"
+            Track-Install -Component "Claude Code CLI" -Status "skipped"
+        }
     }
 
-    # Print summary
-    Write-Summary
+    # Auto-detect Copilot CLI
+    $copilotCmd = Get-Command copilot -ErrorAction SilentlyContinue
+    if ($copilotCmd) {
+        $version = & copilot --version 2>&1 | Select-Object -First 1
+        Clack-Success "Copilot CLI $version"
+        Track-Install -Component "Copilot CLI" -Status "installed"
+    } else {
+        if (Clack-Confirm "Install GitHub Copilot CLI?" "n") {
+            Install-CopilotCLIDev | Out-Null
+        } else {
+            Clack-Skip "Copilot CLI"
+            Track-Install -Component "Copilot CLI" -Status "skipped"
+        }
+    }
 
-    # Complete
-    Write-CompletionDev
+    # ============================================================
+    # Completion
+    # ============================================================
+    $projectRoot = Get-ProjectRoot
+
+    Clack-Note "Getting started" `
+        "Activate venv:  $projectRoot\.venv\Scripts\Activate.ps1" `
+        "Run tests:      uv run pytest" `
+        "Run CLI:        uv run markitai --help"
+
+    Clack-Outro "Development environment ready!"
 }
 
 # Run main function

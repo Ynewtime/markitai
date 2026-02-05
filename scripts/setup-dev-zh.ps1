@@ -23,19 +23,25 @@ if ($script:ScriptDir -and (Test-Path "$script:ScriptDir\lib.ps1" -ErrorAction S
 } else {
     # 远程执行 - 开发者版需要本地克隆
     Write-Host ""
-    Write-Host ("=" * 48) -ForegroundColor Cyan
-    Write-Host "  开发者版需要本地仓库" -ForegroundColor White
-    Write-Host ("=" * 48) -ForegroundColor Cyan
-    Write-Host ""
+    Write-Host ([char]0x250C) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  开发者版需要本地仓库" -ForegroundColor Red
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "  请先克隆仓库:"
-    Write-Host ""
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "    git clone https://github.com/Ynewtime/markitai.git" -ForegroundColor Yellow
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "    cd markitai" -ForegroundColor Yellow
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "    .\scripts\setup-dev-zh.ps1" -ForegroundColor Yellow
-    Write-Host ""
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "  或使用用户版快速安装:"
-    Write-Host ""
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
     Write-Host "    irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps1 | iex" -ForegroundColor Yellow
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x2514) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  退出" -ForegroundColor Red
     Write-Host ""
     exit 1
 }
@@ -48,87 +54,15 @@ function Get-ProjectRoot {
     return Split-Path -Parent $ScriptDir
 }
 
-# 中文欢迎信息（开发者版）
-function Write-WelcomeDevZh {
-    Write-Host ""
-    Write-Host ("=" * 45) -ForegroundColor Cyan
-    Write-Host "  Markitai 开发环境配置" -ForegroundColor White
-    Write-Host ("=" * 45) -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  本脚本将配置:"
-    Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Green -NoNewline; Write-Host "Python 虚拟环境及所有依赖"
-    Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Green -NoNewline; Write-Host "pre-commit hooks 代码质量检查"
-    Write-Host ""
-    Write-Host "  可选组件:"
-    Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "Playwright - 浏览器自动化"
-    Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "LLM CLI 工具 - Claude Code / Copilot"
-    Write-Host "    " -NoNewline; Write-Host "* " -ForegroundColor Yellow -NoNewline; Write-Host "LLM Python SDKs - 程序化 LLM 访问"
-    Write-Host ""
-    Write-Host "  随时按 Ctrl+C 取消" -ForegroundColor White
-    Write-Host ""
-}
-
-# 中文安装总结
-function Write-SummaryDevZh {
-    Write-Host ""
-    Write-Host ("=" * 45) -ForegroundColor Cyan
-    Write-Host "  安装总结" -ForegroundColor White
-    Write-Host ("=" * 45) -ForegroundColor Cyan
-    Write-Host ""
-
-    # 已安装
-    if ($script:InstalledComponents.Count -gt 0) {
-        Write-Host "  已安装:" -ForegroundColor Green
-        foreach ($comp in $script:InstalledComponents) {
-            Write-Host "    " -NoNewline
-            Write-Host "[OK] " -ForegroundColor Green -NoNewline
-            Write-Host $comp
-        }
-        Write-Host ""
-    }
-
-    # 已跳过
-    if ($script:SkippedComponents.Count -gt 0) {
-        Write-Host "  已跳过:" -ForegroundColor Yellow
-        foreach ($comp in $script:SkippedComponents) {
-            Write-Host "    " -NoNewline
-            Write-Host "[--] " -ForegroundColor Yellow -NoNewline
-            Write-Host $comp
-        }
-        Write-Host ""
-    }
-
-    # 安装失败
-    if ($script:FailedComponents.Count -gt 0) {
-        Write-Host "  安装失败:" -ForegroundColor Red
-        foreach ($comp in $script:FailedComponents) {
-            Write-Host "    " -NoNewline
-            Write-Host "[X] " -ForegroundColor Red -NoNewline
-            Write-Host $comp
-        }
-        Write-Host ""
-    }
-
-    Write-Host "  文档: https://markitai.ynewtime.com"
-    Write-Host "  问题反馈: https://github.com/Ynewtime/markitai/issues"
-    Write-Host ""
-}
-
 # 执行策略检查（中文）
 function Test-ExecutionPolicyZh {
     $policy = Get-ExecutionPolicy -Scope CurrentUser
     if ($policy -eq "Restricted" -or $policy -eq "AllSigned") {
-        Write-Host ""
-        Write-Host ("=" * 45) -ForegroundColor Yellow
-        Write-Host "  执行策略警告" -ForegroundColor Yellow
-        Write-Host ("=" * 45) -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "  当前策略: $policy"
-        Write-Host "  脚本可能无法运行。"
-        Write-Host ""
-        Write-Host "  解决方法:" -ForegroundColor White
-        Write-Host "    Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned" -ForegroundColor Yellow
-        Write-Host ""
+        Clack-Warn "执行策略警告: 当前策略为 $policy"
+        Clack-Log "  脚本可能无法运行。"
+        Clack-Log ""
+        Clack-Log "  解决方法:"
+        Clack-Log "    Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned"
         return $false
     }
     return $true
@@ -138,21 +72,15 @@ function Test-AdminWarningZh {
     $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
     if ($isAdmin) {
-        Write-Host ""
-        Write-Host ("=" * 45) -ForegroundColor Yellow
-        Write-Host "  警告: 正在以管理员身份运行" -ForegroundColor Yellow
-        Write-Host ("=" * 45) -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "  以管理员身份运行安装脚本存在以下风险:"
-        Write-Host "  1. 系统级更改可能影响所有用户"
-        Write-Host "  2. 远程代码执行风险被放大"
-        Write-Host ""
-        Write-Host "  建议: 使用普通用户身份运行此脚本"
-        Write-Host ""
+        Clack-Warn "正在以管理员身份运行"
+        Clack-Log "  以管理员身份运行安装脚本存在以下风险:"
+        Clack-Log "  1. 系统级更改可能影响所有用户"
+        Clack-Log "  2. 远程代码执行风险被放大"
+        Clack-Log ""
+        Clack-Log "  建议: 使用普通用户身份运行此脚本"
 
-        if (-not (Ask-YesNo "是否继续以管理员身份运行?" $false)) {
-            Write-Host ""
-            Write-InfoZh "退出。请使用普通用户身份运行。"
+        if (-not (Clack-Confirm "是否继续以管理员身份运行?" "n")) {
+            Clack-Cancel "退出。请使用普通用户身份运行。"
             exit 1
         }
     }
@@ -164,20 +92,14 @@ function Test-WSLWarningZh {
     # WSLENV is used to configure env var sharing between Windows and WSL,
     # and may exist on Windows host even when not running inside WSL
     if ($env:WSL_DISTRO_NAME) {
-        Write-Host ""
-        Write-Host ("=" * 45) -ForegroundColor Yellow
-        Write-Host "  警告: 正在 WSL 环境中运行" -ForegroundColor Yellow
-        Write-Host ("=" * 45) -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "  检测到您正在 WSL 中运行 PowerShell。"
-        Write-Host "  建议使用原生 shell 脚本以获得最佳效果:"
-        Write-Host ""
-        Write-Host "    ./scripts/setup-dev-zh.sh" -ForegroundColor Yellow
-        Write-Host ""
+        Clack-Warn "正在 WSL 环境中运行"
+        Clack-Log "  检测到您正在 WSL 中运行 PowerShell。"
+        Clack-Log "  建议使用原生 shell 脚本以获得最佳效果:"
+        Clack-Log ""
+        Clack-Log "    ./scripts/setup-dev-zh.sh"
 
-        if (-not (Ask-YesNo "是否继续使用 PowerShell 脚本?" $false)) {
-            Write-Host ""
-            Write-InfoZh "退出。请使用 .sh 脚本。"
+        if (-not (Clack-Confirm "是否继续使用 PowerShell 脚本?" "n")) {
+            Clack-Cancel "退出。请使用 .sh 脚本。"
             exit 1
         }
     }
@@ -189,47 +111,14 @@ function Confirm-RemoteScriptZh {
         [string]$ScriptName
     )
 
-    Write-Host ""
-    Write-Host ("=" * 45) -ForegroundColor Yellow
-    Write-Host "  警告: 即将执行远程脚本" -ForegroundColor Yellow
-    Write-Host ("=" * 45) -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  来源: $ScriptUrl"
-    Write-Host "  用途: 安装 $ScriptName"
-    Write-Host ""
-    Write-Host "  此操作将从互联网下载并执行代码。"
-    Write-Host "  请确保您信任该来源。"
-    Write-Host ""
+    Clack-Warn "即将执行远程脚本"
+    Clack-Log "  来源: $ScriptUrl"
+    Clack-Log "  用途: 安装 $ScriptName"
+    Clack-Log ""
+    Clack-Log "  此操作将从互联网下载并执行代码。"
+    Clack-Log "  请确保您信任该来源。"
 
-    return (Ask-YesNo "确认执行?" $false)
-}
-
-function Write-SuccessZh {
-    param([string]$Text)
-    Write-Host "  " -NoNewline
-    Write-Host "[OK] " -ForegroundColor Green -NoNewline
-    Write-Host $Text
-}
-
-function Write-ErrorZh {
-    param([string]$Text)
-    Write-Host "  " -NoNewline
-    Write-Host "[X] " -ForegroundColor Red -NoNewline
-    Write-Host $Text
-}
-
-function Write-InfoZh {
-    param([string]$Text)
-    Write-Host "  " -NoNewline
-    Write-Host "-> " -ForegroundColor Yellow -NoNewline
-    Write-Host $Text
-}
-
-function Write-WarningZh {
-    param([string]$Text)
-    Write-Host "  " -NoNewline
-    Write-Host "[!] " -ForegroundColor Yellow -NoNewline
-    Write-Host $Text
+    return (Clack-Confirm "确认执行?" "n")
 }
 
 # 检测/安装 Python（通过 uv 管理）
@@ -241,13 +130,13 @@ function Test-PythonZh {
             $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
             if ($version) {
                 $script:PYTHON_CMD = $uvPython
-                Write-SuccessZh "Python $version (uv 管理)"
+                Clack-Success "Python $version (uv 管理)"
                 return $true
             }
         }
 
         # 未找到，自动安装
-        Write-InfoZh "正在安装 Python 3.13..."
+        Clack-Info "正在安装 Python 3.13..."
         $installResult = & uv python install 3.13 2>&1
         if ($LASTEXITCODE -eq 0) {
             $uvPython = & uv python find 3.13 2>$null
@@ -255,14 +144,14 @@ function Test-PythonZh {
                 $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
                 if ($version) {
                     $script:PYTHON_CMD = $uvPython
-                    Write-SuccessZh "Python $version 安装成功 (uv 管理)"
+                    Clack-Success "Python $version 安装成功 (uv 管理)"
                     return $true
                 }
             }
         }
-        Write-ErrorZh "Python 3.13 安装失败"
+        Clack-Error "Python 3.13 安装失败"
     } else {
-        Write-ErrorZh "uv 未安装，无法管理 Python"
+        Clack-Error "uv 未安装，无法管理 Python"
     }
 
     return $false
@@ -270,35 +159,35 @@ function Test-PythonZh {
 
 # 安装 UV（开发者版必需）
 function Install-UVZh {
-    Write-InfoZh "检查 UV 安装..."
-
     if (Test-UV) {
+        $version = (& uv --version 2>$null).Split(' ')[1]
+        Clack-Success "uv $version"
         Track-Install -Component "uv" -Status "installed"
         return $true
     }
 
-    Write-ErrorZh "UV 未安装"
+    Clack-Error "UV 未安装"
 
-    if (-not (Ask-YesNo "是否自动安装 UV?" $false)) {
-        Write-ErrorZh "UV 是开发所必需的"
+    if (-not (Clack-Confirm "是否自动安装 UV?" "n")) {
+        Clack-Error "UV 是开发所必需的"
         Track-Install -Component "uv" -Status "failed"
         return $false
     }
 
     if ($script:UvVersion) {
         $uvUrl = "https://astral.sh/uv/$($script:UvVersion)/install.ps1"
-        Write-InfoZh "安装 UV 版本: $($script:UvVersion)"
+        Clack-Info "安装 UV 版本: $($script:UvVersion)"
     } else {
         $uvUrl = "https://astral.sh/uv/install.ps1"
     }
 
     if (-not (Confirm-RemoteScriptZh -ScriptUrl $uvUrl -ScriptName "UV")) {
-        Write-ErrorZh "UV 是开发所必需的"
+        Clack-Error "UV 是开发所必需的"
         Track-Install -Component "uv" -Status "failed"
         return $false
     }
 
-    Write-InfoZh "正在安装 UV..."
+    Clack-Info "正在安装 UV..."
 
     try {
         Invoke-RestMethod $uvUrl | Invoke-Expression
@@ -308,8 +197,8 @@ function Install-UVZh {
         # Check if uv command exists after PATH refresh
         $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
         if (-not $uvCmd) {
-            Write-WarningZh "UV 已安装，但需要重新打开 PowerShell"
-            Write-InfoZh "请重新打开 PowerShell 后再次运行此脚本"
+            Clack-Warn "UV 已安装，但需要重新打开 PowerShell"
+            Clack-Info "请重新打开 PowerShell 后再次运行此脚本"
             Track-Install -Component "uv" -Status "installed"
             return $false
         }
@@ -322,18 +211,18 @@ function Install-UVZh {
             $ErrorActionPreference = $oldErrorAction
         }
         if ($version -and $version -notmatch "error") {
-            Write-SuccessZh "$version 安装成功"
+            Clack-Success "$version 安装成功"
             Track-Install -Component "uv" -Status "installed"
             return $true
         } else {
-            Write-WarningZh "UV 已安装，但需要重新打开 PowerShell"
-            Write-InfoZh "请重新打开 PowerShell 后再次运行此脚本"
+            Clack-Warn "UV 已安装，但需要重新打开 PowerShell"
+            Clack-Info "请重新打开 PowerShell 后再次运行此脚本"
             Track-Install -Component "uv" -Status "installed"
             return $false
         }
     } catch {
-        Write-ErrorZh "UV 安装失败: $_"
-        Write-InfoZh "手动安装: irm https://astral.sh/uv/install.ps1 | iex"
+        Clack-Error "UV 安装失败: $_"
+        Clack-Info "手动安装: irm https://astral.sh/uv/install.ps1 | iex"
         Track-Install -Component "uv" -Status "failed"
         return $false
     }
@@ -341,7 +230,7 @@ function Install-UVZh {
 
 function Sync-DependenciesZh {
     $projectRoot = Get-ProjectRoot
-    Write-InfoZh "项目目录: $projectRoot"
+    Clack-Info "项目目录: $projectRoot"
 
     # 获取 Python 版本号用于 uv --python 参数
     $pythonArg = $script:PYTHON_CMD
@@ -362,13 +251,13 @@ function Sync-DependenciesZh {
     Push-Location $projectRoot
 
     try {
-        Write-InfoZh "运行 uv sync --all-extras --python $pythonArg..."
+        Clack-Info "运行 uv sync --all-extras --python $pythonArg..."
         & uv sync --all-extras --python $pythonArg
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "依赖同步完成 (使用 Python $pythonArg)"
+            Clack-Success "依赖同步完成 (使用 Python $pythonArg)"
             return $true
         } else {
-            Write-ErrorZh "依赖同步失败"
+            Clack-Error "依赖同步失败"
             return $false
         }
     } finally {
@@ -382,21 +271,21 @@ function Install-PreCommitZh {
 
     try {
         if (Test-Path ".pre-commit-config.yaml") {
-            Write-InfoZh "安装 pre-commit hooks..."
+            Clack-Info "安装 pre-commit hooks..."
 
             $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
             if ($uvCmd) {
                 & uv run pre-commit install
                 if ($LASTEXITCODE -eq 0) {
-                    Write-SuccessZh "pre-commit hooks 安装完成"
+                    Clack-Success "pre-commit hooks 安装完成"
                 } else {
-                    Write-WarningZh "pre-commit 安装失败，请手动运行: uv run pre-commit install"
+                    Clack-Warn "pre-commit 安装失败，请手动运行: uv run pre-commit install"
                 }
             } else {
-                Write-WarningZh "未找到 uv 命令，跳过 pre-commit 安装"
+                Clack-Warn "未找到 uv 命令，跳过 pre-commit 安装"
             }
         } else {
-            Write-InfoZh "未找到 .pre-commit-config.yaml，跳过"
+            Clack-Skip "未找到 .pre-commit-config.yaml"
         }
     } finally {
         Pop-Location
@@ -404,17 +293,8 @@ function Install-PreCommitZh {
 }
 
 function Test-NodeJSZh {
-    Write-InfoZh "检测 Node.js..."
-
     $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
     if (-not $nodeCmd) {
-        Write-ErrorZh "未找到 Node.js"
-        Write-Host ""
-        Write-WarningZh "请安装 Node.js 18+:"
-        Write-InfoZh "官网下载: https://nodejs.org/"
-        Write-InfoZh "winget: winget install OpenJS.NodeJS.LTS"
-        Write-InfoZh "scoop: scoop install nodejs-lts"
-        Write-InfoZh "choco: choco install nodejs-lts"
         return $false
     }
 
@@ -425,64 +305,49 @@ function Test-NodeJSZh {
             $parts = $versionStr -split "\."
 
             if ($parts[0] -notmatch '^\d+$') {
-                Write-WarningZh "无法解析 Node 版本: $version"
                 return $false
             }
 
             $major = [int]$parts[0]
-
-            if ($major -ge 18) {
-                Write-SuccessZh "Node.js $version 已安装"
-                return $true
-            } else {
-                Write-WarningZh "Node.js $version 版本较低，建议 18+"
-                return $true
-            }
+            return ($major -ge 18)
         }
     } catch {}
 
-    Write-ErrorZh "未找到 Node.js"
-    Write-Host ""
-    Write-WarningZh "请安装 Node.js 18+:"
-    Write-InfoZh "官网下载: https://nodejs.org/"
-    Write-InfoZh "winget: winget install OpenJS.NodeJS.LTS"
-    Write-InfoZh "scoop: scoop install nodejs-lts"
-    Write-InfoZh "choco: choco install nodejs-lts"
     return $false
 }
 
 # 安装 Claude Code CLI
 function Install-ClaudeCLIZh {
-    Write-InfoZh "正在安装 Claude Code CLI..."
-
     # 检查是否已安装
     $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
     if ($claudeCmd) {
         $version = & claude --version 2>&1 | Select-Object -First 1
-        Write-SuccessZh "Claude Code CLI 已安装: $version"
+        Clack-Success "Claude Code CLI 已安装: $version"
         Track-Install -Component "Claude Code CLI" -Status "installed"
         return $true
     }
+
+    Clack-Info "正在安装 Claude Code CLI..."
 
     # 尝试 npm/pnpm
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
     if ($pnpmCmd) {
-        Write-InfoZh "使用 pnpm 安装..."
+        Clack-Info "使用 pnpm 安装..."
         & pnpm add -g @anthropic-ai/claude-code
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "通过 pnpm 安装 Claude Code CLI 成功"
-            Write-InfoZh "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
+            Clack-Success "通过 pnpm 安装 Claude Code CLI 成功"
+            Clack-Info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
             Track-Install -Component "Claude Code CLI" -Status "installed"
             return $true
         }
     } elseif ($npmCmd) {
-        Write-InfoZh "使用 npm 安装..."
+        Clack-Info "使用 npm 安装..."
         & npm install -g @anthropic-ai/claude-code
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "通过 npm 安装 Claude Code CLI 成功"
-            Write-InfoZh "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
+            Clack-Success "通过 npm 安装 Claude Code CLI 成功"
+            Clack-Info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
             Track-Install -Component "Claude Code CLI" -Status "installed"
             return $true
         }
@@ -491,57 +356,54 @@ function Install-ClaudeCLIZh {
     # 尝试 WinGet (Windows)
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-InfoZh "使用 WinGet 安装..."
+        Clack-Info "使用 WinGet 安装..."
         $null = & winget install Anthropic.ClaudeCode --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "通过 WinGet 安装 Claude Code CLI 成功"
-            Write-InfoZh "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
+            Clack-Success "通过 WinGet 安装 Claude Code CLI 成功"
+            Clack-Info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
             Track-Install -Component "Claude Code CLI" -Status "installed"
             return $true
         }
     }
 
-    Write-WarningZh "Claude Code CLI 安装失败"
-    Write-InfoZh "手动安装选项:"
-    Write-InfoZh "  pnpm: pnpm add -g @anthropic-ai/claude-code"
-    Write-InfoZh "  winget: winget install Anthropic.ClaudeCode"
-    Write-InfoZh "  文档: https://code.claude.com/docs/en/setup"
+    Clack-Warn "Claude Code CLI 安装失败"
+    Clack-Note "手动安装选项" "pnpm: pnpm add -g @anthropic-ai/claude-code" "winget: winget install Anthropic.ClaudeCode" "文档: https://code.claude.com/docs/en/setup"
     Track-Install -Component "Claude Code CLI" -Status "failed"
     return $false
 }
 
 # 安装 GitHub Copilot CLI
 function Install-CopilotCLIZh {
-    Write-InfoZh "正在安装 GitHub Copilot CLI..."
-
     # 检查是否已安装
     $copilotCmd = Get-Command copilot -ErrorAction SilentlyContinue
     if ($copilotCmd) {
         $version = & copilot --version 2>&1 | Select-Object -First 1
-        Write-SuccessZh "Copilot CLI 已安装: $version"
+        Clack-Success "Copilot CLI 已安装: $version"
         Track-Install -Component "Copilot CLI" -Status "installed"
         return $true
     }
+
+    Clack-Info "正在安装 GitHub Copilot CLI..."
 
     # 尝试 npm/pnpm
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
     if ($pnpmCmd) {
-        Write-InfoZh "使用 pnpm 安装..."
+        Clack-Info "使用 pnpm 安装..."
         $null = & pnpm add -g @github/copilot 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "通过 pnpm 安装 Copilot CLI 成功"
-            Write-InfoZh "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
+            Clack-Success "通过 pnpm 安装 Copilot CLI 成功"
+            Clack-Info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
             Track-Install -Component "Copilot CLI" -Status "installed"
             return $true
         }
     } elseif ($npmCmd) {
-        Write-InfoZh "使用 npm 安装..."
+        Clack-Info "使用 npm 安装..."
         $null = & npm install -g @github/copilot 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "通过 npm 安装 Copilot CLI 成功"
-            Write-InfoZh "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
+            Clack-Success "通过 npm 安装 Copilot CLI 成功"
+            Clack-Info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
             Track-Install -Component "Copilot CLI" -Status "installed"
             return $true
         }
@@ -550,39 +412,37 @@ function Install-CopilotCLIZh {
     # 尝试 WinGet (Windows)
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-InfoZh "使用 WinGet 安装..."
+        Clack-Info "使用 WinGet 安装..."
         $null = & winget install GitHub.Copilot --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "通过 WinGet 安装 Copilot CLI 成功"
-            Write-InfoZh "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
+            Clack-Success "通过 WinGet 安装 Copilot CLI 成功"
+            Clack-Info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
             Track-Install -Component "Copilot CLI" -Status "installed"
             return $true
         }
     }
 
-    Write-WarningZh "Copilot CLI 安装失败"
-    Write-InfoZh "手动安装选项:"
-    Write-InfoZh "  pnpm: pnpm add -g @github/copilot"
-    Write-InfoZh "  winget: winget install GitHub.Copilot"
+    Clack-Warn "Copilot CLI 安装失败"
+    Clack-Note "手动安装选项" "pnpm: pnpm add -g @github/copilot" "winget: winget install GitHub.Copilot"
     Track-Install -Component "Copilot CLI" -Status "failed"
     return $false
 }
 
 # 安装 LLM CLI 工具
 function Install-LLMCLIsZh {
-    Write-InfoZh "LLM CLI 工具提供本地认证:"
-    Write-InfoZh "  - Claude Code CLI: 使用你的 Claude 订阅"
-    Write-InfoZh "  - Copilot CLI: 使用你的 GitHub Copilot 订阅"
+    Clack-Note "LLM CLI 工具" "Claude Code CLI: 使用你的 Claude 订阅" "Copilot CLI: 使用你的 GitHub Copilot 订阅"
 
-    if (Ask-YesNo "是否安装 Claude Code CLI?" $false) {
+    if (Clack-Confirm "是否安装 Claude Code CLI?" "n") {
         Install-ClaudeCLIZh | Out-Null
     } else {
+        Clack-Skip "Claude Code CLI"
         Track-Install -Component "Claude Code CLI" -Status "skipped"
     }
 
-    if (Ask-YesNo "是否安装 GitHub Copilot CLI?" $false) {
+    if (Clack-Confirm "是否安装 GitHub Copilot CLI?" "n") {
         Install-CopilotCLIZh | Out-Null
     } else {
+        Clack-Skip "Copilot CLI"
         Track-Install -Component "Copilot CLI" -Status "skipped"
     }
 }
@@ -591,19 +451,34 @@ function Install-LLMCLIsZh {
 # 优先使用 uv run，回退到 python 模块
 # 返回: $true 成功, $false 失败/跳过
 function Install-PlaywrightBrowserDevZh {
-    Write-InfoZh "Playwright 浏览器 (Chromium):"
-    Write-InfoZh "  用途: 浏览器自动化，用于 JavaScript 渲染页面 (Twitter, SPA)"
+    # 自动检测是否已安装
+    $projectRoot = Get-ProjectRoot
+    Push-Location $projectRoot
+
+    try {
+        # 检查 Chromium 是否已安装
+        $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+        if ($uvCmd) {
+            $checkResult = & uv run playwright install --dry-run chromium 2>&1
+            if ($checkResult -match "already installed" -or $checkResult -match "Chromium.*is already installed") {
+                Clack-Success "Playwright 浏览器 (Chromium) 已安装"
+                Track-Install -Component "Playwright Browser" -Status "installed"
+                return $true
+            }
+        }
+    } finally {
+        Pop-Location
+    }
 
     # 下载前先征询用户同意
-    if (-not (Ask-YesNo "是否下载 Chromium 浏览器？" $true)) {
-        Write-InfoZh "跳过 Playwright 浏览器安装"
+    if (-not (Clack-Confirm "是否下载 Chromium 浏览器？(用于 JS 渲染页面)" "y")) {
+        Clack-Skip "Playwright 浏览器"
         Track-Install -Component "Playwright Browser" -Status "skipped"
         return $false
     }
 
-    Write-InfoZh "正在下载 Chromium 浏览器..."
+    Clack-Info "正在下载 Chromium 浏览器..."
 
-    $projectRoot = Get-ProjectRoot
     Push-Location $projectRoot
 
     $oldErrorAction = $ErrorActionPreference
@@ -617,7 +492,7 @@ function Install-PlaywrightBrowserDevZh {
             & uv run playwright install chromium
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
-                Write-SuccessZh "Chromium 浏览器安装成功"
+                Clack-Success "Chromium 浏览器安装成功"
                 Track-Install -Component "Playwright Browser" -Status "installed"
                 return $true
             }
@@ -634,7 +509,7 @@ function Install-PlaywrightBrowserDevZh {
             & $exe @pwArgs
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
-                Write-SuccessZh "Chromium 浏览器安装成功"
+                Clack-Success "Chromium 浏览器安装成功"
                 Track-Install -Component "Playwright Browser" -Status "installed"
                 return $true
             }
@@ -644,22 +519,20 @@ function Install-PlaywrightBrowserDevZh {
         $ErrorActionPreference = $oldErrorAction
     }
 
-    Write-WarningZh "Playwright 浏览器安装失败"
-    Write-InfoZh "稍后可手动安装: uv run playwright install chromium"
+    Clack-Warn "Playwright 浏览器安装失败"
+    Clack-Info "稍后可手动安装: uv run playwright install chromium"
     Track-Install -Component "Playwright Browser" -Status "failed"
     return $false
 }
 
 # 检测 LibreOffice 安装（可选，用于旧版 Office 文件）
 function Install-LibreOfficeDevZh {
-    Write-InfoZh "正在检测 LibreOffice..."
-    Write-InfoZh "  用途: 转换旧版 Office 文件 (.doc, .ppt, .xls)"
-
+    # 自动检测
     $soffice = Get-Command soffice -ErrorAction SilentlyContinue
     if ($soffice) {
         try {
             $version = & soffice --version 2>&1 | Select-Object -First 1
-            Write-SuccessZh "LibreOffice 已安装: $version"
+            Clack-Success "LibreOffice 已安装: $version"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         } catch {}
@@ -672,32 +545,29 @@ function Install-LibreOfficeDevZh {
 
     foreach ($path in $commonPaths) {
         if (Test-Path $path) {
-            Write-SuccessZh "LibreOffice 已安装: $path"
+            Clack-Success "LibreOffice 已安装"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
     }
 
-    Write-WarningZh "LibreOffice 未安装（可选）"
-    Write-InfoZh "  若未安装，无法转换 .doc/.ppt/.xls 文件"
-    Write-InfoZh "  新版格式 (.docx/.pptx/.xlsx) 无需 LibreOffice"
-
-    if (-not (Ask-YesNo "是否安装 LibreOffice？" $false)) {
-        Write-InfoZh "跳过 LibreOffice 安装"
+    # 未安装，询问用户
+    if (-not (Clack-Confirm "是否安装 LibreOffice？(用于转换 .doc/.ppt/.xls 文件)" "n")) {
+        Clack-Skip "LibreOffice (新版格式 .docx/.pptx/.xlsx 无需)"
         Track-Install -Component "LibreOffice" -Status "skipped"
         return $false
     }
 
-    Write-InfoZh "正在安装 LibreOffice..."
+    Clack-Info "正在安装 LibreOffice..."
 
     # 优先级: winget > scoop > choco
     # 优先使用 WinGet
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-InfoZh "通过 WinGet 安装..."
+        Clack-Info "通过 WinGet 安装..."
         $null = & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "LibreOffice 通过 WinGet 安装成功"
+            Clack-Success "LibreOffice 通过 WinGet 安装成功"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
@@ -706,11 +576,11 @@ function Install-LibreOfficeDevZh {
     # 备选：Scoop
     $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
     if ($scoopCmd) {
-        Write-InfoZh "通过 Scoop 安装..."
+        Clack-Info "通过 Scoop 安装..."
         & scoop bucket add extras 2>$null
         $null = & scoop install extras/libreoffice 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "LibreOffice 通过 Scoop 安装成功"
+            Clack-Success "LibreOffice 通过 Scoop 安装成功"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
@@ -719,58 +589,50 @@ function Install-LibreOfficeDevZh {
     # 备选：Chocolatey
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
-        Write-InfoZh "通过 Chocolatey 安装..."
+        Clack-Info "通过 Chocolatey 安装..."
         $null = & choco install libreoffice-fresh -y 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "LibreOffice 通过 Chocolatey 安装成功"
+            Clack-Success "LibreOffice 通过 Chocolatey 安装成功"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
     }
 
-    Write-WarningZh "LibreOffice 安装失败"
-    Write-InfoZh "手动安装方式:"
-    Write-InfoZh "  winget: winget install TheDocumentFoundation.LibreOffice"
-    Write-InfoZh "  scoop: scoop install extras/libreoffice"
-    Write-InfoZh "  choco: choco install libreoffice-fresh"
-    Write-InfoZh "  下载: https://www.libreoffice.org/download/"
+    Clack-Warn "LibreOffice 安装失败"
+    Clack-Note "手动安装方式" "winget: winget install TheDocumentFoundation.LibreOffice" "scoop: scoop install extras/libreoffice" "choco: choco install libreoffice-fresh" "下载: https://www.libreoffice.org/download/"
     Track-Install -Component "LibreOffice" -Status "failed"
     return $false
 }
 
 # 安装 FFmpeg（可选，用于音视频文件处理）
 function Install-FFmpegDevZh {
-    Write-InfoZh "正在检测 FFmpeg..."
-    Write-InfoZh "  用途: 处理音视频文件 (.mp3, .mp4, .wav 等)"
-
+    # 自动检测
     $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
     if ($ffmpegCmd) {
         try {
             $version = & ffmpeg -version 2>&1 | Select-Object -First 1
-            Write-SuccessZh "FFmpeg 已安装: $version"
+            Clack-Success "FFmpeg 已安装: $version"
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         } catch {}
     }
 
-    Write-WarningZh "FFmpeg 未安装（可选）"
-    Write-InfoZh "  若未安装，无法处理音视频文件"
-
-    if (-not (Ask-YesNo "是否安装 FFmpeg？" $false)) {
-        Write-InfoZh "跳过 FFmpeg 安装"
+    # 未安装，询问用户
+    if (-not (Clack-Confirm "是否安装 FFmpeg？(用于处理音视频文件)" "n")) {
+        Clack-Skip "FFmpeg"
         Track-Install -Component "FFmpeg" -Status "skipped"
         return $false
     }
 
-    Write-InfoZh "正在安装 FFmpeg..."
+    Clack-Info "正在安装 FFmpeg..."
 
     # 优先级: winget > scoop > choco
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-InfoZh "通过 WinGet 安装..."
+        Clack-Info "通过 WinGet 安装..."
         $null = & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "FFmpeg 通过 WinGet 安装成功"
+            Clack-Success "FFmpeg 通过 WinGet 安装成功"
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         }
@@ -778,10 +640,10 @@ function Install-FFmpegDevZh {
 
     $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
     if ($scoopCmd) {
-        Write-InfoZh "通过 Scoop 安装..."
+        Clack-Info "通过 Scoop 安装..."
         $null = & scoop install ffmpeg 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "FFmpeg 通过 Scoop 安装成功"
+            Clack-Success "FFmpeg 通过 Scoop 安装成功"
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         }
@@ -789,41 +651,19 @@ function Install-FFmpegDevZh {
 
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
-        Write-InfoZh "通过 Chocolatey 安装..."
+        Clack-Info "通过 Chocolatey 安装..."
         $null = & choco install ffmpeg -y 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-SuccessZh "FFmpeg 通过 Chocolatey 安装成功"
+            Clack-Success "FFmpeg 通过 Chocolatey 安装成功"
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         }
     }
 
-    Write-WarningZh "FFmpeg 安装失败"
-    Write-InfoZh "手动安装方式:"
-    Write-InfoZh "  winget: winget install Gyan.FFmpeg"
-    Write-InfoZh "  scoop: scoop install ffmpeg"
-    Write-InfoZh "  choco: choco install ffmpeg"
-    Write-InfoZh "  下载: https://ffmpeg.org/download.html"
+    Clack-Warn "FFmpeg 安装失败"
+    Clack-Note "手动安装方式" "winget: winget install Gyan.FFmpeg" "scoop: scoop install ffmpeg" "choco: choco install ffmpeg" "下载: https://ffmpeg.org/download.html"
     Track-Install -Component "FFmpeg" -Status "failed"
     return $false
-}
-
-function Write-CompletionZh {
-    $projectRoot = Get-ProjectRoot
-
-    Write-Host ""
-    Write-Host "[OK] " -ForegroundColor Green -NoNewline
-    Write-Host "开发环境配置完成!" -ForegroundColor White
-    Write-Host ""
-    Write-Host "  激活虚拟环境:" -ForegroundColor White
-    Write-Host "    $projectRoot\.venv\Scripts\Activate.ps1" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  运行测试:" -ForegroundColor White
-    Write-Host "    uv run pytest" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  运行 CLI:" -ForegroundColor White
-    Write-Host "    uv run markitai --help" -ForegroundColor Yellow
-    Write-Host ""
 }
 
 # ============================================================
@@ -831,6 +671,9 @@ function Write-CompletionZh {
 # ============================================================
 
 function Main {
+    # 欢迎信息
+    Clack-Intro "Markitai 开发环境配置"
+
     # 检查执行策略
     if (-not (Test-ExecutionPolicyZh)) {
         # 继续，但已显示警告
@@ -842,33 +685,45 @@ function Main {
     # 环境检查: WSL 警告
     Test-WSLWarningZh
 
-    # 欢迎信息
-    Write-WelcomeDevZh
+    # ========================================
+    # 步骤 1: 检测前置依赖
+    # ========================================
+    Clack-Section "检测前置依赖"
 
-    Write-Header "Markitai 开发环境配置向导"
-
-    # 步骤 1: 检测/安装 UV（用于管理 Python 和依赖）
-    Write-Step 1 5 "检测 UV 包管理器..."
+    # 检测/安装 UV（用于管理 Python 和依赖）
     if (-not (Install-UVZh)) {
-        Write-SummaryDevZh
+        Clack-Cancel "UV 安装失败，无法继续"
         exit 1
     }
 
-    # 步骤 2: 检测/安装 Python（通过 uv 自动安装）
-    Write-Step 2 5 "检测 Python..."
+    # 检测/安装 Python（通过 uv 自动安装）
     if (-not (Test-PythonZh)) {
+        Clack-Cancel "Python 安装失败，无法继续"
         exit 1
     }
 
-    # 步骤 3: 同步依赖（包含所有 extras: browser, claude-agent, copilot）
-    Write-Step 3 5 "同步开发依赖..."
+    # ========================================
+    # 步骤 2: 配置开发环境
+    # ========================================
+    Clack-Section "配置开发环境"
+
+    # 同步依赖（包含所有 extras: browser, claude-agent, copilot）
     if (-not (Sync-DependenciesZh)) {
-        Write-SummaryDevZh
+        Clack-Cancel "依赖同步失败，无法继续"
         exit 1
     }
     Track-Install -Component "Python 依赖" -Status "installed"
     Track-Install -Component "Claude Agent SDK" -Status "installed"
     Track-Install -Component "Copilot SDK" -Status "installed"
+
+    # 安装 pre-commit
+    Install-PreCommitZh
+    Track-Install -Component "pre-commit hooks" -Status "installed"
+
+    # ========================================
+    # 步骤 3: 可选组件
+    # ========================================
+    Clack-Section "可选组件"
 
     # 安装 Playwright 浏览器（SPA/JS 渲染页面需要）
     Install-PlaywrightBrowserDevZh | Out-Null
@@ -879,26 +734,29 @@ function Main {
     # 安装 FFmpeg（可选，用于音视频文件）
     Install-FFmpegDevZh | Out-Null
 
-    # 步骤 4: 安装 pre-commit
-    Write-Step 4 5 "配置 pre-commit..."
-    Install-PreCommitZh
-    Track-Install -Component "pre-commit hooks" -Status "installed"
-
-    # 步骤 5: 可选 - LLM CLI 工具
-    Write-Step 5 5 "可选: LLM CLI 工具"
-    if (Ask-YesNo "是否安装 LLM CLI 工具 (Claude Code / Copilot)?" $false) {
-        Install-LLMCLIsZh
+    # LLM CLI 工具（仅当 Node.js 可用时提供安装选项）
+    if (Test-NodeJSZh) {
+        if (Clack-Confirm "是否安装 LLM CLI 工具 (Claude Code / Copilot)?" "n") {
+            Install-LLMCLIsZh
+        } else {
+            Clack-Skip "LLM CLI 工具"
+            Track-Install -Component "Claude Code CLI" -Status "skipped"
+            Track-Install -Component "Copilot CLI" -Status "skipped"
+        }
     } else {
-        Write-InfoZh "跳过 LLM CLI 安装"
+        Clack-Skip "LLM CLI 工具 (需要 Node.js 18+)"
         Track-Install -Component "Claude Code CLI" -Status "skipped"
         Track-Install -Component "Copilot CLI" -Status "skipped"
     }
 
-    # 打印总结
-    Write-SummaryDevZh
-
+    # ========================================
     # 完成
-    Write-CompletionZh
+    # ========================================
+    $projectRoot = Get-ProjectRoot
+
+    Clack-Note "快速开始" "激活环境: $projectRoot\.venv\Scripts\Activate.ps1" "运行测试: uv run pytest" "运行 CLI: uv run markitai --help"
+
+    Clack-Outro "开发环境配置完成!"
 }
 
 # 运行主函数

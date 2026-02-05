@@ -149,6 +149,206 @@ function Write-Warning2 {
 }
 
 # ============================================================
+# Clack-style Visual Components
+# Inspired by @clack/prompts - beautiful CLI with guide lines
+# ============================================================
+
+# Session intro - start of CLI flow
+# Usage: Clack-Intro "Title"
+function Clack-Intro {
+    param([string]$Title)
+    Write-Host ""
+    Write-Host ([char]0x250C) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  $Title"
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+}
+
+# Session outro - end of CLI flow
+# Usage: Clack-Outro "Message"
+function Clack-Outro {
+    param([string]$Message)
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x2514) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  $Message" -ForegroundColor Green
+    Write-Host ""
+}
+
+# Section header with active marker
+# Usage: Clack-Section "Section title"
+function Clack-Section {
+    param([string]$Title)
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x25C6) -ForegroundColor Magenta -NoNewline
+    Write-Host "  $Title"
+}
+
+# Log with guide line - success
+# Usage: Clack-Success "Message"
+function Clack-Success {
+    param([string]$Message)
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  " -NoNewline
+    Write-Host ([char]0x2713) -ForegroundColor Green -NoNewline
+    Write-Host " $Message"
+}
+
+# Log with guide line - error
+# Usage: Clack-Error "Message"
+function Clack-Error {
+    param([string]$Message)
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  " -NoNewline
+    Write-Host ([char]0x2717) -ForegroundColor Red -NoNewline
+    Write-Host " $Message"
+}
+
+# Log with guide line - warning
+# Usage: Clack-Warn "Message"
+function Clack-Warn {
+    param([string]$Message)
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  " -NoNewline
+    Write-Host "!" -ForegroundColor Yellow -NoNewline
+    Write-Host " $Message"
+}
+
+# Log with guide line - info
+# Usage: Clack-Info "Message"
+function Clack-Info {
+    param([string]$Message)
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  " -NoNewline
+    Write-Host ([char]0x2192) -ForegroundColor Cyan -NoNewline
+    Write-Host " $Message"
+}
+
+# Log with guide line - skipped
+# Usage: Clack-Skip "Message"
+function Clack-Skip {
+    param([string]$Message)
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  " -NoNewline
+    Write-Host ([char]0x25CB) -ForegroundColor DarkGray -NoNewline
+    Write-Host " $Message" -ForegroundColor DarkGray
+}
+
+# Log with guide line - plain text
+# Usage: Clack-Log "Message"
+function Clack-Log {
+    param([string]$Message)
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  $Message"
+}
+
+# Spinner with guide line
+# Usage: Clack-Spinner "Message" -ScriptBlock { ... }
+# Shows spinner while command runs, then shows result
+function Clack-Spinner {
+    param(
+        [string]$Message,
+        [scriptblock]$ScriptBlock
+    )
+
+    # Spinner frames (ASCII compatible)
+    $spinnerChars = @('|', '/', '-', '\')
+    $spinnerIndex = 0
+
+    # Start the job
+    $job = Start-Job -ScriptBlock $ScriptBlock
+
+    # Show spinner while job is running
+    while ($job.State -eq 'Running') {
+        $char = $spinnerChars[$spinnerIndex]
+        Write-Host "`r$([char]0x2502)  " -ForegroundColor DarkGray -NoNewline
+        Write-Host $char -ForegroundColor Cyan -NoNewline
+        Write-Host " $Message" -NoNewline
+        $spinnerIndex = ($spinnerIndex + 1) % 4
+        Start-Sleep -Milliseconds 100
+    }
+
+    # Clear spinner line
+    Write-Host "`r$(' ' * ($Message.Length + 10))" -NoNewline
+    Write-Host "`r" -NoNewline
+
+    # Get job result
+    $result = Receive-Job -Job $job
+    $hadError = $job.State -eq 'Failed'
+    Remove-Job -Job $job -Force
+
+    if ($hadError) {
+        return $false
+    }
+    return $true
+}
+
+# Confirm prompt with guide line
+# Usage: Clack-Confirm "Question?" "y|n"
+# Returns: $true for yes, $false for no
+function Clack-Confirm {
+    param(
+        [string]$Prompt,
+        [string]$Default = "n"
+    )
+
+    if ($Default -eq "y") {
+        $hint = "Y/n"
+    } else {
+        $hint = "y/N"
+    }
+
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x25C7) -ForegroundColor Cyan -NoNewline
+    $answer = Read-Host "  $Prompt [$hint]"
+
+    if ([string]::IsNullOrWhiteSpace($answer)) {
+        $answer = $Default
+    }
+
+    return $answer -match "^[Yy]"
+}
+
+# Note/message box with guide line
+# Usage: Clack-Note "Title" "Line1" "Line2" ...
+# Or:    Clack-Note "Title" @("Line1", "Line2")
+function Clack-Note {
+    param(
+        [Parameter(Position=0)]
+        [string]$Title,
+        [Parameter(Position=1, ValueFromRemainingArguments=$true)]
+        [string[]]$Lines
+    )
+
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  " -NoNewline
+    Write-Host ([char]0x256D) -ForegroundColor DarkGray -NoNewline
+    Write-Host ([char]0x2500) -ForegroundColor DarkGray -NoNewline
+    Write-Host " $Title"
+
+    foreach ($line in $Lines) {
+        Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
+        Write-Host "  " -NoNewline
+        Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
+        Write-Host "  $line"
+    }
+
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  " -NoNewline
+    Write-Host ([char]0x2570) -ForegroundColor DarkGray -NoNewline
+    Write-Host ([char]0x2500) -ForegroundColor DarkGray
+}
+
+# Cancel message
+# Usage: Clack-Cancel "Message"
+function Clack-Cancel {
+    param([string]$Message)
+    Write-Host ([char]0x2502) -ForegroundColor DarkGray
+    Write-Host ([char]0x2514) -ForegroundColor DarkGray -NoNewline
+    Write-Host "  $Message" -ForegroundColor Red
+    Write-Host ""
+}
+
+# ============================================================
 # User Interaction
 # ============================================================
 
