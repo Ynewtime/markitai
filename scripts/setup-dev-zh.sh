@@ -361,11 +361,18 @@ zh_install_llm_clis() {
 # 优先使用 uv run，回退到 python 模块
 # 返回: 0 成功, 1 失败, 2 跳过
 zh_dev_install_playwright_browser() {
-    clack_info "Playwright 浏览器 (Chromium):"
-    clack_info "  用途: 浏览器自动化，用于 JavaScript 渲染页面 (Twitter, SPA)"
-
     project_root=$(get_project_root)
     cd "$project_root"
+
+    # 先检测是否已安装
+    if lib_detect_playwright_browser; then
+        clack_success "Playwright 浏览器 (Chromium)"
+        track_install "Playwright Browser" "installed"
+        return 0
+    fi
+
+    clack_info "Playwright 浏览器 (Chromium):"
+    clack_info "  用途: 浏览器自动化，用于 JavaScript 渲染页面 (Twitter, SPA)"
 
     # 下载前先征询用户同意
     if ! clack_confirm "是否下载 Chromium 浏览器？" "y"; then
