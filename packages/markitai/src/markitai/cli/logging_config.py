@@ -203,6 +203,8 @@ def setup_logging(
         log_dir: Directory for log files. Supports ~ expansion.
                  Can be overridden by MARKITAI_LOG_DIR env var.
         log_level: Log level for file output.
+        log_format: Log format ("text" or "json").
+                    Can be overridden by MARKITAI_LOG_FORMAT env var.
         rotation: Log file rotation size.
         retention: Log file retention period.
         quiet: If True, disable console logging entirely (for single file mode).
@@ -234,10 +236,14 @@ def setup_logging(
             filter=lambda record: _should_show_log(record, verbose),
         )
 
-    # Check environment variable override
+    # Check environment variable overrides
     env_log_dir = os.environ.get("MARKITAI_LOG_DIR")
     if env_log_dir:
         log_dir = env_log_dir
+
+    env_log_format = os.environ.get("MARKITAI_LOG_FORMAT")
+    if env_log_format and env_log_format in ("text", "json"):
+        log_format = env_log_format
 
     # Add file logging (independent handler, not affected by console disable)
     log_file_path: Path | None = None
