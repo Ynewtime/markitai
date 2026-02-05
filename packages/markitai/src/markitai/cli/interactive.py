@@ -338,3 +338,98 @@ def _prompt_env_file(session: InteractiveSession) -> bool:
 
     get_console().print("[red]✗[/red] No API key found in .env file")
     return False
+
+
+def run_interactive() -> InteractiveSession:
+    """Run the interactive CLI session.
+
+    Returns:
+        InteractiveSession with user's choices populated.
+    """
+    from rich.panel import Panel
+
+    session = InteractiveSession()
+    console = get_console()
+
+    # Print header
+    console.print()
+    console.print(
+        Panel(
+            "[bold]Markitai Interactive Mode[/bold]\n\n"
+            "Answer the following questions to configure your conversion.",
+            border_style="cyan",
+        )
+    )
+    console.print()
+
+    # 1. Input type
+    prompt_input_type(session)
+
+    # 2. Input path
+    if not prompt_input_path(session):
+        console.print("[red]✗[/red] No input path provided. Exiting.")
+        raise SystemExit(1)
+
+    # 3. LLM enablement
+    prompt_enable_llm(session)
+
+    # 4. Configure provider if needed
+    if session.enable_llm and not session.provider_result:
+        if not prompt_configure_provider(session):
+            session.enable_llm = False
+
+    # 5. LLM options
+    if session.enable_llm:
+        prompt_llm_options(session)
+
+    # Print summary
+    _print_summary(session)
+
+    return session
+
+
+def _print_summary(session: InteractiveSession) -> None:
+    """Print a summary of the session configuration."""
+    console = get_console()
+    console.print()
+    console.print("[bold]Configuration Summary:[/bold]")
+    console.print(f"  Input: {session.input_path} ({session.input_type})")
+    console.print(f"  Output: {session.output_dir}")
+    console.print(f"  LLM: {'enabled' if session.enable_llm else 'disabled'}")
+
+    if session.enable_llm:
+        if session.provider_result:
+            console.print(f"  Provider: {session.provider_result.provider}")
+        console.print(f"  Alt text: {'yes' if session.enable_alt else 'no'}")
+        console.print(f"  Descriptions: {'yes' if session.enable_desc else 'no'}")
+        console.print(f"  OCR: {'yes' if session.enable_ocr else 'no'}")
+        console.print(f"  Screenshots: {'yes' if session.enable_screenshot else 'no'}")
+    console.print()
+
+
+def session_to_cli_args(session: InteractiveSession) -> list[str]:
+    """Convert InteractiveSession to CLI arguments.
+
+    This allows the interactive session to be executed by the main CLI.
+    """
+    args: list[str] = []
+
+    if session.input_path:
+        args.append(str(session.input_path))
+
+    args.extend(["-o", str(session.output_dir)])
+
+    if session.enable_llm:
+        args.append("--llm")
+        if session.enable_alt:
+            args.append("--alt")
+        if session.enable_desc:
+            args.append("--desc")
+        if session.enable_ocr:
+            args.append("--ocr")
+        if session.enable_screenshot:
+            args.append("--screenshot")
+    else:
+        args.append("--no-llm")
+
+    return args
