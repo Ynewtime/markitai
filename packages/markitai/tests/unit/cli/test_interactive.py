@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from markitai.cli.interactive import (
     InteractiveSession,
@@ -97,3 +98,45 @@ class TestInteractiveSession:
         assert session.input_path is None
         assert session.enable_llm is False
         assert session.provider_result is None
+
+
+class TestInteractivePrompts:
+    """Tests for interactive prompt flow."""
+
+    @patch("questionary.select")
+    def test_prompt_input_type(self, mock_select: MagicMock) -> None:
+        """Should prompt for input type."""
+        mock_select.return_value.ask.return_value = "directory"
+        session = InteractiveSession()
+
+        from markitai.cli.interactive import prompt_input_type
+
+        result = prompt_input_type(session)
+
+        assert result == "directory"
+        mock_select.assert_called_once()
+
+    @patch("questionary.path")
+    def test_prompt_input_path(self, mock_path: MagicMock) -> None:
+        """Should prompt for input path."""
+        mock_path.return_value.ask.return_value = "./docs"
+        session = InteractiveSession()
+        session.input_type = "directory"
+
+        from markitai.cli.interactive import prompt_input_path
+
+        result = prompt_input_path(session)
+
+        assert result == Path("./docs")
+
+    @patch("questionary.confirm")
+    def test_prompt_enable_llm(self, mock_confirm: MagicMock) -> None:
+        """Should prompt for LLM enablement."""
+        mock_confirm.return_value.ask.return_value = True
+        session = InteractiveSession()
+
+        from markitai.cli.interactive import prompt_enable_llm
+
+        result = prompt_enable_llm(session)
+
+        assert result is True
