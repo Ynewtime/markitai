@@ -1284,6 +1284,11 @@ class BatchProcessor:
     ) -> None:
         """Print summary to console.
 
+        This displays:
+        1. Completion results (files/URLs completed with duration)
+        2. Warnings for failed items
+        3. Final summary with output location
+
         Args:
             url_completed: Number of URLs successfully processed
             url_failed: Number of URLs that failed
@@ -1293,13 +1298,17 @@ class BatchProcessor:
         if self.state is None:
             return
 
-        # Helper function to format duration as human-readable
+        # Helper function to format duration as human-readable (m:ss format)
         def format_duration(seconds: float) -> str:
             if seconds < 60:
-                return f"{seconds:.1f}s"
+                return f"0:{int(seconds):02d}"
             minutes = int(seconds // 60)
             secs = int(seconds % 60)
-            return f"{minutes}m {secs}s"
+            return f"{minutes}:{secs:02d}"
+
+        # Calculate durations for files and URLs separately
+        files_duration = sum(f.duration or 0 for f in self.state.files.values())
+        urls_duration = sum(u.duration or 0 for u in self.state.urls.values())
 
         # Calculate wall-clock duration from started_at to updated_at
         wall_duration = 0.0
@@ -1310,69 +1319,75 @@ class BatchProcessor:
                 wall_duration = (end - start).total_seconds()
             except ValueError:
                 # Fallback to sum of individual durations
-                wall_duration = sum(f.duration or 0 for f in self.state.files.values())
+                wall_duration = files_duration + urls_duration
 
         # LLM cost (from both files and URLs)
         total_cost = sum(f.cost_usd for f in self.state.files.values()) + sum(
             u.cost_usd for u in self.state.urls.values()
         )
 
-        # File cache hits
-        completed_files = [
-            f for f in self.state.files.values() if f.status == FileStatus.COMPLETED
-        ]
-        file_cache_hits = sum(1 for f in completed_files if f.cache_hit)
+        # Collect warnings (failed files and URLs)
+        warnings: list[str] = []
+        for f in self.state.files.values():
+            if f.status == FileStatus.FAILED and f.error:
+                warnings.append(f"{Path(f.path).name}: {f.error}")
+        for u in self.state.urls.values():
+            if u.status == FileStatus.FAILED and u.error:
+                # Extract domain for display
+                from urllib.parse import urlparse
 
-        # Build summary line
-        duration_str = format_duration(wall_duration)
-        cost_str = f"${total_cost:.3f}" if total_cost > 0 else ""
+                domain = urlparse(u.url).netloc
+                warnings.append(f"{domain}: {u.error}")
 
-        summary_parts = []
-        if self.state.total > 0:
-            summary_parts.append(f"{self.state.completed_count} files")
-        total_urls = url_completed + url_failed
-        if total_urls > 0:
-            summary_parts.append(f"{url_completed} URLs")
-
-        summary_time = f"({duration_str}"
-        if cost_str:
-            summary_time += f", {cost_str}"
-        summary_time += ")"
-
-        ui.summary(
-            f"Done: {', '.join(summary_parts)} {summary_time}", console=self.console
-        )
+        # Print completion display (title + results)
         self.console.print()
+        ui.title("Converting", console=self.console)
 
-        # Files stats
-        if self.state.total > 0:
-            files_status = (
-                f"[green]{ui.MARK_SUCCESS}[/]"
-                if self.state.completed_count == self.state.total
-                else ""
-            )
+        # Files result
+        files_completed = self.state.completed_count
+        if files_completed > 0:
+            files_duration_str = format_duration(files_duration)
             self.console.print(
-                f"  {ui.MARK_INFO} Files: {self.state.completed_count}/{self.state.total} "
-                f"{files_status}  Cache: {file_cache_hits}"
+                f"  [green]{ui.MARK_SUCCESS}[/] {files_completed} files completed "
+                f"({files_duration_str})"
             )
 
-        # URLs stats (if any)
-        if total_urls > 0:
-            urls_status = (
-                f"[green]{ui.MARK_SUCCESS}[/]" if url_completed == total_urls else ""
-            )
+        # URLs result
+        if url_completed > 0:
+            urls_duration_str = format_duration(urls_duration)
             self.console.print(
-                f"  {ui.MARK_INFO} URLs:  {url_completed}/{total_urls} "
-                f"{urls_status}  Cache: {url_cache_hits}"
+                f"  [green]{ui.MARK_SUCCESS}[/] {url_completed} URLs completed "
+                f"({urls_duration_str})"
             )
 
-        self.console.print()
-        self.console.print(f"  Output: {self.output_dir}/")
-
-        # Print failed files if any
-        failed = [f for f in self.state.files.values() if f.status == FileStatus.FAILED]
-        if failed:
+        # Warnings (failed items)
+        if warnings:
             self.console.print()
-            self.console.print("[red]Failed files:[/red]")
-            for f in failed:
-                self.console.print(f"  {ui.MARK_ERROR} {Path(f.path).name}: {f.error}")
+            warning_count = len(warnings)
+            if warning_count == 1:
+                self.console.print(
+                    f"  [yellow]{ui.MARK_WARNING}[/] 1 warning: {warnings[0]}"
+                )
+            else:
+                self.console.print(
+                    f"  [yellow]{ui.MARK_WARNING}[/] {warning_count} warnings:"
+                )
+                for warning in warnings:
+                    self.console.print(f"    {ui.MARK_LINE} {warning}")
+
+        # Final summary line
+        self.console.print()
+        cost_str = f", ${total_cost:.3f}" if total_cost > 0 else ""
+        total_items = files_completed + url_completed
+        total_str = f"{total_items} items" if total_items > 1 else f"{total_items} item"
+
+        # Format wall duration for summary (human readable)
+        if wall_duration < 60:
+            wall_str = f"{wall_duration:.1f}s"
+        else:
+            mins = int(wall_duration // 60)
+            secs = int(wall_duration % 60)
+            wall_str = f"{mins}m {secs}s"
+
+        self.console.print(f"  Done: {total_str} in {wall_str}{cost_str}")
+        self.console.print(f"  Output: {self.output_dir}/")
