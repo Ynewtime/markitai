@@ -19,11 +19,9 @@ from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     Progress,
-    SpinnerColumn,
     TaskID,
     TaskProgressColumn,
     TextColumn,
-    TimeElapsedColumn,
 )
 from rich.text import Text
 
@@ -585,12 +583,14 @@ class BatchProcessor:
         self._console_handler_id = console_handler_id
 
         # Create progress display
+        # Format: "Files  ━━━━━━━━━━━━━  5/7  (example.pdf)"
         self._progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold blue]{task.fields[filename]:<30}"),
+            TextColumn("[progress.description]{task.description: <6}"),
             BarColumn(),
             TaskProgressColumn(),
-            TimeElapsedColumn(),
+            TextColumn("{task.fields[current]}"),
+            console=self.console,
+            transient=True,  # Clear progress when done
         )
 
         # Store totals for progress display
@@ -604,16 +604,14 @@ class BatchProcessor:
             self._url_task_id = self._progress.add_task(
                 "URLs",
                 total=total_urls,
-                filename=f"[URLs:0/{total_urls}]",
+                current="",
             )
 
         # Add file progress task (or overall if no URLs)
         self._overall_task_id = self._progress.add_task(
-            "Overall",
+            "Files",
             total=total_files,
-            filename=f"[Files:0/{total_files}]"
-            if total_urls > 0
-            else "[Overall Progress]",
+            current="",
         )
 
         # Create log panel for verbose mode
@@ -683,39 +681,47 @@ class BatchProcessor:
         self._total_files = total
         if self._progress is not None and self._overall_task_id is not None:
             self._progress.update(self._overall_task_id, total=total)
-            # Update filename with new total
-            self._progress.update(
-                self._overall_task_id,
-                filename=f"[Files:{self._completed_files}/{total}]",
-            )
 
-    def advance_progress(self) -> None:
-        """Advance progress bar by one."""
+    def advance_progress(self, clear_current: bool = True) -> None:
+        """Advance progress bar by one.
+
+        Args:
+            clear_current: Whether to clear the current file field after advancing
+        """
         if self._progress is not None and self._overall_task_id is not None:
             self._completed_files += 1
             self._progress.advance(self._overall_task_id)
-            # Update filename with current count
-            self._progress.update(
-                self._overall_task_id,
-                filename=f"[Files:{self._completed_files}/{self._total_files}]",
-            )
+            if clear_current:
+                self._progress.update(self._overall_task_id, current="")
+
+    def set_current_file(self, filename: str) -> None:
+        """Set the current file being processed in progress display.
+
+        Args:
+            filename: Name of the file being processed (displayed in progress bar)
+        """
+        if self._progress is not None and self._overall_task_id is not None:
+            self._progress.update(self._overall_task_id, current=f"({filename})")
 
     def update_url_status(self, url: str, completed: bool = False) -> None:
         """Update URL processing status in progress display.
 
         Args:
             url: The URL being processed (displayed in progress bar)
-            completed: If True, advance the URL progress counter
+            completed: If True, advance the URL progress counter and clear current
         """
+        from urllib.parse import urlparse
+
         if self._progress is not None and self._url_task_id is not None:
             if completed:
                 self._completed_urls += 1
                 self._progress.advance(self._url_task_id)
-            # Update filename with current count
-            self._progress.update(
-                self._url_task_id,
-                filename=f"[URLs:{self._completed_urls}/{self._total_urls}]",
-            )
+                # Clear current URL after completion
+                self._progress.update(self._url_task_id, current="")
+            else:
+                # Show domain of current URL being processed
+                domain = urlparse(url).netloc
+                self._progress.update(self._url_task_id, current=f"({domain})")
 
     def finish_url_processing(self, completed: int, failed: int) -> None:
         """Mark URL processing as complete.
@@ -1084,17 +1090,19 @@ class BatchProcessor:
             log_panel = self._log_panel
         else:
             # Create progress display (legacy path for backwards compatibility)
+            # Format: "Files  ━━━━━━━━━━━━━  5/7  (example.pdf)"
             progress = Progress(
-                SpinnerColumn(),
-                TextColumn("[bold blue]{task.fields[filename]:<30}"),
+                TextColumn("[progress.description]{task.description: <6}"),
                 BarColumn(),
                 TaskProgressColumn(),
-                TimeElapsedColumn(),
+                TextColumn("{task.fields[current]}"),
+                console=self.console,
+                transient=True,  # Clear progress when done
             )
             overall_task = progress.add_task(
-                "Overall",
+                "Files",
                 total=len(files),
-                filename="[Overall Progress]",
+                current="",
             )
             log_panel = None
 
@@ -1138,6 +1146,8 @@ class BatchProcessor:
             try:
                 # Process file within semaphore
                 async with semaphore:
+                    # Show current file being processed
+                    progress.update(overall_task, current=f"({file_path.name})")
                     result = await process_func(file_path)
 
                 if result.success:
@@ -1167,8 +1177,9 @@ class BatchProcessor:
                 file_state.completed_at = datetime.now().astimezone().isoformat()
                 file_state.duration = end_time - start_time
 
-                # Update progress
+                # Update progress and clear current file
                 progress.advance(overall_task)
+                progress.update(overall_task, current="")
 
             # Save state outside semaphore (non-blocking, throttled)
             # Use asyncio.to_thread to avoid blocking the event loop
