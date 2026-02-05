@@ -42,10 +42,37 @@ function Track-Install {
 function Write-Header {
     param([string]$Text)
     Write-Host ""
-    Write-Host ("=" * 45) -ForegroundColor Cyan
     Write-Host "  $Text" -ForegroundColor White
-    Write-Host ("=" * 45) -ForegroundColor Cyan
     Write-Host ""
+}
+
+# Simplified status output (matches bash script style)
+function Write-Status {
+    param(
+        [string]$Status,
+        [string]$Message
+    )
+    switch ($Status) {
+        "ok"   { Write-Host "  [OK] $Message" -ForegroundColor Green }
+        "skip" { Write-Host "  [--] $Message" -ForegroundColor Yellow }
+        "fail" { Write-Host "  [X] $Message" -ForegroundColor Red }
+        "info" { Write-Host "  -> $Message" -ForegroundColor Cyan }
+    }
+}
+
+# Run command silently, capture and only show output on error
+function Invoke-Silent {
+    param([scriptblock]$Command)
+    try {
+        $output = & $Command 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host $output -ForegroundColor Red
+        }
+        return $LASTEXITCODE -eq 0
+    } catch {
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        return $false
+    }
 }
 
 # Print welcome message (user edition)
@@ -307,28 +334,28 @@ function Test-Python {
             $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
             if ($version) {
                 $script:PYTHON_CMD = $uvPython
-                Write-Success "Python $version (uv managed)"
+                Write-Status -Status "ok" -Message "Python $version"
                 return $true
             }
         }
 
         # Not found, auto-install
-        Write-Info "Installing Python 3.13..."
-        $installResult = & uv python install 3.13 2>&1
+        Write-Status -Status "info" -Message "Installing Python 3.13..."
+        $null = & uv python install 3.13 2>&1
         if ($LASTEXITCODE -eq 0) {
             $uvPython = & uv python find 3.13 2>$null
             if ($uvPython -and (Test-Path $uvPython)) {
                 $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
                 if ($version) {
                     $script:PYTHON_CMD = $uvPython
-                    Write-Success "Python $version installed (uv managed)"
+                    Write-Status -Status "ok" -Message "Python $version installed"
                     return $true
                 }
             }
         }
-        Write-Error2 "Python 3.13 installation failed"
+        Write-Status -Status "fail" -Message "Python 3.13 installation failed"
     } else {
-        Write-Error2 "uv not installed, cannot manage Python"
+        Write-Status -Status "fail" -Message "uv not installed"
     }
 
     return $false
@@ -398,7 +425,6 @@ function Test-UV {
         $ErrorActionPreference = $oldErrorAction
     }
     if ($version -and $version -notmatch "error") {
-        Write-Success "$version installed"
         return $true
     }
     return $false
@@ -411,41 +437,24 @@ function Test-UV {
 # Install UV package manager
 # Returns: $true on success, $false on failure/skip
 function Install-UV {
-    Write-Info "Checking UV installation..."
-
     if (Test-UV) {
+        $version = (& uv --version 2>$null).Split(' ')[1]
+        Write-Status -Status "ok" -Message "uv $version"
         Track-Install -Component "uv" -Status "installed"
         return $true
     }
 
-    Write-Error2 "UV not installed"
-
-    if (-not (Ask-YesNo "Install UV automatically?" $false)) {
-        Write-Info "Skipping UV installation"
-        Write-Warning2 "markitai recommends using UV for installation"
-        Track-Install -Component "uv" -Status "skipped"
-        return $false
-    }
+    Write-Status -Status "info" -Message "Installing uv..."
 
     # Build install URL (with optional version)
     if ($script:UvVersion) {
         $uvUrl = "https://astral.sh/uv/$($script:UvVersion)/install.ps1"
-        Write-Info "Installing UV version: $($script:UvVersion)"
     } else {
         $uvUrl = "https://astral.sh/uv/install.ps1"
     }
 
-    # Confirm remote script execution
-    if (-not (Confirm-RemoteScript -ScriptUrl $uvUrl -ScriptName "UV")) {
-        Write-Info "Skipping UV installation"
-        Track-Install -Component "uv" -Status "skipped"
-        return $false
-    }
-
-    Write-Info "Installing UV..."
-
     try {
-        Invoke-RestMethod $uvUrl | Invoke-Expression
+        $null = Invoke-RestMethod $uvUrl | Invoke-Expression 2>$null
 
         # Refresh PATH (User paths take precedence)
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -453,50 +462,30 @@ function Install-UV {
         # Check if uv command exists after PATH refresh
         $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
         if (-not $uvCmd) {
-            Write-Warning2 "UV installed, but PowerShell needs to be restarted"
-            Write-PathHelp "$env:USERPROFILE\.local\bin"
+            Write-Status -Status "fail" -Message "uv installed but needs shell restart"
             Track-Install -Component "uv" -Status "installed"
             return $false
         }
 
-        $oldErrorAction = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        try {
-            $version = & uv --version 2>&1 | Select-Object -First 1
-        } finally {
-            $ErrorActionPreference = $oldErrorAction
-        }
-        if ($version -and $version -notmatch "error") {
-            Write-Success "$version installed successfully"
-            Track-Install -Component "uv" -Status "installed"
-            return $true
-        } else {
-            Write-Warning2 "UV installed, but PowerShell needs to be restarted"
-            Write-PathHelp "$env:USERPROFILE\.local\bin"
-            Track-Install -Component "uv" -Status "installed"
-            return $false
-        }
+        $version = (& uv --version 2>$null).Split(' ')[1]
+        Write-Status -Status "ok" -Message "uv $version installed"
+        Track-Install -Component "uv" -Status "installed"
+        return $true
     } catch {
-        Write-Error2 "UV installation failed: $_"
-        if (-not (Test-Network)) {
-            Write-NetworkError
-        } else {
-            Write-Info "Manual install: irm https://astral.sh/uv/install.ps1 | iex"
-        }
+        Write-Status -Status "fail" -Message "uv installation failed"
         Track-Install -Component "uv" -Status "failed"
         return $false
     }
 }
 
 function Install-Markitai {
-    Write-Info "Installing markitai..."
+    Write-Status -Status "info" -Message "Installing markitai..."
 
     # Build package spec with optional version
     # Note: Use [browser] instead of [all] to avoid installing unnecessary SDK packages
     # SDK packages (claude-agent, copilot) will be installed when user selects CLI tools
     if ($script:MarkitaiVersion) {
         $pkg = "markitai[browser]==$($script:MarkitaiVersion)"
-        Write-Info "Installing version: $($script:MarkitaiVersion)"
     } else {
         $pkg = "markitai[browser]"
     }
@@ -522,11 +511,11 @@ function Install-Markitai {
         if ($exitCode -eq 0) {
             # Refresh PATH
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
-            
+
             $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
             $version = if ($markitaiCmd) { & markitai --version 2>&1 | Select-Object -First 1 } else { "installed" }
             if (-not $version) { $version = "installed" }
-            Write-Success "markitai $version installed successfully (using Python $pythonArg)"
+            Write-Status -Status "ok" -Message "markitai $version"
             Track-Install -Component "markitai" -Status "installed"
             return $true
         }
@@ -544,14 +533,14 @@ function Install-Markitai {
         } finally {
             $ErrorActionPreference = $oldErrorAction
         }
-    if ($exitCode -eq 0) {
-        $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
-        $version = if ($markitaiCmd) { & markitai --version 2>&1 | Select-Object -First 1 } else { "installed" }
-        if (-not $version) { $version = "installed" }
-        Write-Success "markitai $version installed successfully"
-        Track-Install -Component "markitai" -Status "installed"
-        return $true
-    }
+        if ($exitCode -eq 0) {
+            $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
+            $version = if ($markitaiCmd) { & markitai --version 2>&1 | Select-Object -First 1 } else { "installed" }
+            if (-not $version) { $version = "installed" }
+            Write-Status -Status "ok" -Message "markitai $version"
+            Track-Install -Component "markitai" -Status "installed"
+            return $true
+        }
     }
 
     # Fallback to pip --user
@@ -572,18 +561,12 @@ function Install-Markitai {
         $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
         $version = if ($markitaiCmd) { & markitai --version 2>&1 | Select-Object -First 1 } else { "installed" }
         if (-not $version) { $version = "installed" }
-        Write-Success "markitai $version installed successfully"
-        Write-PathHelp "$env:USERPROFILE\AppData\Roaming\Python\Scripts"
+        Write-Status -Status "ok" -Message "markitai $version"
         Track-Install -Component "markitai" -Status "installed"
         return $true
     }
 
-    Write-Error2 "markitai installation failed"
-    if (-not (Test-Network)) {
-        Write-NetworkError
-    } else {
-        Write-Info "Manual install: uv tool install markitai --python $pythonArg"
-    }
+    Write-Status -Status "fail" -Message "markitai installation failed"
     Track-Install -Component "markitai" -Status "failed"
     return $false
 }
@@ -592,17 +575,7 @@ function Install-Markitai {
 # Security: Use markitai's uv tool environment's playwright to ensure correct version
 # Returns: $true on success, $false on failure/skip
 function Install-PlaywrightBrowser {
-    Write-Info "Playwright browser (Chromium):"
-    Write-Info "  Purpose: Browser automation for JavaScript-rendered pages (Twitter, SPAs)"
-
-    # Ask user consent before downloading
-    if (-not (Ask-YesNo "Download Chromium browser?" $true)) {
-        Write-Info "Skipping Playwright browser installation"
-        Track-Install -Component "Playwright Browser" -Status "skipped"
-        return $false
-    }
-
-    Write-Info "Downloading Chromium browser..."
+    Write-Status -Status "info" -Message "Installing Playwright browser..."
 
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -628,11 +601,10 @@ function Install-PlaywrightBrowser {
 
     if (Test-Path $markitaiPlaywright) {
         try {
-            # Show download progress to user (Chromium is ~200MB)
-            & $markitaiPlaywright install chromium
+            $null = & $markitaiPlaywright install chromium 2>&1
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
-                Write-Success "Chromium browser installed successfully"
+                Write-Status -Status "ok" -Message "Playwright browser"
                 Track-Install -Component "Playwright Browser" -Status "installed"
                 return $true
             }
@@ -647,11 +619,10 @@ function Install-PlaywrightBrowser {
         $pwArgs = $baseArgs + @("-m", "playwright", "install", "chromium")
 
         try {
-            # Show download progress to user
-            & $exe @pwArgs
+            $null = & $exe @pwArgs 2>&1
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
-                Write-Success "Chromium browser installed successfully"
+                Write-Status -Status "ok" -Message "Playwright browser"
                 Track-Install -Component "Playwright Browser" -Status "installed"
                 return $true
             }
@@ -659,8 +630,7 @@ function Install-PlaywrightBrowser {
     }
 
     $ErrorActionPreference = $oldErrorAction
-    Write-Warning2 "Playwright browser installation failed"
-    Write-Info "You can install later with: playwright install chromium"
+    Write-Status -Status "fail" -Message "Playwright browser"
     Track-Install -Component "Playwright Browser" -Status "failed"
     return $false
 }
@@ -668,18 +638,12 @@ function Install-PlaywrightBrowser {
 # Install LibreOffice (optional)
 # LibreOffice is required for converting .doc, .ppt, .xls files
 function Install-LibreOffice {
-    Write-Info "Checking LibreOffice installation..."
-    Write-Info "  Purpose: Convert legacy Office files (.doc, .ppt, .xls)"
-
     # Check for soffice (LibreOffice command)
     $soffice = Get-Command soffice -ErrorAction SilentlyContinue
     if ($soffice) {
-        try {
-            $version = & soffice --version 2>&1 | Select-Object -First 1
-            Write-Success "LibreOffice installed: $version"
-            Track-Install -Component "LibreOffice" -Status "installed"
-            return $true
-        } catch {}
+        Write-Status -Status "ok" -Message "LibreOffice"
+        Track-Install -Component "LibreOffice" -Status "installed"
+        return $true
     }
 
     # On Windows, check common install paths
@@ -690,32 +654,21 @@ function Install-LibreOffice {
 
     foreach ($path in $commonPaths) {
         if (Test-Path $path) {
-            Write-Success "LibreOffice found at: $path"
+            Write-Status -Status "ok" -Message "LibreOffice"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
     }
 
-    Write-Warning2 "LibreOffice not installed (optional)"
-    Write-Info "  Without LibreOffice, .doc/.ppt/.xls files cannot be converted"
-    Write-Info "  Modern formats (.docx/.pptx/.xlsx) work without LibreOffice"
-
-    if (-not (Ask-YesNo "Install LibreOffice?" $false)) {
-        Write-Info "Skipping LibreOffice installation"
-        Track-Install -Component "LibreOffice" -Status "skipped"
-        return $false
-    }
-
-    Write-Info "Installing LibreOffice..."
+    Write-Status -Status "info" -Message "Installing LibreOffice..."
 
     # Priority: winget > scoop > choco
     # Try WinGet first
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-Info "Installing via WinGet..."
-        & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements
+        $null = & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "LibreOffice installed via WinGet"
+            Write-Status -Status "ok" -Message "LibreOffice"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
@@ -724,11 +677,10 @@ function Install-LibreOffice {
     # Try Scoop as second option
     $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
     if ($scoopCmd) {
-        Write-Info "Installing via Scoop..."
-        & scoop bucket add extras 2>$null
-        & scoop install extras/libreoffice
+        $null = & scoop bucket add extras 2>$null
+        $null = & scoop install extras/libreoffice 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "LibreOffice installed via Scoop"
+            Write-Status -Status "ok" -Message "LibreOffice"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
@@ -737,21 +689,15 @@ function Install-LibreOffice {
     # Try Chocolatey as last fallback
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
-        Write-Info "Installing via Chocolatey..."
-        & choco install libreoffice-fresh -y
+        $null = & choco install libreoffice-fresh -y 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "LibreOffice installed via Chocolatey"
+            Write-Status -Status "ok" -Message "LibreOffice"
             Track-Install -Component "LibreOffice" -Status "installed"
             return $true
         }
     }
 
-    Write-Warning2 "LibreOffice installation failed"
-    Write-Info "Manual install options:"
-    Write-Info "  winget: winget install TheDocumentFoundation.LibreOffice"
-    Write-Info "  scoop: scoop install extras/libreoffice"
-    Write-Info "  choco: choco install libreoffice-fresh"
-    Write-Info "  Download: https://www.libreoffice.org/download/"
+    Write-Status -Status "fail" -Message "LibreOffice"
     Track-Install -Component "LibreOffice" -Status "failed"
     return $false
 }
@@ -759,38 +705,22 @@ function Install-LibreOffice {
 # Install FFmpeg (optional)
 # FFmpeg is required for audio/video file processing
 function Install-FFmpeg {
-    Write-Info "Checking FFmpeg installation..."
-    Write-Info "  Purpose: Process audio/video files (.mp3, .mp4, .wav, etc.)"
-
     $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
     if ($ffmpegCmd) {
-        try {
-            $version = & ffmpeg -version 2>&1 | Select-Object -First 1
-            Write-Success "FFmpeg installed: $version"
-            Track-Install -Component "FFmpeg" -Status "installed"
-            return $true
-        } catch {}
+        Write-Status -Status "ok" -Message "FFmpeg"
+        Track-Install -Component "FFmpeg" -Status "installed"
+        return $true
     }
 
-    Write-Warning2 "FFmpeg not installed (optional)"
-    Write-Info "  Without FFmpeg, audio/video files cannot be processed"
-
-    if (-not (Ask-YesNo "Install FFmpeg?" $false)) {
-        Write-Info "Skipping FFmpeg installation"
-        Track-Install -Component "FFmpeg" -Status "skipped"
-        return $false
-    }
-
-    Write-Info "Installing FFmpeg..."
+    Write-Status -Status "info" -Message "Installing FFmpeg..."
 
     # Priority: winget > scoop > choco
     # Try WinGet first
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-Info "Installing via WinGet..."
-        & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements
+        $null = & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "FFmpeg installed via WinGet"
+            Write-Status -Status "ok" -Message "FFmpeg"
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         }
@@ -799,10 +729,9 @@ function Install-FFmpeg {
     # Try Scoop as second option
     $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
     if ($scoopCmd) {
-        Write-Info "Installing via Scoop..."
-        & scoop install ffmpeg
+        $null = & scoop install ffmpeg 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "FFmpeg installed via Scoop"
+            Write-Status -Status "ok" -Message "FFmpeg"
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         }
@@ -811,21 +740,15 @@ function Install-FFmpeg {
     # Try Chocolatey as last fallback
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
-        Write-Info "Installing via Chocolatey..."
-        & choco install ffmpeg -y
+        $null = & choco install ffmpeg -y 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "FFmpeg installed via Chocolatey"
+            Write-Status -Status "ok" -Message "FFmpeg"
             Track-Install -Component "FFmpeg" -Status "installed"
             return $true
         }
     }
 
-    Write-Warning2 "FFmpeg installation failed"
-    Write-Info "Manual install options:"
-    Write-Info "  winget: winget install Gyan.FFmpeg"
-    Write-Info "  scoop: scoop install ffmpeg"
-    Write-Info "  choco: choco install ffmpeg"
-    Write-Info "  Download: https://ffmpeg.org/download.html"
+    Write-Status -Status "fail" -Message "FFmpeg"
     Track-Install -Component "FFmpeg" -Status "failed"
     return $false
 }
@@ -853,7 +776,7 @@ function Install-MarkitaiExtra {
             $null = & uv tool install $pkg --python $pythonArg --upgrade 2>&1
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
-                Write-Success "markitai[$ExtraName] installed"
+                Write-Status -Status "ok" -Message "markitai[$ExtraName]"
                 return $true
             }
         } catch {}
@@ -866,7 +789,7 @@ function Install-MarkitaiExtra {
             $null = & pipx install $pkg --python $pythonArg --force 2>&1
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
-                Write-Success "markitai[$ExtraName] installed"
+                Write-Status -Status "ok" -Message "markitai[$ExtraName]"
                 return $true
             }
         } catch {}
@@ -881,108 +804,86 @@ function Install-MarkitaiExtra {
         $null = & $exe @pipArgs 2>&1
         if ($LASTEXITCODE -eq 0) {
             $ErrorActionPreference = $oldErrorAction
-            Write-Success "markitai[$ExtraName] installed"
+            Write-Status -Status "ok" -Message "markitai[$ExtraName]"
             return $true
         }
     } catch {}
 
     $ErrorActionPreference = $oldErrorAction
-    Write-Warning2 "markitai[$ExtraName] installation failed"
+    Write-Status -Status "fail" -Message "markitai[$ExtraName]"
     return $false
 }
 
 # Install Claude Code CLI
 function Install-ClaudeCLI {
-    Write-Info "Installing Claude Code CLI..."
-    Write-Info "  Purpose: Use your Claude Pro/Team subscription with markitai"
-
     # Check if already installed
     $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
     if ($claudeCmd) {
         $version = & claude --version 2>&1 | Select-Object -First 1
-        Write-Success "Claude Code CLI already installed: $version"
+        Write-Status -Status "ok" -Message "Claude CLI $version"
         Track-Install -Component "Claude Code CLI" -Status "installed"
         return $true
     }
 
+    Write-Status -Status "info" -Message "Installing Claude CLI..."
+
     # Prefer official install script (PowerShell)
     $claudeUrl = "https://claude.ai/install.ps1"
-    if (Confirm-RemoteScript -ScriptUrl $claudeUrl -ScriptName "Claude Code CLI") {
-        Write-Info "Installing via official script..."
-        try {
-            Invoke-Expression (Invoke-RestMethod -Uri $claudeUrl)
-            # Check if installation succeeded
-            $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
-            if ($claudeCmd) {
-                Write-Success "Claude Code CLI installed via official script"
-                Write-Info "Run 'claude /login' to authenticate with your Claude subscription or API key"
-                Track-Install -Component "Claude Code CLI" -Status "installed"
-                return $true
-            }
-        } catch {
-            Write-Info "Official script failed: $_"
+    try {
+        $null = Invoke-Expression (Invoke-RestMethod -Uri $claudeUrl) 2>&1
+        # Check if installation succeeded
+        $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
+        if ($claudeCmd) {
+            Write-Status -Status "ok" -Message "Claude CLI"
+            Track-Install -Component "Claude Code CLI" -Status "installed"
+            return $true
         }
-    }
+    } catch {}
 
     # Fallback: npm/pnpm
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
     if ($pnpmCmd) {
-        Write-Info "Installing via pnpm..."
-        & pnpm add -g @anthropic-ai/claude-code
+        $null = & pnpm add -g @anthropic-ai/claude-code 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Claude Code CLI installed via pnpm"
-            Write-Info "Run 'claude /login' to authenticate with your Claude subscription or API key"
+            Write-Status -Status "ok" -Message "Claude CLI"
             Track-Install -Component "Claude Code CLI" -Status "installed"
             return $true
         }
     } elseif ($npmCmd) {
-        Write-Info "Installing via npm..."
-        & npm install -g @anthropic-ai/claude-code
+        $null = & npm install -g @anthropic-ai/claude-code 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Claude Code CLI installed via npm"
-            Write-Info "Run 'claude /login' to authenticate with your Claude subscription or API key"
+            Write-Status -Status "ok" -Message "Claude CLI"
             Track-Install -Component "Claude Code CLI" -Status "installed"
             return $true
         }
     }
 
-    Write-Warning2 "Claude Code CLI installation failed"
-    if (-not (Test-Network)) {
-        Write-NetworkError
-    } else {
-        Write-Info "Manual install options:"
-        Write-Info "  PowerShell: irm https://claude.ai/install.ps1 | iex"
-        Write-Info "  pnpm: pnpm add -g @anthropic-ai/claude-code"
-        Write-Info "  Docs: https://docs.anthropic.com/en/docs/claude-code"
-    }
+    Write-Status -Status "fail" -Message "Claude CLI"
     Track-Install -Component "Claude Code CLI" -Status "failed"
     return $false
 }
 
 # Install GitHub Copilot CLI
 function Install-CopilotCLI {
-    Write-Info "Installing GitHub Copilot CLI..."
-    Write-Info "  Purpose: Use your GitHub Copilot subscription with markitai"
-
     # Check if already installed
     $copilotCmd = Get-Command copilot -ErrorAction SilentlyContinue
     if ($copilotCmd) {
         $version = & copilot --version 2>&1 | Select-Object -First 1
-        Write-Success "Copilot CLI already installed: $version"
+        Write-Status -Status "ok" -Message "Copilot CLI $version"
         Track-Install -Component "Copilot CLI" -Status "installed"
         return $true
     }
 
+    Write-Status -Status "info" -Message "Installing Copilot CLI..."
+
     # Prefer WinGet on Windows
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-Info "Installing via WinGet..."
-        & winget install GitHub.Copilot --accept-package-agreements --accept-source-agreements
+        $null = & winget install GitHub.Copilot --accept-package-agreements --accept-source-agreements 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Copilot CLI installed via WinGet"
-            Write-Info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
+            Write-Status -Status "ok" -Message "Copilot CLI"
             Track-Install -Component "Copilot CLI" -Status "installed"
             return $true
         }
@@ -993,65 +894,41 @@ function Install-CopilotCLI {
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
     if ($pnpmCmd) {
-        Write-Info "Installing via pnpm..."
-        & pnpm add -g @github/copilot
+        $null = & pnpm add -g @github/copilot 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Copilot CLI installed via pnpm"
-            Write-Info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
+            Write-Status -Status "ok" -Message "Copilot CLI"
             Track-Install -Component "Copilot CLI" -Status "installed"
             return $true
         }
     } elseif ($npmCmd) {
-        Write-Info "Installing via npm..."
-        & npm install -g @github/copilot
+        $null = & npm install -g @github/copilot 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "Copilot CLI installed via npm"
-            Write-Info "Run 'copilot /login' to authenticate with your GitHub Copilot subscription"
+            Write-Status -Status "ok" -Message "Copilot CLI"
             Track-Install -Component "Copilot CLI" -Status "installed"
             return $true
         }
     }
 
-    Write-Warning2 "Copilot CLI installation failed"
-    if (-not (Test-Network)) {
-        Write-NetworkError
-    } else {
-        Write-Info "Manual install options:"
-        Write-Info "  winget: winget install GitHub.Copilot"
-        Write-Info "  pnpm: pnpm add -g @github/copilot"
-    }
+    Write-Status -Status "fail" -Message "Copilot CLI"
     Track-Install -Component "Copilot CLI" -Status "failed"
     return $false
 }
 
 function Initialize-Config {
-    Write-Info "Initializing configuration..."
-
     $markitaiExists = Get-Command markitai -ErrorAction SilentlyContinue
     if (-not $markitaiExists) {
         return
     }
 
     $configPath = Join-Path $env:USERPROFILE ".markitai\config.json"
-    $yesFlag = ""
 
-    # Check if config exists and ask user
+    # Skip if config exists
     if (Test-Path $configPath) {
-        if (Ask-YesNo "$configPath already exists. Overwrite?" $false) {
-            $yesFlag = "--yes"
-        } else {
-            Write-Info "Keeping existing configuration"
-            return
-        }
+        return
     }
 
     try {
-        if ($yesFlag) {
-            & markitai config init $yesFlag 2>$null
-        } else {
-            & markitai config init 2>$null
-        }
-        Write-Success "Configuration initialized"
+        $null = & markitai config init 2>$null
     } catch {
         # Config initialization is optional, ignore errors
     }
@@ -1059,11 +936,10 @@ function Initialize-Config {
 
 function Write-Completion {
     Write-Host ""
-    Write-Host "[OK] " -ForegroundColor Green -NoNewline
-    Write-Host "Setup complete!" -ForegroundColor White
-    Write-Host ""
     Write-Host "  Get started:" -ForegroundColor White
-    Write-Host "    markitai --help" -ForegroundColor Yellow
+    Write-Host "    markitai -I          Interactive mode" -ForegroundColor Cyan
+    Write-Host "    markitai file.pdf   Convert a file" -ForegroundColor Cyan
+    Write-Host "    markitai --help     Show all options" -ForegroundColor Cyan
     Write-Host ""
 }
 
