@@ -42,8 +42,193 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+GRAY='\033[0;90m'
 NC='\033[0m'
 BOLD='\033[1m'
+DIM='\033[2m'
+
+# ============================================================
+# Clack-style Visual Components
+# Inspired by @clack/prompts - beautiful CLI with guide lines
+# ============================================================
+
+# Guide line characters
+S_BAR="│"
+S_BAR_H="─"
+S_CORNER_TOP_RIGHT="┐"
+S_CORNER_BOTTOM_RIGHT="┘"
+S_CONNECT_LEFT="├"
+S_STEP_ACTIVE="◆"
+S_STEP_SUBMIT="◇"
+S_RADIO_ACTIVE="●"
+S_RADIO_INACTIVE="○"
+S_CHECKBOX_ACTIVE="◼"
+S_CHECKBOX_INACTIVE="◻"
+
+# Session intro - start of CLI flow
+# Usage: clack_intro "Title"
+clack_intro() {
+    printf "\n"
+    printf "${GRAY}┌${NC}  ${BOLD}%s${NC}\n" "$1"
+    printf "${GRAY}│${NC}\n"
+}
+
+# Session outro - end of CLI flow
+# Usage: clack_outro "Message"
+clack_outro() {
+    printf "${GRAY}│${NC}\n"
+    printf "${GRAY}└${NC}  ${GREEN}%s${NC}\n" "$1"
+    printf "\n"
+}
+
+# Section header with active marker
+# Usage: clack_section "Section title"
+clack_section() {
+    printf "${GRAY}│${NC}\n"
+    printf "${MAGENTA}◆${NC}  ${BOLD}%s${NC}\n" "$1"
+}
+
+# Log with guide line - success
+# Usage: clack_success "Message"
+clack_success() {
+    printf "${GRAY}│${NC}  ${GREEN}✓${NC} %s\n" "$1"
+}
+
+# Log with guide line - error
+# Usage: clack_error "Message"
+clack_error() {
+    printf "${GRAY}│${NC}  ${RED}✗${NC} %s\n" "$1"
+}
+
+# Log with guide line - warning
+# Usage: clack_warn "Message"
+clack_warn() {
+    printf "${GRAY}│${NC}  ${YELLOW}!${NC} %s\n" "$1"
+}
+
+# Log with guide line - info
+# Usage: clack_info "Message"
+clack_info() {
+    printf "${GRAY}│${NC}  ${CYAN}→${NC} %s\n" "$1"
+}
+
+# Log with guide line - skipped
+# Usage: clack_skip "Message"
+clack_skip() {
+    printf "${GRAY}│${NC}  ${GRAY}○${NC} ${GRAY}%s${NC}\n" "$1"
+}
+
+# Log with guide line - plain text
+# Usage: clack_log "Message"
+clack_log() {
+    printf "${GRAY}│${NC}  %s\n" "$1"
+}
+
+# Spinner with guide line
+# Usage: clack_spinner "message" command args...
+# Shows spinner while command runs, then shows result
+clack_spinner() {
+    _cs_message="$1"
+    shift
+
+    # Spinner frames (ASCII compatible)
+    _cs_pid=""
+
+    # Start spinner in background
+    (
+        while true; do
+            for _cs_frame in '|' '/' '-' '\'; do
+                printf "\r${GRAY}│${NC}  ${CYAN}%s${NC} %s" "$_cs_frame" "$_cs_message"
+                sleep 0.1 2>/dev/null || sleep 1
+            done
+        done
+    ) &
+    _cs_pid=$!
+
+    # Run the actual command
+    "$@" >/dev/null 2>&1
+    _cs_status=$?
+
+    # Stop spinner
+    kill $_cs_pid 2>/dev/null
+    wait $_cs_pid 2>/dev/null
+
+    # Clear spinner line
+    printf "\r\033[K"
+
+    return $_cs_status
+}
+
+# Confirm prompt with guide line
+# Usage: clack_confirm "Question?" "y|n"
+# Returns: 0 for yes, 1 for no
+clack_confirm() {
+    _cc_prompt="$1"
+    _cc_default="$2"
+
+    if [ "$_cc_default" = "y" ]; then
+        _cc_hint="${BOLD}Y${NC}${GRAY}/n${NC}"
+    else
+        _cc_hint="${GRAY}y/${NC}${BOLD}N${NC}"
+    fi
+
+    printf "${GRAY}│${NC}\n"
+    printf "${CYAN}◇${NC}  %s ${GRAY}[%b]${NC} " "$_cc_prompt" "$_cc_hint"
+
+    # Read from /dev/tty for piped execution support
+    if [ -t 0 ]; then
+        read -r _cc_answer
+    else
+        read -r _cc_answer < /dev/tty
+        printf "\n"
+    fi
+
+    if [ -z "$_cc_answer" ]; then
+        _cc_answer="$_cc_default"
+    fi
+
+    case "$_cc_answer" in
+        [Yy]*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Note/message box with guide line
+# Usage: clack_note "title" "line1" "line2" ...
+# Or:    clack_note "title" <<EOF
+#        line1
+#        line2
+#        EOF
+clack_note() {
+    _cn_title="$1"
+    shift
+
+    printf "${GRAY}│${NC}\n"
+    printf "${GRAY}│${NC}  ${GRAY}╭─${NC} ${BOLD}%s${NC}\n" "$_cn_title"
+
+    # If arguments provided, use them as lines
+    if [ $# -gt 0 ]; then
+        for _cn_line in "$@"; do
+            printf "${GRAY}│${NC}  ${GRAY}│${NC}  %s\n" "$_cn_line"
+        done
+    else
+        # Read from stdin (heredoc support)
+        while IFS= read -r _cn_line; do
+            printf "${GRAY}│${NC}  ${GRAY}│${NC}  %s\n" "$_cn_line"
+        done
+    fi
+
+    printf "${GRAY}│${NC}  ${GRAY}╰─${NC}\n"
+}
+
+# Cancel message
+# Usage: clack_cancel "Message"
+clack_cancel() {
+    printf "${GRAY}│${NC}\n"
+    printf "${GRAY}└${NC}  ${RED}%s${NC}\n" "$1"
+    printf "\n"
+}
 
 # ============================================================
 # Output Helpers
@@ -148,19 +333,15 @@ print_status() {
 run_with_spinner() {
     _rws_message="$1"
     shift
-
-    # Spinner characters (POSIX compatible)
-    _rws_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
     _rws_pid=""
 
-    # Start spinner in background
+    # Start spinner in background (ASCII compatible: | / - \)
     (
-        _rws_i=0
         while true; do
-            _rws_char=$(printf '%s' "$_rws_chars" | cut -c$((_rws_i % 10 + 1)))
-            printf "\r  ${CYAN}%s${NC} %s" "$_rws_char" "$_rws_message"
-            _rws_i=$((_rws_i + 1))
-            sleep 0.1 2>/dev/null || sleep 1
+            for _rws_char in '|' '/' '-' '\'; do
+                printf "\r  ${CYAN}%s${NC} %s" "$_rws_char" "$_rws_message"
+                sleep 0.1 2>/dev/null || sleep 1
+            done
         done
     ) &
     _rws_pid=$!

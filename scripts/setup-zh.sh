@@ -42,94 +42,68 @@ load_library() {
 load_library
 
 # ============================================================
-# 中文输出覆盖
+# 中文输出覆盖（使用 clack 风格组件）
 # ============================================================
 
-# 中文欢迎信息（用户版）
+# 中文欢迎信息（用户版）- 使用 clack_intro 和 clack_note
 zh_print_welcome_user() {
-    printf "\n"
-    printf "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-    printf "  ${BOLD}欢迎使用 Markitai 安装向导!${NC}\n"
-    printf "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-    printf "\n"
-    printf "  本脚本将安装:\n"
-    printf "    ${GREEN}•${NC} markitai - 支持 LLM 的 Markdown 转换器\n"
-    printf "\n"
-    printf "  可选组件:\n"
-    printf "    ${YELLOW}•${NC} Playwright - 浏览器自动化（JS 渲染页面）\n"
-    printf "    ${YELLOW}•${NC} Claude Code CLI - 使用 Claude 订阅\n"
-    printf "    ${YELLOW}•${NC} Copilot CLI - 使用 GitHub Copilot 订阅\n"
-    printf "\n"
-    printf "  ${BOLD}随时按 Ctrl+C 取消${NC}\n"
-    printf "\n"
+    clack_intro "欢迎使用 Markitai 安装向导!"
+    clack_note "安装内容" \
+        "${GREEN}•${NC} markitai - 支持 LLM 的 Markdown 转换器" \
+        "" \
+        "${BOLD}可选组件:${NC}" \
+        "${YELLOW}•${NC} Playwright - 浏览器自动化（JS 渲染页面）" \
+        "${YELLOW}•${NC} Claude Code CLI - 使用 Claude 订阅" \
+        "${YELLOW}•${NC} Copilot CLI - 使用 GitHub Copilot 订阅" \
+        "" \
+        "随时按 ${BOLD}Ctrl+C${NC} 取消"
 }
 
-# 中文安装总结
+# 中文安装总结 - 使用 clack 风格
 zh_print_summary() {
-    printf "\n"
-    printf "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-    printf "  ${BOLD}安装总结${NC}\n"
-    printf "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-    printf "\n"
+    clack_section "安装总结"
 
     # 已安装
     if [ -n "$INSTALLED_COMPONENTS" ]; then
-        printf "  ${GREEN}已安装:${NC}\n"
+        clack_log "${GREEN}已安装:${NC}"
         echo "$INSTALLED_COMPONENTS" | tr '|' '\n' | while read -r comp; do
-            [ -n "$comp" ] && printf "    ${GREEN}✓${NC} %s\n" "$comp"
+            [ -n "$comp" ] && clack_success "$comp"
         done
-        printf "\n"
     fi
 
     # 已跳过
     if [ -n "$SKIPPED_COMPONENTS" ]; then
-        printf "  ${YELLOW}已跳过:${NC}\n"
+        clack_log "${YELLOW}已跳过:${NC}"
         echo "$SKIPPED_COMPONENTS" | tr '|' '\n' | while read -r comp; do
-            [ -n "$comp" ] && printf "    ${YELLOW}○${NC} %s\n" "$comp"
+            [ -n "$comp" ] && clack_skip "$comp"
         done
-        printf "\n"
     fi
 
     # 安装失败
     if [ -n "$FAILED_COMPONENTS" ]; then
-        printf "  ${RED}安装失败:${NC}\n"
+        clack_log "${RED}安装失败:${NC}"
         echo "$FAILED_COMPONENTS" | tr '|' '\n' | while read -r comp; do
-            [ -n "$comp" ] && printf "    ${RED}✗${NC} %s\n" "$comp"
+            [ -n "$comp" ] && clack_error "$comp"
         done
-        printf "\n"
     fi
 
-    printf "  ${BOLD}文档:${NC} https://markitai.ynewtime.com\n"
-    printf "  ${BOLD}问题反馈:${NC} https://github.com/Ynewtime/markitai/issues\n"
-    printf "\n"
+    clack_log ""
+    clack_log "${BOLD}文档:${NC} https://markitai.ynewtime.com"
+    clack_log "${BOLD}问题反馈:${NC} https://github.com/Ynewtime/markitai/issues"
     return 0
-}
-
-# 覆盖库函数以使用中文输出
-zh_print_header() {
-    printf "\n"
-    printf "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-    printf "  ${BOLD}%s${NC}\n" "$1"
-    printf "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n\n"
 }
 
 zh_warn_if_root() {
     if [ "$(id -u)" -eq 0 ]; then
-        printf "\n"
-        printf "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-        printf "  ${YELLOW}警告: 正在以 root 身份运行${NC}\n"
-        printf "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-        printf "\n"
-        printf "  以 root 身份运行安装脚本存在以下风险:\n"
-        printf "  1. PATH 劫持: ~/.local/bin 可能被其他用户写入\n"
-        printf "  2. 远程代码执行风险被放大\n"
-        printf "\n"
-        printf "  建议: 使用普通用户身份运行此脚本\n"
-        printf "\n"
+        clack_section "警告: 正在以 root 身份运行"
+        clack_warn "以 root 身份运行安装脚本存在以下风险:"
+        clack_log "  1. PATH 劫持: ~/.local/bin 可能被其他用户写入"
+        clack_log "  2. 远程代码执行风险被放大"
+        clack_log ""
+        clack_info "建议: 使用普通用户身份运行此脚本"
 
-        if ! ask_yes_no "是否继续以 root 身份运行?" "n"; then
-            printf "\n"
-            print_info "退出。请使用普通用户身份运行。"
+        if ! clack_confirm "是否继续以 root 身份运行?" "n"; then
+            clack_cancel "退出。请使用普通用户身份运行。"
             exit 1
         fi
     fi
@@ -140,19 +114,14 @@ zh_confirm_remote_script() {
     script_url="$1"
     script_name="$2"
 
-    printf "\n"
-    printf "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-    printf "  ${YELLOW}警告: 即将执行远程脚本${NC}\n"
-    printf "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-    printf "\n"
-    printf "  来源: %s\n" "$script_url"
-    printf "  用途: 安装 %s\n" "$script_name"
-    printf "\n"
-    printf "  此操作将从互联网下载并执行代码。\n"
-    printf "  请确保您信任该来源。\n"
-    printf "\n"
+    clack_section "警告: 即将执行远程脚本"
+    clack_log "来源: $script_url"
+    clack_log "用途: 安装 $script_name"
+    clack_log ""
+    clack_warn "此操作将从互联网下载并执行代码。"
+    clack_info "请确保您信任该来源。"
 
-    if ask_yes_no "确认执行?" "n"; then
+    if clack_confirm "确认执行?" "n"; then
         return 0
     else
         return 1
@@ -167,113 +136,111 @@ zh_detect_python() {
         if [ -n "$uv_python" ] && [ -x "$uv_python" ]; then
             PYTHON_CMD="$uv_python"
             ver=$("$uv_python" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
-            print_success "Python $ver (uv 管理)"
+            clack_success "Python $ver (uv 管理)"
             return 0
         fi
 
         # 未找到，自动安装
-        print_info "正在安装 Python 3.13..."
+        clack_info "正在安装 Python 3.13..."
         if uv python install 3.13; then
             uv_python=$(uv python find 3.13 2>/dev/null)
             if [ -n "$uv_python" ] && [ -x "$uv_python" ]; then
                 PYTHON_CMD="$uv_python"
                 ver=$("$uv_python" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
-                print_success "Python $ver 安装成功 (uv 管理)"
+                clack_success "Python $ver 安装成功 (uv 管理)"
                 return 0
             fi
         fi
-        print_error "Python 3.13 安装失败"
+        clack_error "Python 3.13 安装失败"
     else
-        print_error "uv 未安装，无法管理 Python"
+        clack_error "uv 未安装，无法管理 Python"
     fi
 
     return 1
 }
 
 zh_install_uv() {
-    print_info "检查 UV 安装..."
-
     if command -v uv >/dev/null 2>&1; then
         version=$(uv --version 2>/dev/null | head -n1)
-        print_success "$version 已安装"
+        clack_success "$version 已安装"
         track_install "uv" "installed"
         return 0
     fi
 
-    print_info "UV 未安装（用于管理 Python 和依赖）"
+    clack_info "UV 未安装（用于管理 Python 和依赖）"
 
-    if ! ask_yes_no "是否自动安装 UV?" "y"; then
-        print_error "UV 是必需的，无法继续"
+    if ! clack_confirm "是否自动安装 UV?" "y"; then
+        clack_error "UV 是必需的，无法继续"
         track_install "uv" "failed"
         return 1
     fi
 
     if ! command -v curl >/dev/null 2>&1; then
-        print_error "未找到 curl，无法下载 UV 安装脚本"
-        print_info "请先安装 curl:"
-        print_info "  Ubuntu/Debian: sudo apt install curl"
-        print_info "  macOS: brew install curl"
-        print_info "  或手动安装 UV: https://docs.astral.sh/uv/getting-started/installation/"
+        clack_error "未找到 curl，无法下载 UV 安装脚本"
+        clack_info "请先安装 curl:"
+        clack_log "  Ubuntu/Debian: sudo apt install curl"
+        clack_log "  macOS: brew install curl"
+        clack_log "  或手动安装 UV: https://docs.astral.sh/uv/getting-started/installation/"
         return 1
     fi
 
     if [ -n "$UV_VERSION" ]; then
         uv_url="https://astral.sh/uv/$UV_VERSION/install.sh"
-        print_info "安装 UV 版本: $UV_VERSION"
+        clack_info "安装 UV 版本: $UV_VERSION"
     else
         uv_url="https://astral.sh/uv/install.sh"
     fi
 
     if ! zh_confirm_remote_script "$uv_url" "UV"; then
-        print_info "跳过 UV 安装"
+        clack_skip "跳过 UV 安装"
         track_install "uv" "skipped"
         return 2
     fi
 
-    print_info "正在安装 UV..."
+    clack_spinner "正在安装 UV..." curl -LsSf "$uv_url" | sh
+    _uv_status=$?
 
-    if curl -LsSf "$uv_url" | sh; then
+    if [ $_uv_status -eq 0 ]; then
         export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
         if command -v uv >/dev/null 2>&1; then
             version=$(uv --version 2>/dev/null | head -n1)
-            print_success "$version 安装成功"
+            clack_success "$version 安装成功"
             track_install "uv" "installed"
             return 0
         else
-            print_warning "UV 已安装，但需要重新加载 shell"
-            print_info "请运行: source ~/.bashrc 或重新打开终端"
-            print_info "然后重新运行此脚本"
+            clack_warn "UV 已安装，但需要重新加载 shell"
+            clack_info "请运行: source ~/.bashrc 或重新打开终端"
+            clack_info "然后重新运行此脚本"
             track_install "uv" "installed"
             return 1
         fi
     else
-        print_error "UV 安装失败"
-        print_info "手动安装: curl -LsSf https://astral.sh/uv/install.sh | sh"
+        clack_error "UV 安装失败"
+        clack_info "手动安装: curl -LsSf https://astral.sh/uv/install.sh | sh"
         track_install "uv" "failed"
         return 1
     fi
 }
 
 zh_install_markitai() {
-    print_info "正在安装 markitai..."
-
     # 注意: 使用 [browser] 而非 [all] 避免安装不必要的 SDK 包
     # SDK 包 (claude-agent, copilot) 将在用户选择安装 CLI 工具时安装
     if [ -n "$MARKITAI_VERSION" ]; then
         pkg="markitai[browser]==$MARKITAI_VERSION"
-        print_info "安装版本: $MARKITAI_VERSION"
+        clack_info "安装版本: $MARKITAI_VERSION"
     else
         pkg="markitai[browser]"
     fi
 
     if command -v uv >/dev/null 2>&1; then
         # 使用 --upgrade 确保安装最新版本
-        if uv tool install "$pkg" --python "$PYTHON_CMD" --upgrade 2>/dev/null; then
+        clack_spinner "正在安装 markitai..." uv tool install "$pkg" --python "$PYTHON_CMD" --upgrade
+        if [ $? -eq 0 ]; then
             export PATH="$HOME/.local/bin:$PATH"
             version=$(markitai --version 2>/dev/null || echo "已安装")
-            print_success "markitai $version 安装成功"
-            print_info "已安装到 ~/.local/bin (使用 $PYTHON_CMD)"
+            clack_success "markitai $version 安装成功"
+            clack_info "已安装到 ~/.local/bin (使用 $PYTHON_CMD)"
             track_install "markitai" "installed"
             return 0
         fi
@@ -281,26 +248,28 @@ zh_install_markitai() {
 
     if command -v pipx >/dev/null 2>&1; then
         # 使用 --force 确保安装最新版本
-        if pipx install "$pkg" --python "$PYTHON_CMD" --force; then
+        clack_spinner "正在安装 markitai..." pipx install "$pkg" --python "$PYTHON_CMD" --force
+        if [ $? -eq 0 ]; then
             version=$(markitai --version 2>/dev/null || echo "已安装")
-            print_success "markitai $version 安装成功"
+            clack_success "markitai $version 安装成功"
             track_install "markitai" "installed"
             return 0
         fi
     fi
 
     # 使用 --upgrade 确保安装最新版本
-    if "$PYTHON_CMD" -m pip install --user --upgrade "$pkg" 2>/dev/null; then
+    clack_spinner "正在安装 markitai..." "$PYTHON_CMD" -m pip install --user --upgrade "$pkg"
+    if [ $? -eq 0 ]; then
         export PATH="$HOME/.local/bin:$PATH"
         version=$(markitai --version 2>/dev/null || echo "已安装")
-        print_success "markitai $version 安装成功"
-        print_warning "可能需要将 ~/.local/bin 添加到 PATH"
+        clack_success "markitai $version 安装成功"
+        clack_warn "可能需要将 ~/.local/bin 添加到 PATH"
         track_install "markitai" "installed"
         return 0
     fi
 
-    print_error "markitai 安装失败"
-    print_info "请手动安装: uv tool install markitai --python $PYTHON_CMD"
+    clack_error "markitai 安装失败"
+    clack_info "请手动安装: uv tool install markitai --python $PYTHON_CMD"
     track_install "markitai" "failed"
     return 1
 }
@@ -309,19 +278,19 @@ zh_install_markitai() {
 # 安全性: 使用 markitai 虚拟环境中的 playwright 确保使用正确版本
 # 返回: 0 成功, 1 失败, 2 跳过
 zh_install_playwright_browser() {
-    print_info "Playwright 浏览器 (Chromium):"
-    print_info "  用途: 浏览器自动化，用于 JavaScript 渲染页面 (Twitter, SPA)"
+    clack_log "Playwright 浏览器 (Chromium):"
+    clack_info "用途: 浏览器自动化，用于 JavaScript 渲染页面 (Twitter, SPA)"
 
     # 先检测是否已安装
     if lib_detect_playwright_browser; then
-        print_success "Playwright Chromium 已安装"
+        clack_success "Playwright Chromium 已安装"
         track_install "Playwright Browser" "installed"
         return 0
     fi
 
     # 下载前先征询用户同意
-    if ! ask_yes_no "是否下载 Chromium 浏览器？" "y"; then
-        print_info "跳过 Playwright 浏览器安装"
+    if ! clack_confirm "是否下载 Chromium 浏览器？" "y"; then
+        clack_skip "跳过 Playwright 浏览器安装"
         track_install "Playwright Browser" "skipped"
         return 2
     fi
@@ -343,83 +312,88 @@ zh_install_playwright_browser() {
         markitai_playwright="$HOME/.local/share/uv/tools/markitai/bin/playwright"
     fi
 
-    # 使用 spinner 显示下载进度
+    # 使用 clack_spinner 显示下载进度
     if [ -x "$markitai_playwright" ]; then
-        if run_with_spinner "正在下载 Chromium 浏览器..." "$markitai_playwright" install chromium; then
-            print_success "Chromium 浏览器下载成功"
+        clack_spinner "正在下载 Chromium 浏览器..." "$markitai_playwright" install chromium
+        if [ $? -eq 0 ]; then
+            clack_success "Chromium 浏览器下载成功"
             browser_installed=true
         fi
     fi
 
     # 方法 2: 回退到 Python 模块（用于 pip/pipx 安装）
     if [ "$browser_installed" = false ] && [ -n "$PYTHON_CMD" ]; then
-        if run_with_spinner "正在下载 Chromium 浏览器..." "$PYTHON_CMD" -m playwright install chromium; then
-            print_success "Chromium 浏览器下载成功"
+        clack_spinner "正在下载 Chromium 浏览器..." "$PYTHON_CMD" -m playwright install chromium
+        if [ $? -eq 0 ]; then
+            clack_success "Chromium 浏览器下载成功"
             browser_installed=true
         fi
     fi
 
     if [ "$browser_installed" = false ]; then
-        print_warning "Playwright 浏览器安装失败"
-        print_info "稍后可手动安装: playwright install chromium"
+        clack_warn "Playwright 浏览器安装失败"
+        clack_info "稍后可手动安装: playwright install chromium"
         track_install "Playwright Browser" "failed"
         return 1
     fi
 
     # 在 Linux 上安装系统依赖（需要 sudo）
     if [ "$(uname)" = "Linux" ]; then
-        print_info "Chromium 在 Linux 上需要系统依赖"
-        if ask_yes_no "是否安装系统依赖（需要 sudo）？" "y"; then
+        clack_info "Chromium 在 Linux 上需要系统依赖"
+        if clack_confirm "是否安装系统依赖（需要 sudo）？" "y"; then
             # Arch Linux: 使用 pacman（playwright install-deps 不支持 Arch）
             if [ -f /etc/arch-release ]; then
-                print_info "检测到 Arch Linux，使用 pacman 安装依赖..."
+                clack_info "检测到 Arch Linux，使用 pacman 安装依赖..."
                 # Playwright Chromium 核心依赖
                 arch_deps="nss nspr at-spi2-core cups libdrm mesa alsa-lib libxcomposite libxdamage libxrandr libxkbcommon pango cairo"
                 # 可选字体（提升中文/日文显示）
                 arch_fonts="noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-liberation"
-                if run_with_spinner "正在安装系统依赖..." sudo pacman -S --noconfirm --needed $arch_deps $arch_fonts; then
-                    print_success "系统依赖安装成功"
+                clack_spinner "正在安装系统依赖..." sudo pacman -S --noconfirm --needed $arch_deps $arch_fonts
+                if [ $? -eq 0 ]; then
+                    clack_success "系统依赖安装成功"
                     track_install "Playwright Browser" "installed"
                     return 0
                 else
-                    print_warning "部分依赖安装失败"
-                    print_info "可手动安装: sudo pacman -S $arch_deps"
+                    clack_warn "部分依赖安装失败"
+                    clack_info "可手动安装: sudo pacman -S $arch_deps"
                 fi
             # Debian/Ubuntu: 使用 playwright install-deps
             elif command -v apt-get >/dev/null 2>&1; then
                 # 方法 1: 使用 markitai 环境中的 playwright
                 if [ -x "$markitai_playwright" ]; then
-                    if run_with_spinner "正在安装系统依赖..." "$markitai_playwright" install-deps chromium; then
-                        print_success "系统依赖安装成功"
+                    clack_spinner "正在安装系统依赖..." "$markitai_playwright" install-deps chromium
+                    if [ $? -eq 0 ]; then
+                        clack_success "系统依赖安装成功"
                         track_install "Playwright Browser" "installed"
                         return 0
                     fi
                 fi
                 # 方法 2: 回退到 Python 模块
                 if [ -n "$PYTHON_CMD" ]; then
-                    if run_with_spinner "正在安装系统依赖..." "$PYTHON_CMD" -m playwright install-deps chromium; then
-                        print_success "系统依赖安装成功"
+                    clack_spinner "正在安装系统依赖..." "$PYTHON_CMD" -m playwright install-deps chromium
+                    if [ $? -eq 0 ]; then
+                        clack_success "系统依赖安装成功"
                         track_install "Playwright Browser" "installed"
                         return 0
                     fi
                 fi
-                print_warning "系统依赖安装失败"
-                print_info "可手动安装: sudo playwright install-deps chromium"
-                print_info "或: sudo apt install libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxkbcommon0 libxdamage1 libgbm1 libpango-1.0-0 libcairo2 libasound2"
+                clack_warn "系统依赖安装失败"
+                clack_info "可手动安装: sudo playwright install-deps chromium"
+                clack_info "或: sudo apt install libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxkbcommon0 libxdamage1 libgbm1 libpango-1.0-0 libcairo2 libasound2"
             # 其他发行版
             else
-                print_warning "未识别的 Linux 发行版"
-                print_info "请手动安装 Chromium 依赖"
+                clack_warn "未识别的 Linux 发行版"
+                clack_info "请手动安装 Chromium 依赖"
             fi
             track_install "Playwright Browser" "installed"
             return 0
         else
-            print_warning "已跳过系统依赖安装"
-            print_info "Chromium 可能无法运行"
+            clack_warn "已跳过系统依赖安装"
+            clack_info "Chromium 可能无法运行"
             if [ -f /etc/arch-release ]; then
-                print_info "稍后安装: sudo pacman -S nss nspr at-spi2-core cups libdrm mesa alsa-lib"
+                clack_info "稍后安装: sudo pacman -S nss nspr at-spi2-core cups libdrm mesa alsa-lib"
             else
-                print_info "稍后安装: sudo playwright install-deps chromium"
+                clack_info "稍后安装: sudo playwright install-deps chromium"
             fi
             track_install "Playwright Browser" "installed"
             return 0
@@ -433,14 +407,14 @@ zh_install_playwright_browser() {
 # 检测 LibreOffice 安装
 # LibreOffice 用于转换 .doc, .ppt, .xls 文件
 zh_install_libreoffice() {
-    print_info "LibreOffice (可选):"
-    print_info "  用途: 转换旧版 Office 文件 (.doc, .ppt, .xls)"
-    print_info "  新版格式 (.docx/.pptx/.xlsx) 无需 LibreOffice"
+    clack_log "LibreOffice (可选):"
+    clack_info "用途: 转换旧版 Office 文件 (.doc, .ppt, .xls)"
+    clack_info "新版格式 (.docx/.pptx/.xlsx) 无需 LibreOffice"
 
     # 检测 soffice 命令
     if command -v soffice >/dev/null 2>&1; then
         version=$(soffice --version 2>/dev/null | head -n1)
-        print_success "LibreOffice 已安装: $version"
+        clack_success "LibreOffice 已安装: $version"
         track_install "LibreOffice" "installed"
         return 0
     fi
@@ -448,13 +422,13 @@ zh_install_libreoffice() {
     # 检测 libreoffice 命令
     if command -v libreoffice >/dev/null 2>&1; then
         version=$(libreoffice --version 2>/dev/null | head -n1)
-        print_success "LibreOffice 已安装: $version"
+        clack_success "LibreOffice 已安装: $version"
         track_install "LibreOffice" "installed"
         return 0
     fi
 
-    if ! ask_yes_no "是否安装 LibreOffice？" "n"; then
-        print_info "跳过 LibreOffice 安装"
+    if ! clack_confirm "是否安装 LibreOffice？" "n"; then
+        clack_skip "跳过 LibreOffice 安装"
         track_install "LibreOffice" "skipped"
         return 2  # Skipped
     fi
@@ -463,70 +437,74 @@ zh_install_libreoffice() {
         Darwin)
             # macOS: 使用 Homebrew
             if command -v brew >/dev/null 2>&1; then
-                if run_with_spinner "正在安装 LibreOffice..." brew install --cask libreoffice; then
-                    print_success "LibreOffice 通过 Homebrew 安装成功"
+                clack_spinner "正在安装 LibreOffice..." brew install --cask libreoffice
+                if [ $? -eq 0 ]; then
+                    clack_success "LibreOffice 通过 Homebrew 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
                 fi
             else
-                print_error "未找到 Homebrew"
-                print_info "请先安装 Homebrew: https://brew.sh"
-                print_info "然后运行: brew install --cask libreoffice"
+                clack_error "未找到 Homebrew"
+                clack_info "请先安装 Homebrew: https://brew.sh"
+                clack_info "然后运行: brew install --cask libreoffice"
             fi
             ;;
         Linux)
             # Linux: 使用包管理器
             if [ -f /etc/debian_version ]; then
                 # Debian/Ubuntu
-                if run_with_spinner "正在安装 LibreOffice..." sh -c "sudo apt update >/dev/null 2>&1 && sudo apt install -y libreoffice >/dev/null 2>&1"; then
-                    print_success "LibreOffice 通过 apt 安装成功"
+                clack_spinner "正在安装 LibreOffice..." sh -c "sudo apt update >/dev/null 2>&1 && sudo apt install -y libreoffice >/dev/null 2>&1"
+                if [ $? -eq 0 ]; then
+                    clack_success "LibreOffice 通过 apt 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
                 fi
             elif [ -f /etc/fedora-release ]; then
                 # Fedora
-                if run_with_spinner "正在安装 LibreOffice..." sudo dnf install -y libreoffice; then
-                    print_success "LibreOffice 通过 dnf 安装成功"
+                clack_spinner "正在安装 LibreOffice..." sudo dnf install -y libreoffice
+                if [ $? -eq 0 ]; then
+                    clack_success "LibreOffice 通过 dnf 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
                 fi
             elif [ -f /etc/arch-release ]; then
                 # Arch Linux
-                if run_with_spinner "正在安装 LibreOffice..." sudo pacman -S --noconfirm libreoffice-fresh; then
-                    print_success "LibreOffice 通过 pacman 安装成功"
+                clack_spinner "正在安装 LibreOffice..." sudo pacman -S --noconfirm libreoffice-fresh
+                if [ $? -eq 0 ]; then
+                    clack_success "LibreOffice 通过 pacman 安装成功"
                     track_install "LibreOffice" "installed"
                     return 0
                 fi
             else
-                print_error "未知的 Linux 发行版"
-                print_info "请使用包管理器手动安装 LibreOffice"
+                clack_error "未知的 Linux 发行版"
+                clack_info "请使用包管理器手动安装 LibreOffice"
             fi
             ;;
         *)
-            print_error "此平台不支持自动安装"
-            print_info "下载地址: https://www.libreoffice.org/download/"
+            clack_error "此平台不支持自动安装"
+            clack_info "下载地址: https://www.libreoffice.org/download/"
             ;;
     esac
 
-    print_warning "LibreOffice 安装失败"
-    print_info "手动安装方式:"
+    clack_warn "LibreOffice 安装失败"
+    clack_info "手动安装方式:"
     case "$(uname)" in
         Darwin)
-            print_info "  brew install --cask libreoffice"
+            clack_log "  brew install --cask libreoffice"
             ;;
         Linux)
             if [ -f /etc/debian_version ]; then
-                print_info "  sudo apt install libreoffice"
+                clack_log "  sudo apt install libreoffice"
             elif [ -f /etc/fedora-release ]; then
-                print_info "  sudo dnf install libreoffice"
+                clack_log "  sudo dnf install libreoffice"
             elif [ -f /etc/arch-release ]; then
-                print_info "  sudo pacman -S libreoffice-fresh"
+                clack_log "  sudo pacman -S libreoffice-fresh"
             else
-                print_info "  使用包管理器安装 libreoffice"
+                clack_log "  使用包管理器安装 libreoffice"
             fi
             ;;
         *)
-            print_info "  下载地址: https://www.libreoffice.org/download/"
+            clack_log "  下载地址: https://www.libreoffice.org/download/"
             ;;
     esac
     track_install "LibreOffice" "failed"
@@ -536,18 +514,18 @@ zh_install_libreoffice() {
 # 检测 FFmpeg 安装
 # FFmpeg 用于处理音视频文件
 zh_install_ffmpeg() {
-    print_info "FFmpeg (可选):"
-    print_info "  用途: 处理音视频文件 (.mp3, .mp4, .wav 等)"
+    clack_log "FFmpeg (可选):"
+    clack_info "用途: 处理音视频文件 (.mp3, .mp4, .wav 等)"
 
     if command -v ffmpeg >/dev/null 2>&1; then
         version=$(ffmpeg -version 2>/dev/null | head -n1)
-        print_success "FFmpeg 已安装: $version"
+        clack_success "FFmpeg 已安装: $version"
         track_install "FFmpeg" "installed"
         return 0
     fi
 
-    if ! ask_yes_no "是否安装 FFmpeg？" "n"; then
-        print_info "跳过 FFmpeg 安装"
+    if ! clack_confirm "是否安装 FFmpeg？" "n"; then
+        clack_skip "跳过 FFmpeg 安装"
         track_install "FFmpeg" "skipped"
         return 2
     fi
@@ -555,65 +533,69 @@ zh_install_ffmpeg() {
     case "$(uname)" in
         Darwin)
             if command -v brew >/dev/null 2>&1; then
-                if run_with_spinner "正在安装 FFmpeg..." brew install ffmpeg; then
-                    print_success "FFmpeg 通过 Homebrew 安装成功"
+                clack_spinner "正在安装 FFmpeg..." brew install ffmpeg
+                if [ $? -eq 0 ]; then
+                    clack_success "FFmpeg 通过 Homebrew 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
             else
-                print_error "未找到 Homebrew"
-                print_info "请先安装 Homebrew: https://brew.sh"
+                clack_error "未找到 Homebrew"
+                clack_info "请先安装 Homebrew: https://brew.sh"
             fi
             ;;
         Linux)
             if [ -f /etc/debian_version ]; then
-                if run_with_spinner "正在安装 FFmpeg..." sh -c "sudo apt update >/dev/null 2>&1 && sudo apt install -y ffmpeg >/dev/null 2>&1"; then
-                    print_success "FFmpeg 通过 apt 安装成功"
+                clack_spinner "正在安装 FFmpeg..." sh -c "sudo apt update >/dev/null 2>&1 && sudo apt install -y ffmpeg >/dev/null 2>&1"
+                if [ $? -eq 0 ]; then
+                    clack_success "FFmpeg 通过 apt 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
             elif [ -f /etc/fedora-release ]; then
-                if run_with_spinner "正在安装 FFmpeg..." sudo dnf install -y ffmpeg; then
-                    print_success "FFmpeg 通过 dnf 安装成功"
+                clack_spinner "正在安装 FFmpeg..." sudo dnf install -y ffmpeg
+                if [ $? -eq 0 ]; then
+                    clack_success "FFmpeg 通过 dnf 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
             elif [ -f /etc/arch-release ]; then
-                if run_with_spinner "正在安装 FFmpeg..." sudo pacman -S --noconfirm ffmpeg; then
-                    print_success "FFmpeg 通过 pacman 安装成功"
+                clack_spinner "正在安装 FFmpeg..." sudo pacman -S --noconfirm ffmpeg
+                if [ $? -eq 0 ]; then
+                    clack_success "FFmpeg 通过 pacman 安装成功"
                     track_install "FFmpeg" "installed"
                     return 0
                 fi
             else
-                print_error "未知的 Linux 发行版"
-                print_info "请手动安装 FFmpeg"
+                clack_error "未知的 Linux 发行版"
+                clack_info "请手动安装 FFmpeg"
             fi
             ;;
         *)
-            print_error "此平台不支持自动安装"
-            print_info "下载地址: https://ffmpeg.org/download.html"
+            clack_error "此平台不支持自动安装"
+            clack_info "下载地址: https://ffmpeg.org/download.html"
             ;;
     esac
 
-    print_warning "FFmpeg 安装失败"
-    print_info "手动安装方式:"
+    clack_warn "FFmpeg 安装失败"
+    clack_info "手动安装方式:"
     case "$(uname)" in
         Darwin)
-            print_info "  brew install ffmpeg"
+            clack_log "  brew install ffmpeg"
             ;;
         Linux)
             if [ -f /etc/debian_version ]; then
-                print_info "  sudo apt install ffmpeg"
+                clack_log "  sudo apt install ffmpeg"
             elif [ -f /etc/fedora-release ]; then
-                print_info "  sudo dnf install ffmpeg"
+                clack_log "  sudo dnf install ffmpeg"
             elif [ -f /etc/arch-release ]; then
-                print_info "  sudo pacman -S ffmpeg"
+                clack_log "  sudo pacman -S ffmpeg"
             else
-                print_info "  使用包管理器安装 ffmpeg"
+                clack_log "  使用包管理器安装 ffmpeg"
             fi
             ;;
         *)
-            print_info "  下载地址: https://ffmpeg.org/download.html"
+            clack_log "  下载地址: https://ffmpeg.org/download.html"
             ;;
     esac
     track_install "FFmpeg" "failed"
@@ -622,14 +604,13 @@ zh_install_ffmpeg() {
 
 zh_detect_node() {
     if ! command -v node >/dev/null 2>&1; then
-        print_error "未找到 Node.js"
-        printf "\n"
-        print_warning "请安装 Node.js 18+:"
-        print_info "官网下载: https://nodejs.org/"
-        print_info "使用 nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash"
-        print_info "使用 fnm: curl -fsSL https://fnm.vercel.app/install | bash"
-        print_info "Ubuntu/Debian: sudo apt install nodejs npm"
-        print_info "macOS: brew install node"
+        clack_error "未找到 Node.js"
+        clack_warn "请安装 Node.js 18+:"
+        clack_info "官网下载: https://nodejs.org/"
+        clack_info "使用 nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash"
+        clack_info "使用 fnm: curl -fsSL https://fnm.vercel.app/install | bash"
+        clack_info "Ubuntu/Debian: sudo apt install nodejs npm"
+        clack_info "macOS: brew install node"
         return 1
     fi
 
@@ -638,7 +619,7 @@ zh_detect_node() {
 
     # Check if version is empty
     if [ -z "$version" ]; then
-        print_warning "无法获取 Node 版本 (输出为空)"
+        clack_warn "无法获取 Node 版本 (输出为空)"
         return 1
     fi
 
@@ -647,46 +628,46 @@ zh_detect_node() {
 
     case "$major" in
         ''|*[!0-9]*)
-            print_warning "无法解析 Node 版本: $version"
+            clack_warn "无法解析 Node 版本: $version"
             return 1
             ;;
     esac
 
     if [ "$major" -ge 18 ]; then
-        print_success "Node.js $version 已安装"
+        clack_success "Node.js $version 已安装"
         return 0
     else
-        print_warning "Node.js $version 版本较低，建议 18+"
+        clack_warn "Node.js $version 版本较低，建议 18+"
         return 0
     fi
 }
 
 # 安装 Claude Code CLI
 zh_install_claude_cli() {
-    print_info "正在安装 Claude Code CLI..."
-
     # 检查是否已安装
     if command -v claude >/dev/null 2>&1; then
         version=$(claude --version 2>/dev/null | head -n1)
-        print_success "Claude Code CLI 已安装: $version"
+        clack_success "Claude Code CLI 已安装: $version"
         track_install "Claude Code CLI" "installed"
         return 0
     fi
 
     # 优先使用 npm/pnpm
     if command -v pnpm >/dev/null 2>&1; then
-        print_info "通过 pnpm 安装..."
-        if pnpm add -g @anthropic-ai/claude-code; then
-            print_success "Claude Code CLI 安装成功 (pnpm)"
-            print_info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
+        clack_info "通过 pnpm 安装..."
+        clack_spinner "正在安装 Claude Code CLI..." pnpm add -g @anthropic-ai/claude-code
+        if [ $? -eq 0 ]; then
+            clack_success "Claude Code CLI 安装成功 (pnpm)"
+            clack_info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
             track_install "Claude Code CLI" "installed"
             return 0
         fi
     elif command -v npm >/dev/null 2>&1; then
-        print_info "通过 npm 安装..."
-        if npm install -g @anthropic-ai/claude-code >/dev/null 2>&1; then
-            print_success "Claude Code CLI 安装成功 (npm)"
-            print_info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
+        clack_info "通过 npm 安装..."
+        clack_spinner "正在安装 Claude Code CLI..." npm install -g @anthropic-ai/claude-code
+        if [ $? -eq 0 ]; then
+            clack_success "Claude Code CLI 安装成功 (npm)"
+            clack_info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
             track_install "Claude Code CLI" "installed"
             return 0
         fi
@@ -694,50 +675,51 @@ zh_install_claude_cli() {
 
     # 备选: Homebrew
     if command -v brew >/dev/null 2>&1; then
-        print_info "通过 Homebrew 安装..."
-        if brew install claude-code >/dev/null 2>&1; then
-            print_success "Claude Code CLI 安装成功 (Homebrew)"
-            print_info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
+        clack_info "通过 Homebrew 安装..."
+        clack_spinner "正在安装 Claude Code CLI..." brew install claude-code
+        if [ $? -eq 0 ]; then
+            clack_success "Claude Code CLI 安装成功 (Homebrew)"
+            clack_info "请运行 'claude /login' 使用 Claude 订阅或 API 密钥进行认证"
             track_install "Claude Code CLI" "installed"
             return 0
         fi
     fi
 
-    print_warning "Claude Code CLI 安装失败"
-    print_info "手动安装方式:"
-    print_info "  pnpm: pnpm add -g @anthropic-ai/claude-code"
-    print_info "  brew: brew install claude-code"
-    print_info "  文档: https://code.claude.com/docs/en/setup"
+    clack_warn "Claude Code CLI 安装失败"
+    clack_info "手动安装方式:"
+    clack_log "  pnpm: pnpm add -g @anthropic-ai/claude-code"
+    clack_log "  brew: brew install claude-code"
+    clack_log "  文档: https://code.claude.com/docs/en/setup"
     track_install "Claude Code CLI" "failed"
     return 1
 }
 
 # 安装 GitHub Copilot CLI
 zh_install_copilot_cli() {
-    print_info "正在安装 GitHub Copilot CLI..."
-
     # 检查是否已安装
     if command -v copilot >/dev/null 2>&1; then
         version=$(copilot --version 2>/dev/null | head -n1)
-        print_success "Copilot CLI 已安装: $version"
+        clack_success "Copilot CLI 已安装: $version"
         track_install "Copilot CLI" "installed"
         return 0
     fi
 
     # 优先使用 npm/pnpm
     if command -v pnpm >/dev/null 2>&1; then
-        print_info "通过 pnpm 安装..."
-        if pnpm add -g @github/copilot; then
-            print_success "Copilot CLI 安装成功 (pnpm)"
-            print_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
+        clack_info "通过 pnpm 安装..."
+        clack_spinner "正在安装 Copilot CLI..." pnpm add -g @github/copilot
+        if [ $? -eq 0 ]; then
+            clack_success "Copilot CLI 安装成功 (pnpm)"
+            clack_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
             track_install "Copilot CLI" "installed"
             return 0
         fi
     elif command -v npm >/dev/null 2>&1; then
-        print_info "通过 npm 安装..."
-        if npm install -g @github/copilot >/dev/null 2>&1; then
-            print_success "Copilot CLI 安装成功 (npm)"
-            print_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
+        clack_info "通过 npm 安装..."
+        clack_spinner "正在安装 Copilot CLI..." npm install -g @github/copilot
+        if [ $? -eq 0 ]; then
+            clack_success "Copilot CLI 安装成功 (npm)"
+            clack_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
             track_install "Copilot CLI" "installed"
             return 0
         fi
@@ -745,10 +727,11 @@ zh_install_copilot_cli() {
 
     # 备选: Homebrew
     if command -v brew >/dev/null 2>&1; then
-        print_info "通过 Homebrew 安装..."
-        if brew install copilot-cli >/dev/null 2>&1; then
-            print_success "Copilot CLI 安装成功 (Homebrew)"
-            print_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
+        clack_info "通过 Homebrew 安装..."
+        clack_spinner "正在安装 Copilot CLI..." brew install copilot-cli
+        if [ $? -eq 0 ]; then
+            clack_success "Copilot CLI 安装成功 (Homebrew)"
+            clack_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
             track_install "Copilot CLI" "installed"
             return 0
         fi
@@ -757,57 +740,57 @@ zh_install_copilot_cli() {
     # 备选: 安装脚本 (需要确认)
     copilot_url="https://gh.io/copilot-install"
     if zh_confirm_remote_script "$copilot_url" "GitHub Copilot CLI"; then
-        print_info "尝试安装脚本..."
-        if curl -fsSL "$copilot_url" | bash; then
-            print_success "Copilot CLI 安装成功"
-            print_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
+        clack_info "尝试安装脚本..."
+        clack_spinner "正在安装 Copilot CLI..." curl -fsSL "$copilot_url" | bash
+        if [ $? -eq 0 ]; then
+            clack_success "Copilot CLI 安装成功"
+            clack_info "请运行 'copilot /login' 使用 GitHub Copilot 订阅进行认证"
             track_install "Copilot CLI" "installed"
             return 0
         fi
     fi
 
-    print_warning "Copilot CLI 安装失败"
-    print_info "手动安装方式:"
-    print_info "  pnpm: pnpm add -g @github/copilot"
-    print_info "  brew: brew install copilot-cli"
-    print_info "  curl: curl -fsSL https://gh.io/copilot-install | bash"
+    clack_warn "Copilot CLI 安装失败"
+    clack_info "手动安装方式:"
+    clack_log "  pnpm: pnpm add -g @github/copilot"
+    clack_log "  brew: brew install copilot-cli"
+    clack_log "  curl: curl -fsSL https://gh.io/copilot-install | bash"
     track_install "Copilot CLI" "failed"
     return 1
 }
 
 zh_init_config() {
-    print_info "初始化配置..."
+    clack_info "初始化配置..."
 
     if ! command -v markitai >/dev/null 2>&1; then
         return 0
     fi
 
-    local config_path="$HOME/.markitai/config.json"
-    local yes_flag=""
+    config_path="$HOME/.markitai/config.json"
+    yes_flag=""
 
-    # Check if config exists and ask user (using ask_yes_no for piped execution)
+    # Check if config exists and ask user (using clack_confirm for piped execution)
     if [ -f "$config_path" ]; then
-        if ask_yes_no "$config_path 已存在，是否覆盖？" "n"; then
+        if clack_confirm "$config_path 已存在，是否覆盖？" "n"; then
             yes_flag="--yes"
         else
-            print_info "保留现有配置"
+            clack_info "保留现有配置"
             return 0
         fi
     fi
 
     if markitai config init $yes_flag 2>/dev/null; then
-        print_success "配置初始化完成"
+        clack_success "配置初始化完成"
     fi
     return 0
 }
 
 zh_print_completion() {
-    printf "\n"
-    printf "${GREEN}✓${NC} ${BOLD}配置完成!${NC}\n"
-    printf "\n"
-    printf "  ${BOLD}开始使用:${NC}\n"
-    printf "    ${YELLOW}markitai --help${NC}\n"
-    printf "\n"
+    clack_log ""
+    clack_log "${BOLD}开始使用:${NC}"
+    clack_log "  ${CYAN}markitai -I${NC}          交互模式"
+    clack_log "  ${CYAN}markitai file.pdf${NC}   转换文件"
+    clack_log "  ${CYAN}markitai --help${NC}     显示所有选项"
 }
 
 # ============================================================
@@ -815,33 +798,38 @@ zh_print_completion() {
 # ============================================================
 
 main() {
-    # 安全检查: root 警告
-    zh_warn_if_root
-
     # 欢迎信息
     zh_print_welcome_user
 
-    zh_print_header "Markitai 环境配置向导"
+    # 安全检查: root 警告
+    zh_warn_if_root
 
     # 步骤 1: 检测/安装 UV（用于管理 Python 和依赖）
-    print_step 1 5 "检测 UV 包管理器..."
+    clack_section "检测 UV 包管理器"
     if ! zh_install_uv; then
         zh_print_summary
+        clack_cancel "安装失败"
         exit 1
     fi
 
     # 步骤 2: 检测/安装 Python（通过 uv 自动安装）
-    print_step 2 5 "检测 Python..."
+    clack_section "检测 Python"
     if ! zh_detect_python; then
+        zh_print_summary
+        clack_cancel "安装失败"
         exit 1
     fi
 
     # 步骤 3: 安装 markitai
-    print_step 3 5 "安装 markitai..."
+    clack_section "安装 markitai"
     if ! zh_install_markitai; then
         zh_print_summary
+        clack_cancel "安装失败"
         exit 1
     fi
+
+    # 可选组件
+    clack_section "可选组件"
 
     # 安装 Playwright 浏览器 (SPA/JS 渲染页面需要)
     zh_install_playwright_browser
@@ -853,32 +841,34 @@ main() {
     zh_install_ffmpeg
 
     # 步骤 4: 可选 - LLM CLI 工具
-    print_step 4 5 "可选: LLM CLI 工具"
-    print_info "LLM CLI 工具为 AI 提供商提供本地认证"
+    clack_section "LLM CLI 工具 (可选)"
+    clack_info "LLM CLI 工具为 AI 提供商提供本地认证"
 
     # Claude Code CLI - 先检测再询问
     if command -v claude >/dev/null 2>&1; then
         version=$(claude --version 2>/dev/null | head -n1)
-        print_success "Claude Code CLI 已安装: $version"
+        clack_success "Claude Code CLI 已安装: $version"
         track_install "Claude Code CLI" "installed"
-    elif ask_yes_no "是否安装 Claude Code CLI?" "n"; then
+    elif clack_confirm "是否安装 Claude Code CLI?" "n"; then
         if zh_install_claude_cli; then
             lib_install_markitai_extra "claude-agent"
         fi
     else
+        clack_skip "跳过 Claude Code CLI"
         track_install "Claude Code CLI" "skipped"
     fi
 
     # Copilot CLI - 先检测再询问
     if command -v copilot >/dev/null 2>&1; then
         version=$(copilot --version 2>/dev/null | head -n1)
-        print_success "Copilot CLI 已安装: $version"
+        clack_success "Copilot CLI 已安装: $version"
         track_install "Copilot CLI" "installed"
-    elif ask_yes_no "是否安装 GitHub Copilot CLI?" "n"; then
+    elif clack_confirm "是否安装 GitHub Copilot CLI?" "n"; then
         if zh_install_copilot_cli; then
             lib_install_markitai_extra "copilot"
         fi
     else
+        clack_skip "跳过 Copilot CLI"
         track_install "Copilot CLI" "skipped"
     fi
 
@@ -890,6 +880,9 @@ main() {
 
     # 完成
     zh_print_completion
+
+    # 结束
+    clack_outro "配置完成!"
 }
 
 # 运行主函数
