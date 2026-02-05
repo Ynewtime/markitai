@@ -200,6 +200,11 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
             f"({session.provider_result.source})"
         )
         get_console().print(f"[green]✓[/green] {provider_info}")
+    else:
+        get_console().print(
+            "[yellow]![/yellow] No LLM provider detected "
+            "(no CLI tools or API keys found)"
+        )
 
     result = questionary.confirm(
         "Enable LLM enhancement? (better formatting, metadata)",
