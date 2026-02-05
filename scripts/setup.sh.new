@@ -474,7 +474,8 @@ warn_if_root() {
 # Returns: 0 if dev mode, 1 if user mode
 is_dev_mode() {
     # Check if we're in the markitai project directory
-    if [ -f "./pyproject.toml" ] && [ -d "./.git" ] && [ -d "./scripts" ]; then
+    # Note: .git can be a directory (normal repo) or file (worktree)
+    if [ -f "./pyproject.toml" ] && [ -e "./.git" ] && [ -d "./scripts" ]; then
         if grep -q "markitai" "./pyproject.toml" 2>/dev/null; then
             return 0
         fi
