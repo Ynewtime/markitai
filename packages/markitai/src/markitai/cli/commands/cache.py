@@ -15,7 +15,9 @@ from typing import Any
 import click
 from rich.table import Table
 
+from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.i18n import t
 from markitai.config import ConfigManager
 from markitai.constants import DEFAULT_CACHE_DB_FILENAME
 from markitai.llm import SQLiteCache
@@ -142,20 +144,22 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
             json.dumps(stats_data, indent=2, ensure_ascii=False), soft_wrap=True
         )
     else:
-        console.print("[bold]Cache Statistics[/bold]")
-        console.print(f"Enabled: {cfg.cache.enabled}")
+        ui.title(t("cache.title"))
+
+        console.print(f"  {t('enabled')}: {cfg.cache.enabled}")
         console.print()
 
         if stats_data["cache"]:
             c = stats_data["cache"]
             if "error" in c:
-                console.print(f"[red]Cache error:[/red] {c['error']}")
+                ui.error(f"Cache: {c['error']}")
             else:
-                console.print(f"  Path: {c['db_path']}")
-                console.print(f"  Entries: {c['count']}")
-                console.print(f"  Size: {c['size_mb']} MB / {c['max_size_mb']} MB")
+                ui.info(
+                    f"{t('cache.llm')}: {c['count']} {t('cache.entries')} "
+                    f"({c['size_mb']} MB)"
+                )
         else:
-            console.print("[dim]No cache found[/dim]")
+            ui.info(f"{t('cache.llm')}: 0 {t('cache.entries')}")
 
 
 @cache.command("clear")
@@ -209,11 +213,11 @@ def cache_clear(include_spa_domains: bool, yes: bool) -> None:
 
     # Report results
     if result["cache"] > 0 or result["spa_domains"] > 0:
-        console.print(f"[green]Cleared {result['cache']} cache entries[/green]")
+        ui.summary(t("cache.cleared", count=result["cache"]))
         if result["spa_domains"] > 0:
             console.print(f"  SPA domains: {result['spa_domains']}")
     else:
-        console.print("[dim]No cache entries to clear[/dim]")
+        console.print(f"[dim]{t('cache.no_entries')}[/dim]")
 
 
 @cache.command("spa-domains")
@@ -261,32 +265,18 @@ def cache_spa_domains(as_json: bool, clear: bool) -> None:
         )
         return
 
-    console.print(f"[bold]Learned SPA Domains[/bold] ({len(domains)} total)\n")
-
-    table = Table()
-    table.add_column("Domain", style="cyan")
-    table.add_column("Hits", justify="right")
-    table.add_column("Learned At", style="dim")
-    table.add_column("Last Hit", style="dim")
-    table.add_column("Status")
+    ui.title(f"Learned SPA Domains ({len(domains)} {t('total').lower()})")
 
     for d in domains:
-        status = "[red]Expired[/red]" if d.get("expired") else "[green]Active[/green]"
-        learned_at = d.get("learned_at", "")[:10] if d.get("learned_at") else "-"
-        last_hit = d.get("last_hit", "")[:10] if d.get("last_hit") else "-"
-        table.add_row(
-            d["domain"],
-            str(d.get("hits", 0)),
-            learned_at,
-            last_hit,
-            status,
-        )
+        status = "expired" if d.get("expired") else "active"
+        if status == "active":
+            ui.success(d["domain"])
+        else:
+            ui.warning(d["domain"], detail="Expired")
 
-    console.print(table)
-    console.print(
-        "\n[dim]Tip: Use --clear to reset learned domains, "
-        "or configure fallback_patterns in config file for permanent rules.[/dim]"
-    )
+        learned_at = d.get("learned_at", "")[:10] if d.get("learned_at") else "-"
+        hits = d.get("hits", 0)
+        console.print(f"    [dim]│ Hits: {hits}, Learned: {learned_at}[/dim]")
 
 
 __all__ = ["cache"]

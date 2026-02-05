@@ -113,10 +113,9 @@ def _install_component(component: str) -> bool:
     return False
 
 
-from rich.panel import Panel
-from rich.table import Table
-
+from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.i18n import t
 from markitai.config import ConfigManager
 from markitai.providers.auth import AuthManager, get_auth_resolution_hint
 
@@ -569,50 +568,101 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         click.echo(json.dumps(results, indent=2))
         return
 
-    # Rich table output
-    table = Table(title="Dependency Status")
-    table.add_column("Component", style="cyan")
-    table.add_column("Status", justify="center")
-    table.add_column("Description")
-    table.add_column("Details")
+    # Unified UI output
+    ui.title(t("doctor.title"))
 
-    status_icons = {
-        "ok": "[green]✓[/green]",
-        "warning": "[yellow]⚠[/yellow]",
-        "missing": "[red]✗[/red]",
-        "error": "[red]![/red]",
-    }
+    # Define dependency groups
+    required_deps = ["playwright", "libreoffice", "rapidocr"]
+    optional_deps = ["ffmpeg"]
+    llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
+    auth_keys = ["claude-agent-auth", "copilot-auth"]
 
-    for _key, info in results.items():
-        status_icon = status_icons.get(info["status"], "?")
-        table.add_row(
-            info["name"],
-            status_icon,
-            info["description"],
-            info["message"],
-        )
-
-    console.print(table)
+    # Required dependencies
+    ui.section(t("doctor.required"))
+    passed = 0
+    for key in required_deps:
+        if key not in results:
+            continue
+        info = results[key]
+        if info["status"] == "ok":
+            ui.success(f"{info['name']} {info['message']}")
+            passed += 1
+        elif info["status"] == "warning":
+            ui.warning(info["name"], detail=info["message"])
+        else:
+            ui.error(info["name"], detail=info["message"])
     console.print()
 
-    # Show install hints for missing/error items
+    # Optional dependencies
+    optional_missing = 0
+    has_optional = any(k in results for k in optional_deps)
+    if has_optional:
+        ui.section(t("doctor.optional"))
+        for key in optional_deps:
+            if key not in results:
+                continue
+            info = results[key]
+            if info["status"] == "ok":
+                ui.success(info["name"])
+            else:
+                ui.warning(
+                    f"{info['name']}（{t('missing')}）",
+                    detail=info.get("install_hint", ""),
+                )
+                optional_missing += 1
+        console.print()
+
+    # LLM status
+    has_llm = any(k in results for k in llm_keys)
+    if has_llm:
+        ui.section("LLM")
+        for key in llm_keys:
+            if key not in results:
+                continue
+            info = results[key]
+            if info["status"] == "ok":
+                ui.success(f"{info['name']}: {info['message']}")
+            elif info["status"] == "warning":
+                ui.warning(f"{info['name']}: {info['message']}")
+            else:
+                ui.error(f"{info['name']}: {info['message']}")
+        console.print()
+
+    # Authentication status
+    has_auth = any(k in results for k in auth_keys)
+    if has_auth:
+        ui.section(t("doctor.auth"))
+        for key in auth_keys:
+            if key not in results:
+                continue
+            info = results[key]
+            if info["status"] == "ok":
+                ui.success(f"{info['name']}: {info['message']}")
+            else:
+                ui.error(f"{info['name']}: {info['message']}")
+        console.print()
+
+    # Summary
+    all_required_ok = all(
+        results.get(k, {}).get("status") == "ok" for k in required_deps if k in results
+    )
+    if optional_missing == 0 and all_required_ok:
+        ui.summary(t("doctor.all_good"))
+    else:
+        ui.summary(t("doctor.summary", passed=passed, optional=optional_missing))
+
+    # Installation hints (simplified format)
     hints = [
         (info["name"], info["install_hint"])
         for info in results.values()
-        if info["status"] in ("missing", "error") and info["install_hint"]
+        if info["status"] in ("missing", "error") and info.get("install_hint")
     ]
 
     if hints:
-        hint_text = "\n".join([f"  * {name}: {hint}" for name, hint in hints])
-        console.print(
-            Panel(
-                f"[yellow]To fix missing dependencies:[/yellow]\n{hint_text}",
-                title="Installation Hints",
-                border_style="yellow",
-            )
-        )
-    else:
-        console.print("[green]All dependencies are properly configured![/green]")
+        console.print()
+        console.print(f"[yellow]{t('doctor.fix_hint')}[/yellow]")
+        for name, hint in hints:
+            console.print(f"  [dim]\u2022[/dim] {name}: {hint}")
 
     # Attempt to fix missing components if --fix flag is set
     if fix and not as_json:
