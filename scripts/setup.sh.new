@@ -320,8 +320,8 @@ clack_spinner() {
     _cs_status=$?
 
     # Stop spinner
-    kill $_cs_pid 2>/dev/null
-    wait $_cs_pid 2>/dev/null
+    kill "$_cs_pid" 2>/dev/null
+    wait "$_cs_pid" 2>/dev/null
 
     # Clear spinner line
     printf "\r\033[K"
