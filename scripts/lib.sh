@@ -122,7 +122,7 @@ clack_skip() {
 # Log with guide line - plain text
 # Usage: clack_log "Message"
 clack_log() {
-    printf "${GRAY}│${NC}  %s\n" "$1"
+    printf "${GRAY}│${NC}  %b\n" "$1"
 }
 
 # Spinner with guide line
@@ -200,6 +200,7 @@ clack_confirm() {
 #        line1
 #        line2
 #        EOF
+# Note: Use %b to interpret escape sequences in lines
 clack_note() {
     _cn_title="$1"
     shift
@@ -210,12 +211,12 @@ clack_note() {
     # If arguments provided, use them as lines
     if [ $# -gt 0 ]; then
         for _cn_line in "$@"; do
-            printf "${GRAY}│${NC}  ${GRAY}│${NC}  %s\n" "$_cn_line"
+            printf "${GRAY}│${NC}  ${GRAY}│${NC}  %b\n" "$_cn_line"
         done
     else
         # Read from stdin (heredoc support)
         while IFS= read -r _cn_line; do
-            printf "${GRAY}│${NC}  ${GRAY}│${NC}  %s\n" "$_cn_line"
+            printf "${GRAY}│${NC}  ${GRAY}│${NC}  %b\n" "$_cn_line"
         done
     fi
 
