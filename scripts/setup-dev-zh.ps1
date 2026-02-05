@@ -290,30 +290,6 @@ function Install-PreCommitZh {
     }
 }
 
-function Test-NodeJSZh {
-    $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
-    if (-not $nodeCmd) {
-        return $false
-    }
-
-    try {
-        $version = & node --version 2>$null
-        if ($version) {
-            $versionStr = $version -replace "v", ""
-            $parts = $versionStr -split "\."
-
-            if ($parts[0] -notmatch '^\d+$') {
-                return $false
-            }
-
-            $major = [int]$parts[0]
-            return ($major -ge 18)
-        }
-    } catch {}
-
-    return $false
-}
-
 # 安装 Claude Code CLI
 function Install-ClaudeCLIZh {
     # 检查是否已安装
@@ -424,25 +400,6 @@ function Install-CopilotCLIZh {
     Clack-Note "手动安装选项" "pnpm: pnpm add -g @github/copilot" "winget: winget install GitHub.Copilot"
     Track-Install -Component "Copilot CLI" -Status "failed"
     return $false
-}
-
-# 安装 LLM CLI 工具
-function Install-LLMCLIsZh {
-    Clack-Note "LLM CLI 工具" "Claude Code CLI: 使用你的 Claude 订阅" "Copilot CLI: 使用你的 GitHub Copilot 订阅"
-
-    if (Clack-Confirm "是否安装 Claude Code CLI?" "n") {
-        Install-ClaudeCLIZh | Out-Null
-    } else {
-        Clack-Skip "Claude Code CLI"
-        Track-Install -Component "Claude Code CLI" -Status "skipped"
-    }
-
-    if (Clack-Confirm "是否安装 GitHub Copilot CLI?" "n") {
-        Install-CopilotCLIZh | Out-Null
-    } else {
-        Clack-Skip "Copilot CLI"
-        Track-Install -Component "Copilot CLI" -Status "skipped"
-    }
 }
 
 # 安装 Playwright 浏览器 (Chromium) - 开发环境
@@ -732,19 +689,37 @@ function Main {
     # 安装 FFmpeg（可选，用于音视频文件）
     Install-FFmpegDevZh | Out-Null
 
-    # LLM CLI 工具（仅当 Node.js 可用时提供安装选项）
-    if (Test-NodeJSZh) {
-        if (Clack-Confirm "是否安装 LLM CLI 工具 (Claude Code / Copilot)?" "n") {
-            Install-LLMCLIsZh
+    # LLM CLI 工具
+    Clack-Section "LLM CLI 工具"
+
+    # 自动检测 Claude Code CLI
+    $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
+    if ($claudeCmd) {
+        $version = & claude --version 2>&1 | Select-Object -First 1
+        Clack-Success "Claude Code CLI 已安装: $version"
+        Track-Install -Component "Claude Code CLI" -Status "installed"
+    } else {
+        if (Clack-Confirm "是否安装 Claude Code CLI?" "n") {
+            Install-ClaudeCLIZh | Out-Null
         } else {
-            Clack-Skip "LLM CLI 工具"
+            Clack-Skip "Claude Code CLI"
             Track-Install -Component "Claude Code CLI" -Status "skipped"
+        }
+    }
+
+    # 自动检测 Copilot CLI
+    $copilotCmd = Get-Command copilot -ErrorAction SilentlyContinue
+    if ($copilotCmd) {
+        $version = & copilot --version 2>&1 | Select-Object -First 1
+        Clack-Success "Copilot CLI 已安装: $version"
+        Track-Install -Component "Copilot CLI" -Status "installed"
+    } else {
+        if (Clack-Confirm "是否安装 GitHub Copilot CLI?" "n") {
+            Install-CopilotCLIZh | Out-Null
+        } else {
+            Clack-Skip "Copilot CLI"
             Track-Install -Component "Copilot CLI" -Status "skipped"
         }
-    } else {
-        Clack-Skip "LLM CLI 工具 (需要 Node.js 18+)"
-        Track-Install -Component "Claude Code CLI" -Status "skipped"
-        Track-Install -Component "Copilot CLI" -Status "skipped"
     }
 
     # ========================================
