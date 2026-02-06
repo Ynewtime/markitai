@@ -144,8 +144,8 @@ class TestHelpAndVersion:
         assert "minimal" in result.output
 
     def test_version_short_flag(self, runner: CliRunner):
-        """Test -v displays version."""
-        result = runner.invoke(app, ["-v"])
+        """Test -V displays version."""
+        result = runner.invoke(app, ["-V"])
         assert result.exit_code == 0
         assert "markitai" in result.output.lower()
 
