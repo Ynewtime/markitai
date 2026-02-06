@@ -248,19 +248,21 @@ async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResul
     if ctx.conversion_result is None:
         return ConversionStepResult(success=False, error="No conversion result")
 
+    conversion_result = ctx.conversion_result
     image_processor = ImageProcessor(config=ctx.config.image)
-    base64_images = image_processor.extract_base64_images(
-        ctx.conversion_result.markdown
+    base64_images = await asyncio.to_thread(
+        image_processor.extract_base64_images,
+        conversion_result.markdown,
     )
 
     # Count screenshots from page images
-    page_images = ctx.conversion_result.metadata.get("page_images", [])
+    page_images = conversion_result.metadata.get("page_images", [])
     ctx.screenshots_count = len(page_images)
 
     # Count embedded images from two sources:
     # 1. Base64 images in markdown (will be processed below)
     # 2. Images already extracted by converter (e.g., PDF converter saves directly to assets)
-    converter_images = len(ctx.conversion_result.images)
+    converter_images = len(conversion_result.images)
     ctx.embedded_images_count = len(base64_images) + converter_images
 
     if base64_images:
@@ -279,24 +281,28 @@ async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResul
                 base_name=ctx.input_path.name,
             )
         else:
-            image_result = image_processor.process_and_save(
-                base64_images,
-                output_dir=ctx.output_dir,
-                base_name=ctx.input_path.name,
+            image_result = await asyncio.to_thread(
+                lambda: image_processor.process_and_save(
+                    base64_images,
+                    output_dir=ctx.output_dir,
+                    base_name=ctx.input_path.name,
+                )
             )
 
         # Update markdown with image paths using index mapping for correct replacement
-        ctx.conversion_result.markdown = image_processor.replace_base64_with_paths(
-            ctx.conversion_result.markdown,
-            image_result.saved_images,
-            index_mapping=image_result.index_mapping,
+        conversion_result.markdown = await asyncio.to_thread(
+            lambda: image_processor.replace_base64_with_paths(
+                conversion_result.markdown,
+                image_result.saved_images,
+                index_mapping=image_result.index_mapping,
+            )
         )
 
         # Also update extracted_text in metadata if present (for PPTX+LLM mode)
-        if "extracted_text" in ctx.conversion_result.metadata:
-            ctx.conversion_result.metadata["extracted_text"] = (
-                image_processor.replace_base64_with_paths(
-                    ctx.conversion_result.metadata["extracted_text"],
+        if "extracted_text" in conversion_result.metadata:
+            conversion_result.metadata["extracted_text"] = await asyncio.to_thread(
+                lambda: image_processor.replace_base64_with_paths(
+                    conversion_result.metadata["extracted_text"],
                     image_result.saved_images,
                     index_mapping=image_result.index_mapping,
                 )
