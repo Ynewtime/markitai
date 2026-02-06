@@ -237,39 +237,9 @@ def _check_libreoffice() -> dict[str, Any]:
     Returns:
         Result dict with name, description, status, message, install_hint.
     """
-    soffice_path = shutil.which("soffice") or shutil.which("libreoffice")
+    from markitai.utils.office import find_libreoffice
 
-    # Check common installation paths if not in PATH
-    if not soffice_path:
-        import os
-        import sys
-
-        common_paths: list[str] = []
-        if sys.platform == "win32":
-            # Windows: Check Program Files
-            for prog_dir in [
-                os.environ.get("PROGRAMFILES", r"C:\Program Files"),
-                os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
-            ]:
-                common_paths.extend(
-                    [
-                        os.path.join(prog_dir, "LibreOffice", "program", "soffice.exe"),
-                        os.path.join(
-                            prog_dir, "LibreOffice 7", "program", "soffice.exe"
-                        ),
-                        os.path.join(
-                            prog_dir, "LibreOffice 24", "program", "soffice.exe"
-                        ),
-                    ]
-                )
-        elif sys.platform == "darwin":
-            # macOS: Check Applications
-            common_paths.append("/Applications/LibreOffice.app/Contents/MacOS/soffice")
-
-        for path in common_paths:
-            if os.path.isfile(path):
-                soffice_path = path
-                break
+    soffice_path = find_libreoffice()
 
     if soffice_path:
         # LibreOffice found - just report the path without running --version

@@ -25,6 +25,10 @@ class TestDoctorUnifiedUI:
         with (
             patch("shutil.which", return_value="/usr/bin/soffice"),
             patch(
+                "markitai.utils.office.find_libreoffice",
+                return_value="/usr/bin/soffice",
+            ),
+            patch(
                 "markitai.fetch_playwright.is_playwright_available", return_value=True
             ),
             patch(
@@ -44,6 +48,10 @@ class TestDoctorUnifiedUI:
         """Test doctor command shows section headers."""
         with (
             patch("shutil.which", return_value="/usr/bin/soffice"),
+            patch(
+                "markitai.utils.office.find_libreoffice",
+                return_value="/usr/bin/soffice",
+            ),
             patch(
                 "markitai.fetch_playwright.is_playwright_available", return_value=True
             ),

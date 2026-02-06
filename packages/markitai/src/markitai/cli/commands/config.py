@@ -93,27 +93,39 @@ def config_path_cmd() -> None:
 
     ui.title(t("config.title"))
 
-    console.print(
-        f"  1. {t('config.cli_args')}      [dim]{ui.MARK_LINE} {t('config.highest')}[/]"
+    # Check which config is loaded
+    local_loaded = bool(
+        manager.config_path and "markitai.json" in str(manager.config_path)
     )
-    console.print(f"  2. {t('config.env_vars')}  [dim]{ui.MARK_LINE}[/]")
-
-    # Check local config file
-    local_status = ""
-    if manager.config_path and "markitai.json" in str(manager.config_path):
-        local_status = f" [green]{ui.MARK_SUCCESS} {t('config.loaded')}[/]"
-    console.print(f"  3. ./markitai.json{local_status}")
-
-    # Check user config file
     user_config_path = manager.DEFAULT_USER_CONFIG_DIR / "config.json"
-    user_status = ""
-    if manager.config_path and str(user_config_path) in str(manager.config_path):
-        user_status = f" [green]{ui.MARK_SUCCESS} {t('config.loaded')}[/]"
-    console.print(f"  4. {user_config_path}{user_status}")
-
-    console.print(
-        f"  5. {t('config.defaults')}        [dim]{ui.MARK_LINE} {t('config.lowest')}[/]"
+    user_loaded = bool(
+        manager.config_path and str(user_config_path) in str(manager.config_path)
     )
+    user_config_display = "~/.markitai/config.json"
+
+    # Build rows: (label, annotation)
+    rows = [
+        (t("config.cli_args"), t("config.highest")),
+        (t("config.env_vars"), ""),
+        (
+            "./markitai.json",
+            f"[green]{ui.MARK_SUCCESS} {t('config.loaded')}[/]" if local_loaded else "",
+        ),
+        (
+            user_config_display,
+            f"[green]{ui.MARK_SUCCESS} {t('config.loaded')}[/]" if user_loaded else "",
+        ),
+        (t("config.defaults"), t("config.lowest")),
+    ]
+
+    # Align │ column to the longest label
+    max_label_len = max(len(label) for label, _ in rows)
+    for i, (label, annotation) in enumerate(rows):
+        num = i + 1
+        padding = " " * (max_label_len - len(label))
+        ann = f" {annotation}" if annotation else ""
+        console.print(f"  {num}. {label}{padding} [dim]{ui.MARK_LINE}[/]{ann}")
+
     console.print()
 
     if manager.config_path:
