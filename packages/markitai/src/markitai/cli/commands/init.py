@@ -223,6 +223,40 @@ def _wizard_init(target: Path) -> None:
 
     # Phase 3: Generate config
     config_data = _build_config(providers)
+
+    # If multiple providers available, let user choose default
+    model_list = config_data.get("llm", {}).get("model_list", [])
+    if len(model_list) >= 2:
+        console.print()
+        ui.section("Default Model")
+        console.print("  Multiple providers detected. Choose your default model:")
+        console.print()
+        choices = []
+        for i, m in enumerate(model_list, 1):
+            model_id = m.get("litellm_params", {}).get("model", "")
+            name = m.get("model_name", "")
+            choices.append((name, model_id))
+            console.print(f"  [{i}] {name}: {model_id}")
+        console.print()
+
+        default_idx = click.prompt(
+            "  Select default",
+            type=click.IntRange(1, len(choices)),
+            default=1,
+        )
+        # Rename any existing "default" back to a provider-based name,
+        # then set the chosen one as "default"
+        chosen_name, _chosen_model_id = choices[default_idx - 1]
+        for m in model_list:
+            if m.get("model_name") == "default" and m.get("model_name") != chosen_name:
+                # Derive a name from the model id prefix (e.g. "claude-agent/sonnet" → "claude-agent")
+                fallback = m.get("litellm_params", {}).get("model", "").split("/")[0]
+                m["model_name"] = fallback or "alt"
+        for m in model_list:
+            if m.get("model_name") == chosen_name:
+                m["model_name"] = "default"
+                break
+
     _write_config(target, config_data)
 
     ui.summary(f"Configuration created: {target}")
@@ -231,9 +265,11 @@ def _wizard_init(target: Path) -> None:
         model = m.get("litellm_params", {}).get("model", "")
         console.print(f"  {ui.MARK_LINE} {m.get('model_name', '')}: {model}")
 
-    # Hint: run doctor for full diagnostics
+    # Next steps hint
     console.print()
-    ui.step("Run 'markitai doctor' for full diagnostics")
+    console.print("  [bold]Next steps:[/bold]")
+    console.print("  [dim]•[/dim] Convert a file:  [cyan]markitai <file> --llm[/cyan]")
+    console.print("  [dim]•[/dim] Full diagnostics: [cyan]markitai doctor[/cyan]")
 
 
 def _detect_providers() -> list[tuple[str, bool]]:
@@ -277,13 +313,13 @@ def _build_config(
 
     # Map provider display names to model configs
     provider_models = {
-        "Claude": ("default", "claude-agent/haiku"),
+        "Claude": ("default", "claude-agent/sonnet"),
         "Copilot": ("copilot", "copilot/claude-sonnet-4.5"),
         "DeepSeek": ("deepseek", "deepseek/deepseek-chat"),
-        "Gemini": ("gemini", "gemini/gemini-2.0-flash"),
-        "OpenAI": ("openai", "openai/gpt-4o"),
-        "Anthropic": ("anthropic", "anthropic/claude-sonnet-4-20250514"),
-        "OpenRouter": ("openrouter", "openrouter/google/gemini-2.0-flash-001"),
+        "Gemini": ("gemini", "gemini/gemini-2.5-flash"),
+        "OpenAI": ("openai", "openai/gpt-5.2"),
+        "Anthropic": ("anthropic", "anthropic/claude-sonnet-4-5-20250929"),
+        "OpenRouter": ("openrouter", "openrouter/google/gemini-2.5-flash"),
     }
 
     if providers:
@@ -307,7 +343,7 @@ def _build_config(
 
     if model_list:
         config_data["llm"] = {
-            "enabled": False,
+            "enabled": True,
             "model_list": model_list,
         }
 

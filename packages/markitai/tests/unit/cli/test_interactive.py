@@ -44,7 +44,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "copilot"
-            assert result.model == "copilot/gpt-4o"
+            assert result.model == "copilot/claude-sonnet-4.5"
 
     def test_detect_anthropic_api_key(self) -> None:
         """Should detect ANTHROPIC_API_KEY environment variable."""
@@ -55,7 +55,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "anthropic"
-            assert result.model == "anthropic/claude-sonnet-4-20250514"
+            assert result.model == "anthropic/claude-sonnet-4-5-20250929"
 
     def test_detect_openai_api_key(self) -> None:
         """Should detect OPENAI_API_KEY when no other provider available."""
@@ -66,7 +66,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "openai"
-            assert result.model == "openai/gpt-4o"
+            assert result.model == "openai/gpt-5.2"
 
     def test_detect_gemini_api_key(self) -> None:
         """Should detect GEMINI_API_KEY when no other provider available."""
@@ -77,7 +77,29 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "gemini"
-            assert result.model == "gemini/gemini-2.0-flash"
+            assert result.model == "gemini/gemini-2.5-flash"
+
+    def test_detect_deepseek_api_key(self) -> None:
+        """Should detect DEEPSEEK_API_KEY when no higher-priority provider available."""
+        with (
+            patch("shutil.which", return_value=None),
+            patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-test"}, clear=True),
+        ):
+            result = detect_llm_provider()
+            assert result is not None
+            assert result.provider == "deepseek"
+            assert result.model == "deepseek/deepseek-chat"
+
+    def test_detect_openrouter_api_key(self) -> None:
+        """Should detect OPENROUTER_API_KEY when no higher-priority provider available."""
+        with (
+            patch("shutil.which", return_value=None),
+            patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-test"}, clear=True),
+        ):
+            result = detect_llm_provider()
+            assert result is not None
+            assert result.provider == "openrouter"
+            assert result.model == "openrouter/google/gemini-2.5-flash"
 
     def test_detect_no_provider(self) -> None:
         """Should return None when no provider detected."""

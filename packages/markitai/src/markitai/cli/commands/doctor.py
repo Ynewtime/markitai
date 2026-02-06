@@ -589,7 +589,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "status": "warning",
             "message": "No vision model detected (auto-detect or set model_info.supports_vision)",
             "models": [],  # Empty list for JSON output
-            "install_hint": "Use vision-capable models like gemini-*, gpt-4o, claude-*",
+            "install_hint": "Use vision-capable models like gemini-*, gpt-5.2, claude-*",
         }
 
     # Output results
