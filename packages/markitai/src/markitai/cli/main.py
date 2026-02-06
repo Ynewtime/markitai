@@ -6,10 +6,6 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 # Fix Windows console encoding for Unicode output
 if sys.platform == "win32":

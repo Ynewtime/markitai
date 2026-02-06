@@ -8,13 +8,9 @@ of command modules to minimize startup cost.
 from __future__ import annotations
 
 import importlib
-from typing import TYPE_CHECKING
 
 import click
 from click import Context
-
-if TYPE_CHECKING:
-    pass
 
 # Mapping of command name -> (module_path, attribute_name, short_help)
 # This allows list_commands() and get_command() to work without importing
