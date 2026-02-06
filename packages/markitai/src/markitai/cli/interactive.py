@@ -52,10 +52,11 @@ def _check_copilot_auth() -> bool:
         return False
 
 
-def detect_llm_provider() -> ProviderDetectionResult | None:
-    """Auto-detect available LLM provider.
+def detect_all_llm_providers() -> list[ProviderDetectionResult]:
+    """Auto-detect all available LLM providers.
 
-    Detection priority:
+    Checks each provider independently and returns all that are available,
+    ordered by priority:
     1. Claude CLI (if installed and authenticated)
     2. Copilot CLI (if installed and authenticated)
     3. ANTHROPIC_API_KEY environment variable
@@ -65,72 +66,64 @@ def detect_llm_provider() -> ProviderDetectionResult | None:
     7. OPENROUTER_API_KEY environment variable
 
     Returns:
-        ProviderDetectionResult if a provider is found, None otherwise.
+        List of all detected providers (may be empty).
     """
+    results: list[ProviderDetectionResult] = []
+
     # 1. Check Claude CLI
     if shutil.which("claude"):
         if _check_claude_auth():
-            return ProviderDetectionResult(
-                provider="claude-agent",
-                model="claude-agent/sonnet",
-                authenticated=True,
-                source="cli",
+            results.append(
+                ProviderDetectionResult(
+                    provider="claude-agent",
+                    model="claude-agent/sonnet",
+                    authenticated=True,
+                    source="cli",
+                )
             )
 
     # 2. Check Copilot CLI
     if shutil.which("copilot"):
         if _check_copilot_auth():
-            return ProviderDetectionResult(
-                provider="copilot",
-                model="copilot/claude-sonnet-4.5",
-                authenticated=True,
-                source="cli",
+            results.append(
+                ProviderDetectionResult(
+                    provider="copilot",
+                    model="copilot/claude-sonnet-4.5",
+                    authenticated=True,
+                    source="cli",
+                )
             )
 
-    # 3. Check environment variables
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return ProviderDetectionResult(
-            provider="anthropic",
-            model="anthropic/claude-sonnet-4-5-20250929",
-            authenticated=True,
-            source="env",
-        )
+    # 3-7. Check environment variables
+    env_providers = [
+        ("ANTHROPIC_API_KEY", "anthropic", "anthropic/claude-sonnet-4-5-20250929"),
+        ("OPENAI_API_KEY", "openai", "openai/gpt-5.2"),
+        ("GEMINI_API_KEY", "gemini", "gemini/gemini-2.5-flash"),
+        ("DEEPSEEK_API_KEY", "deepseek", "deepseek/deepseek-chat"),
+        ("OPENROUTER_API_KEY", "openrouter", "openrouter/google/gemini-2.5-flash"),
+    ]
+    for env_var, provider, model in env_providers:
+        if os.environ.get(env_var):
+            results.append(
+                ProviderDetectionResult(
+                    provider=provider,
+                    model=model,
+                    authenticated=True,
+                    source="env",
+                )
+            )
 
-    if os.environ.get("OPENAI_API_KEY"):
-        return ProviderDetectionResult(
-            provider="openai",
-            model="openai/gpt-5.2",
-            authenticated=True,
-            source="env",
-        )
+    return results
 
-    if os.environ.get("GEMINI_API_KEY"):
-        return ProviderDetectionResult(
-            provider="gemini",
-            model="gemini/gemini-2.5-flash",
-            authenticated=True,
-            source="env",
-        )
 
-    # 6. Check DeepSeek API key
-    if os.environ.get("DEEPSEEK_API_KEY"):
-        return ProviderDetectionResult(
-            provider="deepseek",
-            model="deepseek/deepseek-chat",
-            authenticated=True,
-            source="env",
-        )
+def detect_llm_provider() -> ProviderDetectionResult | None:
+    """Auto-detect the highest-priority available LLM provider.
 
-    # 7. Check OpenRouter API key
-    if os.environ.get("OPENROUTER_API_KEY"):
-        return ProviderDetectionResult(
-            provider="openrouter",
-            model="openrouter/google/gemini-2.5-flash",
-            authenticated=True,
-            source="env",
-        )
-
-    return None
+    Returns:
+        ProviderDetectionResult for the best provider, or None.
+    """
+    providers = detect_all_llm_providers()
+    return providers[0] if providers else None
 
 
 @dataclass
@@ -212,15 +205,15 @@ def prompt_output_dir(session: InteractiveSession) -> Path:
 
 def prompt_enable_llm(session: InteractiveSession) -> bool:
     """Prompt user to enable LLM enhancement."""
-    # First, detect available providers
-    session.provider_result = detect_llm_provider()
+    # Detect all available providers, use first as default
+    all_providers = detect_all_llm_providers()
+    session.provider_result = all_providers[0] if all_providers else None
 
-    if session.provider_result:
-        provider_info = (
-            f"Detected: {session.provider_result.provider} "
-            f"({session.provider_result.source})"
-        )
-        get_console().print(f"[green]✓[/green] {provider_info}")
+    if all_providers:
+        for p in all_providers:
+            get_console().print(
+                f"[green]\u2713[/green] Detected: {p.provider} ({p.source})"
+            )
     else:
         get_console().print(
             "[yellow]![/yellow] No LLM provider detected "
