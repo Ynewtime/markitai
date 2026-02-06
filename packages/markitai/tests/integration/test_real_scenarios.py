@@ -10,19 +10,16 @@ Use `pytest -m "not slow"` to skip slow tests.
 from __future__ import annotations
 
 import json
-import os
 import re
-import sys
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from markitai.cli import app
+from markitai.utils.office import find_libreoffice
 
-# CI environment detection
-_IS_CI = os.environ.get("CI", "").lower() == "true"
-_IS_WINDOWS_CI = _IS_CI and sys.platform == "win32"
+_HAS_LIBREOFFICE = bool(find_libreoffice())
 
 # =============================================================================
 # Fixtures
@@ -89,10 +86,7 @@ def converted_fixtures(tmp_path_factory) -> dict:
 class TestBatchConversionResults:
     """Tests that verify batch conversion results using shared fixture."""
 
-    @pytest.mark.skipif(
-        _IS_WINDOWS_CI,
-        reason="DOC conversion requires LibreOffice/MS Office not available in Windows CI",
-    )
+    @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_batch_conversion_succeeds(self, converted_fixtures: dict):
         """Test batch conversion completes successfully."""
         assert converted_fixtures["exit_code"] == 0
@@ -128,10 +122,7 @@ class TestBatchConversionResults:
         jpg_output = output_dir / "candy.JPG.md"
         assert jpg_output.exists(), "JPG should be converted"
 
-    @pytest.mark.skipif(
-        _IS_WINDOWS_CI,
-        reason="DOC conversion requires LibreOffice/MS Office not available in Windows CI",
-    )
+    @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_subdirectory_preserved(self, converted_fixtures: dict):
         """Test subdirectory structure is preserved."""
         output_dir = converted_fixtures["output_dir"]
@@ -151,10 +142,7 @@ class TestBatchConversionResults:
         report_files = list(reports_dir.glob("*.json"))
         assert len(report_files) == 1, "Should have one report file"
 
-    @pytest.mark.skipif(
-        _IS_WINDOWS_CI,
-        reason="DOC conversion requires LibreOffice/MS Office not available in Windows CI",
-    )
+    @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_report_structure(self, converted_fixtures: dict):
         """Test report has correct structure."""
         output_dir = converted_fixtures["output_dir"]
