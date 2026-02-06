@@ -260,8 +260,7 @@ async def process_single_file(
             # File mode: show output path
             if verbose:
                 # Verbose: show detailed steps
-                parse_time = duration * 0.8  # Approximate parse time
-                console.print(f"  {ui.MARK_SUCCESS} Parsed ({parse_time:.1f}s)")
+                console.print(f"  {ui.MARK_SUCCESS} Parsed ({duration:.1f}s)")
                 if ctx.embedded_images_count > 0:
                     console.print(
                         f"  {ui.MARK_SUCCESS} Images: {ctx.embedded_images_count} "

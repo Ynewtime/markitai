@@ -133,9 +133,7 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
         stats_data["cache"]["entries"] = global_cache.list_entries(limit)
 
     if as_json:
-        console.print(
-            json.dumps(stats_data, indent=2, ensure_ascii=False), soft_wrap=True
-        )
+        click.echo(json.dumps(stats_data, indent=2, ensure_ascii=False))
     else:
         ui.title(t("cache.title"))
 
@@ -243,7 +241,7 @@ def cache_spa_domains(as_json: bool, clear: bool) -> None:
     if clear:
         count = spa_cache.clear()
         if as_json:
-            console.print(json.dumps({"cleared": count}))
+            click.echo(json.dumps({"cleared": count}))
         else:
             console.print(f"[green]Cleared {count} learned SPA domains[/green]")
         return
@@ -251,7 +249,7 @@ def cache_spa_domains(as_json: bool, clear: bool) -> None:
     domains = spa_cache.list_domains()
 
     if as_json:
-        console.print(json.dumps(domains, indent=2, ensure_ascii=False), soft_wrap=True)
+        click.echo(json.dumps(domains, indent=2, ensure_ascii=False))
         return
 
     if not domains:

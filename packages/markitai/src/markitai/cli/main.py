@@ -223,7 +223,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
 )
 @click.option(
     "--version",
-    "-v",
+    "-V",
     is_flag=True,
     callback=print_version,
     expose_value=False,

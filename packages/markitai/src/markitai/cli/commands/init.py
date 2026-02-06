@@ -198,8 +198,6 @@ def _wizard_init(target: Path) -> None:
         if available:
             ui.success(f"{name}")
             available_count += 1
-        else:
-            console.print(f"  [dim]{ui.MARK_INFO} {name}: not found[/dim]")
     console.print()
 
     if available_count == 0:
