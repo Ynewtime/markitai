@@ -28,7 +28,7 @@ from markitai.llm.types import (
     Frontmatter,
 )
 from markitai.utils.mime import get_mime_type
-from markitai.utils.text import format_error_message
+from markitai.utils.text import format_error_message, repair_json_string
 from markitai.workflow.helpers import detect_language, get_language_name
 
 # Pre-compiled regex patterns for _remove_uncommented_screenshots hot path
@@ -92,6 +92,57 @@ def get_response_cost(raw_response: Any) -> float:
         return completion_cost(completion_response=raw_response) or 0.0
     except Exception:
         return 0.0
+
+
+def _try_repair_instructor_response(
+    exc: Exception,
+    response_model: type,
+) -> tuple[Any, Any] | None:
+    """Try to repair JSON from a failed instructor response.
+
+    When instructor's retry mechanism fails (all retries exhausted), the
+    last LLM completion is still available. This function extracts the raw
+    text, attempts JSON repair, and constructs the Pydantic model manually.
+
+    Args:
+        exc: The InstructorRetryException (or compatible exception)
+        response_model: Pydantic model class to validate against
+
+    Returns:
+        Tuple of (parsed_model, raw_response) or None if repair failed
+    """
+    last = getattr(exc, "last_completion", None)
+    if last is None:
+        return None
+
+    # Extract text content from the completion
+    try:
+        content = last.choices[0].message.content
+        if not content:
+            return None
+    except (AttributeError, IndexError):
+        return None
+
+    # Attempt JSON repair
+    repaired = repair_json_string(content)
+    if repaired is None:
+        return None
+
+    try:
+        import json
+
+        data = json.loads(repaired)
+        result = response_model.model_validate(data)
+        logger.info(
+            f"[JSON repair] Successfully repaired malformed JSON "
+            f"for {response_model.__name__}"
+        )
+        return result, last
+    except Exception:
+        logger.debug(
+            f"[JSON repair] Repair attempt failed for {response_model.__name__}"
+        )
+        return None
 
 
 class DocumentMixin:
@@ -346,16 +397,22 @@ class DocumentMixin:
             )
             # Cast to ChatCompletionMessageParam for instructor API
             messages = cast(list[ChatCompletionMessageParam], messages_dict)
-            response, raw_response = await cast(
-                Awaitable[tuple[EnhancedDocumentResult, Any]],
-                client.chat.completions.create_with_completion(
-                    model="default",
-                    response_model=EnhancedDocumentResult,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                ),
-            )
+            try:
+                response, raw_response = await cast(
+                    Awaitable[tuple[EnhancedDocumentResult, Any]],
+                    client.chat.completions.create_with_completion(
+                        model="default",
+                        response_model=EnhancedDocumentResult,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
+                    ),
+                )
+            except Exception as e:
+                repaired = _try_repair_instructor_response(e, EnhancedDocumentResult)
+                if repaired is None:
+                    raise
+                response, raw_response = repaired
 
             # Track usage and log completion
             elapsed = time.perf_counter() - start_time
@@ -505,19 +562,25 @@ class DocumentMixin:
             client = instructor.from_litellm(
                 self.vision_router.acompletion, mode=instructor.Mode.MD_JSON
             )
-            response, raw_response = await cast(
-                Awaitable[tuple[EnhancedDocumentResult, Any]],
-                client.chat.completions.create_with_completion(
-                    model="default",
-                    messages=cast(
-                        list[ChatCompletionMessageParam],
-                        messages,
+            try:
+                response, raw_response = await cast(
+                    Awaitable[tuple[EnhancedDocumentResult, Any]],
+                    client.chat.completions.create_with_completion(
+                        model="default",
+                        messages=cast(
+                            list[ChatCompletionMessageParam],
+                            messages,
+                        ),
+                        response_model=EnhancedDocumentResult,
+                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
+                        max_tokens=max_tokens,
                     ),
-                    response_model=EnhancedDocumentResult,
-                    max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                    max_tokens=max_tokens,
-                ),
-            )
+                )
+            except Exception as e:
+                repaired = _try_repair_instructor_response(e, EnhancedDocumentResult)
+                if repaired is None:
+                    raise
+                response, raw_response = repaired
 
             # Track usage and log completion
             actual_model = getattr(raw_response, "model", None) or "default"
@@ -940,19 +1003,25 @@ class DocumentMixin:
             )
             # max_retries allows Instructor to retry with validation error
             # feedback, which helps LLM fix JSON escaping issues
-            response, raw_response = await cast(
-                Awaitable[tuple[EnhancedDocumentResult, Any]],
-                client.chat.completions.create_with_completion(
-                    model="default",
-                    messages=cast(
-                        list[ChatCompletionMessageParam],
-                        messages,
+            try:
+                response, raw_response = await cast(
+                    Awaitable[tuple[EnhancedDocumentResult, Any]],
+                    client.chat.completions.create_with_completion(
+                        model="default",
+                        messages=cast(
+                            list[ChatCompletionMessageParam],
+                            messages,
+                        ),
+                        response_model=EnhancedDocumentResult,
+                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
+                        max_tokens=max_tokens,
                     ),
-                    response_model=EnhancedDocumentResult,
-                    max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                    max_tokens=max_tokens,
-                ),
-            )
+                )
+            except Exception as e:
+                repaired = _try_repair_instructor_response(e, EnhancedDocumentResult)
+                if repaired is None:
+                    raise
+                response, raw_response = repaired
 
             # Check for truncation
             if hasattr(raw_response, "choices") and raw_response.choices:
@@ -1305,16 +1374,22 @@ class DocumentMixin:
             # Use logical model name for router load balancing
             # max_retries allows Instructor to retry with validation error
             # feedback, which helps LLM fix JSON escaping issues
-            response, raw_response = await cast(
-                Awaitable[tuple[DocumentProcessResult, Any]],
-                client.chat.completions.create_with_completion(
-                    model="default",
-                    messages=messages,
-                    response_model=DocumentProcessResult,
-                    max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                    max_tokens=max_tokens,
-                ),
-            )
+            try:
+                response, raw_response = await cast(
+                    Awaitable[tuple[DocumentProcessResult, Any]],
+                    client.chat.completions.create_with_completion(
+                        model="default",
+                        messages=messages,
+                        response_model=DocumentProcessResult,
+                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
+                        max_tokens=max_tokens,
+                    ),
+                )
+            except Exception as e:
+                repaired = _try_repair_instructor_response(e, DocumentProcessResult)
+                if repaired is None:
+                    raise
+                response, raw_response = repaired
 
             elapsed_ms = (time.perf_counter() - start_time) * 1000
 

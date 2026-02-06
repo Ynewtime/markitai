@@ -33,6 +33,80 @@ def clean_control_characters(text: str, preserve_whitespace: bool = True) -> str
     return "".join(c for c in text if ord(c) >= 32)
 
 
+# Pre-compiled patterns for repair_json_string
+_JSON_CODEBLOCK_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL)
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def repair_json_string(text: str) -> str | None:
+    """Attempt to repair common JSON syntax errors from LLM output.
+
+    Tries multiple repair strategies in sequence:
+    1. Parse as-is
+    2. Extract from markdown code blocks
+    3. Trim to JSON object boundaries
+    4. Remove trailing commas
+    5. Close unclosed brackets/braces (truncated output)
+
+    Args:
+        text: Raw text that should contain JSON
+
+    Returns:
+        Repaired JSON string, or None if repair is not possible
+    """
+    import json
+
+    # Strategy 1: Try as-is
+    try:
+        json.loads(text)
+        return text
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Strategy 2: Extract from markdown code blocks
+    match = _JSON_CODEBLOCK_RE.search(text)
+    if match:
+        candidate = match.group(1).strip()
+        try:
+            json.loads(candidate)
+            return candidate
+        except (json.JSONDecodeError, ValueError):
+            text = candidate
+
+    # Strategy 3: Find JSON object start
+    start = text.find("{")
+    if start < 0:
+        return None
+    text = text[start:]
+
+    # Strategy 4: Remove trailing commas before } or ]
+    repaired = _TRAILING_COMMA_RE.sub(r"\1", text)
+    try:
+        json.loads(repaired)
+        return repaired
+    except (json.JSONDecodeError, ValueError):
+        text = repaired
+
+    # Strategy 5: Close unclosed brackets/braces (handles truncated output)
+    open_braces = text.count("{") - text.count("}")
+    open_brackets = text.count("[") - text.count("]")
+    if open_brackets > 0 or open_braces > 0:
+        # Try closing with a quote first (in case truncated inside a string value)
+        for prefix in ['"', ""]:
+            closed = text + prefix
+            if open_brackets > 0:
+                closed += "]" * open_brackets
+            if open_braces > 0:
+                closed += "}" * open_braces
+            try:
+                json.loads(closed)
+                return closed
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+    return None
+
+
 def format_error_message(error: Any, max_length: int = 200) -> str:
     """Format an exception for user-friendly logging.
 
