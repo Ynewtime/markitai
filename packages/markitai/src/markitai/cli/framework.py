@@ -1,17 +1,37 @@
 """Custom CLI framework classes for Markitai.
 
 This module contains the custom Click Group class that supports
-the main command with arguments and subcommands.
+the main command with arguments and subcommands, with lazy loading
+of command modules to minimize startup cost.
 """
 
 from __future__ import annotations
 
+import importlib
+from typing import TYPE_CHECKING
+
 import click
 from click import Context
+
+if TYPE_CHECKING:
+    pass
+
+# Mapping of command name -> (module_path, attribute_name)
+# This allows list_commands() and get_command() to work without importing
+# the heavy command modules at module level.
+_LAZY_COMMANDS: dict[str, tuple[str, str]] = {
+    "cache": ("markitai.cli.commands.cache", "cache"),
+    "config": ("markitai.cli.commands.config", "config"),
+    "doctor": ("markitai.cli.commands.doctor", "doctor"),
+    "init": ("markitai.cli.commands.init", "init"),
+}
 
 
 class MarkitaiGroup(click.Group):
     """Custom Group that supports main command with arguments and subcommands.
+
+    Subcommands are lazily loaded: their modules are only imported when
+    the command is actually invoked or when help text needs to be rendered.
 
     This allows:
         markitai document.docx --llm          # Convert file (main command)
@@ -35,6 +55,32 @@ class MarkitaiGroup(click.Group):
         "--url-concurrency",
     }
 
+    def list_commands(self, ctx: Context) -> list[str]:
+        """Return sorted list of all command names (lazy + eagerly registered)."""
+        # Combine lazily-declared names with any eagerly registered commands
+        names = set(_LAZY_COMMANDS.keys())
+        names.update(super().list_commands(ctx))
+        return sorted(names)
+
+    def get_command(self, ctx: Context, cmd_name: str) -> click.Command | None:
+        """Lazily import and return the command, or fall back to eager lookup."""
+        # Check eagerly registered commands first (allows runtime add_command)
+        cmd = super().get_command(ctx, cmd_name)
+        if cmd is not None:
+            return cmd
+
+        # Lazy import
+        spec = _LAZY_COMMANDS.get(cmd_name)
+        if spec is None:
+            return None
+
+        module_path, attr_name = spec
+        mod = importlib.import_module(module_path)
+        cmd = getattr(mod, attr_name)
+        # Cache so subsequent calls don't re-import
+        self.add_command(cmd, cmd_name)
+        return cmd
+
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         """Parse arguments, detecting if first arg is a subcommand or file path."""
         # Find INPUT: first positional arg that's not:
@@ -44,6 +90,11 @@ class MarkitaiGroup(click.Group):
         ctx.ensure_object(dict)
         skip_next = False
         input_idx = None
+
+        # Use the full set of known command names (lazy + eager) for detection.
+        # We use _LAZY_COMMANDS keys + self.commands keys to avoid importing
+        # the command modules just to check if an arg is a subcommand name.
+        known_commands = set(_LAZY_COMMANDS.keys()) | set(self.commands.keys())
 
         for i, arg in enumerate(args):
             if skip_next:
@@ -63,7 +114,7 @@ class MarkitaiGroup(click.Group):
                 continue
 
             # First positional argument
-            if arg in self.commands:
+            if arg in known_commands:
                 # It's a subcommand - stop looking
                 break
             else:
