@@ -26,13 +26,11 @@ from markitai.config import (
     ModelConfig,
     PromptsConfig,
 )
+from markitai.llm.cache import ContentCache, PersistentCache, SQLiteCache
 from markitai.llm.processor import (
-    ContentCache,
     HybridRouter,
     LLMProcessor,
     LocalProviderWrapper,
-    PersistentCache,
-    SQLiteCache,
     _context_display_name,
     _is_all_local_providers,
     get_model_info_cached,
