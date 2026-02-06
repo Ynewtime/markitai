@@ -1258,7 +1258,7 @@ wheels = [
 
 [[package]]
 name = "markitai"
-version = "0.4.2"
+version = "0.5.0"
 source = { editable = "packages/markitai" }
 dependencies = [
     { name = "aiofiles" },
@@ -1342,7 +1342,7 @@ dev = [
 
 [[package]]
 name = "markitai-workspace"
-version = "0.4.2"
+version = "0.5.0"
 source = { virtual = "." }
 dependencies = [
     { name = "markitai" },

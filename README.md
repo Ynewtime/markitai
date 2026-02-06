@@ -109,7 +109,7 @@ Priority: CLI arguments > Environment variables > Config file > Defaults
 markitai config list
 
 # Initialize config file
-markitai config init -o .
+markitai init
 
 # View cache status
 markitai cache stats
