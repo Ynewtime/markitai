@@ -199,6 +199,51 @@ class SQLiteCache:
                 "db_path": str(self._db_path),
             }
 
+    def stats_verbose(self) -> dict[str, Any]:
+        """Return cache statistics with model breakdown in a single query.
+
+        Combines stats() and stats_by_model() into a single table scan.
+
+        Returns:
+            Dict with count, size_bytes, size_mb, max_size_mb, db_path, by_model
+        """
+        with self._get_connection() as conn:
+            # Single query for both overall stats and per-model breakdown
+            cursor = conn.execute("""
+                SELECT
+                    COALESCE(NULLIF(model, ''), 'unknown') as model_name,
+                    COUNT(*) as count,
+                    COALESCE(SUM(size_bytes), 0) as total_size
+                FROM cache
+                GROUP BY model_name
+                ORDER BY total_size DESC
+            """)
+
+            by_model = {}
+            total_count = 0
+            total_size = 0
+
+            for row in cursor.fetchall():
+                model_name = row["model_name"]
+                count = row["count"]
+                size = row["total_size"]
+                by_model[model_name] = {
+                    "count": count,
+                    "size_bytes": size,
+                    "size_mb": round(size / (1024 * 1024), 2),
+                }
+                total_count += count
+                total_size += size
+
+            return {
+                "count": total_count,
+                "size_bytes": total_size,
+                "size_mb": round(total_size / (1024 * 1024), 2),
+                "max_size_mb": round(self._max_size_bytes / (1024 * 1024), 2),
+                "db_path": str(self._db_path),
+                "by_model": by_model,
+            }
+
     def stats_by_model(self) -> dict[str, dict[str, Any]]:
         """Get cache statistics grouped by model.
 

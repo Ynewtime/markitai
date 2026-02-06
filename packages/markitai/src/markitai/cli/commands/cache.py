@@ -115,18 +115,21 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
     if global_cache_path.exists():
         try:
             global_cache = SQLiteCache(global_cache_path, cfg.cache.max_size_bytes)
-            stats_data["cache"] = global_cache.stats()
+            if verbose:
+                # Single query for stats + model breakdown
+                stats_data["cache"] = global_cache.stats_verbose()
+            else:
+                stats_data["cache"] = global_cache.stats()
         except Exception as e:
             stats_data["cache"] = {"error": str(e)}
 
-    # Collect verbose data (without printing)
+    # Collect verbose entries (separate query, different shape)
     if (
         verbose
         and global_cache
         and stats_data["cache"]
         and "error" not in stats_data["cache"]
     ):
-        stats_data["cache"]["by_model"] = global_cache.stats_by_model()
         stats_data["cache"]["entries"] = global_cache.list_entries(limit)
 
     if as_json:
