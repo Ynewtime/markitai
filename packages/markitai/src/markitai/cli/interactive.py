@@ -61,6 +61,8 @@ def detect_llm_provider() -> ProviderDetectionResult | None:
     3. ANTHROPIC_API_KEY environment variable
     4. OPENAI_API_KEY environment variable
     5. GEMINI_API_KEY environment variable
+    6. DEEPSEEK_API_KEY environment variable
+    7. OPENROUTER_API_KEY environment variable
 
     Returns:
         ProviderDetectionResult if a provider is found, None otherwise.
@@ -80,7 +82,7 @@ def detect_llm_provider() -> ProviderDetectionResult | None:
         if _check_copilot_auth():
             return ProviderDetectionResult(
                 provider="copilot",
-                model="copilot/gpt-4o",
+                model="copilot/claude-sonnet-4.5",
                 authenticated=True,
                 source="cli",
             )
@@ -89,7 +91,7 @@ def detect_llm_provider() -> ProviderDetectionResult | None:
     if os.environ.get("ANTHROPIC_API_KEY"):
         return ProviderDetectionResult(
             provider="anthropic",
-            model="anthropic/claude-sonnet-4-20250514",
+            model="anthropic/claude-sonnet-4-5-20250929",
             authenticated=True,
             source="env",
         )
@@ -97,7 +99,7 @@ def detect_llm_provider() -> ProviderDetectionResult | None:
     if os.environ.get("OPENAI_API_KEY"):
         return ProviderDetectionResult(
             provider="openai",
-            model="openai/gpt-4o",
+            model="openai/gpt-5.2",
             authenticated=True,
             source="env",
         )
@@ -105,7 +107,25 @@ def detect_llm_provider() -> ProviderDetectionResult | None:
     if os.environ.get("GEMINI_API_KEY"):
         return ProviderDetectionResult(
             provider="gemini",
-            model="gemini/gemini-2.0-flash",
+            model="gemini/gemini-2.5-flash",
+            authenticated=True,
+            source="env",
+        )
+
+    # 6. Check DeepSeek API key
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        return ProviderDetectionResult(
+            provider="deepseek",
+            model="deepseek/deepseek-chat",
+            authenticated=True,
+            source="env",
+        )
+
+    # 7. Check OpenRouter API key
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return ProviderDetectionResult(
+            provider="openrouter",
+            model="openrouter/google/gemini-2.5-flash",
             authenticated=True,
             source="env",
         )
@@ -280,13 +300,17 @@ def prompt_configure_provider(session: InteractiveSession) -> bool:
 
 
 def _prompt_manual_api_key(session: InteractiveSession) -> bool:
-    """Prompt for manual API key entry."""
+    """Prompt for manual API key entry.
+
+    Saves API key to .env file and references it via env: prefix in config.
+    """
     provider = questionary.select(
         "Select provider:",
         choices=[
             questionary.Choice("Anthropic (Claude)", value="anthropic"),
-            questionary.Choice("OpenAI (GPT-4o)", value="openai"),
+            questionary.Choice("OpenAI", value="openai"),
             questionary.Choice("Google (Gemini)", value="gemini"),
+            questionary.Choice("DeepSeek", value="deepseek"),
         ],
     ).ask()
 
@@ -300,21 +324,36 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
     if not api_key:
         return False
 
-    # Save to config
-    from markitai.config import ConfigManager, LiteLLMParams, ModelConfig
-
     model_map = {
-        "anthropic": "anthropic/claude-sonnet-4-20250514",
-        "openai": "openai/gpt-4o",
-        "gemini": "gemini/gemini-2.0-flash",
+        "anthropic": "anthropic/claude-sonnet-4-5-20250929",
+        "openai": "openai/gpt-5.2",
+        "gemini": "gemini/gemini-2.5-flash",
+        "deepseek": "deepseek/deepseek-chat",
     }
+
+    env_var_map = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+    }
+
+    # Save API key to .env file instead of config
+    env_var = env_var_map[provider]
+    env_path = Path(".env")
+    _append_env_var(env_path, env_var, api_key)
+
+    # Save config with env: reference (no plaintext key)
+    from markitai.config import ConfigManager, LiteLLMParams, ModelConfig
 
     manager = ConfigManager()
     cfg = manager.load()
     cfg.llm.model_list = [
         ModelConfig(
             model_name="default",
-            litellm_params=LiteLLMParams(model=model_map[provider], api_key=api_key),
+            litellm_params=LiteLLMParams(
+                model=model_map[provider], api_key=f"env:{env_var}"
+            ),
         )
     ]
     manager.save()
@@ -326,8 +365,30 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
         source="manual",
     )
 
-    get_console().print("[green]✓[/green] API key saved to config")
+    get_console().print(f"[green]✓[/green] API key saved to {env_path}")
+    get_console().print(
+        f"[green]✓[/green] Config uses [cyan]env:{env_var}[/cyan] reference"
+    )
     return True
+
+
+def _append_env_var(env_path: Path, var_name: str, value: str) -> None:
+    """Append or update an environment variable in a .env file."""
+    lines: list[str] = []
+    found = False
+
+    if env_path.exists():
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+        for i, line in enumerate(lines):
+            if line.startswith(f"{var_name}="):
+                lines[i] = f"{var_name}={value}"
+                found = True
+                break
+
+    if not found:
+        lines.append(f"{var_name}={value}")
+
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _prompt_env_file(session: InteractiveSession) -> bool:
