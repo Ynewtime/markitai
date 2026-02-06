@@ -21,11 +21,14 @@ Markitai looks for configuration files in the following locations:
 ### Initialize Configuration
 
 ```bash
-# Create config file in current directory
-markitai config init
+# Interactive setup wizard (recommended)
+markitai init
+
+# Quick mode (generate default config)
+markitai init --yes
 
 # Create in specific location
-markitai config init -o ~/.markitai/
+markitai init -o ~/.markitai/ --global
 ```
 
 ### View Configuration
@@ -105,7 +108,7 @@ markitai config set llm.enabled true
     "strategy": "auto",
     "playwright": {
       "timeout": 30000,
-      "wait_for": "networkidle",
+      "wait_for": "domcontentloaded",
       "extra_wait_ms": 5000
     },
     "jina": {
@@ -152,6 +155,7 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 |----------|-------------|
 | `MARKITAI_CONFIG` | Path to configuration file |
 | `MARKITAI_LOG_DIR` | Directory for log files |
+| `MARKITAI_LOG_FORMAT` | Log format override (`text` or `json`) |
 
 ## LLM Configuration
 
@@ -312,7 +316,7 @@ This prevents timeouts on large documents while keeping short requests responsiv
 Claude Agent provider automatically enables **prompt caching** for system prompts longer than 4KB. This reduces API costs by caching frequently-used system prompt prefixes.
 
 ::: tip
-Prompt caching is transparent - no configuration needed. View cache statistics with `markitai cache stats -v`.
+Prompt caching is transparent - no configuration needed. View cache statistics with `markitai cache stats --verbose`.
 :::
 
 ## Image Configuration
@@ -455,7 +459,7 @@ Configure how URLs are fetched:
     "strategy": "auto",
     "playwright": {
       "timeout": 30000,
-      "wait_for": "networkidle",
+      "wait_for": "domcontentloaded",
       "extra_wait_ms": 5000
     },
     "jina": {
@@ -481,7 +485,7 @@ Configure how URLs are fetched:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `timeout` | `30000` | Page load timeout (ms) |
-| `wait_for` | `networkidle` | Wait condition: `load`, `domcontentloaded`, `networkidle` |
+| `wait_for` | `domcontentloaded` | Wait condition: `load`, `domcontentloaded`, `networkidle` |
 | `extra_wait_ms` | `5000` | Extra wait time for JS rendering |
 
 ### Fallback Patterns
@@ -525,10 +529,10 @@ Markitai uses a global cache stored at `~/.markitai/cache.db`.
 markitai cache stats
 
 # View detailed statistics (entries, by model)
-markitai cache stats -v
+markitai cache stats --verbose
 
 # View with limit
-markitai cache stats -v --limit 50
+markitai cache stats --verbose --limit 50
 
 # Clear cache
 markitai cache clear
@@ -594,14 +598,26 @@ Customize LLM prompts for different tasks. Each prompt is split into **system** 
     "dir": "~/.markitai/prompts",
     "cleaner_system": null,
     "cleaner_user": null,
-    "frontmatter_system": null,
-    "frontmatter_user": null,
     "image_caption_system": null,
     "image_caption_user": null,
     "image_description_system": null,
     "image_description_user": null,
+    "image_analysis_system": null,
+    "image_analysis_user": null,
+    "page_content_system": null,
+    "page_content_user": null,
+    "document_enhance_system": null,
+    "document_enhance_user": null,
+    "document_enhance_complete_system": null,
+    "document_enhance_complete_user": null,
     "document_process_system": null,
-    "document_process_user": null
+    "document_process_user": null,
+    "document_vision_system": null,
+    "document_vision_user": null,
+    "url_enhance_system": null,
+    "url_enhance_user": null,
+    "screenshot_extract_system": null,
+    "screenshot_extract_user": null
   }
 }
 ```
@@ -612,11 +628,10 @@ Create custom prompt files in the prompts directory:
 ~/.markitai/prompts/
 ├── cleaner_system.md          # Document cleaning role & rules
 ├── cleaner_user.md            # Document cleaning content template
-├── frontmatter_system.md      # Metadata extraction role
-├── frontmatter_user.md        # Metadata extraction template
 ├── image_caption_system.md    # Alt text generation role
 ├── image_caption_user.md      # Alt text content template
-└── document_enhance_system.md # Vision enhancement role
+├── document_enhance_system.md # Document enhancement role
+└── document_process_system.md # Document processing role
 ```
 
 Set a specific prompt file path:

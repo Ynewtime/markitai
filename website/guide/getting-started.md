@@ -85,6 +85,24 @@ uv pip install markitai
 
 ## Quick Start
 
+### First Run
+
+For new users, the interactive mode guides you through initial setup:
+
+```bash
+markitai -I
+```
+
+Or initialize configuration with the setup wizard:
+
+```bash
+# Interactive setup wizard
+markitai init
+
+# Quick mode (generate default config)
+markitai init --yes
+```
+
 ### Basic Conversion
 
 Convert a single document to Markdown:
@@ -93,7 +111,7 @@ Convert a single document to Markdown:
 markitai document.docx
 ```
 
-This saves the output to the current directory and prints it to stdout. Use `-o` to specify a different output directory:
+Without `-o`, this prints the output to stdout. With `-o`, it saves to the specified directory:
 
 ```bash
 markitai document.docx -o output/
@@ -104,7 +122,7 @@ markitai document.docx -o output/
 Convert web pages directly:
 
 ```bash
-markitai https://example.com/article
+markitai https://example.com/article -o output/
 ```
 
 ### LLM Enhancement
@@ -146,6 +164,18 @@ Resume interrupted batch processing:
 markitai ./docs -o ./output --resume
 ```
 
+### System Check
+
+Verify all dependencies and auto-fix missing components:
+
+```bash
+# Check system health
+markitai doctor
+
+# Auto-fix missing components
+markitai doctor --fix
+```
+
 ## Output Structure
 
 ```
@@ -155,6 +185,8 @@ output/
 ├── assets/
 │   ├── document.docx.0001.jpg
 │   └── images.json         # Image descriptions
+├── screenshots/             # Page screenshots (when --screenshot is used)
+│   └── document.docx.0001.png
 ```
 
 ## Supported Formats
@@ -165,7 +197,7 @@ output/
 | PowerPoint | `.pptx`, `.ppt` |
 | Excel | `.xlsx`, `.xls` |
 | PDF | `.pdf` |
-| Text | `.txt`, `.md` |
+| Text | `.txt`, `.md`, `.markdown` |
 | Images | `.jpg`, `.jpeg`, `.png`, `.webp` |
 | URLs | `http://`, `https://` |
 
@@ -182,15 +214,11 @@ Some features have platform-specific behavior or limitations:
 | EMF/WMF Images | ✅ Full | Native support |
 | Browser Automation | ✅ Full | Hidden window mode |
 
-::: tip Windows Performance
-On Windows, markitai automatically limits concurrency to 4 threads due to higher thread-switching overhead.
-:::
-
 ### Linux
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.xls`, `.ppt`) | ❌ No | Requires Windows COM |
+| Legacy Office (`.doc`, `.xls`, `.ppt`) | ✅ Full | Requires LibreOffice (Windows uses COM, LibreOffice as fallback) |
 | PPTX Slide Rendering | ✅ Full | Requires LibreOffice |
 | EMF/WMF Images | ❌ No | Windows-only format |
 | Browser Automation | ✅ Full | Requires system dependencies |
@@ -214,7 +242,7 @@ uv run playwright install-deps chromium  # Install system dependencies
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.xls`, `.ppt`) | ❌ No | Requires Windows COM |
+| Legacy Office (`.doc`, `.xls`, `.ppt`) | ✅ Full | Requires LibreOffice |
 | PPTX Slide Rendering | ✅ Full | Requires LibreOffice |
 | EMF/WMF Images | ❌ No | Windows-only format |
 | Browser Automation | ✅ Full | - |

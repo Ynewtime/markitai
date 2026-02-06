@@ -226,6 +226,34 @@ markitai https://example.com --jina
 `--playwright` and `--jina` are mutually exclusive. You can only use one at a time.
 :::
 
+## Setup Commands
+
+### `markitai init`
+
+Interactive setup wizard that checks dependencies, detects LLM providers, and generates a configuration file.
+
+```bash
+# Interactive setup wizard
+markitai init
+
+# Quick mode (generate default config without prompts)
+markitai init --yes
+
+# Generate global config
+markitai init --global
+
+# Specify output path
+markitai init -o ./markitai.json
+```
+
+### `-I, --interactive`
+
+Enter interactive mode for guided file conversion setup.
+
+```bash
+markitai -I
+```
+
 ## Configuration Commands
 
 ### `markitai config list`
@@ -234,16 +262,7 @@ Display all configuration settings.
 
 ```bash
 markitai config list
-markitai config list --json
-```
-
-### `markitai config init`
-
-Create a new configuration file.
-
-```bash
-markitai config init
-markitai config init -o ~/.markitai/
+markitai config list --format json
 ```
 
 ### `markitai config get <key>`
@@ -288,7 +307,7 @@ Display cache statistics.
 
 ```bash
 markitai cache stats
-markitai cache stats -v           # Verbose mode
+markitai cache stats --verbose    # Verbose mode
 markitai cache stats --json       # JSON output
 ```
 
@@ -324,6 +343,7 @@ Check system health, dependencies, and authentication status. This is the primar
 
 ```bash
 markitai doctor
+markitai doctor --fix     # Auto-fix missing components
 markitai doctor --json    # JSON output
 ```
 
@@ -357,16 +377,15 @@ Example output:
 When using local providers (`claude-agent/` or `copilot/`), the doctor command also checks authentication status and provides resolution hints if authentication fails.
 :::
 
-### `markitai check-deps`
+## Other Options
 
-Alias for `markitai doctor`. Kept for backward compatibility.
+### `--quiet, -q`
+
+Suppress non-essential output.
 
 ```bash
-markitai check-deps
-markitai check-deps --json    # JSON output
+markitai document.docx --quiet
 ```
-
-## Other Options
 
 ### `--verbose`
 
