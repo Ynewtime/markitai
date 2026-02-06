@@ -33,5 +33,7 @@ def __getattr__(name: str) -> Any:
     if spec is not None:
         module_path, attr_name = spec
         mod = importlib.import_module(module_path)
-        return getattr(mod, attr_name)
+        obj = getattr(mod, attr_name)
+        globals()[name] = obj  # Cache so __getattr__ isn't called again
+        return obj
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
