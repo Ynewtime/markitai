@@ -210,7 +210,7 @@ def _check_playwright() -> dict[str, Any]:
                 "name": "Playwright",
                 "description": "Browser automation for dynamic URLs",
                 "status": "ok",
-                "message": "Playwright and Chromium browser installed",
+                "message": "Chromium installed",
                 "install_hint": "",
             }
         else:
@@ -242,13 +242,14 @@ def _check_libreoffice() -> dict[str, Any]:
     soffice_path = find_libreoffice()
 
     if soffice_path:
-        # LibreOffice found - just report the path without running --version
+        # LibreOffice found - report "installed" (path available in --json output)
         # Running soffice --version can hang on Windows in non-interactive mode
         return {
             "name": "LibreOffice",
             "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
             "status": "ok",
-            "message": f"Found at {soffice_path}",
+            "message": "installed",
+            "path": soffice_path,
             "install_hint": "",
         }
     else:
@@ -276,16 +277,20 @@ def _check_ffmpeg() -> dict[str, Any]:
                 text=True,
                 timeout=10,
             )
-            version = (
-                proc.stdout.strip().split("\n")[0]
-                if proc.returncode == 0
-                else "unknown"
-            )
+            # Extract version: "ffmpeg version 8.0.1 ..." → "v8.0.1"
+            version = "unknown"
+            if proc.returncode == 0:
+                parts = proc.stdout.strip().split()
+                if len(parts) >= 3 and parts[0] == "ffmpeg":
+                    version = f"v{parts[2]}"
+                else:
+                    version = parts[0] if parts else "unknown"
             return {
                 "name": "FFmpeg",
                 "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
                 "status": "ok",
-                "message": f"Found at {ffmpeg_path} ({version})",
+                "message": version,
+                "path": ffmpeg_path,
                 "install_hint": "",
             }
         except Exception as e:
@@ -465,7 +470,8 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                         "name": "Claude Agent SDK",
                         "description": "Claude Code CLI integration",
                         "status": "ok",
-                        "message": f"SDK installed, CLI at {claude_cli}",
+                        "message": "SDK + CLI installed",
+                        "path": claude_cli,
                         "install_hint": "",
                     }
                 else:
@@ -508,7 +514,8 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                         "name": "GitHub Copilot SDK",
                         "description": "GitHub Copilot CLI integration",
                         "status": "ok",
-                        "message": f"SDK installed, CLI at {copilot_cli}",
+                        "message": "SDK + CLI installed",
+                        "path": copilot_cli,
                         "install_hint": "",
                     }
                 else:
@@ -626,7 +633,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 continue
             info = results[key]
             if info["status"] == "ok":
-                ui.success(info["name"])
+                ui.success(f"{info['name']}: {info['message']}")
             else:
                 ui.warning(
                     f"{info['name']}（{t('missing')}）",

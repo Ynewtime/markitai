@@ -219,7 +219,8 @@ class TestLibreOfficeDependency:
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert data["libreoffice"]["status"] == "ok"
-            assert "/usr/bin/soffice" in data["libreoffice"]["message"]
+            assert data["libreoffice"]["message"] == "installed"
+            assert data["libreoffice"]["path"] == "/usr/bin/soffice"
 
     def test_libreoffice_not_installed(
         self, runner: CliRunner, mock_config: MagicMock
