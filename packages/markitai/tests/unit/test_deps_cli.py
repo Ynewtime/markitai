@@ -1,8 +1,4 @@
-"""Unit tests for check-deps CLI command.
-
-Note: check-deps is now an alias for the doctor command.
-This test file is kept for backward compatibility testing.
-"""
+"""Unit tests for doctor CLI command - dependency checking."""
 
 from __future__ import annotations
 
@@ -12,11 +8,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from markitai.cli.commands.doctor import check_deps
+from markitai.cli.commands.doctor import doctor
 
 
-class TestCheckDepsCommand:
-    """Tests for check-deps CLI command."""
+class TestDoctorDepsCommand:
+    """Tests for doctor CLI command - dependency checking."""
 
     @pytest.fixture
     def runner(self) -> CliRunner:
@@ -48,11 +44,15 @@ class TestCheckDepsCommand:
             mock_browser.return_value = False
             mock_which.return_value = None
 
-            result = runner.invoke(check_deps)
+            result = runner.invoke(doctor)
 
             assert result.exit_code == 0
-            # Support both English and Chinese output (i18n)
-            assert "Dependency Status" in result.output or "系统检查" in result.output
+            # Support both English and Chinese output (i18n) and unified UI format
+            assert (
+                "Dependency Status" in result.output
+                or "System Check" in result.output
+                or "系统检查" in result.output
+            )
 
     def test_check_deps_json_format(
         self, runner: CliRunner, mock_config: MagicMock
@@ -72,7 +72,7 @@ class TestCheckDepsCommand:
             mock_browser.return_value = False
             mock_which.return_value = None
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -118,7 +118,7 @@ class TestPlaywrightDependency:
             mock_browser.return_value = True
             mock_which.return_value = None
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -143,7 +143,7 @@ class TestPlaywrightDependency:
             mock_browser.return_value = False
             mock_which.return_value = None
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -168,7 +168,7 @@ class TestPlaywrightDependency:
             mock_browser.return_value = False
             mock_which.return_value = None
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -216,7 +216,7 @@ class TestLibreOfficeDependency:
 
             mock_which.side_effect = which_side_effect
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -244,7 +244,7 @@ class TestLibreOfficeDependency:
             mock_which.return_value = None
             mock_isfile.return_value = False
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -295,7 +295,7 @@ class TestFFmpegDependency:
                 returncode=0, stdout="ffmpeg version 6.0\n"
             )
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -338,7 +338,7 @@ class TestRapidOCRDependency:
             mock_browser.return_value = False
             mock_which.return_value = None
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -365,7 +365,7 @@ class TestRapidOCRDependency:
             mock_browser.return_value = False
             mock_which.return_value = None
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -406,7 +406,7 @@ class TestLLMAPIDependency:
             mock_which.return_value = None
             mock_info.return_value = {"supports_vision": True}
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -434,7 +434,7 @@ class TestLLMAPIDependency:
             mock_browser.return_value = False
             mock_which.return_value = None
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -477,7 +477,7 @@ class TestVisionModelDependency:
             mock_info.return_value = {"supports_vision": True}
             mock_local.return_value = False
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -512,7 +512,7 @@ class TestVisionModelDependency:
             mock_info.return_value = {"supports_vision": False}
             mock_local.return_value = False
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -578,7 +578,7 @@ class TestLocalProviderSDKs:
             mock_manager = MockAuthManager.return_value
             mock_manager.check_auth = AsyncMock(return_value=mock_auth_status)
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -621,7 +621,7 @@ class TestOutputFormatting:
             mock_browser.return_value = False
             mock_which.return_value = None
 
-            result = runner.invoke(check_deps)
+            result = runner.invoke(doctor)
 
             assert result.exit_code == 0
             # New unified UI doesn't use Component/Status/Description columns
@@ -650,7 +650,7 @@ class TestOutputFormatting:
             mock_browser.return_value = False
             mock_which.return_value = None
 
-            result = runner.invoke(check_deps)
+            result = runner.invoke(doctor)
 
             assert result.exit_code == 0
             # Should show hints panel for missing items
@@ -690,12 +690,13 @@ class TestOutputFormatting:
             mock_which.side_effect = which_side_effect
             mock_run.return_value = MagicMock(returncode=0, stdout="version 1.0\n")
 
-            result = runner.invoke(check_deps)
+            result = runner.invoke(doctor)
 
             assert result.exit_code == 0
-            # Support both English and Chinese success messages (i18n)
+            # Support both English and Chinese success messages (i18n) and new unified UI
             assert (
                 "properly configured" in result.output
+                or "configured correctly" in result.output
                 or "所有依赖配置正确" in result.output
             )
 
@@ -735,7 +736,7 @@ class TestDependencyStatusIcons:
             mock_browser.return_value = False
             mock_which.return_value = None
 
-            result = runner.invoke(check_deps, ["--json"])
+            result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)

@@ -131,7 +131,7 @@ class TestHelpAndVersion:
         """Test help shows all subcommands."""
         result = runner.invoke(app, ["-h"])
         assert result.exit_code == 0
-        subcommands = ["cache", "config", "check-deps"]
+        subcommands = ["cache", "config", "doctor"]
         for cmd in subcommands:
             assert cmd in result.output, f"Subcommand {cmd} not found in help"
 
@@ -537,7 +537,7 @@ class TestConfigSubcommand:
         assert result.exit_code == 0
         assert "list" in result.output
         assert "path" in result.output
-        assert "init" in result.output
+        # Note: init command moved to top-level 'markitai init'
 
     def test_config_list_formats(self, runner: CliRunner):
         """Test config list with different formats."""
@@ -556,9 +556,9 @@ class TestConfigSubcommand:
         assert result.exit_code == 0
 
     def test_config_init(self, runner: CliRunner, tmp_path: Path):
-        """Test config init creates config file."""
-        output_file = tmp_path / "test_config.json"
-        result = runner.invoke(app, ["config", "init", "-o", str(output_file)])
+        """Test init command creates config file (moved from config init)."""
+        output_file = tmp_path / "markitai.json"
+        result = runner.invoke(app, ["init", "-y", "-o", str(output_file)])
         assert result.exit_code == 0
         assert output_file.exists()
         content = json.loads(output_file.read_text())
@@ -623,21 +623,21 @@ class TestCacheSubcommand:
 
 
 # =============================================================================
-# Test: check-deps Subcommand
+# Test: doctor Subcommand
 # =============================================================================
 
 
-class TestCheckDepsSubcommand:
-    """Tests for check-deps subcommand."""
+class TestDoctorSubcommand:
+    """Tests for doctor subcommand."""
 
-    def test_check_deps_table_output(self, runner: CliRunner):
-        """Test check-deps shows table output."""
-        result = runner.invoke(app, ["check-deps"])
+    def test_doctor_table_output(self, runner: CliRunner):
+        """Test doctor shows table output."""
+        result = runner.invoke(app, ["doctor"])
         assert result.exit_code == 0
 
-    def test_check_deps_json_output(self, runner: CliRunner):
-        """Test check-deps --json output."""
-        result = runner.invoke(app, ["check-deps", "--json"])
+    def test_doctor_json_output(self, runner: CliRunner):
+        """Test doctor --json output."""
+        result = runner.invoke(app, ["doctor", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert any(

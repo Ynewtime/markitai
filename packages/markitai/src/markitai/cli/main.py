@@ -84,11 +84,11 @@ def run_interactive_mode(ctx: click.Context) -> None:
         ).ask():
             # Re-invoke the CLI with the gathered arguments
             args = session_to_cli_args(session)
-            # Use sys.argv[0] which is the actual invoked script/executable
-            # This works for both installed (markitai) and development (uv run markitai)
+            # Use sys.executable -m for reliable cross-platform invocation
+            # sys.argv[0] can be a .py file on Windows, breaking re-invocation
             import subprocess
 
-            subprocess.run([sys.argv[0]] + args)
+            subprocess.run([sys.executable, "-m", "markitai"] + args)
         else:
             click.echo("Cancelled.")
         ctx.exit(0)
@@ -290,8 +290,9 @@ def app(
         markitai ./docs/ -o ./output/ --resume      # Batch conversion
         markitai config list                        # Show configuration
     """
-    # If subcommand is invoked, let it handle
+    # If subcommand is invoked, setup logging (quiet console) and let it handle
     if ctx.invoked_subcommand is not None:
+        setup_logging(verbose=False, quiet=True)
         return
 
     # Get input path from context (set by MarkitaiGroup.parse_args)
@@ -344,8 +345,12 @@ def app(
     is_single_mode = (
         is_url_input or (input_path is not None and input_path.is_file())
     ) and not is_url_list_mode
-    # Enable quiet mode if: explicitly requested via --quiet, or in single mode without --verbose
-    quiet_console = quiet or (is_single_mode and not verbose)
+    # Determine if we're in stdout mode (single file/URL without -o)
+    # In stdout mode, output IS the content, so suppress ALL console logs
+    is_stdout_mode = is_single_mode and output is None
+    # Enable quiet mode if: explicitly requested via --quiet,
+    # in stdout mode (regardless of --verbose), or in single mode without --verbose
+    quiet_console = quiet or is_stdout_mode or (is_single_mode and not verbose)
 
     # Setup logging with configuration
     console_handler_id, log_file_path = setup_logging(
@@ -360,7 +365,7 @@ def app(
 
     # Log configuration status after logging is set up
     if config_manager.config_path:
-        logger.info(f"[Config] Loaded from: {config_manager.config_path}")
+        logger.debug(f"[Config] Loaded from: {config_manager.config_path}")
     else:
         logger.warning("[Config] No config file found, using defaults")
 
@@ -485,16 +490,26 @@ def app(
         logger.debug(f"Output directory: {output.resolve()}")
 
     async def run_workflow() -> None:
-        # URL list batch mode - requires -o
+        # Helper to get effective output directory (CLI -o or config fallback)
+        def get_effective_output() -> Path | None:
+            if output is not None:
+                return output
+            if cfg.output.dir:
+                logger.debug(f"[Config] Using output.dir from config: {cfg.output.dir}")
+                return Path(cfg.output.dir).expanduser()
+            return None
+
+        # URL list batch mode - requires -o (or config output.dir)
         if is_url_list_mode:
-            if output is None:
+            effective_output = get_effective_output()
+            if effective_output is None:
                 console.print(
                     "[red]Error: URL list mode requires -o/--output directory.[/red]"
                 )
                 ctx.exit(1)
             await process_url_batch(
                 url_entries,
-                output,
+                effective_output,
                 cfg,
                 dry_run,
                 verbose,
@@ -505,9 +520,10 @@ def app(
             )
             return
 
-        # Single URL mode - requires -o
+        # Single URL mode - requires -o (or config output.dir)
         if is_url_input:
-            if output is None:
+            effective_output = get_effective_output()
+            if effective_output is None:
                 console.print(
                     "[red]Error: URL mode requires -o/--output directory.[/red]"
                 )
@@ -515,7 +531,7 @@ def app(
             assert input_path_str is not None  # Guaranteed when is_url_input is True
             await process_url(
                 input_path_str,
-                output,
+                effective_output,
                 cfg,
                 dry_run,
                 verbose,
@@ -528,16 +544,17 @@ def app(
         # File/directory mode
         assert input_path is not None  # Already validated above
 
-        # Check if input is directory (batch mode) - requires -o
+        # Check if input is directory (batch mode) - requires -o (or config output.dir)
         if input_path.is_dir():
-            if output is None:
+            effective_output = get_effective_output()
+            if effective_output is None:
                 console.print(
                     "[red]Error: Batch mode requires -o/--output directory.[/red]"
                 )
                 ctx.exit(1)
             await process_batch(
                 input_path,
-                output,
+                effective_output,
                 cfg,
                 resume,
                 dry_run,
@@ -550,6 +567,8 @@ def app(
             return
 
         # Single file mode - output is optional (None means stdout)
+        # Note: For single file mode, we do NOT use config output.dir as fallback
+        # because the design specifies that no -o means stdout output
         await process_single_file(
             input_path,
             output,
@@ -587,13 +606,14 @@ def app(
 # Register commands from commands/ modules
 from markitai.cli.commands.cache import cache
 from markitai.cli.commands.config import config
-from markitai.cli.commands.doctor import check_deps, doctor
+from markitai.cli.commands.doctor import doctor
+from markitai.cli.commands.init import init as init_cmd
 
 app.add_command(cache)
 app.add_command(config)
+app.add_command(init_cmd, name="init")
 
 app.add_command(doctor)
-app.add_command(check_deps)
 
 
 # =============================================================================

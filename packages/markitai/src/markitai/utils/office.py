@@ -254,7 +254,7 @@ def find_libreoffice() -> str | None:
     ]
 
     for path in common_paths:
-        if shutil.which(path):
+        if Path(path).exists():
             logger.debug(f"LibreOffice found at: {path}")
             return path
 

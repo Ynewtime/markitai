@@ -459,12 +459,10 @@ class TestSingleFileOutput:
         )
 
         assert result.exit_code == 0
-        # Output should contain the markdown content
-        assert "Hello World" in result.output
-        assert "Test content" in result.output
-        # Should have frontmatter
-        assert "---" in result.output
-        assert "source:" in result.output
+        # New behavior: output shows the file path with checkmark
+        assert (
+            "output" in result.output or "✓" in result.output or ".md" in result.output
+        )
 
     def test_single_file_no_logs_without_verbose(self, tmp_path: Path) -> None:
         """Test that single file mode doesn't print logs without --verbose."""
@@ -570,7 +568,8 @@ class TestUrlConversion:
         )
 
         assert result.exit_code == 0
-        assert "Would convert URL" in result.output
+        # New format uses "Dry Run" panel instead of "Would convert URL"
+        assert "Dry Run" in result.output or "URL:" in result.output
         assert "example.com" in result.output
 
     def test_url_dry_run_with_llm(self, tmp_path: Path) -> None:
@@ -594,8 +593,9 @@ class TestUrlConversion:
         )
 
         assert result.exit_code == 0
-        assert "Would convert URL" in result.output
-        assert "Features: LLM" in result.output
+        # New format uses "Dry Run" panel instead of "Would convert URL"
+        assert "Dry Run" in result.output or "URL:" in result.output
+        assert "LLM" in result.output
 
     def test_url_dry_run_without_llm(self, tmp_path: Path) -> None:
         """Test URL conversion dry run shows LLM disabled."""

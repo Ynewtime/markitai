@@ -3,7 +3,6 @@
 This module provides CLI commands for managing Markitai configuration:
 - config list: Show current effective configuration
 - config path: Show configuration file paths
-- config init: Initialize a configuration file
 - config validate: Validate a configuration file
 - config get: Get a configuration value
 - config set: Set a configuration value
@@ -121,48 +120,6 @@ def config_path_cmd() -> None:
         ui.success(f"Currently using: {manager.config_path}")
     else:
         ui.warning("Using default configuration (no config file found)")
-
-
-@config.command("init")
-@click.option(
-    "--output",
-    "-o",
-    "output_path",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Output path for configuration file.",
-)
-@click.option(
-    "--yes",
-    "-y",
-    is_flag=True,
-    default=False,
-    help="Overwrite existing config without confirmation.",
-)
-def config_init(output_path: Path | None, yes: bool) -> None:
-    """Initialize a configuration file with defaults."""
-    manager = ConfigManager()
-
-    if output_path is None:
-        output_path = manager.DEFAULT_USER_CONFIG_DIR / "config.json"
-    elif output_path.is_dir():
-        # User passed a directory, append default filename
-        output_path = output_path / "markitai.json"
-
-    # Check if file exists (not directory)
-    if output_path.exists() and output_path.is_file():
-        if not yes and not click.confirm(f"{output_path} already exists. Overwrite?"):
-            raise click.Abort()
-
-    # Save minimal template config (essential fields only)
-    saved_path = manager.save(output_path, minimal=True)
-    ui.summary(f"{t('config.created')}: {saved_path}")
-    console.print()
-    console.print("Edit this file to customize your settings.")
-    console.print(
-        "[dim]Note: max_tokens, supports_vision are auto-detected from litellm.[/dim]"
-    )
-    console.print("Run 'markitai config list' to see the current configuration.")
 
 
 @config.command("validate")

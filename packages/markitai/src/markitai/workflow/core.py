@@ -191,7 +191,7 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
             and ctx.config.screenshot.enabled
         ) or (ctx.input_path.suffix.lower() in {".ppt", ".doc", ".xls"})
 
-        logger.info(
+        logger.debug(
             f"Converting {ctx.input_path.name}..." + (" [HEAVY]" if is_heavy else "")
         )
 
@@ -230,7 +230,7 @@ def resolve_output_file(ctx: ConversionContext) -> ConversionStepResult:
     )
 
     if ctx.output_file is None:
-        logger.info(f"[SKIP] Output exists: {base_output_file}")
+        logger.debug(f"[SKIP] Output exists: {base_output_file}")
         return ConversionStepResult(success=True, skip_reason="exists")
 
     return ConversionStepResult(success=True)
@@ -264,7 +264,7 @@ async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResul
     ctx.embedded_images_count = len(base64_images) + converter_images
 
     if base64_images:
-        logger.info(f"Processing {len(base64_images)} embedded images...")
+        logger.debug(f"Processing {len(base64_images)} embedded images...")
 
         # Use multiprocess for large batches if enabled
         from markitai.constants import DEFAULT_IMAGE_MULTIPROCESS_THRESHOLD
@@ -326,7 +326,7 @@ def write_base_markdown(ctx: ConversionContext) -> ConversionStepResult:
         ctx.conversion_result.markdown, ctx.input_path.name
     )
     atomic_write_text(ctx.output_file, base_md_content)
-    logger.info(f"Written output: {ctx.output_file}")
+    logger.debug(f"Written output: {ctx.output_file}")
 
     return ConversionStepResult(success=True)
 

@@ -1,8 +1,7 @@
 """Doctor CLI command for system health checking.
 
 This module provides the doctor command for verifying all optional dependencies,
-authentication status, and overall system health. The check-deps command is
-retained as an alias for backward compatibility.
+authentication status, and overall system health.
 """
 
 from __future__ import annotations
@@ -195,8 +194,6 @@ def _check_claude_auth() -> dict[str, str]:
 
 def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     """Implementation of the doctor command.
-
-    This function contains the core logic shared by both doctor and check_deps.
 
     Args:
         as_json: Output results as JSON.
@@ -585,7 +582,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             continue
         info = results[key]
         if info["status"] == "ok":
-            ui.success(f"{info['name']} {info['message']}")
+            ui.success(f"{info['name']}: {info['message']}")
             passed += 1
         elif info["status"] == "warning":
             ui.warning(info["name"], detail=info["message"])
@@ -700,38 +697,4 @@ def doctor(as_json: bool, fix: bool) -> None:
     - LLM API configuration (for content enhancement)
     - Authentication status for local providers (Claude Agent, Copilot)
     """
-    # Suppress debug logs during doctor command
-    from loguru import logger
-
-    logger.disable("markitai")
-    try:
-        _doctor_impl(as_json, fix=fix)
-    finally:
-        logger.enable("markitai")
-
-
-@click.command("check-deps")
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Output as JSON.",
-)
-@click.option(
-    "--fix",
-    is_flag=True,
-    help="Attempt to install missing components.",
-)
-def check_deps(as_json: bool, fix: bool) -> None:
-    """Check all optional dependencies and their status.
-
-    This is an alias for 'doctor' command, kept for backward compatibility.
-    """
-    # Suppress debug logs during check-deps command
-    from loguru import logger
-
-    logger.disable("markitai")
-    try:
-        _doctor_impl(as_json, fix=fix)
-    finally:
-        logger.enable("markitai")
+    _doctor_impl(as_json, fix=fix)

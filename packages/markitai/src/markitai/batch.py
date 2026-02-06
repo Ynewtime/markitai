@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +19,7 @@ from rich.progress import (
     TaskID,
     TaskProgressColumn,
     TextColumn,
+    TimeElapsedColumn,
 )
 
 from markitai.cli import ui
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from markitai.workflow.single import ImageAnalysisResult
 
 
-class FileStatus(str, Enum):
+class FileStatus(StrEnum):
     """Status of a file in batch processing.
 
     State transitions:
@@ -558,11 +559,12 @@ class BatchProcessor:
         self._console_handler_id = console_handler_id
 
         # Create progress display
-        # Format: "Files  ━━━━━━━━━━━━━  5/7  (example.pdf)"
+        # Format: "Files  ━━━━━━━━━━━━━  5/7  0:15  (example.pdf)"
         self._progress = Progress(
             TextColumn("[progress.description]{task.description: <6}"),
             BarColumn(),
             TaskProgressColumn(),
+            TimeElapsedColumn(),
             TextColumn("{task.fields[current]}"),
             console=self.console,
             transient=True,  # Clear progress when done
@@ -611,10 +613,13 @@ class BatchProcessor:
 
         # Re-add console handler (restore original state)
         if self._console_handler_id is not None:
+            from markitai.cli.logging_config import _should_show_log
+
             new_handler_id = logger.add(
                 sys.stderr,
-                level="DEBUG" if self._verbose else "INFO",
+                level="INFO",
                 format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+                filter=lambda record: _should_show_log(record, self._verbose),
             )
             self._restored_console_handler_id = new_handler_id
             self._console_handler_id = None
@@ -805,7 +810,7 @@ class BatchProcessor:
             self._last_state_save = now
 
             if log:
-                logger.info(f"State file saved: {self.state_file.resolve()}")
+                logger.debug(f"State file saved: {self.state_file.resolve()}")
         finally:
             self._save_lock.release()
 
@@ -1032,11 +1037,12 @@ class BatchProcessor:
             progress.update(overall_task, total=len(files))
         else:
             # Create progress display (legacy path for backwards compatibility)
-            # Format: "Files  ━━━━━━━━━━━━━  5/7  (example.pdf)"
+            # Format: "Files  ━━━━━━━━━━━━━  5/7  0:15  (example.pdf)"
             progress = Progress(
                 TextColumn("[progress.description]{task.description: <6}"),
                 BarColumn(),
                 TaskProgressColumn(),
+                TimeElapsedColumn(),
                 TextColumn("{task.fields[current]}"),
                 console=self.console,
                 transient=True,  # Clear progress when done
@@ -1132,10 +1138,13 @@ class BatchProcessor:
                 if console_handler_id is not None:
                     import sys
 
+                    from markitai.cli.logging_config import _should_show_log
+
                     new_handler_id = logger.add(
                         sys.stderr,
-                        level="DEBUG" if verbose else "INFO",
+                        level="INFO",
                         format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+                        filter=lambda record: _should_show_log(record, verbose),
                     )
                     self._restored_console_handler_id = new_handler_id
 
@@ -1180,7 +1189,7 @@ class BatchProcessor:
         self.report_file.parent.mkdir(parents=True, exist_ok=True)
 
         atomic_write_json(self.report_file, report, order_func=order_report)
-        logger.info(f"Report saved: {self.report_file.resolve()}")
+        logger.debug(f"Report saved: {self.report_file.resolve()}")
 
         return self.report_file
 
@@ -1215,10 +1224,6 @@ class BatchProcessor:
             secs = int(seconds % 60)
             return f"{minutes}:{secs:02d}"
 
-        # Calculate durations for files and URLs separately
-        files_duration = sum(f.duration or 0 for f in self.state.files.values())
-        urls_duration = sum(u.duration or 0 for u in self.state.urls.values())
-
         # Calculate wall-clock duration from started_at to updated_at
         wall_duration = 0.0
         if self.state.started_at and self.state.updated_at:
@@ -1227,8 +1232,7 @@ class BatchProcessor:
                 end = datetime.fromisoformat(self.state.updated_at)
                 wall_duration = (end - start).total_seconds()
             except ValueError:
-                # Fallback to sum of individual durations
-                wall_duration = files_duration + urls_duration
+                wall_duration = 0.0
 
         # LLM cost (from both files and URLs)
         total_cost = sum(f.cost_usd for f in self.state.files.values()) + sum(
@@ -1248,55 +1252,55 @@ class BatchProcessor:
                 domain = urlparse(u.url).netloc
                 warnings.append(f"{domain}: {u.error}")
 
-        # Print completion display (title + results)
+        # Format wall duration for display
+        wall_duration_str = format_duration(wall_duration)
+
+        # Print completion display
         self.console.print()
-        ui.title("Converting", console=self.console)
-
-        # Files result
         files_completed = self.state.completed_count
-        if files_completed > 0:
-            files_duration_str = format_duration(files_duration)
-            self.console.print(
-                f"  [green]{ui.MARK_SUCCESS}[/] {files_completed} files completed "
-                f"({files_duration_str})"
-            )
 
-        # URLs result
+        # Build summary parts
+        parts: list[str] = []
+        if files_completed > 0:
+            parts.append(f"{files_completed} files")
         if url_completed > 0:
-            urls_duration_str = format_duration(urls_duration)
+            parts.append(f"{url_completed} URLs")
+
+        cost_str = f", ${total_cost:.3f}" if total_cost > 0 else ""
+        summary_text = f"Done: {', '.join(parts)} ({wall_duration_str}{cost_str})"
+        ui.summary(summary_text, console=self.console)
+
+        # Detail lines
+        if files_completed > 0:
+            cache_hits = sum(
+                1
+                for f in self.state.files.values()
+                if f.status == FileStatus.COMPLETED and f.cache_hit
+            )
+            cache_str = f"  Cache: {cache_hits}" if cache_hits > 0 else ""
             self.console.print(
-                f"  [green]{ui.MARK_SUCCESS}[/] {url_completed} URLs completed "
-                f"({urls_duration_str})"
+                f"  {ui.MARK_INFO} Files: {files_completed}/{self.state.total} "
+                f"[green]{ui.MARK_SUCCESS}[/]{cache_str}"
+            )
+        if url_completed > 0 or url_failed > 0:
+            total_urls = url_completed + url_failed
+            self.console.print(
+                f"  {ui.MARK_INFO} URLs:  {url_completed}/{total_urls} "
+                f"[green]{ui.MARK_SUCCESS}[/]"
             )
 
         # Warnings (failed items)
         if warnings:
+            width = ui.term_width(self.console)
+            warn_max = max(width - 4, 20)
             self.console.print()
-            warning_count = len(warnings)
-            if warning_count == 1:
+            for warning in warnings:
                 self.console.print(
-                    f"  [yellow]{ui.MARK_WARNING}[/] 1 warning: {warnings[0]}"
+                    f"  [yellow]{ui.MARK_WARNING}[/] {ui.truncate(warning, warn_max)}"
                 )
-            else:
-                self.console.print(
-                    f"  [yellow]{ui.MARK_WARNING}[/] {warning_count} warnings:"
-                )
-                for warning in warnings:
-                    self.console.print(f"    {ui.MARK_LINE} {warning}")
 
-        # Final summary line
         self.console.print()
-        cost_str = f", ${total_cost:.3f}" if total_cost > 0 else ""
-        total_items = files_completed + url_completed
-        total_str = f"{total_items} items" if total_items > 1 else f"{total_items} item"
-
-        # Format wall duration for summary (human readable)
-        if wall_duration < 60:
-            wall_str = f"{wall_duration:.1f}s"
-        else:
-            mins = int(wall_duration // 60)
-            secs = int(wall_duration % 60)
-            wall_str = f"{mins}m {secs}s"
-
-        self.console.print(f"  Done: {total_str} in {wall_str}{cost_str}")
-        self.console.print(f"  Output: {self.output_dir}/")
+        out_max = max(ui.term_width(self.console) - 10, 20)
+        self.console.print(
+            f"  Output: {ui.truncate(str(self.output_dir) + '/', out_max)}"
+        )

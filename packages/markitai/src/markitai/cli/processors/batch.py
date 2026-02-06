@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from rich.panel import Panel
 
+from markitai.cli import ui
 from markitai.cli.console import get_console
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
@@ -71,7 +71,7 @@ def create_process_file(
         import time
 
         start_time = time.perf_counter()
-        logger.info(f"[START] {file_path.name}")
+        logger.debug(f"[START] {file_path.name}")
 
         try:
             # Calculate relative path to preserve directory structure
@@ -104,7 +104,7 @@ def create_process_file(
                 return ProcessResult(success=False, error=result.error)
 
             if result.skip_reason == "exists":
-                logger.info(
+                logger.debug(
                     f"[SKIP] Output exists: {file_output_dir / f'{file_path.name}.md'}"
                 )
                 return ProcessResult(
@@ -116,7 +116,7 @@ def create_process_file(
             # Determine cache hit
             cache_hit = cfg.llm.enabled and not ctx.llm_usage
 
-            logger.info(
+            logger.debug(
                 f"[DONE] {file_path.name}: {total_time:.2f}s "
                 f"(images={ctx.embedded_images_count}, screenshots={ctx.screenshots_count}, cost=${ctx.llm_cost:.4f})"
                 + (" [cache]" if cache_hit else "")
@@ -230,7 +230,7 @@ def create_url_processor(
             else:
                 filename = url_to_filename(url)
 
-            logger.info(f"[URL] Processing: {url} (strategy: {_fetch_strategy.value})")
+            logger.debug(f"[URL] Processing: {url} (strategy: {_fetch_strategy.value})")
 
             # Fetch URL using the configured strategy
             try:
@@ -314,7 +314,7 @@ def create_url_processor(
             output_file = resolve_output_path(base_output_file, cfg.output.on_conflict)
 
             if output_file is None:
-                logger.info(f"[URL] Skipped (exists): {base_output_file}")
+                logger.debug(f"[URL] Skipped (exists): {base_output_file}")
                 return ProcessResult(
                     success=True,
                     output_path=str(base_output_file),
@@ -357,7 +357,7 @@ def create_url_processor(
                         markdown_for_llm,  # Fallback primary content
                     )
 
-                    logger.info(
+                    logger.debug(
                         f"[URL] Using vision enhancement for multi-source URL: {url}"
                     )
 
@@ -437,7 +437,7 @@ def create_url_processor(
             is_cache_hit = cfg.llm.enabled and not url_llm_usage
 
             total_time = time.perf_counter() - start_time
-            logger.info(
+            logger.debug(
                 f"[URL] Completed via {extra_info['fetch_strategy']}: {url} "
                 f"({total_time:.2f}s)" + (" [cache]" if is_cache_hit else "")
             )
@@ -525,7 +525,7 @@ async def process_batch(
             for entry in entries:
                 url_entries_from_files.append((url_file, entry))
             if entries:
-                logger.info(f"Found {len(entries)} URLs in {url_file.name}")
+                logger.debug(f"Found {len(entries)} URLs in {url_file.name}")
         except Exception as e:
             logger.warning(f"Failed to parse URL list {url_file}: {e}")
 
@@ -561,29 +561,38 @@ async def process_batch(
         feature_str = " ".join(features) if features else "[dim]none[/dim]"
         cache_status = "enabled" if cfg.cache.enabled else "disabled"
 
-        # Build dry run message
-        dry_run_msg = f"[yellow]Would process {len(files)} files[/yellow]"
-        if url_entries_from_files:
-            dry_run_msg += f"\n[yellow]Would process {len(url_entries_from_files)} URLs from {len(url_list_files)} .urls files[/yellow]"
-        dry_run_msg += f"\n[yellow]Input:[/yellow] {input_dir}\n[yellow]Output:[/yellow] {output_dir}"
-        dry_run_msg += f"\n[yellow]Features:[/yellow] {feature_str}"
-        dry_run_msg += f"\n[yellow]Cache:[/yellow] {cache_status}"
+        # Display unified dry run output
+        width = ui.term_width(console)
+        path_max = max(width - 10, 20)
+        url_max = max(width - 6, 20)
 
-        console.print(Panel(dry_run_msg, title="Dry Run"))
+        ui.title("Dry Run")
+        console.print(f"  Input: {ui.truncate(str(input_dir), path_max)}")
+        console.print(f"  Output: {ui.truncate(str(output_dir), path_max)}")
+        console.print(f"  Features: {feature_str}")
+        console.print(f"  Cache: {cache_status}")
+        console.print()
+        console.print(f"  Files ({len(files)})")
         for f in files[:10]:
-            console.print(f"  - {f.name}")
+            console.print(f"    {ui.MARK_INFO} {ui.truncate(f.name, url_max)}")
         if len(files) > 10:
-            console.print(f"  ... and {len(files) - 10} more files")
+            console.print(f"    ... and {len(files) - 10} more files")
         if url_entries_from_files:
-            console.print("[dim]URL list files:[/dim]")
-            for url_file in url_list_files[:5]:
-                console.print(f"  - {url_file.name}")
-            if len(url_list_files) > 5:
-                console.print(f"  ... and {len(url_list_files) - 5} more .urls files")
+            console.print()
+            console.print(f"  URLs ({len(url_entries_from_files)})")
+            for _source_file, entry in url_entries_from_files[:10]:
+                console.print(f"    {ui.MARK_INFO} {ui.truncate(entry.url, url_max)}")
+            if len(url_entries_from_files) > 10:
+                console.print(
+                    f"    ... and {len(url_entries_from_files) - 10} more URLs"
+                )
+        console.print()
+        console.print("  " + "\u2500" * 20)
+        console.print(
+            f"  Total: {len(files)} files, {len(url_entries_from_files)} URLs"
+        )
         if cfg.cache.enabled:
-            console.print(
-                "[dim]Tip: Use 'markitai cache stats -v' to view cached entries[/dim]"
-            )
+            ui.step("Tip: Use 'markitai cache stats -v' to view cached entries")
         raise SystemExit(0)
 
     # Record batch start time before any processing (including pre-conversion)
@@ -617,10 +626,10 @@ async def process_batch(
             )
             preconvert_path = Path(preconvert_temp_dir.name)
 
-            logger.info(f"Pre-converting {len(legacy_files)} legacy files...")
+            logger.debug(f"Pre-converting {len(legacy_files)} legacy files...")
             preconverted_map = batch_convert_legacy_files(legacy_files, preconvert_path)
             if preconverted_map:
-                logger.info(
+                logger.debug(
                     f"Pre-converted {len(preconverted_map)}/{len(legacy_files)} files with MS Office COM"
                 )
 
@@ -631,7 +640,7 @@ async def process_batch(
 
         runtime = LLMRuntime(concurrency=cfg.llm.concurrency)
         shared_processor = create_llm_processor(cfg, runtime=runtime)
-        logger.info(
+        logger.debug(
             f"Created shared LLMProcessor with concurrency={cfg.llm.concurrency}"
         )
 
@@ -644,7 +653,7 @@ async def process_batch(
         # We initialize it here to reuse across all URLs in the batch
         proxy = _detect_proxy() if getattr(cfg.fetch, "auto_proxy", True) else None
         shared_renderer = await _get_playwright_renderer(proxy=proxy)
-        logger.info("Created shared PlaywrightRenderer for batch URL processing")
+        logger.debug("Created shared PlaywrightRenderer for batch URL processing")
 
     # Create process_file using workflow/core implementation
     process_file = create_process_file(
@@ -823,7 +832,7 @@ async def process_batch(
                 all_tasks.append(process_file_with_state(file_path))
 
             if all_tasks:
-                logger.info(
+                logger.debug(
                     f"Processing {len(files)} files and {len(url_entries_from_files)} URLs "
                     f"with concurrency {cfg.batch.concurrency}"
                 )

@@ -432,12 +432,12 @@ def write_images_json(
         atomic_write_json(json_file, images_json, order_func=order_images)
         created_files.append(json_file)
 
-    # Log summary of created files
+    # Log summary of created files (debug level - UI handles user-facing output)
     if created_files:
         if len(created_files) == 1:
-            logger.info(f"Image descriptions saved: {created_files[0]}")
+            logger.debug(f"Image descriptions saved: {created_files[0]}")
         else:
-            logger.info(f"Asset descriptions saved: {len(created_files)} files")
+            logger.debug(f"Asset descriptions saved: {len(created_files)} files")
 
     return created_files
 
