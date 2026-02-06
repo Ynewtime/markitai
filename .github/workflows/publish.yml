@@ -25,13 +25,18 @@ jobs:
         run: uv python install 3.13
 
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync --frozen --all-extras
 
       - name: Run lint
         run: uv run ruff check packages/markitai/src
 
-      - name: Run tests
-        run: uv run --project packages/markitai pytest packages/markitai/tests/ -x -q
+      - name: Run unit tests
+        run: uv run pytest packages/markitai/tests/unit -x -q
+
+      - name: Run integration tests (no API keys)
+        run: uv run pytest packages/markitai/tests/integration -x -q -k "not test_url"
+        env:
+          SKIP_LLM_TESTS: "1"
 
   publish:
     needs: [test]
