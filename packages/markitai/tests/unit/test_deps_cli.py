@@ -677,6 +677,10 @@ class TestOutputFormatting:
             patch("markitai.cli.commands.doctor.shutil.which") as mock_which,
             patch("markitai.cli.commands.doctor.subprocess.run") as mock_run,
             patch.dict("sys.modules", {"rapidocr": MagicMock(__version__="1.3.0")}),
+            patch(
+                "markitai.utils.office.find_libreoffice",
+                return_value="/usr/bin/soffice",
+            ),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = True
