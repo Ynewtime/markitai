@@ -21,11 +21,14 @@ Markitai 按以下顺序查找配置文件：
 ### 初始化配置
 
 ```bash
-# 在当前目录创建配置文件
-markitai config init
+# 交互式配置向导（推荐）
+markitai init
 
-# 在指定位置创建
-markitai config init -o ~/.markitai/
+# 快速模式（生成默认配置）
+markitai init --yes
+
+# 在指定位置创建全局配置
+markitai init -o ~/.markitai/ --global
 ```
 
 ### 查看配置
@@ -105,7 +108,7 @@ markitai config set llm.enabled true
     "strategy": "auto",
     "playwright": {
       "timeout": 30000,
-      "wait_for": "networkidle",
+      "wait_for": "domcontentloaded",
       "extra_wait_ms": 5000
     },
     "jina": {
@@ -152,6 +155,7 @@ markitai config set llm.enabled true
 |------|------|
 | `MARKITAI_CONFIG` | 配置文件路径 |
 | `MARKITAI_LOG_DIR` | 日志文件目录 |
+| `MARKITAI_LOG_FORMAT` | 日志格式覆盖（`text` 或 `json`） |
 
 ## LLM 配置
 
@@ -312,7 +316,7 @@ GitHub Copilot SDK 支持的模型：
 Claude Agent provider 对超过 4KB 的系统提示词自动启用**提示缓存**。这通过缓存常用的系统提示词前缀来降低 API 成本。
 
 ::: tip
-提示缓存是透明的——无需配置。使用 `markitai cache stats -v` 查看缓存统计。
+提示缓存是透明的——无需配置。使用 `markitai cache stats --verbose` 查看缓存统计。
 :::
 
 ## 图片配置
@@ -455,7 +459,7 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
     "strategy": "auto",
     "playwright": {
       "timeout": 30000,
-      "wait_for": "networkidle",
+      "wait_for": "domcontentloaded",
       "extra_wait_ms": 5000
     },
     "jina": {
@@ -481,7 +485,7 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `timeout` | `30000` | 页面加载超时（毫秒） |
-| `wait_for` | `networkidle` | 等待条件：`load`, `domcontentloaded`, `networkidle` |
+| `wait_for` | `domcontentloaded` | 等待条件：`load`, `domcontentloaded`, `networkidle` |
 | `extra_wait_ms` | `5000` | JS 渲染额外等待时间 |
 
 ### 回退模式
@@ -525,10 +529,10 @@ Markitai 使用全局缓存，存储在 `~/.markitai/cache.db`。
 markitai cache stats
 
 # 查看详细统计（条目、按模型分组）
-markitai cache stats -v
+markitai cache stats --verbose
 
 # 指定显示数量
-markitai cache stats -v --limit 50
+markitai cache stats --verbose --limit 50
 
 # 清除缓存
 markitai cache clear
@@ -594,14 +598,26 @@ markitai ./docs --no-cache-for "file1.pdf,reports/**"
     "dir": "~/.markitai/prompts",
     "cleaner_system": null,
     "cleaner_user": null,
-    "frontmatter_system": null,
-    "frontmatter_user": null,
     "image_caption_system": null,
     "image_caption_user": null,
     "image_description_system": null,
     "image_description_user": null,
+    "image_analysis_system": null,
+    "image_analysis_user": null,
+    "page_content_system": null,
+    "page_content_user": null,
+    "document_enhance_system": null,
+    "document_enhance_user": null,
+    "document_enhance_complete_system": null,
+    "document_enhance_complete_user": null,
     "document_process_system": null,
-    "document_process_user": null
+    "document_process_user": null,
+    "document_vision_system": null,
+    "document_vision_user": null,
+    "url_enhance_system": null,
+    "url_enhance_user": null,
+    "screenshot_extract_system": null,
+    "screenshot_extract_user": null
   }
 }
 ```
@@ -610,13 +626,16 @@ markitai ./docs --no-cache-for "file1.pdf,reports/**"
 
 ```
 ~/.markitai/prompts/
-├── cleaner_system.md          # 文档清理角色和规则
-├── cleaner_user.md            # 文档清理内容模板
-├── frontmatter_system.md      # 元数据提取角色
-├── frontmatter_user.md        # 元数据提取模板
-├── image_caption_system.md    # Alt 文本生成角色
-├── image_caption_user.md      # Alt 文本内容模板
-└── document_enhance_system.md # 视觉增强角色
+├── cleaner_system.md                    # 文档清理角色和规则
+├── cleaner_user.md                      # 文档清理内容模板
+├── image_caption_system.md              # Alt 文本生成角色
+├── image_caption_user.md                # Alt 文本内容模板
+├── document_enhance_system.md           # 文档增强角色
+├── document_enhance_user.md             # 文档增强内容模板
+├── document_enhance_complete_system.md  # 完整文档增强角色
+├── document_enhance_complete_user.md    # 完整文档增强内容模板
+├── screenshot_extract_system.md         # 截图提取角色
+└── screenshot_extract_user.md           # 截图提取内容模板
 ```
 
 指定特定的提示词文件路径：

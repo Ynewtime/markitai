@@ -587,19 +587,6 @@ function Install-Python {
 
 # Install markitai (User mode)
 function Install-Markitai {
-    # Check if already installed
-    $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
-    if ($markitaiCmd) {
-        $version = & markitai --version 2>&1 | Select-Object -First 1
-        if ($version) {
-            Clack-Success "$(i18n 'markitai') $version $(i18n 'already_installed')"
-            Track-Install -Component "markitai" -Status "installed"
-            return $true
-        }
-    }
-
-    Clack-Info "$(i18n 'installing') $(i18n 'markitai')..."
-
     # Build package spec with optional version
     if ($script:MarkitaiVersion) {
         $pkg = "markitai[browser]==$($script:MarkitaiVersion)"
@@ -610,7 +597,21 @@ function Install-Markitai {
     # Build Python command for --python argument
     $pythonArg = $script:PYTHON_CMD
 
-    # Prefer uv tool install (recommended)
+    # Check if already installed
+    $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
+    $isUpgrade = $false
+    if ($markitaiCmd) {
+        $oldVersion = & markitai --version 2>&1 | Select-Object -First 1
+        if ($oldVersion) {
+            $isUpgrade = $true
+        }
+    }
+
+    if (-not $isUpgrade) {
+        Clack-Info "$(i18n 'installing') $(i18n 'markitai')..."
+    }
+
+    # Always run uv tool install --upgrade to ensure latest version
     $uvExists = Get-Command uv -ErrorAction SilentlyContinue
     if ($uvExists) {
         $oldErrorAction = $ErrorActionPreference

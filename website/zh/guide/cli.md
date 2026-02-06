@@ -226,6 +226,34 @@ markitai https://example.com --jina
 `--playwright` 和 `--jina` 互斥，同时只能使用一个。
 :::
 
+## 初始化命令
+
+### `markitai init`
+
+交互式配置向导，检查依赖项、检测 LLM 提供商并生成配置文件。
+
+```bash
+# 交互式配置向导
+markitai init
+
+# 快速模式（不询问直接生成默认配置）
+markitai init --yes
+
+# 生成全局配置
+markitai init --global
+
+# 指定输出路径
+markitai init -o ./markitai.json
+```
+
+### `-I, --interactive`
+
+进入交互模式，引导式文件转换设置。
+
+```bash
+markitai -I
+```
+
 ## 配置命令
 
 ### `markitai config list`
@@ -234,16 +262,7 @@ markitai https://example.com --jina
 
 ```bash
 markitai config list
-markitai config list --json
-```
-
-### `markitai config init`
-
-创建新的配置文件。
-
-```bash
-markitai config init
-markitai config init -o ~/.markitai/
+markitai config list --format json
 ```
 
 ### `markitai config get <key>`
@@ -288,7 +307,7 @@ markitai config validate
 
 ```bash
 markitai cache stats
-markitai cache stats -v           # 详细模式
+markitai cache stats --verbose    # 详细模式
 markitai cache stats --json       # JSON 输出
 ```
 
@@ -324,6 +343,7 @@ SPA 域名会在静态抓取检测到 JavaScript 依赖时自动学习。这可�
 
 ```bash
 markitai doctor
+markitai doctor --fix     # 自动修复缺失组件
 markitai doctor --json    # JSON 输出
 ```
 
@@ -357,15 +377,6 @@ markitai doctor --json    # JSON 输出
 当使用本地 provider（`claude-agent/` 或 `copilot/`）时，doctor 命令还会检查认证状态，如果认证失败会提供解决方案提示。
 :::
 
-### `markitai check-deps`
-
-`markitai doctor` 的别名，保留用于向后兼容。
-
-```bash
-markitai check-deps
-markitai check-deps --json    # JSON 输出
-```
-
 ## 其他选项
 
 ### `--verbose`
@@ -374,6 +385,14 @@ markitai check-deps --json    # JSON 输出
 
 ```bash
 markitai document.docx --verbose
+```
+
+### `--quiet, -q`
+
+静默模式，减少输出信息。
+
+```bash
+markitai document.docx --quiet
 ```
 
 ### `--dry-run`
@@ -389,7 +408,7 @@ markitai document.docx --dry-run
 指定配置文件路径。
 
 ```bash
-markitai document.docx -c ./my-config.json
+markitai document.docx --config ./my-config.json
 ```
 
 ### `-v, --version`

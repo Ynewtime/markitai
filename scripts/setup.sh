@@ -602,14 +602,6 @@ detect_python() {
 # Requires: PYTHON_CMD to be set
 # Returns: 0 on success, 1 on failure
 install_markitai() {
-    # Check if already installed
-    if command -v markitai >/dev/null 2>&1; then
-        _mi_version=$(markitai --version 2>/dev/null || echo "")
-        clack_success "$(i18n markitai) $_mi_version $(i18n already_installed)"
-        track_install "markitai" "installed"
-        return 0
-    fi
-
     # Build package spec with optional version
     if [ -n "$MARKITAI_VERSION" ]; then
         _mi_pkg="markitai[browser]==$MARKITAI_VERSION"
@@ -617,14 +609,17 @@ install_markitai() {
         _mi_pkg="markitai[browser]"
     fi
 
-    clack_info "$(i18n installing) $(i18n markitai)..."
+    # Show installing message only for fresh installs
+    if ! command -v markitai >/dev/null 2>&1; then
+        clack_info "$(i18n installing) $(i18n markitai)..."
+    fi
 
-    # Install via uv tool
+    # Always run uv tool install --upgrade to ensure latest version
     if command -v uv >/dev/null 2>&1; then
         if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --upgrade; then
             export PATH="$HOME/.local/bin:$PATH"
             _mi_version=$(markitai --version 2>/dev/null || echo "")
-            clack_success "$(i18n markitai) $_mi_version $(i18n installed)"
+            clack_success "$(i18n markitai) $_mi_version"
             track_install "markitai" "installed"
             return 0
         fi

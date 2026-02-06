@@ -85,6 +85,24 @@ uv pip install markitai
 
 ## 快速上手
 
+### 首次运行
+
+新用户推荐使用交互模式，引导完成初始设置：
+
+```bash
+markitai -I
+```
+
+或使用配置向导初始化：
+
+```bash
+# 交互式配置向导
+markitai init
+
+# 快速模式（生成默认配置）
+markitai init --yes
+```
+
 ### 基础转换
 
 将单个文档转换为 Markdown：
@@ -93,7 +111,7 @@ uv pip install markitai
 markitai document.docx
 ```
 
-输出保存到当前目录，同时打印到 stdout。使用 `-o` 指定其他输出目录：
+不指定 `-o` 时，输出打印到 stdout。使用 `-o` 可指定输出目录：
 
 ```bash
 markitai document.docx -o output/
@@ -104,7 +122,7 @@ markitai document.docx -o output/
 直接转换网页：
 
 ```bash
-markitai https://example.com/article
+markitai https://example.com/article -o output/
 ```
 
 ### LLM 增强
@@ -146,6 +164,18 @@ markitai ./docs -o ./output
 markitai ./docs -o ./output --resume
 ```
 
+### 系统检查
+
+验证所有依赖项，自动修复缺失组件：
+
+```bash
+# 检查系统状态
+markitai doctor
+
+# 自动修复缺失组件
+markitai doctor --fix
+```
+
 ## 输出结构
 
 ```
@@ -155,6 +185,8 @@ output/
 ├── assets/
 │   ├── document.docx.0001.jpg
 │   └── images.json         # 图片描述
+├── screenshots/             # 页面截图（使用 --screenshot 时）
+│   └── document.docx.0001.png
 ```
 
 ## 支持的格式
@@ -165,7 +197,7 @@ output/
 | PowerPoint | `.pptx`, `.ppt` |
 | Excel | `.xlsx`, `.xls` |
 | PDF | `.pdf` |
-| 文本 | `.txt`, `.md` |
+| 文本 | `.txt`, `.md`, `.markdown` |
 | 图片 | `.jpg`, `.jpeg`, `.png`, `.webp` |
 | URL | `http://`, `https://` |
 
@@ -182,15 +214,11 @@ output/
 | EMF/WMF 图片 | ✅ 完全支持 | 原生支持 |
 | 浏览器自动化 | ✅ 完全支持 | 隐藏窗口模式 |
 
-::: tip Windows 性能
-在 Windows 上，markitai 自动将并发数限制为 4 个线程，以应对较高的线程切换开销。
-:::
-
 ### Linux
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ❌ 不支持 | 需要 Windows COM |
+| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ✅ 完全支持 | 需要 LibreOffice（Windows 使用 COM，LibreOffice 作为备选） |
 | PPTX 幻灯片渲染 | ✅ 完全支持 | 需要 LibreOffice |
 | EMF/WMF 图片 | ❌ 不支持 | Windows 专有格式 |
 | 浏览器自动化 | ✅ 完全支持 | 需要系统依赖 |
@@ -214,7 +242,7 @@ uv run playwright install-deps chromium  # 安装系统依赖
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ❌ 不支持 | 需要 Windows COM |
+| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ✅ 完全支持 | 需要 LibreOffice |
 | PPTX 幻灯片渲染 | ✅ 完全支持 | 需要 LibreOffice |
 | EMF/WMF 图片 | ❌ 不支持 | Windows 专有格式 |
 | 浏览器自动化 | ✅ 完全支持 | - |
