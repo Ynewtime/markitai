@@ -16,14 +16,27 @@ from click import Context
 if TYPE_CHECKING:
     pass
 
-# Mapping of command name -> (module_path, attribute_name)
+# Mapping of command name -> (module_path, attribute_name, short_help)
 # This allows list_commands() and get_command() to work without importing
-# the heavy command modules at module level.
-_LAZY_COMMANDS: dict[str, tuple[str, str]] = {
-    "cache": ("markitai.cli.commands.cache", "cache"),
-    "config": ("markitai.cli.commands.config", "config"),
-    "doctor": ("markitai.cli.commands.doctor", "doctor"),
-    "init": ("markitai.cli.commands.init", "init"),
+# the heavy command modules at module level.  The short_help string is
+# used by format_help() so that displaying --help never triggers imports.
+_LAZY_COMMANDS: dict[str, tuple[str, str, str]] = {
+    "cache": ("markitai.cli.commands.cache", "cache", "Cache management commands."),
+    "config": (
+        "markitai.cli.commands.config",
+        "config",
+        "Configuration management commands.",
+    ),
+    "doctor": (
+        "markitai.cli.commands.doctor",
+        "doctor",
+        "Check system health, dependencies, and authentication status.",
+    ),
+    "init": (
+        "markitai.cli.commands.init",
+        "init",
+        "Initialize Markitai configuration.",
+    ),
 }
 
 
@@ -31,7 +44,7 @@ class MarkitaiGroup(click.Group):
     """Custom Group that supports main command with arguments and subcommands.
 
     Subcommands are lazily loaded: their modules are only imported when
-    the command is actually invoked or when help text needs to be rendered.
+    the command is actually invoked, not when help text is rendered.
 
     This allows:
         markitai document.docx --llm          # Convert file (main command)
@@ -74,7 +87,7 @@ class MarkitaiGroup(click.Group):
         if spec is None:
             return None
 
-        module_path, attr_name = spec
+        module_path, attr_name, _help = spec
         mod = importlib.import_module(module_path)
         cmd = getattr(mod, attr_name)
         # Cache so subsequent calls don't re-import
@@ -169,13 +182,19 @@ class MarkitaiGroup(click.Group):
             with formatter.section("Options"):
                 formatter.write_dl(opts)
 
-        # Commands
+        # Commands — use stored help text for lazy commands to avoid imports
         commands = []
         for name in self.list_commands(ctx):
-            cmd = self.get_command(ctx, name)
-            if cmd is None or cmd.hidden:
-                continue
-            commands.append((name, cmd.get_short_help_str(limit=formatter.width)))
+            if name in _LAZY_COMMANDS and name not in self.commands:
+                # Lazy command not yet imported — use the stored short help
+                _mod, _attr, short_help = _LAZY_COMMANDS[name]
+                commands.append((name, short_help))
+            else:
+                # Eagerly registered (or already imported) — resolve normally
+                cmd = self.get_command(ctx, name)
+                if cmd is None or cmd.hidden:
+                    continue
+                commands.append((name, cmd.get_short_help_str(limit=formatter.width)))
         if commands:
             with formatter.section("Commands"):
                 formatter.write_dl(commands)
