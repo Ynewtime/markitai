@@ -4,32 +4,26 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections import deque
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from rich.console import Group
 from rich.live import Live
-from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     Progress,
-    SpinnerColumn,
     TaskID,
     TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
 )
-from rich.table import Table
-from rich.text import Text
 
+from markitai.cli import ui
 from markitai.cli.console import get_console
-from markitai.constants import DEFAULT_LOG_PANEL_MAX_LINES
 from markitai.json_order import order_report, order_state
 from markitai.security import atomic_write_json
 from markitai.utils.text import format_error_message
@@ -39,7 +33,7 @@ if TYPE_CHECKING:
     from markitai.workflow.single import ImageAnalysisResult
 
 
-class FileStatus(str, Enum):
+class FileStatus(StrEnum):
     """Status of a file in batch processing.
 
     State transitions:
@@ -415,24 +409,6 @@ class ProcessResult:
 ProcessFunc = Callable[[Path], Coroutine[Any, Any, ProcessResult]]
 
 
-class LogPanel:
-    """Log panel for verbose mode, displays scrolling log messages."""
-
-    def __init__(self, max_lines: int = DEFAULT_LOG_PANEL_MAX_LINES):
-        self.logs: deque[str] = deque(maxlen=max_lines)
-
-    def add(self, message: str) -> None:
-        """Add a log message to the panel."""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.logs.append(f"{timestamp} | {message}")
-
-    def __rich__(self) -> Panel:
-        """Render the log panel."""
-        content = "\n".join(self.logs) if self.logs else "(waiting for logs...)"
-        # Use Text object to prevent markup parsing (paths like [/foo/bar] would be misinterpreted)
-        return Panel(Text(content), title="Logs", border_style="dim")
-
-
 class BatchProcessor:
     """Batch processor with concurrent execution and progress display."""
 
@@ -477,8 +453,6 @@ class BatchProcessor:
 
         # Live display state (managed by start_live_display/stop_live_display)
         self._live: Live | None = None
-        self._log_panel: LogPanel | None = None
-        self._panel_handler_id: int | None = None
         self._console_handler_id: int | None = None
         self._verbose: bool = False
         self._progress: Progress | None = None
@@ -569,13 +543,13 @@ class BatchProcessor:
         total_files: int = 0,
         total_urls: int = 0,
     ) -> None:
-        """Start Live display with progress bar and optional log panel.
+        """Start Live display with progress bar.
 
-        Call this before any processing (including pre-conversion) to capture
-        all logs in the panel instead of printing to console.
+        Call this before any processing (including pre-conversion).
+        In verbose mode, logs are printed directly to console with │ prefix.
 
         Args:
-            verbose: Whether to show log panel
+            verbose: Whether to show verbose log output
             console_handler_id: Loguru console handler ID to disable
             total_files: Total number of files (for progress bar)
             total_urls: Total number of URLs to process
@@ -585,12 +559,15 @@ class BatchProcessor:
         self._console_handler_id = console_handler_id
 
         # Create progress display
+        # Format: "Files  ━━━━━━━━━━━━━  5/7  0:15  (example.pdf)"
         self._progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold blue]{task.fields[filename]:<30}"),
+            TextColumn("[progress.description]{task.description: <6}"),
             BarColumn(),
             TaskProgressColumn(),
             TimeElapsedColumn(),
+            TextColumn("{task.fields[current]}"),
+            console=self.console,
+            transient=True,  # Clear progress when done
         )
 
         # Store totals for progress display
@@ -604,34 +581,15 @@ class BatchProcessor:
             self._url_task_id = self._progress.add_task(
                 "URLs",
                 total=total_urls,
-                filename=f"[URLs:0/{total_urls}]",
+                current="",
             )
 
         # Add file progress task (or overall if no URLs)
         self._overall_task_id = self._progress.add_task(
-            "Overall",
+            "Files",
             total=total_files,
-            filename=f"[Files:0/{total_files}]"
-            if total_urls > 0
-            else "[Overall Progress]",
+            current="",
         )
-
-        # Create log panel for verbose mode
-        if verbose:
-            self._log_panel = LogPanel()
-
-            def panel_sink(message: Any) -> None:
-                """Sink function to write logs to the panel."""
-                if self._log_panel is not None:
-                    self._log_panel.add(message.record["message"])
-
-            # Add a handler that writes to the log panel
-            self._panel_handler_id = logger.add(
-                panel_sink,
-                level="INFO",
-                format="{message}",
-                filter=lambda record: record["level"].no >= 20,  # INFO and above
-            )
 
         # Disable console handler to avoid conflict with progress bar
         if console_handler_id is not None:
@@ -640,15 +598,8 @@ class BatchProcessor:
             except ValueError:
                 pass  # Handler already removed
 
-        # Start Live display
-        if verbose and self._log_panel is not None:
-            display = Group(self._progress, self._log_panel)
-            self._live = Live(display, console=self.console, refresh_per_second=4)
-        else:
-            self._live = Live(
-                self._progress, console=self.console, refresh_per_second=4
-            )
-
+        # Start Live display (progress bar only, no panel)
+        self._live = Live(self._progress, console=self.console, refresh_per_second=4)
         self._live.start()
 
     def stop_live_display(self) -> None:
@@ -660,20 +611,15 @@ class BatchProcessor:
             self._live.stop()
             self._live = None
 
-        # Remove panel handler if added
-        if self._panel_handler_id is not None:
-            try:
-                logger.remove(self._panel_handler_id)
-            except ValueError:
-                pass
-            self._panel_handler_id = None
-
         # Re-add console handler (restore original state)
         if self._console_handler_id is not None:
+            from markitai.cli.logging_config import _should_show_log
+
             new_handler_id = logger.add(
                 sys.stderr,
-                level="DEBUG" if self._verbose else "INFO",
+                level="INFO",
                 format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+                filter=lambda record: _should_show_log(record, self._verbose),
             )
             self._restored_console_handler_id = new_handler_id
             self._console_handler_id = None
@@ -683,39 +629,47 @@ class BatchProcessor:
         self._total_files = total
         if self._progress is not None and self._overall_task_id is not None:
             self._progress.update(self._overall_task_id, total=total)
-            # Update filename with new total
-            self._progress.update(
-                self._overall_task_id,
-                filename=f"[Files:{self._completed_files}/{total}]",
-            )
 
-    def advance_progress(self) -> None:
-        """Advance progress bar by one."""
+    def advance_progress(self, clear_current: bool = True) -> None:
+        """Advance progress bar by one.
+
+        Args:
+            clear_current: Whether to clear the current file field after advancing
+        """
         if self._progress is not None and self._overall_task_id is not None:
             self._completed_files += 1
             self._progress.advance(self._overall_task_id)
-            # Update filename with current count
-            self._progress.update(
-                self._overall_task_id,
-                filename=f"[Files:{self._completed_files}/{self._total_files}]",
-            )
+            if clear_current:
+                self._progress.update(self._overall_task_id, current="")
+
+    def set_current_file(self, filename: str) -> None:
+        """Set the current file being processed in progress display.
+
+        Args:
+            filename: Name of the file being processed (displayed in progress bar)
+        """
+        if self._progress is not None and self._overall_task_id is not None:
+            self._progress.update(self._overall_task_id, current=f"({filename})")
 
     def update_url_status(self, url: str, completed: bool = False) -> None:
         """Update URL processing status in progress display.
 
         Args:
             url: The URL being processed (displayed in progress bar)
-            completed: If True, advance the URL progress counter
+            completed: If True, advance the URL progress counter and clear current
         """
+        from urllib.parse import urlparse
+
         if self._progress is not None and self._url_task_id is not None:
             if completed:
                 self._completed_urls += 1
                 self._progress.advance(self._url_task_id)
-            # Update filename with current count
-            self._progress.update(
-                self._url_task_id,
-                filename=f"[URLs:{self._completed_urls}/{self._total_urls}]",
-            )
+                # Clear current URL after completion
+                self._progress.update(self._url_task_id, current="")
+            else:
+                # Show domain of current URL being processed
+                domain = urlparse(url).netloc
+                self._progress.update(self._url_task_id, current=f"({domain})")
 
     def finish_url_processing(self, completed: int, failed: int) -> None:
         """Mark URL processing as complete.
@@ -856,7 +810,7 @@ class BatchProcessor:
             self._last_state_save = now
 
             if log:
-                logger.info(f"State file saved: {self.state_file.resolve()}")
+                logger.debug(f"State file saved: {self.state_file.resolve()}")
         finally:
             self._save_lock.release()
 
@@ -1081,39 +1035,23 @@ class BatchProcessor:
             assert overall_task is not None  # Guaranteed when _progress is set
             # Update total in case it changed
             progress.update(overall_task, total=len(files))
-            log_panel = self._log_panel
         else:
             # Create progress display (legacy path for backwards compatibility)
+            # Format: "Files  ━━━━━━━━━━━━━  5/7  0:15  (example.pdf)"
             progress = Progress(
-                SpinnerColumn(),
-                TextColumn("[bold blue]{task.fields[filename]:<30}"),
+                TextColumn("[progress.description]{task.description: <6}"),
                 BarColumn(),
                 TaskProgressColumn(),
                 TimeElapsedColumn(),
+                TextColumn("{task.fields[current]}"),
+                console=self.console,
+                transient=True,  # Clear progress when done
             )
             overall_task = progress.add_task(
-                "Overall",
+                "Files",
                 total=len(files),
-                filename="[Overall Progress]",
+                current="",
             )
-            log_panel = None
-
-            # Create log panel for verbose mode (if not already created)
-            if verbose:
-                log_panel = LogPanel()
-
-                def panel_sink(message: Any) -> None:
-                    """Sink function to write logs to the panel."""
-                    if log_panel is not None:
-                        log_panel.add(message.record["message"])
-
-                # Add a handler that writes to the log panel
-                self._panel_handler_id = logger.add(
-                    panel_sink,
-                    level="INFO",
-                    format="{message}",
-                    filter=lambda record: record["level"].no >= 20,  # INFO and above
-                )
 
         async def process_with_limit(file_path: Path) -> None:
             """Process a file with semaphore limit.
@@ -1138,6 +1076,8 @@ class BatchProcessor:
             try:
                 # Process file within semaphore
                 async with semaphore:
+                    # Show current file being processed
+                    progress.update(overall_task, current=f"({file_path.name})")
                     result = await process_func(file_path)
 
                 if result.success:
@@ -1167,8 +1107,9 @@ class BatchProcessor:
                 file_state.completed_at = datetime.now().astimezone().isoformat()
                 file_state.duration = end_time - start_time
 
-                # Update progress
+                # Update progress and clear current file
                 progress.advance(overall_task)
+                progress.update(overall_task, current="")
 
             # Save state outside semaphore (non-blocking, throttled)
             # Use asyncio.to_thread to avoid blocking the event loop
@@ -1188,34 +1129,22 @@ class BatchProcessor:
                     pass  # Handler already removed
 
             try:
-                if verbose and log_panel is not None:
-                    # Verbose mode: show progress + log panel
-                    display = Group(progress, log_panel)
-                    with Live(display, console=self.console, refresh_per_second=4):
-                        tasks = [process_with_limit(f) for f in files]
-                        await asyncio.gather(*tasks, return_exceptions=True)
-                else:
-                    # Normal mode: progress bar only
-                    with Live(progress, console=self.console, refresh_per_second=4):
-                        tasks = [process_with_limit(f) for f in files]
-                        await asyncio.gather(*tasks, return_exceptions=True)
+                # Progress bar only (verbose logs handled by loguru)
+                with Live(progress, console=self.console, refresh_per_second=4):
+                    tasks = [process_with_limit(f) for f in files]
+                    await asyncio.gather(*tasks, return_exceptions=True)
             finally:
-                # Remove panel handler if added
-                if self._panel_handler_id is not None:
-                    try:
-                        logger.remove(self._panel_handler_id)
-                    except ValueError:
-                        pass
-                    self._panel_handler_id = None
-
                 # Re-add console handler (restore original state)
                 if console_handler_id is not None:
                     import sys
 
+                    from markitai.cli.logging_config import _should_show_log
+
                     new_handler_id = logger.add(
                         sys.stderr,
-                        level="DEBUG" if verbose else "INFO",
+                        level="INFO",
                         format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+                        filter=lambda record: _should_show_log(record, verbose),
                     )
                     self._restored_console_handler_id = new_handler_id
 
@@ -1260,7 +1189,7 @@ class BatchProcessor:
         self.report_file.parent.mkdir(parents=True, exist_ok=True)
 
         atomic_write_json(self.report_file, report, order_func=order_report)
-        logger.info(f"Report saved: {self.report_file.resolve()}")
+        logger.debug(f"Report saved: {self.report_file.resolve()}")
 
         return self.report_file
 
@@ -1273,6 +1202,11 @@ class BatchProcessor:
     ) -> None:
         """Print summary to console.
 
+        This displays:
+        1. Completion results (files/URLs completed with duration)
+        2. Warnings for failed items
+        3. Final summary with output location
+
         Args:
             url_completed: Number of URLs successfully processed
             url_failed: Number of URLs that failed
@@ -1282,45 +1216,13 @@ class BatchProcessor:
         if self.state is None:
             return
 
-        table = Table(title="Batch Processing Summary")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="green")
-
-        # Local Files section
-        if self.state.total > 0:
-            table.add_row("Local Files", str(self.state.total))
-            table.add_row("Completed", str(self.state.completed_count))
-            if self.state.failed_count > 0:
-                table.add_row("Failed", str(self.state.failed_count))
-
-            # File cache hits
-            completed_files = [
-                f for f in self.state.files.values() if f.status == FileStatus.COMPLETED
-            ]
-            file_cache_hits = sum(1 for f in completed_files if f.cache_hit)
-            if completed_files:
-                table.add_row("Cache Hits", f"{file_cache_hits}/{len(completed_files)}")
-
-            # Add separator if URLs follow
-            total_urls = url_completed + url_failed
-            if total_urls > 0:
-                table.add_row("", "")  # Empty row as separator
-
-        # URL Files section
-        total_urls = url_completed + url_failed
-        if total_urls > 0:
-            if url_sources > 0:
-                table.add_row("URL Files", str(url_sources))
-            table.add_row("URLs", str(total_urls))
-            table.add_row("Completed", str(url_completed))
-            if url_failed > 0:
-                table.add_row("Failed", str(url_failed))
-            if url_completed > 0:
-                table.add_row("Cache Hits", f"{url_cache_hits}/{url_completed}")
-
-            # Add separator before duration
-            if self.state.total > 0 or total_urls > 0:
-                table.add_row("", "")  # Empty row as separator
+        # Helper function to format duration as human-readable (m:ss format)
+        def format_duration(seconds: float) -> str:
+            if seconds < 60:
+                return f"0:{int(seconds):02d}"
+            minutes = int(seconds // 60)
+            secs = int(seconds % 60)
+            return f"{minutes}:{secs:02d}"
 
         # Calculate wall-clock duration from started_at to updated_at
         wall_duration = 0.0
@@ -1330,20 +1232,75 @@ class BatchProcessor:
                 end = datetime.fromisoformat(self.state.updated_at)
                 wall_duration = (end - start).total_seconds()
             except ValueError:
-                # Fallback to sum of individual durations
-                wall_duration = sum(f.duration or 0 for f in self.state.files.values())
-        table.add_row("Duration", f"{wall_duration:.1f}s")
+                wall_duration = 0.0
 
-        # LLM cost
-        total_cost = sum(f.cost_usd for f in self.state.files.values())
-        if total_cost > 0:
-            table.add_row("LLM Cost", f"${total_cost:.4f}")
+        # LLM cost (from both files and URLs)
+        total_cost = sum(f.cost_usd for f in self.state.files.values()) + sum(
+            u.cost_usd for u in self.state.urls.values()
+        )
 
-        self.console.print(table)
+        # Collect warnings (failed files and URLs)
+        warnings: list[str] = []
+        for f in self.state.files.values():
+            if f.status == FileStatus.FAILED and f.error:
+                warnings.append(f"{Path(f.path).name}: {f.error}")
+        for u in self.state.urls.values():
+            if u.status == FileStatus.FAILED and u.error:
+                # Extract domain for display
+                from urllib.parse import urlparse
 
-        # Print failed files if any
-        failed = [f for f in self.state.files.values() if f.status == FileStatus.FAILED]
-        if failed:
-            self.console.print("\n[red]Failed files:[/red]")
-            for f in failed:
-                self.console.print(f" - {Path(f.path).name}: {f.error}")
+                domain = urlparse(u.url).netloc
+                warnings.append(f"{domain}: {u.error}")
+
+        # Format wall duration for display
+        wall_duration_str = format_duration(wall_duration)
+
+        # Print completion display
+        self.console.print()
+        files_completed = self.state.completed_count
+
+        # Build summary parts
+        parts: list[str] = []
+        if files_completed > 0:
+            parts.append(f"{files_completed} files")
+        if url_completed > 0:
+            parts.append(f"{url_completed} URLs")
+
+        cost_str = f", ${total_cost:.3f}" if total_cost > 0 else ""
+        summary_text = f"Done: {', '.join(parts)} ({wall_duration_str}{cost_str})"
+        ui.summary(summary_text, console=self.console)
+
+        # Detail lines
+        if files_completed > 0:
+            cache_hits = sum(
+                1
+                for f in self.state.files.values()
+                if f.status == FileStatus.COMPLETED and f.cache_hit
+            )
+            cache_str = f"  Cache: {cache_hits}" if cache_hits > 0 else ""
+            self.console.print(
+                f"  {ui.MARK_INFO} Files: {files_completed}/{self.state.total} "
+                f"[green]{ui.MARK_SUCCESS}[/]{cache_str}"
+            )
+        if url_completed > 0 or url_failed > 0:
+            total_urls = url_completed + url_failed
+            self.console.print(
+                f"  {ui.MARK_INFO} URLs:  {url_completed}/{total_urls} "
+                f"[green]{ui.MARK_SUCCESS}[/]"
+            )
+
+        # Warnings (failed items)
+        if warnings:
+            width = ui.term_width(self.console)
+            warn_max = max(width - 4, 20)
+            self.console.print()
+            for warning in warnings:
+                self.console.print(
+                    f"  [yellow]{ui.MARK_WARNING}[/] {ui.truncate(warning, warn_max)}"
+                )
+
+        self.console.print()
+        out_max = max(ui.term_width(self.console) - 10, 20)
+        self.console.print(
+            f"  Output: {ui.truncate(str(self.output_dir) + '/', out_max)}"
+        )

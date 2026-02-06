@@ -16,6 +16,7 @@ from markitai.constants import (
     DEFAULT_FETCH_FALLBACK_PATTERNS,
     DEFAULT_FETCH_STRATEGY,
     DEFAULT_GLOBAL_CACHE_DIR,
+    DEFAULT_HEAVY_TASK_LIMIT,
     DEFAULT_IMAGE_FILTER_MIN_AREA,
     DEFAULT_IMAGE_FILTER_MIN_HEIGHT,
     DEFAULT_IMAGE_FILTER_MIN_WIDTH,
@@ -273,6 +274,7 @@ class BatchConfig(BaseModel):
     state_flush_interval_seconds: int = DEFAULT_STATE_FLUSH_INTERVAL_SECONDS
     scan_max_depth: int = Field(default=DEFAULT_SCAN_MAX_DEPTH, ge=1)
     scan_max_files: int = Field(default=DEFAULT_SCAN_MAX_FILES, ge=1)
+    heavy_task_limit: int = Field(default=DEFAULT_HEAVY_TASK_LIMIT, ge=0)
 
 
 class LogConfig(BaseModel):
@@ -282,6 +284,7 @@ class LogConfig(BaseModel):
     dir: str | None = DEFAULT_LOG_DIR
     rotation: str = DEFAULT_LOG_ROTATION
     retention: str = DEFAULT_LOG_RETENTION
+    format: Literal["text", "json"] = "text"
 
 
 class CacheConfig(BaseModel):

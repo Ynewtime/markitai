@@ -422,18 +422,18 @@ More content
         assert "More content" in cleaned
 
 
-class TestCheckDepsCommand:
-    """Tests for check-deps command."""
+class TestDoctorCommand:
+    """Tests for doctor command."""
 
-    def test_check_deps_runs(self, runner: CliRunner) -> None:
-        """Test that check-deps command runs successfully."""
-        result = runner.invoke(app, ["check-deps"])
+    def test_doctor_runs(self, runner: CliRunner) -> None:
+        """Test that doctor command runs successfully."""
+        result = runner.invoke(app, ["doctor"])
         assert result.exit_code == 0
-        assert "Dependency Status" in result.output
+        assert "Dependency Status" in result.output or "System Check" in result.output
 
-    def test_check_deps_json(self, runner: CliRunner) -> None:
-        """Test that check-deps --json outputs valid JSON."""
-        result = runner.invoke(app, ["check-deps", "--json"], color=False)
+    def test_doctor_json(self, runner: CliRunner) -> None:
+        """Test that doctor --json outputs valid JSON."""
+        result = runner.invoke(app, ["doctor", "--json"], color=False)
         assert result.exit_code == 0
 
         # Strip any ANSI codes and leading/trailing whitespace
@@ -447,9 +447,9 @@ class TestCheckDepsCommand:
         assert "rapidocr" in data
         assert "llm-api" in data
 
-    def test_check_deps_shows_components(self, runner: CliRunner) -> None:
-        """Test that check-deps shows all required components."""
-        result = runner.invoke(app, ["check-deps"])
+    def test_doctor_shows_components(self, runner: CliRunner) -> None:
+        """Test that doctor shows all required components."""
+        result = runner.invoke(app, ["doctor"])
         assert result.exit_code == 0
 
         # Should show all major components

@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from rich.panel import Panel
 
+from markitai.cli import ui
 from markitai.cli.console import get_console
 
 if TYPE_CHECKING:
@@ -41,13 +41,16 @@ def check_vision_model_config(
 
     # Check if LLM is enabled
     if not cfg.llm.enabled:
-        warning_text = (
-            "[yellow]⚠ Image analysis (--alt/--desc) requires LLM to be enabled.[/yellow]\n\n"
-            "[dim]Image alt text and descriptions will be skipped without LLM.[/dim]\n\n"
-            "To enable LLM processing:\n"
-            "  [cyan]markitai --llm ...[/cyan]  or use [cyan]--preset rich/standard[/cyan]"
+        ui.warning(
+            "Image analysis (--alt/--desc) requires LLM to be enabled", console=console
         )
-        console.print(Panel(warning_text, title="LLM Required", border_style="yellow"))
+        ui.step(
+            "Image alt text and descriptions will be skipped without LLM",
+            console=console,
+        )
+        ui.step(
+            "Enable with: markitai --llm ... or --preset rich/standard", console=console
+        )
         return
 
     # Check if vision-capable models are configured (auto-detect from litellm)
@@ -83,14 +86,12 @@ def check_vision_model_config(
         if len(cfg.llm.model_list) > 3:
             configured_models += f" (+{len(cfg.llm.model_list) - 3} more)"
 
-        warning_text = (
-            "[yellow]⚠ No vision-capable models detected.[/yellow]\n\n"
-            f"[dim]Current models: {configured_models}[/dim]\n"
-            "[dim]Vision models are auto-detected from litellm. "
-            "Add `supports_vision: true` in config to override.[/dim]"
-        )
-        console.print(
-            Panel(warning_text, title="Vision Model Recommended", border_style="yellow")
+        ui.warning("No vision-capable models detected", console=console)
+        ui.step(f"Current models: {configured_models}", console=console)
+        ui.step(
+            "Vision models are auto-detected from litellm. "
+            "Add `supports_vision: true` in config to override.",
+            console=console,
         )
     elif verbose and vision_models:
         # In verbose mode, show which vision models are configured
@@ -133,20 +134,26 @@ def _check_copilot_unsupported_models(model_list: list[Any], console: Console) -
 
     if unsupported_models:
         model_list_str = ", ".join(unsupported_models)
-        warning_text = (
-            f"[yellow]⚠ Unsupported Copilot models detected: {model_list_str}[/yellow]\n\n"
-            "[dim]GPT-5/o1/o3 series models are not compatible with Copilot SDK.\n"
-            "The SDK uses 'max_tokens' but these models require 'max_completion_tokens'.\n"
-            "Requests to these models will fail with 400 errors.[/dim]\n\n"
-            "Solutions:\n"
-            "  1. Set [cyan]weight: 0[/cyan] for these models in config\n"
-            "  2. Use [cyan]openrouter/openai/gpt-5.2[/cyan] instead (direct API)\n"
-            "  3. Use other Copilot models like [cyan]copilot/claude-sonnet-4.5[/cyan]"
+        ui.warning(
+            f"Unsupported Copilot models detected: {model_list_str}", console=console
         )
-        console.print(
-            Panel(
-                warning_text, title="Copilot Model Compatibility", border_style="yellow"
-            )
+        ui.step(
+            "GPT-5/o1/o3 series models are not compatible with Copilot SDK",
+            console=console,
+        )
+        ui.step(
+            "The SDK uses 'max_tokens' but these models require 'max_completion_tokens'",
+            console=console,
+        )
+        ui.step("Requests to these models will fail with 400 errors", console=console)
+        ui.step("Solutions:", console=console)
+        ui.step("  1. Set weight: 0 for these models in config", console=console)
+        ui.step(
+            "  2. Use openrouter/openai/gpt-5.2 instead (direct API)", console=console
+        )
+        ui.step(
+            "  3. Use other Copilot models like copilot/claude-sonnet-4.5",
+            console=console,
         )
 
 
@@ -175,16 +182,21 @@ def check_playwright_for_urls(cfg: Any, console: Console) -> None:
     except ImportError:
         pass  # Playwright not installed
 
-    warning_text = (
-        "[yellow]Playwright is not installed or Chromium browser is missing.[/yellow]\n\n"
-        "[dim]URL processing will fall back to static fetch strategy.\n"
-        "For JavaScript-rendered pages (Twitter/X, etc.), Playwright is recommended.\n\n"
-        "To install:[/dim]\n"
-        "  [cyan]uv add playwright && uv run playwright install chromium[/cyan]\n"
-        "  [dim]Linux: also run 'uv run playwright install-deps chromium' for system dependencies[/dim]"
+    ui.warning(
+        "Playwright is not installed or Chromium browser is missing", console=console
     )
-    console.print(
-        Panel(warning_text, title="Browser Not Available", border_style="yellow")
+    ui.step("URL processing will fall back to static fetch strategy", console=console)
+    ui.step(
+        "For JavaScript-rendered pages (Twitter/X, etc.), Playwright is recommended",
+        console=console,
+    )
+    ui.step("To install:", console=console)
+    ui.step(
+        "  uv add playwright && uv run playwright install chromium", console=console
+    )
+    ui.step(
+        "  Linux: also run 'uv run playwright install-deps chromium' for system deps",
+        console=console,
     )
 
 
@@ -242,19 +254,18 @@ def warn_case_sensitivity_mismatches(
         )
 
         # Show details in console
-        console.print(
-            f"[yellow]Warning: {len(mismatches)} file(s) have case mismatches "
-            "with --no-cache-for patterns[/yellow]"
+        ui.warning(
+            f"{len(mismatches)} file(s) have case mismatches with --no-cache-for patterns"
         )
         for pattern, file_paths in by_pattern.items():
-            console.print(f"  Pattern: [cyan]{pattern}[/cyan]")
+            ui.step(f"Pattern: {pattern}")
             for fp in file_paths[:3]:  # Show max 3 examples
-                console.print(f"    - {fp}")
+                ui.step(f"  - {fp}")
             if len(file_paths) > 3:
-                console.print(f"    ... and {len(file_paths) - 3} more")
-        console.print(
-            "[dim]Hint: Pattern matching is case-sensitive. "
-            "Use exact case or patterns like '*.[jJ][pP][gG]'[/dim]"
+                ui.step(f"  ... and {len(file_paths) - 3} more")
+        ui.step(
+            "Hint: Pattern matching is case-sensitive. "
+            "Use exact case or patterns like '*.[jJ][pP][gG]'"
         )
 
 

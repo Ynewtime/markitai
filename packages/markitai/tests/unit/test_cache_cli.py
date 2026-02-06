@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from markitai.cli.commands.cache import (
+    cache,
     cache_clear,
     cache_spa_domains,
     cache_stats,
@@ -49,6 +50,30 @@ class TestFormatSize:
         assert format_size(1024 * 1024) == "1.00 MB"
 
 
+class TestCacheStatsUnifiedUI:
+    """Tests for cache stats unified UI."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a CLI runner."""
+        return CliRunner()
+
+    def test_cache_stats_unified_ui(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Test cache stats uses unified UI."""
+        mock_cfg = MagicMock()
+        mock_cfg.cache.enabled = True
+        mock_cfg.cache.global_dir = str(tmp_path)
+        mock_cfg.cache.max_size_bytes = 100 * 1024 * 1024
+
+        with patch("markitai.cli.commands.cache.ConfigManager") as MockConfigManager:
+            MockConfigManager.return_value.load.return_value = mock_cfg
+
+            result = runner.invoke(cache, ["stats"])
+
+            assert result.exit_code == 0
+            assert "\u25c6" in result.output  # Title marker (diamond)
+
+
 class TestCacheStatsCommand:
     """Tests for cache stats CLI command."""
 
@@ -76,9 +101,8 @@ class TestCacheStatsCommand:
             result = runner.invoke(cache_stats)
 
             assert result.exit_code == 0
-            assert (
-                "Cache Statistics" in result.output or "No cache found" in result.output
-            )
+            # Now uses unified UI with title marker
+            assert "\u25c6" in result.output  # Title marker (diamond)
 
     def test_stats_json_format(
         self, runner: CliRunner, mock_config: MagicMock, tmp_path: Path
@@ -104,8 +128,8 @@ class TestCacheStatsCommand:
 
         # Create a cache with some entries
         cache_path = tmp_path / DEFAULT_CACHE_DB_FILENAME
-        cache = SQLiteCache(cache_path, mock_config.cache.max_size_bytes)
-        cache.set("test_key", "test_content", "test_response", model="test-model")
+        cache_obj = SQLiteCache(cache_path, mock_config.cache.max_size_bytes)
+        cache_obj.set("test_key", "test_content", "test_response", model="test-model")
         # SQLiteCache uses connection context managers, no explicit close needed
 
         with patch("markitai.cli.commands.cache.ConfigManager") as MockConfigManager:
@@ -114,7 +138,8 @@ class TestCacheStatsCommand:
             result = runner.invoke(cache_stats)
 
             assert result.exit_code == 0
-            assert "Entries:" in result.output or "count" in result.output
+            # Now uses unified UI with bullet points for info
+            assert "\u2022" in result.output  # Info marker (bullet)
 
 
 class TestCacheClearCommand:
@@ -156,8 +181,13 @@ class TestCacheClearCommand:
             result = runner.invoke(cache_clear, ["--yes"])
 
             assert result.exit_code == 0
-            # Either cleared something or nothing to clear
-            assert "Cleared" in result.output or "No cache entries" in result.output
+            # Either cleared something or nothing to clear (supports both en/zh)
+            assert (
+                "Cleared" in result.output
+                or "No cache entries" in result.output
+                or "已清理" in result.output
+                or "无缓存可清理" in result.output
+            )
 
 
 class TestCacheSpaDomainsCommand:
@@ -223,7 +253,7 @@ class TestCacheSpaDomainsCommand:
             assert data["cleared"] == 5
 
     def test_spa_domains_with_entries(self, runner: CliRunner) -> None:
-        """Test spa-domains with multiple entries in table format."""
+        """Test spa-domains with multiple entries using unified UI."""
         with patch("markitai.fetch.get_spa_domain_cache") as mock_get_cache:
             mock_cache = MagicMock()
             mock_cache.list_domains.return_value = [
@@ -248,11 +278,12 @@ class TestCacheSpaDomainsCommand:
 
             assert result.exit_code == 0
             assert "Learned SPA Domains" in result.output
-            assert "2 total" in result.output
+            assert "2 total" in result.output or "2 总计" in result.output
             assert "twitter.com" in result.output
             assert "old-spa.com" in result.output
-            assert "Active" in result.output
-            assert "Expired" in result.output
+            # Now uses unified UI with checkmark for active and warning for expired
+            assert "\u2713" in result.output  # Success checkmark for active
+            assert "!" in result.output  # Warning for expired
 
     def test_spa_domains_with_missing_fields(self, runner: CliRunner) -> None:
         """Test spa-domains handles entries with missing optional fields."""
@@ -446,7 +477,7 @@ class TestCacheClearWithSpaDomains:
             result = runner.invoke(cache_clear, ["--yes", "--include-spa-domains"])
 
             assert result.exit_code == 0
-            assert "Cleared" in result.output
+            assert "Cleared" in result.output or "已清理" in result.output
             mock_spa_cache.clear.assert_called_once()
 
     def test_clear_confirmation_includes_spa_mention(

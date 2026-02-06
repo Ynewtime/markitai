@@ -3,7 +3,6 @@
 This module provides CLI commands for managing Markitai configuration:
 - config list: Show current effective configuration
 - config path: Show configuration file paths
-- config init: Initialize a configuration file
 - config validate: Validate a configuration file
 - config get: Get a configuration value
 - config set: Set a configuration value
@@ -17,7 +16,9 @@ from pathlib import Path
 import click
 from rich.syntax import Syntax
 
+from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.i18n import t
 from markitai.config import ConfigManager, MarkitaiConfig
 
 console = get_console()
@@ -90,60 +91,47 @@ def config_path_cmd() -> None:
     manager = ConfigManager()
     manager.load()
 
-    console.print("[bold]Configuration file search order:[/bold]")
-    console.print("  1. --config CLI argument")
-    console.print("  2. MARKITAI_CONFIG environment variable")
-    console.print("  3. ./markitai.json (current directory)")
-    console.print(f"  4. {manager.DEFAULT_USER_CONFIG_DIR / 'config.json'}")
+    ui.title(t("config.title"))
+
+    # Check which config is loaded
+    local_loaded = bool(
+        manager.config_path and "markitai.json" in str(manager.config_path)
+    )
+    user_config_path = manager.DEFAULT_USER_CONFIG_DIR / "config.json"
+    user_loaded = bool(
+        manager.config_path and str(user_config_path) in str(manager.config_path)
+    )
+    user_config_display = "~/.markitai/config.json"
+
+    # Build rows: (label, annotation)
+    rows = [
+        (t("config.cli_args"), t("config.highest")),
+        (t("config.env_vars"), ""),
+        (
+            "./markitai.json",
+            f"[green]{ui.MARK_SUCCESS} {t('config.loaded')}[/]" if local_loaded else "",
+        ),
+        (
+            user_config_display,
+            f"[green]{ui.MARK_SUCCESS} {t('config.loaded')}[/]" if user_loaded else "",
+        ),
+        (t("config.defaults"), t("config.lowest")),
+    ]
+
+    # Align │ column to the longest label
+    max_label_len = max(len(label) for label, _ in rows)
+    for i, (label, annotation) in enumerate(rows):
+        num = i + 1
+        padding = " " * (max_label_len - len(label))
+        ann = f" {annotation}" if annotation else ""
+        console.print(f"  {num}. {label}{padding} [dim]{ui.MARK_LINE}[/]{ann}")
+
     console.print()
 
     if manager.config_path:
-        console.print(f"[green]Currently using:[/green] {manager.config_path}")
+        ui.success(f"Currently using: {manager.config_path}")
     else:
-        console.print(
-            "[yellow]Using default configuration (no config file found)[/yellow]"
-        )
-
-
-@config.command("init")
-@click.option(
-    "--output",
-    "-o",
-    "output_path",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Output path for configuration file.",
-)
-@click.option(
-    "--yes",
-    "-y",
-    is_flag=True,
-    default=False,
-    help="Overwrite existing config without confirmation.",
-)
-def config_init(output_path: Path | None, yes: bool) -> None:
-    """Initialize a configuration file with defaults."""
-    manager = ConfigManager()
-
-    if output_path is None:
-        output_path = manager.DEFAULT_USER_CONFIG_DIR / "config.json"
-    elif output_path.is_dir():
-        # User passed a directory, append default filename
-        output_path = output_path / "markitai.json"
-
-    # Check if file exists (not directory)
-    if output_path.exists() and output_path.is_file():
-        if not yes and not click.confirm(f"{output_path} already exists. Overwrite?"):
-            raise click.Abort()
-
-    # Save minimal template config (essential fields only)
-    saved_path = manager.save(output_path, minimal=True)
-    console.print(f"[green]Configuration file created:[/green] {saved_path}")
-    console.print("\nEdit this file to customize your settings.")
-    console.print(
-        "[dim]Note: max_tokens, supports_vision are auto-detected from litellm.[/dim]"
-    )
-    console.print("Run 'markitai config list' to see the current configuration.")
+        ui.warning("Using default configuration (no config file found)")
 
 
 @config.command("validate")
@@ -159,7 +147,7 @@ def config_validate(config_file: Path | None) -> None:
     try:
         manager.load(config_path=config_file)
 
-        console.print("[green]Configuration is valid![/green]")
+        ui.summary(t("config.valid"))
 
         if manager.config_path:
             console.print(f"[dim]Validated: {manager.config_path}[/dim]")

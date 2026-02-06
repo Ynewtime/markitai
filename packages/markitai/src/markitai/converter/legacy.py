@@ -527,8 +527,8 @@ class LegacyOfficeConverter(BaseConverter):
                         f"LibreOffice conversion failed: {result.stderr}"
                     )
 
-            except subprocess.TimeoutExpired:
-                raise RuntimeError("LibreOffice conversion timed out")
+            except subprocess.TimeoutExpired as e:
+                raise RuntimeError("LibreOffice conversion timed out") from e
 
         # Find converted file
         converted_name = input_path.stem + "." + target_format

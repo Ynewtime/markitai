@@ -28,6 +28,11 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.constants import (
+    DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS,
+    DEFAULT_PLAYWRIGHT_WAIT_FOR,
+)
+
 if TYPE_CHECKING:
     from markitai.config import ScreenshotConfig
 
@@ -202,8 +207,8 @@ class PlaywrightRenderer:
         self,
         url: str,
         timeout: int = 30000,
-        wait_for: str = "domcontentloaded",
-        extra_wait_ms: int = 3000,
+        wait_for: str = DEFAULT_PLAYWRIGHT_WAIT_FOR,
+        extra_wait_ms: int = DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS,
         screenshot_config: ScreenshotConfig | None = None,
         output_dir: Path | None = None,
     ) -> PlaywrightFetchResult:
@@ -273,8 +278,8 @@ class PlaywrightRenderer:
 async def fetch_with_playwright(
     url: str,
     timeout: int = 30000,
-    wait_for: str = "domcontentloaded",
-    extra_wait_ms: int = 3000,
+    wait_for: str = DEFAULT_PLAYWRIGHT_WAIT_FOR,
+    extra_wait_ms: int = DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS,
     proxy: str | None = None,
     screenshot_config: ScreenshotConfig | None = None,
     output_dir: Path | None = None,

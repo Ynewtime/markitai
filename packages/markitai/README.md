@@ -37,6 +37,31 @@ uv pip install markitai
 
 ## Quick Start
 
+### First Run
+
+```bash
+# Interactive mode (recommended for new users)
+markitai -I
+
+# Or convert a file directly
+markitai document.pdf
+
+# With LLM enhancement
+markitai document.pdf --llm
+```
+
+### Check Setup
+
+```bash
+# Verify all dependencies
+markitai doctor
+
+# Auto-fix missing components
+markitai doctor --fix
+```
+
+### Common Tasks
+
 ```bash
 # Basic conversion
 markitai document.docx
@@ -84,7 +109,7 @@ Priority: CLI arguments > Environment variables > Config file > Defaults
 markitai config list
 
 # Initialize config file
-markitai config init -o .
+markitai init
 
 # View cache status
 markitai cache stats

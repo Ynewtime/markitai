@@ -191,12 +191,12 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
             and ctx.config.screenshot.enabled
         ) or (ctx.input_path.suffix.lower() in {".ppt", ".doc", ".xls"})
 
-        logger.info(
+        logger.debug(
             f"Converting {ctx.input_path.name}..." + (" [HEAVY]" if is_heavy else "")
         )
 
         if is_heavy:
-            async with get_heavy_task_semaphore():
+            async with get_heavy_task_semaphore(ctx.config.batch.heavy_task_limit):
                 ctx.conversion_result = await run_in_converter_thread(
                     ctx.converter.convert,
                     ctx.effective_input,
@@ -230,7 +230,7 @@ def resolve_output_file(ctx: ConversionContext) -> ConversionStepResult:
     )
 
     if ctx.output_file is None:
-        logger.info(f"[SKIP] Output exists: {base_output_file}")
+        logger.debug(f"[SKIP] Output exists: {base_output_file}")
         return ConversionStepResult(success=True, skip_reason="exists")
 
     return ConversionStepResult(success=True)
@@ -248,23 +248,25 @@ async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResul
     if ctx.conversion_result is None:
         return ConversionStepResult(success=False, error="No conversion result")
 
+    conversion_result = ctx.conversion_result
     image_processor = ImageProcessor(config=ctx.config.image)
-    base64_images = image_processor.extract_base64_images(
-        ctx.conversion_result.markdown
+    base64_images = await asyncio.to_thread(
+        image_processor.extract_base64_images,
+        conversion_result.markdown,
     )
 
     # Count screenshots from page images
-    page_images = ctx.conversion_result.metadata.get("page_images", [])
+    page_images = conversion_result.metadata.get("page_images", [])
     ctx.screenshots_count = len(page_images)
 
     # Count embedded images from two sources:
     # 1. Base64 images in markdown (will be processed below)
     # 2. Images already extracted by converter (e.g., PDF converter saves directly to assets)
-    converter_images = len(ctx.conversion_result.images)
+    converter_images = len(conversion_result.images)
     ctx.embedded_images_count = len(base64_images) + converter_images
 
     if base64_images:
-        logger.info(f"Processing {len(base64_images)} embedded images...")
+        logger.debug(f"Processing {len(base64_images)} embedded images...")
 
         # Use multiprocess for large batches if enabled
         from markitai.constants import DEFAULT_IMAGE_MULTIPROCESS_THRESHOLD
@@ -279,24 +281,28 @@ async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResul
                 base_name=ctx.input_path.name,
             )
         else:
-            image_result = image_processor.process_and_save(
-                base64_images,
-                output_dir=ctx.output_dir,
-                base_name=ctx.input_path.name,
+            image_result = await asyncio.to_thread(
+                lambda: image_processor.process_and_save(
+                    base64_images,
+                    output_dir=ctx.output_dir,
+                    base_name=ctx.input_path.name,
+                )
             )
 
         # Update markdown with image paths using index mapping for correct replacement
-        ctx.conversion_result.markdown = image_processor.replace_base64_with_paths(
-            ctx.conversion_result.markdown,
-            image_result.saved_images,
-            index_mapping=image_result.index_mapping,
+        conversion_result.markdown = await asyncio.to_thread(
+            lambda: image_processor.replace_base64_with_paths(
+                conversion_result.markdown,
+                image_result.saved_images,
+                index_mapping=image_result.index_mapping,
+            )
         )
 
         # Also update extracted_text in metadata if present (for PPTX+LLM mode)
-        if "extracted_text" in ctx.conversion_result.metadata:
-            ctx.conversion_result.metadata["extracted_text"] = (
-                image_processor.replace_base64_with_paths(
-                    ctx.conversion_result.metadata["extracted_text"],
+        if "extracted_text" in conversion_result.metadata:
+            conversion_result.metadata["extracted_text"] = await asyncio.to_thread(
+                lambda: image_processor.replace_base64_with_paths(
+                    conversion_result.metadata["extracted_text"],
                     image_result.saved_images,
                     index_mapping=image_result.index_mapping,
                 )
@@ -326,7 +332,7 @@ def write_base_markdown(ctx: ConversionContext) -> ConversionStepResult:
         ctx.conversion_result.markdown, ctx.input_path.name
     )
     atomic_write_text(ctx.output_file, base_md_content)
-    logger.info(f"Written output: {ctx.output_file}")
+    logger.debug(f"Written output: {ctx.output_file}")
 
     return ConversionStepResult(success=True)
 
@@ -370,26 +376,36 @@ def apply_alt_text_updates(
 
     try:
         llm_content = llm_file.read_text(encoding="utf-8")
-        updated = False
 
+        # Build combined pattern and replacement map for a single-pass substitution
+        replacements: dict[str, str] = {}
+        patterns: list[str] = []
         for asset in image_analysis.assets:
             asset_path = Path(asset.get("asset", ""))
             alt_text = asset.get("alt", "")
             if not alt_text or not asset_path.name:
                 continue
 
-            # Replace image references with new alt text
-            old_pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(asset_path.name)}\)"
+            pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(asset_path.name)}\)"
             new_ref = f"![{alt_text}](assets/{asset_path.name})"
-            new_content = re.sub(old_pattern, new_ref, llm_content)
-            if new_content != llm_content:
-                llm_content = new_content
-                updated = True
+            patterns.append(pattern)
+            replacements[asset_path.name] = new_ref
 
-        if updated:
-            atomic_write_text(llm_file, llm_content)
-            logger.debug(f"Applied alt text updates to {llm_file}")
-            return True
+        if patterns:
+            combined = re.compile("|".join(patterns))
+
+            def replace_match(m: re.Match[str]) -> str:
+                text = m.group(0)
+                for name, ref in replacements.items():
+                    if name in text:
+                        return ref
+                return text
+
+            new_content = combined.sub(replace_match, llm_content)
+            if new_content != llm_content:
+                atomic_write_text(llm_file, new_content)
+                logger.debug(f"Applied alt text updates to {llm_file}")
+                return True
 
     except Exception as e:
         logger.warning(f"Failed to apply alt text updates: {e}")

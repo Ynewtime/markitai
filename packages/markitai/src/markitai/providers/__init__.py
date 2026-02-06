@@ -341,7 +341,7 @@ def check_deprecated_models(models: list[str]) -> list[str]:
             seen.add(model_name)
             replacement = DEPRECATED_MODELS[model_name]
             warnings.append(
-                f"⚠️  Model '{model_name}' will be retired on February 13, 2025."
+                f"⚠️  Model '{model_name}' was retired on February 13, 2025."
                 f"\n   Please migrate to: {replacement}"
             )
 

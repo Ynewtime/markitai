@@ -1,17 +1,46 @@
 """Custom CLI framework classes for Markitai.
 
 This module contains the custom Click Group class that supports
-the main command with arguments and subcommands.
+the main command with arguments and subcommands, with lazy loading
+of command modules to minimize startup cost.
 """
 
 from __future__ import annotations
 
+import importlib
+
 import click
 from click import Context
+
+# Mapping of command name -> (module_path, attribute_name, short_help)
+# This allows list_commands() and get_command() to work without importing
+# the heavy command modules at module level.  The short_help string is
+# used by format_help() so that displaying --help never triggers imports.
+_LAZY_COMMANDS: dict[str, tuple[str, str, str]] = {
+    "cache": ("markitai.cli.commands.cache", "cache", "Cache management commands."),
+    "config": (
+        "markitai.cli.commands.config",
+        "config",
+        "Configuration management commands.",
+    ),
+    "doctor": (
+        "markitai.cli.commands.doctor",
+        "doctor",
+        "Check system health, dependencies, and authentication status.",
+    ),
+    "init": (
+        "markitai.cli.commands.init",
+        "init",
+        "Initialize Markitai configuration.",
+    ),
+}
 
 
 class MarkitaiGroup(click.Group):
     """Custom Group that supports main command with arguments and subcommands.
+
+    Subcommands are lazily loaded: their modules are only imported when
+    the command is actually invoked, not when help text is rendered.
 
     This allows:
         markitai document.docx --llm          # Convert file (main command)
@@ -35,6 +64,32 @@ class MarkitaiGroup(click.Group):
         "--url-concurrency",
     }
 
+    def list_commands(self, ctx: Context) -> list[str]:
+        """Return sorted list of all command names (lazy + eagerly registered)."""
+        # Combine lazily-declared names with any eagerly registered commands
+        names = set(_LAZY_COMMANDS.keys())
+        names.update(super().list_commands(ctx))
+        return sorted(names)
+
+    def get_command(self, ctx: Context, cmd_name: str) -> click.Command | None:
+        """Lazily import and return the command, or fall back to eager lookup."""
+        # Check eagerly registered commands first (allows runtime add_command)
+        cmd = super().get_command(ctx, cmd_name)
+        if cmd is not None:
+            return cmd
+
+        # Lazy import
+        spec = _LAZY_COMMANDS.get(cmd_name)
+        if spec is None:
+            return None
+
+        module_path, attr_name, _help = spec
+        mod = importlib.import_module(module_path)
+        cmd = getattr(mod, attr_name)
+        # Cache so subsequent calls don't re-import
+        self.add_command(cmd, cmd_name)
+        return cmd
+
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         """Parse arguments, detecting if first arg is a subcommand or file path."""
         # Find INPUT: first positional arg that's not:
@@ -44,6 +99,11 @@ class MarkitaiGroup(click.Group):
         ctx.ensure_object(dict)
         skip_next = False
         input_idx = None
+
+        # Use the full set of known command names (lazy + eager) for detection.
+        # We use _LAZY_COMMANDS keys + self.commands keys to avoid importing
+        # the command modules just to check if an arg is a subcommand name.
+        known_commands = set(_LAZY_COMMANDS.keys()) | set(self.commands.keys())
 
         for i, arg in enumerate(args):
             if skip_next:
@@ -63,7 +123,7 @@ class MarkitaiGroup(click.Group):
                 continue
 
             # First positional argument
-            if arg in self.commands:
+            if arg in known_commands:
                 # It's a subcommand - stop looking
                 break
             else:
@@ -118,13 +178,19 @@ class MarkitaiGroup(click.Group):
             with formatter.section("Options"):
                 formatter.write_dl(opts)
 
-        # Commands
+        # Commands — use stored help text for lazy commands to avoid imports
         commands = []
         for name in self.list_commands(ctx):
-            cmd = self.get_command(ctx, name)
-            if cmd is None or cmd.hidden:
-                continue
-            commands.append((name, cmd.get_short_help_str(limit=formatter.width)))
+            if name in _LAZY_COMMANDS and name not in self.commands:
+                # Lazy command not yet imported — use the stored short help
+                _mod, _attr, short_help = _LAZY_COMMANDS[name]
+                commands.append((name, short_help))
+            else:
+                # Eagerly registered (or already imported) — resolve normally
+                cmd = self.get_command(ctx, name)
+                if cmd is None or cmd.hidden:
+                    continue
+                commands.append((name, cmd.get_short_help_str(limit=formatter.width)))
         if commands:
             with formatter.section("Commands"):
                 formatter.write_dl(commands)

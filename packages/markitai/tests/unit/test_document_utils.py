@@ -1109,7 +1109,8 @@ class TestEnhanceUrlWithVisionAsync:
 
         cached_result = {
             "cleaned_markdown": "# Cached URL Content",
-            "frontmatter_yaml": "title: Cached\nsource: https://example.com",
+            "description": "A cached URL",
+            "tags": ["web"],
         }
         processor._persistent_cache.get = MagicMock(return_value=cached_result)
 
@@ -1120,7 +1121,8 @@ class TestEnhanceUrlWithVisionAsync:
         )
 
         assert cleaned == "# Cached URL Content"
-        assert "Cached" in frontmatter
+        assert "Cached URL Content" in frontmatter
+        assert "markitai_processed" in frontmatter
 
     @pytest.mark.asyncio
     async def test_enhance_url_with_vision_calls_vision_llm(
@@ -1251,7 +1253,8 @@ class TestExtractFromScreenshotAsync:
 
         cached_result = {
             "cleaned_markdown": "# Extracted Content",
-            "frontmatter_yaml": "title: Screenshot\nsource: test",
+            "description": "Screenshot extraction",
+            "tags": ["screenshot"],
         }
         processor._persistent_cache.get = MagicMock(return_value=cached_result)
 
@@ -1261,7 +1264,8 @@ class TestExtractFromScreenshotAsync:
         )
 
         assert cleaned == "# Extracted Content"
-        assert "Screenshot" in frontmatter
+        assert "Extracted Content" in frontmatter
+        assert "markitai_processed" in frontmatter
 
     @pytest.mark.asyncio
     async def test_extract_from_screenshot_calls_vision_llm(
@@ -1429,7 +1433,8 @@ class TestEnhanceWithFrontmatterAsync:
 
         cached_result = {
             "cleaned_markdown": "# Cached Enhanced",
-            "frontmatter_yaml": "title: Cached\nsource: test",
+            "description": "A cached doc",
+            "tags": ["test"],
         }
         processor._persistent_cache.get = MagicMock(return_value=cached_result)
 
@@ -1440,6 +1445,7 @@ class TestEnhanceWithFrontmatterAsync:
         )
 
         assert cleaned == "# Cached Enhanced"
+        assert "markitai_processed" in frontmatter
 
     @pytest.mark.asyncio
     async def test_enhance_with_frontmatter_restores_protected_content(
