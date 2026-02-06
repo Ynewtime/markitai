@@ -21,7 +21,7 @@ Usage:
 
 Supported Models:
     - OpenAI: gpt-4.1 (GPT-5 series not yet supported, see below)
-    - Anthropic: claude-sonnet-4, claude-sonnet-4.5, claude-opus-4.5, claude-haiku-4.5
+    - Anthropic: claude-sonnet-4, claude-sonnet-4.5, claude-opus-4.6, claude-haiku-4.5
     - Google: gemini-2.5-pro, gemini-3-flash, gemini-3-pro
     - Availability depends on your Copilot subscription
     - See docs/archive/deps/github-copilot-supported-models.md for full list

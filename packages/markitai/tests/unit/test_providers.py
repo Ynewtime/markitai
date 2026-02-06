@@ -95,7 +95,7 @@ class TestIsLocalProviderModel:
         assert (
             is_local_provider_model("claude-agent/claude-sonnet-4-5-20250929") is True
         )
-        assert is_local_provider_model("claude-agent/claude-opus-4-5-20251101") is True
+        assert is_local_provider_model("claude-agent/claude-opus-4-6") is True
         # Legacy format (still works)
         assert is_local_provider_model("claude-agent/claude-sonnet-4") is True
         assert is_local_provider_model("claude-agent/some-model") is True
@@ -161,7 +161,7 @@ class TestGetLocalProviderModelInfo:
 
         info = get_local_provider_model_info("claude-agent/opus")
         assert info is not None
-        # Opus 4.5 has 200K context
+        # Opus 4.6 has 200K context (1M beta)
         assert info["max_input_tokens"] >= 200000
         assert info["max_output_tokens"] >= 8192
         assert info["supports_vision"] is True

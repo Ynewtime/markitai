@@ -13,7 +13,7 @@ source:
 |-----|---------|
 | `haiku` | `claude-haiku-4-5-20251001` (Haiku 4.5) |
 | `sonnet` | `claude-sonnet-4-5-20250929` (Sonnet 4.5) |
-| `opus` | `claude-opus-4-5-20251101` (Opus 4.5) |
+| `opus` | `claude-opus-4-6` (Opus 4.6) |
 
 ---
 
@@ -34,8 +34,8 @@ claude --model claude-sonnet-4-5-20250929
 # Sonnet 4
 claude --model claude-sonnet-4-20250514
 
-# Opus 4.5
-claude --model claude-opus-4-5-20251101
+# Opus 4.6
+claude --model claude-opus-4-6
 ```
 
 ---
@@ -59,15 +59,16 @@ claude --model claude-opus-4-5-20251101
 
 | 模型别名 | 完整模型名 | 说明 |
 |---------|-----------|------|
-| `default` | - | 根据订阅类型自动选择，Max 用户使用 Opus 4.5 并在限额后回退到 Sonnet |
-| `opus` | `claude-opus-4-5-20251101` | 最新 Opus 4.5，顶级软件工程能力 |
+| `default` | - | 根据订阅类型自动选择，Max 用户使用 Opus 4.6 并在限额后回退到 Sonnet |
+| `opus` | `claude-opus-4-6` | 最新 Opus 4.6，顶级软件工程能力 |
 | `opusplan` | - | 混合模式：规划用 Opus，执行用 Sonnet |
 | `sonnet` | `claude-sonnet-4-5-20250929` | Sonnet 4.5，平衡性能与速度 |
 | `haiku` | `claude-haiku-4-5-20251001` | Haiku 4.5，快速低成本 |
 
 ### 其他可用版本
-- `claude-opus-4-20250514` (Opus 4)
+- `claude-opus-4-5-20251101` (Opus 4.5)
 - `claude-opus-4-1-20250805` (Opus 4.1)
+- `claude-opus-4-20250514` (Opus 4)
 
 ---
 
@@ -80,7 +81,7 @@ claude --model claude-opus-4-5-20251101
 
 ```bash
 # 示例
-claude --model claude-opus-4-5-20251101
+claude --model claude-opus-4-6
 claude --model sonnet
 claude --model haiku
 ```
@@ -92,7 +93,7 @@ claude --model haiku
 | 订阅类型 | 可用模型 |
 |---------|---------|
 | **Pro** | Sonnet 4.5（Opus 需额外付费） |
-| **Max** | Opus 4.5 + Sonnet 4.5（自动回退） |
+| **Max** | Opus 4.6 + Sonnet 4.5（自动回退） |
 | **API Key** | 所有模型（按 API 计费） |
 
 ---
@@ -134,7 +135,7 @@ remembering exact version numbers:
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`default`**    | Recommended model setting, depending on your account type                                                                                                               |
 | **`sonnet`**     | Uses the latest Sonnet model (currently Sonnet 4.5) for daily coding tasks                                                                                              |
-| **`opus`**       | Uses Opus model (currently Opus 4.5) for specialized complex reasoning tasks                                                                                            |
+| **`opus`**       | Uses Opus model (currently Opus 4.6) for specialized complex reasoning tasks                                                                                            |
 | **`haiku`**      | Uses the fast and efficient Haiku model for simple tasks                                                                                                                |
 | **`sonnet[1m]`** | Uses Sonnet with a [1 million token context window](https://docs.claude.com/en/docs/build-with-claude/context-windows#1m-token-context-window) window for long sessions |
 | **`opusplan`**   | Special mode that uses `opus` during plan mode, then switches to `sonnet` for execution                                                                                 |

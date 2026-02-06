@@ -28,8 +28,9 @@ updated: 2026-01-27
 | 模型标识符 | 状态 | 说明 |
 |-----------|------|------|
 | `claude-haiku-4.5` | GA | 快速、经济 |
-| `claude-opus-4.1` | ⚠️ 2026-02-17 关闭 | 请迁移到 opus-4.5 |
-| `claude-opus-4.5` | GA | 最强大 |
+| `claude-opus-4.1` | ⚠️ 2026-02-17 关闭 | 请迁移到 opus-4.6 |
+| `claude-opus-4.5` | GA | Legacy |
+| `claude-opus-4.6` | GA | 最强大 |
 | `claude-sonnet-4` | GA | 平衡性能与速度 |
 | `claude-sonnet-4.5` | GA | 推荐用于代码任务 |
 
