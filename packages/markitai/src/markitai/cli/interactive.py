@@ -14,6 +14,7 @@ from pathlib import Path
 
 import questionary
 
+from markitai.cli import ui
 from markitai.cli.console import get_console
 
 
@@ -364,20 +365,13 @@ def run_interactive() -> InteractiveSession:
     Returns:
         InteractiveSession with user's choices populated.
     """
-    from rich.panel import Panel
-
     session = InteractiveSession()
     console = get_console()
 
-    # Print header
+    # Print header using unified UI
     console.print()
-    console.print(
-        Panel(
-            "[bold]Markitai Interactive Mode[/bold]\n\n"
-            "Answer the following questions to configure your conversion.",
-            border_style="cyan",
-        )
-    )
+    ui.title("Markitai Interactive")
+    console.print("  Answer the following questions to configure your conversion.")
     console.print()
 
     # 1. Input type

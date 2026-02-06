@@ -374,15 +374,11 @@ def _should_show_log(record: Any, verbose: bool) -> bool:
     if level == "INFO" and _is_third_party_log(name, module):
         return False
 
-    # In non-verbose mode, filter out most INFO logs
-    # Only show key milestones: file writes, completions
+    # In non-verbose mode, filter out ALL INFO logs from console
+    # User-facing output uses ui.* functions (ui.success, ui.summary, etc.)
+    # which write directly to console, not through logger
     if not verbose and level == "INFO":
-        msg = record.get("message", "")
-        # Only show file write and completion messages
-        if not any(
-            kw in msg for kw in ["Written", "Saved", "Complete", "finished", "Report"]
-        ):
-            return False
+        return False
 
     return True
 

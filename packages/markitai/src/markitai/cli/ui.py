@@ -26,6 +26,21 @@ MARK_TITLE = "\u25c6"  # Diamond
 MARK_LINE = "\u2502"  # Vertical line
 
 
+def term_width(console: Console | None = None) -> int:
+    """Return current terminal width."""
+    c = console or get_console()
+    return c.width
+
+
+def truncate(text: str, max_len: int) -> str:
+    """Truncate text to max_len, appending '...' if trimmed."""
+    if max_len < 4:
+        return text[:max_len]
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
+
+
 def title(text: str, *, console: Console | None = None) -> None:
     """Display a title with diamond symbol.
 

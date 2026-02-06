@@ -12,10 +12,10 @@ from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
-from rich.panel import Panel
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.ui import MARK_INFO, MARK_TITLE
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
 from markitai.converter import FileFormat, detect_format
@@ -95,18 +95,16 @@ async def process_single_file(
         else:
             output_display = "stdout"
 
-        dry_run_msg = (
-            f"[yellow]Would convert:[/yellow] {input_path}\n"
-            f"[yellow]Format:[/yellow] {fmt.value.upper()}\n"
-            f"[yellow]Output:[/yellow] {output_display}\n"
-            f"[yellow]Features:[/yellow] {feature_str}\n"
-            f"[yellow]Cache:[/yellow] {cache_status}"
-        )
-        console.print(Panel(dry_run_msg, title="Dry Run"))
-        if cfg.cache.enabled:
-            console.print(
-                "[dim]Tip: Use 'markitai cache stats -v' to view cached entries[/dim]"
-            )
+        # Unified UI dry-run display
+        console.print(f"[cyan]{MARK_TITLE}[/] [bold]Dry Run[/]\n")
+        console.print("  Files (1)")
+        console.print(f"    [dim]{MARK_INFO}[/] {input_path.name}")
+        console.print()
+        console.print("  ─────────────────")
+        console.print(f"  Output: {output_display}")
+        console.print(f"  Format: {fmt.value.upper()}")
+        console.print(f"  Features: {feature_str}")
+        console.print(f"  Cache: {cache_status}")
         raise SystemExit(0)
 
     # Track timing
@@ -235,7 +233,7 @@ async def process_single_file(
             report_path.parent.mkdir(parents=True, exist_ok=True)
 
             atomic_write_json(report_path, report, order_func=order_report)
-            logger.info(f"Report saved: {report_path}")
+            logger.debug(f"Report saved: {report_path}")
 
         # Determine final output file
         final_output_file = None

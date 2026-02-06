@@ -66,7 +66,10 @@ class TestConfigCommands:
         """Test config path command."""
         result = runner.invoke(app, ["config", "path"])
         assert result.exit_code == 0
-        assert "Configuration file" in result.output
+        assert (
+            "Configuration Sources" in result.output
+            or "Currently using" in result.output
+        )
 
     def test_config_validate(self, runner: CliRunner):
         """Test config validate command."""
@@ -81,9 +84,9 @@ class TestConfigCommands:
         assert result.exit_code in (0, 1)
 
     def test_config_init(self, runner: CliRunner, tmp_path: Path):
-        """Test config init command."""
-        output_file = tmp_path / "test_config.json"
-        result = runner.invoke(app, ["config", "init", "-o", str(output_file)])
+        """Test init command (moved from config init to top-level init)."""
+        output_file = tmp_path / "markitai.json"
+        result = runner.invoke(app, ["init", "-y", "-o", str(output_file)])
         assert result.exit_code == 0
         assert output_file.exists()
 
@@ -542,3 +545,145 @@ class TestWorkflowCoreV2:
         assert "version" in report
         assert "summary" in report
         assert report["summary"]["completed_documents"] >= 1
+
+
+class TestConfigOutputDir:
+    """Tests for using output.dir from config file as default output directory.
+
+    Note: Single file mode always outputs to stdout (no -o = stdout).
+    Config output.dir is only used as fallback for batch/URL modes.
+    """
+
+    def test_single_file_outputs_to_stdout_ignoring_config(
+        self, runner: CliRunner, sample_txt: Path, tmp_path: Path
+    ):
+        """Test that single file mode outputs to stdout, ignoring config output.dir."""
+        # Setup: create project config with output.dir
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        output_dir = project_dir / "my_output"
+
+        config_file = project_dir / "markitai.json"
+        config_file.write_text(json.dumps({"output": {"dir": str(output_dir)}}))
+
+        # Copy sample file to project dir
+        input_file = project_dir / "test.txt"
+        input_file.write_text(sample_txt.read_text())
+
+        # Run from project directory (where markitai.json exists)
+        import os
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(project_dir)
+            result = runner.invoke(app, [str(input_file)])
+        finally:
+            os.chdir(old_cwd)
+
+        assert result.exit_code == 0
+        # Single file mode should output to stdout, NOT create file
+        assert not output_dir.exists(), (
+            "Config output.dir should NOT be used for single file mode"
+        )
+        # Verify content is in stdout
+        assert "# test" in result.output or "test" in result.output.lower()
+
+    def test_single_file_with_explicit_output_saves_to_file(
+        self, runner: CliRunner, sample_txt: Path, tmp_path: Path
+    ):
+        """Test that single file mode with -o saves to file."""
+        output_dir = tmp_path / "output"
+        input_file = tmp_path / "test.txt"
+        input_file.write_text(sample_txt.read_text())
+
+        result = runner.invoke(app, [str(input_file), "-o", str(output_dir)])
+
+        assert result.exit_code == 0
+        assert output_dir.exists()
+        assert (output_dir / "test.txt.md").exists()
+
+    def test_cli_output_overrides_config(
+        self, runner: CliRunner, sample_txt: Path, tmp_path: Path
+    ):
+        """Test that -o CLI flag overrides config output.dir."""
+        # Setup: create config with output.dir
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        config_output = project_dir / "config_output"
+        cli_output = project_dir / "cli_output"
+
+        config_file = project_dir / "markitai.json"
+        config_file.write_text(json.dumps({"output": {"dir": str(config_output)}}))
+
+        input_file = project_dir / "test.txt"
+        input_file.write_text(sample_txt.read_text())
+
+        # Run with explicit -o flag
+        import os
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(project_dir)
+            result = runner.invoke(app, [str(input_file), "-o", str(cli_output)])
+        finally:
+            os.chdir(old_cwd)
+
+        assert result.exit_code == 0
+        assert cli_output.exists(), "CLI -o should be used"
+        assert (cli_output / "test.txt.md").exists(), "Output should be in CLI -o dir"
+        assert not config_output.exists(), (
+            "Config output.dir should NOT be used when -o specified"
+        )
+
+    def test_explicit_config_single_file_outputs_to_stdout(
+        self, runner: CliRunner, sample_txt: Path, tmp_path: Path
+    ):
+        """Test that single file with -c config still outputs to stdout (not config's output.dir)."""
+        # Setup: create explicit config file with output.dir
+        config_file = tmp_path / "custom_config.json"
+        output_dir = tmp_path / "custom_output"
+        config_file.write_text(json.dumps({"output": {"dir": str(output_dir)}}))
+
+        input_file = tmp_path / "test.txt"
+        input_file.write_text(sample_txt.read_text())
+
+        # Run with explicit -c flag but no -o
+        result = runner.invoke(app, [str(input_file), "-c", str(config_file)])
+
+        assert result.exit_code == 0
+        # Single file mode should output to stdout, NOT use config's output.dir
+        assert not output_dir.exists(), (
+            "Config output.dir should NOT be used for single file mode"
+        )
+        # Verify content is in stdout
+        assert "# test" in result.output or "test" in result.output.lower()
+
+    def test_batch_mode_uses_config_output_dir(self, runner: CliRunner, tmp_path: Path):
+        """Test that batch mode (directory input) uses config output.dir."""
+        # Setup: create project with config and input files
+        project_dir = tmp_path / "project"
+        input_dir = project_dir / "input"
+        input_dir.mkdir(parents=True)
+        output_dir = project_dir / "batch_output"
+
+        config_file = project_dir / "markitai.json"
+        config_file.write_text(json.dumps({"output": {"dir": str(output_dir)}}))
+
+        # Create test files
+        (input_dir / "file1.txt").write_text("Content 1")
+        (input_dir / "file2.txt").write_text("Content 2")
+
+        # Run batch mode from project directory
+        import os
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(project_dir)
+            result = runner.invoke(app, [str(input_dir)])
+        finally:
+            os.chdir(old_cwd)
+
+        assert result.exit_code == 0
+        assert output_dir.exists(), "Batch mode should use config output.dir"
+        assert (output_dir / "file1.txt.md").exists(), "Batch output file1 should exist"
+        assert (output_dir / "file2.txt.md").exists(), "Batch output file2 should exist"
