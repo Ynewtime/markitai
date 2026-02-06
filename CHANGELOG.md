@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-06
+
+### Added
+
+- **Unified UI system**: New `ui.py` components and `i18n.py` module with Chinese/English support across all CLI commands
+- **`markitai init`**: One-stop setup wizard — checks dependencies, detects LLM providers, generates config
+- **Interactive mode** (`-I`): Guided setup with questionary prompts for new users
+- **`doctor --fix`**: Auto-install missing components (e.g., Playwright)
+- **Cross-platform install hints**: Platform-specific installation commands in doctor output
+- **`MARKITAI_LOG_FORMAT`**: Environment variable override for log format
+- **JSON repair**: Fallback parser for malformed LLM JSON responses using `json_repair`
+
+### Changed
+
+#### Performance
+
+- **CLI startup**: Lazy-load processor and command modules (~3x faster `--help`)
+- **Dependency checks**: Parallelized doctor and init with `ThreadPoolExecutor`
+- **LLM processing**: Pre-compiled regex patterns and batched replacements
+- **PDF rendering**: Parallel page rendering for standard and LLM modes
+- **URL fetching**: Async-safe cache locking for concurrent requests
+- **Executor**: Auto-detect heavy task limit based on system RAM
+- **Image processing**: Offloaded CPU-intensive work to thread pool
+- **Cache stats**: Merged stats and model breakdown into single SQLite query
+
+#### Refactoring
+
+- **Batch UI**: Replaced Rich table/LogPanel with compact unified UI (progress bar with current file, completion summary)
+- **Log format**: Default changed to human-readable text (was JSON)
+- **LLM cache**: Deduplicated `SQLiteCache`/`PersistentCache` into `llm/cache.py`
+- **Single file output**: Layered output with `--verbose` for detailed logs
+- **Setup scripts**: Consolidated 10 scripts into 2 unified files (`setup.sh` + `setup.ps1`) with built-in i18n
+
+### Fixed
+
+- **Windows**: LibreOffice detection with fallback to `Program Files` paths (not just PATH)
+- **Windows**: FFmpeg/CLI path display — show "installed" instead of long winget package paths
+- **Windows**: `config path` alignment with dynamic padding and continuous `│` column
+- **Playwright**: Default `wait_for` changed to `domcontentloaded` (was `networkidle`, caused hangs)
+- **Config**: Schema and function defaults synced with constants
+- **Exceptions**: Preserved exception chains (`raise from`) across codebase
+- **Cache**: Prevented stale `markitai_processed` timestamp on cache hit
+- **CLI**: Version flag reverted to `-v/--version`, `--verbose` kept without short flag
+
+### CI
+
+- Added Windows LibreOffice install step (`choco`) to CI matrix
+- Changed to `--all-extras` for comprehensive dependency testing
+- Publish workflow: split unit/integration tests with `SKIP_LLM_TESTS`
+
 ## [0.4.2] - 2026-02-03
 
 ### Changed
@@ -460,6 +510,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.5.0]: https://github.com/Ynewtime/markitai/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Ynewtime/markitai/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Ynewtime/markitai/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Ynewtime/markitai/compare/v0.3.2...v0.4.0
