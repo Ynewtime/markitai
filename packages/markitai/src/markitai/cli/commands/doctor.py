@@ -11,6 +11,7 @@ import json
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import click
@@ -192,29 +193,20 @@ def _check_claude_auth() -> dict[str, str]:
         }
 
 
-def _doctor_impl(as_json: bool, fix: bool = False) -> None:
-    """Implementation of the doctor command.
+def _check_playwright() -> dict[str, Any]:
+    """Check Playwright installation status.
 
-    Args:
-        as_json: Output results as JSON.
-        fix: Attempt to install missing components.
+    Returns:
+        Result dict with name, description, status, message, install_hint.
     """
     from markitai.fetch_playwright import (
-        clear_browser_cache,
         is_playwright_available,
         is_playwright_browser_installed,
     )
 
-    manager = ConfigManager()
-    cfg = manager.load()
-
-    results: dict[str, dict[str, Any]] = {}
-
-    # 1. Check Playwright
-    clear_browser_cache()  # Clear cache for fresh check
     if is_playwright_available():
         if is_playwright_browser_installed(use_cache=False):
-            results["playwright"] = {
+            return {
                 "name": "Playwright",
                 "description": "Browser automation for dynamic URLs",
                 "status": "ok",
@@ -222,7 +214,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "install_hint": "",
             }
         else:
-            results["playwright"] = {
+            return {
                 "name": "Playwright",
                 "description": "Browser automation for dynamic URLs",
                 "status": "warning",
@@ -230,7 +222,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "install_hint": get_install_hint("playwright"),
             }
     else:
-        results["playwright"] = {
+        return {
             "name": "Playwright",
             "description": "Browser automation for dynamic URLs",
             "status": "missing",
@@ -238,7 +230,13 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "install_hint": f"uv add playwright && {get_install_hint('playwright')}",
         }
 
-    # 2. Check LibreOffice
+
+def _check_libreoffice() -> dict[str, Any]:
+    """Check LibreOffice installation status.
+
+    Returns:
+        Result dict with name, description, status, message, install_hint.
+    """
     soffice_path = shutil.which("soffice") or shutil.which("libreoffice")
 
     # Check common installation paths if not in PATH
@@ -276,7 +274,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     if soffice_path:
         # LibreOffice found - just report the path without running --version
         # Running soffice --version can hang on Windows in non-interactive mode
-        results["libreoffice"] = {
+        return {
             "name": "LibreOffice",
             "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
             "status": "ok",
@@ -284,7 +282,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "install_hint": "",
         }
     else:
-        results["libreoffice"] = {
+        return {
             "name": "LibreOffice",
             "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
             "status": "missing",
@@ -292,7 +290,13 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "install_hint": get_install_hint("libreoffice"),
         }
 
-    # 3. Check FFmpeg (for audio/video processing)
+
+def _check_ffmpeg() -> dict[str, Any]:
+    """Check FFmpeg installation status.
+
+    Returns:
+        Result dict with name, description, status, message, install_hint.
+    """
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path:
         try:
@@ -307,7 +311,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 if proc.returncode == 0
                 else "unknown"
             )
-            results["ffmpeg"] = {
+            return {
                 "name": "FFmpeg",
                 "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
                 "status": "ok",
@@ -315,7 +319,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "install_hint": "",
             }
         except Exception as e:
-            results["ffmpeg"] = {
+            return {
                 "name": "FFmpeg",
                 "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
                 "status": "error",
@@ -323,7 +327,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "install_hint": "Reinstall FFmpeg",
             }
     else:
-        results["ffmpeg"] = {
+        return {
             "name": "FFmpeg",
             "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
             "status": "missing",
@@ -331,7 +335,16 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "install_hint": get_install_hint("ffmpeg"),
         }
 
-    # 4. Check RapidOCR (Python OCR library with built-in models)
+
+def _check_rapidocr(cfg: Any) -> dict[str, Any]:
+    """Check RapidOCR installation status.
+
+    Args:
+        cfg: Configuration object with OCR language settings.
+
+    Returns:
+        Result dict with name, description, status, message, install_hint.
+    """
     try:
         from importlib.metadata import version as get_version
 
@@ -373,7 +386,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         }
 
         if configured_lang.lower() in supported_langs:
-            results["rapidocr"] = {
+            return {
                 "name": "RapidOCR",
                 "description": "OCR for scanned documents (built-in models)",
                 "status": "ok",
@@ -381,7 +394,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "install_hint": "",
             }
         else:
-            results["rapidocr"] = {
+            return {
                 "name": "RapidOCR",
                 "description": "OCR for scanned documents (built-in models)",
                 "status": "warning",
@@ -389,13 +402,44 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "install_hint": "Set ocr.lang to one of: zh, en, ja, ko, ar, th, latin",
             }
     except ImportError:
-        results["rapidocr"] = {
+        return {
             "name": "RapidOCR",
             "description": "OCR for scanned documents (built-in models)",
             "status": "missing",
             "message": "RapidOCR not installed",
             "install_hint": "uv add rapidocr (included in markitai dependencies)",
         }
+
+
+def _doctor_impl(as_json: bool, fix: bool = False) -> None:
+    """Implementation of the doctor command.
+
+    Args:
+        as_json: Output results as JSON.
+        fix: Attempt to install missing components.
+    """
+    from markitai.fetch_playwright import clear_browser_cache
+
+    manager = ConfigManager()
+    cfg = manager.load()
+
+    results: dict[str, dict[str, Any]] = {}
+
+    # Clear Playwright browser cache before parallel checks
+    clear_browser_cache()
+
+    # Run independent system tool checks in parallel
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        future_playwright = executor.submit(_check_playwright)
+        future_libreoffice = executor.submit(_check_libreoffice)
+        future_ffmpeg = executor.submit(_check_ffmpeg)
+        future_rapidocr = executor.submit(_check_rapidocr, cfg)
+
+    # Collect results in deterministic order
+    results["playwright"] = future_playwright.result()
+    results["libreoffice"] = future_libreoffice.result()
+    results["ffmpeg"] = future_ffmpeg.result()
+    results["rapidocr"] = future_rapidocr.result()
 
     # 5. Check LLM API configuration (check model_list for configured models)
     configured_models = cfg.llm.model_list if cfg.llm.model_list else []

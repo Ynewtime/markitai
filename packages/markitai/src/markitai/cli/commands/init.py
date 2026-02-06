@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import click
@@ -79,17 +80,14 @@ def _quick_init(target: Path) -> None:
     ui.success(f"Configuration created: {target}")
 
 
-def _check_deps() -> list[tuple[str, str, bool]]:
-    """Quick dependency check.
+def _check_playwright_dep() -> tuple[str, str, bool]:
+    """Check Playwright dependency status.
 
     Returns:
-        List of (name, detail, available) tuples.
+        Tuple of (name, detail, available).
     """
     from markitai.cli.commands.doctor import get_install_hint
 
-    results: list[tuple[str, str, bool]] = []
-
-    # Playwright
     try:
         from markitai.fetch_playwright import (
             is_playwright_available,
@@ -101,40 +99,75 @@ def _check_deps() -> list[tuple[str, str, bool]]:
 
         if pw_available:
             if pw_browser:
-                results.append(("Playwright", "Chromium installed", True))
+                return ("Playwright", "Chromium installed", True)
             else:
                 hint = get_install_hint("playwright")
-                results.append(("Playwright", f"browser missing ({hint})", False))
+                return ("Playwright", f"browser missing ({hint})", False)
         else:
-            results.append(("Playwright", "not installed (uv add playwright)", False))
+            return ("Playwright", "not installed (uv add playwright)", False)
     except Exception:
-        results.append(("Playwright", "not installed (uv add playwright)", False))
+        return ("Playwright", "not installed (uv add playwright)", False)
 
-    # LibreOffice
+
+def _check_libreoffice_dep() -> tuple[str, str, bool]:
+    """Check LibreOffice dependency status.
+
+    Returns:
+        Tuple of (name, detail, available).
+    """
+    from markitai.cli.commands.doctor import get_install_hint
+
     lo = shutil.which("soffice") or shutil.which("libreoffice")
     if lo:
-        results.append(("LibreOffice", lo, True))
+        return ("LibreOffice", lo, True)
     else:
         hint = get_install_hint("libreoffice")
-        results.append(("LibreOffice", f"not found ({hint})", False))
+        return ("LibreOffice", f"not found ({hint})", False)
 
-    # FFmpeg
+
+def _check_ffmpeg_dep() -> tuple[str, str, bool]:
+    """Check FFmpeg dependency status.
+
+    Returns:
+        Tuple of (name, detail, available).
+    """
     ff = shutil.which("ffmpeg")
     if ff:
-        results.append(("FFmpeg", ff, True))
+        return ("FFmpeg", ff, True)
     else:
-        results.append(("FFmpeg", "not found (optional)", False))
+        return ("FFmpeg", "not found (optional)", False)
 
-    # RapidOCR
+
+def _check_rapidocr_dep() -> tuple[str, str, bool]:
+    """Check RapidOCR dependency status.
+
+    Returns:
+        Tuple of (name, detail, available).
+    """
     try:
         import rapidocr
 
         ver = getattr(rapidocr, "__version__", "?")
-        results.append(("RapidOCR", f"v{ver}", True))
+        return ("RapidOCR", f"v{ver}", True)
     except ImportError:
-        results.append(("RapidOCR", "not installed (uv add rapidocr)", False))
+        return ("RapidOCR", "not installed (uv add rapidocr)", False)
 
-    return results
+
+def _check_deps() -> list[tuple[str, str, bool]]:
+    """Quick dependency check (parallelized).
+
+    Returns:
+        List of (name, detail, available) tuples.
+    """
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [
+            executor.submit(_check_playwright_dep),
+            executor.submit(_check_libreoffice_dep),
+            executor.submit(_check_ffmpeg_dep),
+            executor.submit(_check_rapidocr_dep),
+        ]
+        # Collect in submission order for deterministic output
+        return [f.result() for f in futures]
 
 
 def _wizard_init(target: Path) -> None:
