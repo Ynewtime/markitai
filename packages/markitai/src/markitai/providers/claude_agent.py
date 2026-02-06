@@ -23,7 +23,7 @@ Usage:
 Supported models:
     - Aliases (recommended): sonnet, opus, haiku, inherit
       (automatically resolves to latest version via LiteLLM database)
-    - Full model strings: claude-sonnet-4-5-20250929, claude-opus-4-5-20251101, etc.
+    - Full model strings: claude-sonnet-4-5-20250929, claude-opus-4-6, etc.
 
 Supported API providers (via environment variables):
     - Anthropic API (default)

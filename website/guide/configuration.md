@@ -218,11 +218,11 @@ Examples:
 
 Claude Agent SDK supported models:
 - Aliases (recommended): `sonnet`, `opus`, `haiku`, `inherit`
-- Full model strings: `claude-sonnet-4-5-20250929`, `claude-opus-4-5-20251101`, `claude-opus-4-1-20250805`
+- Full model strings: `claude-sonnet-4-5-20250929`, `claude-opus-4-6`, `claude-opus-4-5-20251101`
 
 GitHub Copilot SDK supported models:
 - OpenAI: `gpt-5.2`, `gpt-5.1`, `gpt-5-mini`, `gpt-5.1-codex`
-- Anthropic: `claude-sonnet-4.5`, `claude-opus-4.5`, `claude-haiku-4.5`
+- Anthropic: `claude-sonnet-4.5`, `claude-opus-4.6`, `claude-haiku-4.5`
 - Google: `gemini-2.5-pro`, `gemini-3-flash`
 - Availability depends on your Copilot subscription
 

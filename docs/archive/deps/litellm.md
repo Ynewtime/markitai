@@ -300,7 +300,8 @@ curl -X GET 'http://localhost:4000/user/daily/activity?start_date=2026-01-01&end
 
 | Model | Input ($/1M) | Output ($/1M) | Cache Write | Cache Hit | Context |
 |-------|--------------|---------------|-------------|-----------|---------|
-| **Claude Opus 4.5** | $5.00 | $25.00 | $6.25 | $0.50 | 200K |
+| **Claude Opus 4.6** | $5.00 | $25.00 | $6.25 | $0.50 | 200K/1M* |
+| Claude Opus 4.5 | $5.00 | $25.00 | $6.25 | $0.50 | 200K |
 | Claude Opus 4.1 | $15.00 | $75.00 | $18.75 | $1.50 | 200K |
 | Claude Opus 4 | $15.00 | $75.00 | $18.75 | $1.50 | 200K |
 | **Claude Sonnet 4.5** | $3.00 | $15.00 | $3.75 | $0.30 | 200K/1M* |
@@ -353,7 +354,7 @@ curl -X GET 'http://localhost:4000/user/daily/activity?start_date=2026-01-01&end
 | **通用低成本** | Gemini 2.5 Flash-Lite | $0.10-$0.40 | Google 最便宜，功能全面 |
 | **OpenAI 低成本** | GPT-4o-mini | $0.15-$0.60 | OpenAI 生态最便宜 |
 | **多模态性价比** | Gemini 2.0 Flash | $0.10-$0.40 | 支持图像视频音频 |
-| **顶级推理** | Claude Opus 4.5 | $5-$25 | 比 Opus 4 便宜67%，最强能力 |
+| **顶级推理** | Claude Opus 4.6 | $5-$25 | 最强推理+128K输出+1M上下文 |
 | **均衡选择** | Claude Sonnet 4.5 | $3-$15 | SWE-bench 第一 |
 | **代码开发** | GPT-5.2 | $1.75-$14 | 代码/Agent 最强 |
 

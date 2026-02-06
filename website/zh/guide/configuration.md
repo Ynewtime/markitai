@@ -218,11 +218,11 @@ provider/model-name
 
 Claude Agent SDK 支持的模型：
 - 别名（推荐）：`sonnet`、`opus`、`haiku`、`inherit`
-- 完整模型字符串：`claude-sonnet-4-5-20250929`、`claude-opus-4-5-20251101`、`claude-opus-4-1-20250805`
+- 完整模型字符串：`claude-sonnet-4-5-20250929`、`claude-opus-4-6`、`claude-opus-4-5-20251101`
 
 GitHub Copilot SDK 支持的模型：
 - OpenAI: `gpt-5.2`、`gpt-5.1`、`gpt-5-mini`、`gpt-5.1-codex`
-- Anthropic: `claude-sonnet-4.5`、`claude-opus-4.5`、`claude-haiku-4.5`
+- Anthropic: `claude-sonnet-4.5`、`claude-opus-4.6`、`claude-haiku-4.5`
 - Google: `gemini-2.5-pro`、`gemini-3-flash`
 - 可用性取决于您的 Copilot 订阅
 
