@@ -36,10 +36,12 @@ jobs:
         run: uv run ruff check packages/markitai/src
 
       - name: Run unit tests
-        run: uv run pytest packages/markitai/tests/unit -x -q
+        run: uv run pytest packages/markitai/tests/unit -v --tb=short
+        env:
+          SKIP_LLM_TESTS: "1"
 
       - name: Run integration tests (no API keys)
-        run: uv run pytest packages/markitai/tests/integration -x -q -k "not test_url"
+        run: uv run pytest packages/markitai/tests/integration -v --tb=short -k "not test_url"
         env:
           SKIP_LLM_TESTS: "1"
 
