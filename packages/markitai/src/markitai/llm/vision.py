@@ -23,6 +23,7 @@ from markitai.constants import (
     DEFAULT_INSTRUCTOR_MAX_RETRIES,
     DEFAULT_MAX_IMAGES_PER_BATCH,
 )
+from markitai.llm.document import _try_repair_instructor_response
 from markitai.llm.models import get_response_cost
 from markitai.llm.types import (
     BatchImageAnalysisResult,
@@ -400,19 +401,27 @@ class VisionMixin:
                 )
                 # max_retries allows Instructor to retry with validation error
                 # feedback, which helps LLM fix JSON escaping issues
-                response, raw_response = await cast(
-                    Awaitable[tuple[BatchImageAnalysisResult, Any]],
-                    client.chat.completions.create_with_completion(
-                        model="default",
-                        messages=cast(
-                            list[ChatCompletionMessageParam],
-                            messages,
+                try:
+                    response, raw_response = await cast(
+                        Awaitable[tuple[BatchImageAnalysisResult, Any]],
+                        client.chat.completions.create_with_completion(
+                            model="default",
+                            messages=cast(
+                                list[ChatCompletionMessageParam],
+                                messages,
+                            ),
+                            response_model=BatchImageAnalysisResult,
+                            max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
+                            max_tokens=max_tokens,
                         ),
-                        response_model=BatchImageAnalysisResult,
-                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                        max_tokens=max_tokens,
-                    ),
-                )
+                    )
+                except Exception as e:
+                    repaired = _try_repair_instructor_response(
+                        e, BatchImageAnalysisResult
+                    )
+                    if repaired is None:
+                        raise
+                    response, raw_response = repaired
 
                 # Check for truncation
                 if hasattr(raw_response, "choices") and raw_response.choices:
@@ -601,16 +610,22 @@ class VisionMixin:
             # Use create_with_completion to get both the model and the raw response
             # max_retries allows Instructor to retry with validation error
             # feedback, which helps LLM fix JSON escaping issues
-            response, raw_response = await cast(
-                Awaitable[tuple[ImageAnalysisResult, Any]],
-                client.chat.completions.create_with_completion(
-                    model=model,
-                    messages=cast(list[ChatCompletionMessageParam], messages),
-                    response_model=ImageAnalysisResult,
-                    max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                    max_tokens=max_tokens,
-                ),
-            )
+            try:
+                response, raw_response = await cast(
+                    Awaitable[tuple[ImageAnalysisResult, Any]],
+                    client.chat.completions.create_with_completion(
+                        model=model,
+                        messages=cast(list[ChatCompletionMessageParam], messages),
+                        response_model=ImageAnalysisResult,
+                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
+                        max_tokens=max_tokens,
+                    ),
+                )
+            except Exception as e:
+                repaired = _try_repair_instructor_response(e, ImageAnalysisResult)
+                if repaired is None:
+                    raise
+                response, raw_response = repaired
 
             # Check for truncation
             if hasattr(raw_response, "choices") and raw_response.choices:
