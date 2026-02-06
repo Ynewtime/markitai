@@ -31,6 +31,31 @@ from markitai.utils.mime import get_mime_type
 from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import detect_language, get_language_name
 
+# Pre-compiled regex patterns for _remove_uncommented_screenshots hot path
+# Screenshot references (markitai-generated .pageNNNN patterns)
+_SCREENSHOT_REF_RE = re.compile(
+    r"^!\[(?:Page\s+\d+|[^\]]*)\]\(screenshots/[^)]+\.page\d{4}\.\w+\)\s*$",
+    re.MULTILINE,
+)
+# Page heading image labels (legacy format)
+_PAGE_HEADING_LABEL_RE = re.compile(
+    r"^#{2,3}\s+Page\s+\d+\s+Image:\s*\n\s*\n",
+    re.MULTILINE,
+)
+# Placeholder and label patterns (merged: [Page/Image N], __MARKITAI_*_LABEL_N__, __MARKITAI_SLIDE_N__)
+_PLACEHOLDER_LABEL_RE = re.compile(
+    r"^(?:\[(Page|Image)\s+\d+\]"
+    r"|__MARKITAI_(?:PAGE|IMG)_LABEL_\d+__"
+    r"|__MARKITAI_SLIDE_\d+__)\s*\n",
+    re.MULTILINE,
+)
+_EXCESS_NEWLINES_RE = re.compile(r"\n{3,}")
+_PAGE_SECTION_RE = re.compile(
+    r"(<!-- Page images for reference -->)"
+    r"((?:\s*<!-- !\[Page \d+\]\([^)]+\) -->)+)"
+)
+_PAGE_COMMENT_RE = re.compile(r"<!-- !\[Page \d+\]\([^)]+\) -->")
+
 
 def _context_display_name(context: str) -> str:
     """Get display name for logging context.
@@ -1435,50 +1460,16 @@ class DocumentMixin:
             # IMPORTANT: Only match markitai-generated screenshot patterns to avoid
             # removing user's original screenshots/ references (P0-5 fix).
             # markitai naming format: {filename}.page{NNNN}.{ext} in screenshots/
-            # Patterns to remove:
-            # 1. ![Page N](screenshots/*.page*.jpg) - markitai standard pattern
-            # 2. ![...](screenshots/*.page*.jpg) - LLM-generated variants with same filename
-            patterns = [
-                # Matches: ![Page N](screenshots/anything.pageNNNN.jpg)
-                r"^!\[Page\s+\d+\]\(screenshots/[^)]+\.page\d{4}\.\w+\)\s*$",
-                # Matches: ![...](screenshots/anything.pageNNNN.jpg)
-                r"^!\[[^\]]*\]\(screenshots/[^)]+\.page\d{4}\.\w+\)\s*$",
-            ]
-            for pattern in patterns:
-                content = re.sub(pattern, "", content, flags=re.MULTILINE)
+            content = _SCREENSHOT_REF_RE.sub("", content)
 
             # Also remove any page/image labels that LLM may have copied
             # Pattern: ## or ### Page N Image: followed by empty line (legacy format)
-            # Pattern: [Page N] or [Image N] on its own line (simple format)
-            # Pattern: __MARKITAI_PAGE_LABEL_N__ or __MARKITAI_IMG_LABEL_N__ (unique format)
-            content = re.sub(
-                r"^#{2,3}\s+Page\s+\d+\s+Image:\s*\n\s*\n",
-                "",
-                content,
-                flags=re.MULTILINE,
-            )
-            content = re.sub(
-                r"^\[(Page|Image)\s+\d+\]\s*\n",
-                "",
-                content,
-                flags=re.MULTILINE,
-            )
-            content = re.sub(
-                r"^__MARKITAI_(PAGE|IMG)_LABEL_\d+__\s*\n",
-                "",
-                content,
-                flags=re.MULTILINE,
-            )
-            # Remove any leftover slide placeholders (shouldn't exist but cleanup)
-            content = re.sub(
-                r"^__MARKITAI_SLIDE_\d+__\s*\n",
-                "",
-                content,
-                flags=re.MULTILINE,
-            )
+            content = _PAGE_HEADING_LABEL_RE.sub("", content)
+            # Merged: [Page/Image N], __MARKITAI_*_LABEL_N__, __MARKITAI_SLIDE_N__
+            content = _PLACEHOLDER_LABEL_RE.sub("", content)
 
             # Clean up any resulting empty lines
-            content = re.sub(r"\n{3,}", "\n\n", content)
+            content = _EXCESS_NEWLINES_RE.sub("\n\n", content)
         else:
             # Split at the page images section
             before = content[:header_pos]
@@ -1486,42 +1477,13 @@ class DocumentMixin:
 
             # Remove screenshot references from BEFORE the page images header
             # IMPORTANT: Only match markitai-generated screenshot patterns (P0-5 fix)
-            patterns = [
-                # Matches: ![Page N](screenshots/anything.pageNNNN.jpg)
-                r"^!\[Page\s+\d+\]\(screenshots/[^)]+\.page\d{4}\.\w+\)\s*$",
-                # Matches: ![...](screenshots/anything.pageNNNN.jpg)
-                r"^!\[[^\]]*\]\(screenshots/[^)]+\.page\d{4}\.\w+\)\s*$",
-            ]
-            for pattern in patterns:
-                before = re.sub(pattern, "", before, flags=re.MULTILINE)
+            before = _SCREENSHOT_REF_RE.sub("", before)
 
             # Also remove any page/image labels that LLM may have copied
-            before = re.sub(
-                r"^#{2,3}\s+Page\s+\d+\s+Image:\s*\n\s*\n",
-                "",
-                before,
-                flags=re.MULTILINE,
-            )
-            before = re.sub(
-                r"^\[(Page|Image)\s+\d+\]\s*\n",
-                "",
-                before,
-                flags=re.MULTILINE,
-            )
-            before = re.sub(
-                r"^__MARKITAI_(PAGE|IMG)_LABEL_\d+__\s*\n",
-                "",
-                before,
-                flags=re.MULTILINE,
-            )
-            # Remove any leftover slide placeholders (shouldn't exist but cleanup)
-            before = re.sub(
-                r"^__MARKITAI_SLIDE_\d+__\s*\n",
-                "",
-                before,
-                flags=re.MULTILINE,
-            )
-            before = re.sub(r"\n{3,}", "\n\n", before)
+            before = _PAGE_HEADING_LABEL_RE.sub("", before)
+            # Merged: [Page/Image N], __MARKITAI_*_LABEL_N__, __MARKITAI_SLIDE_N__
+            before = _PLACEHOLDER_LABEL_RE.sub("", before)
+            before = _EXCESS_NEWLINES_RE.sub("\n\n", before)
 
             # Fix the AFTER section: convert any non-commented page images to comments
             # Match lines with page image references that are not already commented
@@ -1545,18 +1507,13 @@ class DocumentMixin:
 
         # Clean up screenshot comments section: remove blank lines between comments
         # Pattern: <!-- Page images for reference --> followed by page image comments
-        page_section_pattern = (
-            r"(<!-- Page images for reference -->)"
-            r"((?:\s*<!-- !\[Page \d+\]\([^)]+\) -->)+)"
-        )
-
         def clean_page_section(match: re.Match) -> str:
             header = match.group(1)
             comments_section = match.group(2)
             # Extract individual comments and rejoin without blank lines
-            comments = re.findall(r"<!-- !\[Page \d+\]\([^)]+\) -->", comments_section)
+            comments = _PAGE_COMMENT_RE.findall(comments_section)
             return header + "\n" + "\n".join(comments)
 
-        content = re.sub(page_section_pattern, clean_page_section, content)
+        content = _PAGE_SECTION_RE.sub(clean_page_section, content)
 
         return content
