@@ -190,40 +190,12 @@ class PdfConverter(BaseConverter):
             page_images: list[dict] = []
             screenshots_dir = ensure_screenshots_dir(output_dir)
 
-            import pymupdf
-
-            # Create ImageProcessor for compression
-            img_processor = ImageProcessor(self.config.image if self.config else None)
-
-            doc = pymupdf.open(input_path)
-            try:
-                screenshot_dpi = DEFAULT_RENDER_DPI
-                screenshot_format = image_format if image_format != "png" else "jpg"
-                for page_num in range(len(doc)):
-                    page = doc[page_num]
-
-                    # Render page to image
-                    mat = pymupdf.Matrix(screenshot_dpi / 72, screenshot_dpi / 72)
-                    pix = page.get_pixmap(matrix=mat)
-
-                    # Save page image with compression (ensures < 5MB for LLM)
-                    image_name = (
-                        f"{input_path.name}.page{page_num + 1:04d}.{screenshot_format}"
-                    )
-                    screenshot_path = screenshots_dir / image_name
-                    img_processor.save_screenshot(
-                        pix.samples, pix.width, pix.height, screenshot_path
-                    )
-
-                    page_images.append(
-                        {
-                            "page": page_num + 1,
-                            "path": str(screenshot_path),
-                            "name": image_name,
-                        }
-                    )
-            finally:
-                doc.close()
+            screenshot_format = image_format if image_format != "png" else "jpg"
+            page_results = self._render_pages_parallel(
+                input_path, screenshots_dir, screenshot_format, dpi=DEFAULT_RENDER_DPI
+            )
+            for _extracted_img, page_info in page_results:
+                page_images.append(page_info)
 
             if page_images:
                 logger.debug(f"Rendered {len(page_images)} page screenshots")
@@ -241,6 +213,116 @@ class PdfConverter(BaseConverter):
             images=images,
             metadata=metadata,
         )
+
+    def _render_pages_parallel(
+        self,
+        input_path: Path,
+        screenshots_dir: Path,
+        image_format: str,
+        dpi: int = DEFAULT_RENDER_DPI,
+        max_workers: int | None = None,
+    ) -> list[tuple[ExtractedImage, dict]]:
+        """Render PDF pages as images in parallel using ThreadPoolExecutor.
+
+        Each thread opens its own PDF document for thread safety (PyMuPDF is not thread-safe).
+
+        Args:
+            input_path: Path to the PDF file
+            screenshots_dir: Directory to save screenshots
+            image_format: Image format (jpg, png, etc.)
+            dpi: Render DPI
+            max_workers: Override worker count. If None, auto-detect based on file size.
+
+        Returns:
+            List of (ExtractedImage, page_info_dict) tuples, sorted by page number.
+        """
+        import pymupdf
+
+        # Create ImageProcessor once (thread-safe for read-only config access)
+        img_processor = ImageProcessor(self.config.image if self.config else None)
+
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get total pages (lightweight - only reads PDF metadata)
+        doc = pymupdf.open(input_path)
+        total_pages = len(doc)
+        doc.close()
+
+        if total_pages == 0:
+            return []
+
+        # Auto-detect worker count if not specified
+        if max_workers is None:
+            file_size_mb = input_path.stat().st_size / (1024 * 1024)
+            cpu_count = os.cpu_count() or 4
+            if file_size_mb < 10:
+                max_workers = min(cpu_count // 2 or 2, total_pages, 6)
+            elif file_size_mb < 50:
+                max_workers = min(4, total_pages)
+            else:
+                max_workers = min(2, total_pages)
+            max_workers = max(1, max_workers)
+
+        def _render_single_page(page_num: int) -> tuple[ExtractedImage, dict]:
+            """Render a single page (thread-safe).
+
+            Each thread opens its own document copy to ensure thread safety.
+            PyMuPDF is not thread-safe when sharing document objects.
+            """
+            thread_doc = pymupdf.open(input_path)
+            try:
+                page = thread_doc[page_num]
+
+                # Render page to image
+                mat = pymupdf.Matrix(dpi / 72, dpi / 72)
+                pix = page.get_pixmap(matrix=mat)
+
+                # Save page image with compression (ensures < 5MB for LLM)
+                image_name = f"{input_path.name}.page{page_num + 1:04d}.{image_format}"
+                image_path = screenshots_dir / image_name
+                final_size = img_processor.save_screenshot(
+                    pix.samples, pix.width, pix.height, image_path
+                )
+
+                extracted_img = ExtractedImage(
+                    path=image_path,
+                    index=page_num + 1,
+                    original_name=image_name,
+                    mime_type=f"image/{image_format}",
+                    width=final_size[0],
+                    height=final_size[1],
+                )
+
+                page_info = {
+                    "page": page_num + 1,
+                    "path": str(image_path),
+                    "name": image_name,
+                }
+
+                return (extracted_img, page_info)
+            finally:
+                thread_doc.close()
+
+        # Render pages in parallel
+        results: list[tuple[int, ExtractedImage, dict]] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(_render_single_page, i): i for i in range(total_pages)
+            }
+
+            for future in as_completed(futures):
+                page_num = futures[future]
+                try:
+                    extracted_img, page_info = future.result()
+                    results.append((page_num, extracted_img, page_info))
+                except Exception as e:
+                    logger.error(f"Failed to render page {page_num + 1}: {e}")
+                    raise
+
+        # Sort by page number to maintain order
+        results.sort(key=lambda x: x[0])
+
+        return [(img, info) for _, img, info in results]
 
     def _fix_image_paths(self, markdown: str, image_path: Path) -> str:
         """Fix image paths to be relative to output directory.
@@ -540,13 +622,6 @@ class PdfConverter(BaseConverter):
         Returns:
             ConvertResult with extracted text and page images
         """
-        try:
-            import pymupdf
-        except ImportError as e:
-            raise ImportError(
-                "PyMuPDF is not installed. Install with: uv add pymupdf"
-            ) from e
-
         logger.info(f"Extracting text and rendering pages for LLM: {input_path.name}")
 
         # Determine output paths
@@ -588,84 +663,12 @@ class PdfConverter(BaseConverter):
         page_images: list[dict] = []
 
         if enable_screenshot:
-            screenshots_dir.mkdir(parents=True, exist_ok=True)
-            # Create ImageProcessor for compression
-            img_processor = ImageProcessor(self.config.image if self.config else None)
-
-            # Get total pages (lightweight operation - only reads PDF metadata)
-            with pymupdf.open(input_path) as doc:
-                total_pages = len(doc)
-
-            dpi = DEFAULT_RENDER_DPI
-
-            def render_page(page_num: int) -> tuple[ExtractedImage, dict]:
-                """Render a single page (thread-safe).
-
-                Each thread opens its own document copy to ensure thread safety.
-                PyMuPDF is not thread-safe when sharing document objects.
-                """
-                # Open document in each thread for thread safety
-                thread_doc = pymupdf.open(input_path)
-                try:
-                    page = thread_doc[page_num]
-
-                    # Render page to image
-                    mat = pymupdf.Matrix(dpi / 72, dpi / 72)
-                    pix = page.get_pixmap(matrix=mat)
-
-                    # Save page image with compression (ensures < 5MB for LLM)
-                    image_name = (
-                        f"{input_path.name}.page{page_num + 1:04d}.{image_format}"
-                    )
-                    image_path = screenshots_dir / image_name
-                    final_size = img_processor.save_screenshot(
-                        pix.samples, pix.width, pix.height, image_path
-                    )
-
-                    extracted_img = ExtractedImage(
-                        path=image_path,
-                        index=page_num + 1,
-                        original_name=image_name,
-                        mime_type=f"image/{image_format}",
-                        width=final_size[0],
-                        height=final_size[1],
-                    )
-
-                    page_info = {
-                        "page": page_num + 1,
-                        "path": str(image_path),
-                        "name": image_name,
-                    }
-
-                    return (extracted_img, page_info)
-                finally:
-                    thread_doc.close()
-
-            # Render pages in parallel using ThreadPoolExecutor
-            # Use min(4, total_pages) workers to balance parallelism and resource usage
-            max_workers = min(4, total_pages) if total_pages > 0 else 1
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(render_page, i): i for i in range(total_pages)
-                }
-
-                # Collect results maintaining page order
-                results: list[tuple[int, ExtractedImage, dict]] = []
-                for future in as_completed(futures):
-                    page_num = futures[future]
-                    try:
-                        extracted_img, page_info = future.result()
-                        results.append((page_num, extracted_img, page_info))
-                    except Exception as e:
-                        logger.error(f"Failed to render page {page_num + 1}: {e}")
-                        raise
-
-                # Sort by page number to maintain order
-                results.sort(key=lambda x: x[0])
-
-                for _, extracted_img, page_info in results:
-                    images.append(extracted_img)
-                    page_images.append(page_info)
+            page_results = self._render_pages_parallel(
+                input_path, screenshots_dir, image_format, dpi=DEFAULT_RENDER_DPI
+            )
+            for extracted_img, page_info in page_results:
+                images.append(extracted_img)
+                page_images.append(page_info)
 
             if page_images:
                 logger.debug(f"Rendered {len(page_images)} page screenshots")
