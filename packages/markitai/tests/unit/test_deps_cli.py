@@ -204,24 +204,21 @@ class TestLibreOfficeDependency:
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
             patch("markitai.cli.commands.doctor.shutil.which") as mock_which,
+            patch(
+                "markitai.utils.office.find_libreoffice",
+                return_value="/usr/bin/soffice",
+            ),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = False
             mock_browser.return_value = False
-
-            def which_side_effect(cmd: str) -> str | None:
-                if cmd == "soffice":
-                    return "/usr/bin/soffice"
-                return None
-
-            mock_which.side_effect = which_side_effect
+            mock_which.return_value = None
 
             result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert data["libreoffice"]["status"] == "ok"
-            # Now we just report path without version (avoids hanging on Windows)
             assert "/usr/bin/soffice" in data["libreoffice"]["message"]
 
     def test_libreoffice_not_installed(
@@ -236,13 +233,15 @@ class TestLibreOfficeDependency:
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
             patch("markitai.cli.commands.doctor.shutil.which") as mock_which,
-            patch("os.path.isfile") as mock_isfile,
+            patch(
+                "markitai.utils.office.find_libreoffice",
+                return_value=None,
+            ),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = False
             mock_browser.return_value = False
             mock_which.return_value = None
-            mock_isfile.return_value = False
 
             result = runner.invoke(doctor, ["--json"])
 

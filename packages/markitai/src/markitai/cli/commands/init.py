@@ -116,10 +116,11 @@ def _check_libreoffice_dep() -> tuple[str, str, bool]:
         Tuple of (name, detail, available).
     """
     from markitai.cli.commands.doctor import get_install_hint
+    from markitai.utils.office import find_libreoffice
 
-    lo = shutil.which("soffice") or shutil.which("libreoffice")
+    lo = find_libreoffice()
     if lo:
-        return ("LibreOffice", lo, True)
+        return ("LibreOffice", "installed", True)
     else:
         hint = get_install_hint("libreoffice")
         return ("LibreOffice", f"not found ({hint})", False)
@@ -133,7 +134,7 @@ def _check_ffmpeg_dep() -> tuple[str, str, bool]:
     """
     ff = shutil.which("ffmpeg")
     if ff:
-        return ("FFmpeg", ff, True)
+        return ("FFmpeg", "installed", True)
     else:
         return ("FFmpeg", "not found (optional)", False)
 
