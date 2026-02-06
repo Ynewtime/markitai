@@ -444,14 +444,26 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     # 5. Check LLM API configuration (check model_list for configured models)
     configured_models = cfg.llm.model_list if cfg.llm.model_list else []
     if configured_models:
-        # Find first model with api_key to determine provider
-        first_model = configured_models[0].litellm_params.model
-        provider = first_model.split("/")[0] if "/" in first_model else "openai"
+        # Count distinct API providers (exclude local providers like claude-agent, copilot)
+        local_prefixes = ("claude-agent/", "copilot/")
+        api_providers: set[str] = set()
+        for m in configured_models:
+            model_id = m.litellm_params.model
+            if not any(model_id.startswith(p) for p in local_prefixes):
+                provider = model_id.split("/")[0] if "/" in model_id else "openai"
+                api_providers.add(provider)
+
+        if api_providers:
+            providers_str = ", ".join(sorted(api_providers))
+            message = f"{len(configured_models)} model(s) configured, API provider(s): {providers_str}"
+        else:
+            message = f"{len(configured_models)} model(s) configured"
+
         results["llm-api"] = {
-            "name": f"LLM API ({provider})",
+            "name": "LLM API",
             "description": "Content enhancement and image analysis",
             "status": "ok",
-            "message": f"{len(configured_models)} model(s) configured",
+            "message": message,
             "install_hint": "",
         }
     else:
