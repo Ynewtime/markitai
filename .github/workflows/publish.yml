@@ -6,7 +6,35 @@ on:
   workflow_dispatch:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run lint
+        run: uv run ruff check packages/markitai/src
+
+      - name: Run tests
+        run: uv run --project packages/markitai pytest packages/markitai/tests/ -x -q
+
   publish:
+    needs: [test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -18,9 +46,15 @@ jobs:
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - name: Build package
         run: uv build --package markitai
+
+      - name: Verify build artifacts
+        run: ls -la dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
