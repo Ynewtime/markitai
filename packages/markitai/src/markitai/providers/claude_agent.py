@@ -561,7 +561,7 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
                     model_name,
                 )
 
-            raise RuntimeError(f"Claude Agent SDK error: {e}")
+            raise RuntimeError(f"Claude Agent SDK error: {e}") from e
 
         elapsed = time.time() - start_time
 

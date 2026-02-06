@@ -714,7 +714,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                     model_name,
                 )
 
-            raise RuntimeError(f"GitHub Copilot SDK error: {e}")
+            raise RuntimeError(f"GitHub Copilot SDK error: {e}") from e
         finally:
             # Clean up session (release resources)
             if session is not None:
