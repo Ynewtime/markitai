@@ -196,7 +196,7 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
         )
 
         if is_heavy:
-            async with get_heavy_task_semaphore():
+            async with get_heavy_task_semaphore(ctx.config.batch.heavy_task_limit):
                 ctx.conversion_result = await run_in_converter_thread(
                     ctx.converter.convert,
                     ctx.effective_input,

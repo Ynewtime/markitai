@@ -45,6 +45,7 @@ DEFAULT_IO_CONCURRENCY = 20  # I/O operations (file reads, etc.)
 DEFAULT_LLM_CONCURRENCY = 10  # LLM API calls (config default)
 DEFAULT_BATCH_CONCURRENCY = 10  # Batch file processing (config default)
 DEFAULT_URL_CONCURRENCY = 5  # URL fetching (separate from file processing)
+DEFAULT_HEAVY_TASK_LIMIT = 0  # Heavy task semaphore limit (0 = auto-detect from RAM)
 
 # Batch sizes
 DEFAULT_MAX_IMAGES_PER_BATCH = 10  # Images per LLM vision call
