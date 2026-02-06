@@ -9,7 +9,7 @@
           "type": "integer"
         },
         "wait_for": {
-          "default": "domcontentloaded",
+          "default": "networkidle",
           "enum": [
             "load",
             "domcontentloaded",
@@ -19,7 +19,7 @@
           "type": "string"
         },
         "extra_wait_ms": {
-          "default": 3000,
+          "default": 5000,
           "title": "Extra Wait Ms",
           "type": "integer"
         }
@@ -57,6 +57,13 @@
           "default": 10000,
           "minimum": 1,
           "title": "Scan Max Files",
+          "type": "integer"
+        },
+        "heavy_task_limit": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Heavy Task Limit",
+          "description": "Max concurrent heavy tasks (0 = auto-detect from RAM)",
           "type": "integer"
         }
       },
