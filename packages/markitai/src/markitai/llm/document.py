@@ -265,9 +265,19 @@ class DocumentMixin:
         cache_content = f"{screenshot_path.name}"
         cached = self._persistent_cache.get(cache_key, cache_content, context=context)
         if cached is not None:
-            return cached.get("cleaned_markdown", ""), cached.get(
-                "frontmatter_yaml", ""
+            from markitai.utils.frontmatter import (
+                build_frontmatter_dict,
+                frontmatter_to_yaml,
             )
+
+            fm = build_frontmatter_dict(
+                source=context,
+                description=cached.get("description", ""),
+                tags=cached.get("tags", []),
+                title=original_title,
+                content=cached.get("cleaned_markdown", ""),
+            )
+            return cached.get("cleaned_markdown", ""), frontmatter_to_yaml(fm).strip()
 
         # Use screenshot extraction prompts
         system_prompt = self._prompt_manager.get_prompt(
@@ -362,10 +372,11 @@ class DocumentMixin:
         )
         frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
 
-        # Cache result
+        # Cache result (store description+tags, not frontmatter_yaml which contains timestamp)
         cache_value = {
             "cleaned_markdown": response.cleaned_markdown,
-            "frontmatter_yaml": frontmatter_yaml,
+            "description": response.frontmatter.description,
+            "tags": response.frontmatter.tags,
         }
         self._persistent_cache.set(
             cache_key, cache_content, cache_value, model="vision"
@@ -410,9 +421,21 @@ class DocumentMixin:
         cache_content = f"{screenshot_path.name}|{content[:1000]}"
         cached = self._persistent_cache.get(cache_key, cache_content, context=context)
         if cached is not None:
-            return cached.get("cleaned_markdown", content), cached.get(
-                "frontmatter_yaml", ""
+            from markitai.utils.frontmatter import (
+                build_frontmatter_dict,
+                frontmatter_to_yaml,
             )
+
+            fm = build_frontmatter_dict(
+                source=context,
+                description=cached.get("description", ""),
+                tags=cached.get("tags", []),
+                title=original_title,
+                content=cached.get("cleaned_markdown", content),
+            )
+            return cached.get("cleaned_markdown", content), frontmatter_to_yaml(
+                fm
+            ).strip()
 
         # Only protect image references, NOT slide/page markers (URLs don't have them)
         protected_text, img_mapping = self._protect_image_positions(content)
@@ -541,10 +564,11 @@ class DocumentMixin:
         )
         frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
 
-        # Cache result
+        # Cache result (store description+tags, not frontmatter_yaml which contains timestamp)
         cache_value = {
             "cleaned_markdown": cleaned_markdown,
-            "frontmatter_yaml": frontmatter_yaml,
+            "description": response.frontmatter.description,
+            "tags": response.frontmatter.tags,
         }
         self._persistent_cache.set(
             cache_key, cache_content, cache_value, model="vision"
@@ -808,9 +832,20 @@ class DocumentMixin:
         cache_content = f"{page_names}|{extracted_text[:1000]}"
         cached = self._persistent_cache.get(cache_key, cache_content, context=source)
         if cached is not None:
+            from markitai.utils.frontmatter import (
+                build_frontmatter_dict,
+                frontmatter_to_yaml,
+            )
+
             # Fix malformed image refs even for cached content (handles old cache entries)
             cleaned = self._fix_malformed_image_refs(cached.get("cleaned_markdown", ""))
-            return cleaned, cached.get("frontmatter_yaml", "")
+            fm = build_frontmatter_dict(
+                source=source,
+                description=cached.get("description", ""),
+                tags=cached.get("tags", []),
+                content=cleaned,
+            )
+            return cleaned, frontmatter_to_yaml(fm).strip()
 
         # Extract protected content for fallback restoration
         protected = self.extract_protected_content(extracted_text)
@@ -943,10 +978,11 @@ class DocumentMixin:
             # Fix malformed image references (e.g., extra closing parentheses)
             cleaned_markdown = self._fix_malformed_image_refs(cleaned_markdown)
 
-            # Store in persistent cache
+            # Store in persistent cache (description+tags, not frontmatter_yaml which contains timestamp)
             cache_value = {
                 "cleaned_markdown": cleaned_markdown,
-                "frontmatter_yaml": frontmatter_yaml,
+                "description": response.frontmatter.description,
+                "tags": response.frontmatter.tags,
             }
             self._persistent_cache.set(
                 cache_key, cache_content, cache_value, model="vision"
