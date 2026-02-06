@@ -40,14 +40,6 @@ from markitai.cli.logging_config import (
     print_version,
     setup_logging,
 )
-
-# Import processors from refactored modules
-from markitai.cli.processors import (
-    process_batch,
-    process_single_file,
-    process_url,
-    process_url_batch,
-)
 from markitai.cli.processors.validators import (
     check_vision_model_config as _check_vision_model_config,
 )
@@ -507,6 +499,8 @@ def app(
                     "[red]Error: URL list mode requires -o/--output directory.[/red]"
                 )
                 ctx.exit(1)
+            from markitai.cli.processors.url import process_url_batch
+
             await process_url_batch(
                 url_entries,
                 effective_output,
@@ -529,6 +523,8 @@ def app(
                 )
                 ctx.exit(1)
             assert input_path_str is not None  # Guaranteed when is_url_input is True
+            from markitai.cli.processors.url import process_url
+
             await process_url(
                 input_path_str,
                 effective_output,
@@ -552,6 +548,8 @@ def app(
                     "[red]Error: Batch mode requires -o/--output directory.[/red]"
                 )
                 ctx.exit(1)
+            from markitai.cli.processors.batch import process_batch
+
             await process_batch(
                 input_path,
                 effective_output,
@@ -569,6 +567,8 @@ def app(
         # Single file mode - output is optional (None means stdout)
         # Note: For single file mode, we do NOT use config output.dir as fallback
         # because the design specifies that no -o means stdout output
+        from markitai.cli.processors.file import process_single_file
+
         await process_single_file(
             input_path,
             output,
@@ -601,19 +601,6 @@ def app(
                 pass  # Ignore cleanup errors
 
     asyncio.run(run_workflow_with_cleanup())
-
-
-# Register commands from commands/ modules
-from markitai.cli.commands.cache import cache
-from markitai.cli.commands.config import config
-from markitai.cli.commands.doctor import doctor
-from markitai.cli.commands.init import init as init_cmd
-
-app.add_command(cache)
-app.add_command(config)
-app.add_command(init_cmd, name="init")
-
-app.add_command(doctor)
 
 
 # =============================================================================
