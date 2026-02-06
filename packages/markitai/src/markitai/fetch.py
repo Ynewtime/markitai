@@ -121,7 +121,11 @@ class FetchCache:
 
     Connection reuse: A single connection is reused for all operations
     within the same FetchCache instance to reduce connection overhead.
-    Thread safety is ensured by a lock protecting all database operations.
+
+    Concurrency: Provides both sync methods (using threading.Lock) and async
+    methods (using asyncio.Lock, prefixed with 'a') to avoid blocking the
+    event loop during concurrent URL fetching. Async callers should use
+    aget/aset/aget_with_validators/aset_with_validators/aupdate_accessed_at.
     """
 
     def __init__(self, db_path: Path, max_size_bytes: int = 100 * 1024 * 1024) -> None:
@@ -136,7 +140,8 @@ class FetchCache:
         self._db_path = db_path
         self._max_size_bytes = max_size_bytes
         self._connection: sqlite3.Connection | None = None
-        self._lock = threading.Lock()  # Protect database operations
+        self._lock = threading.Lock()  # Protect database operations (sync callers)
+        self._async_lock = asyncio.Lock()  # Protect database operations (async callers)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -215,6 +220,35 @@ class FetchCache:
         """Compute hash key from URL."""
         return hashlib.sha256(url.encode()).hexdigest()[:32]
 
+    def _get_unlocked(self, url: str) -> FetchResult | None:
+        """Get cached fetch result (no lock). Caller must hold a lock."""
+        key = self._compute_hash(url)
+        now = int(time.time())
+
+        conn = self._get_connection()
+        row = conn.execute("SELECT * FROM fetch_cache WHERE key = ?", (key,)).fetchone()
+
+        if row:
+            # Update accessed_at for LRU tracking
+            conn.execute(
+                "UPDATE fetch_cache SET accessed_at = ? WHERE key = ?", (now, key)
+            )
+            conn.commit()
+
+            metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+            logger.debug(f"[FetchCache] Cache hit for URL: {url}")
+            return FetchResult(
+                content=row["content"],
+                strategy_used=row["strategy_used"],
+                title=row["title"],
+                url=row["url"],
+                final_url=row["final_url"],
+                metadata=metadata,
+                cache_hit=True,
+            )
+
+        return None
+
     def get(self, url: str) -> FetchResult | None:
         """Get cached fetch result if exists.
 
@@ -224,35 +258,62 @@ class FetchCache:
         Returns:
             Cached FetchResult or None if not found
         """
+        with self._lock:
+            return self._get_unlocked(url)
+
+    async def aget(self, url: str) -> FetchResult | None:
+        """Async version of get() using asyncio.Lock."""
+        async with self._async_lock:
+            return self._get_unlocked(url)
+
+    def _set_unlocked(self, url: str, result: FetchResult) -> None:
+        """Cache a fetch result (no lock). Caller must hold a lock."""
         key = self._compute_hash(url)
         now = int(time.time())
+        metadata_json = json.dumps(result.metadata) if result.metadata else None
+        size_bytes = len(result.content.encode("utf-8"))
 
-        with self._lock:
-            conn = self._get_connection()
-            row = conn.execute(
-                "SELECT * FROM fetch_cache WHERE key = ?", (key,)
+        conn = self._get_connection()
+        # Check current total size
+        total_size = conn.execute(
+            "SELECT COALESCE(SUM(size_bytes), 0) as total FROM fetch_cache"
+        ).fetchone()["total"]
+
+        # Evict LRU entries if needed
+        while total_size + size_bytes > self._max_size_bytes:
+            oldest = conn.execute(
+                "SELECT key, size_bytes FROM fetch_cache ORDER BY accessed_at ASC LIMIT 1"
             ).fetchone()
 
-            if row:
-                # Update accessed_at for LRU tracking
-                conn.execute(
-                    "UPDATE fetch_cache SET accessed_at = ? WHERE key = ?", (now, key)
-                )
-                conn.commit()
+            if oldest is None:
+                break
 
-                metadata = json.loads(row["metadata"]) if row["metadata"] else {}
-                logger.debug(f"[FetchCache] Cache hit for URL: {url}")
-                return FetchResult(
-                    content=row["content"],
-                    strategy_used=row["strategy_used"],
-                    title=row["title"],
-                    url=row["url"],
-                    final_url=row["final_url"],
-                    metadata=metadata,
-                    cache_hit=True,
-                )
+            conn.execute("DELETE FROM fetch_cache WHERE key = ?", (oldest["key"],))
+            total_size -= oldest["size_bytes"]
+            logger.debug(f"[FetchCache] Evicted LRU entry: {oldest['key'][:8]}...")
 
-        return None
+        # Insert or replace
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO fetch_cache
+            (key, url, content, strategy_used, title, final_url, metadata, created_at, accessed_at, size_bytes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                key,
+                url,
+                result.content,
+                result.strategy_used,
+                result.title,
+                result.final_url,
+                metadata_json,
+                now,
+                now,
+                size_bytes,
+            ),
+        )
+        conn.commit()
+        logger.debug(f"[FetchCache] Cached URL: {url} ({size_bytes} bytes)")
 
     def set(self, url: str, result: FetchResult) -> None:
         """Cache a fetch result.
@@ -261,53 +322,13 @@ class FetchCache:
             url: URL that was fetched
             result: FetchResult to cache
         """
-        key = self._compute_hash(url)
-        now = int(time.time())
-        metadata_json = json.dumps(result.metadata) if result.metadata else None
-        size_bytes = len(result.content.encode("utf-8"))
-
         with self._lock:
-            conn = self._get_connection()
-            # Check current total size
-            total_size = conn.execute(
-                "SELECT COALESCE(SUM(size_bytes), 0) as total FROM fetch_cache"
-            ).fetchone()["total"]
+            self._set_unlocked(url, result)
 
-            # Evict LRU entries if needed
-            while total_size + size_bytes > self._max_size_bytes:
-                oldest = conn.execute(
-                    "SELECT key, size_bytes FROM fetch_cache ORDER BY accessed_at ASC LIMIT 1"
-                ).fetchone()
-
-                if oldest is None:
-                    break
-
-                conn.execute("DELETE FROM fetch_cache WHERE key = ?", (oldest["key"],))
-                total_size -= oldest["size_bytes"]
-                logger.debug(f"[FetchCache] Evicted LRU entry: {oldest['key'][:8]}...")
-
-            # Insert or replace
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO fetch_cache
-                (key, url, content, strategy_used, title, final_url, metadata, created_at, accessed_at, size_bytes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    key,
-                    url,
-                    result.content,
-                    result.strategy_used,
-                    result.title,
-                    result.final_url,
-                    metadata_json,
-                    now,
-                    now,
-                    size_bytes,
-                ),
-            )
-            conn.commit()
-        logger.debug(f"[FetchCache] Cached URL: {url} ({size_bytes} bytes)")
+    async def aset(self, url: str, result: FetchResult) -> None:
+        """Async version of set() using asyncio.Lock."""
+        async with self._async_lock:
+            self._set_unlocked(url, result)
 
     def stats(self) -> dict[str, Any]:
         """Return cache statistics."""
@@ -343,6 +364,30 @@ class FetchCache:
             conn.commit()
         return count
 
+    def _get_with_validators_unlocked(
+        self, url: str
+    ) -> tuple[FetchResult | None, str | None, str | None]:
+        """Get cached result with HTTP validators (no lock). Caller must hold a lock."""
+        key = self._compute_hash(url)
+
+        conn = self._get_connection()
+        row = conn.execute("SELECT * FROM fetch_cache WHERE key = ?", (key,)).fetchone()
+
+        if row:
+            metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+            result = FetchResult(
+                content=row["content"],
+                strategy_used=row["strategy_used"],
+                title=row["title"],
+                url=row["url"],
+                final_url=row["final_url"],
+                metadata=metadata,
+                cache_hit=True,
+            )
+            return result, row["etag"], row["last_modified"]
+
+        return None, None, None
+
     def get_with_validators(
         self, url: str
     ) -> tuple[FetchResult | None, str | None, str | None]:
@@ -357,28 +402,75 @@ class FetchCache:
             - etag: ETag header from previous fetch (for If-None-Match)
             - last_modified: Last-Modified header from previous fetch (for If-Modified-Since)
         """
-        key = self._compute_hash(url)
-
         with self._lock:
-            conn = self._get_connection()
-            row = conn.execute(
-                "SELECT * FROM fetch_cache WHERE key = ?", (key,)
+            return self._get_with_validators_unlocked(url)
+
+    async def aget_with_validators(
+        self, url: str
+    ) -> tuple[FetchResult | None, str | None, str | None]:
+        """Async version of get_with_validators() using asyncio.Lock."""
+        async with self._async_lock:
+            return self._get_with_validators_unlocked(url)
+
+    def _set_with_validators_unlocked(
+        self,
+        url: str,
+        result: FetchResult,
+        etag: str | None = None,
+        last_modified: str | None = None,
+    ) -> None:
+        """Cache a fetch result with HTTP validators (no lock). Caller must hold a lock."""
+        key = self._compute_hash(url)
+        now = int(time.time())
+        metadata_json = json.dumps(result.metadata) if result.metadata else None
+        size_bytes = len(result.content.encode("utf-8"))
+
+        conn = self._get_connection()
+        # Check current total size
+        total_size = conn.execute(
+            "SELECT COALESCE(SUM(size_bytes), 0) as total FROM fetch_cache"
+        ).fetchone()["total"]
+
+        # Evict LRU entries if needed
+        while total_size + size_bytes > self._max_size_bytes:
+            oldest = conn.execute(
+                "SELECT key, size_bytes FROM fetch_cache ORDER BY accessed_at ASC LIMIT 1"
             ).fetchone()
 
-            if row:
-                metadata = json.loads(row["metadata"]) if row["metadata"] else {}
-                result = FetchResult(
-                    content=row["content"],
-                    strategy_used=row["strategy_used"],
-                    title=row["title"],
-                    url=row["url"],
-                    final_url=row["final_url"],
-                    metadata=metadata,
-                    cache_hit=True,
-                )
-                return result, row["etag"], row["last_modified"]
+            if oldest is None:
+                break
 
-        return None, None, None
+            conn.execute("DELETE FROM fetch_cache WHERE key = ?", (oldest["key"],))
+            total_size -= oldest["size_bytes"]
+            logger.debug(f"[FetchCache] Evicted LRU entry: {oldest['key'][:8]}...")
+
+        # Insert or replace
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO fetch_cache
+            (key, url, content, strategy_used, title, final_url, metadata, created_at, accessed_at, size_bytes, etag, last_modified)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                key,
+                url,
+                result.content,
+                result.strategy_used,
+                result.title,
+                result.final_url,
+                metadata_json,
+                now,
+                now,
+                size_bytes,
+                etag,
+                last_modified,
+            ),
+        )
+        conn.commit()
+        logger.debug(
+            f"[FetchCache] Cached URL with validators: {url} "
+            f"(etag={etag is not None}, last_modified={last_modified is not None})"
+        )
 
     def set_with_validators(
         self,
@@ -395,58 +487,28 @@ class FetchCache:
             etag: ETag response header (for future If-None-Match)
             last_modified: Last-Modified response header (for future If-Modified-Since)
         """
+        with self._lock:
+            self._set_with_validators_unlocked(url, result, etag, last_modified)
+
+    async def aset_with_validators(
+        self,
+        url: str,
+        result: FetchResult,
+        etag: str | None = None,
+        last_modified: str | None = None,
+    ) -> None:
+        """Async version of set_with_validators() using asyncio.Lock."""
+        async with self._async_lock:
+            self._set_with_validators_unlocked(url, result, etag, last_modified)
+
+    def _update_accessed_at_unlocked(self, url: str) -> None:
+        """Update accessed_at timestamp (no lock). Caller must hold a lock."""
         key = self._compute_hash(url)
         now = int(time.time())
-        metadata_json = json.dumps(result.metadata) if result.metadata else None
-        size_bytes = len(result.content.encode("utf-8"))
 
-        with self._lock:
-            conn = self._get_connection()
-            # Check current total size
-            total_size = conn.execute(
-                "SELECT COALESCE(SUM(size_bytes), 0) as total FROM fetch_cache"
-            ).fetchone()["total"]
-
-            # Evict LRU entries if needed
-            while total_size + size_bytes > self._max_size_bytes:
-                oldest = conn.execute(
-                    "SELECT key, size_bytes FROM fetch_cache ORDER BY accessed_at ASC LIMIT 1"
-                ).fetchone()
-
-                if oldest is None:
-                    break
-
-                conn.execute("DELETE FROM fetch_cache WHERE key = ?", (oldest["key"],))
-                total_size -= oldest["size_bytes"]
-                logger.debug(f"[FetchCache] Evicted LRU entry: {oldest['key'][:8]}...")
-
-            # Insert or replace
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO fetch_cache
-                (key, url, content, strategy_used, title, final_url, metadata, created_at, accessed_at, size_bytes, etag, last_modified)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    key,
-                    url,
-                    result.content,
-                    result.strategy_used,
-                    result.title,
-                    result.final_url,
-                    metadata_json,
-                    now,
-                    now,
-                    size_bytes,
-                    etag,
-                    last_modified,
-                ),
-            )
-            conn.commit()
-        logger.debug(
-            f"[FetchCache] Cached URL with validators: {url} "
-            f"(etag={etag is not None}, last_modified={last_modified is not None})"
-        )
+        conn = self._get_connection()
+        conn.execute("UPDATE fetch_cache SET accessed_at = ? WHERE key = ?", (now, key))
+        conn.commit()
 
     def update_accessed_at(self, url: str) -> None:
         """Update accessed_at timestamp for cache hit (304 response).
@@ -454,15 +516,13 @@ class FetchCache:
         Args:
             url: URL to update
         """
-        key = self._compute_hash(url)
-        now = int(time.time())
-
         with self._lock:
-            conn = self._get_connection()
-            conn.execute(
-                "UPDATE fetch_cache SET accessed_at = ? WHERE key = ?", (now, key)
-            )
-            conn.commit()
+            self._update_accessed_at_unlocked(url)
+
+    async def aupdate_accessed_at(self, url: str) -> None:
+        """Async version of update_accessed_at() using asyncio.Lock."""
+        async with self._async_lock:
+            self._update_accessed_at_unlocked(url)
 
 
 class SPADomainCache:
@@ -1747,9 +1807,11 @@ async def fetch_url(
         # Type narrowing: cache is guaranteed non-None here due to condition above
         assert cache is not None
         # Get cached result with HTTP validators
-        cached_result, cached_etag, cached_last_modified = cache.get_with_validators(
-            url
-        )
+        (
+            cached_result,
+            cached_etag,
+            cached_last_modified,
+        ) = await cache.aget_with_validators(url)
 
         # If we have validators, try conditional fetch (static strategy only)
         if cached_result is not None and (cached_etag or cached_last_modified):
@@ -1766,11 +1828,11 @@ async def fetch_url(
                     )
                     if cond_result.not_modified:
                         # 304 Not Modified - use cached content
-                        cache.update_accessed_at(url)
+                        await cache.aupdate_accessed_at(url)
                         return cached_result
                     elif cond_result.result is not None:
                         # New content received - update cache with new validators
-                        cache.set_with_validators(
+                        await cache.aset_with_validators(
                             url,
                             cond_result.result,
                             cond_result.etag,
@@ -1789,7 +1851,7 @@ async def fetch_url(
 
     # Traditional cache check for non-conditional strategies
     elif cache is not None and not skip_read_cache:
-        cached_result = cache.get(url)
+        cached_result = await cache.aget(url)
         if cached_result is not None:
             return cached_result
 
@@ -1845,7 +1907,7 @@ async def fetch_url(
             result = cond_result.result
             # Save with validators for future conditional requests
             if cache is not None:
-                cache.set_with_validators(
+                await cache.aset_with_validators(
                     url, result, cond_result.etag, cond_result.last_modified
                 )
                 return result
@@ -1878,7 +1940,7 @@ async def fetch_url(
         result = cond_result.result
         # Save with validators for future conditional requests
         if cache is not None:
-            cache.set_with_validators(
+            await cache.aset_with_validators(
                 url, result, cond_result.etag, cond_result.last_modified
             )
             return result
@@ -1923,7 +1985,7 @@ async def fetch_url(
 
     # Cache the result (for non-static strategies that don't use conditional caching)
     if cache is not None:
-        cache.set(url, result)
+        await cache.aset(url, result)
 
     return result
 
@@ -2139,7 +2201,7 @@ async def _fetch_multi_source(
                     jina_result.metadata["fallback"] = "jina"
                     jina_result.metadata["browser_error"] = browser_error
                     if cache is not None:
-                        cache.set(url, jina_result)
+                        await cache.aset(url, jina_result)
                     return jina_result
                 except JinaRateLimitError:
                     logger.warning("[URL] Jina fallback failed: rate limit exceeded")
@@ -2221,7 +2283,7 @@ async def _fetch_multi_source(
 
     # Cache the result
     if cache is not None:
-        cache.set(url, result)
+        await cache.aset(url, result)
 
     return result
 
