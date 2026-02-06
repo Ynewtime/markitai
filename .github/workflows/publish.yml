@@ -24,6 +24,11 @@ jobs:
       - name: Set up Python
         run: uv python install 3.13
 
+      - name: Install LibreOffice
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice --no-install-recommends
+
       - name: Install dependencies
         run: uv sync --frozen --all-extras
 
