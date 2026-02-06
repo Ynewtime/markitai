@@ -153,7 +153,9 @@ DEFAULT_LOG_LEVEL = "INFO"
 
 DEFAULT_FETCH_STRATEGY = "auto"  # auto | static | playwright | jina
 DEFAULT_PLAYWRIGHT_TIMEOUT = 30000  # ms
-DEFAULT_PLAYWRIGHT_WAIT_FOR = "networkidle"  # load | domcontentloaded | networkidle
+DEFAULT_PLAYWRIGHT_WAIT_FOR = (
+    "domcontentloaded"  # load | domcontentloaded | networkidle
+)
 DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS = (
     5000  # Extra wait after load state (for JS rendering, SPAs need 5-8s)
 )

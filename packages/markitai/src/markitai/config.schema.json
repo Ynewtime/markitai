@@ -9,7 +9,7 @@
           "type": "integer"
         },
         "wait_for": {
-          "default": "networkidle",
+          "default": "domcontentloaded",
           "enum": [
             "load",
             "domcontentloaded",
