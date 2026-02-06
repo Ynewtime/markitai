@@ -45,8 +45,8 @@ class TestVersionCommand:
         assert "markitai" in result.output
 
     def test_version_short_flag(self, runner: CliRunner):
-        """Test -v flag."""
-        result = runner.invoke(app, ["-v"])
+        """Test -V flag."""
+        result = runner.invoke(app, ["-V"])
         assert result.exit_code == 0
         assert "markitai" in result.output
 
