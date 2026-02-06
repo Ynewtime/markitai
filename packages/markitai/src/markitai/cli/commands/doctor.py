@@ -1,8 +1,7 @@
 """Doctor CLI command for system health checking.
 
 This module provides the doctor command for verifying all optional dependencies,
-authentication status, and overall system health. The check-deps command is
-retained as an alias for backward compatibility.
+authentication status, and overall system health.
 """
 
 from __future__ import annotations
@@ -11,13 +10,112 @@ import asyncio
 import json
 import shutil
 import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import click
-from rich.panel import Panel
-from rich.table import Table
 
+# Cross-platform installation hints
+INSTALL_HINTS: dict[str, dict[str, str]] = {
+    "libreoffice": {
+        "darwin": "brew install --cask libreoffice",
+        "linux": "sudo apt install libreoffice  # Ubuntu/Debian\nsudo dnf install libreoffice  # Fedora\nsudo pacman -S libreoffice-fresh  # Arch",
+        "win32": "winget install LibreOffice.LibreOffice",
+    },
+    "ffmpeg": {
+        "darwin": "brew install ffmpeg",
+        "linux": "sudo apt install ffmpeg  # Ubuntu/Debian\nsudo dnf install ffmpeg  # Fedora\nsudo pacman -S ffmpeg  # Arch",
+        "win32": "winget install FFmpeg.FFmpeg\n# Or: scoop install ffmpeg\n# Or: choco install ffmpeg",
+    },
+    "playwright": {
+        "darwin": "uv run playwright install chromium",
+        "linux": "uv run playwright install chromium && uv run playwright install-deps chromium",
+        "win32": "uv run playwright install chromium",
+    },
+    "claude-cli": {
+        "darwin": "curl -fsSL https://claude.ai/install.sh | bash",
+        "linux": "curl -fsSL https://claude.ai/install.sh | bash",
+        "win32": "irm https://claude.ai/install.ps1 | iex",
+    },
+    "copilot-cli": {
+        "darwin": "curl -fsSL https://gh.io/copilot-install | bash",
+        "linux": "curl -fsSL https://gh.io/copilot-install | bash",
+        "win32": "winget install GitHub.Copilot",
+    },
+}
+
+
+def get_install_hint(component: str, platform: str | None = None) -> str:
+    """Get platform-specific installation hint for a component.
+
+    Args:
+        component: Component name (e.g., "libreoffice", "ffmpeg")
+        platform: Target platform. If None, uses current sys.platform.
+
+    Returns:
+        Installation command(s) for the platform.
+    """
+    if platform is None:
+        platform = sys.platform
+
+    # Normalize platform
+    if platform.startswith("linux"):
+        platform = "linux"
+
+    hints = INSTALL_HINTS.get(component, {})
+    return hints.get(
+        platform, hints.get("linux", f"Install {component} using your package manager")
+    )
+
+
+def _install_component(component: str) -> bool:
+    """Attempt to install a missing component.
+
+    Args:
+        component: Component name to install.
+
+    Returns:
+        True if installation succeeded.
+    """
+    console = get_console()
+    hint = get_install_hint(component)
+
+    console.print(f"[yellow]Installing {component}...[/yellow]")
+
+    # Only auto-install safe components
+    safe_components = {"playwright"}
+
+    if component not in safe_components:
+        console.print("[yellow]Please install manually:[/yellow]")
+        console.print(f"  {hint}")
+        return False
+
+    if component == "playwright":
+        try:
+            # Use uv to run playwright install
+            result = subprocess.run(
+                ["uv", "run", "playwright", "install", "chromium"],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if result.returncode == 0:
+                console.print(f"[green]✓[/green] {component} installed")
+                return True
+            else:
+                console.print(f"[red]✗[/red] Failed: {result.stderr}")
+                return False
+        except Exception as e:
+            console.print(f"[red]✗[/red] Error: {e}")
+            return False
+
+    return False
+
+
+from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.i18n import t
 from markitai.config import ConfigManager
 from markitai.providers.auth import AuthManager, get_auth_resolution_hint
 
@@ -95,105 +193,81 @@ def _check_claude_auth() -> dict[str, str]:
         }
 
 
-def _doctor_impl(as_json: bool) -> None:
-    """Implementation of the doctor command.
+def _check_playwright() -> dict[str, Any]:
+    """Check Playwright installation status.
 
-    This function contains the core logic shared by both doctor and check_deps.
+    Returns:
+        Result dict with name, description, status, message, install_hint.
     """
     from markitai.fetch_playwright import (
-        clear_browser_cache,
         is_playwright_available,
         is_playwright_browser_installed,
     )
 
-    manager = ConfigManager()
-    cfg = manager.load()
-
-    results: dict[str, dict[str, Any]] = {}
-
-    # 1. Check Playwright
-    clear_browser_cache()  # Clear cache for fresh check
     if is_playwright_available():
         if is_playwright_browser_installed(use_cache=False):
-            results["playwright"] = {
+            return {
                 "name": "Playwright",
                 "description": "Browser automation for dynamic URLs",
                 "status": "ok",
-                "message": "Playwright and Chromium browser installed",
+                "message": "Chromium installed",
                 "install_hint": "",
             }
         else:
-            results["playwright"] = {
+            return {
                 "name": "Playwright",
                 "description": "Browser automation for dynamic URLs",
                 "status": "warning",
                 "message": "Playwright installed but browser not found",
-                "install_hint": "uv run playwright install chromium (Linux: also run 'playwright install-deps chromium')",
+                "install_hint": get_install_hint("playwright"),
             }
     else:
-        results["playwright"] = {
+        return {
             "name": "Playwright",
             "description": "Browser automation for dynamic URLs",
             "status": "missing",
             "message": "Playwright not installed",
-            "install_hint": "uv add playwright && uv run playwright install chromium (Linux: also run 'playwright install-deps chromium')",
+            "install_hint": f"uv add playwright && {get_install_hint('playwright')}",
         }
 
-    # 2. Check LibreOffice
-    soffice_path = shutil.which("soffice") or shutil.which("libreoffice")
 
-    # Check common installation paths if not in PATH
-    if not soffice_path:
-        import os
-        import sys
+def _check_libreoffice() -> dict[str, Any]:
+    """Check LibreOffice installation status.
 
-        common_paths: list[str] = []
-        if sys.platform == "win32":
-            # Windows: Check Program Files
-            for prog_dir in [
-                os.environ.get("PROGRAMFILES", r"C:\Program Files"),
-                os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
-            ]:
-                common_paths.extend(
-                    [
-                        os.path.join(prog_dir, "LibreOffice", "program", "soffice.exe"),
-                        os.path.join(
-                            prog_dir, "LibreOffice 7", "program", "soffice.exe"
-                        ),
-                        os.path.join(
-                            prog_dir, "LibreOffice 24", "program", "soffice.exe"
-                        ),
-                    ]
-                )
-        elif sys.platform == "darwin":
-            # macOS: Check Applications
-            common_paths.append("/Applications/LibreOffice.app/Contents/MacOS/soffice")
+    Returns:
+        Result dict with name, description, status, message, install_hint.
+    """
+    from markitai.utils.office import find_libreoffice
 
-        for path in common_paths:
-            if os.path.isfile(path):
-                soffice_path = path
-                break
+    soffice_path = find_libreoffice()
 
     if soffice_path:
-        # LibreOffice found - just report the path without running --version
+        # LibreOffice found - report "installed" (path available in --json output)
         # Running soffice --version can hang on Windows in non-interactive mode
-        results["libreoffice"] = {
+        return {
             "name": "LibreOffice",
             "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
             "status": "ok",
-            "message": f"Found at {soffice_path}",
+            "message": "installed",
+            "path": soffice_path,
             "install_hint": "",
         }
     else:
-        results["libreoffice"] = {
+        return {
             "name": "LibreOffice",
             "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
             "status": "missing",
             "message": "soffice/libreoffice command not found",
-            "install_hint": "apt install libreoffice (Linux) / brew install libreoffice (macOS)",
+            "install_hint": get_install_hint("libreoffice"),
         }
 
-    # 3. Check FFmpeg (for audio/video processing)
+
+def _check_ffmpeg() -> dict[str, Any]:
+    """Check FFmpeg installation status.
+
+    Returns:
+        Result dict with name, description, status, message, install_hint.
+    """
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path:
         try:
@@ -203,20 +277,24 @@ def _doctor_impl(as_json: bool) -> None:
                 text=True,
                 timeout=10,
             )
-            version = (
-                proc.stdout.strip().split("\n")[0]
-                if proc.returncode == 0
-                else "unknown"
-            )
-            results["ffmpeg"] = {
+            # Extract version: "ffmpeg version 8.0.1 ..." → "v8.0.1"
+            version = "unknown"
+            if proc.returncode == 0:
+                parts = proc.stdout.strip().split()
+                if len(parts) >= 3 and parts[0] == "ffmpeg":
+                    version = f"v{parts[2]}"
+                else:
+                    version = parts[0] if parts else "unknown"
+            return {
                 "name": "FFmpeg",
                 "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
                 "status": "ok",
-                "message": f"Found at {ffmpeg_path} ({version})",
+                "message": version,
+                "path": ffmpeg_path,
                 "install_hint": "",
             }
         except Exception as e:
-            results["ffmpeg"] = {
+            return {
                 "name": "FFmpeg",
                 "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
                 "status": "error",
@@ -224,15 +302,24 @@ def _doctor_impl(as_json: bool) -> None:
                 "install_hint": "Reinstall FFmpeg",
             }
     else:
-        results["ffmpeg"] = {
+        return {
             "name": "FFmpeg",
             "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
             "status": "missing",
             "message": "ffmpeg command not found",
-            "install_hint": "apt install ffmpeg (Linux) / brew install ffmpeg (macOS) / winget/scoop/choco install ffmpeg (Windows)",
+            "install_hint": get_install_hint("ffmpeg"),
         }
 
-    # 4. Check RapidOCR (Python OCR library with built-in models)
+
+def _check_rapidocr(cfg: Any) -> dict[str, Any]:
+    """Check RapidOCR installation status.
+
+    Args:
+        cfg: Configuration object with OCR language settings.
+
+    Returns:
+        Result dict with name, description, status, message, install_hint.
+    """
     try:
         from importlib.metadata import version as get_version
 
@@ -274,7 +361,7 @@ def _doctor_impl(as_json: bool) -> None:
         }
 
         if configured_lang.lower() in supported_langs:
-            results["rapidocr"] = {
+            return {
                 "name": "RapidOCR",
                 "description": "OCR for scanned documents (built-in models)",
                 "status": "ok",
@@ -282,7 +369,7 @@ def _doctor_impl(as_json: bool) -> None:
                 "install_hint": "",
             }
         else:
-            results["rapidocr"] = {
+            return {
                 "name": "RapidOCR",
                 "description": "OCR for scanned documents (built-in models)",
                 "status": "warning",
@@ -290,7 +377,7 @@ def _doctor_impl(as_json: bool) -> None:
                 "install_hint": "Set ocr.lang to one of: zh, en, ja, ko, ar, th, latin",
             }
     except ImportError:
-        results["rapidocr"] = {
+        return {
             "name": "RapidOCR",
             "description": "OCR for scanned documents (built-in models)",
             "status": "missing",
@@ -298,17 +385,60 @@ def _doctor_impl(as_json: bool) -> None:
             "install_hint": "uv add rapidocr (included in markitai dependencies)",
         }
 
+
+def _doctor_impl(as_json: bool, fix: bool = False) -> None:
+    """Implementation of the doctor command.
+
+    Args:
+        as_json: Output results as JSON.
+        fix: Attempt to install missing components.
+    """
+    from markitai.fetch_playwright import clear_browser_cache
+
+    manager = ConfigManager()
+    cfg = manager.load()
+
+    results: dict[str, dict[str, Any]] = {}
+
+    # Clear Playwright browser cache before parallel checks
+    clear_browser_cache()
+
+    # Run independent system tool checks in parallel
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        future_playwright = executor.submit(_check_playwright)
+        future_libreoffice = executor.submit(_check_libreoffice)
+        future_ffmpeg = executor.submit(_check_ffmpeg)
+        future_rapidocr = executor.submit(_check_rapidocr, cfg)
+
+    # Collect results in deterministic order
+    results["playwright"] = future_playwright.result()
+    results["libreoffice"] = future_libreoffice.result()
+    results["ffmpeg"] = future_ffmpeg.result()
+    results["rapidocr"] = future_rapidocr.result()
+
     # 5. Check LLM API configuration (check model_list for configured models)
     configured_models = cfg.llm.model_list if cfg.llm.model_list else []
     if configured_models:
-        # Find first model with api_key to determine provider
-        first_model = configured_models[0].litellm_params.model
-        provider = first_model.split("/")[0] if "/" in first_model else "openai"
+        # Count distinct API providers (exclude local providers like claude-agent, copilot)
+        local_prefixes = ("claude-agent/", "copilot/")
+        api_providers: set[str] = set()
+        for m in configured_models:
+            model_id = m.litellm_params.model
+            if not any(model_id.startswith(p) for p in local_prefixes):
+                provider = model_id.split("/")[0] if "/" in model_id else "openai"
+                api_providers.add(provider)
+
+        if api_providers:
+            providers_str = ", ".join(sorted(api_providers))
+            message = f"{len(configured_models)} model(s) configured, API provider(s): {providers_str}"
+        else:
+            message = f"{len(configured_models)} model(s) configured"
+
         results["llm-api"] = {
-            "name": f"LLM API ({provider})",
+            "name": "LLM API",
             "description": "Content enhancement and image analysis",
             "status": "ok",
-            "message": f"{len(configured_models)} model(s) configured",
+            "message": message,
             "install_hint": "",
         }
     else:
@@ -340,7 +470,8 @@ def _doctor_impl(as_json: bool) -> None:
                         "name": "Claude Agent SDK",
                         "description": "Claude Code CLI integration",
                         "status": "ok",
-                        "message": f"SDK installed, CLI at {claude_cli}",
+                        "message": "SDK + CLI installed",
+                        "path": claude_cli,
                         "install_hint": "",
                     }
                 else:
@@ -349,7 +480,7 @@ def _doctor_impl(as_json: bool) -> None:
                         "description": "Claude Code CLI integration",
                         "status": "warning",
                         "message": "SDK installed but 'claude' CLI not found",
-                        "install_hint": "Install Claude Code CLI: curl -fsSL https://claude.ai/install.sh | bash (or irm https://claude.ai/install.ps1 | iex on Windows)",
+                        "install_hint": f"Install Claude Code CLI: {get_install_hint('claude-cli')}",
                     }
             else:
                 results["claude-agent-sdk"] = {
@@ -357,7 +488,7 @@ def _doctor_impl(as_json: bool) -> None:
                     "description": "Claude Code CLI integration",
                     "status": "missing",
                     "message": "claude-agent-sdk not installed",
-                    "install_hint": "uv add claude-agent-sdk && curl -fsSL https://claude.ai/install.sh | bash",
+                    "install_hint": f"uv add claude-agent-sdk && {get_install_hint('claude-cli')}",
                 }
         except Exception as e:
             results["claude-agent-sdk"] = {
@@ -383,7 +514,8 @@ def _doctor_impl(as_json: bool) -> None:
                         "name": "GitHub Copilot SDK",
                         "description": "GitHub Copilot CLI integration",
                         "status": "ok",
-                        "message": f"SDK installed, CLI at {copilot_cli}",
+                        "message": "SDK + CLI installed",
+                        "path": copilot_cli,
                         "install_hint": "",
                     }
                 else:
@@ -392,7 +524,7 @@ def _doctor_impl(as_json: bool) -> None:
                         "description": "GitHub Copilot CLI integration",
                         "status": "warning",
                         "message": "SDK installed but 'copilot' CLI not found",
-                        "install_hint": "Install Copilot CLI: curl -fsSL https://gh.io/copilot-install | bash (or winget install GitHub.Copilot on Windows)",
+                        "install_hint": f"Install Copilot CLI: {get_install_hint('copilot-cli')}",
                     }
             else:
                 results["copilot-sdk"] = {
@@ -400,7 +532,7 @@ def _doctor_impl(as_json: bool) -> None:
                     "description": "GitHub Copilot CLI integration",
                     "status": "missing",
                     "message": "github-copilot-sdk not installed",
-                    "install_hint": "uv add github-copilot-sdk && curl -fsSL https://gh.io/copilot-install | bash",
+                    "install_hint": f"uv add github-copilot-sdk && {get_install_hint('copilot-cli')}",
                 }
         except Exception as e:
             results["copilot-sdk"] = {
@@ -466,50 +598,114 @@ def _doctor_impl(as_json: bool) -> None:
         click.echo(json.dumps(results, indent=2))
         return
 
-    # Rich table output
-    table = Table(title="Dependency Status")
-    table.add_column("Component", style="cyan")
-    table.add_column("Status", justify="center")
-    table.add_column("Description")
-    table.add_column("Details")
+    # Unified UI output
+    ui.title(t("doctor.title"))
 
-    status_icons = {
-        "ok": "[green]✓[/green]",
-        "warning": "[yellow]⚠[/yellow]",
-        "missing": "[red]✗[/red]",
-        "error": "[red]![/red]",
-    }
+    # Define dependency groups
+    required_deps = ["playwright", "libreoffice", "rapidocr"]
+    optional_deps = ["ffmpeg"]
+    llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
+    auth_keys = ["claude-agent-auth", "copilot-auth"]
 
-    for _key, info in results.items():
-        status_icon = status_icons.get(info["status"], "?")
-        table.add_row(
-            info["name"],
-            status_icon,
-            info["description"],
-            info["message"],
-        )
-
-    console.print(table)
+    # Required dependencies
+    ui.section(t("doctor.required"))
+    passed = 0
+    for key in required_deps:
+        if key not in results:
+            continue
+        info = results[key]
+        if info["status"] == "ok":
+            ui.success(f"{info['name']}: {info['message']}")
+            passed += 1
+        elif info["status"] == "warning":
+            ui.warning(info["name"], detail=info["message"])
+        else:
+            ui.error(info["name"], detail=info["message"])
     console.print()
 
-    # Show install hints for missing/error items
+    # Optional dependencies
+    optional_missing = 0
+    has_optional = any(k in results for k in optional_deps)
+    if has_optional:
+        ui.section(t("doctor.optional"))
+        for key in optional_deps:
+            if key not in results:
+                continue
+            info = results[key]
+            if info["status"] == "ok":
+                ui.success(f"{info['name']}: {info['message']}")
+            else:
+                ui.warning(
+                    f"{info['name']}（{t('missing')}）",
+                    detail=info.get("install_hint", ""),
+                )
+                optional_missing += 1
+        console.print()
+
+    # LLM status
+    has_llm = any(k in results for k in llm_keys)
+    if has_llm:
+        ui.section("LLM")
+        for key in llm_keys:
+            if key not in results:
+                continue
+            info = results[key]
+            if info["status"] == "ok":
+                ui.success(f"{info['name']}: {info['message']}")
+            elif info["status"] == "warning":
+                ui.warning(f"{info['name']}: {info['message']}")
+            else:
+                ui.error(f"{info['name']}: {info['message']}")
+        console.print()
+
+    # Authentication status
+    has_auth = any(k in results for k in auth_keys)
+    if has_auth:
+        ui.section(t("doctor.auth"))
+        for key in auth_keys:
+            if key not in results:
+                continue
+            info = results[key]
+            if info["status"] == "ok":
+                ui.success(f"{info['name']}: {info['message']}")
+            else:
+                ui.error(f"{info['name']}: {info['message']}")
+        console.print()
+
+    # Summary
+    all_required_ok = all(
+        results.get(k, {}).get("status") == "ok" for k in required_deps if k in results
+    )
+    if optional_missing == 0 and all_required_ok:
+        ui.summary(t("doctor.all_good"))
+    else:
+        ui.summary(t("doctor.summary", passed=passed, optional=optional_missing))
+
+    # Installation hints (simplified format)
     hints = [
         (info["name"], info["install_hint"])
         for info in results.values()
-        if info["status"] in ("missing", "error") and info["install_hint"]
+        if info["status"] in ("missing", "error") and info.get("install_hint")
     ]
 
     if hints:
-        hint_text = "\n".join([f"  * {name}: {hint}" for name, hint in hints])
-        console.print(
-            Panel(
-                f"[yellow]To fix missing dependencies:[/yellow]\n{hint_text}",
-                title="Installation Hints",
-                border_style="yellow",
-            )
-        )
-    else:
-        console.print("[green]All dependencies are properly configured![/green]")
+        console.print()
+        console.print(f"[yellow]{t('doctor.fix_hint')}[/yellow]")
+        for name, hint in hints:
+            console.print(f"  [dim]\u2022[/dim] {name}: {hint}")
+
+    # Attempt to fix missing components if --fix flag is set
+    if fix and not as_json:
+        missing = [
+            key
+            for key, info in results.items()
+            if info["status"] in ("missing", "warning")
+        ]
+        if missing:
+            console.print()
+            console.print("[bold]Attempting to fix missing components...[/bold]")
+            for component in missing:
+                _install_component(component)
 
 
 @click.command("doctor")
@@ -519,7 +715,12 @@ def _doctor_impl(as_json: bool) -> None:
     is_flag=True,
     help="Output as JSON.",
 )
-def doctor(as_json: bool) -> None:
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="Attempt to install missing components.",
+)
+def doctor(as_json: bool, fix: bool) -> None:
     """Check system health, dependencies, and authentication status.
 
     This command helps diagnose setup issues by verifying:
@@ -529,33 +730,4 @@ def doctor(as_json: bool) -> None:
     - LLM API configuration (for content enhancement)
     - Authentication status for local providers (Claude Agent, Copilot)
     """
-    # Suppress debug logs during doctor command
-    from loguru import logger
-
-    logger.disable("markitai")
-    try:
-        _doctor_impl(as_json)
-    finally:
-        logger.enable("markitai")
-
-
-@click.command("check-deps")
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Output as JSON.",
-)
-def check_deps(as_json: bool) -> None:
-    """Check all optional dependencies and their status.
-
-    This is an alias for 'doctor' command, kept for backward compatibility.
-    """
-    # Suppress debug logs during check-deps command
-    from loguru import logger
-
-    logger.disable("markitai")
-    try:
-        _doctor_impl(as_json)
-    finally:
-        logger.enable("markitai")
+    _doctor_impl(as_json, fix=fix)

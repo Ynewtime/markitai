@@ -123,7 +123,8 @@ def _compress_image_cv2(
 
         return buffer.tobytes(), width, height
 
-    except Exception:
+    except Exception as e:
+        logger.debug("cv2 compression failed for image: {}", e)
         return None
 
 
@@ -184,7 +185,8 @@ def _compress_image_pillow(
 
             img.save(out_buffer, **save_kwargs)
             return out_buffer.getvalue(), img.size[0], img.size[1]
-    except Exception:
+    except Exception as e:
+        logger.debug("Pillow compression failed for image: {}", e)
         return None
 
 
@@ -229,7 +231,8 @@ def _compress_image_worker(
             return result
     except ImportError:
         pass  # OpenCV not installed, fall through to Pillow
-    except Exception:
+    except Exception as e:
+        logger.debug("Image compression fallback failed: {}", e)
         pass  # OpenCV failed, fall through to Pillow
 
     # Fallback to Pillow

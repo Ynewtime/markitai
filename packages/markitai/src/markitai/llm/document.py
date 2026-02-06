@@ -28,8 +28,33 @@ from markitai.llm.types import (
     Frontmatter,
 )
 from markitai.utils.mime import get_mime_type
-from markitai.utils.text import format_error_message
+from markitai.utils.text import format_error_message, repair_json_string
 from markitai.workflow.helpers import detect_language, get_language_name
+
+# Pre-compiled regex patterns for _remove_uncommented_screenshots hot path
+# Screenshot references (markitai-generated .pageNNNN patterns)
+_SCREENSHOT_REF_RE = re.compile(
+    r"^!\[(?:Page\s+\d+|[^\]]*)\]\(screenshots/[^)]+\.page\d{4}\.\w+\)\s*$",
+    re.MULTILINE,
+)
+# Page heading image labels (legacy format)
+_PAGE_HEADING_LABEL_RE = re.compile(
+    r"^#{2,3}\s+Page\s+\d+\s+Image:\s*\n\s*\n",
+    re.MULTILINE,
+)
+# Placeholder and label patterns (merged: [Page/Image N], __MARKITAI_*_LABEL_N__, __MARKITAI_SLIDE_N__)
+_PLACEHOLDER_LABEL_RE = re.compile(
+    r"^(?:\[(Page|Image)\s+\d+\]"
+    r"|__MARKITAI_(?:PAGE|IMG)_LABEL_\d+__"
+    r"|__MARKITAI_SLIDE_\d+__)\s*\n",
+    re.MULTILINE,
+)
+_EXCESS_NEWLINES_RE = re.compile(r"\n{3,}")
+_PAGE_SECTION_RE = re.compile(
+    r"(<!-- Page images for reference -->)"
+    r"((?:\s*<!-- !\[Page \d+\]\([^)]+\) -->)+)"
+)
+_PAGE_COMMENT_RE = re.compile(r"<!-- !\[Page \d+\]\([^)]+\) -->")
 
 
 def _context_display_name(context: str) -> str:
@@ -67,6 +92,57 @@ def get_response_cost(raw_response: Any) -> float:
         return completion_cost(completion_response=raw_response) or 0.0
     except Exception:
         return 0.0
+
+
+def _try_repair_instructor_response(
+    exc: Exception,
+    response_model: type,
+) -> tuple[Any, Any] | None:
+    """Try to repair JSON from a failed instructor response.
+
+    When instructor's retry mechanism fails (all retries exhausted), the
+    last LLM completion is still available. This function extracts the raw
+    text, attempts JSON repair, and constructs the Pydantic model manually.
+
+    Args:
+        exc: The InstructorRetryException (or compatible exception)
+        response_model: Pydantic model class to validate against
+
+    Returns:
+        Tuple of (parsed_model, raw_response) or None if repair failed
+    """
+    last = getattr(exc, "last_completion", None)
+    if last is None:
+        return None
+
+    # Extract text content from the completion
+    try:
+        content = last.choices[0].message.content
+        if not content:
+            return None
+    except (AttributeError, IndexError):
+        return None
+
+    # Attempt JSON repair
+    repaired = repair_json_string(content)
+    if repaired is None:
+        return None
+
+    try:
+        import json
+
+        data = json.loads(repaired)
+        result = response_model.model_validate(data)
+        logger.info(
+            f"[JSON repair] Successfully repaired malformed JSON "
+            f"for {response_model.__name__}"
+        )
+        return result, last
+    except Exception:
+        logger.debug(
+            f"[JSON repair] Repair attempt failed for {response_model.__name__}"
+        )
+        return None
 
 
 class DocumentMixin:
@@ -265,9 +341,19 @@ class DocumentMixin:
         cache_content = f"{screenshot_path.name}"
         cached = self._persistent_cache.get(cache_key, cache_content, context=context)
         if cached is not None:
-            return cached.get("cleaned_markdown", ""), cached.get(
-                "frontmatter_yaml", ""
+            from markitai.utils.frontmatter import (
+                build_frontmatter_dict,
+                frontmatter_to_yaml,
             )
+
+            fm = build_frontmatter_dict(
+                source=context,
+                description=cached.get("description", ""),
+                tags=cached.get("tags", []),
+                title=original_title,
+                content=cached.get("cleaned_markdown", ""),
+            )
+            return cached.get("cleaned_markdown", ""), frontmatter_to_yaml(fm).strip()
 
         # Use screenshot extraction prompts
         system_prompt = self._prompt_manager.get_prompt(
@@ -311,16 +397,22 @@ class DocumentMixin:
             )
             # Cast to ChatCompletionMessageParam for instructor API
             messages = cast(list[ChatCompletionMessageParam], messages_dict)
-            response, raw_response = await cast(
-                Awaitable[tuple[EnhancedDocumentResult, Any]],
-                client.chat.completions.create_with_completion(
-                    model="default",
-                    response_model=EnhancedDocumentResult,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                ),
-            )
+            try:
+                response, raw_response = await cast(
+                    Awaitable[tuple[EnhancedDocumentResult, Any]],
+                    client.chat.completions.create_with_completion(
+                        model="default",
+                        response_model=EnhancedDocumentResult,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
+                    ),
+                )
+            except Exception as e:
+                repaired = _try_repair_instructor_response(e, EnhancedDocumentResult)
+                if repaired is None:
+                    raise
+                response, raw_response = repaired
 
             # Track usage and log completion
             elapsed = time.perf_counter() - start_time
@@ -362,10 +454,11 @@ class DocumentMixin:
         )
         frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
 
-        # Cache result
+        # Cache result (store description+tags, not frontmatter_yaml which contains timestamp)
         cache_value = {
             "cleaned_markdown": response.cleaned_markdown,
-            "frontmatter_yaml": frontmatter_yaml,
+            "description": response.frontmatter.description,
+            "tags": response.frontmatter.tags,
         }
         self._persistent_cache.set(
             cache_key, cache_content, cache_value, model="vision"
@@ -410,9 +503,21 @@ class DocumentMixin:
         cache_content = f"{screenshot_path.name}|{content[:1000]}"
         cached = self._persistent_cache.get(cache_key, cache_content, context=context)
         if cached is not None:
-            return cached.get("cleaned_markdown", content), cached.get(
-                "frontmatter_yaml", ""
+            from markitai.utils.frontmatter import (
+                build_frontmatter_dict,
+                frontmatter_to_yaml,
             )
+
+            fm = build_frontmatter_dict(
+                source=context,
+                description=cached.get("description", ""),
+                tags=cached.get("tags", []),
+                title=original_title,
+                content=cached.get("cleaned_markdown", content),
+            )
+            return cached.get("cleaned_markdown", content), frontmatter_to_yaml(
+                fm
+            ).strip()
 
         # Only protect image references, NOT slide/page markers (URLs don't have them)
         protected_text, img_mapping = self._protect_image_positions(content)
@@ -457,19 +562,25 @@ class DocumentMixin:
             client = instructor.from_litellm(
                 self.vision_router.acompletion, mode=instructor.Mode.MD_JSON
             )
-            response, raw_response = await cast(
-                Awaitable[tuple[EnhancedDocumentResult, Any]],
-                client.chat.completions.create_with_completion(
-                    model="default",
-                    messages=cast(
-                        list[ChatCompletionMessageParam],
-                        messages,
+            try:
+                response, raw_response = await cast(
+                    Awaitable[tuple[EnhancedDocumentResult, Any]],
+                    client.chat.completions.create_with_completion(
+                        model="default",
+                        messages=cast(
+                            list[ChatCompletionMessageParam],
+                            messages,
+                        ),
+                        response_model=EnhancedDocumentResult,
+                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
+                        max_tokens=max_tokens,
                     ),
-                    response_model=EnhancedDocumentResult,
-                    max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                    max_tokens=max_tokens,
-                ),
-            )
+                )
+            except Exception as e:
+                repaired = _try_repair_instructor_response(e, EnhancedDocumentResult)
+                if repaired is None:
+                    raise
+                response, raw_response = repaired
 
             # Track usage and log completion
             actual_model = getattr(raw_response, "model", None) or "default"
@@ -541,10 +652,11 @@ class DocumentMixin:
         )
         frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
 
-        # Cache result
+        # Cache result (store description+tags, not frontmatter_yaml which contains timestamp)
         cache_value = {
             "cleaned_markdown": cleaned_markdown,
-            "frontmatter_yaml": frontmatter_yaml,
+            "description": response.frontmatter.description,
+            "tags": response.frontmatter.tags,
         }
         self._persistent_cache.set(
             cache_key, cache_content, cache_value, model="vision"
@@ -808,9 +920,20 @@ class DocumentMixin:
         cache_content = f"{page_names}|{extracted_text[:1000]}"
         cached = self._persistent_cache.get(cache_key, cache_content, context=source)
         if cached is not None:
+            from markitai.utils.frontmatter import (
+                build_frontmatter_dict,
+                frontmatter_to_yaml,
+            )
+
             # Fix malformed image refs even for cached content (handles old cache entries)
             cleaned = self._fix_malformed_image_refs(cached.get("cleaned_markdown", ""))
-            return cleaned, cached.get("frontmatter_yaml", "")
+            fm = build_frontmatter_dict(
+                source=source,
+                description=cached.get("description", ""),
+                tags=cached.get("tags", []),
+                content=cleaned,
+            )
+            return cleaned, frontmatter_to_yaml(fm).strip()
 
         # Extract protected content for fallback restoration
         protected = self.extract_protected_content(extracted_text)
@@ -880,19 +1003,25 @@ class DocumentMixin:
             )
             # max_retries allows Instructor to retry with validation error
             # feedback, which helps LLM fix JSON escaping issues
-            response, raw_response = await cast(
-                Awaitable[tuple[EnhancedDocumentResult, Any]],
-                client.chat.completions.create_with_completion(
-                    model="default",
-                    messages=cast(
-                        list[ChatCompletionMessageParam],
-                        messages,
+            try:
+                response, raw_response = await cast(
+                    Awaitable[tuple[EnhancedDocumentResult, Any]],
+                    client.chat.completions.create_with_completion(
+                        model="default",
+                        messages=cast(
+                            list[ChatCompletionMessageParam],
+                            messages,
+                        ),
+                        response_model=EnhancedDocumentResult,
+                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
+                        max_tokens=max_tokens,
                     ),
-                    response_model=EnhancedDocumentResult,
-                    max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                    max_tokens=max_tokens,
-                ),
-            )
+                )
+            except Exception as e:
+                repaired = _try_repair_instructor_response(e, EnhancedDocumentResult)
+                if repaired is None:
+                    raise
+                response, raw_response = repaired
 
             # Check for truncation
             if hasattr(raw_response, "choices") and raw_response.choices:
@@ -943,10 +1072,11 @@ class DocumentMixin:
             # Fix malformed image references (e.g., extra closing parentheses)
             cleaned_markdown = self._fix_malformed_image_refs(cleaned_markdown)
 
-            # Store in persistent cache
+            # Store in persistent cache (description+tags, not frontmatter_yaml which contains timestamp)
             cache_value = {
                 "cleaned_markdown": cleaned_markdown,
-                "frontmatter_yaml": frontmatter_yaml,
+                "description": response.frontmatter.description,
+                "tags": response.frontmatter.tags,
             }
             self._persistent_cache.set(
                 cache_key, cache_content, cache_value, model="vision"
@@ -1244,16 +1374,22 @@ class DocumentMixin:
             # Use logical model name for router load balancing
             # max_retries allows Instructor to retry with validation error
             # feedback, which helps LLM fix JSON escaping issues
-            response, raw_response = await cast(
-                Awaitable[tuple[DocumentProcessResult, Any]],
-                client.chat.completions.create_with_completion(
-                    model="default",
-                    messages=messages,
-                    response_model=DocumentProcessResult,
-                    max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                    max_tokens=max_tokens,
-                ),
-            )
+            try:
+                response, raw_response = await cast(
+                    Awaitable[tuple[DocumentProcessResult, Any]],
+                    client.chat.completions.create_with_completion(
+                        model="default",
+                        messages=messages,
+                        response_model=DocumentProcessResult,
+                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
+                        max_tokens=max_tokens,
+                    ),
+                )
+            except Exception as e:
+                repaired = _try_repair_instructor_response(e, DocumentProcessResult)
+                if repaired is None:
+                    raise
+                response, raw_response = repaired
 
             elapsed_ms = (time.perf_counter() - start_time) * 1000
 
@@ -1399,50 +1535,16 @@ class DocumentMixin:
             # IMPORTANT: Only match markitai-generated screenshot patterns to avoid
             # removing user's original screenshots/ references (P0-5 fix).
             # markitai naming format: {filename}.page{NNNN}.{ext} in screenshots/
-            # Patterns to remove:
-            # 1. ![Page N](screenshots/*.page*.jpg) - markitai standard pattern
-            # 2. ![...](screenshots/*.page*.jpg) - LLM-generated variants with same filename
-            patterns = [
-                # Matches: ![Page N](screenshots/anything.pageNNNN.jpg)
-                r"^!\[Page\s+\d+\]\(screenshots/[^)]+\.page\d{4}\.\w+\)\s*$",
-                # Matches: ![...](screenshots/anything.pageNNNN.jpg)
-                r"^!\[[^\]]*\]\(screenshots/[^)]+\.page\d{4}\.\w+\)\s*$",
-            ]
-            for pattern in patterns:
-                content = re.sub(pattern, "", content, flags=re.MULTILINE)
+            content = _SCREENSHOT_REF_RE.sub("", content)
 
             # Also remove any page/image labels that LLM may have copied
             # Pattern: ## or ### Page N Image: followed by empty line (legacy format)
-            # Pattern: [Page N] or [Image N] on its own line (simple format)
-            # Pattern: __MARKITAI_PAGE_LABEL_N__ or __MARKITAI_IMG_LABEL_N__ (unique format)
-            content = re.sub(
-                r"^#{2,3}\s+Page\s+\d+\s+Image:\s*\n\s*\n",
-                "",
-                content,
-                flags=re.MULTILINE,
-            )
-            content = re.sub(
-                r"^\[(Page|Image)\s+\d+\]\s*\n",
-                "",
-                content,
-                flags=re.MULTILINE,
-            )
-            content = re.sub(
-                r"^__MARKITAI_(PAGE|IMG)_LABEL_\d+__\s*\n",
-                "",
-                content,
-                flags=re.MULTILINE,
-            )
-            # Remove any leftover slide placeholders (shouldn't exist but cleanup)
-            content = re.sub(
-                r"^__MARKITAI_SLIDE_\d+__\s*\n",
-                "",
-                content,
-                flags=re.MULTILINE,
-            )
+            content = _PAGE_HEADING_LABEL_RE.sub("", content)
+            # Merged: [Page/Image N], __MARKITAI_*_LABEL_N__, __MARKITAI_SLIDE_N__
+            content = _PLACEHOLDER_LABEL_RE.sub("", content)
 
             # Clean up any resulting empty lines
-            content = re.sub(r"\n{3,}", "\n\n", content)
+            content = _EXCESS_NEWLINES_RE.sub("\n\n", content)
         else:
             # Split at the page images section
             before = content[:header_pos]
@@ -1450,42 +1552,13 @@ class DocumentMixin:
 
             # Remove screenshot references from BEFORE the page images header
             # IMPORTANT: Only match markitai-generated screenshot patterns (P0-5 fix)
-            patterns = [
-                # Matches: ![Page N](screenshots/anything.pageNNNN.jpg)
-                r"^!\[Page\s+\d+\]\(screenshots/[^)]+\.page\d{4}\.\w+\)\s*$",
-                # Matches: ![...](screenshots/anything.pageNNNN.jpg)
-                r"^!\[[^\]]*\]\(screenshots/[^)]+\.page\d{4}\.\w+\)\s*$",
-            ]
-            for pattern in patterns:
-                before = re.sub(pattern, "", before, flags=re.MULTILINE)
+            before = _SCREENSHOT_REF_RE.sub("", before)
 
             # Also remove any page/image labels that LLM may have copied
-            before = re.sub(
-                r"^#{2,3}\s+Page\s+\d+\s+Image:\s*\n\s*\n",
-                "",
-                before,
-                flags=re.MULTILINE,
-            )
-            before = re.sub(
-                r"^\[(Page|Image)\s+\d+\]\s*\n",
-                "",
-                before,
-                flags=re.MULTILINE,
-            )
-            before = re.sub(
-                r"^__MARKITAI_(PAGE|IMG)_LABEL_\d+__\s*\n",
-                "",
-                before,
-                flags=re.MULTILINE,
-            )
-            # Remove any leftover slide placeholders (shouldn't exist but cleanup)
-            before = re.sub(
-                r"^__MARKITAI_SLIDE_\d+__\s*\n",
-                "",
-                before,
-                flags=re.MULTILINE,
-            )
-            before = re.sub(r"\n{3,}", "\n\n", before)
+            before = _PAGE_HEADING_LABEL_RE.sub("", before)
+            # Merged: [Page/Image N], __MARKITAI_*_LABEL_N__, __MARKITAI_SLIDE_N__
+            before = _PLACEHOLDER_LABEL_RE.sub("", before)
+            before = _EXCESS_NEWLINES_RE.sub("\n\n", before)
 
             # Fix the AFTER section: convert any non-commented page images to comments
             # Match lines with page image references that are not already commented
@@ -1509,18 +1582,13 @@ class DocumentMixin:
 
         # Clean up screenshot comments section: remove blank lines between comments
         # Pattern: <!-- Page images for reference --> followed by page image comments
-        page_section_pattern = (
-            r"(<!-- Page images for reference -->)"
-            r"((?:\s*<!-- !\[Page \d+\]\([^)]+\) -->)+)"
-        )
-
         def clean_page_section(match: re.Match) -> str:
             header = match.group(1)
             comments_section = match.group(2)
             # Extract individual comments and rejoin without blank lines
-            comments = re.findall(r"<!-- !\[Page \d+\]\([^)]+\) -->", comments_section)
+            comments = _PAGE_COMMENT_RE.findall(comments_section)
             return header + "\n" + "\n".join(comments)
 
-        content = re.sub(page_section_pattern, clean_page_section, content)
+        content = _PAGE_SECTION_RE.sub(clean_page_section, content)
 
         return content

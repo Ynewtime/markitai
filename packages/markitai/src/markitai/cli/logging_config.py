@@ -185,6 +185,7 @@ def setup_logging(
     verbose: bool,
     log_dir: str | None = None,
     log_level: str = "DEBUG",
+    log_format: str = "text",
     rotation: str = "10 MB",
     retention: str = "7 days",
     quiet: bool = False,
@@ -202,6 +203,8 @@ def setup_logging(
         log_dir: Directory for log files. Supports ~ expansion.
                  Can be overridden by MARKITAI_LOG_DIR env var.
         log_level: Log level for file output.
+        log_format: Log format ("text" or "json").
+                    Can be overridden by MARKITAI_LOG_FORMAT env var.
         rotation: Log file rotation size.
         retention: Log file retention period.
         quiet: If True, disable console logging entirely (for single file mode).
@@ -233,10 +236,14 @@ def setup_logging(
             filter=lambda record: _should_show_log(record, verbose),
         )
 
-    # Check environment variable override
+    # Check environment variable overrides
     env_log_dir = os.environ.get("MARKITAI_LOG_DIR")
     if env_log_dir:
         log_dir = env_log_dir
+
+    env_log_format = os.environ.get("MARKITAI_LOG_FORMAT")
+    if env_log_format and env_log_format in ("text", "json"):
+        log_format = env_log_format
 
     # Add file logging (independent handler, not affected by console disable)
     log_file_path: Path | None = None
@@ -246,13 +253,24 @@ def setup_logging(
         # Generate log filename with current timestamp (matching loguru's format)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         log_file_path = log_path / f"markitai_{timestamp}.log"
-        logger.add(
-            log_file_path,
-            level=log_level,
-            rotation=rotation,
-            retention=retention,
-            serialize=True,
-        )
+        if log_format == "json":
+            # Compact JSON format
+            logger.add(
+                log_file_path,
+                level=log_level,
+                rotation=rotation,
+                retention=retention,
+                format='{{"ts":"{time:YYYY-MM-DDTHH:mm:ss}","lvl":"{level.name}","src":"{module}:{line}","msg":"{message}"}}',
+            )
+        else:
+            # Human-readable format (default)
+            logger.add(
+                log_file_path,
+                level=log_level,
+                rotation=rotation,
+                retention=retention,
+                format="{time:YYYY-MM-DD HH:mm:ss} | {level: <5} | {module}:{line: <3} | {message}",
+            )
 
     # Intercept standard logging from all third-party dependencies
     # and route to loguru for unified log handling
@@ -356,15 +374,11 @@ def _should_show_log(record: Any, verbose: bool) -> bool:
     if level == "INFO" and _is_third_party_log(name, module):
         return False
 
-    # In non-verbose mode, filter out most INFO logs
-    # Only show key milestones: file writes, completions
+    # In non-verbose mode, filter out ALL INFO logs from console
+    # User-facing output uses ui.* functions (ui.success, ui.summary, etc.)
+    # which write directly to console, not through logger
     if not verbose and level == "INFO":
-        msg = record.get("message", "")
-        # Only show file write and completion messages
-        if not any(
-            kw in msg for kw in ["Written", "Saved", "Complete", "finished", "Report"]
-        ):
-            return False
+        return False
 
     return True
 

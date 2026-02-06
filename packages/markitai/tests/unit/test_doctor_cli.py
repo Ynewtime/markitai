@@ -49,32 +49,12 @@ class TestDoctorCommand:
             result = runner.invoke(doctor)
 
             assert result.exit_code == 0
-            assert "Dependency Status" in result.output
-
-    def test_check_deps_alias_works(
-        self, runner: CliRunner, mock_config: MagicMock
-    ) -> None:
-        """Test check-deps alias works and maps to doctor command."""
-        from markitai.cli.commands.doctor import check_deps
-
-        with (
-            patch("markitai.cli.commands.doctor.ConfigManager") as MockConfigManager,
-            patch("markitai.fetch_playwright.is_playwright_available") as mock_pw,
-            patch(
-                "markitai.fetch_playwright.is_playwright_browser_installed"
-            ) as mock_browser,
-            patch("markitai.fetch_playwright.clear_browser_cache"),
-            patch("shutil.which") as mock_which,
-        ):
-            MockConfigManager.return_value.load.return_value = mock_config
-            mock_pw.return_value = False
-            mock_browser.return_value = False
-            mock_which.return_value = None
-
-            result = runner.invoke(check_deps)
-
-            assert result.exit_code == 0
-            assert "Dependency Status" in result.output
+            # Support both English and Chinese output (i18n) and unified UI
+            assert (
+                "Dependency Status" in result.output
+                or "System Check" in result.output
+                or "系统检查" in result.output
+            )
 
     def test_doctor_json_output_valid(
         self, runner: CliRunner, mock_config: MagicMock
@@ -338,29 +318,9 @@ class TestDoctorFromMainCLI:
             result = runner.invoke(app, ["doctor"])
 
             assert result.exit_code == 0
-            assert "Dependency Status" in result.output
-
-    def test_check_deps_alias_in_main_cli(
-        self, runner: CliRunner, mock_config: MagicMock
-    ) -> None:
-        """Test check-deps alias works in main CLI."""
-        from markitai.cli.main import app
-
-        with (
-            patch("markitai.cli.commands.doctor.ConfigManager") as MockConfigManager,
-            patch("markitai.fetch_playwright.is_playwright_available") as mock_pw,
-            patch(
-                "markitai.fetch_playwright.is_playwright_browser_installed"
-            ) as mock_browser,
-            patch("markitai.fetch_playwright.clear_browser_cache"),
-            patch("shutil.which") as mock_which,
-        ):
-            MockConfigManager.return_value.load.return_value = mock_config
-            mock_pw.return_value = False
-            mock_browser.return_value = False
-            mock_which.return_value = None
-
-            result = runner.invoke(app, ["check-deps"])
-
-            assert result.exit_code == 0
-            assert "Dependency Status" in result.output
+            # Support both English and Chinese output (i18n) and unified UI
+            assert (
+                "Dependency Status" in result.output
+                or "System Check" in result.output
+                or "系统检查" in result.output
+            )

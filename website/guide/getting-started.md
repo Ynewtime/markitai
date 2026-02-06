@@ -61,13 +61,13 @@ Pin specific versions using environment variables:
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.4.2"
+export MARKITAI_VERSION="0.5.0"
 export UV_VERSION="0.9.27"
 curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.4.2"
+$env:MARKITAI_VERSION = "0.5.0"
 $env:UV_VERSION = "0.9.27"
 irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
 ```

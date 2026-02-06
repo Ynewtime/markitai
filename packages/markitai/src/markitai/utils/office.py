@@ -241,20 +241,39 @@ def find_libreoffice() -> str | None:
             return path
 
     # Check common installation paths
-    common_paths = [
-        # Linux
-        "/usr/bin/soffice",
-        "/usr/local/bin/soffice",
-        "/opt/libreoffice/program/soffice",
-        # macOS
-        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-        # Windows
-        r"C:\Program Files\LibreOffice\program\soffice.exe",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-    ]
+    common_paths: list[str] = []
+
+    if platform.system() == "Windows":
+        import os
+
+        prog_dirs = [
+            os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+            os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
+        ]
+        for prog_dir in prog_dirs:
+            for subdir in (
+                "LibreOffice",
+                "LibreOffice 7",
+                "LibreOffice 24",
+                "LibreOffice 25",
+            ):
+                common_paths.append(
+                    os.path.join(prog_dir, subdir, "program", "soffice.exe")
+                )
+    elif platform.system() == "Darwin":
+        common_paths.append("/Applications/LibreOffice.app/Contents/MacOS/soffice")
+
+    # Linux paths (always checked as fallback)
+    common_paths.extend(
+        [
+            "/usr/bin/soffice",
+            "/usr/local/bin/soffice",
+            "/opt/libreoffice/program/soffice",
+        ]
+    )
 
     for path in common_paths:
-        if shutil.which(path):
+        if Path(path).exists():
             logger.debug(f"LibreOffice found at: {path}")
             return path
 

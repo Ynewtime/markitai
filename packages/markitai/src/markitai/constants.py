@@ -32,7 +32,7 @@ DEFAULT_RETRY_MAX_DELAY = 60.0  # seconds
 # feedback, allowing the LLM to fix issues like incorrect escaping.
 # Common issues: unescaped quotes in CJK text (e.g., Chinese quoted phrases)
 # Increased to 2 to give model more chances to self-correct
-DEFAULT_INSTRUCTOR_MAX_RETRIES = 2
+DEFAULT_INSTRUCTOR_MAX_RETRIES = 3
 
 # Token limits
 DEFAULT_MAX_OUTPUT_TOKENS = 8192  # Conservative default for most models
@@ -45,6 +45,7 @@ DEFAULT_IO_CONCURRENCY = 20  # I/O operations (file reads, etc.)
 DEFAULT_LLM_CONCURRENCY = 10  # LLM API calls (config default)
 DEFAULT_BATCH_CONCURRENCY = 10  # Batch file processing (config default)
 DEFAULT_URL_CONCURRENCY = 5  # URL fetching (separate from file processing)
+DEFAULT_HEAVY_TASK_LIMIT = 0  # Heavy task semaphore limit (0 = auto-detect from RAM)
 
 # Batch sizes
 DEFAULT_MAX_IMAGES_PER_BATCH = 10  # Images per LLM vision call
@@ -152,7 +153,9 @@ DEFAULT_LOG_LEVEL = "INFO"
 
 DEFAULT_FETCH_STRATEGY = "auto"  # auto | static | playwright | jina
 DEFAULT_PLAYWRIGHT_TIMEOUT = 30000  # ms
-DEFAULT_PLAYWRIGHT_WAIT_FOR = "networkidle"  # load | domcontentloaded | networkidle
+DEFAULT_PLAYWRIGHT_WAIT_FOR = (
+    "domcontentloaded"  # load | domcontentloaded | networkidle
+)
 DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS = (
     5000  # Extra wait after load state (for JS rendering, SPAs need 5-8s)
 )

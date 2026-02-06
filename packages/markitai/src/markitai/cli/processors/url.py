@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from rich.panel import Panel
 
+from markitai.cli import ui
 from markitai.cli.console import get_console
 from markitai.config import MarkitaiConfig
 from markitai.json_order import order_report
@@ -122,18 +122,16 @@ async def process_url(
         cache_status = "enabled" if cfg.cache.enabled else "disabled"
         fetch_strategy_str = fetch_strategy.value if fetch_strategy else "auto"
 
-        dry_run_msg = (
-            f"[yellow]Would convert URL:[/yellow] {url}\n"
-            f"[yellow]Output:[/yellow] {output_dir / filename}\n"
-            f"[yellow]Fetch strategy:[/yellow] {fetch_strategy_str}\n"
-            f"[yellow]Features:[/yellow] {feature_str}\n"
-            f"[yellow]Cache:[/yellow] {cache_status}"
-        )
-        console.print(Panel(dry_run_msg, title="Dry Run"))
+        path_max = max(ui.term_width(console) - 10, 20)
+
+        ui.title("Dry Run")
+        console.print(f"  URL: {ui.truncate(url, path_max)}")
+        console.print(f"  Output: {ui.truncate(str(output_dir / filename), path_max)}")
+        console.print(f"  Fetch strategy: {fetch_strategy_str}")
+        console.print(f"  Features: {feature_str}")
+        console.print(f"  Cache: {cache_status}")
         if cfg.cache.enabled:
-            console.print(
-                "[dim]Tip: Use 'markitai cache stats -v' to view cached entries[/dim]"
-            )
+            ui.step("Tip: Use 'markitai cache stats -v' to view cached entries")
         raise SystemExit(0)
 
     # Create output directory
@@ -190,25 +188,18 @@ async def process_url(
             screenshot_path = fetch_result.screenshot_path
             logger.info(f"Fetched via {used_strategy}: {url}")
         except JinaRateLimitError:
-            console.print(
-                Panel(
-                    "[red]Jina Reader rate limit exceeded (free tier: 20 RPM).[/red]\n\n"
-                    "[dim]Try again later or use --playwright for local rendering.[/dim]",
-                    title="Error",
-                )
-            )
+            ui.error("Jina Reader rate limit exceeded (free tier: 20 RPM)")
+            ui.step("Try again later or use --playwright for local rendering")
             raise SystemExit(1)
         except FetchError as e:
-            console.print(Panel(f"[red]{e}[/red]", title="Error"))
+            ui.error(str(e))
             raise SystemExit(1)
 
         if not original_markdown.strip():
-            console.print(
-                Panel(
-                    f"[red]No content extracted from URL: {url}[/red]\n"
-                    "[dim]The page may be empty, require JavaScript, or use an unsupported format.[/dim]",
-                    title="Error",
-                )
+            ui.error(f"No content extracted from URL: {url}")
+            ui.step(
+                "The page may be empty, require JavaScript, "
+                "or use an unsupported format."
             )
             raise SystemExit(1)
 
@@ -528,7 +519,7 @@ async def process_url(
         }
 
         atomic_write_json(report_path, report, order_func=order_report)
-        logger.info(f"Report saved: {report_path}")
+        logger.debug(f"Report saved: {report_path}")
 
         # Clear progress output before printing final result
         progress.clear_and_finish()
@@ -540,7 +531,7 @@ async def process_url(
     except SystemExit:
         raise
     except Exception as e:
-        console.print(Panel(f"[red]{e}[/red]", title="Error"))
+        ui.error(str(e))
         raise SystemExit(1)
 
 
@@ -615,21 +606,23 @@ async def process_url_batch(
         cache_status = "enabled" if cfg.cache.enabled else "disabled"
         fetch_strategy_str = fetch_strategy.value if fetch_strategy else "auto"
 
-        console.print(
-            Panel(
-                f"[yellow]Would process {len(url_entries)} URLs[/yellow]\n"
-                f"[yellow]Output directory:[/yellow] {output_dir}\n"
-                f"[yellow]Fetch strategy:[/yellow] {fetch_strategy_str}\n"
-                f"[yellow]Features:[/yellow] {feature_str}\n"
-                f"[yellow]Cache:[/yellow] {cache_status}",
-                title="Dry Run - URL Batch",
-            )
-        )
+        width = ui.term_width(console)
+        path_max = max(width - 10, 20)
+        entry_max = max(width - 4, 20)
+
+        ui.title("Dry Run - URL Batch")
+        console.print(f"  URLs: {len(url_entries)}")
+        console.print(f"  Output directory: {ui.truncate(str(output_dir), path_max)}")
+        console.print(f"  Fetch strategy: {fetch_strategy_str}")
+        console.print(f"  Features: {feature_str}")
+        console.print(f"  Cache: {cache_status}")
+        console.print()
         for entry in url_entries[:10]:
             filename = entry.output_name or url_to_filename(entry.url).replace(
                 ".md", ""
             )
-            console.print(f"  - {entry.url} -> {filename}.md")
+            line = f"{entry.url} -> {filename}.md"
+            console.print(f"  - {ui.truncate(line, entry_max)}")
         if len(url_entries) > 10:
             console.print(f"  ... and {len(url_entries) - 10} more")
         raise SystemExit(0)
@@ -670,7 +663,11 @@ async def process_url_batch(
                     filename = url_to_filename(url)
 
                 logger.info(f"Processing URL: {url} (strategy: {fetch_strategy.value})")
-                progress_obj.update(progress_task, description=f"[cyan]{url[:50]}...")
+                desc_max = max(ui.term_width(console) // 3, 15)
+                progress_obj.update(
+                    progress_task,
+                    description=f"[cyan]{ui.truncate(url, desc_max)}",
+                )
 
                 # Fetch URL using the configured strategy
                 try:
@@ -843,19 +840,14 @@ async def process_url_batch(
     }
 
     atomic_write_json(report_path, report, order_func=order_report)
-    logger.info(f"Report saved: {report_path}")
+    logger.debug(f"Report saved: {report_path}")
 
     # Print summary
-    console.print()
-    console.print(
-        Panel(
-            f"[green]Completed:[/green] {completed}\n"
-            f"[red]Failed:[/red] {failed}\n"
-            f"[dim]Duration:[/dim] {duration:.1f}s\n"
-            f"[dim]Report:[/dim] {report_path}",
-            title="URL Batch Complete",
-        )
-    )
+    ui.summary(f"Done: {completed} URLs ({duration:.1f}s)")
+    if failed > 0:
+        ui.warning(f"{failed} failed")
+    out_max = max(ui.term_width(console) - 10, 20)
+    console.print(f"\n  Output: {ui.truncate(str(output_dir) + '/', out_max)}")
 
 
 def build_multi_source_content(

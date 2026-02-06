@@ -56,14 +56,78 @@ def get_converter_executor() -> ThreadPoolExecutor:
 
 # Global heavy task semaphore to prevent OOM from LibreOffice/Playwright/etc.
 _HEAVY_TASK_SEMAPHORE: asyncio.Semaphore | None = None
-_HEAVY_TASK_LIMIT = 2  # Aggressive limit for extremely heavy processes
+_HEAVY_TASK_CONFIGURED_LIMIT: int = 0  # 0 = auto-detect
 
 
-def get_heavy_task_semaphore() -> asyncio.Semaphore:
-    """Get the global semaphore for heavyweight tasks (LibreOffice, etc.)."""
-    global _HEAVY_TASK_SEMAPHORE
+def _get_total_ram_bytes() -> int | None:
+    """Get total system RAM in bytes.
+
+    Tries multiple methods:
+    1. /proc/meminfo (Linux)
+    2. os.sysconf (POSIX cross-platform)
+
+    Returns:
+        Total RAM in bytes, or None if detection fails.
+    """
+    # Method 1: /proc/meminfo (Linux)
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    # Format: "MemTotal:       16384000 kB"
+                    parts = line.split()
+                    return int(parts[1]) * 1024  # Convert kB to bytes
+    except (OSError, ValueError, IndexError):
+        pass
+
+    # Method 2: os.sysconf (POSIX)
+    try:
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        phys_pages = os.sysconf("SC_PHYS_PAGES")
+        if page_size > 0 and phys_pages > 0:
+            return page_size * phys_pages
+    except (ValueError, OSError, AttributeError):
+        pass
+
+    return None
+
+
+def _detect_heavy_task_limit() -> int:
+    """Auto-detect heavy task semaphore limit based on system RAM.
+
+    Returns:
+        Optimal concurrent heavy task limit for available memory.
+    """
+    total_ram = _get_total_ram_bytes()
+    if total_ram is None:
+        return 2  # Conservative fallback
+
+    gb = total_ram / (1024**3)
+    if gb >= 32:
+        return 8
+    elif gb >= 16:
+        return 4
+    elif gb >= 8:
+        return 3
+    else:
+        return 2
+
+
+def get_heavy_task_semaphore(limit: int = 0) -> asyncio.Semaphore:
+    """Get the global semaphore for heavyweight tasks (LibreOffice, etc.).
+
+    Args:
+        limit: Maximum concurrent heavy tasks. 0 = auto-detect from system RAM.
+               Only used on first call; subsequent calls return the existing semaphore.
+
+    Returns:
+        Shared asyncio.Semaphore instance.
+    """
+    global _HEAVY_TASK_SEMAPHORE, _HEAVY_TASK_CONFIGURED_LIMIT
     if _HEAVY_TASK_SEMAPHORE is None:
-        _HEAVY_TASK_SEMAPHORE = asyncio.Semaphore(_HEAVY_TASK_LIMIT)
+        effective_limit = limit if limit > 0 else _detect_heavy_task_limit()
+        _HEAVY_TASK_CONFIGURED_LIMIT = effective_limit
+        _HEAVY_TASK_SEMAPHORE = asyncio.Semaphore(effective_limit)
     return _HEAVY_TASK_SEMAPHORE
 
 

@@ -12,6 +12,33 @@ from __future__ import annotations
 
 import re
 
+# Pre-compiled regex patterns for hot path functions
+_IMAGE_LINK_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
+_SLIDE_COMMENT_RE = re.compile(r"<!--\s*Slide\s+(?:number:\s*)?\d+\s*-->")
+_PAGE_NUMBER_COMMENT_RE = re.compile(r"<!--\s*Page number:\s*\d+\s*-->")
+_PAGE_HEADER_COMMENT_RE = re.compile(r"<!--\s*Page images for reference\s*-->")
+_PAGE_IMG_COMMENT_RE = re.compile(r"<!--\s*!\[Page\s+\d+\]\([^)]*\)\s*-->")
+_PAGE_NUM_MARKER_RE = re.compile(r"<!--\s*Page number:\s*\d+\s*-->")
+_SLIDE_NUM_MARKER_RE = re.compile(r"<!--\s*Slide number:\s*\d+\s*-->")
+_HALLUCINATED_SLIDE_RE = re.compile(r"<!--\s*Slide\s+number:\s*\d+\s*-->\s*\n?")
+_HALLUCINATED_PAGE_RE = re.compile(r"<!--\s*Page\s+number:\s*\d+\s*-->\s*\n?")
+_RESIDUAL_PLACEHOLDER_RE = re.compile(r"__MARKITAI_[A-Z]+_\d+__\s*\n?")
+_IMG_PATH_RE = re.compile(r"\]\(([^)]+)\)")
+_SLIDE_NUM_EXTRACT_RE = re.compile(r"Slide\s+(?:number:\s*)?(\d+)")
+_PAGE_NUM_EXTRACT_RE = re.compile(r"Page number:\s*(\d+)")
+_PAGE_REF_RE = re.compile(r"!\[Page\s+(\d+)\]")
+_UNCOMMENTED_SCREENSHOT_RE = re.compile(r"\n*!\[Page\s+\d+\]\(screenshots/[^)]+\)\s*$")
+_CODE_BLOCK_RE = re.compile(
+    r"^```(?:ya?ml)?\s*\n?(.*?)\n?```$", re.DOTALL | re.IGNORECASE
+)
+_PROMPT_LEAKAGE_PATTERNS = [
+    re.compile(r"^根据.*生成.*frontmatter.*:.*$", re.IGNORECASE),
+    re.compile(r"^请.*生成.*:.*$", re.IGNORECASE),
+    re.compile(r"^以下是.*:.*$", re.IGNORECASE),
+    re.compile(r"^YAML.*frontmatter.*:.*$", re.IGNORECASE),
+    re.compile(r"^元数据.*:.*$", re.IGNORECASE),
+]
+
 
 def smart_truncate(text: str, max_chars: int, preserve_end: bool = False) -> str:
     """Truncate text at sentence/paragraph boundary to preserve readability.
@@ -86,24 +113,20 @@ def extract_protected_content(content: str) -> dict[str, list[str]]:
     }
 
     # Extract image links
-    protected["images"] = re.findall(r"!\[[^\]]*\]\([^)]+\)", content)
+    protected["images"] = _IMAGE_LINK_RE.findall(content)
 
     # Extract slide comments: <!-- Slide X --> or <!-- Slide number: X -->
-    protected["slides"] = re.findall(
-        r"<!--\s*Slide\s+(?:number:\s*)?\d+\s*-->", content
-    )
+    protected["slides"] = _SLIDE_COMMENT_RE.findall(content)
 
     # Extract page number comments: <!-- Page number: X -->
-    protected["page_numbers"] = re.findall(r"<!--\s*Page number:\s*\d+\s*-->", content)
+    protected["page_numbers"] = _PAGE_NUMBER_COMMENT_RE.findall(content)
 
     # Extract page image comments
     # Pattern 1: <!-- Page images for reference -->
     # Pattern 2: <!-- ![Page X](screenshots/...) -->
-    page_header_pattern = r"<!--\s*Page images for reference\s*-->"
-    page_img_pattern = r"<!--\s*!\[Page\s+\d+\]\([^)]*\)\s*-->"
-    protected["page_comments"] = re.findall(page_header_pattern, content) + re.findall(
-        page_img_pattern, content
-    )
+    protected["page_comments"] = _PAGE_HEADER_COMMENT_RE.findall(
+        content
+    ) + _PAGE_IMG_COMMENT_RE.findall(content)
 
     return protected
 
@@ -131,31 +154,27 @@ def protect_content(content: str) -> tuple[str, dict[str, str]]:
 
     # 1. Protect Page number markers (PDF): <!-- Page number: X -->
     # These must stay at the beginning of each page's content
-    page_num_pattern = r"<!--\s*Page number:\s*\d+\s*-->"
-    for page_num_idx, match in enumerate(re.finditer(page_num_pattern, result)):
+    for page_num_idx, match in enumerate(_PAGE_NUM_MARKER_RE.finditer(result)):
         placeholder = f"__MARKITAI_PAGENUM_{page_num_idx}__"
         mapping[placeholder] = match.group(0)
         result = result.replace(match.group(0), placeholder, 1)
 
     # 2. Protect Slide number markers (PPTX/PPT): <!-- Slide number: X -->
     # These must stay at the beginning of each slide's content
-    slide_num_pattern = r"<!--\s*Slide number:\s*\d+\s*-->"
-    for slide_num_idx, match in enumerate(re.finditer(slide_num_pattern, result)):
+    for slide_num_idx, match in enumerate(_SLIDE_NUM_MARKER_RE.finditer(result)):
         placeholder = f"__MARKITAI_SLIDENUM_{slide_num_idx}__"
         mapping[placeholder] = match.group(0)
         result = result.replace(match.group(0), placeholder, 1)
 
     # 3. Protect page image comments: <!-- ![Page X](...) --> and <!-- Page images... -->
     # Use separate patterns for header and individual page image comments
-    page_header_pattern = r"<!--\s*Page images for reference\s*-->"
-    page_img_pattern = r"<!--\s*!\[Page\s+\d+\]\([^)]*\)\s*-->"
     page_idx = 0
-    for match in re.finditer(page_header_pattern, result):
+    for match in _PAGE_HEADER_COMMENT_RE.finditer(result):
         placeholder = f"__MARKITAI_PAGE_{page_idx}__"
         mapping[placeholder] = match.group(0)
         result = result.replace(match.group(0), placeholder, 1)
         page_idx += 1
-    for match in re.finditer(page_img_pattern, result):
+    for match in _PAGE_IMG_COMMENT_RE.finditer(result):
         placeholder = f"__MARKITAI_PAGE_{page_idx}__"
         mapping[placeholder] = match.group(0)
         result = result.replace(match.group(0), placeholder, 1)
@@ -189,16 +208,14 @@ def unprotect_content(
     # Remove any slide/page number comments that LLM hallucinated
     # These are NOT from our placeholders and should be removed
     # Pattern: <!-- Slide number: X --> or <!-- Page number: X -->
-    hallucinated_slide_pattern = r"<!--\s*Slide\s+number:\s*\d+\s*-->\s*\n?"
-    hallucinated_page_pattern = r"<!--\s*Page\s+number:\s*\d+\s*-->\s*\n?"
 
     # Remove hallucinated markers BEFORE replacing placeholders:
     # - If original had markers (placeholders exist): ALL raw markers are hallucinated
     #   because the real ones are protected as __MARKITAI_SLIDENUM_X__ placeholders
     # - If original had NO markers (placeholders empty): ALL raw markers are hallucinated
     # Either way, we should remove all raw slide/page markers at this point
-    result = re.sub(hallucinated_slide_pattern, "", result)
-    result = re.sub(hallucinated_page_pattern, "", result)
+    result = _HALLUCINATED_SLIDE_RE.sub("", result)
+    result = _HALLUCINATED_PAGE_RE.sub("", result)
 
     # First pass: replace placeholders with original content
     # Ensure page/slide number markers have proper blank lines around them
@@ -220,11 +237,10 @@ def unprotect_content(
 
     # Clean up any residual placeholders that LLM might have duplicated or misplaced
     # Pattern: __MARKITAI_*__ (any of our placeholder formats)
-    residual_placeholder_pattern = r"__MARKITAI_[A-Z]+_\d+__\s*\n?"
-    residual_count = len(re.findall(residual_placeholder_pattern, result))
+    residual_count = len(_RESIDUAL_PLACEHOLDER_RE.findall(result))
     if residual_count > 0:
         logger.debug(f"Removing {residual_count} residual placeholders from LLM output")
-        result = re.sub(residual_placeholder_pattern, "", result)
+        result = _RESIDUAL_PLACEHOLDER_RE.sub("", result)
 
     # NOTE: Removed heuristic logic that auto-inserted images into short slide sections.
     # This caused false positives where legitimate short slides like "Agenda", "Thanks",
@@ -237,7 +253,7 @@ def unprotect_content(
         # Helper to check if an image is already in result (by filename)
         def image_exists_in_result(img_syntax: str, text: str) -> bool:
             """Check if image already exists in result by filename."""
-            match = re.search(r"\]\(([^)]+)\)", img_syntax)
+            match = _IMG_PATH_RE.search(img_syntax)
             if match:
                 img_path = match.group(1)
                 img_name = img_path.split("/")[-1]
@@ -251,7 +267,7 @@ def unprotect_content(
         # Only restore if the image filename doesn't already exist
         for img in protected.get("images", []):
             if img not in result and not image_exists_in_result(img, result):
-                match = re.search(r"\]\(([^)]+)\)", img)
+                match = _IMG_PATH_RE.search(img)
                 if match:
                     img_name = match.group(1).split("/")[-1]
                     logger.debug(f"Restoring missing image at end: {img_name}")
@@ -264,7 +280,7 @@ def unprotect_content(
             slide_info = []
             for slide in missing_slides:
                 # Support both "Slide X" and "Slide number: X" formats
-                match = re.search(r"Slide\s+(?:number:\s*)?(\d+)", slide)
+                match = _SLIDE_NUM_EXTRACT_RE.search(slide)
                 if match:
                     slide_info.append((int(match.group(1)), slide))
             slide_info.sort()
@@ -302,7 +318,7 @@ def unprotect_content(
             # Extract page numbers for logging
             missing_nums = []
             for page_marker in missing_page_nums:
-                match = re.search(r"Page number:\s*(\d+)", page_marker)
+                match = _PAGE_NUM_EXTRACT_RE.search(page_marker)
                 if match:
                     missing_nums.append(match.group(1))
             if missing_nums:
@@ -325,7 +341,7 @@ def unprotect_content(
                 # For individual page image comments, check if already exists
                 else:
                     # Extract page number to check for duplicates
-                    page_match = re.search(r"!\[Page\s+(\d+)\]", comment)
+                    page_match = _PAGE_REF_RE.search(comment)
                     if page_match:
                         page_num = page_match.group(1)
                         # Check if this page is already referenced (commented or not)
@@ -433,8 +449,7 @@ def protect_image_positions(text: str) -> tuple[str, dict[str, str]]:
     result = text
 
     # Find all image references
-    image_pattern = r"!\[[^\]]*\]\([^)]+\)"
-    for img_idx, match in enumerate(re.finditer(image_pattern, result)):
+    for img_idx, match in enumerate(_IMAGE_LINK_RE.finditer(result)):
         placeholder = f"__MARKITAI_IMG_{img_idx}__"
         mapping[placeholder] = match.group(0)
         result = result.replace(match.group(0), placeholder, 1)
@@ -473,8 +488,7 @@ def remove_uncommented_screenshots(content: str) -> str:
     """
     # Pattern: ![Page X](screenshots/...) not inside HTML comment
     # This is a heuristic - we look for screenshot references at the end
-    pattern = r"\n*!\[Page\s+\d+\]\(screenshots/[^)]+\)\s*$"
-    return re.sub(pattern, "", content)
+    return _UNCOMMENTED_SCREENSHOT_RE.sub("", content)
 
 
 def clean_frontmatter(frontmatter: str) -> str:
@@ -492,8 +506,7 @@ def clean_frontmatter(frontmatter: str) -> str:
 
     # Remove code block markers (```yaml, ```yml, ```)
     # Pattern: ```yaml or ```yml at start, ``` at end
-    code_block_pattern = r"^```(?:ya?ml)?\s*\n?(.*?)\n?```$"
-    match = re.match(code_block_pattern, frontmatter, re.DOTALL | re.IGNORECASE)
+    match = _CODE_BLOCK_RE.match(frontmatter)
     if match:
         frontmatter = match.group(1).strip()
 
@@ -505,22 +518,14 @@ def clean_frontmatter(frontmatter: str) -> str:
 
     # Detect and remove prompt leakage lines (Chinese prompt instructions)
     # These are LLM hallucinations where the prompt text appears in output
-    prompt_leakage_patterns = [
-        r"^根据.*生成.*frontmatter.*:.*$",  # "根据文档内容生成 YAML frontmatter: null"
-        r"^请.*生成.*:.*$",  # "请生成元数据: null"
-        r"^以下是.*:.*$",  # "以下是生成的 frontmatter:"
-        r"^YAML.*frontmatter.*:.*$",  # "YAML frontmatter:"
-        r"^元数据.*:.*$",  # "元数据:"
-    ]
-
     lines = frontmatter.split("\n")
     cleaned_lines = []
     removed_count = 0
 
     for line in lines:
         is_leakage = False
-        for pattern in prompt_leakage_patterns:
-            if re.match(pattern, line.strip(), re.IGNORECASE):
+        for pattern in _PROMPT_LEAKAGE_PATTERNS:
+            if pattern.match(line.strip()):
                 is_leakage = True
                 removed_count += 1
                 break

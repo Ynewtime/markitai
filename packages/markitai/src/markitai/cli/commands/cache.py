@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import Any
 
 import click
-from rich.table import Table
+from rich.console import Console
 
+from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.i18n import t
 from markitai.config import ConfigManager
 from markitai.constants import DEFAULT_CACHE_DB_FILENAME
 from markitai.llm import SQLiteCache
@@ -33,6 +35,44 @@ def format_size(size_bytes: int) -> str:
         return f"{size_bytes / (1024 * 1024):.2f} MB"
 
 
+def _print_verbose(cache_data: dict[str, Any], con: Console) -> None:
+    """Print verbose cache details in compact format."""
+    by_model = cache_data.get("by_model", {})
+    entries = cache_data.get("entries", [])
+    width = ui.term_width(con)
+
+    if by_model:
+        con.print()
+        ui.section("By Model")
+        max_name = min(max((len(m) for m in by_model), default=0), 20)
+        for model, data in by_model.items():
+            name_pad = ui.truncate(model, max_name).ljust(max_name)
+            con.print(
+                f"  [cyan]{name_pad}[/]  "
+                f"{data['count']:>3} entries  "
+                f"{format_size(data['size_bytes']):>8}"
+            )
+
+    if entries:
+        con.print()
+        ui.section(f"Recent Entries ({len(entries)})")
+        # Fixed prefix: "  {key:8}  {model:10} {size:>8}" = ~34 chars
+        prefix_len = 34
+        preview_max = width - prefix_len
+        show_preview = preview_max >= 15
+        for entry in entries:
+            key_short = entry["key"][:8]
+            size = format_size(entry["size_bytes"])
+            model = entry.get("model", "")
+            line = f"  [dim]{key_short}[/]  {model:<10} {size:>8}"
+            if show_preview:
+                preview = entry.get("preview", "")
+                if preview:
+                    preview = preview.replace("\n", " ").strip()
+                    line += f"  [dim]{ui.truncate(preview, preview_max)}[/]"
+            con.print(line)
+
+
 @click.group()
 def cache() -> None:
     """Cache management commands."""
@@ -47,7 +87,6 @@ def cache() -> None:
     help="Output as JSON.",
 )
 @click.option(
-    "-v",
     "--verbose",
     is_flag=True,
     help="Show detailed cache entries and model breakdown.",
@@ -60,51 +99,6 @@ def cache() -> None:
 )
 def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
     """Show cache statistics."""
-
-    def print_verbose_details(
-        cache_obj: SQLiteCache, cache_name: str, limit: int, as_json: bool
-    ) -> dict[str, Any]:
-        """Collect and optionally print verbose cache details."""
-        by_model = cache_obj.stats_by_model()
-        entries = cache_obj.list_entries(limit)
-
-        if not as_json:
-            # Print By Model table
-            if by_model:
-                model_table = Table(title=f"{cache_name} - By Model")
-                model_table.add_column("Model", style="cyan")
-                model_table.add_column("Entries", justify="right")
-                model_table.add_column("Size", justify="right")
-                for model, data in by_model.items():
-                    model_table.add_row(
-                        model, str(data["count"]), format_size(data["size_bytes"])
-                    )
-                console.print(model_table)
-                console.print()
-
-            # Print Recent Entries table
-            if entries:
-                entry_table = Table(title=f"{cache_name} - Recent Entries")
-                entry_table.add_column("Key", style="dim", max_width=18)
-                entry_table.add_column("Model", max_width=30)
-                entry_table.add_column("Size", justify="right")
-                entry_table.add_column("Preview", max_width=40)
-                for entry in entries:
-                    key_display = (
-                        entry["key"][:16] + "..."
-                        if len(entry["key"]) > 16
-                        else entry["key"]
-                    )
-                    entry_table.add_row(
-                        key_display,
-                        entry["model"],
-                        format_size(entry["size_bytes"]),
-                        entry["preview"],
-                    )
-                console.print(entry_table)
-
-        return {"by_model": by_model, "entries": entries}
-
     manager = ConfigManager()
     cfg = manager.load()
 
@@ -121,41 +115,46 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
     if global_cache_path.exists():
         try:
             global_cache = SQLiteCache(global_cache_path, cfg.cache.max_size_bytes)
-            stats_data["cache"] = global_cache.stats()
+            if verbose:
+                # Single query for stats + model breakdown
+                stats_data["cache"] = global_cache.stats_verbose()
+            else:
+                stats_data["cache"] = global_cache.stats()
         except Exception as e:
             stats_data["cache"] = {"error": str(e)}
 
-    # Collect verbose data if needed
+    # Collect verbose entries (separate query, different shape)
     if (
         verbose
         and global_cache
         and stats_data["cache"]
         and "error" not in stats_data["cache"]
     ):
-        verbose_data = print_verbose_details(global_cache, "Cache", limit, as_json)
-        stats_data["cache"]["by_model"] = verbose_data["by_model"]
-        stats_data["cache"]["entries"] = verbose_data["entries"]
+        stats_data["cache"]["entries"] = global_cache.list_entries(limit)
 
     if as_json:
-        # Use soft_wrap=True to prevent rich from breaking long lines
-        console.print(
-            json.dumps(stats_data, indent=2, ensure_ascii=False), soft_wrap=True
-        )
+        click.echo(json.dumps(stats_data, indent=2, ensure_ascii=False))
     else:
-        console.print("[bold]Cache Statistics[/bold]")
-        console.print(f"Enabled: {cfg.cache.enabled}")
+        ui.title(t("cache.title"))
+
+        console.print(f"  {t('enabled')}: {cfg.cache.enabled}")
         console.print()
 
         if stats_data["cache"]:
             c = stats_data["cache"]
             if "error" in c:
-                console.print(f"[red]Cache error:[/red] {c['error']}")
+                ui.error(f"Cache: {c['error']}")
             else:
-                console.print(f"  Path: {c['db_path']}")
-                console.print(f"  Entries: {c['count']}")
-                console.print(f"  Size: {c['size_mb']} MB / {c['max_size_mb']} MB")
+                ui.info(
+                    f"{t('cache.llm')}: {c['count']} {t('cache.entries')} "
+                    f"({c['size_mb']} MB)"
+                )
         else:
-            console.print("[dim]No cache found[/dim]")
+            ui.info(f"{t('cache.llm')}: 0 {t('cache.entries')}")
+
+        # Print verbose details after summary
+        if verbose and stats_data.get("cache") and "error" not in stats_data["cache"]:
+            _print_verbose(stats_data["cache"], console)
 
 
 @cache.command("clear")
@@ -209,11 +208,11 @@ def cache_clear(include_spa_domains: bool, yes: bool) -> None:
 
     # Report results
     if result["cache"] > 0 or result["spa_domains"] > 0:
-        console.print(f"[green]Cleared {result['cache']} cache entries[/green]")
+        ui.summary(t("cache.cleared", count=result["cache"]))
         if result["spa_domains"] > 0:
             console.print(f"  SPA domains: {result['spa_domains']}")
     else:
-        console.print("[dim]No cache entries to clear[/dim]")
+        console.print(f"[dim]{t('cache.no_entries')}[/dim]")
 
 
 @cache.command("spa-domains")
@@ -242,7 +241,7 @@ def cache_spa_domains(as_json: bool, clear: bool) -> None:
     if clear:
         count = spa_cache.clear()
         if as_json:
-            console.print(json.dumps({"cleared": count}))
+            click.echo(json.dumps({"cleared": count}))
         else:
             console.print(f"[green]Cleared {count} learned SPA domains[/green]")
         return
@@ -250,7 +249,7 @@ def cache_spa_domains(as_json: bool, clear: bool) -> None:
     domains = spa_cache.list_domains()
 
     if as_json:
-        console.print(json.dumps(domains, indent=2, ensure_ascii=False), soft_wrap=True)
+        click.echo(json.dumps(domains, indent=2, ensure_ascii=False))
         return
 
     if not domains:
@@ -261,32 +260,18 @@ def cache_spa_domains(as_json: bool, clear: bool) -> None:
         )
         return
 
-    console.print(f"[bold]Learned SPA Domains[/bold] ({len(domains)} total)\n")
-
-    table = Table()
-    table.add_column("Domain", style="cyan")
-    table.add_column("Hits", justify="right")
-    table.add_column("Learned At", style="dim")
-    table.add_column("Last Hit", style="dim")
-    table.add_column("Status")
+    ui.title(f"Learned SPA Domains ({len(domains)} {t('total').lower()})")
 
     for d in domains:
-        status = "[red]Expired[/red]" if d.get("expired") else "[green]Active[/green]"
-        learned_at = d.get("learned_at", "")[:10] if d.get("learned_at") else "-"
-        last_hit = d.get("last_hit", "")[:10] if d.get("last_hit") else "-"
-        table.add_row(
-            d["domain"],
-            str(d.get("hits", 0)),
-            learned_at,
-            last_hit,
-            status,
-        )
+        status = "expired" if d.get("expired") else "active"
+        if status == "active":
+            ui.success(d["domain"])
+        else:
+            ui.warning(d["domain"], detail="Expired")
 
-    console.print(table)
-    console.print(
-        "\n[dim]Tip: Use --clear to reset learned domains, "
-        "or configure fallback_patterns in config file for permanent rules.[/dim]"
-    )
+        learned_at = d.get("learned_at", "")[:10] if d.get("learned_at") else "-"
+        hits = d.get("hits", 0)
+        console.print(f"    [dim]│ Hits: {hits}, Learned: {learned_at}[/dim]")
 
 
 __all__ = ["cache"]

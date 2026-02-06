@@ -36,11 +36,11 @@ uv run playwright install-deps chromium
 
 ::: code-group
 ```bash [Linux/macOS]
-curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 ```
 
 ```powershell [Windows]
-irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps1 | iex
+irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
 ```
 :::
 
@@ -61,15 +61,15 @@ irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.4.2"
+export MARKITAI_VERSION="0.5.0"
 export UV_VERSION="0.9.27"
-curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.4.2"
+$env:MARKITAI_VERSION = "0.5.0"
 $env:UV_VERSION = "0.9.27"
-irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps1 | iex
+irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
 ```
 :::
 

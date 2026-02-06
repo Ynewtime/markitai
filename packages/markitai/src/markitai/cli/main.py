@@ -3,14 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    pass
 
 # Fix Windows console encoding for Unicode output
 if sys.platform == "win32":
@@ -34,7 +29,6 @@ load_dotenv()
 
 from click import Context
 from loguru import logger
-from rich.syntax import Syntax
 
 from markitai.cli.console import get_console, get_stderr_console
 from markitai.cli.framework import MarkitaiGroup
@@ -42,18 +36,10 @@ from markitai.cli.logging_config import (
     print_version,
     setup_logging,
 )
-
-# Import processors from refactored modules
-from markitai.cli.processors import (
-    process_batch,
-    process_single_file,
-    process_url,
-    process_url_batch,
-)
 from markitai.cli.processors.validators import (
     check_vision_model_config as _check_vision_model_config,
 )
-from markitai.config import ConfigManager, MarkitaiConfig
+from markitai.config import ConfigManager
 
 # Import utilities from refactored modules
 from markitai.utils.cli_helpers import (
@@ -71,6 +57,34 @@ stderr_console = get_stderr_console()
 # =============================================================================
 
 
+def run_interactive_mode(ctx: click.Context) -> None:
+    """Run interactive mode and execute with gathered options."""
+    from markitai.cli.interactive import run_interactive, session_to_cli_args
+
+    try:
+        session = run_interactive()
+
+        # Ask for confirmation before executing
+        import questionary
+
+        if questionary.confirm(
+            "Execute conversion with these settings?", default=True
+        ).ask():
+            # Re-invoke the CLI with the gathered arguments
+            args = session_to_cli_args(session)
+            # Use sys.executable -m for reliable cross-platform invocation
+            # sys.argv[0] can be a .py file on Windows, breaking re-invocation
+            import subprocess
+
+            subprocess.run([sys.executable, "-m", "markitai"] + args)
+        else:
+            click.echo("Cancelled.")
+        ctx.exit(0)
+    except (KeyboardInterrupt, EOFError):
+        click.echo("\nCancelled.")
+        ctx.exit(0)
+
+
 @click.group(
     cls=MarkitaiGroup,
     invoke_without_command=True,
@@ -80,8 +94,8 @@ stderr_console = get_stderr_console()
     "--output",
     "-o",
     type=click.Path(path_type=Path),
-    default=Path("./output"),
-    help="Output directory.",
+    default=None,
+    help="Output directory. If not specified, output to stdout.",
 )
 @click.option(
     "--config",
@@ -199,6 +213,15 @@ stderr_console = get_stderr_console()
     help="Preview conversion without writing files.",
 )
 @click.option(
+    "--interactive",
+    "-I",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=lambda ctx, _param, value: run_interactive_mode(ctx) if value else None,
+    help="Enter interactive mode for guided setup.",
+)
+@click.option(
     "--version",
     "-v",
     is_flag=True,
@@ -210,7 +233,7 @@ stderr_console = get_stderr_console()
 @click.pass_context
 def app(
     ctx: Context,
-    output: Path,
+    output: Path | None,
     config_path: Path | None,
     preset: str | None,
     llm: bool | None,
@@ -255,8 +278,9 @@ def app(
         markitai ./docs/ -o ./output/ --resume      # Batch conversion
         markitai config list                        # Show configuration
     """
-    # If subcommand is invoked, let it handle
+    # If subcommand is invoked, setup logging (quiet console) and let it handle
     if ctx.invoked_subcommand is not None:
+        setup_logging(verbose=False, quiet=True)
         return
 
     # Get input path from context (set by MarkitaiGroup.parse_args)
@@ -309,14 +333,19 @@ def app(
     is_single_mode = (
         is_url_input or (input_path is not None and input_path.is_file())
     ) and not is_url_list_mode
-    # Enable quiet mode if: explicitly requested via --quiet, or in single mode without --verbose
-    quiet_console = quiet or (is_single_mode and not verbose)
+    # Determine if we're in stdout mode (single file/URL without -o)
+    # In stdout mode, output IS the content, so suppress ALL console logs
+    is_stdout_mode = is_single_mode and output is None
+    # Enable quiet mode if: explicitly requested via --quiet,
+    # in stdout mode (regardless of --verbose), or in single mode without --verbose
+    quiet_console = quiet or is_stdout_mode or (is_single_mode and not verbose)
 
     # Setup logging with configuration
     console_handler_id, log_file_path = setup_logging(
         verbose=verbose,
         log_dir=cfg.log.dir,
         log_level=cfg.log.level,
+        log_format=cfg.log.format,
         rotation=cfg.log.rotation,
         retention=cfg.log.retention,
         quiet=quiet_console,
@@ -324,7 +353,7 @@ def app(
 
     # Log configuration status after logging is set up
     if config_manager.config_path:
-        logger.info(f"[Config] Loaded from: {config_manager.config_path}")
+        logger.debug(f"[Config] Loaded from: {config_manager.config_path}")
     else:
         logger.warning("[Config] No config file found, using defaults")
 
@@ -445,14 +474,32 @@ def app(
     else:
         assert input_path is not None  # Already validated above
         logger.debug(f"Processing: {input_path.resolve()}")
-    logger.debug(f"Output directory: {output.resolve()}")
+    if output:
+        logger.debug(f"Output directory: {output.resolve()}")
 
     async def run_workflow() -> None:
-        # URL list batch mode
+        # Helper to get effective output directory (CLI -o or config fallback)
+        def get_effective_output() -> Path | None:
+            if output is not None:
+                return output
+            if cfg.output.dir:
+                logger.debug(f"[Config] Using output.dir from config: {cfg.output.dir}")
+                return Path(cfg.output.dir).expanduser()
+            return None
+
+        # URL list batch mode - requires -o (or config output.dir)
         if is_url_list_mode:
+            effective_output = get_effective_output()
+            if effective_output is None:
+                console.print(
+                    "[red]Error: URL list mode requires -o/--output directory.[/red]"
+                )
+                ctx.exit(1)
+            from markitai.cli.processors.url import process_url_batch
+
             await process_url_batch(
                 url_entries,
-                output,
+                effective_output,
                 cfg,
                 dry_run,
                 verbose,
@@ -463,12 +510,20 @@ def app(
             )
             return
 
-        # Single URL mode
+        # Single URL mode - requires -o (or config output.dir)
         if is_url_input:
+            effective_output = get_effective_output()
+            if effective_output is None:
+                console.print(
+                    "[red]Error: URL mode requires -o/--output directory.[/red]"
+                )
+                ctx.exit(1)
             assert input_path_str is not None  # Guaranteed when is_url_input is True
+            from markitai.cli.processors.url import process_url
+
             await process_url(
                 input_path_str,
-                output,
+                effective_output,
                 cfg,
                 dry_run,
                 verbose,
@@ -481,11 +536,19 @@ def app(
         # File/directory mode
         assert input_path is not None  # Already validated above
 
-        # Check if input is directory (batch mode)
+        # Check if input is directory (batch mode) - requires -o (or config output.dir)
         if input_path.is_dir():
+            effective_output = get_effective_output()
+            if effective_output is None:
+                console.print(
+                    "[red]Error: Batch mode requires -o/--output directory.[/red]"
+                )
+                ctx.exit(1)
+            from markitai.cli.processors.batch import process_batch
+
             await process_batch(
                 input_path,
-                output,
+                effective_output,
                 cfg,
                 resume,
                 dry_run,
@@ -497,9 +560,19 @@ def app(
             )
             return
 
-        # Single file mode
+        # Single file mode - output is optional (None means stdout)
+        # Note: For single file mode, we do NOT use config output.dir as fallback
+        # because the design specifies that no -o means stdout output
+        from markitai.cli.processors.file import process_single_file
+
         await process_single_file(
-            input_path, output, cfg, dry_run, log_file_path, verbose
+            input_path,
+            output,
+            cfg,
+            dry_run,
+            log_file_path,
+            verbose=verbose,
+            quiet=quiet,
         )
 
     async def run_workflow_with_cleanup() -> None:
@@ -524,518 +597,6 @@ def app(
                 pass  # Ignore cleanup errors
 
     asyncio.run(run_workflow_with_cleanup())
-
-
-# =============================================================================
-# Config subcommands
-# =============================================================================
-
-
-@app.group()
-def config() -> None:
-    """Configuration management commands."""
-    pass
-
-
-@config.command("list")
-@click.option(
-    "--format",
-    "-f",
-    "output_format",
-    type=click.Choice(["json", "yaml", "table"], case_sensitive=False),
-    default="json",
-    help="Output format (json, yaml, or table).",
-)
-def config_list(output_format: str) -> None:
-    """Show current effective configuration."""
-    from rich.table import Table
-
-    manager = ConfigManager()
-    cfg = manager.load()
-
-    config_dict = cfg.model_dump(mode="json", exclude_none=True)
-
-    if output_format == "json":
-        config_json = json.dumps(config_dict, indent=2, ensure_ascii=False)
-        syntax = Syntax(config_json, "json", theme="monokai", line_numbers=False)
-        console.print(syntax)
-    elif output_format == "yaml":
-        try:
-            import yaml
-
-            config_yaml = yaml.dump(
-                config_dict,
-                default_flow_style=False,
-                allow_unicode=True,
-                sort_keys=False,
-            )
-            syntax = Syntax(config_yaml, "yaml", theme="monokai", line_numbers=False)
-            console.print(syntax)
-        except ImportError:
-            console.print("[red]YAML output requires PyYAML: uv add pyyaml[/red]")
-            raise SystemExit(1)
-    elif output_format == "table":
-        table = Table(title="Markitai Configuration", show_header=True)
-        table.add_column("Section", style="cyan")
-        table.add_column("Key", style="green")
-        table.add_column("Value", style="white")
-
-        for section, values in config_dict.items():
-            if isinstance(values, dict):
-                for key, value in values.items():
-                    if isinstance(value, (dict, list)):
-                        value = json.dumps(value, ensure_ascii=False)
-                    table.add_row(section, key, str(value))
-            else:
-                table.add_row("", section, str(values))
-
-        console.print(table)
-
-
-@config.command("path")
-def config_path_cmd() -> None:
-    """Show configuration file paths."""
-    manager = ConfigManager()
-    manager.load()
-
-    console.print("[bold]Configuration file search order:[/bold]")
-    console.print("  1. --config CLI argument")
-    console.print("  2. MARKITAI_CONFIG environment variable")
-    console.print("  3. ./markitai.json (current directory)")
-    console.print(f"  4. {manager.DEFAULT_USER_CONFIG_DIR / 'config.json'}")
-    console.print()
-
-    if manager.config_path:
-        console.print(f"[green]Currently using:[/green] {manager.config_path}")
-    else:
-        console.print(
-            "[yellow]Using default configuration (no config file found)[/yellow]"
-        )
-
-
-@config.command("init")
-@click.option(
-    "--output",
-    "-o",
-    "output_path",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Output path for configuration file.",
-)
-@click.option(
-    "--yes",
-    "-y",
-    is_flag=True,
-    default=False,
-    help="Overwrite existing config without confirmation.",
-)
-def config_init(output_path: Path | None, yes: bool) -> None:
-    """Initialize a configuration file with defaults."""
-    manager = ConfigManager()
-
-    if output_path is None:
-        output_path = manager.DEFAULT_USER_CONFIG_DIR / "config.json"
-    elif output_path.is_dir():
-        # User passed a directory, append default filename
-        output_path = output_path / "markitai.json"
-
-    # Check if file exists (not directory)
-    if output_path.exists() and output_path.is_file():
-        if not yes and not click.confirm(f"{output_path} already exists. Overwrite?"):
-            raise click.Abort()
-
-    # Save minimal template config (essential fields only)
-    saved_path = manager.save(output_path, minimal=True)
-    console.print(f"[green]Configuration file created:[/green] {saved_path}")
-    console.print("\nEdit this file to customize your settings.")
-    console.print(
-        "[dim]Note: max_tokens, supports_vision are auto-detected from litellm.[/dim]"
-    )
-    console.print("Run 'markitai config list' to see the current configuration.")
-
-
-@config.command("validate")
-@click.argument(
-    "config_file",
-    type=click.Path(exists=True, path_type=Path),
-    required=False,
-)
-def config_validate(config_file: Path | None) -> None:
-    """Validate a configuration file."""
-    manager = ConfigManager()
-
-    try:
-        manager.load(config_path=config_file)
-
-        console.print("[green]Configuration is valid![/green]")
-
-        if manager.config_path:
-            console.print(f"[dim]Validated: {manager.config_path}[/dim]")
-
-    except Exception as e:
-        console.print(f"[red]Configuration error:[/red] {e}")
-        raise SystemExit(2)
-
-
-@config.command("get")
-@click.argument("key")
-def config_get(key: str) -> None:
-    """Get a configuration value."""
-    manager = ConfigManager()
-    manager.load()
-
-    value = manager.get(key)
-    if value is None:
-        console.print(f"[yellow]Key not found:[/yellow] {key}")
-        raise SystemExit(1)
-
-    # Format output
-    if isinstance(value, (dict, list)):
-        console.print(json.dumps(value, indent=2, ensure_ascii=False))
-    else:
-        console.print(str(value))
-
-
-@config.command("set")
-@click.argument("key")
-@click.argument("value")
-def config_set(key: str, value: str) -> None:
-    """Set a configuration value."""
-    from pydantic import ValidationError
-
-    manager = ConfigManager()
-    manager.load()
-
-    # Parse value
-    parsed_value: bool | int | float | str
-    if value.lower() in ("true", "false"):
-        parsed_value = value.lower() == "true"
-    else:
-        try:
-            parsed_value = int(value)
-        except ValueError:
-            try:
-                parsed_value = float(value)
-            except ValueError:
-                parsed_value = value
-
-    # Store old config for rollback on validation failure
-    old_config_dict = manager.config.model_dump()
-
-    try:
-        manager.set(key, parsed_value)
-
-        # Validate the entire config using Pydantic
-        try:
-            MarkitaiConfig.model_validate(manager.config.model_dump())
-        except ValidationError as ve:
-            # Rollback to old config
-            manager._config = MarkitaiConfig.model_validate(old_config_dict)
-            # Format validation errors nicely
-            errors = []
-            for err in ve.errors():
-                loc = ".".join(str(x) for x in err["loc"])
-                msg = err["msg"]
-                errors.append(f"  {loc}: {msg}")
-            console.print(f"[red]Invalid value for '{key}':[/red]")
-            for error in errors:
-                console.print(f"[red]{error}[/red]")
-            raise SystemExit(1)
-
-        manager.save()
-        console.print(f"[green]Set {key} = {parsed_value}[/green]")
-
-    except SystemExit:
-        raise
-    except Exception as e:
-        console.print(f"[red]Error setting value:[/red] {e}")
-        raise SystemExit(1)
-
-
-# =============================================================================
-# Cache subcommands
-# =============================================================================
-
-
-@app.group()
-def cache() -> None:
-    """Cache management commands."""
-    pass
-
-
-@cache.command("stats")
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Output as JSON.",
-)
-@click.option(
-    "-v",
-    "--verbose",
-    is_flag=True,
-    help="Show detailed cache entries and model breakdown.",
-)
-@click.option(
-    "--limit",
-    default=20,
-    type=int,
-    help="Number of entries to show in verbose mode (default: 20).",
-)
-def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
-    """Show cache statistics."""
-    from rich.table import Table
-
-    from markitai.constants import DEFAULT_CACHE_DB_FILENAME
-    from markitai.llm import SQLiteCache
-
-    def format_size(size_bytes: int) -> str:
-        """Format size in human-readable format."""
-        if size_bytes < 1024:
-            return f"{size_bytes} B"
-        elif size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.1f} KB"
-        else:
-            return f"{size_bytes / (1024 * 1024):.2f} MB"
-
-    def print_verbose_details(
-        cache_obj: SQLiteCache, cache_name: str, limit: int, as_json: bool
-    ) -> dict[str, Any]:
-        """Collect and optionally print verbose cache details."""
-        by_model = cache_obj.stats_by_model()
-        entries = cache_obj.list_entries(limit)
-
-        if not as_json:
-            # Print By Model table
-            if by_model:
-                model_table = Table(title=f"{cache_name} - By Model")
-                model_table.add_column("Model", style="cyan")
-                model_table.add_column("Entries", justify="right")
-                model_table.add_column("Size", justify="right")
-                for model, data in by_model.items():
-                    model_table.add_row(
-                        model, str(data["count"]), format_size(data["size_bytes"])
-                    )
-                console.print(model_table)
-                console.print()
-
-            # Print Recent Entries table
-            if entries:
-                entry_table = Table(title=f"{cache_name} - Recent Entries")
-                entry_table.add_column("Key", style="dim", max_width=18)
-                entry_table.add_column("Model", max_width=30)
-                entry_table.add_column("Size", justify="right")
-                entry_table.add_column("Preview", max_width=40)
-                for entry in entries:
-                    key_display = (
-                        entry["key"][:16] + "..."
-                        if len(entry["key"]) > 16
-                        else entry["key"]
-                    )
-                    entry_table.add_row(
-                        key_display,
-                        entry["model"],
-                        format_size(entry["size_bytes"]),
-                        entry["preview"],
-                    )
-                console.print(entry_table)
-
-        return {"by_model": by_model, "entries": entries}
-
-    manager = ConfigManager()
-    cfg = manager.load()
-
-    stats_data: dict[str, Any] = {
-        "cache": None,
-        "enabled": cfg.cache.enabled,
-    }
-
-    # Check global cache
-    global_cache: SQLiteCache | None = None
-    global_cache_path = (
-        Path(cfg.cache.global_dir).expanduser() / DEFAULT_CACHE_DB_FILENAME
-    )
-    if global_cache_path.exists():
-        try:
-            global_cache = SQLiteCache(global_cache_path, cfg.cache.max_size_bytes)
-            stats_data["cache"] = global_cache.stats()
-        except Exception as e:
-            stats_data["cache"] = {"error": str(e)}
-
-    # Collect verbose data if needed
-    if (
-        verbose
-        and global_cache
-        and stats_data["cache"]
-        and "error" not in stats_data["cache"]
-    ):
-        verbose_data = print_verbose_details(global_cache, "Cache", limit, as_json)
-        stats_data["cache"]["by_model"] = verbose_data["by_model"]
-        stats_data["cache"]["entries"] = verbose_data["entries"]
-
-    if as_json:
-        # Use soft_wrap=True to prevent rich from breaking long lines
-        console.print(
-            json.dumps(stats_data, indent=2, ensure_ascii=False), soft_wrap=True
-        )
-    else:
-        console.print("[bold]Cache Statistics[/bold]")
-        console.print(f"Enabled: {cfg.cache.enabled}")
-        console.print()
-
-        if stats_data["cache"]:
-            c = stats_data["cache"]
-            if "error" in c:
-                console.print(f"[red]Cache error:[/red] {c['error']}")
-            else:
-                console.print(f"  Path: {c['db_path']}")
-                console.print(f"  Entries: {c['count']}")
-                console.print(f"  Size: {c['size_mb']} MB / {c['max_size_mb']} MB")
-        else:
-            console.print("[dim]No cache found[/dim]")
-
-
-@cache.command("clear")
-@click.option(
-    "--include-spa-domains",
-    is_flag=True,
-    help="Also clear learned SPA domains.",
-)
-@click.option(
-    "--yes",
-    "-y",
-    is_flag=True,
-    help="Skip confirmation prompt.",
-)
-def cache_clear(include_spa_domains: bool, yes: bool) -> None:
-    """Clear cache entries."""
-    from markitai.constants import DEFAULT_CACHE_DB_FILENAME
-    from markitai.llm import SQLiteCache
-
-    manager = ConfigManager()
-    cfg = manager.load()
-
-    # Confirm if not --yes
-    if not yes:
-        desc = "global cache (~/.markitai)"
-        if include_spa_domains:
-            desc += " + learned SPA domains"
-        if not click.confirm(f"Clear {desc}?"):
-            console.print("[yellow]Aborted[/yellow]")
-            return
-
-    result = {"cache": 0, "spa_domains": 0}
-
-    # Clear global cache
-    global_cache_path = (
-        Path(cfg.cache.global_dir).expanduser() / DEFAULT_CACHE_DB_FILENAME
-    )
-    if global_cache_path.exists():
-        try:
-            global_cache = SQLiteCache(global_cache_path, cfg.cache.max_size_bytes)
-            result["cache"] = global_cache.clear()
-        except Exception as e:
-            console.print(f"[red]Failed to clear cache:[/red] {e}")
-
-    # Clear SPA domains if requested
-    if include_spa_domains:
-        from markitai.fetch import get_spa_domain_cache
-
-        try:
-            spa_cache = get_spa_domain_cache()
-            result["spa_domains"] = spa_cache.clear()
-        except Exception as e:
-            console.print(f"[red]Failed to clear SPA domains:[/red] {e}")
-
-    # Report results
-    if result["cache"] > 0 or result["spa_domains"] > 0:
-        console.print(f"[green]Cleared {result['cache']} cache entries[/green]")
-        if result["spa_domains"] > 0:
-            console.print(f"  SPA domains: {result['spa_domains']}")
-    else:
-        console.print("[dim]No cache entries to clear[/dim]")
-
-
-@cache.command("spa-domains")
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Output as JSON.",
-)
-@click.option(
-    "--clear",
-    is_flag=True,
-    help="Clear all learned SPA domains.",
-)
-def cache_spa_domains(as_json: bool, clear: bool) -> None:
-    """View or manage learned SPA domains.
-
-    Shows domains that were automatically detected as requiring browser
-    rendering (JavaScript-heavy sites). These domains will use browser
-    strategy directly on future requests, avoiding wasted static fetch attempts.
-    """
-    from rich.table import Table
-
-    from markitai.fetch import get_spa_domain_cache
-
-    spa_cache = get_spa_domain_cache()
-
-    if clear:
-        count = spa_cache.clear()
-        if as_json:
-            console.print(json.dumps({"cleared": count}))
-        else:
-            console.print(f"[green]Cleared {count} learned SPA domains[/green]")
-        return
-
-    domains = spa_cache.list_domains()
-
-    if as_json:
-        console.print(json.dumps(domains, indent=2, ensure_ascii=False), soft_wrap=True)
-        return
-
-    if not domains:
-        console.print("[dim]No learned SPA domains yet[/dim]")
-        console.print(
-            "\n[dim]Domains are learned automatically when static fetch "
-            "detects JavaScript requirement.[/dim]"
-        )
-        return
-
-    console.print(f"[bold]Learned SPA Domains[/bold] ({len(domains)} total)\n")
-
-    table = Table()
-    table.add_column("Domain", style="cyan")
-    table.add_column("Hits", justify="right")
-    table.add_column("Learned At", style="dim")
-    table.add_column("Last Hit", style="dim")
-    table.add_column("Status")
-
-    for d in domains:
-        status = "[red]Expired[/red]" if d.get("expired") else "[green]Active[/green]"
-        learned_at = d.get("learned_at", "")[:10] if d.get("learned_at") else "-"
-        last_hit = d.get("last_hit", "")[:10] if d.get("last_hit") else "-"
-        table.add_row(
-            d["domain"],
-            str(d.get("hits", 0)),
-            learned_at,
-            last_hit,
-            status,
-        )
-
-    console.print(table)
-    console.print(
-        "\n[dim]Tip: Use --clear to reset learned domains, "
-        "or configure fallback_patterns in config file for permanent rules.[/dim]"
-    )
-
-
-# Register doctor command and check-deps alias
-from markitai.cli.commands.doctor import check_deps, doctor
-
-app.add_command(doctor)
-app.add_command(check_deps)
 
 
 # =============================================================================

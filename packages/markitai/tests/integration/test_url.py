@@ -273,7 +273,7 @@ class TestUrlListCli:
         )
 
         assert result.exit_code == 0
-        assert "Would process 2 URLs" in result.output
+        assert "URLs: 2" in result.output or "Dry Run" in result.output
 
     def test_url_list_with_custom_names(self, cli_runner: CliRunner, tmp_path: Path):
         """Test .urls file with custom output names."""

@@ -10,7 +10,6 @@ from click.testing import CliRunner
 
 from markitai.cli.commands.config import (
     config_get,
-    config_init,
     config_list,
     config_path_cmd,
     config_set,
@@ -100,48 +99,18 @@ class TestConfigPathCommand:
                 str(config_file) in result.output or "Currently using" in result.output
             )
 
-
-class TestConfigInitCommand:
-    """Tests for config init CLI command."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a CLI runner."""
-        return CliRunner()
-
-    def test_init_creates_config(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Test that init creates a config file."""
-        output_file = tmp_path / "new_config.json"
-
+    def test_path_unified_ui(self, runner: CliRunner) -> None:
+        """Test config path uses unified UI."""
         with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
             mock_manager = MagicMock()
-            mock_manager.save.return_value = output_file
-            mock_manager.DEFAULT_USER_CONFIG_DIR = tmp_path
+            mock_manager.config_path = None
+            mock_manager.DEFAULT_USER_CONFIG_DIR = Path.home() / ".markitai"
             MockManager.return_value = mock_manager
 
-            result = runner.invoke(config_init, ["--output", str(output_file)])
+            result = runner.invoke(config_path_cmd)
 
             assert result.exit_code == 0
-            assert (
-                "created" in result.output.lower() or str(output_file) in result.output
-            )
-
-    def test_init_prompts_overwrite(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Test that init prompts before overwriting existing file."""
-        existing_file = tmp_path / "existing.json"
-        existing_file.write_text("{}")
-
-        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
-            mock_manager = MagicMock()
-            mock_manager.DEFAULT_USER_CONFIG_DIR = tmp_path
-            MockManager.return_value = mock_manager
-
-            # User says no to overwrite
-            result = runner.invoke(
-                config_init, ["--output", str(existing_file)], input="n\n"
-            )
-
-            assert result.exit_code == 1  # Aborted
+            assert "\u25c6" in result.output  # Title marker (diamond)
 
 
 class TestConfigValidateCommand:

@@ -4,9 +4,14 @@ This package provides the command-line interface for Markitai.
 
 Usage:
     from markitai.cli import app
+    from markitai.cli import ui
+    from markitai.cli.i18n import t
 """
 
 from __future__ import annotations
+
+# Re-export UI components and i18n
+from markitai.cli import i18n, ui
 
 # Re-export CLI app
 from markitai.cli.main import app
@@ -38,6 +43,8 @@ _sanitize_filename = sanitize_filename
 
 __all__ = [
     "app",
+    "ui",
+    "i18n",
     "ProgressReporter",
     "is_url",
     "url_to_filename",

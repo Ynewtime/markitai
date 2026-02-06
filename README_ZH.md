@@ -19,10 +19,10 @@
 
 ```bash
 # Linux/macOS
-curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup-zh.ps1 | iex
+irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
 ```
 
 ### 手动安装
@@ -36,6 +36,31 @@ uv pip install markitai
 ```
 
 ## 快速开始
+
+### 首次运行
+
+```bash
+# 交互模式（推荐新用户使用）
+markitai -I
+
+# 或直接转换文件
+markitai document.pdf
+
+# 使用 LLM 增强
+markitai document.pdf --llm
+```
+
+### 检查配置
+
+```bash
+# 验证所有依赖
+markitai doctor
+
+# 自动修复缺失组件
+markitai doctor --fix
+```
+
+### 常用操作
 
 ```bash
 # 基础转换
@@ -84,7 +109,7 @@ output/
 markitai config list
 
 # 初始化配置文件
-markitai config init -o .
+markitai init
 
 # 查看缓存状态
 markitai cache stats

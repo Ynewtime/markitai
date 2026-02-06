@@ -75,7 +75,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --frozen --extra browser
+        run: uv sync --frozen --all-extras
 
       - name: Install LibreOffice (Linux)
         if: runner.os == 'Linux'
@@ -87,6 +87,10 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install --cask libreoffice
+
+      - name: Install LibreOffice (Windows)
+        if: runner.os == 'Windows'
+        run: choco install libreoffice-fresh -y --no-progress
 
       - name: Run unit tests with coverage
         run: uv run pytest packages/markitai/tests/unit -v --tb=short -n auto --cov=markitai --cov-report=xml --cov-report=term-missing
