@@ -145,9 +145,14 @@ def _check_rapidocr_dep() -> tuple[str, str, bool]:
         Tuple of (name, detail, available).
     """
     try:
-        import rapidocr
+        from importlib.metadata import version as get_version
 
-        ver = getattr(rapidocr, "__version__", "?")
+        import rapidocr  # noqa: F401
+
+        try:
+            ver = get_version("rapidocr")
+        except Exception:
+            ver = getattr(rapidocr, "__version__", "unknown")
         return ("RapidOCR", f"v{ver}", True)
     except ImportError:
         return ("RapidOCR", "not installed (uv add rapidocr)", False)
@@ -235,16 +240,32 @@ def _wizard_init(target: Path) -> None:
 def _detect_providers() -> list[tuple[str, bool]]:
     """Detect available LLM providers.
 
+    Checks local CLI providers and API key environment variables.
+
     Returns:
         List of (provider_name, is_available) tuples.
     """
+    import os
+
     providers: list[tuple[str, bool]] = []
 
+    # Local CLI providers
     claude_available = shutil.which("claude") is not None
     providers.append(("Claude CLI", claude_available))
 
     copilot_available = shutil.which("copilot") is not None
     providers.append(("GitHub Copilot CLI", copilot_available))
+
+    # API key providers
+    api_keys = [
+        ("DeepSeek API", "DEEPSEEK_API_KEY"),
+        ("Google Gemini API", "GEMINI_API_KEY"),
+        ("OpenAI API", "OPENAI_API_KEY"),
+        ("Anthropic API", "ANTHROPIC_API_KEY"),
+        ("OpenRouter API", "OPENROUTER_API_KEY"),
+    ]
+    for name, env_var in api_keys:
+        providers.append((name, bool(os.environ.get(env_var))))
 
     return providers
 
@@ -255,24 +276,30 @@ def _build_config(
     """Build config data with all detected providers."""
     model_list = []
 
+    # Map provider display names to model configs
+    provider_models = {
+        "Claude": ("default", "claude-agent/haiku"),
+        "Copilot": ("copilot", "copilot/claude-sonnet-4.5"),
+        "DeepSeek": ("deepseek", "deepseek/deepseek-chat"),
+        "Gemini": ("gemini", "gemini/gemini-2.0-flash"),
+        "OpenAI": ("openai", "openai/gpt-4o"),
+        "Anthropic": ("anthropic", "anthropic/claude-sonnet-4-20250514"),
+        "OpenRouter": ("openrouter", "openrouter/google/gemini-2.0-flash-001"),
+    }
+
     if providers:
         for name, available in providers:
             if not available:
                 continue
-            if "Claude" in name:
-                model_list.append(
-                    {
-                        "model_name": "default",
-                        "litellm_params": {"model": "claude-agent/haiku"},
-                    }
-                )
-            elif "Copilot" in name:
-                model_list.append(
-                    {
-                        "model_name": "copilot",
-                        "litellm_params": {"model": "copilot/claude-sonnet-4.5"},
-                    }
-                )
+            for key, (model_name, model_id) in provider_models.items():
+                if key in name:
+                    model_list.append(
+                        {
+                            "model_name": model_name,
+                            "litellm_params": {"model": model_id},
+                        }
+                    )
+                    break
 
     config_data: dict = {
         "output": {"dir": "./output"},
