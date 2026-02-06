@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from markitai.cli.interactive import (
     InteractiveSession,
+    detect_all_llm_providers,
     detect_llm_provider,
 )
 
@@ -109,6 +110,28 @@ class TestProviderDetection:
         ):
             result = detect_llm_provider()
             assert result is None
+
+    def test_detect_all_returns_multiple(self) -> None:
+        """Should return all available providers, not just the first."""
+        with (
+            patch(
+                "shutil.which",
+                side_effect=lambda x: "/usr/bin/claude" if x == "claude" else None,
+            ),
+            patch(
+                "markitai.cli.interactive._check_claude_auth",
+                return_value=True,
+            ),
+            patch.dict(
+                "os.environ",
+                {"GEMINI_API_KEY": "test-key", "OPENAI_API_KEY": "sk-test"},
+                clear=True,
+            ),
+        ):
+            results = detect_all_llm_providers()
+            assert len(results) == 3
+            providers = [r.provider for r in results]
+            assert providers == ["claude-agent", "openai", "gemini"]
 
 
 class TestInteractiveSession:
