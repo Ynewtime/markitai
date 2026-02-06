@@ -376,26 +376,36 @@ def apply_alt_text_updates(
 
     try:
         llm_content = llm_file.read_text(encoding="utf-8")
-        updated = False
 
+        # Build combined pattern and replacement map for a single-pass substitution
+        replacements: dict[str, str] = {}
+        patterns: list[str] = []
         for asset in image_analysis.assets:
             asset_path = Path(asset.get("asset", ""))
             alt_text = asset.get("alt", "")
             if not alt_text or not asset_path.name:
                 continue
 
-            # Replace image references with new alt text
-            old_pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(asset_path.name)}\)"
+            pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(asset_path.name)}\)"
             new_ref = f"![{alt_text}](assets/{asset_path.name})"
-            new_content = re.sub(old_pattern, new_ref, llm_content)
-            if new_content != llm_content:
-                llm_content = new_content
-                updated = True
+            patterns.append(pattern)
+            replacements[asset_path.name] = new_ref
 
-        if updated:
-            atomic_write_text(llm_file, llm_content)
-            logger.debug(f"Applied alt text updates to {llm_file}")
-            return True
+        if patterns:
+            combined = re.compile("|".join(patterns))
+
+            def replace_match(m: re.Match[str]) -> str:
+                text = m.group(0)
+                for name, ref in replacements.items():
+                    if name in text:
+                        return ref
+                return text
+
+            new_content = combined.sub(replace_match, llm_content)
+            if new_content != llm_content:
+                atomic_write_text(llm_file, new_content)
+                logger.debug(f"Applied alt text updates to {llm_file}")
+                return True
 
     except Exception as e:
         logger.warning(f"Failed to apply alt text updates: {e}")
