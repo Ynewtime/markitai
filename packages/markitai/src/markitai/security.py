@@ -285,17 +285,18 @@ def validate_path_within_base(path: Path, base_dir: Path) -> Path:
 def check_symlink_safety(path: Path, allow_symlinks: bool = False) -> None:
     """Check if a path involves symlinks at any level.
 
-    This function checks not just the final path, but all parent directories
-    to detect nested symlinks that could be used for path traversal.
+    This function checks the path itself for symlinks. Parent directories are
+    checked via the resolved path to avoid false positives on system-level
+    symlinks (e.g. /tmp -> /private/tmp on macOS).
 
     Args:
         path: Path to check
         allow_symlinks: If False, raises error on symlinks
 
     Raises:
-        ValueError: If symlinks are not allowed and any path component is a symlink
+        ValueError: If symlinks are not allowed and the path is a symlink
     """
-    # Check the path itself
+    # Check the path itself (unresolved, to catch user-created symlinks)
     if path.is_symlink():
         if not allow_symlinks:
             target = path.readlink()
@@ -304,15 +305,17 @@ def check_symlink_safety(path: Path, allow_symlinks: bool = False) -> None:
             logger.warning(f"Symlink detected: {path} -> {path.readlink()}")
             return  # If symlinks allowed, no need to check further
 
-    # Check all parent directories for nested symlinks
+    # Check parent directories for nested symlinks using the resolved path.
+    # This avoids false positives on system-level symlinks like /tmp -> /private/tmp
+    # on macOS, while still catching user-created symlinks in the resolved tree.
     if not allow_symlinks:
+        resolved = path.resolve()
         checked_parts: list[Path] = []
-        for part in path.parts:
+        for part in resolved.parts:
             checked_parts.append(
                 Path(part) if not checked_parts else checked_parts[-1] / part
             )
             current_path = checked_parts[-1]
-            # Only check if path exists and is absolute enough to be meaningful
             if (
                 len(checked_parts) > 1
                 and current_path.exists()
