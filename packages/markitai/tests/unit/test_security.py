@@ -302,23 +302,42 @@ class TestCheckSymlinkSafety:
         sys.platform == "win32",
         reason="Symlink creation requires admin privileges on Windows",
     )
-    def test_nested_symlink_not_allowed(self, tmp_path: Path) -> None:
-        """Test nested symlink in parent directory is detected."""
-        # Create: tmp_path/real_dir/file.txt
+    def test_symlink_directory_not_allowed(self, tmp_path: Path) -> None:
+        """Test symlink directory itself is detected."""
         real_dir = tmp_path / "real_dir"
         real_dir.mkdir()
-        real_file = real_dir / "file.txt"
-        real_file.touch()
 
         # Create symlink directory: tmp_path/link_dir -> tmp_path/real_dir
         link_dir = tmp_path / "link_dir"
         link_dir.symlink_to(real_dir)
 
-        # Access file through symlink: tmp_path/link_dir/file.txt
-        nested_path = link_dir / "file.txt"
+        # Checking the symlink directory itself should fail
+        with pytest.raises(ValueError, match="Symlink not allowed"):
+            check_symlink_safety(link_dir, allow_symlinks=False)
 
-        with pytest.raises(ValueError, match="Nested symlink not allowed"):
-            check_symlink_safety(nested_path, allow_symlinks=False)
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Symlink creation requires admin privileges on Windows",
+    )
+    def test_file_through_symlink_dir_resolved(self, tmp_path: Path) -> None:
+        """Test that file accessed through symlink dir is safe after resolution.
+
+        System-level symlinks (e.g. /tmp -> /private/tmp on macOS) and
+        user symlinks that resolve to real paths are handled by resolving
+        the path before checking parent components.
+        """
+        real_dir = tmp_path / "real_dir"
+        real_dir.mkdir()
+        real_file = real_dir / "file.txt"
+        real_file.touch()
+
+        link_dir = tmp_path / "link_dir"
+        link_dir.symlink_to(real_dir)
+
+        # Accessing file through symlink dir: after resolution it's just
+        # real_dir/file.txt, so no symlink detected in parents
+        nested_path = link_dir / "file.txt"
+        check_symlink_safety(nested_path, allow_symlinks=False)  # Should not raise
 
     def test_regular_nested_path(self, tmp_path: Path) -> None:
         """Test deeply nested regular paths pass check."""
