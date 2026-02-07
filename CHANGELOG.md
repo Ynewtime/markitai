@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-02-07
+
+### Added
+
+- **Playwright auto-scroll**: Auto-scroll pages to trigger lazy-loaded content before extraction (up to 8 steps, inspired by baoyu-skills url-to-markdown)
+- **DOM noise cleanup**: Remove navigation, ads, cookie banners, popups, and inline event handlers before content extraction
+- **`python -m markitai`**: Add `__main__.py` for `-m` invocation support (fixes Windows execution)
+- **Multi-provider detection**: Interactive mode (`-I`) now detects and displays all available LLM providers (DeepSeek, OpenRouter included)
+- **Copilot GPT-5 series support**: GPT-5, GPT-5.1, GPT-5.2, GPT-5.1-Codex-Mini/Max, GPT-5.2-Codex now fully supported via Copilot provider
+- **22 new unit tests**: Vision fallback strategies, smart_truncate edge cases, content protection roundtrip, cache fingerprint collision resistance, batch thread safety
+
+### Changed
+
+- **Default models modernized**: Updated outdated defaults across init/interactive/doctor (haiku→sonnet, gpt-4o→gpt-5.2, gemini-2.0→2.5, claude-sonnet-4→4.5)
+- **Init wizard**: Multi-provider default selection, API keys stored in `.env` instead of plaintext config, next-steps hints after completion
+- **LLM code deduplication**: `document.py` now delegates `_protect_image_positions` / `_restore_image_positions` to `content.py` shared functions
+- **Cache fingerprint**: SHA256 over full content + page structure replaces `text[:1000]` prefix-based cache keys, preventing collisions for documents with identical prefixes
+- **Batch thread safety**: Double-checked locking with timeout-based lock acquisition (5s) replaces non-blocking `acquire(blocking=force)`
+- **LiteLLM model database**: Refreshed with 35 new models including Claude Opus 4.6
+
+### Fixed
+
+- **DOM cleanup JS syntax error**: Selectors with double quotes (e.g., `[role="banner"]`) now properly escaped via `json.dumps()` instead of f-string interpolation
+- **Copilot model blocklist**: Removed outdated GPT-5 series from `UNSUPPORTED_MODELS` (only o1/o3 reasoning models remain blocked)
+- **CLI provider display**: Truncate provider list with `(+N more)` when >3 detected to prevent line overflow
+
 ## [0.5.0] - 2026-02-06
 
 ### Added
@@ -510,6 +536,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.5.1]: https://github.com/Ynewtime/markitai/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Ynewtime/markitai/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Ynewtime/markitai/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Ynewtime/markitai/compare/v0.4.0...v0.4.1
