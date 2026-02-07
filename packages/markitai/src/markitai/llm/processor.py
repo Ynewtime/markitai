@@ -880,6 +880,10 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                 "Check that required SDKs are installed for configured models."
             )
 
+        # Normalize all model_name to "default" for unified load balancing pool
+        for entry in model_list:
+            entry["model_name"] = "default"
+
         # Log router configuration (compact format)
         model_names = [e["litellm_params"]["model"].split("/")[-1] for e in model_list]
 

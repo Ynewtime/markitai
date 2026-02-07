@@ -618,7 +618,7 @@ install_markitai() {
     if command -v uv >/dev/null 2>&1; then
         if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --upgrade; then
             export PATH="$HOME/.local/bin:$PATH"
-            _mi_version=$(markitai --version 2>/dev/null || echo "")
+            _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
             clack_success "$(i18n markitai) $_mi_version"
             track_install "markitai" "installed"
             return 0

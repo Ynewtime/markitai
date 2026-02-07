@@ -627,7 +627,7 @@ function Install-Markitai {
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
 
             $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
-            $version = if ($markitaiCmd) { & markitai --version 2>&1 | Select-Object -First 1 } else { (i18n "installed") }
+            $version = if ($markitaiCmd) { (& markitai --version 2>&1 | Select-Object -First 1).Split(' ')[-1] } else { (i18n "installed") }
             if (-not $version) { $version = (i18n "installed") }
             Clack-Success "$(i18n 'markitai') $version"
             Track-Install -Component "markitai" -Status "installed"

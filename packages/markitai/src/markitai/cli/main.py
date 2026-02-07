@@ -24,8 +24,10 @@ os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
 import click
 from dotenv import load_dotenv
 
-# Load .env file from current directory and parent directories
-load_dotenv()
+# Load .env: cwd first (project-level), then ~/.markitai/ (global fallback).
+# override=False (default) means first-loaded values win → cwd takes priority.
+load_dotenv(Path.cwd() / ".env")
+load_dotenv(Path.home() / ".markitai" / ".env")
 
 from click import Context
 from loguru import logger
