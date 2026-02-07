@@ -169,9 +169,19 @@ def config_get(key: str) -> None:
         console.print(f"[yellow]Key not found:[/yellow] {key}")
         raise SystemExit(1)
 
+    # Serialize Pydantic models to dicts for consistent JSON output
+    from pydantic import BaseModel
+
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="json", exclude_none=True)
+    elif isinstance(value, list) and value and isinstance(value[0], BaseModel):
+        value = [v.model_dump(mode="json", exclude_none=True) for v in value]
+
     # Format output
     if isinstance(value, (dict, list)):
-        console.print(json.dumps(value, indent=2, ensure_ascii=False))
+        output = json.dumps(value, indent=2, ensure_ascii=False)
+        syntax = Syntax(output, "json", theme="monokai", line_numbers=False)
+        console.print(syntax)
     else:
         console.print(str(value))
 
