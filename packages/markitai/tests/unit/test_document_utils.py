@@ -10,9 +10,8 @@ import pytest
 
 from markitai.llm.document import (
     DocumentMixin,
-    _context_display_name,
-    get_response_cost,
 )
+from markitai.llm.models import get_response_cost
 from markitai.llm.types import (
     DocumentProcessResult,
     EnhancedDocumentResult,
@@ -121,75 +120,6 @@ class TestRestoreImagePositions:
         assert restored == original
 
 
-class TestContextDisplayName:
-    """Tests for _context_display_name function."""
-
-    def test_empty_context(self) -> None:
-        """Test with empty string."""
-        assert _context_display_name("") == "unknown"
-
-    def test_file_path_unix(self) -> None:
-        """Test with Unix file path."""
-        assert _context_display_name("/home/user/docs/file.md") == "file.md"
-
-    def test_file_path_windows(self) -> None:
-        """Test with Windows file path.
-
-        Note: On Unix, Path() only recognizes '/' as separator,
-        so the backslash path is treated as a single filename.
-        The function detects '\\' and uses Path().name which
-        returns the entire string on Unix.
-        """
-        result = _context_display_name("C:\\Users\\docs\\file.md")
-        # On Unix, Path treats this as a single filename
-        # On Windows, it would extract "file.md"
-        assert "\\" in result or result == "file.md"
-
-    def test_url_extracts_last_segment(self) -> None:
-        """Test that URLs with '/' extract the last path segment.
-
-        The function treats URLs as paths since they contain '/'.
-        """
-        url = "https://example.com/page"
-        # URL contains '/', so Path().name extracts "page"
-        assert _context_display_name(url) == "page"
-
-    def test_url_with_long_filename(self) -> None:
-        """Test URL where last segment is long."""
-        # The last segment after '/' is extracted via Path().name
-        long_filename = "a" * 60
-        long_url = "https://example.com/" + long_filename
-        result = _context_display_name(long_url)
-        # Path().name extracts the filename, which is 60 chars
-        assert result == long_filename
-
-    def test_simple_filename(self) -> None:
-        """Test with simple filename (no path)."""
-        assert _context_display_name("document.pdf") == "document.pdf"
-
-    def test_simple_string_exactly_50_chars(self) -> None:
-        """Test string with exactly 50 characters (boundary case)."""
-        text = "x" * 50  # No slashes, exactly 50 chars
-        result = _context_display_name(text)
-        assert result == text  # Should not be truncated
-
-    def test_simple_string_51_chars(self) -> None:
-        """Test string with 51 characters (just over boundary)."""
-        text = "x" * 51  # No slashes, 51 chars
-        result = _context_display_name(text)
-        assert len(result) == 50
-        assert result.endswith("...")
-
-    def test_long_string_truncated(self) -> None:
-        """Test that long strings without slashes are truncated."""
-        long_text = "a" * 100  # No slashes
-        result = _context_display_name(long_text)
-
-        assert len(result) == 50
-        assert result.endswith("...")
-        assert result == "a" * 47 + "..."
-
-
 class TestGetResponseCost:
     """Tests for get_response_cost function."""
 
@@ -198,7 +128,7 @@ class TestGetResponseCost:
         mock_response = MagicMock()
         mock_response.model = "gpt-4"
 
-        with patch("litellm.completion_cost", return_value=0.05):
+        with patch("markitai.llm.models.completion_cost", return_value=0.05):
             cost = get_response_cost(mock_response)
             assert cost == 0.05
 
@@ -206,7 +136,7 @@ class TestGetResponseCost:
         """Test when completion_cost returns None."""
         mock_response = MagicMock()
 
-        with patch("litellm.completion_cost", return_value=None):
+        with patch("markitai.llm.models.completion_cost", return_value=None):
             cost = get_response_cost(mock_response)
             assert cost == 0.0
 

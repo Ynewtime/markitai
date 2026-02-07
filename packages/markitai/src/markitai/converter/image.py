@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -15,9 +14,6 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.utils.paths import ensure_assets_dir
-
-if TYPE_CHECKING:
-    pass
 
 
 class ImageConverter(BaseConverter):

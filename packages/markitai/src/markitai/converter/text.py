@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from markitai.converter.base import (
     BaseConverter,
@@ -11,9 +10,6 @@ from markitai.converter.base import (
     FileFormat,
     register_converter,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 class TextConverter(BaseConverter):

@@ -52,6 +52,11 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.providers.common import (
+    UNSUPPORTED_PARAMS,
+    has_images,
+    messages_to_prompt,
+)
 from markitai.providers.timeout import calculate_timeout_from_messages
 
 if TYPE_CHECKING:
@@ -106,21 +111,8 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         self.timeout = timeout
 
     def _has_images(self, messages: list[dict[str, Any]]) -> bool:
-        """Check if messages contain any image content.
-
-        Args:
-            messages: OpenAI-style message list
-
-        Returns:
-            True if any message contains image content
-        """
-        for msg in messages:
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "image_url":
-                        return True
-        return False
+        """Check if messages contain any image content."""
+        return has_images(messages)
 
     def _add_cache_control(
         self,
@@ -165,50 +157,12 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         return result
 
     def _calculate_adaptive_timeout(self, messages: list[dict[str, Any]]) -> int:
-        """Calculate adaptive timeout based on message content.
-
-        Uses the timeout module to estimate appropriate timeout based on
-        prompt length, image count, and other factors.
-
-        Args:
-            messages: OpenAI-style messages
-
-        Returns:
-            Timeout in seconds
-        """
+        """Calculate adaptive timeout based on message content."""
         return calculate_timeout_from_messages(messages)
 
     def _messages_to_prompt(self, messages: list[dict[str, Any]]) -> str:
-        """Convert OpenAI-style messages to a single prompt string (text only).
-
-        Args:
-            messages: List of message dicts with 'role' and 'content' keys
-
-        Returns:
-            Combined prompt string
-        """
-        parts = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-
-            # Handle content that's a list (multimodal messages) - extract text only
-            if isinstance(content, list):
-                text_parts = []
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        text_parts.append(part.get("text", ""))
-                content = "\n".join(text_parts)
-
-            if role == "system":
-                parts.append(f"<system>\n{content}\n</system>")
-            elif role == "assistant":
-                parts.append(f"<assistant>\n{content}\n</assistant>")
-            else:
-                # user or other roles
-                parts.append(content)
-
-        return "\n\n".join(parts)
+        """Convert OpenAI-style messages to a single prompt string (text only)."""
+        return messages_to_prompt(messages)
 
     def _convert_content_to_sdk_format(
         self, content: str | list[dict[str, Any]]
@@ -387,20 +341,7 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
 
     # Parameters that are not supported by Claude Agent SDK
     # These are silently ignored with DEBUG logging
-    _UNSUPPORTED_PARAMS = frozenset(
-        {
-            "max_tokens",
-            "max_completion_tokens",
-            "temperature",
-            "top_p",
-            "stop",
-            "presence_penalty",
-            "frequency_penalty",
-            "logit_bias",
-            "seed",
-            "n",
-        }
-    )
+    _UNSUPPORTED_PARAMS = UNSUPPORTED_PARAMS
 
     async def acompletion(
         self,
