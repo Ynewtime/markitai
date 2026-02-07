@@ -602,11 +602,20 @@ detect_python() {
 # Requires: PYTHON_CMD to be set
 # Returns: 0 on success, 1 on failure
 install_markitai() {
-    # Build package spec with optional version
+    # Detect existing extras from uv receipt to preserve on upgrade
+    _uv_tools_dir=$(uv tool dir 2>/dev/null || echo "$HOME/.local/share/uv/tools")
+    _receipt_file="$_uv_tools_dir/markitai/uv-receipt.toml"
+    if [ -f "$_receipt_file" ]; then
+        _receipt=$(cat "$_receipt_file" 2>/dev/null || true)
+        case "$_receipt" in *claude-agent*) install_markitai_extra "claude-agent" ;; esac
+        case "$_receipt" in *copilot*) install_markitai_extra "copilot" ;; esac
+    fi
+
+    # Build package spec with all tracked extras
     if [ -n "$MARKITAI_VERSION" ]; then
-        _mi_pkg="markitai[browser]==$MARKITAI_VERSION"
+        _mi_pkg="markitai[$MARKITAI_EXTRAS]==$MARKITAI_VERSION"
     else
-        _mi_pkg="markitai[browser]"
+        _mi_pkg="markitai[$MARKITAI_EXTRAS]"
     fi
 
     # Show installing message only for fresh installs
@@ -630,20 +639,49 @@ install_markitai() {
     return 1
 }
 
-# Install markitai extra package
+# Global variable tracking all needed extras (comma-separated)
+MARKITAI_EXTRAS="browser"
+
+# Track a markitai extra for deferred installation
 # Usage: install_markitai_extra "claude-agent"
-# Returns: 0 on success, 1 on failure
+# Extras are accumulated and installed once via finalize_markitai_extras()
 install_markitai_extra() {
     _extra_name="$1"
-    _extra_pkg="markitai[$_extra_name]"
+    case ",$MARKITAI_EXTRAS," in
+        *",$_extra_name,"*) return 0 ;;  # Already tracked
+    esac
+    MARKITAI_EXTRAS="${MARKITAI_EXTRAS},$_extra_name"
+}
 
-    if command -v uv >/dev/null 2>&1; then
-        if uv tool install "$_extra_pkg" --python "$PYTHON_CMD" --upgrade >/dev/null 2>&1; then
-            return 0
-        fi
+# Finalize markitai extras after all optional components are resolved
+# Reinstalls markitai with all accumulated extras if needed
+finalize_markitai_extras() {
+    # Read current receipt to check if extras changed
+    _uv_tools_dir=$(uv tool dir 2>/dev/null || echo "$HOME/.local/share/uv/tools")
+    _receipt_file="$_uv_tools_dir/markitai/uv-receipt.toml"
+    _current=""
+    if [ -f "$_receipt_file" ]; then
+        _current=$(cat "$_receipt_file" 2>/dev/null || true)
     fi
 
-    return 1
+    # Check if new extras need to be added
+    _needs_update=false
+    _old_ifs="$IFS"
+    IFS=','
+    for _extra in $MARKITAI_EXTRAS; do
+        case "$_current" in *"$_extra"*) ;; *) _needs_update=true ;; esac
+    done
+    IFS="$_old_ifs"
+
+    [ "$_needs_update" = "false" ] && return 0
+
+    # Reinstall with all extras
+    if [ -n "$MARKITAI_VERSION" ]; then
+        _mi_pkg="markitai[$MARKITAI_EXTRAS]==$MARKITAI_VERSION"
+    else
+        _mi_pkg="markitai[$MARKITAI_EXTRAS]"
+    fi
+    uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --upgrade >/dev/null 2>&1 || true
 }
 
 # Sync project dependencies (Dev mode)
@@ -922,6 +960,7 @@ install_optional_claude_cli() {
     if command -v claude >/dev/null 2>&1; then
         _cl_version=$(claude --version 2>/dev/null | head -n1)
         clack_success "$(i18n claude_cli): $_cl_version"
+        install_markitai_extra "claude-agent"
         track_install "claude_cli" "installed"
         return 0
     fi
@@ -974,6 +1013,7 @@ install_optional_copilot_cli() {
     if command -v copilot >/dev/null 2>&1; then
         _cp_version=$(copilot --version 2>/dev/null | head -n1)
         clack_success "$(i18n copilot_cli): $_cp_version"
+        install_markitai_extra "copilot"
         track_install "copilot_cli" "installed"
         return 0
     fi
@@ -1142,6 +1182,8 @@ run_user_setup() {
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli
     install_optional_copilot_cli
+
+    finalize_markitai_extras
 
     init_config >/dev/null 2>&1
 
