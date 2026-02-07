@@ -188,13 +188,15 @@ class TestAuthManagerCheckAuth:
         assert "max" in (status.user or "")
 
     @pytest.mark.asyncio
-    async def test_check_auth_claude_token_expired(self, tmp_path: Path) -> None:
-        """Test check_auth for claude when token is expired."""
+    async def test_check_auth_claude_token_expired_no_refresh(
+        self, tmp_path: Path
+    ) -> None:
+        """Test check_auth for claude when token is expired and no refresh token."""
         from markitai.providers.auth import AuthManager
 
         manager = AuthManager()
 
-        # Create mock credentials file with expired token
+        # Create mock credentials file with expired token, no refresh token
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
         creds_file = claude_dir / ".credentials.json"
@@ -217,6 +219,43 @@ class TestAuthManagerCheckAuth:
 
         assert status.authenticated is False
         assert "expired" in (status.error or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_check_auth_claude_token_expired_with_refresh(
+        self, tmp_path: Path
+    ) -> None:
+        """Test check_auth for claude when access token is expired but refresh token exists.
+
+        Claude CLI auto-refreshes tokens, so expired access token + valid refresh
+        token should still be considered authenticated.
+        """
+        from markitai.providers.auth import AuthManager
+
+        manager = AuthManager()
+
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        creds_file = claude_dir / ".credentials.json"
+        # Access token expired 1 hour ago, but refresh token present
+        expires_at = int((datetime.now().timestamp() - 3600) * 1000)
+        creds_file.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "test-token",
+                        "refreshToken": "refresh-token-abc",
+                        "subscriptionType": "max",
+                        "expiresAt": expires_at,
+                    }
+                }
+            )
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = await manager.check_auth("claude-agent")
+
+        assert status.authenticated is True
+        assert "max" in (status.user or "")
 
 
 class TestAuthManagerNoConfigFile:
@@ -382,6 +421,19 @@ class TestResolutionHints:
         hint = get_auth_resolution_hint("claude-agent")
         assert "claude" in hint.lower()
         assert "auth" in hint.lower() or "login" in hint.lower()
+
+    def test_resolution_hint_is_platform_aware(self) -> None:
+        """Test that resolution hints use platform-specific install commands."""
+        from markitai.providers.auth import _build_resolution_hint
+
+        with patch("markitai.providers.auth.sys") as mock_sys:
+            mock_sys.platform = "win32"
+            hint = _build_resolution_hint("claude-agent")
+            assert "install.ps1" in hint or "iex" in hint
+
+            mock_sys.platform = "linux"
+            hint = _build_resolution_hint("claude-agent")
+            assert "install.sh" in hint
 
     def test_get_auth_resolution_hint_unknown_provider(self) -> None:
         """Test resolution hint for unknown provider."""
