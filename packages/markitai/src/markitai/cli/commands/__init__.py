@@ -25,7 +25,7 @@ _LAZY_MAP: dict[str, tuple[str, str]] = {
     "init": ("markitai.cli.commands.init", "init"),
 }
 
-__all__ = ["cache", "config", "doctor", "init"]
+__all__ = ["cache", "config", "doctor", "init"]  # pyright: ignore[reportUnsupportedDunderAll]
 
 
 def __getattr__(name: str) -> Any:
