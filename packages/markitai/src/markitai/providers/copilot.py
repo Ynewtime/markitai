@@ -495,7 +495,8 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
             raise ProviderError(
                 f"Model '{model_name}' is not supported by Copilot SDK. "
                 "o1/o3 reasoning models require 'max_completion_tokens' which "
-                "the Copilot SDK does not support. Consider using a different model."
+                "the Copilot SDK does not support. Consider using a different model.",
+                provider="copilot",
             )
 
         # Check for JSON mode request
