@@ -587,11 +587,28 @@ function Install-Python {
 
 # Install markitai (User mode)
 function Install-Markitai {
-    # Build package spec with optional version
+    # Detect existing extras from uv receipt to preserve on upgrade
+    $uvToolsDir = $null
+    try { $uvToolsDir = & uv tool dir 2>$null } catch {}
+    if (-not $uvToolsDir) {
+        if ($env:WSL_DISTRO_NAME) {
+            $uvToolsDir = "$HOME/.local/share/uv/tools"
+        } else {
+            $uvToolsDir = "$env:APPDATA\uv\tools"
+        }
+    }
+    $receiptFile = Join-Path $uvToolsDir "markitai\uv-receipt.toml"
+    if (Test-Path $receiptFile) {
+        $receipt = Get-Content $receiptFile -Raw -ErrorAction SilentlyContinue
+        if ($receipt -match "claude-agent") { Install-MarkitaiExtra -ExtraName "claude-agent" }
+        if ($receipt -match "copilot") { Install-MarkitaiExtra -ExtraName "copilot" }
+    }
+
+    # Build package spec with all tracked extras
     if ($script:MarkitaiVersion) {
-        $pkg = "markitai[browser]==$($script:MarkitaiVersion)"
+        $pkg = "markitai[$($script:MARKITAI_EXTRAS)]==$($script:MarkitaiVersion)"
     } else {
-        $pkg = "markitai[browser]"
+        $pkg = "markitai[$($script:MARKITAI_EXTRAS)]"
     }
 
     # Build Python command for --python argument
@@ -640,29 +657,65 @@ function Install-Markitai {
     return $false
 }
 
-# Install markitai extra package
+# Global variable tracking all needed extras (comma-separated)
+$script:MARKITAI_EXTRAS = "browser"
+
+# Track a markitai extra for deferred installation
+# Extras are accumulated and installed once via Finalize-MarkitaiExtras
 function Install-MarkitaiExtra {
     param([string]$ExtraName)
 
-    $pkg = "markitai[$ExtraName]"
-    $pythonArg = $script:PYTHON_CMD
+    # Check if already tracked
+    $extras = $script:MARKITAI_EXTRAS -split ","
+    if ($extras -contains $ExtraName) {
+        return
+    }
+    $script:MARKITAI_EXTRAS = "$($script:MARKITAI_EXTRAS),$ExtraName"
+}
+
+# Finalize markitai extras after all optional components are resolved
+# Reinstalls markitai with all accumulated extras if needed
+function Finalize-MarkitaiExtras {
+    # Read current receipt to check if extras changed
+    $uvToolsDir = $null
+    try { $uvToolsDir = & uv tool dir 2>$null } catch {}
+    if (-not $uvToolsDir) {
+        if ($env:WSL_DISTRO_NAME) {
+            $uvToolsDir = "$HOME/.local/share/uv/tools"
+        } else {
+            $uvToolsDir = "$env:APPDATA\uv\tools"
+        }
+    }
+    $receiptFile = Join-Path $uvToolsDir "markitai\uv-receipt.toml"
+    $current = ""
+    if (Test-Path $receiptFile) {
+        $current = Get-Content $receiptFile -Raw -ErrorAction SilentlyContinue
+    }
+
+    # Check if new extras need to be added
+    $needsUpdate = $false
+    foreach ($extra in ($script:MARKITAI_EXTRAS -split ",")) {
+        if ($current -notmatch [regex]::Escape($extra)) {
+            $needsUpdate = $true
+            break
+        }
+    }
+
+    if (-not $needsUpdate) { return }
+
+    # Reinstall with all extras
+    if ($script:MarkitaiVersion) {
+        $pkg = "markitai[$($script:MARKITAI_EXTRAS)]==$($script:MarkitaiVersion)"
+    } else {
+        $pkg = "markitai[$($script:MARKITAI_EXTRAS)]"
+    }
 
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-
-    $uvExists = Get-Command uv -ErrorAction SilentlyContinue
-    if ($uvExists) {
-        try {
-            $null = & uv tool install $pkg --python $pythonArg --upgrade 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                $ErrorActionPreference = $oldErrorAction
-                return $true
-            }
-        } catch {}
-    }
-
+    try {
+        $null = & uv tool install $pkg --python $script:PYTHON_CMD --upgrade 2>&1
+    } catch {}
     $ErrorActionPreference = $oldErrorAction
-    return $false
 }
 
 # Sync project dependencies (Dev mode)
@@ -944,6 +997,7 @@ function Install-OptionalClaudeCLI {
     if ($claudeCmd) {
         $version = & claude --version 2>&1 | Select-Object -First 1
         Clack-Success "$(i18n 'claude_cli'): $version $(i18n 'already_installed')"
+        Install-MarkitaiExtra -ExtraName "claude-agent"
         Track-Install -Component "claude_cli" -Status "installed"
         return $true
     }
@@ -1004,6 +1058,7 @@ function Install-OptionalCopilotCLI {
     if ($copilotCmd) {
         $version = & copilot --version 2>&1 | Select-Object -First 1
         Clack-Success "$(i18n 'copilot_cli'): $version $(i18n 'already_installed')"
+        Install-MarkitaiExtra -ExtraName "copilot"
         Track-Install -Component "copilot_cli" -Status "installed"
         return $true
     }
@@ -1194,6 +1249,8 @@ function Run-UserSetup {
     Clack-Section (i18n "section_llm_cli")
     Install-OptionalClaudeCLI | Out-Null
     Install-OptionalCopilotCLI | Out-Null
+
+    Finalize-MarkitaiExtras
 
     Initialize-Config 2>$null | Out-Null
 

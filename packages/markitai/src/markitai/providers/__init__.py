@@ -370,7 +370,7 @@ def validate_local_provider_deps(models: list[str]) -> list[str]:
         if not importlib.util.find_spec("claude_agent_sdk"):
             warnings.append(
                 "⚠️  claude-agent/ models require Claude Agent SDK."
-                "\n   Install: uv add claude-agent-sdk"
+                "\n   Install: uv tool install 'markitai[claude-agent]' --upgrade  # or: uv add claude-agent-sdk (dev mode)"
             )
         elif not shutil.which("claude"):
             warnings.append(
@@ -385,7 +385,7 @@ def validate_local_provider_deps(models: list[str]) -> list[str]:
         if not importlib.util.find_spec("copilot"):
             warnings.append(
                 "⚠️  copilot/ models require GitHub Copilot SDK."
-                "\n   Install: uv add github-copilot-sdk"
+                "\n   Install: uv tool install 'markitai[copilot]' --upgrade  # or: uv add github-copilot-sdk (dev mode)"
             )
         elif not shutil.which("copilot"):
             warnings.append(

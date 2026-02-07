@@ -488,7 +488,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                     "description": "Claude Code CLI integration",
                     "status": "missing",
                     "message": "claude-agent-sdk not installed",
-                    "install_hint": f"uv add claude-agent-sdk && {get_install_hint('claude-cli')}",
+                    "install_hint": "curl -fsSL https://markitai.ynewtime.com/setup.sh | sh  # or: uv tool install 'markitai[claude-agent]' --upgrade",
                 }
         except Exception as e:
             results["claude-agent-sdk"] = {
@@ -496,7 +496,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "description": "Claude Code CLI integration",
                 "status": "error",
                 "message": f"Check failed: {e}",
-                "install_hint": "uv add claude-agent-sdk",
+                "install_hint": "curl -fsSL https://markitai.ynewtime.com/setup.sh | sh  # or: uv tool install 'markitai[claude-agent]' --upgrade",
             }
 
         # 5b. Check Claude Agent authentication status
@@ -532,7 +532,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                     "description": "GitHub Copilot CLI integration",
                     "status": "missing",
                     "message": "github-copilot-sdk not installed",
-                    "install_hint": f"uv add github-copilot-sdk && {get_install_hint('copilot-cli')}",
+                    "install_hint": "curl -fsSL https://markitai.ynewtime.com/setup.sh | sh  # or: uv tool install 'markitai[copilot]' --upgrade",
                 }
         except Exception as e:
             results["copilot-sdk"] = {
@@ -540,7 +540,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "description": "GitHub Copilot CLI integration",
                 "status": "error",
                 "message": f"Check failed: {e}",
-                "install_hint": "uv add github-copilot-sdk",
+                "install_hint": "curl -fsSL https://markitai.ynewtime.com/setup.sh | sh  # or: uv tool install 'markitai[copilot]' --upgrade",
             }
 
         # 5c. Check Copilot authentication status
