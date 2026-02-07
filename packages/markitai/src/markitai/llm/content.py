@@ -433,7 +433,9 @@ def fix_malformed_image_refs(text: str) -> str:
     return "".join(result)
 
 
-def protect_image_positions(text: str) -> tuple[str, dict[str, str]]:
+def protect_image_positions(
+    text: str, exclude_screenshots: bool = False
+) -> tuple[str, dict[str, str]]:
     """Protect image positions with unique placeholders.
 
     This is an alternative protection method that protects images
@@ -441,6 +443,7 @@ def protect_image_positions(text: str) -> tuple[str, dict[str, str]]:
 
     Args:
         text: Original markdown content
+        exclude_screenshots: If True, skip screenshot references (screenshots/ paths)
 
     Returns:
         Tuple of (content with placeholders, mapping of placeholder -> original)
@@ -450,9 +453,13 @@ def protect_image_positions(text: str) -> tuple[str, dict[str, str]]:
 
     # Find all image references
     for img_idx, match in enumerate(_IMAGE_LINK_RE.finditer(result)):
+        img_ref = match.group(0)
+        # Skip screenshot placeholders if requested (handled separately in document processing)
+        if exclude_screenshots and "screenshots/" in img_ref:
+            continue
         placeholder = f"__MARKITAI_IMG_{img_idx}__"
-        mapping[placeholder] = match.group(0)
-        result = result.replace(match.group(0), placeholder, 1)
+        mapping[placeholder] = img_ref
+        result = result.replace(img_ref, placeholder, 1)
 
     return result, mapping
 
