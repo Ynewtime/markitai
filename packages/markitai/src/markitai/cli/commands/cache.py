@@ -133,6 +133,9 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
         cache_stats_dict: dict[str, Any] = stats_data["cache"]
         cache_stats_dict["entries"] = global_cache.list_entries(limit)
 
+    if global_cache:
+        global_cache.close()
+
     if as_json:
         click.echo(json.dumps(stats_data, indent=2, ensure_ascii=False))
     else:
@@ -194,6 +197,7 @@ def cache_clear(include_spa_domains: bool, yes: bool) -> None:
         try:
             global_cache = SQLiteCache(global_cache_path, cfg.cache.max_size_bytes)
             result["cache"] = global_cache.clear()
+            global_cache.close()
         except Exception as e:
             console.print(f"[red]Failed to clear cache:[/red] {e}")
 

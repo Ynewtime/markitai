@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import time
 from collections import OrderedDict
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +58,11 @@ class SQLiteCache:
         self._init_db()
 
     def _get_connection(self) -> Any:
-        """Get a new database connection (thread-local)."""
+        """Create a raw database connection.
+
+        Prefer using _connect() context manager which ensures the
+        connection is closed after use.
+        """
         import sqlite3
 
         conn = sqlite3.connect(str(self._db_path), timeout=30.0)
@@ -65,9 +71,21 @@ class SQLiteCache:
         conn.row_factory = sqlite3.Row
         return conn
 
+    @contextmanager
+    def _connect(self) -> Iterator[Any]:
+        """Context manager that creates a connection and closes it on exit."""
+        conn = self._get_connection()
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def close(self) -> None:
+        """Explicit close (no-op — connections are per-call and auto-closed)."""
+
     def _init_db(self) -> None:
         """Initialize database schema."""
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS cache (
                     key TEXT PRIMARY KEY,
@@ -109,7 +127,7 @@ class SQLiteCache:
         key = self._compute_hash(prompt, content)
         now = int(time.time())
 
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             row = conn.execute(
                 "SELECT value FROM cache WHERE key = ?", (key,)
             ).fetchone()
@@ -137,7 +155,7 @@ class SQLiteCache:
         now = int(time.time())
         size_bytes = len(value.encode("utf-8"))
 
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             # Check current total size
             total_size = conn.execute(
                 "SELECT COALESCE(SUM(size_bytes), 0) as total FROM cache"
@@ -172,7 +190,7 @@ class SQLiteCache:
         Returns:
             Number of entries deleted
         """
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             count = conn.execute("SELECT COUNT(*) as cnt FROM cache").fetchone()["cnt"]
             conn.execute("DELETE FROM cache")
             conn.commit()
@@ -184,7 +202,7 @@ class SQLiteCache:
         Returns:
             Dict with count, size_bytes, size_mb, db_path
         """
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT COUNT(*) as count, COALESCE(SUM(size_bytes), 0) as size_bytes
@@ -208,7 +226,7 @@ class SQLiteCache:
         Returns:
             Dict with count, size_bytes, size_mb, max_size_mb, db_path, by_model
         """
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             # Single query for both overall stats and per-model breakdown
             cursor = conn.execute("""
                 SELECT
@@ -251,7 +269,7 @@ class SQLiteCache:
         Returns:
             Dict mapping model name to {"count": int, "size_bytes": int, "size_mb": float}
         """
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             cursor = conn.execute("""
                 SELECT
                     COALESCE(NULLIF(model, ''), 'unknown') as model_name,
@@ -282,7 +300,7 @@ class SQLiteCache:
         """
         from datetime import UTC, datetime
 
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             cursor = conn.execute(
                 """
                 SELECT
@@ -378,6 +396,11 @@ class PersistentCache:
             logger.debug(f"[Cache] Global cache: {global_cache_path}")
         except Exception as e:
             logger.warning(f"[Cache] Failed to init global cache: {e}")
+
+    def close(self) -> None:
+        """Close underlying SQLiteCache."""
+        if self._global_cache:
+            self._global_cache.close()
 
     def _glob_match(self, path: str, pattern: str) -> bool:
         """Enhanced glob matching for ** patterns."""
