@@ -130,7 +130,8 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
         and stats_data["cache"]
         and "error" not in stats_data["cache"]
     ):
-        stats_data["cache"]["entries"] = global_cache.list_entries(limit)
+        cache_stats_dict: dict[str, Any] = stats_data["cache"]
+        cache_stats_dict["entries"] = global_cache.list_entries(limit)
 
     if as_json:
         click.echo(json.dumps(stats_data, indent=2, ensure_ascii=False))

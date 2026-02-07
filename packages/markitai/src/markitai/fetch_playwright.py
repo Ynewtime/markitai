@@ -270,7 +270,9 @@ class PlaywrightRenderer:
         if self._browser is not None:
             return self._browser
 
-        from playwright.async_api import async_playwright
+        from playwright.async_api import (
+            async_playwright,  # pyright: ignore[reportMissingImports]
+        )
 
         async with self._lock:
             if self._browser is not None:
