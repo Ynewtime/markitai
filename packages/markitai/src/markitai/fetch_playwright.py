@@ -29,7 +29,10 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from markitai.constants import (
+    DEFAULT_PLAYWRIGHT_AUTO_SCROLL_DELAY_MS,
+    DEFAULT_PLAYWRIGHT_AUTO_SCROLL_STEPS,
     DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS,
+    DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS,
     DEFAULT_PLAYWRIGHT_WAIT_FOR,
 )
 
@@ -150,6 +153,91 @@ def clear_browser_cache() -> None:
     _browser_installed_cache = None
 
 
+def _build_auto_scroll_script(
+    max_steps: int = DEFAULT_PLAYWRIGHT_AUTO_SCROLL_STEPS,
+    step_delay_ms: int = DEFAULT_PLAYWRIGHT_AUTO_SCROLL_DELAY_MS,
+) -> str:
+    """Build JavaScript for auto-scrolling to trigger lazy-loaded content.
+
+    Borrowed from baoyu-skills url-to-markdown pattern:
+    Scroll down incrementally, check if page height grows, stop when stable.
+
+    Args:
+        max_steps: Maximum number of scroll iterations
+        step_delay_ms: Delay between scroll steps in milliseconds
+
+    Returns:
+        JavaScript code string for page.evaluate()
+    """
+    return f"""
+    async () => {{
+        let lastHeight = document.body.scrollHeight;
+        for (let i = 0; i < {max_steps}; i++) {{
+            window.scrollTo(0, document.body.scrollHeight);
+            await new Promise(r => setTimeout(r, {step_delay_ms}));
+            const newHeight = document.body.scrollHeight;
+            if (newHeight === lastHeight) break;
+            lastHeight = newHeight;
+        }}
+        window.scrollTo(0, 0);
+    }}
+    """
+
+
+def _build_dom_cleanup_script() -> str:
+    """Build JavaScript for removing DOM noise before content extraction.
+
+    Borrowed from baoyu-skills url-to-markdown pattern:
+    Remove navigation, ads, popups, cookie banners, and inline event handlers.
+
+    Returns:
+        JavaScript code string for page.evaluate()
+    """
+    from markitai.constants import DOM_NOISE_ATTRIBUTES, DOM_NOISE_SELECTORS
+
+    selectors_js = ", ".join(f'"{s}"' for s in DOM_NOISE_SELECTORS)
+    attributes_js = ", ".join(f'"{a}"' for a in DOM_NOISE_ATTRIBUTES)
+
+    return f"""
+    () => {{
+        // Remove noise elements
+        const selectors = [{selectors_js}];
+        for (const sel of selectors) {{
+            try {{
+                document.querySelectorAll(sel).forEach(el => el.remove());
+            }} catch (e) {{}}
+        }}
+
+        // Clean inline event handlers and styles
+        const attrs = [{attributes_js}];
+        document.querySelectorAll('*').forEach(el => {{
+            for (const attr of attrs) {{
+                el.removeAttribute(attr);
+            }}
+        }});
+
+        // Convert relative URLs to absolute
+        const base = document.baseURI;
+        document.querySelectorAll('a[href]').forEach(a => {{
+            try {{
+                const href = a.getAttribute('href');
+                if (href && !href.startsWith('http') && !href.startsWith('//') && !href.startsWith('#')) {{
+                    a.setAttribute('href', new URL(href, base).href);
+                }}
+            }} catch (e) {{}}
+        }});
+        document.querySelectorAll('img[src]').forEach(img => {{
+            try {{
+                const src = img.getAttribute('src');
+                if (src && !src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('//')) {{
+                    img.setAttribute('src', new URL(src, base).href);
+                }}
+            }} catch (e) {{}}
+        }});
+    }}
+    """
+
+
 @dataclass
 class PlaywrightFetchResult:
     """Result from Playwright fetch."""
@@ -230,6 +318,22 @@ class PlaywrightRenderer:
 
             if extra_wait_ms > 0:
                 await asyncio.sleep(extra_wait_ms / 1000)
+
+            # Auto-scroll to trigger lazy-loaded content
+            # (inspired by baoyu-skills url-to-markdown)
+            try:
+                scroll_script = _build_auto_scroll_script()
+                await page.evaluate(scroll_script)
+                await asyncio.sleep(DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS / 1000)
+            except Exception as e:
+                logger.debug(f"Auto-scroll failed (non-critical): {e}")
+
+            # DOM cleanup: remove noise elements before extraction
+            try:
+                cleanup_script = _build_dom_cleanup_script()
+                await page.evaluate(cleanup_script)
+            except Exception as e:
+                logger.debug(f"DOM cleanup failed (non-critical): {e}")
 
             title = await page.title()
             final_url = page.url

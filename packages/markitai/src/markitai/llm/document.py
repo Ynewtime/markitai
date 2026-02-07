@@ -22,6 +22,12 @@ from markitai.constants import (
     DEFAULT_MAX_CONTENT_CHARS,
     DEFAULT_MAX_PAGES_PER_BATCH,
 )
+from markitai.llm.content import (
+    protect_image_positions as _shared_protect_image_positions,
+)
+from markitai.llm.content import (
+    restore_image_positions as _shared_restore_image_positions,
+)
 from markitai.llm.types import (
     DocumentProcessResult,
     EnhancedDocumentResult,
@@ -55,6 +61,32 @@ _PAGE_SECTION_RE = re.compile(
     r"((?:\s*<!-- !\[Page \d+\]\([^)]+\) -->)+)"
 )
 _PAGE_COMMENT_RE = re.compile(r"<!-- !\[Page \d+\]\([^)]+\) -->")
+
+
+def _compute_document_fingerprint(
+    content: str,
+    page_names: list[str],
+) -> str:
+    """Compute a collision-resistant fingerprint for document caching.
+
+    Uses SHA256 over the full content (truncated at DEFAULT_CACHE_CONTENT_TRUNCATE
+    chars for performance) plus page structure info, rather than just the first
+    1000 chars which can collide for documents with identical prefixes.
+
+    Args:
+        content: Document text content
+        page_names: List of page/section names
+
+    Returns:
+        SHA256 hex digest string (64 chars)
+    """
+    import hashlib
+
+    from markitai.constants import DEFAULT_CACHE_CONTENT_TRUNCATE
+
+    truncated = content[:DEFAULT_CACHE_CONTENT_TRUNCATE]
+    fingerprint_input = f"{truncated}|pages:{','.join(page_names[:50])}"
+    return hashlib.sha256(fingerprint_input.encode()).hexdigest()
 
 
 def _context_display_name(context: str) -> str:
@@ -274,33 +306,22 @@ class DocumentMixin:
     def _protect_image_positions(text: str) -> tuple[str, dict[str, str]]:
         """Replace image references with position markers to prevent LLM from moving them.
 
+        Delegates to shared implementation in content.py, excluding screenshots
+        which have their own protection mechanism in document processing.
+
         Args:
             text: Markdown text with image references
 
         Returns:
             Tuple of (text with markers, mapping of marker -> original image reference)
         """
-        mapping: dict[str, str] = {}
-        result = text
-
-        # Match ALL image references: ![...](...)
-        # This includes both local assets and external URLs
-        # Excludes screenshots placeholder which has its own protection
-        img_pattern = r"!\[[^\]]*\]\([^)]+\)"
-        for i, match in enumerate(re.finditer(img_pattern, text)):
-            img_ref = match.group(0)
-            # Skip screenshot placeholders (handled separately)
-            if "screenshots/" in img_ref:
-                continue
-            marker = f"__MARKITAI_IMG_{i}__"
-            mapping[marker] = img_ref
-            result = result.replace(img_ref, marker, 1)
-
-        return result, mapping
+        return _shared_protect_image_positions(text, exclude_screenshots=True)
 
     @staticmethod
     def _restore_image_positions(text: str, mapping: dict[str, str]) -> str:
         """Restore original image references from position markers.
+
+        Delegates to shared implementation in content.py.
 
         Args:
             text: Text with position markers
@@ -309,10 +330,7 @@ class DocumentMixin:
         Returns:
             Text with original image references restored
         """
-        result = text
-        for marker, original in mapping.items():
-            result = result.replace(marker, original)
-        return result
+        return _shared_restore_image_positions(text, mapping)
 
     async def extract_from_screenshot(
         self,
@@ -500,7 +518,9 @@ class DocumentMixin:
 
         # Check persistent cache
         cache_key = f"enhance_url:{context}"
-        cache_content = f"{screenshot_path.name}|{content[:1000]}"
+        cache_content = (
+            f"{screenshot_path.name}|{_compute_document_fingerprint(content, [])}"
+        )
         cached = self._persistent_cache.get(cache_key, cache_content, context=context)
         if cached is not None:
             from markitai.utils.frontmatter import (
@@ -692,9 +712,9 @@ class DocumentMixin:
 
         # Check persistent cache using page count + text fingerprint as key
         # Create a fingerprint from text + page image names for cache lookup
-        page_names = "|".join(p.name for p in page_images[:10])  # First 10 page names
+        page_name_list = [p.name for p in page_images[:10]]  # First 10 page names
         cache_key = f"enhance_vision:{context}:{len(page_images)}"
-        cache_content = f"{page_names}|{extracted_text[:1000]}"
+        cache_content = _compute_document_fingerprint(extracted_text, page_name_list)
         cached = self._persistent_cache.get(cache_key, cache_content, context=context)
         if cached is not None:
             # Fix malformed image refs even for cached content (handles old cache entries)
@@ -915,9 +935,9 @@ class DocumentMixin:
 
         # Check persistent cache first
         # Use page count + source + text fingerprint as cache key
-        page_names = "|".join(p.name for p in page_images[:10])  # First 10 page names
+        page_name_list = [p.name for p in page_images[:10]]  # First 10 page names
         cache_key = f"enhance_frontmatter:{source}:{len(page_images)}"
-        cache_content = f"{page_names}|{extracted_text[:1000]}"
+        cache_content = _compute_document_fingerprint(extracted_text, page_name_list)
         cached = self._persistent_cache.get(cache_key, cache_content, context=source)
         if cached is not None:
             from markitai.utils.frontmatter import (

@@ -771,10 +771,10 @@ class BatchProcessor:
 
         State file is saved to: states/markitai.<hash>.state.json
 
-        Optimized with interval-based throttling:
-        - Checks interval BEFORE serialization to avoid unnecessary work
-        - Uses minimal serialization when possible
-        - Uses thread lock to prevent concurrent disk writes
+        Thread-safe with double-checked locking pattern:
+        1. Quick interval check before lock (optimization)
+        2. Blocking lock with timeout (prevents silent skips)
+        3. Re-check interval after lock (correctness)
 
         Args:
             force: Force save even if interval hasn't passed
@@ -783,21 +783,34 @@ class BatchProcessor:
         if self.state is None:
             return
 
-        now = datetime.now().astimezone()
-        # Default to 5 seconds if not specified in config to prevent $O(N^2)$ IO
+        # Default to 5 seconds if not specified in config to prevent O(N^2) IO
         interval = getattr(self.config, "state_flush_interval_seconds", 5) or 5
 
-        # Check interval BEFORE any serialization work (optimization)
+        # Quick check BEFORE acquiring lock (optimization, not correctness)
         if not force:
             last_saved = getattr(self, "_last_state_save", None)
-            if last_saved and (now - last_saved).total_seconds() < interval:
-                return  # Skip: interval not passed, no work done
+            if last_saved:
+                now = datetime.now().astimezone()
+                if (now - last_saved).total_seconds() < interval:
+                    return  # Skip: interval not passed
 
-        # Ensure only one thread is writing at a time
-        if not self._save_lock.acquire(blocking=force):
-            return  # Skip if another thread is already saving, unless forced
+        # Use blocking lock with timeout to prevent both:
+        # - Silent skips (old non-blocking behavior)
+        # - Indefinite waits (deadlock prevention)
+        acquired = self._save_lock.acquire(timeout=5.0)
+        if not acquired:
+            logger.warning("State save lock timeout (5s), skipping this save")
+            return
 
         try:
+            now = datetime.now().astimezone()
+
+            # Re-check interval after acquiring lock (double-checked locking)
+            if not force:
+                last_saved = getattr(self, "_last_state_save", None)
+                if last_saved and (now - last_saved).total_seconds() < interval:
+                    return  # Another thread already saved within the interval
+
             self.state.updated_at = now.isoformat()
 
             # Build minimal state document (only what's needed for resume)
