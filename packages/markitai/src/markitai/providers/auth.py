@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -46,25 +47,47 @@ class AuthStatus:
     error: str | None
 
 
-# Resolution hints for each provider
-_RESOLUTION_HINTS: dict[str, str] = {
-    "claude-agent": (
-        "Run 'claude auth login' to authenticate with Claude Code CLI.\n"
-        "If Claude Code CLI is not installed, install it with:\n"
-        "  curl -fsSL https://claude.ai/install.sh | bash"
-    ),
-    "copilot": (
-        "Run 'copilot auth login' to authenticate with GitHub Copilot.\n"
-        "If Copilot CLI is not installed, install it with:\n"
-        "  curl -fsSL https://gh.io/copilot-install | bash"
-    ),
+# Platform-specific install commands for CLI tools
+_CLI_INSTALL_COMMANDS: dict[str, dict[str, str]] = {
+    "claude": {
+        "darwin": "curl -fsSL https://claude.ai/install.sh | bash",
+        "linux": "curl -fsSL https://claude.ai/install.sh | bash",
+        "win32": "irm https://claude.ai/install.ps1 | iex",
+    },
+    "copilot": {
+        "darwin": "curl -fsSL https://gh.io/copilot-install | bash",
+        "linux": "curl -fsSL https://gh.io/copilot-install | bash",
+        "win32": "winget install GitHub.Copilot",
+    },
 }
 
-_DEFAULT_RESOLUTION_HINT = "Please authenticate with the provider CLI."
+
+def _get_cli_install_cmd(tool: str) -> str:
+    """Get platform-specific CLI install command."""
+    platform = "linux" if sys.platform.startswith("linux") else sys.platform
+    commands = _CLI_INSTALL_COMMANDS.get(tool, {})
+    return commands.get(platform, commands.get("linux", f"Install {tool} CLI"))
+
+
+def _build_resolution_hint(provider: str) -> str:
+    """Build platform-aware resolution hint for a provider."""
+    if provider == "claude-agent":
+        return (
+            "Run 'claude auth login' to authenticate with Claude Code CLI.\n"
+            "If Claude Code CLI is not installed, install it with:\n"
+            f"  {_get_cli_install_cmd('claude')}"
+        )
+    elif provider == "copilot":
+        return (
+            "Run 'copilot auth login' to authenticate with GitHub Copilot.\n"
+            "If Copilot CLI is not installed, install it with:\n"
+            f"  {_get_cli_install_cmd('copilot')}"
+        )
+    return "Please authenticate with the provider CLI."
 
 
 def get_auth_resolution_hint(provider: str) -> str:
-    """Get a user-friendly resolution hint for authentication issues.
+    """Get a user-friendly, platform-aware resolution hint for authentication issues.
 
     Args:
         provider: Provider name (e.g., "claude-agent", "copilot")
@@ -72,7 +95,7 @@ def get_auth_resolution_hint(provider: str) -> str:
     Returns:
         Resolution hint string with instructions to authenticate
     """
-    return _RESOLUTION_HINTS.get(provider, _DEFAULT_RESOLUTION_HINT)
+    return _build_resolution_hint(provider)
 
 
 def _is_copilot_sdk_available() -> bool:
@@ -179,13 +202,18 @@ def _check_claude_credentials_auth() -> AuthStatus:
                 is_expired = datetime.now() > expires_at
 
             if is_expired:
-                return AuthStatus(
-                    provider="claude-agent",
-                    authenticated=False,
-                    user=None,
-                    expires_at=expires_at,
-                    error="Token expired",
-                )
+                # Claude CLI uses OAuth with refresh tokens — an expired access
+                # token does NOT mean auth is broken if a refresh token exists.
+                # The CLI refreshes automatically on next use.
+                has_refresh = bool(oauth_data.get("refreshToken"))
+                if not has_refresh:
+                    return AuthStatus(
+                        provider="claude-agent",
+                        authenticated=False,
+                        user=None,
+                        expires_at=expires_at,
+                        error="Token expired (no refresh token)",
+                    )
 
             # Get subscription type as user info
             subscription = oauth_data.get("subscriptionType", "unknown")
