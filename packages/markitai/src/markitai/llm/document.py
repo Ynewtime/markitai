@@ -28,6 +28,7 @@ from markitai.llm.content import (
 from markitai.llm.content import (
     restore_image_positions as _shared_restore_image_positions,
 )
+from markitai.llm.models import get_response_cost
 from markitai.llm.types import (
     DocumentProcessResult,
     EnhancedDocumentResult,
@@ -87,43 +88,6 @@ def _compute_document_fingerprint(
     truncated = content[:DEFAULT_CACHE_CONTENT_TRUNCATE]
     fingerprint_input = f"{truncated}|pages:{','.join(page_names[:50])}"
     return hashlib.sha256(fingerprint_input.encode()).hexdigest()
-
-
-def _context_display_name(context: str) -> str:
-    """Get display name for logging context.
-
-    Args:
-        context: Context string (e.g., file path or URL)
-
-    Returns:
-        Short display name suitable for logging
-    """
-    if not context:
-        return "unknown"
-    # If it's a path, use just the filename
-    if "/" in context or "\\" in context:
-        return Path(context).name
-    # If it's a URL, truncate it
-    if len(context) > 50:
-        return context[:47] + "..."
-    return context
-
-
-def get_response_cost(raw_response: Any) -> float:
-    """Get response cost from raw LLM response.
-
-    Args:
-        raw_response: Raw response from LLM API
-
-    Returns:
-        Cost in dollars
-    """
-    from litellm import completion_cost
-
-    try:
-        return completion_cost(completion_response=raw_response) or 0.0
-    except Exception:
-        return 0.0
 
 
 def _try_repair_instructor_response(

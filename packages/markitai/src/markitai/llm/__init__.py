@@ -42,7 +42,6 @@ from markitai.llm.models import (
     get_model_info_cached,
     get_model_max_output_tokens,
     get_response_cost,
-    markitai_llm_logger,
 )
 
 # Re-export main processor from processor module
@@ -96,5 +95,4 @@ __all__ = [
     "get_response_cost",
     "context_display_name",
     "MarkitaiLLMLogger",
-    "markitai_llm_logger",
 ]

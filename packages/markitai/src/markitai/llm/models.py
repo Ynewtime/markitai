@@ -109,7 +109,7 @@ def get_response_cost(response: Any) -> float:
 
     # Fall back to litellm's cost calculation
     try:
-        return completion_cost(completion_response=response)
+        return completion_cost(completion_response=response) or 0.0
     except Exception:
         return 0.0
 
@@ -199,7 +199,3 @@ class MarkitaiLLMLogger(CustomLogger):
     ) -> None:
         """Async version of failure event logging."""
         self.log_failure_event(kwargs, response_obj, start_time, end_time)
-
-
-# Global callback instance
-markitai_llm_logger = MarkitaiLLMLogger()

@@ -27,15 +27,17 @@ from markitai.config import (
     PromptsConfig,
 )
 from markitai.llm.cache import ContentCache, PersistentCache, SQLiteCache
+from markitai.llm.models import (
+    context_display_name,
+    get_model_info_cached,
+    get_model_max_output_tokens,
+    get_response_cost,
+)
 from markitai.llm.processor import (
     HybridRouter,
     LLMProcessor,
     LocalProviderWrapper,
-    _context_display_name,
     _is_all_local_providers,
-    get_model_info_cached,
-    get_model_max_output_tokens,
-    get_response_cost,
 )
 
 # =============================================================================
@@ -44,19 +46,19 @@ from markitai.llm.processor import (
 
 
 class TestContextDisplayName:
-    """Tests for _context_display_name function."""
+    """Tests for context_display_name function (from models.py)."""
 
     def test_empty_context(self):
         """Test empty context returns empty."""
-        assert _context_display_name("") == ""
+        assert context_display_name("") == ""
 
     def test_simple_filename(self):
         """Test simple filename."""
-        assert _context_display_name("file.pdf") == "file.pdf"
+        assert context_display_name("file.pdf") == "file.pdf"
 
     def test_unix_path(self):
         """Test Unix path extracts filename."""
-        assert _context_display_name("/path/to/file.pdf") == "file.pdf"
+        assert context_display_name("/path/to/file.pdf") == "file.pdf"
 
     def test_windows_style_path_with_forward_slashes(self):
         """Test Windows-style path with forward slashes (normalized).
@@ -66,11 +68,9 @@ class TestContextDisplayName:
         this behavior since it uses Path().name which works correctly on Windows.
         On Windows, this would return "file.pdf".
         """
-        # The behavior is platform-dependent
-        # This test documents the Linux behavior - on Windows it would return "file.pdf"
         import platform
 
-        result = _context_display_name("C:/path/to/file.pdf")
+        result = context_display_name("C:/path/to/file.pdf")
         if platform.system() == "Windows":
             assert result == "file.pdf"
         else:
@@ -79,17 +79,17 @@ class TestContextDisplayName:
 
     def test_path_with_suffix(self):
         """Test path with :suffix preserves suffix."""
-        result = _context_display_name("/path/to/file.pdf:images")
+        result = context_display_name("/path/to/file.pdf:images")
         assert result == "file.pdf:images"
 
     def test_windows_path_with_suffix_forward_slash(self):
         """Test Windows path with suffix using forward slashes."""
-        result = _context_display_name("C:/path/to/file.pdf:images")
+        result = context_display_name("C:/path/to/file.pdf:images")
         assert result == "file.pdf:images"
 
     def test_relative_path(self):
         """Test relative path extracts filename."""
-        assert _context_display_name("subdir/file.pdf") == "file.pdf"
+        assert context_display_name("subdir/file.pdf") == "file.pdf"
 
 
 class TestIsAllLocalProviders:
@@ -135,10 +135,10 @@ class TestGetModelInfoCached:
 
     def test_returns_cached_value(self):
         """Test that cached values are returned."""
-        from markitai.llm import processor
+        from markitai.llm import models
 
         # Clear cache first
-        processor._model_info_cache.clear()
+        models._model_info_cache.clear()
 
         # First call - should query litellm
         with (
@@ -162,13 +162,13 @@ class TestGetModelInfoCached:
             assert result2 == result1
 
         # Clean up
-        processor._model_info_cache.clear()
+        models._model_info_cache.clear()
 
     def test_local_provider_model(self):
         """Test local provider model info."""
-        from markitai.llm import processor
+        from markitai.llm import models
 
-        processor._model_info_cache.clear()
+        models._model_info_cache.clear()
 
         local_info = {
             "max_input_tokens": 200000,
@@ -185,13 +185,13 @@ class TestGetModelInfoCached:
             assert result["max_output_tokens"] == 16000
             assert result["supports_vision"] is True
 
-        processor._model_info_cache.clear()
+        models._model_info_cache.clear()
 
     def test_fallback_on_exception(self):
         """Test defaults are returned when litellm fails."""
-        from markitai.llm import processor
+        from markitai.llm import models
 
-        processor._model_info_cache.clear()
+        models._model_info_cache.clear()
 
         with (
             patch(
@@ -203,7 +203,7 @@ class TestGetModelInfoCached:
             assert result["max_input_tokens"] == 128000
             assert result["supports_vision"] is False
 
-        processor._model_info_cache.clear()
+        models._model_info_cache.clear()
 
 
 class TestGetModelMaxOutputTokens:
@@ -212,7 +212,7 @@ class TestGetModelMaxOutputTokens:
     def test_returns_max_output_tokens(self):
         """Test returns max_output_tokens from model info."""
         with patch(
-            "markitai.llm.processor.get_model_info_cached",
+            "markitai.llm.models.get_model_info_cached",
             return_value={"max_output_tokens": 16384},
         ):
             assert get_model_max_output_tokens("test/model") == 16384
@@ -234,7 +234,7 @@ class TestGetResponseCost:
         response = MagicMock()
         response._hidden_params = {}
 
-        with patch("markitai.llm.processor.completion_cost", return_value=0.005):
+        with patch("markitai.llm.models.completion_cost", return_value=0.005):
             cost = get_response_cost(response)
             assert cost == 0.005
 
@@ -244,7 +244,7 @@ class TestGetResponseCost:
         response._hidden_params = {}
 
         with patch(
-            "markitai.llm.processor.completion_cost", side_effect=Exception("Error")
+            "markitai.llm.models.completion_cost", side_effect=Exception("Error")
         ):
             cost = get_response_cost(response)
             assert cost == 0.0
@@ -253,7 +253,7 @@ class TestGetResponseCost:
         """Test when _hidden_params is None."""
         response = MagicMock(spec=[])  # No _hidden_params attribute
 
-        with patch("markitai.llm.processor.completion_cost", return_value=0.003):
+        with patch("markitai.llm.models.completion_cost", return_value=0.003):
             cost = get_response_cost(response)
             assert cost == 0.003
 

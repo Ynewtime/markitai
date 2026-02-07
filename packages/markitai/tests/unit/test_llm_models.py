@@ -20,7 +20,6 @@ from markitai.llm.models import (
     get_model_info_cached,
     get_model_max_output_tokens,
     get_response_cost,
-    markitai_llm_logger,
 )
 
 
@@ -507,21 +506,6 @@ class TestMarkitaiLLMLogger:
         )
         assert logger.last_call_details["api_base"] == "second"
         assert logger.last_call_details["cache_hit"] is False
-
-
-class TestGlobalLoggerInstance:
-    """Tests for the global markitai_llm_logger instance."""
-
-    def test_global_instance_exists(self):
-        """Test that global logger instance is created."""
-        assert markitai_llm_logger is not None
-        assert isinstance(markitai_llm_logger, MarkitaiLLMLogger)
-
-    def test_global_instance_is_singleton(self):
-        """Test that importing returns same instance."""
-        from markitai.llm.models import markitai_llm_logger as logger2
-
-        assert markitai_llm_logger is logger2
 
 
 class TestModelInfoCacheIsolation:
