@@ -210,8 +210,13 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
     session.provider_result = all_providers[0] if all_providers else None
 
     if all_providers:
-        names = ", ".join(f"{p.provider} ({p.source})" for p in all_providers)
-        get_console().print(f"[green]\u2713[/green] Detected: {names}")
+        max_show = 3
+        shown = ", ".join(
+            f"{p.provider} ({p.source})" for p in all_providers[:max_show]
+        )
+        extra = len(all_providers) - max_show
+        suffix = f" (+{extra} more)" if extra > 0 else ""
+        get_console().print(f"[green]\u2713[/green] Detected: {shown}{suffix}")
     else:
         get_console().print(
             "[yellow]![/yellow] No LLM provider detected "
