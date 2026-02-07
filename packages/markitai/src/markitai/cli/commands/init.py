@@ -37,35 +37,37 @@ console = get_console()
     help="Output path for configuration file.",
 )
 @click.option(
-    "--global",
-    "use_global",
+    "--local",
+    "use_local",
     is_flag=True,
     default=False,
-    help="Initialize global configuration (~/.markitai/config.json).",
+    help="Initialize local project configuration (./markitai.json).",
 )
-def init(yes: bool, output_path: Path | None, use_global: bool) -> None:
+def init(yes: bool, output_path: Path | None, use_local: bool) -> None:
     """Initialize Markitai configuration.
 
     Checks dependencies, detects LLM providers, and generates config.
     Use -y for quick setup without prompts.
     """
-    target = _resolve_output_path(output_path, use_global)
+    target = _resolve_output_path(output_path, use_local)
+    # When no explicit path flags given, let wizard ask the user
+    explicit_path = output_path is not None or use_local
 
     if yes:
         _quick_init(target)
     else:
-        _wizard_init(target)
+        _wizard_init(target, prompt_path=not explicit_path)
 
 
-def _resolve_output_path(output_path: Path | None, use_global: bool) -> Path:
+def _resolve_output_path(output_path: Path | None, use_local: bool) -> Path:
     """Resolve the target config file path."""
     if output_path is not None:
         if output_path.is_dir():
             return output_path / "markitai.json"
         return output_path
-    if use_global:
-        return ConfigManager.DEFAULT_USER_CONFIG_DIR / "config.json"
-    return Path.cwd() / "markitai.json"
+    if use_local:
+        return Path.cwd() / "markitai.json"
+    return ConfigManager.DEFAULT_USER_CONFIG_DIR / "config.json"
 
 
 def _quick_init(target: Path) -> None:
@@ -176,7 +178,7 @@ def _check_deps() -> list[tuple[str, str, bool]]:
         return [f.result() for f in futures]
 
 
-def _wizard_init(target: Path) -> None:
+def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
     """Interactive wizard: check deps, detect providers, generate config."""
     ui.title("Markitai Setup")
 
@@ -214,6 +216,17 @@ def _wizard_init(target: Path) -> None:
         console.print("  Run 'markitai init' again after setup.")
         return
 
+    # Phase 3: Choose config location
+    if prompt_path:
+        global_path = ConfigManager.DEFAULT_USER_CONFIG_DIR / "config.json"
+        local_path = Path.cwd() / "markitai.json"
+        ui.section("Config Location")
+        console.print(f"  [1] Global: {global_path}")
+        console.print(f"  [2] Local:  {local_path}")
+        console.print()
+        choice = click.prompt("  Save to", type=click.IntRange(1, 2), default=1)
+        target = global_path if choice == 1 else local_path
+
     # Check existing config before writing
     if target.exists():
         if not click.confirm(
@@ -221,41 +234,8 @@ def _wizard_init(target: Path) -> None:
         ):
             return
 
-    # Phase 3: Generate config
+    # Phase 4: Generate config
     config_data = _build_config(providers)
-
-    # If multiple providers available, let user choose default
-    model_list = config_data.get("llm", {}).get("model_list", [])
-    if len(model_list) >= 2:
-        console.print()
-        ui.section("Default Model")
-        console.print("  Multiple providers detected. Choose your default model:")
-        console.print()
-        choices = []
-        for i, m in enumerate(model_list, 1):
-            model_id = m.get("litellm_params", {}).get("model", "")
-            name = m.get("model_name", "")
-            choices.append((name, model_id))
-            console.print(f"  [{i}] {name}: {model_id}")
-        console.print()
-
-        default_idx = click.prompt(
-            "  Select default",
-            type=click.IntRange(1, len(choices)),
-            default=1,
-        )
-        # Rename any existing "default" back to a provider-based name,
-        # then set the chosen one as "default"
-        chosen_name, _chosen_model_id = choices[default_idx - 1]
-        for m in model_list:
-            if m.get("model_name") == "default" and m.get("model_name") != chosen_name:
-                # Derive a name from the model id prefix (e.g. "claude-agent/sonnet" → "claude-agent")
-                fallback = m.get("litellm_params", {}).get("model", "").split("/")[0]
-                m["model_name"] = fallback or "alt"
-        for m in model_list:
-            if m.get("model_name") == chosen_name:
-                m["model_name"] = "default"
-                break
 
     _write_config(target, config_data)
 
@@ -263,7 +243,7 @@ def _wizard_init(target: Path) -> None:
     model_list = config_data.get("llm", {}).get("model_list", [])
     for m in model_list:
         model = m.get("litellm_params", {}).get("model", "")
-        console.print(f"  {ui.MARK_LINE} {m.get('model_name', '')}: {model}")
+        console.print(f"  {ui.MARK_LINE} {model}")
 
     # Next steps hint
     console.print()
@@ -314,12 +294,12 @@ def _build_config(
     # Map provider display names to model configs
     provider_models = {
         "Claude": ("default", "claude-agent/sonnet"),
-        "Copilot": ("copilot", "copilot/claude-sonnet-4.5"),
-        "DeepSeek": ("deepseek", "deepseek/deepseek-chat"),
-        "Gemini": ("gemini", "gemini/gemini-2.5-flash"),
-        "OpenAI": ("openai", "openai/gpt-5.2"),
-        "Anthropic": ("anthropic", "anthropic/claude-sonnet-4-5-20250929"),
-        "OpenRouter": ("openrouter", "openrouter/google/gemini-2.5-flash"),
+        "Copilot": ("default", "copilot/claude-sonnet-4.5"),
+        "DeepSeek": ("default", "deepseek/deepseek-chat"),
+        "Gemini": ("default", "gemini/gemini-2.5-flash"),
+        "OpenAI": ("default", "openai/gpt-5.2"),
+        "Anthropic": ("default", "anthropic/claude-sonnet-4-5-20250929"),
+        "OpenRouter": ("default", "openrouter/google/gemini-2.5-flash"),
     }
 
     if providers:
