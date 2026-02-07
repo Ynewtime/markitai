@@ -33,24 +33,7 @@ import json
 import re
 from typing import Any
 
-
-def clean_control_characters(text: str) -> str:
-    """Remove control characters that break JSON parsing.
-
-    Removes ASCII control characters (0x00-0x08, 0x0b, 0x0c, 0x0e-0x1f, 0x7f)
-    while preserving common whitespace characters (newline, tab, carriage return).
-
-    Args:
-        text: Input text that may contain control characters
-
-    Returns:
-        Text with control characters removed
-    """
-    # Remove control characters except:
-    # - 0x09 (tab)
-    # - 0x0a (newline)
-    # - 0x0d (carriage return)
-    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+from markitai.utils.text import clean_control_characters
 
 
 class StructuredOutputHandler:

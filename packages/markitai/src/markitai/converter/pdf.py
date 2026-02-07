@@ -22,7 +22,7 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.image import ImageProcessor
-from markitai.utils.mime import get_mime_type
+from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.paths import ensure_assets_dir, ensure_screenshots_dir
 
 if TYPE_CHECKING:
@@ -40,6 +40,31 @@ class PdfConverter(BaseConverter):
 
     def __init__(self, config: MarkitaiConfig | None = None) -> None:
         super().__init__(config)
+
+    def _get_worker_count(self, input_path: Path, task_count: int) -> int:
+        """Calculate optimal worker count based on file size and system resources.
+
+        Each worker opens its own PDF copy, so memory usage scales with
+        workers x file_size. Larger files use fewer workers to limit memory.
+
+        Args:
+            input_path: Path to the PDF file (used to check file size).
+            task_count: Number of tasks (pages) to process.
+
+        Returns:
+            Optimal number of workers (at least 1).
+        """
+        file_size_mb = input_path.stat().st_size / (1024 * 1024)
+        cpu_count = os.cpu_count() or 4
+
+        if file_size_mb < 10:
+            workers = min(cpu_count // 2 or 2, task_count, 6)
+        elif file_size_mb < 50:
+            workers = min(4, task_count)
+        else:
+            workers = min(2, task_count)
+
+        return max(1, workers)
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
@@ -84,9 +109,7 @@ class PdfConverter(BaseConverter):
         image_format = "png"
         dpi = DEFAULT_RENDER_DPI
         if self.config:
-            image_format = self.config.image.format
-            if image_format == "jpeg":
-                image_format = "jpg"
+            image_format = normalize_image_extension(self.config.image.format)
 
         # Convert using pymupdf4llm with page_chunks=True for page-level splitting
         # This allows proper text-to-screenshot alignment in batched LLM processing
@@ -253,15 +276,7 @@ class PdfConverter(BaseConverter):
 
         # Auto-detect worker count if not specified
         if max_workers is None:
-            file_size_mb = input_path.stat().st_size / (1024 * 1024)
-            cpu_count = os.cpu_count() or 4
-            if file_size_mb < 10:
-                max_workers = min(cpu_count // 2 or 2, total_pages, 6)
-            elif file_size_mb < 50:
-                max_workers = min(4, total_pages)
-            else:
-                max_workers = min(2, total_pages)
-            max_workers = max(1, max_workers)
+            max_workers = self._get_worker_count(input_path, total_pages)
 
         def _render_single_page(page_num: int) -> tuple[ExtractedImage, dict]:
             """Render a single page (thread-safe).
@@ -427,8 +442,7 @@ class PdfConverter(BaseConverter):
         # Get image format from config
         image_format = "jpg"
         if self.config:
-            fmt = self.config.image.format
-            image_format = "jpg" if fmt == "jpeg" else fmt
+            image_format = normalize_image_extension(self.config.image.format)
 
         # Check if screenshot is enabled
         enable_screenshot = self.config and self.config.screenshot.enabled
@@ -444,24 +458,7 @@ class PdfConverter(BaseConverter):
         total_pages = len(doc)
         doc.close()
 
-        # Determine optimal worker count based on file size and system resources
-        # Each worker opens its own PDF copy, so memory usage scales with workers × file_size
-        file_size_mb = input_path.stat().st_size / (1024 * 1024)
-        cpu_count = os.cpu_count() or 4
-
-        # Adaptive worker count:
-        # - Small files (<10MB): use up to cpu_count/2 workers
-        # - Medium files (10-50MB): use up to 4 workers
-        # - Large files (>50MB): use up to 2 workers to limit memory
-        if file_size_mb < 10:
-            max_workers = min(cpu_count // 2 or 2, total_pages, 6)
-        elif file_size_mb < 50:
-            max_workers = min(4, total_pages)
-        else:
-            max_workers = min(2, total_pages)
-
-        # Ensure at least 1 worker
-        max_workers = max(1, max_workers)
+        max_workers = self._get_worker_count(input_path, total_pages)
 
         if enable_screenshot:
             screenshots_dir.mkdir(parents=True, exist_ok=True)
@@ -635,8 +632,7 @@ class PdfConverter(BaseConverter):
         # Get image format from config
         image_format = "jpg"
         if self.config:
-            fmt = self.config.image.format
-            image_format = "jpg" if fmt == "jpeg" else fmt
+            image_format = normalize_image_extension(self.config.image.format)
 
         # Step 1: Extract text using pymupdf4llm (fast, preserves structure)
         logger.debug("Extracting text with pymupdf4llm...")

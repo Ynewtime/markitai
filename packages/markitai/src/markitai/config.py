@@ -107,6 +107,25 @@ def resolve_env_value(value: str, strict: bool = True) -> str | None:
     return value
 
 
+def _resolve_api_key(api_key: str | None, strict: bool = True) -> str | None:
+    """Resolve API key from value with env: syntax support.
+
+    Args:
+        api_key: Raw API key value, possibly using env: syntax.
+        strict: If True, raises EnvVarNotFoundError when env var not found.
+                If False, returns None when env var not found.
+
+    Returns:
+        The resolved API key, or None if not configured or env var not found.
+
+    Raises:
+        EnvVarNotFoundError: If strict=True and environment variable not found.
+    """
+    if api_key:
+        return resolve_env_value(api_key, strict=strict)
+    return None
+
+
 class OutputConfig(BaseModel):
     """Output configuration."""
 
@@ -137,9 +156,7 @@ class LiteLLMParams(BaseModel):
         Raises:
             EnvVarNotFoundError: If strict=True and environment variable not found.
         """
-        if self.api_key:
-            return resolve_env_value(self.api_key, strict=strict)
-        return None
+        return _resolve_api_key(self.api_key, strict=strict)
 
 
 class ModelInfo(BaseModel):
@@ -325,9 +342,7 @@ class JinaConfig(BaseModel):
         Returns:
             The resolved API key, or None if not configured or env var not found.
         """
-        if self.api_key:
-            return resolve_env_value(self.api_key, strict=strict)
-        return None
+        return _resolve_api_key(self.api_key, strict=strict)
 
 
 class FetchConfig(BaseModel):
@@ -440,7 +455,7 @@ class ConfigManager:
         2. MARKITAI_CONFIG environment variable
         3. ./markitai.json (current directory)
         4. ~/.markitai/config.json (user directory)
-        5. Default values
+        5. Default values (applied by caller when no config file is found)
         """
         config_data: dict[str, Any] = {}
 

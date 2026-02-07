@@ -1148,11 +1148,11 @@ class TestLLMProcessorRouterHelpers:
         result = processor._get_router_primary_model(mock_router)
         assert result is None
 
-    def test_message_contains_image_true(
+    def test_has_images_true(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
-        """Test image detection in messages."""
-        processor = LLMProcessor(llm_config, prompts_config)
+        """Test image detection in messages using has_images from providers.common."""
+        from markitai.providers.common import has_images
 
         messages = [
             {
@@ -1167,17 +1167,17 @@ class TestLLMProcessorRouterHelpers:
             }
         ]
 
-        assert processor._message_contains_image(messages) is True
+        assert has_images(messages) is True
 
-    def test_message_contains_image_false(
+    def test_has_images_false(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
-        """Test text-only messages."""
-        processor = LLMProcessor(llm_config, prompts_config)
+        """Test text-only messages using has_images from providers.common."""
+        from markitai.providers.common import has_images
 
         messages = [{"role": "user", "content": "Hello, world!"}]
 
-        assert processor._message_contains_image(messages) is False
+        assert has_images(messages) is False
 
 
 class TestLLMProcessorFormatOutput:

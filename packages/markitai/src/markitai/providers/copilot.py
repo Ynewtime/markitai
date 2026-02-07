@@ -20,13 +20,8 @@ Usage:
     }
 
 Supported Models:
-    - OpenAI: gpt-4.1, gpt-5, gpt-5.1, gpt-5.2, gpt-5-mini,
-              gpt-5.1-codex-mini, gpt-5.1-codex, gpt-5.1-codex-max,
-              gpt-5.2-codex
-    - Anthropic: claude-sonnet-4, claude-sonnet-4.5, claude-opus-4.5,
-                 claude-opus-4.6, claude-haiku-4.5
-    - Google: gemini-3-pro
-    - Availability depends on your Copilot subscription
+    All models are supported EXCEPT those in UNSUPPORTED_MODELS (currently
+    o1/o3 reasoning models, which require 'max_completion_tokens').
 
 Known Limitations:
     - o1/o3 reasoning models are NOT supported (require 'max_completion_tokens').
@@ -51,7 +46,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import importlib.util
 import json
 import os
 import tempfile
@@ -61,11 +55,14 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.providers.auth import _is_copilot_sdk_available
 from markitai.providers.common import (
     UNSUPPORTED_PARAMS,
     has_images,
     messages_to_prompt,
+    sync_completion,
 )
+from markitai.providers.errors import ProviderError, classify_and_raise_provider_error
 from markitai.providers.json_mode import StructuredOutputHandler
 from markitai.providers.timeout import calculate_timeout_from_messages
 
@@ -92,18 +89,6 @@ except ImportError:
     CustomLLM = object  # type: ignore[misc, assignment]
     AuthenticationError = Exception  # type: ignore[misc, assignment]
     RateLimitError = Exception  # type: ignore[misc, assignment]
-
-
-def _is_copilot_sdk_available() -> bool:
-    """Check if GitHub Copilot SDK is available using importlib.
-
-    This is the correct way to check for optional dependencies without
-    actually importing them or triggering side effects.
-
-    Returns:
-        True if github-copilot-sdk is installed, False otherwise
-    """
-    return importlib.util.find_spec("copilot") is not None
 
 
 # Cache for resolved Copilot CLI path
@@ -222,10 +207,6 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         self._temp_files: list[str] = []
         self._json_handler = StructuredOutputHandler()
 
-    def _calculate_adaptive_timeout(self, messages: list[dict[str, Any]]) -> int:
-        """Calculate adaptive timeout based on message content."""
-        return calculate_timeout_from_messages(messages)
-
     def _resize_image_if_needed(self, image_path: str) -> str:
         """Resize image if it exceeds Copilot's dimension limit.
 
@@ -286,14 +267,6 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         except Exception as e:
             logger.warning(f"[Copilot] Failed to check/resize image: {e}")
             return image_path
-
-    def _has_images(self, messages: list[dict[str, Any]]) -> bool:
-        """Check if messages contain any image content."""
-        return has_images(messages)
-
-    def _messages_to_prompt(self, messages: list[dict[str, Any]]) -> str:
-        """Convert OpenAI-style messages to a single prompt string (text only)."""
-        return messages_to_prompt(messages)
 
     def _extract_images(
         self, messages: list[dict[str, Any]]
@@ -519,8 +492,8 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
 
         # Check if model is in the unsupported list (o1/o3 reasoning models)
         if model_name in self.UNSUPPORTED_MODELS:
-            logger.warning(
-                f"[Copilot] Model '{model_name}' is not supported by Copilot SDK. "
+            raise ProviderError(
+                f"Model '{model_name}' is not supported by Copilot SDK. "
                 "o1/o3 reasoning models require 'max_completion_tokens' which "
                 "the Copilot SDK does not support. Consider using a different model."
             )
@@ -531,17 +504,17 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         is_json_mode = json_prompt_suffix is not None
 
         # Check if messages contain images
-        has_images = self._has_images(messages)
+        contains_images = has_images(messages)
 
         # Extract prompt and attachments (temp files created here)
         try:
-            if has_images:
+            if contains_images:
                 prompt, attachments = self._extract_images(messages)
                 logger.debug(
                     f"[Copilot] Calling model={model_name} with {len(attachments)} image(s)"
                 )
             else:
-                prompt = self._messages_to_prompt(messages)
+                prompt = messages_to_prompt(messages)
                 attachments = []
                 logger.debug(
                     f"[Copilot] Calling model={model_name}, prompt_length={len(prompt)}"
@@ -563,7 +536,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         session = None
 
         # Calculate adaptive timeout based on message content
-        timeout = self._calculate_adaptive_timeout(messages)
+        timeout = calculate_timeout_from_messages(messages)
 
         try:
             client = await self._get_client()
@@ -609,44 +582,19 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                 f"Copilot request timed out ({timeout}s). Check network or increase timeout."
             )
         except Exception as e:
-            # Log and re-raise with context
             error_msg = str(e)
-            error_msg_lower = error_msg.lower()
             logger.error(f"[Copilot] Error: {error_msg}")
 
-            # Check for quota/billing errors (should NOT be retried)
-            # These are non-recoverable without user action (upgrade plan, add payment)
-            quota_patterns = [
-                "quota exceeded",
-                "no quota",
-                "402",
-                "billing",
-                "payment required",
-                "subscription",
-                "upgrade to increase",
-            ]
-            if any(pattern in error_msg_lower for pattern in quota_patterns):
-                raise AuthenticationError(
-                    f"Copilot quota/billing error: {error_msg}",
-                    "copilot",
-                    model_name,
-                )
-
-            # Check for authentication errors (should NOT be retried)
-            if "not authenticated" in error_msg_lower:
-                raise AuthenticationError(
-                    "Copilot CLI not authenticated. Run 'copilot auth login' to sign in.",
-                    "copilot",
-                    model_name,
-                )
-
-            # Rate limit errors (LiteLLM will handle retry via RateLimitError)
-            if "rate limit" in error_msg_lower:
-                raise RateLimitError(
-                    "Copilot API rate limit reached. Please try again later.",
-                    "copilot",
-                    model_name,
-                )
+            # Classify known error patterns and raise the appropriate
+            # LiteLLM exception (AuthenticationError / RateLimitError).
+            # If no pattern matches, the call returns without raising.
+            classify_and_raise_provider_error(
+                error_msg,
+                "copilot",
+                model_name,
+                AuthenticationError_cls=AuthenticationError,
+                RateLimitError_cls=RateLimitError,
+            )
 
             raise RuntimeError(f"GitHub Copilot SDK error: {e}") from e
         finally:
@@ -748,21 +696,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         Raises:
             RuntimeError: If called from within a running event loop
         """
-        # Check if we're already in an async context
-        try:
-            asyncio.get_running_loop()
-            # If we get here, there's a running loop - can't use run_until_complete
-            raise RuntimeError(
-                "Cannot call sync completion() from within an async context. "
-                "Please use acompletion() instead."
-            )
-        except RuntimeError as e:
-            # "no running event loop" means we can safely use asyncio.run()
-            if "no running event loop" not in str(e):
-                raise
-
-        # Use asyncio.run() which properly creates and cleans up the event loop
-        return asyncio.run(self.acompletion(model, messages, **kwargs))
+        return sync_completion(self, model, messages, **kwargs)
 
     async def close(self) -> None:
         """Close the Copilot client connection."""

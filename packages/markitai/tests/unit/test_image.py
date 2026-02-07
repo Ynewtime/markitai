@@ -1169,15 +1169,15 @@ class TestUrlImageHelpers:
 
     def test_get_extension_from_content_type(self) -> None:
         """Test extension detection from Content-Type."""
-        from markitai.image import _get_extension_from_content_type
+        from markitai.utils.mime import get_extension_from_mime
 
-        assert _get_extension_from_content_type("image/jpeg") == ".jpg"
-        assert _get_extension_from_content_type("image/png") == ".png"
-        assert _get_extension_from_content_type("image/gif") == ".gif"
-        assert _get_extension_from_content_type("image/webp") == ".webp"
+        assert get_extension_from_mime("image/jpeg") == ".jpg"
+        assert get_extension_from_mime("image/png") == ".png"
+        assert get_extension_from_mime("image/gif") == ".gif"
+        assert get_extension_from_mime("image/webp") == ".webp"
         # Unknown type defaults
-        assert _get_extension_from_content_type("image/unknown") == ".jpg"
-        assert _get_extension_from_content_type("") == ".jpg"
+        assert get_extension_from_mime("image/unknown") == ".jpg"
+        assert get_extension_from_mime("") == ".jpg"
 
 
 class TestUrlImagePattern:

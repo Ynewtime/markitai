@@ -43,8 +43,6 @@ Limitations:
 
 from __future__ import annotations
 
-import asyncio
-import importlib.util
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -52,11 +50,14 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.providers.auth import _is_claude_agent_sdk_available
 from markitai.providers.common import (
     UNSUPPORTED_PARAMS,
     has_images,
     messages_to_prompt,
+    sync_completion,
 )
+from markitai.providers.errors import classify_and_raise_provider_error
 from markitai.providers.timeout import calculate_timeout_from_messages
 
 if TYPE_CHECKING:
@@ -74,18 +75,6 @@ except ImportError:
     CustomLLM = object  # type: ignore[misc, assignment]
     AuthenticationError = Exception  # type: ignore[misc, assignment]
     RateLimitError = Exception  # type: ignore[misc, assignment]
-
-
-def _is_claude_agent_sdk_available() -> bool:
-    """Check if Claude Agent SDK is available using importlib.
-
-    This is the correct way to check for optional dependencies without
-    actually importing them or triggering side effects.
-
-    Returns:
-        True if claude-agent-sdk is installed, False otherwise
-    """
-    return importlib.util.find_spec("claude_agent_sdk") is not None
 
 
 class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
@@ -109,10 +98,6 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         if not LITELLM_AVAILABLE:
             raise RuntimeError("LiteLLM not available. Install with: uv add litellm")
         self.timeout = timeout
-
-    def _has_images(self, messages: list[dict[str, Any]]) -> bool:
-        """Check if messages contain any image content."""
-        return has_images(messages)
 
     def _add_cache_control(
         self,
@@ -155,14 +140,6 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
             result.append(msg.copy())
 
         return result
-
-    def _calculate_adaptive_timeout(self, messages: list[dict[str, Any]]) -> int:
-        """Calculate adaptive timeout based on message content."""
-        return calculate_timeout_from_messages(messages)
-
-    def _messages_to_prompt(self, messages: list[dict[str, Any]]) -> str:
-        """Convert OpenAI-style messages to a single prompt string (text only)."""
-        return messages_to_prompt(messages)
 
     def _convert_content_to_sdk_format(
         self, content: str | list[dict[str, Any]]
@@ -389,16 +366,16 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         messages = self._add_cache_control(messages)
 
         # Check if messages contain images
-        has_images = self._has_images(messages)
+        contains_images = has_images(messages)
 
-        if has_images:
+        if contains_images:
             logger.debug("[ClaudeAgent] Using streaming input for multimodal content")
             # Use streaming input for multimodal messages
             prompt: str | AsyncIterator[dict[str, Any]] = self._messages_to_stream(
                 messages
             )
         else:
-            prompt = self._messages_to_prompt(messages)
+            prompt = messages_to_prompt(messages)
             logger.debug(
                 f"[ClaudeAgent] Calling model={model_name}, prompt_length={len(prompt)}"
             )
@@ -408,7 +385,7 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         output_format = self._convert_response_format(response_format)
 
         # Calculate adaptive timeout based on message content
-        timeout = self._calculate_adaptive_timeout(messages)
+        timeout = calculate_timeout_from_messages(messages)
         logger.debug(f"[ClaudeAgent] Using adaptive timeout: {timeout}s")
 
         start_time = time.time()
@@ -459,48 +436,18 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
 
         except Exception as e:
             error_msg = str(e)
-            error_msg_lower = error_msg.lower()
             logger.error(f"[ClaudeAgent] Error: {error_msg}")
 
-            # Check for quota/billing errors (should NOT be retried)
-            quota_patterns = [
-                "quota",
-                "billing",
-                "payment",
-                "subscription",
-                "402",
-                "insufficient",
-                "credit",
-            ]
-            if any(pattern in error_msg_lower for pattern in quota_patterns):
-                raise AuthenticationError(
-                    f"Claude Agent quota/billing error: {error_msg}",
-                    "claude-agent",
-                    model_name,
-                )
-
-            # Check for authentication errors (should NOT be retried)
-            auth_patterns = [
-                "not authenticated",
-                "authentication",
-                "unauthorized",
-                "401",
-                "api key",
-            ]
-            if any(pattern in error_msg_lower for pattern in auth_patterns):
-                raise AuthenticationError(
-                    f"Claude Agent authentication error: {error_msg}",
-                    "claude-agent",
-                    model_name,
-                )
-
-            # Rate limit errors (LiteLLM will handle retry)
-            if "rate limit" in error_msg_lower or "429" in error_msg_lower:
-                raise RateLimitError(
-                    f"Claude Agent rate limit: {error_msg}",
-                    "claude-agent",
-                    model_name,
-                )
+            # Classify known error patterns and raise the appropriate
+            # LiteLLM exception (AuthenticationError / RateLimitError).
+            # If no pattern matches, the call returns without raising.
+            classify_and_raise_provider_error(
+                error_msg,
+                "claude-agent",
+                model_name,
+                AuthenticationError_cls=AuthenticationError,
+                RateLimitError_cls=RateLimitError,
+            )
 
             raise RuntimeError(f"Claude Agent SDK error: {e}") from e
 
@@ -573,18 +520,4 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         Raises:
             RuntimeError: If called from within a running event loop
         """
-        # Check if we're already in an async context
-        try:
-            asyncio.get_running_loop()
-            # If we get here, there's a running loop - can't use run_until_complete
-            raise RuntimeError(
-                "Cannot call sync completion() from within an async context. "
-                "Please use acompletion() instead."
-            )
-        except RuntimeError as e:
-            # "no running event loop" means we can safely use asyncio.run()
-            if "no running event loop" not in str(e):
-                raise
-
-        # Use asyncio.run() which properly creates and cleans up the event loop
-        return asyncio.run(self.acompletion(model, messages, **kwargs))
+        return sync_completion(self, model, messages, **kwargs)

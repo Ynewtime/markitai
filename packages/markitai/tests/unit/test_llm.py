@@ -426,7 +426,7 @@ class TestProtectedContent:
             "page_numbers": [],
             "page_comments": [],
         }
-        result = LLMProcessor.restore_protected_content("Content only", protected)
+        result = LLMProcessor.unprotect_content("Content only", {}, protected)
         assert "![Test](img.jpg)" in result
 
     def test_preserve_existing_image(self):
@@ -437,8 +437,8 @@ class TestProtectedContent:
             "page_numbers": [],
             "page_comments": [],
         }
-        result = LLMProcessor.restore_protected_content(
-            "Content ![Test](img.jpg) more", protected
+        result = LLMProcessor.unprotect_content(
+            "Content ![Test](img.jpg) more", {}, protected
         )
         assert result.count("![Test](img.jpg)") == 1
 

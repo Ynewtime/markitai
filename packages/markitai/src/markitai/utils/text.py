@@ -9,9 +9,9 @@ from typing import Any
 def clean_control_characters(text: str, preserve_whitespace: bool = True) -> str:
     """Remove control characters from string.
 
-    Control characters (ASCII 0x00-0x1F) can cause JSON parsing errors when
-    LLMs include them in their output. This function removes them while
-    optionally preserving common whitespace characters.
+    Control characters (ASCII 0x00-0x1F and 0x7F DEL) can cause JSON parsing
+    errors when LLMs include them in their output. This function removes them
+    while optionally preserving common whitespace characters.
 
     Args:
         text: Input text to clean
@@ -28,9 +28,11 @@ def clean_control_characters(text: str, preserve_whitespace: bool = True) -> str
         'line1\\nline2'
     """
     if preserve_whitespace:
-        # Keep \n (0x0A), \r (0x0D), \t (0x09)
-        return "".join(c for c in text if ord(c) >= 32 or c in "\n\r\t")
-    return "".join(c for c in text if ord(c) >= 32)
+        # Keep \n (0x0A), \r (0x0D), \t (0x09); remove 0x00-0x1F and 0x7F
+        return "".join(
+            c for c in text if (ord(c) >= 32 and ord(c) != 0x7F) or c in "\n\r\t"
+        )
+    return "".join(c for c in text if 32 <= ord(c) != 0x7F)
 
 
 # Pre-compiled patterns for repair_json_string
@@ -223,7 +225,8 @@ def normalize_markdown_whitespace(content: str) -> str:
     - Strip trailing whitespace from lines
 
     Note: Header normalization is markdown-aware and correctly handles
-    nested code blocks (e.g., ```` containing ```).
+    nested fenced code blocks (e.g., ```` containing ```).
+    Indented code blocks (4-space) are not detected.
 
     Args:
         content: Markdown content to normalize

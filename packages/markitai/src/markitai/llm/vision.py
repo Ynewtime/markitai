@@ -24,7 +24,7 @@ from markitai.constants import (
     DEFAULT_MAX_IMAGES_PER_BATCH,
 )
 from markitai.llm.document import _try_repair_instructor_response
-from markitai.llm.models import get_response_cost
+from markitai.llm.models import context_display_name, get_response_cost
 from markitai.llm.types import (
     BatchImageAnalysisResult,
     ImageAnalysis,
@@ -41,11 +41,6 @@ if TYPE_CHECKING:
     from markitai.llm.processor import HybridRouter, LocalProviderWrapper
     from markitai.prompts import PromptManager
     from markitai.types import LLMUsageByModel, ModelUsageStats
-
-
-def _context_display_name(context: str) -> str:
-    """Get display name for context (filename or default)."""
-    return context.split("/")[-1] if context else "batch"
 
 
 class VisionMixin:
@@ -176,7 +171,10 @@ class VisionMixin:
         Analyze multiple images in batches with parallel execution.
 
         Batches are processed concurrently using asyncio.gather for better
-        throughput. LLM concurrency is controlled by the shared semaphore.
+        throughput. Two levels of concurrency control:
+        - Batch-level semaphore limits concurrent batches (prevents memory
+          pressure from loading all images at once)
+        - LLM-level semaphore controls concurrent API calls
 
         Args:
             image_paths: List of image paths to analyze
@@ -208,7 +206,7 @@ class VisionMixin:
         max_concurrent_batches = min(self.config.concurrency, num_batches)  # type: ignore[attr-defined]
         batch_semaphore = asyncio.Semaphore(max_concurrent_batches)
 
-        display_name = _context_display_name(context)
+        display_name = context_display_name(context) or "batch"
         logger.info(
             f"[{display_name}] Analyzing {len(image_paths)} images in "
             f"{num_batches} batches (max {max_concurrent_batches} concurrent)"
@@ -329,7 +327,7 @@ class VisionMixin:
                 uncached_indices.append(orig_idx)
 
         # If all supported images are cached, return merged results
-        display_name = _context_display_name(context)
+        display_name = context_display_name(context) or "batch"
         if not uncached_indices:
             logger.info(
                 f"[{display_name}] All {len(supported_paths)} supported images found in cache"
@@ -583,7 +581,7 @@ class VisionMixin:
 
         # Strategy 3: Original two-call method
         return await self._analyze_with_two_calls(
-            copy.deepcopy(messages), model, context=context or image_name
+            copy.deepcopy(messages), context=context or image_name
         )
 
     async def _analyze_with_instructor(
@@ -743,7 +741,6 @@ class VisionMixin:
     async def _analyze_with_two_calls(
         self,
         messages: list[dict[str, Any]],
-        model: str,  # noqa: ARG002
         context: str = "",
     ) -> ImageAnalysis:
         """Original two-call method as final fallback."""

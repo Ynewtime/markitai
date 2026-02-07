@@ -285,20 +285,9 @@ class TestContextDisplayName:
         assert context_display_name("/path/to/document.pdf") == "document.pdf"
 
     def test_windows_path(self):
-        """Test Windows-style path on the same platform.
-
-        Note: pathlib.Path behavior is platform-dependent.
-        On Linux, backslashes are treated as part of filename.
-        On Windows, they are path separators.
-        """
-        import sys
-
+        """Test Windows-style path is handled cross-platform."""
         result = context_display_name("C:\\Users\\test\\doc.pdf")
-        if sys.platform == "win32":
-            assert result == "doc.pdf"
-        else:
-            # On Linux/Mac, backslashes are not path separators
-            assert result == "C:\\Users\\test\\doc.pdf"
+        assert result == "doc.pdf"
 
     def test_path_with_suffix(self):
         """Test path with :suffix preserves suffix."""
@@ -306,32 +295,14 @@ class TestContextDisplayName:
         assert result == "file.pdf:images"
 
     def test_windows_path_with_suffix(self):
-        """Test Windows path with :suffix preserves suffix.
-
-        Note: Platform-dependent behavior with pathlib.
-        """
-        import sys
-
+        """Test Windows path with :suffix preserves suffix cross-platform."""
         result = context_display_name("C:\\path\\to\\file.pdf:images")
-        if sys.platform == "win32":
-            assert result == "file.pdf:images"
-        else:
-            # On Linux/Mac, entire path is treated as filename with suffix
-            assert result == "C:\\path\\to\\file.pdf:images"
+        assert result == "file.pdf:images"
 
     def test_windows_drive_letter_preserved(self):
-        """Test Windows drive letter handling.
-
-        Note: Platform-dependent behavior with pathlib.
-        """
-        import sys
-
+        """Test Windows drive letter handling cross-platform."""
         result = context_display_name("C:\\file.pdf")
-        if sys.platform == "win32":
-            assert result == "file.pdf"
-        else:
-            # On Linux/Mac, backslash is not a separator
-            assert result == "C:\\file.pdf"
+        assert result == "file.pdf"
 
     def test_complex_suffix(self):
         """Test more complex suffix patterns."""

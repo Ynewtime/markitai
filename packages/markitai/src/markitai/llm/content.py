@@ -134,9 +134,11 @@ def extract_protected_content(content: str) -> dict[str, list[str]]:
 def protect_content(content: str) -> tuple[str, dict[str, str]]:
     """Replace protected content with placeholders before LLM processing.
 
-    This preserves the position of images, slides, and page comments
-    by replacing them with unique placeholders that the LLM is unlikely
-    to modify.
+    This preserves the position of slides and page comments by replacing
+    them with unique placeholders that the LLM is unlikely to modify.
+
+    Note: Images are intentionally NOT protected. The prompt instructs the
+    LLM to preserve image positions directly.
 
     Args:
         content: Original markdown content
@@ -192,6 +194,10 @@ def unprotect_content(
 
     Also handles cases where the LLM removed placeholders by appending
     missing content at the end, and detects garbage content replacement.
+
+    Note: Page number markers are intentionally NOT restored if missing —
+    LLM's decision to remove them is respected, as programmatic restoration
+    often inserts markers at wrong positions. Slide markers ARE restored.
 
     Args:
         content: LLM output with placeholders
@@ -350,21 +356,6 @@ def unprotect_content(
                             result = result.rstrip() + "\n" + comment
 
     return result
-
-
-def restore_protected_content(result: str, protected: dict[str, list[str]]) -> str:
-    """Restore any protected content that was lost during LLM processing.
-
-    Legacy method - use unprotect_content for new code.
-
-    Args:
-        result: LLM output
-        protected: Dict of protected content from extract_protected_content
-
-    Returns:
-        Result with missing protected content restored
-    """
-    return unprotect_content(result, {}, protected)
 
 
 def fix_malformed_image_refs(text: str) -> str:
@@ -551,8 +542,8 @@ def split_text_by_pages(text: str, num_pages: int) -> list[str]:
 
     Split strategy (in priority order):
     1. Remove trailing page image reference section first
-    2. Use <!-- Slide number: N --> markers (PPTX/PPT)
-    3. Use <!-- Page number: N --> markers (PDF)
+    2. Use <!-- Slide number: N --> markers (PPTX/PPT) if count >= num_pages
+    3. Use <!-- Page number: N --> markers (PDF) if count >= num_pages
     4. Fallback: split by paragraphs proportionally
 
     Args:
@@ -639,6 +630,4 @@ __all__ = [
     # Text utilities
     "smart_truncate",
     "split_text_by_pages",
-    # Legacy alias
-    "restore_protected_content",
 ]

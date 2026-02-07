@@ -8,7 +8,6 @@ This module provides utilities for:
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import litellm
@@ -139,8 +138,11 @@ def context_display_name(context: str) -> str:
         parts = context.rsplit(":", 1)
         if len(parts) == 2 and not parts[1].startswith("\\"):
             path_part, suffix = parts
-            return f"{Path(path_part).name}:{suffix}"
-    return Path(context).name
+            # Handle both Unix and Windows separators
+            name = path_part.replace("\\", "/").strip("/").rsplit("/", 1)[-1]
+            return f"{name}:{suffix}"
+    # Handle both Unix and Windows separators for cross-platform support
+    return context.replace("\\", "/").strip("/").rsplit("/", 1)[-1]
 
 
 class MarkitaiLLMLogger(CustomLogger):

@@ -292,9 +292,9 @@ class AuthManager:
             AuthStatus with authentication result
         """
         if provider == "copilot":
-            return await self._check_copilot()
+            return self._check_copilot()
         elif provider == "claude-agent":
-            return await self._check_claude()
+            return self._check_claude()
         else:
             return AuthStatus(
                 provider=provider,
@@ -304,7 +304,7 @@ class AuthManager:
                 error=f"Unknown provider: {provider}",
             )
 
-    async def _check_copilot(self) -> AuthStatus:
+    def _check_copilot(self) -> AuthStatus:
         """Check authentication status for Copilot provider.
 
         Checks ~/.copilot/config.json for logged_in_users.
@@ -314,7 +314,7 @@ class AuthManager:
         """
         return _check_copilot_config_auth()
 
-    async def _check_claude(self) -> AuthStatus:
+    def _check_claude(self) -> AuthStatus:
         """Check authentication status for Claude Agent provider.
 
         Checks ~/.claude/.credentials.json for valid access token.

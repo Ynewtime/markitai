@@ -194,12 +194,12 @@ class DocumentMixin:
 
         # Static method references from content module
         extract_protected_content: Any
-        _protect_content: Any
-        _unprotect_content: Any
-        _fix_malformed_image_refs: Any
-        _clean_frontmatter: Any
-        _smart_truncate: Any
-        _split_text_by_pages: Any
+        protect_content: Any
+        unprotect_content: Any
+        fix_malformed_image_refs: Any
+        clean_frontmatter: Any
+        smart_truncate: Any
+        split_text_by_pages: Any
 
     async def clean_markdown(self, content: str, context: str = "") -> str:
         """
@@ -212,6 +212,9 @@ class DocumentMixin:
         1. In-memory cache (session-level, fast)
         2. Persistent cache (cross-session, SQLite)
         3. LLM API call
+
+        The cache_key parameter identifies the cache category (e.g. "cleaner");
+        PersistentCache internally combines it with a content hash for lookups.
 
         Args:
             content: Raw markdown content
@@ -240,7 +243,7 @@ class DocumentMixin:
 
         # 3. Extract and protect content before LLM processing
         protected = self.extract_protected_content(content)
-        protected_content, mapping = self._protect_content(content)
+        protected_content, mapping = self.protect_content(content)
 
         # Use separated system/user prompts to prevent prompt leakage
         system_prompt = self._prompt_manager.get_prompt("cleaner_system")
@@ -258,7 +261,7 @@ class DocumentMixin:
         )
 
         # Restore protected content from placeholders, with fallback for removed items
-        result = self._unprotect_content(response.content, mapping, protected)
+        result = self.unprotect_content(response.content, mapping, protected)
 
         # Cache the result in both layers
         self._cache.set(cache_key, content, result)
@@ -619,7 +622,7 @@ class DocumentMixin:
         )
 
         # Fix malformed image refs
-        cleaned_markdown = self._fix_malformed_image_refs(cleaned_markdown)
+        cleaned_markdown = self.fix_malformed_image_refs(cleaned_markdown)
 
         # Build frontmatter using utility function for consistent structure
         from markitai.utils.frontmatter import (
@@ -682,11 +685,11 @@ class DocumentMixin:
         cached = self._persistent_cache.get(cache_key, cache_content, context=context)
         if cached is not None:
             # Fix malformed image refs even for cached content (handles old cache entries)
-            return self._fix_malformed_image_refs(cached)
+            return self.fix_malformed_image_refs(cached)
 
         # Extract and protect content before LLM processing
         protected = self.extract_protected_content(extracted_text)
-        protected_content, mapping = self._protect_content(extracted_text)
+        protected_content, mapping = self.protect_content(extracted_text)
 
         # Use unified document_vision prompt (no metadata section for cleaning-only)
         system_prompt = self._prompt_manager.get_prompt(
@@ -732,10 +735,10 @@ class DocumentMixin:
         )
 
         # Restore protected content from placeholders, with fallback for removed items
-        result = self._unprotect_content(response.content, mapping, protected)
+        result = self.unprotect_content(response.content, mapping, protected)
 
         # Fix malformed image references (e.g., extra closing parentheses)
-        result = self._fix_malformed_image_refs(result)
+        result = self.fix_malformed_image_refs(result)
 
         # Store in persistent cache
         self._persistent_cache.set(cache_key, cache_content, result, model="vision")
@@ -755,8 +758,8 @@ class DocumentMixin:
         Architecture:
         - Single batch (pages <= max_pages_per_batch): Use Instructor for combined
           cleaning + frontmatter in one LLM call (saves one API call)
-        - Multi batch (pages > max_pages_per_batch): Clean in batches, then
-          generate frontmatter separately
+        - Multi batch (pages > max_pages_per_batch): First batch uses combined
+          call for cleaning + frontmatter, remaining batches clean only
 
         Args:
             extracted_text: Text extracted by pymupdf4llm/markitdown
@@ -910,7 +913,7 @@ class DocumentMixin:
             )
 
             # Fix malformed image refs even for cached content (handles old cache entries)
-            cleaned = self._fix_malformed_image_refs(cached.get("cleaned_markdown", ""))
+            cleaned = self.fix_malformed_image_refs(cached.get("cleaned_markdown", ""))
             fm = build_frontmatter_dict(
                 source=source,
                 description=cached.get("description", ""),
@@ -923,7 +926,7 @@ class DocumentMixin:
         protected = self.extract_protected_content(extracted_text)
 
         # Protect slide comments and images with placeholders before LLM processing
-        protected_text, mapping = self._protect_content(extracted_text)
+        protected_text, mapping = self.protect_content(extracted_text)
 
         # Metadata section to inject into unified document_vision prompt
         metadata_section = """
@@ -1049,12 +1052,12 @@ class DocumentMixin:
 
             # Restore protected content from placeholders
             # Pass protected dict for fallback restoration if LLM removed placeholders
-            cleaned_markdown = self._unprotect_content(
+            cleaned_markdown = self.unprotect_content(
                 response.cleaned_markdown, mapping, protected
             )
 
             # Fix malformed image references (e.g., extra closing parentheses)
-            cleaned_markdown = self._fix_malformed_image_refs(cleaned_markdown)
+            cleaned_markdown = self.fix_malformed_image_refs(cleaned_markdown)
 
             # Store in persistent cache (description+tags, not frontmatter_yaml which contains timestamp)
             cache_value = {
@@ -1077,7 +1080,8 @@ class DocumentMixin:
 
         Args:
             source: Source filename
-            content: Document content for title extraction
+            content: Document content (used only for title extraction;
+                     description and tags are left empty in fallback mode)
             title: Optional pre-extracted title to preserve
 
         Returns:
@@ -1129,7 +1133,7 @@ class DocumentMixin:
             List of text chunks, one per batch
         """
         num_pages = len(page_images)
-        page_texts = self._split_text_by_pages(extracted_text, num_pages)
+        page_texts = self.split_text_by_pages(extracted_text, num_pages)
 
         batches: list[str] = []
         for i in range(0, num_pages, batch_size):
@@ -1161,7 +1165,7 @@ class DocumentMixin:
         num_batches = (num_pages + batch_size - 1) // batch_size
 
         # Split text by pages
-        page_texts = self._split_text_by_pages(extracted_text, num_pages)
+        page_texts = self.split_text_by_pages(extracted_text, num_pages)
 
         cleaned_parts = []
 
@@ -1219,14 +1223,14 @@ class DocumentMixin:
 
         # Extract and protect content before LLM processing
         protected = self.extract_protected_content(markdown)
-        protected_content, mapping = self._protect_content(markdown)
+        protected_content, mapping = self.protect_content(markdown)
 
         # Try combined approach with Instructor first
         try:
             result = await self._process_document_combined(protected_content, source)
 
             # Restore protected content from placeholders, with fallback
-            cleaned = self._unprotect_content(
+            cleaned = self.unprotect_content(
                 result.cleaned_markdown, mapping, protected
             )
 
@@ -1317,7 +1321,7 @@ class DocumentMixin:
 
         # Truncate content if needed (with warning)
         original_len = len(markdown)
-        truncated_content = self._smart_truncate(markdown, DEFAULT_MAX_CONTENT_CHARS)
+        truncated_content = self.smart_truncate(markdown, DEFAULT_MAX_CONTENT_CHARS)
         if len(truncated_content) < original_len:
             logger.warning(
                 f"[LLM:{source}] Content truncated: {original_len} -> {len(truncated_content)} chars "
@@ -1475,7 +1479,7 @@ class DocumentMixin:
             Complete markdown with frontmatter
         """
         # Clean frontmatter (remove accidental --- markers)
-        frontmatter = self._clean_frontmatter(frontmatter)
+        frontmatter = self.clean_frontmatter(frontmatter)
 
         # Clean markdown content
         markdown = self._remove_uncommented_screenshots(markdown)

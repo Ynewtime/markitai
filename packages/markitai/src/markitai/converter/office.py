@@ -18,6 +18,7 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.image import ImageProcessor
+from markitai.utils.mime import normalize_image_extension
 from markitai.utils.office import find_libreoffice, has_ms_office
 from markitai.utils.paths import ensure_screenshots_dir
 
@@ -39,7 +40,15 @@ class OfficeConverter(BaseConverter):
     def convert(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
-        """Convert Office document to Markdown using MarkItDown."""
+        """Convert Office document to Markdown using MarkItDown.
+
+        Args:
+            input_path: Path to the Office document
+            output_dir: Unused (present for BaseConverter interface compatibility)
+
+        Returns:
+            ConvertResult with markdown content
+        """
         return self._convert_with_markitdown(Path(input_path))
 
     def _convert_with_markitdown(self, input_path: Path) -> ConvertResult:
@@ -110,7 +119,7 @@ class PptxConverter(OfficeConverter):
         elif use_ocr:
             # --ocr only: Extract text + commented slide images
             logger.info("PPTX OCR mode: extracting text with slide images (commented)")
-            return self._convert_with_ocr(input_path, output_dir)
+            return self._convert_with_slide_images(input_path, output_dir)
 
         # Standard conversion - use MarkItDown directly (cross-platform)
         # COM is only needed for slide screenshots, not text extraction
@@ -124,8 +133,7 @@ class PptxConverter(OfficeConverter):
             # Get image format from config
             image_format = "jpg"
             if self.config:
-                fmt = self.config.image.format
-                image_format = "jpg" if fmt == "jpeg" else fmt
+                image_format = normalize_image_extension(self.config.image.format)
 
             images, slide_images = self._render_slides_to_images(
                 input_path, screenshots_dir, image_format
@@ -141,7 +149,7 @@ class PptxConverter(OfficeConverter):
 
         return result
 
-    def _convert_with_ocr(
+    def _convert_with_slide_images(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
         """Convert PPTX with text extraction + commented slide images.
@@ -174,8 +182,7 @@ class PptxConverter(OfficeConverter):
             # Get image format from config
             image_format = "jpg"
             if self.config:
-                fmt = self.config.image.format
-                image_format = "jpg" if fmt == "jpeg" else fmt
+                image_format = normalize_image_extension(self.config.image.format)
 
             images, slide_images = self._render_slides_to_images(
                 input_path, screenshots_dir, image_format
@@ -496,8 +503,7 @@ class PptxConverter(OfficeConverter):
             # Get image format from config
             image_format = "jpg"
             if self.config:
-                fmt = self.config.image.format
-                image_format = "jpg" if fmt == "jpeg" else fmt
+                image_format = normalize_image_extension(self.config.image.format)
 
             images, slide_images = self._render_slides_to_images(
                 input_path, screenshots_dir, image_format

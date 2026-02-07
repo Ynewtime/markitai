@@ -12,7 +12,6 @@ from PIL import Image
 
 from markitai.cli import app
 from markitai.image import (
-    _get_extension_from_content_type,
     _get_extension_from_url,
     _sanitize_image_filename,
     download_url_images,
@@ -22,6 +21,7 @@ from markitai.urls import (
     is_url_list_file,
     parse_url_list,
 )
+from markitai.utils.mime import get_extension_from_mime
 
 
 def _create_test_png(width: int = 100, height: int = 100) -> bytes:
@@ -150,12 +150,12 @@ class TestUrlImageDownload:
 
     def test_get_extension_from_content_type(self):
         """Test content-type to extension mapping."""
-        assert _get_extension_from_content_type("image/jpeg") == ".jpg"
-        assert _get_extension_from_content_type("image/png") == ".png"
-        assert _get_extension_from_content_type("image/webp") == ".webp"
-        assert _get_extension_from_content_type("image/gif") == ".gif"
-        assert _get_extension_from_content_type("image/svg+xml") == ".svg"
-        assert _get_extension_from_content_type("text/html") == ".jpg"  # default
+        assert get_extension_from_mime("image/jpeg") == ".jpg"
+        assert get_extension_from_mime("image/png") == ".png"
+        assert get_extension_from_mime("image/webp") == ".webp"
+        assert get_extension_from_mime("image/gif") == ".gif"
+        assert get_extension_from_mime("image/svg+xml") == ".svg"
+        assert get_extension_from_mime("text/html") == ".jpg"  # default
 
     def test_get_extension_from_url(self):
         """Test URL to extension extraction."""
