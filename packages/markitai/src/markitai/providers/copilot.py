@@ -20,17 +20,16 @@ Usage:
     }
 
 Supported Models:
-    - OpenAI: gpt-4.1 (GPT-5 series not yet supported, see below)
-    - Anthropic: claude-sonnet-4, claude-sonnet-4.5, claude-opus-4.6, claude-haiku-4.5
-    - Google: gemini-2.5-pro, gemini-3-flash, gemini-3-pro
+    - OpenAI: gpt-4.1, gpt-5, gpt-5.1, gpt-5.2, gpt-5-mini,
+              gpt-5.1-codex-mini, gpt-5.1-codex, gpt-5.1-codex-max,
+              gpt-5.2-codex
+    - Anthropic: claude-sonnet-4, claude-sonnet-4.5, claude-opus-4.5,
+                 claude-opus-4.6, claude-haiku-4.5
+    - Google: gemini-3-pro
     - Availability depends on your Copilot subscription
-    - See docs/archive/deps/github-copilot-supported-models.md for full list
 
 Known Limitations:
-    - GPT-5 series models (gpt-5, gpt-5.1, gpt-5.2, etc.) are NOT supported yet.
-      The Copilot SDK/CLI has a compatibility issue with OpenAI's reasoning models
-      which require 'max_completion_tokens' instead of 'max_tokens'.
-      Use non-GPT-5 models or direct OpenAI API for these models.
+    - o1/o3 reasoning models are NOT supported (require 'max_completion_tokens').
 
 Requirements:
     - github-copilot-sdk package: uv add github-copilot-sdk
@@ -191,21 +190,12 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
     # Images larger than this will fail to be processed
     MAX_IMAGE_DIMENSION = 2000
 
-    # GPT-5 series models are NOT supported by Copilot SDK yet.
-    # The SDK/CLI has a compatibility issue with OpenAI's reasoning models
-    # which require 'max_completion_tokens' instead of 'max_tokens'.
-    # This causes 400 errors from the API.
+    # Models not supported by Copilot SDK.
+    # Note: GPT-5 series is now fully supported by Copilot (2026+).
+    # Only reasoning models (o1/o3) remain unsupported due to
+    # 'max_completion_tokens' vs 'max_tokens' incompatibility.
     UNSUPPORTED_MODELS = frozenset(
         {
-            "gpt-5",
-            "gpt-5.1",
-            "gpt-5.2",
-            "gpt-5-mini",
-            "gpt-5.1-mini",
-            "gpt-5.2-mini",
-            "gpt-5-codex",
-            "gpt-5.1-codex",
-            "gpt-5.2-codex",
             "o1",
             "o1-mini",
             "o1-preview",
@@ -583,12 +573,12 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         # Extract model name from provider prefix
         model_name = model.replace("copilot/", "")
 
-        # Check if model is in the unsupported list (GPT-5 series, o1/o3)
+        # Check if model is in the unsupported list (o1/o3 reasoning models)
         if model_name in self.UNSUPPORTED_MODELS:
             logger.warning(
                 f"[Copilot] Model '{model_name}' is not supported by Copilot SDK. "
-                "GPT-5/o1/o3 series models require 'max_completion_tokens' which "
-                "the Copilot SDK does not support yet. Consider using a different model."
+                "o1/o3 reasoning models require 'max_completion_tokens' which "
+                "the Copilot SDK does not support. Consider using a different model."
             )
 
         # Check for JSON mode request

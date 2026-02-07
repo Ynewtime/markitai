@@ -753,19 +753,19 @@ class TestCopilotProvider:
         assert "max_completion_tokens" in unsupported
 
     def test_unsupported_models_defined(self) -> None:
-        """Test that UNSUPPORTED_MODELS is defined for GPT-5 series models."""
+        """Test that UNSUPPORTED_MODELS only contains o1/o3 reasoning models."""
         from markitai.providers.copilot import CopilotProvider
 
         # Verify the frozenset exists and contains expected models
         unsupported = CopilotProvider.UNSUPPORTED_MODELS
         assert isinstance(unsupported, frozenset)
 
-        # GPT-5 series should be unsupported
-        assert "gpt-5" in unsupported
-        assert "gpt-5.1" in unsupported
-        assert "gpt-5.2" in unsupported
+        # GPT-5 series is now fully supported by Copilot
+        assert "gpt-5" not in unsupported
+        assert "gpt-5.1" not in unsupported
+        assert "gpt-5.2" not in unsupported
 
-        # o1/o3 reasoning models should be unsupported
+        # o1/o3 reasoning models should still be unsupported
         assert "o1" in unsupported
         assert "o3" in unsupported
 

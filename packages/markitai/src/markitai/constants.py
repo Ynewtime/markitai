@@ -245,7 +245,9 @@ COPILOT_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gpt-5": (5.0, 15.0),
     "gpt-5.1": (5.0, 15.0),
     "gpt-5.2": (5.0, 15.0),
+    "gpt-5.1-codex-mini": (1.5, 6.0),
     "gpt-5.1-codex": (7.5, 22.5),
+    "gpt-5.1-codex-max": (15.0, 60.0),
     "gpt-5.2-codex": (7.5, 22.5),
     # Anthropic models (via Copilot)
     "claude-haiku-4.5": (0.80, 4.0),
@@ -254,8 +256,6 @@ COPILOT_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-opus-4.5": (5.0, 25.0),
     "claude-opus-4.6": (5.0, 25.0),
     # Google models
-    "gemini-2.5-pro": (1.25, 5.0),
-    "gemini-3-flash": (0.10, 0.40),
     "gemini-3-pro": (2.5, 10.0),
 }
 
