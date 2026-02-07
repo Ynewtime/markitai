@@ -116,9 +116,9 @@ def _check_copilot_unsupported_models(model_list: list[Any], console: Console) -
         model_list: List of model configurations
         console: Rich console for output
     """
-    # Unsupported model patterns for Copilot
+    # Unsupported model patterns for Copilot (only o1/o3 reasoning models)
+    # Note: GPT-5 series is now fully supported by Copilot (2026+)
     unsupported_patterns = (
-        "copilot/gpt-5",
         "copilot/o1",
         "copilot/o3",
     )
@@ -138,7 +138,7 @@ def _check_copilot_unsupported_models(model_list: list[Any], console: Console) -
             f"Unsupported Copilot models detected: {model_list_str}", console=console
         )
         ui.step(
-            "GPT-5/o1/o3 series models are not compatible with Copilot SDK",
+            "o1/o3 reasoning models are not compatible with Copilot SDK",
             console=console,
         )
         ui.step(
@@ -149,10 +149,7 @@ def _check_copilot_unsupported_models(model_list: list[Any], console: Console) -
         ui.step("Solutions:", console=console)
         ui.step("  1. Set weight: 0 for these models in config", console=console)
         ui.step(
-            "  2. Use openrouter/openai/gpt-5.2 instead (direct API)", console=console
-        )
-        ui.step(
-            "  3. Use other Copilot models like copilot/claude-sonnet-4.5",
+            "  2. Use other Copilot models like copilot/claude-sonnet-4.5",
             console=console,
         )
 
