@@ -15,6 +15,33 @@ LLM_SUPPORTED_MIME_TYPES = frozenset(
 )
 
 
+def normalize_image_extension(fmt: str) -> str:
+    """Normalize image format extension for file naming.
+
+    Converts "jpeg" to "jpg" since file extensions conventionally use the
+    shorter form. All other formats are returned as-is.
+    Input is normalized to lowercase before matching.
+
+    Args:
+        fmt: Image format string, e.g. "jpeg", "png", "webp", "JPEG"
+
+    Returns:
+        Normalized lowercase extension string, e.g. "jpg", "png", "webp"
+
+    Examples:
+        >>> normalize_image_extension("jpeg")
+        'jpg'
+        >>> normalize_image_extension("JPEG")
+        'jpg'
+        >>> normalize_image_extension("png")
+        'png'
+    """
+    fmt = fmt.lower()
+    if fmt == "jpeg":
+        return "jpg"
+    return fmt
+
+
 def get_mime_type(extension: str, default: str = "image/jpeg") -> str:
     """Get MIME type from file extension.
 

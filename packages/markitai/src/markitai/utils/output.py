@@ -2,7 +2,46 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+
+
+def resolve_name_conflict(
+    path: Path,
+    on_conflict: str,
+    rename_fn: Callable[[int], Path],
+) -> Path | None:
+    """Resolve a filename conflict using the given strategy.
+
+    This is the single authoritative implementation of the
+    skip / overwrite / rename-with-sequential-version-number pattern
+    used throughout the codebase.
+
+    Args:
+        path: The target file path that already exists.
+        on_conflict: Strategy -- "skip", "overwrite", or "rename".
+        rename_fn: A callable that receives a sequence number (starting at 2)
+            and returns a candidate ``Path``.  Called repeatedly until the
+            returned path does not yet exist on disk.
+
+    Returns:
+        Resolved path, or ``None`` if the file should be skipped.
+    """
+    if not path.exists():
+        return path
+
+    if on_conflict == "skip":
+        return None
+    if on_conflict == "overwrite":
+        return path
+
+    # rename: find next available sequence number
+    seq = 2
+    while True:
+        candidate = rename_fn(seq)
+        if not candidate.exists():
+            return candidate
+        seq += 1
 
 
 def resolve_output_path(
@@ -19,35 +58,17 @@ def resolve_output_path(
         Resolved path, or None if file should be skipped.
         For rename strategy: file.pdf.md -> file.pdf.v2.md -> file.pdf.v3.md
         For rename with .llm.md: file.pdf.llm.md -> file.pdf.v2.llm.md
-        This ensures files sort in natural order (A-Z).
     """
-    if not base_path.exists():
-        return base_path
+    # Determine the markitai suffix (.md or .llm.md) for rename
+    name = base_path.name
+    if name.endswith(".llm.md"):
+        base_stem = name[:-7]  # Remove ".llm.md" -> "file.pdf"
+        markitai_suffix = ".llm.md"
+    else:
+        base_stem = name[:-3]  # Remove ".md" -> "file.pdf"
+        markitai_suffix = ".md"
 
-    if on_conflict == "skip":
-        return None
-    elif on_conflict == "overwrite":
-        return base_path
-    else:  # rename
-        # Parse filename to insert version number before .md/.llm.md suffix
-        # e.g., "file.pdf.md" -> "file.pdf.v2.md" -> "file.pdf.v3.md"
-        # e.g., "file.pdf.llm.md" -> "file.pdf.v2.llm.md"
-        # This ensures files sort in natural A-Z order (.md < .v2.md < .v3.md)
-        name = base_path.name
+    def _rename(seq: int) -> Path:
+        return base_path.parent / f"{base_stem}.v{seq}{markitai_suffix}"
 
-        # Determine the markitai suffix (.md or .llm.md)
-        if name.endswith(".llm.md"):
-            base_stem = name[:-7]  # Remove ".llm.md" -> "file.pdf"
-            markitai_suffix = ".llm.md"
-        else:
-            base_stem = name[:-3]  # Remove ".md" -> "file.pdf"
-            markitai_suffix = ".md"
-
-        # Find next available sequence number
-        seq = 2
-        while True:
-            new_name = f"{base_stem}.v{seq}{markitai_suffix}"
-            new_path = base_path.parent / new_name
-            if not new_path.exists():
-                return new_path
-            seq += 1
+    return resolve_name_conflict(base_path, on_conflict, _rename)

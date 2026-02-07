@@ -33,14 +33,19 @@ class ImageConverter(BaseConverter):
     def convert(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
-        """Convert image to Markdown by extracting text via OCR.
+        """Convert image to Markdown.
+
+        Modes based on config:
+        - OCR + LLM: Return placeholder for later LLM vision analysis
+        - OCR only: Extract text via RapidOCR
+        - Neither: Return image reference placeholder
 
         Args:
             input_path: Path to the image file
             output_dir: Optional output directory for copying image
 
         Returns:
-            ConvertResult containing markdown with OCR text
+            ConvertResult containing markdown with OCR text or placeholder
         """
         input_path = Path(input_path)
 
@@ -149,29 +154,6 @@ class ImageConverter(BaseConverter):
         return f"# {input_path.stem}\n\n![{input_path.stem}]({image_ref_path})\n"
 
 
-@register_converter(FileFormat.JPEG)
-class JpegConverter(ImageConverter):
-    """Converter for JPEG images."""
-
-    supported_formats = [FileFormat.JPEG]
-
-
-@register_converter(FileFormat.JPG)
-class JpgConverter(ImageConverter):
-    """Converter for JPG images."""
-
-    supported_formats = [FileFormat.JPG]
-
-
-@register_converter(FileFormat.PNG)
-class PngConverter(ImageConverter):
-    """Converter for PNG images."""
-
-    supported_formats = [FileFormat.PNG]
-
-
-@register_converter(FileFormat.WEBP)
-class WebpConverter(ImageConverter):
-    """Converter for WebP images."""
-
-    supported_formats = [FileFormat.WEBP]
+# Register ImageConverter for all supported image formats
+for _fmt in (FileFormat.JPEG, FileFormat.JPG, FileFormat.PNG, FileFormat.WEBP):
+    register_converter(_fmt)(ImageConverter)

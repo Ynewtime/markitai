@@ -357,15 +357,15 @@ class TestVisionRouterIntegration:
         """Return a test prompts configuration."""
         return PromptsConfig()
 
-    def test_message_contains_image_detection(
+    def test_has_images_detection(
         self, vision_llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
-        """Test image detection in messages."""
-        processor = LLMProcessor(vision_llm_config, prompts_config, no_cache=True)
+        """Test image detection in messages using has_images from providers.common."""
+        from markitai.providers.common import has_images
 
         # Text-only message
         text_messages = [{"role": "user", "content": "Hello, world!"}]
-        assert processor._message_contains_image(text_messages) is False
+        assert has_images(text_messages) is False
 
         # Message with image_url
         image_messages = [
@@ -380,7 +380,7 @@ class TestVisionRouterIntegration:
                 ],
             }
         ]
-        assert processor._message_contains_image(image_messages) is True
+        assert has_images(image_messages) is True
 
         # Mixed messages
         mixed_messages = [
@@ -395,7 +395,7 @@ class TestVisionRouterIntegration:
                 ],
             },
         ]
-        assert processor._message_contains_image(mixed_messages) is True
+        assert has_images(mixed_messages) is True
 
     def test_vision_router_filters_models(
         self, vision_llm_config: LLMConfig, prompts_config: PromptsConfig
@@ -443,8 +443,10 @@ class TestVisionRouterIntegration:
             processor._router = mock_router
 
             # Text-only message should NOT trigger vision router
+            from markitai.providers.common import has_images
+
             text_messages = [{"role": "user", "content": "Hello"}]
-            requires_vision = processor._message_contains_image(text_messages)
+            requires_vision = has_images(text_messages)
 
             assert requires_vision is False
 
@@ -452,7 +454,7 @@ class TestVisionRouterIntegration:
         self, vision_llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
         """Test that image messages trigger vision router selection."""
-        processor = LLMProcessor(vision_llm_config, prompts_config, no_cache=True)
+        from markitai.providers.common import has_images
 
         # Image message should trigger vision router
         image_messages = [
@@ -466,7 +468,7 @@ class TestVisionRouterIntegration:
                 ],
             }
         ]
-        requires_vision = processor._message_contains_image(image_messages)
+        requires_vision = has_images(image_messages)
 
         assert requires_vision is True
 

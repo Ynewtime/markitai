@@ -87,7 +87,8 @@ class SQLiteCache:
     def _compute_hash(self, prompt: str, content: str) -> str:
         """Compute hash key from prompt and content.
 
-        Uses head + tail + length strategy to detect changes anywhere in content.
+        Uses head + tail + length strategy to detect most changes.
+        Note: middle-only edits in content >50k chars may not be detected.
         """
         length = len(content)
         head = content[:25000]

@@ -378,40 +378,37 @@ class TestClaudeAgentProvider:
 
     def test_messages_to_prompt_simple(self) -> None:
         """Test converting simple messages to prompt."""
-        from markitai.providers.claude_agent import ClaudeAgentProvider
+        from markitai.providers.common import messages_to_prompt
 
-        provider = ClaudeAgentProvider()
         messages = [
             {"role": "user", "content": "Hello, world!"},
         ]
-        prompt = provider._messages_to_prompt(messages)
+        prompt = messages_to_prompt(messages)
         assert prompt == "Hello, world!"
 
     def test_messages_to_prompt_with_system(self) -> None:
         """Test converting messages with system prompt."""
-        from markitai.providers.claude_agent import ClaudeAgentProvider
+        from markitai.providers.common import messages_to_prompt
 
-        provider = ClaudeAgentProvider()
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "Hello!"},
         ]
-        prompt = provider._messages_to_prompt(messages)
+        prompt = messages_to_prompt(messages)
         assert "<system>" in prompt
         assert "You are a helpful assistant." in prompt
         assert "Hello!" in prompt
 
     def test_messages_to_prompt_with_assistant(self) -> None:
         """Test converting messages with assistant response."""
-        from markitai.providers.claude_agent import ClaudeAgentProvider
+        from markitai.providers.common import messages_to_prompt
 
-        provider = ClaudeAgentProvider()
         messages = [
             {"role": "user", "content": "Hello!"},
             {"role": "assistant", "content": "Hi there!"},
             {"role": "user", "content": "How are you?"},
         ]
-        prompt = provider._messages_to_prompt(messages)
+        prompt = messages_to_prompt(messages)
         assert "Hello!" in prompt
         assert "<assistant>" in prompt
         assert "Hi there!" in prompt
@@ -419,9 +416,8 @@ class TestClaudeAgentProvider:
 
     def test_messages_to_prompt_multimodal_content(self) -> None:
         """Test converting multimodal message content."""
-        from markitai.providers.claude_agent import ClaudeAgentProvider
+        from markitai.providers.common import messages_to_prompt
 
-        provider = ClaudeAgentProvider()
         messages = [
             {
                 "role": "user",
@@ -431,19 +427,17 @@ class TestClaudeAgentProvider:
                 ],
             },
         ]
-        prompt = provider._messages_to_prompt(messages)
+        prompt = messages_to_prompt(messages)
         # Should extract only text parts
         assert "What's in this image?" in prompt
 
     def test_has_images_detects_image_content(self) -> None:
-        """Test _has_images correctly detects image content."""
-        from markitai.providers.claude_agent import ClaudeAgentProvider
-
-        provider = ClaudeAgentProvider()
+        """Test has_images correctly detects image content."""
+        from markitai.providers.common import has_images
 
         # Messages without images
         no_images = [{"role": "user", "content": "Hello"}]
-        assert provider._has_images(no_images) is False
+        assert has_images(no_images) is False
 
         # Messages with images
         with_images = [
@@ -458,7 +452,7 @@ class TestClaudeAgentProvider:
                 ],
             }
         ]
-        assert provider._has_images(with_images) is True
+        assert has_images(with_images) is True
 
     def test_sdk_availability_check(self) -> None:
         """Test SDK availability check using module-level function."""
@@ -561,40 +555,37 @@ class TestCopilotProvider:
 
     def test_messages_to_prompt_simple(self) -> None:
         """Test converting simple messages to prompt."""
-        from markitai.providers.copilot import CopilotProvider
+        from markitai.providers.common import messages_to_prompt
 
-        provider = CopilotProvider()
         messages = [
             {"role": "user", "content": "Hello, world!"},
         ]
-        prompt = provider._messages_to_prompt(messages)
+        prompt = messages_to_prompt(messages)
         assert prompt == "Hello, world!"
 
     def test_messages_to_prompt_with_system(self) -> None:
         """Test converting messages with system prompt."""
-        from markitai.providers.copilot import CopilotProvider
+        from markitai.providers.common import messages_to_prompt
 
-        provider = CopilotProvider()
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "Hello!"},
         ]
-        prompt = provider._messages_to_prompt(messages)
+        prompt = messages_to_prompt(messages)
         assert "<system>" in prompt
         assert "You are a helpful assistant." in prompt
         assert "Hello!" in prompt
 
     def test_messages_to_prompt_with_assistant(self) -> None:
         """Test converting messages with assistant response."""
-        from markitai.providers.copilot import CopilotProvider
+        from markitai.providers.common import messages_to_prompt
 
-        provider = CopilotProvider()
         messages = [
             {"role": "user", "content": "Hello!"},
             {"role": "assistant", "content": "Hi there!"},
             {"role": "user", "content": "How are you?"},
         ]
-        prompt = provider._messages_to_prompt(messages)
+        prompt = messages_to_prompt(messages)
         assert "Hello!" in prompt
         assert "<assistant>" in prompt
         assert "Hi there!" in prompt
@@ -602,9 +593,8 @@ class TestCopilotProvider:
 
     def test_messages_to_prompt_multimodal_content(self) -> None:
         """Test converting multimodal message content."""
-        from markitai.providers.copilot import CopilotProvider
+        from markitai.providers.common import messages_to_prompt
 
-        provider = CopilotProvider()
         messages = [
             {
                 "role": "user",
@@ -614,19 +604,17 @@ class TestCopilotProvider:
                 ],
             },
         ]
-        prompt = provider._messages_to_prompt(messages)
+        prompt = messages_to_prompt(messages)
         # Should extract only text parts
         assert "What's in this image?" in prompt
 
     def test_has_images_detects_image_content(self) -> None:
-        """Test _has_images correctly detects image content."""
-        from markitai.providers.copilot import CopilotProvider
-
-        provider = CopilotProvider()
+        """Test has_images correctly detects image content."""
+        from markitai.providers.common import has_images
 
         # Messages without images
         no_images = [{"role": "user", "content": "Hello"}]
-        assert provider._has_images(no_images) is False
+        assert has_images(no_images) is False
 
         # Messages with images
         with_images = [
@@ -641,7 +629,7 @@ class TestCopilotProvider:
                 ],
             }
         ]
-        assert provider._has_images(with_images) is True
+        assert has_images(with_images) is True
 
     def test_extract_images_with_base64_data(self) -> None:
         """Test _extract_images extracts base64 images correctly."""
@@ -777,43 +765,37 @@ class TestCopilotProvider:
 
 
 class TestClaudeAgentAdaptiveTimeout:
-    """Tests for ClaudeAgentProvider adaptive timeout calculation."""
+    """Tests for adaptive timeout calculation used by ClaudeAgentProvider."""
 
-    def test_calculate_adaptive_timeout_exists(self) -> None:
-        """Test that _calculate_adaptive_timeout method exists."""
-        from markitai.providers.claude_agent import ClaudeAgentProvider
+    def test_calculate_timeout_from_messages_callable(self) -> None:
+        """Test that calculate_timeout_from_messages is callable."""
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
-        provider = ClaudeAgentProvider()
-        assert hasattr(provider, "_calculate_adaptive_timeout")
-        assert callable(provider._calculate_adaptive_timeout)
+        assert callable(calculate_timeout_from_messages)
 
     def test_longer_messages_return_higher_timeout(self) -> None:
         """Test that longer messages result in higher timeout values."""
-        from markitai.providers.claude_agent import ClaudeAgentProvider
-
-        provider = ClaudeAgentProvider()
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
         # Short message
         short_messages = [{"role": "user", "content": "Hello!"}]
-        short_timeout = provider._calculate_adaptive_timeout(short_messages)
+        short_timeout = calculate_timeout_from_messages(short_messages)
 
         # Long message (100K chars)
         long_content = "x" * 100000
         long_messages = [{"role": "user", "content": long_content}]
-        long_timeout = provider._calculate_adaptive_timeout(long_messages)
+        long_timeout = calculate_timeout_from_messages(long_messages)
 
         # Long messages should have higher timeout
         assert long_timeout > short_timeout
 
     def test_images_increase_timeout(self) -> None:
         """Test that messages with images have higher timeout."""
-        from markitai.providers.claude_agent import ClaudeAgentProvider
-
-        provider = ClaudeAgentProvider()
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
         # Text-only message
         text_messages = [{"role": "user", "content": "Describe this."}]
-        text_timeout = provider._calculate_adaptive_timeout(text_messages)
+        text_timeout = calculate_timeout_from_messages(text_messages)
 
         # Message with image
         image_messages = [
@@ -828,16 +810,14 @@ class TestClaudeAgentAdaptiveTimeout:
                 ],
             }
         ]
-        image_timeout = provider._calculate_adaptive_timeout(image_messages)
+        image_timeout = calculate_timeout_from_messages(image_messages)
 
         # Image messages should have higher timeout
         assert image_timeout > text_timeout
 
     def test_multiple_images_increase_timeout(self) -> None:
         """Test that multiple images result in higher timeout than single image."""
-        from markitai.providers.claude_agent import ClaudeAgentProvider
-
-        provider = ClaudeAgentProvider()
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
         # Single image
         single_image_messages = [
@@ -852,7 +832,7 @@ class TestClaudeAgentAdaptiveTimeout:
                 ],
             }
         ]
-        single_timeout = provider._calculate_adaptive_timeout(single_image_messages)
+        single_timeout = calculate_timeout_from_messages(single_image_messages)
 
         # Multiple images
         multi_image_messages = [
@@ -875,28 +855,26 @@ class TestClaudeAgentAdaptiveTimeout:
                 ],
             }
         ]
-        multi_timeout = provider._calculate_adaptive_timeout(multi_image_messages)
+        multi_timeout = calculate_timeout_from_messages(multi_image_messages)
 
         # Multiple images should have higher timeout
         assert multi_timeout > single_timeout
 
     def test_returns_integer(self) -> None:
-        """Test that _calculate_adaptive_timeout returns an integer."""
-        from markitai.providers.claude_agent import ClaudeAgentProvider
+        """Test that calculate_timeout_from_messages returns an integer."""
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
-        provider = ClaudeAgentProvider()
         messages = [{"role": "user", "content": "Hello!"}]
-        timeout = provider._calculate_adaptive_timeout(messages)
+        timeout = calculate_timeout_from_messages(messages)
 
         assert isinstance(timeout, int)
 
     def test_minimum_timeout_is_60_seconds(self) -> None:
         """Test that minimum timeout is at least 60 seconds (base timeout)."""
-        from markitai.providers.claude_agent import ClaudeAgentProvider
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
-        provider = ClaudeAgentProvider()
         messages = [{"role": "user", "content": "Hi"}]
-        timeout = provider._calculate_adaptive_timeout(messages)
+        timeout = calculate_timeout_from_messages(messages)
 
         assert timeout >= 60
 
@@ -988,43 +966,37 @@ class TestCopilotJsonExtraction:
 
 
 class TestCopilotAdaptiveTimeout:
-    """Tests for CopilotProvider adaptive timeout calculation."""
+    """Tests for adaptive timeout calculation used by CopilotProvider."""
 
-    def test_calculate_adaptive_timeout_exists(self) -> None:
-        """Test that _calculate_adaptive_timeout method exists."""
-        from markitai.providers.copilot import CopilotProvider
+    def test_calculate_timeout_from_messages_callable(self) -> None:
+        """Test that calculate_timeout_from_messages is callable."""
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
-        provider = CopilotProvider()
-        assert hasattr(provider, "_calculate_adaptive_timeout")
-        assert callable(provider._calculate_adaptive_timeout)
+        assert callable(calculate_timeout_from_messages)
 
     def test_longer_messages_return_higher_timeout(self) -> None:
         """Test that longer messages result in higher timeout values."""
-        from markitai.providers.copilot import CopilotProvider
-
-        provider = CopilotProvider()
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
         # Short message
         short_messages = [{"role": "user", "content": "Hello!"}]
-        short_timeout = provider._calculate_adaptive_timeout(short_messages)
+        short_timeout = calculate_timeout_from_messages(short_messages)
 
         # Long message (100K chars)
         long_content = "x" * 100000
         long_messages = [{"role": "user", "content": long_content}]
-        long_timeout = provider._calculate_adaptive_timeout(long_messages)
+        long_timeout = calculate_timeout_from_messages(long_messages)
 
         # Long messages should have higher timeout
         assert long_timeout > short_timeout
 
     def test_images_increase_timeout(self) -> None:
         """Test that messages with images have higher timeout."""
-        from markitai.providers.copilot import CopilotProvider
-
-        provider = CopilotProvider()
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
         # Text-only message
         text_messages = [{"role": "user", "content": "Describe this."}]
-        text_timeout = provider._calculate_adaptive_timeout(text_messages)
+        text_timeout = calculate_timeout_from_messages(text_messages)
 
         # Message with image
         image_messages = [
@@ -1039,16 +1011,14 @@ class TestCopilotAdaptiveTimeout:
                 ],
             }
         ]
-        image_timeout = provider._calculate_adaptive_timeout(image_messages)
+        image_timeout = calculate_timeout_from_messages(image_messages)
 
         # Image messages should have higher timeout
         assert image_timeout > text_timeout
 
     def test_multiple_images_increase_timeout(self) -> None:
         """Test that multiple images result in higher timeout than single image."""
-        from markitai.providers.copilot import CopilotProvider
-
-        provider = CopilotProvider()
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
         # Single image
         single_image_messages = [
@@ -1063,7 +1033,7 @@ class TestCopilotAdaptiveTimeout:
                 ],
             }
         ]
-        single_timeout = provider._calculate_adaptive_timeout(single_image_messages)
+        single_timeout = calculate_timeout_from_messages(single_image_messages)
 
         # Multiple images
         multi_image_messages = [
@@ -1086,28 +1056,26 @@ class TestCopilotAdaptiveTimeout:
                 ],
             }
         ]
-        multi_timeout = provider._calculate_adaptive_timeout(multi_image_messages)
+        multi_timeout = calculate_timeout_from_messages(multi_image_messages)
 
         # Multiple images should have higher timeout
         assert multi_timeout > single_timeout
 
     def test_returns_integer(self) -> None:
-        """Test that _calculate_adaptive_timeout returns an integer."""
-        from markitai.providers.copilot import CopilotProvider
+        """Test that calculate_timeout_from_messages returns an integer."""
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
-        provider = CopilotProvider()
         messages = [{"role": "user", "content": "Hello!"}]
-        timeout = provider._calculate_adaptive_timeout(messages)
+        timeout = calculate_timeout_from_messages(messages)
 
         assert isinstance(timeout, int)
 
     def test_minimum_timeout_is_60_seconds(self) -> None:
         """Test that minimum timeout is at least 60 seconds (base timeout)."""
-        from markitai.providers.copilot import CopilotProvider
+        from markitai.providers.timeout import calculate_timeout_from_messages
 
-        provider = CopilotProvider()
         messages = [{"role": "user", "content": "Hi"}]
-        timeout = provider._calculate_adaptive_timeout(messages)
+        timeout = calculate_timeout_from_messages(messages)
 
         assert timeout >= 60
 

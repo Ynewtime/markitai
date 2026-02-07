@@ -13,12 +13,7 @@ from markitai.converter.base import (
     detect_format,
     get_converter,
 )
-from markitai.converter.image import (
-    JpegConverter,
-    JpgConverter,
-    PngConverter,
-    WebpConverter,
-)
+from markitai.converter.image import ImageConverter
 from markitai.converter.legacy import DocConverter, PptConverter, XlsConverter
 
 # Import converters to register them
@@ -42,8 +37,5 @@ __all__ = [
     "DocConverter",
     "PptConverter",
     "XlsConverter",
-    "JpegConverter",
-    "JpgConverter",
-    "PngConverter",
-    "WebpConverter",
+    "ImageConverter",
 ]

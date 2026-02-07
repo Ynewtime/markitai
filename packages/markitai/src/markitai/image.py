@@ -20,6 +20,9 @@ from loguru import logger
 from PIL import Image
 
 from markitai.constants import (
+    DEFAULT_IMAGE_FILTER_MIN_AREA,
+    DEFAULT_IMAGE_FILTER_MIN_HEIGHT,
+    DEFAULT_IMAGE_FILTER_MIN_WIDTH,
     DEFAULT_IMAGE_IO_CONCURRENCY,
     DEFAULT_IMAGE_MAX_HEIGHT,
     DEFAULT_IMAGE_MAX_WIDTH,
@@ -51,7 +54,8 @@ def _compress_image_cv2(
 
     Args:
         image_data: Raw image bytes
-        quality: JPEG/WEBP quality (1-100)
+        quality: Compression quality (1-100). For JPEG/WEBP: image quality.
+             For PNG: mapped to compression level (100=none, 1=max)
         max_size: Maximum dimensions (width, height)
         output_format: Output format (JPEG, PNG, WEBP)
         min_width: Minimum width filter
@@ -408,7 +412,8 @@ class ImageProcessor:
             markdown: Original markdown with data URIs
             images: List of saved images with paths
             assets_path: Relative path to assets directory
-            index_mapping: Optional mapping from original index to ProcessedImage
+            index_mapping: Optional mapping from original 1-based index to
+                   ProcessedImage. When provided, images param is ignored
 
         Returns:
             Markdown with data URIs replaced by file paths (filtered images removed)
@@ -738,6 +743,74 @@ class ImageProcessor:
         self._seen_hashes.add(image_hash)
         return False
 
+    # ---- Shared preprocessing helpers ----
+
+    _FORMAT_MAP: dict[str, tuple[str, str]] = {
+        "jpeg": ("JPEG", "jpg"),
+        "png": ("PNG", "png"),
+        "webp": ("WEBP", "webp"),
+    }
+
+    def _resolve_format(self) -> tuple[str, str]:
+        """Resolve the output image format and file extension from config.
+
+        Returns:
+            (output_format, extension) – e.g. ("JPEG", "jpg")
+        """
+        if self.config:
+            return self._FORMAT_MAP.get(self.config.format, ("JPEG", "jpg"))
+        return ("JPEG", "jpg")
+
+    def _get_compression_params(self) -> tuple[int, tuple[int, int], bool]:
+        """Return (quality, max_size, compress_enabled) from config or defaults."""
+        if self.config:
+            quality = self.config.quality
+            max_size = (self.config.max_width, self.config.max_height)
+            compress_enabled = self.config.compress
+        else:
+            quality = DEFAULT_IMAGE_QUALITY
+            max_size = (DEFAULT_IMAGE_MAX_WIDTH, DEFAULT_IMAGE_MAX_HEIGHT)
+            compress_enabled = True
+        return quality, max_size, compress_enabled
+
+    def _get_filter_params(self) -> tuple[int, int, int]:
+        """Return (min_width, min_height, min_area) from config or defaults."""
+        if self.config:
+            f = self.config.filter
+            return f.min_width, f.min_height, f.min_area
+        return (
+            DEFAULT_IMAGE_FILTER_MIN_WIDTH,
+            DEFAULT_IMAGE_FILTER_MIN_HEIGHT,
+            DEFAULT_IMAGE_FILTER_MIN_AREA,
+        )
+
+    def _preprocess_images(
+        self, images: list[tuple[str, str, bytes]]
+    ) -> tuple[list[tuple[int, bytes]], int, dict[int, ProcessedImage]]:
+        """Run deduplication on images and separate duplicates from work items.
+
+        Args:
+            images: List of (alt_text, mime_type, image_data) tuples
+
+        Returns:
+            (work_items, deduplicated_count, index_mapping) where work_items
+            is the list of non-duplicate (idx, image_data) tuples (1-indexed).
+        """
+        work_items: list[tuple[int, bytes]] = []
+        deduplicated_count = 0
+        index_mapping: dict[int, ProcessedImage] = {}
+
+        for idx, (_alt_text, _mime_type, image_data) in enumerate(images, start=1):
+            if self.is_duplicate(image_data):
+                deduplicated_count += 1
+                index_mapping[idx] = ProcessedImage(
+                    original_index=idx, saved_path=None, skip_reason="duplicate"
+                )
+                continue
+            work_items.append((idx, image_data))
+
+        return work_items, deduplicated_count, index_mapping
+
     def process_and_save(
         self,
         images: list[tuple[str, str, bytes]],
@@ -758,36 +831,15 @@ class ImageProcessor:
         # Delayed import to avoid circular import
         from markitai.converter.base import ExtractedImage
 
-        # Create assets directory
         assets_dir = ensure_assets_dir(output_dir)
+        output_format, extension = self._resolve_format()
+        quality, max_size, compress_enabled = self._get_compression_params()
+        work_items, deduplicated_count, index_mapping = self._preprocess_images(images)
 
         saved_images: list[ExtractedImage] = []
         filtered_count = 0
-        deduplicated_count = 0
-        index_mapping: dict[int, ProcessedImage] = {}
 
-        # Determine output format
-        output_format = "JPEG"
-        extension = "jpg"
-        if self.config:
-            format_map = {
-                "jpeg": ("JPEG", "jpg"),
-                "png": ("PNG", "png"),
-                "webp": ("WEBP", "webp"),
-            }
-            output_format, extension = format_map.get(
-                self.config.format, ("JPEG", "jpg")
-            )
-
-        for idx, (_alt_text, _mime_type, image_data) in enumerate(images, start=1):
-            # Check for duplicates
-            if self.is_duplicate(image_data):
-                deduplicated_count += 1
-                index_mapping[idx] = ProcessedImage(
-                    original_index=idx, saved_path=None, skip_reason="duplicate"
-                )
-                continue
-
+        for idx, image_data in work_items:
             # Load image
             try:
                 # Use BytesIO as context manager to ensure buffer is released
@@ -808,17 +860,7 @@ class ImageProcessor:
                         img.close()
                         continue
 
-                    # Compress
-                    quality = (
-                        self.config.quality if self.config else DEFAULT_IMAGE_QUALITY
-                    )
-                    max_size = (
-                        (self.config.max_width, self.config.max_height)
-                        if self.config
-                        else (DEFAULT_IMAGE_MAX_WIDTH, DEFAULT_IMAGE_MAX_HEIGHT)
-                    )
-
-                    if self.config and self.config.compress:
+                    if compress_enabled:
                         # No need for img.copy() - compress can modify the image
                         # since we don't need the original after this
                         compressed_img, compressed_data = self.compress(
@@ -907,38 +949,17 @@ class ImageProcessor:
         from markitai.converter.base import ExtractedImage
         from markitai.security import write_bytes_async
 
-        # Create assets directory
         assets_dir = ensure_assets_dir(output_dir)
+        output_format, extension = self._resolve_format()
+        quality, max_size, compress_enabled = self._get_compression_params()
+        work_items, deduplicated_count, index_mapping = self._preprocess_images(images)
 
         saved_images: list[ExtractedImage] = []
         filtered_count = 0
-        deduplicated_count = 0
-        index_mapping: dict[int, ProcessedImage] = {}
-
-        # Determine output format
-        output_format = "JPEG"
-        extension = "jpg"
-        if self.config:
-            format_map = {
-                "jpeg": ("JPEG", "jpg"),
-                "png": ("PNG", "png"),
-                "webp": ("WEBP", "webp"),
-            }
-            output_format, extension = format_map.get(
-                self.config.format, ("JPEG", "jpg")
-            )
 
         # First pass: process images (CPU-bound, sequential)
         processed_images: list[tuple[int, bytes, int, int]] = []
-        for idx, (_alt_text, _mime_type, image_data) in enumerate(images, start=1):
-            # Check for duplicates
-            if self.is_duplicate(image_data):
-                deduplicated_count += 1
-                index_mapping[idx] = ProcessedImage(
-                    original_index=idx, saved_path=None, skip_reason="duplicate"
-                )
-                continue
-
+        for idx, image_data in work_items:
             # Load and process image
             try:
                 with Image.open(io.BytesIO(image_data)) as img:
@@ -952,17 +973,7 @@ class ImageProcessor:
                         )
                         continue
 
-                    # Compress
-                    quality = (
-                        self.config.quality if self.config else DEFAULT_IMAGE_QUALITY
-                    )
-                    max_size = (
-                        (self.config.max_width, self.config.max_height)
-                        if self.config
-                        else (DEFAULT_IMAGE_MAX_WIDTH, DEFAULT_IMAGE_MAX_HEIGHT)
-                    )
-
-                    if self.config and self.config.compress:
+                    if compress_enabled:
                         compressed_img, compressed_data = self.compress(
                             img.copy(),
                             quality=quality,
@@ -1077,48 +1088,11 @@ class ImageProcessor:
                 index_mapping={},
             )
 
-        # Create assets directory
         assets_dir = ensure_assets_dir(output_dir)
-
-        # Determine output format
-        output_format = "JPEG"
-        extension = "jpg"
-        if self.config:
-            format_map = {
-                "jpeg": ("JPEG", "jpg"),
-                "png": ("PNG", "png"),
-                "webp": ("WEBP", "webp"),
-            }
-            output_format, extension = format_map.get(
-                self.config.format, ("JPEG", "jpg")
-            )
-
-        # Get compression parameters
-        quality = self.config.quality if self.config else DEFAULT_IMAGE_QUALITY
-        max_size = (
-            (self.config.max_width, self.config.max_height)
-            if self.config
-            else (DEFAULT_IMAGE_MAX_WIDTH, DEFAULT_IMAGE_MAX_HEIGHT)
-        )
-        compress_enabled = self.config.compress if self.config else True
-
-        # Get filter parameters
-        min_width = self.config.filter.min_width if self.config else 50
-        min_height = self.config.filter.min_height if self.config else 50
-        min_area = self.config.filter.min_area if self.config else 5000
-
-        # Prepare work items (filter duplicates first)
-        work_items: list[tuple[int, bytes]] = []
-        deduplicated_count = 0
-        index_mapping: dict[int, ProcessedImage] = {}
-        for idx, (_alt_text, _mime_type, image_data) in enumerate(images, start=1):
-            if self.is_duplicate(image_data):
-                deduplicated_count += 1
-                index_mapping[idx] = ProcessedImage(
-                    original_index=idx, saved_path=None, skip_reason="duplicate"
-                )
-                continue
-            work_items.append((idx, image_data))
+        output_format, extension = self._resolve_format()
+        quality, max_size, compress_enabled = self._get_compression_params()
+        min_width, min_height, min_area = self._get_filter_params()
+        work_items, deduplicated_count, index_mapping = self._preprocess_images(images)
 
         if not work_items:
             return ImageProcessResult(
@@ -1285,11 +1259,6 @@ class UrlImageDownloadResult:
     )  # URL -> local path mapping
 
 
-def _get_extension_from_content_type(content_type: str) -> str:
-    """Get file extension from content-type header."""
-    return get_extension_from_mime(content_type)
-
-
 def _get_extension_from_url(url: str) -> str | None:
     """Extract image extension from URL path."""
     parsed = urlparse(url)
@@ -1427,7 +1396,7 @@ async def download_url_images(
                 content_type = response.headers.get("content-type", "")
                 ext = _get_extension_from_url(image_url)
                 if not ext:
-                    ext = _get_extension_from_content_type(content_type)
+                    ext = get_extension_from_mime(content_type)
 
                 # Generate filename: source_name.NNNN.ext (1-indexed, 4 digits)
                 filename = f"{safe_source}.{index + 1:04d}{ext}"

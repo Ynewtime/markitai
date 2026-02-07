@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from markitai.llm.models import context_display_name
 from markitai.llm.types import (
     BatchImageAnalysisResult,
     ImageAnalysis,
@@ -30,31 +31,31 @@ from markitai.llm.types import (
     LLMResponse,
     SingleImageResult,
 )
-from markitai.llm.vision import VisionMixin, _context_display_name
+from markitai.llm.vision import VisionMixin
 
 # =============================================================================
-# Test Helper: _context_display_name
+# Test Helper: context_display_name (formerly _context_display_name in vision.py)
 # =============================================================================
 
 
 class TestContextDisplayName:
-    """Tests for _context_display_name helper function."""
+    """Tests for context_display_name helper function."""
 
     def test_empty_context(self):
-        """Empty context returns 'batch'."""
-        assert _context_display_name("") == "batch"
+        """Empty context returns empty string."""
+        assert context_display_name("") == ""
 
     def test_simple_filename(self):
         """Simple filename is returned as-is."""
-        assert _context_display_name("file.pdf") == "file.pdf"
+        assert context_display_name("file.pdf") == "file.pdf"
 
     def test_unix_path(self):
         """Unix path extracts filename."""
-        assert _context_display_name("/path/to/file.pdf") == "file.pdf"
+        assert context_display_name("/path/to/file.pdf") == "file.pdf"
 
     def test_relative_path(self):
         """Relative path extracts filename."""
-        assert _context_display_name("subdir/file.pdf") == "file.pdf"
+        assert context_display_name("subdir/file.pdf") == "file.pdf"
 
 
 # =============================================================================
@@ -1043,9 +1044,7 @@ class TestAnalyzeWithTwoCalls:
 
         mock_processor._call_llm = mock_call_llm
 
-        result = await mock_processor._analyze_with_two_calls(
-            messages, "default", context="test"
-        )
+        result = await mock_processor._analyze_with_two_calls(messages, context="test")
 
         assert call_count == 2
         assert result.caption == "Caption result"
@@ -1079,9 +1078,7 @@ class TestAnalyzeWithTwoCalls:
 
         mock_processor._call_llm = mock_call_llm
 
-        result = await mock_processor._analyze_with_two_calls(
-            messages, "default", context="test"
-        )
+        result = await mock_processor._analyze_with_two_calls(messages, context="test")
 
         assert result.llm_usage is not None
         assert result.llm_usage["test/model"]["requests"] == 2
@@ -1126,7 +1123,7 @@ class TestAnalyzeWithTwoCalls:
 
         mock_processor._call_llm = mock_call_llm
 
-        await mock_processor._analyze_with_two_calls(messages, "default")
+        await mock_processor._analyze_with_two_calls(messages)
 
         # Should use Chinese language
         lang_params = [call[1].get("language") for call in prompt_calls]
@@ -1159,7 +1156,7 @@ class TestAnalyzeWithTwoCalls:
 
         mock_processor._call_llm = mock_call_llm
 
-        result = await mock_processor._analyze_with_two_calls(messages, "default")
+        result = await mock_processor._analyze_with_two_calls(messages)
 
         assert result.caption == "Result"
 

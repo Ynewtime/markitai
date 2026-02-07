@@ -154,6 +154,40 @@ class OCRProcessor:
         # Use global shared engine for better performance
         return self.get_shared_engine(self.config)
 
+    def _build_ocr_result(self, raw_result: Any) -> OCRResult:
+        """Build OCRResult from raw RapidOCR engine output.
+
+        Extracts texts, scores, and boxes from the engine result,
+        joins text blocks, and calculates average confidence.
+
+        Args:
+            raw_result: Raw result from RapidOCR engine call
+
+        Returns:
+            OCRResult with recognized text and metadata
+        """
+        # Extract text from result (RapidOCR returns union type with incomplete stubs)
+        # Use 'is not None' to avoid numpy array boolean ambiguity
+        texts = list(raw_result.txts) if raw_result.txts is not None else []
+        scores = list(raw_result.scores) if raw_result.scores is not None else []
+        boxes = list(raw_result.boxes) if raw_result.boxes is not None else []
+
+        full_text = "\n".join(texts)
+        avg_confidence = sum(scores) / len(scores) if scores else 0.0
+
+        logger.debug(
+            f"OCR completed: {len(texts)} text blocks, "
+            f"avg confidence: {avg_confidence:.2f}"
+        )
+
+        return OCRResult(
+            text=full_text,
+            confidence=avg_confidence,
+            boxes=[
+                box.tolist() if hasattr(box, "tolist") else list(box) for box in boxes
+            ],
+        )
+
     def recognize(self, image_path: Path | str) -> OCRResult:
         """
         Perform OCR on an image file.
@@ -172,31 +206,7 @@ class OCRProcessor:
         logger.debug(f"Running OCR on: {image_path.name}")
 
         result: Any = self.engine(str(image_path))
-
-        # Extract text from result (RapidOCR returns union type with incomplete stubs)
-        # Use 'is not None' to avoid numpy array boolean ambiguity
-        texts = list(result.txts) if result.txts is not None else []
-        scores = list(result.scores) if result.scores is not None else []
-        boxes = list(result.boxes) if result.boxes is not None else []
-
-        # Join all recognized text
-        full_text = "\n".join(texts)
-
-        # Calculate average confidence
-        avg_confidence = sum(scores) / len(scores) if scores else 0.0
-
-        logger.debug(
-            f"OCR completed: {len(texts)} text blocks, "
-            f"avg confidence: {avg_confidence:.2f}"
-        )
-
-        return OCRResult(
-            text=full_text,
-            confidence=avg_confidence,
-            boxes=[
-                box.tolist() if hasattr(box, "tolist") else list(box) for box in boxes
-            ],
-        )
+        return self._build_ocr_result(result)
 
     def recognize_numpy(self, image_array: Any) -> OCRResult:
         """
@@ -219,33 +229,8 @@ class OCRProcessor:
 
         logger.debug(f"Running OCR on numpy array: shape={image_array.shape}")
 
-        # RapidOCR can accept numpy arrays directly
         result: Any = self.engine(image_array)
-
-        # Extract text from result
-        # Use 'is not None' to avoid numpy array boolean ambiguity
-        texts = list(result.txts) if result.txts is not None else []
-        scores = list(result.scores) if result.scores is not None else []
-        boxes = list(result.boxes) if result.boxes is not None else []
-
-        # Join all recognized text
-        full_text = "\n".join(texts)
-
-        # Calculate average confidence
-        avg_confidence = sum(scores) / len(scores) if scores else 0.0
-
-        logger.debug(
-            f"OCR completed: {len(texts)} text blocks, "
-            f"avg confidence: {avg_confidence:.2f}"
-        )
-
-        return OCRResult(
-            text=full_text,
-            confidence=avg_confidence,
-            boxes=[
-                box.tolist() if hasattr(box, "tolist") else list(box) for box in boxes
-            ],
-        )
+        return self._build_ocr_result(result)
 
     def recognize_bytes(self, image_data: bytes) -> OCRResult:
         """
@@ -398,7 +383,8 @@ class OCRProcessor:
             image_path: Path to the image file
 
         Returns:
-            Markdown formatted text
+            Markdown formatted text if RapidOCR supports to_markdown(),
+            otherwise plain text joined by double newlines
         """
         image_path = Path(image_path)
 

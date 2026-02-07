@@ -54,16 +54,20 @@ def _check_office_exe_exists(app_name: str) -> bool:
     return False
 
 
-@lru_cache(maxsize=1)
-def check_ms_powerpoint_available() -> bool:
-    """Check if MS Office PowerPoint is installed (Windows only).
+def _check_ms_office_app(registry_key: str, exe_name: str, display_name: str) -> bool:
+    """Check if a specific MS Office application is available (Windows only).
 
     Detection strategy:
     1. Windows Registry lookup (fast, preferred)
     2. Direct file path check (fallback for Click-to-Run installations)
 
+    Args:
+        registry_key: Registry key name (e.g., "PowerPoint.Application")
+        exe_name: Executable name without extension (e.g., "POWERPNT")
+        display_name: Human-readable name for logging (e.g., "MS PowerPoint")
+
     Returns:
-        True if PowerPoint is installed, False otherwise.
+        True if the application is installed, False otherwise.
     """
     if not _is_windows():
         return False
@@ -73,9 +77,9 @@ def check_ms_powerpoint_available() -> bool:
         import winreg  # type: ignore[import-not-found]
 
         try:
-            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"PowerPoint.Application")  # type: ignore[attr-defined]
+            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, registry_key)  # type: ignore[attr-defined]
             winreg.CloseKey(key)  # type: ignore[attr-defined]
-            logger.debug("MS PowerPoint detected via registry")
+            logger.debug(f"{display_name} detected via registry")
             return True
         except OSError:
             pass  # Registry key not found, try file path
@@ -83,86 +87,30 @@ def check_ms_powerpoint_available() -> bool:
         pass  # winreg not available
 
     # Method 2: Direct file path check (for Click-to-Run installations)
-    if _check_office_exe_exists("POWERPNT"):
-        logger.debug("MS PowerPoint detected via file path")
+    if _check_office_exe_exists(exe_name):
+        logger.debug(f"{display_name} detected via file path")
         return True
 
-    logger.debug("MS PowerPoint not found")
+    logger.debug(f"{display_name} not found")
     return False
+
+
+@lru_cache(maxsize=1)
+def check_ms_powerpoint_available() -> bool:
+    """Check if MS Office PowerPoint is installed (Windows only)."""
+    return _check_ms_office_app("PowerPoint.Application", "POWERPNT", "MS PowerPoint")
 
 
 @lru_cache(maxsize=1)
 def check_ms_word_available() -> bool:
-    """Check if MS Office Word is installed (Windows only).
-
-    Detection strategy:
-    1. Windows Registry lookup (fast, preferred)
-    2. Direct file path check (fallback for Click-to-Run installations)
-
-    Returns:
-        True if Word is installed, False otherwise.
-    """
-    if not _is_windows():
-        return False
-
-    # Method 1: Registry lookup
-    try:
-        import winreg  # type: ignore[import-not-found]
-
-        try:
-            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"Word.Application")  # type: ignore[attr-defined]
-            winreg.CloseKey(key)  # type: ignore[attr-defined]
-            logger.debug("MS Word detected via registry")
-            return True
-        except OSError:
-            pass  # Registry key not found, try file path
-    except ImportError:
-        pass  # winreg not available
-
-    # Method 2: Direct file path check (for Click-to-Run installations)
-    if _check_office_exe_exists("WINWORD"):
-        logger.debug("MS Word detected via file path")
-        return True
-
-    logger.debug("MS Word not found")
-    return False
+    """Check if MS Office Word is installed (Windows only)."""
+    return _check_ms_office_app("Word.Application", "WINWORD", "MS Word")
 
 
 @lru_cache(maxsize=1)
 def check_ms_excel_available() -> bool:
-    """Check if MS Office Excel is installed (Windows only).
-
-    Detection strategy:
-    1. Windows Registry lookup (fast, preferred)
-    2. Direct file path check (fallback for Click-to-Run installations)
-
-    Returns:
-        True if Excel is installed, False otherwise.
-    """
-    if not _is_windows():
-        return False
-
-    # Method 1: Registry lookup
-    try:
-        import winreg  # type: ignore[import-not-found]
-
-        try:
-            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"Excel.Application")  # type: ignore[attr-defined]
-            winreg.CloseKey(key)  # type: ignore[attr-defined]
-            logger.debug("MS Excel detected via registry")
-            return True
-        except OSError:
-            pass  # Registry key not found, try file path
-    except ImportError:
-        pass  # winreg not available
-
-    # Method 2: Direct file path check (for Click-to-Run installations)
-    if _check_office_exe_exists("EXCEL"):
-        logger.debug("MS Excel detected via file path")
-        return True
-
-    logger.debug("MS Excel not found")
-    return False
+    """Check if MS Office Excel is installed (Windows only)."""
+    return _check_ms_office_app("Excel.Application", "EXCEL", "MS Excel")
 
 
 import threading

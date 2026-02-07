@@ -427,19 +427,8 @@ _markitai_llm_logger = MarkitaiLLMLogger()
 class LLMProcessor(VisionMixin, DocumentMixin):
     """LLM processor using LiteLLM Router for load balancing."""
 
-    # Static method proxies to content module (for backward compatibility)
-    # These methods were originally defined in this class but have been
-    # refactored to markitai.llm.content module with public names (no underscore)
+    # Static method proxies to content module
     extract_protected_content = staticmethod(content.extract_protected_content)
-    _protect_content = staticmethod(content.protect_content)
-    _unprotect_content = staticmethod(content.unprotect_content)
-    _fix_malformed_image_refs = staticmethod(content.fix_malformed_image_refs)
-    _clean_frontmatter = staticmethod(content.clean_frontmatter)
-    _smart_truncate = staticmethod(content.smart_truncate)
-    _split_text_by_pages = staticmethod(content.split_text_by_pages)
-    restore_protected_content = staticmethod(content.restore_protected_content)
-
-    # Public aliases without underscore prefix
     protect_content = staticmethod(content.protect_content)
     unprotect_content = staticmethod(content.unprotect_content)
     fix_malformed_image_refs = staticmethod(content.fix_malformed_image_refs)
@@ -923,25 +912,6 @@ class LLMProcessor(VisionMixin, DocumentMixin):
 
         return self._vision_router
 
-    def _message_contains_image(self, messages: list[dict[str, Any]]) -> bool:
-        """Detect if messages contain image content.
-
-        Checks for image_url type in message content parts.
-
-        Args:
-            messages: List of chat messages
-
-        Returns:
-            True if any message contains an image
-        """
-        for msg in messages:
-            content = msg.get("content")
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "image_url":
-                        return True
-        return False
-
     async def _call_llm(
         self,
         model: str,
@@ -967,7 +937,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         call_id = f"{context}:{call_index}" if context else f"call:{call_index}"
 
         # Smart router selection based on message content
-        requires_vision = self._message_contains_image(messages)
+        requires_vision = has_images(messages)
         router = self.vision_router if requires_vision else self.router
 
         max_retries = self.config.router_settings.num_retries
@@ -994,6 +964,8 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         When router is provided, uses the minimum max_output_tokens across all
         models in the router to ensure compatibility with any model the router
         might select.
+
+        Also detects table-heavy content (>20 rows) and applies a higher token floor.
 
         Args:
             messages: Chat messages to estimate input tokens

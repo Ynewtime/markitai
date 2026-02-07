@@ -216,10 +216,105 @@ class SDKNotAvailableError(ProviderError):
         self.install_command = install_command
 
 
+# ---------------------------------------------------------------------------
+# Shared error classification
+# ---------------------------------------------------------------------------
+
+# Known error message patterns for quota/billing issues.
+# Union of patterns from claude-agent and copilot providers.
+_QUOTA_PATTERNS: tuple[str, ...] = (
+    "quota",
+    "quota exceeded",
+    "no quota",
+    "billing",
+    "payment",
+    "payment required",
+    "subscription",
+    "402",
+    "insufficient",
+    "credit",
+    "upgrade to increase",
+)
+
+# Known error message patterns for authentication issues.
+_AUTH_PATTERNS: tuple[str, ...] = (
+    "not authenticated",
+    "authentication",
+    "unauthorized",
+    "401",
+    "api key",
+)
+
+# Known error message patterns for rate-limit issues.
+_RATE_LIMIT_PATTERNS: tuple[str, ...] = (
+    "rate limit",
+    "429",
+)
+
+
+def classify_and_raise_provider_error(
+    error_msg: str,
+    provider: str,
+    model: str,
+    *,
+    AuthenticationError_cls: type[Exception] | None = None,
+    RateLimitError_cls: type[Exception] | None = None,
+) -> None:
+    """Classify a provider error message and raise the appropriate exception.
+
+    Checks the error message against known patterns for:
+    - Quota/billing errors -> AuthenticationError (not retryable, requires user action)
+    - Authentication errors -> AuthenticationError
+    - Rate limit errors -> RateLimitError (LiteLLM will handle retry)
+
+    If no pattern matches, this function returns without raising.
+
+    The *_cls parameters accept the LiteLLM exception classes that both
+    providers already import.  This avoids importing LiteLLM inside
+    ``errors.py`` (which must stay dependency-free).
+
+    Args:
+        error_msg: The stringified error from the underlying SDK.
+        provider: Provider name (e.g. "claude-agent", "copilot").
+        model: Model name passed to the provider.
+        AuthenticationError_cls: LiteLLM ``AuthenticationError`` class.
+        RateLimitError_cls: LiteLLM ``RateLimitError`` class.
+    """
+    if AuthenticationError_cls is None or RateLimitError_cls is None:
+        return
+
+    error_msg_lower = error_msg.lower()
+
+    # Quota / billing (should NOT be retried)
+    if any(p in error_msg_lower for p in _QUOTA_PATTERNS):
+        raise AuthenticationError_cls(
+            f"{provider} quota/billing error: {error_msg}",
+            provider,
+            model,
+        )
+
+    # Authentication (should NOT be retried)
+    if any(p in error_msg_lower for p in _AUTH_PATTERNS):
+        raise AuthenticationError_cls(
+            f"{provider} authentication error: {error_msg}",
+            provider,
+            model,
+        )
+
+    # Rate limit (LiteLLM handles retry via RateLimitError)
+    if any(p in error_msg_lower for p in _RATE_LIMIT_PATTERNS):
+        raise RateLimitError_cls(
+            f"{provider} rate limit: {error_msg}",
+            provider,
+            model,
+        )
+
+
 __all__ = [
     "ProviderError",
     "AuthenticationError",
     "QuotaError",
     "ProviderTimeoutError",
     "SDKNotAvailableError",
+    "classify_and_raise_provider_error",
 ]

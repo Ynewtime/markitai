@@ -9,13 +9,7 @@ import pytest
 
 from markitai.config import MarkitaiConfig
 from markitai.converter.base import FileFormat
-from markitai.converter.image import (
-    ImageConverter,
-    JpegConverter,
-    JpgConverter,
-    PngConverter,
-    WebpConverter,
-)
+from markitai.converter.image import ImageConverter
 
 
 @pytest.fixture
@@ -95,32 +89,32 @@ class TestImageConverter:
             assert "test.png" in result.markdown
 
 
-class TestSpecificConverters:
-    """Tests for specific image format converters."""
+class TestImageConverterFormats:
+    """Tests for ImageConverter format support and registration."""
 
-    def test_jpeg_converter(self):
-        """Test JPEG converter."""
-        assert FileFormat.JPEG in JpegConverter.supported_formats
-        converter = JpegConverter()
-        assert isinstance(converter, ImageConverter)
+    def test_jpeg_format_supported(self):
+        """Test JPEG format is supported by ImageConverter."""
+        assert FileFormat.JPEG in ImageConverter.supported_formats
 
-    def test_jpg_converter(self):
-        """Test JPG converter."""
-        assert FileFormat.JPG in JpgConverter.supported_formats
-        converter = JpgConverter()
-        assert isinstance(converter, ImageConverter)
+    def test_jpg_format_supported(self):
+        """Test JPG format is supported by ImageConverter."""
+        assert FileFormat.JPG in ImageConverter.supported_formats
 
-    def test_png_converter(self):
-        """Test PNG converter."""
-        assert FileFormat.PNG in PngConverter.supported_formats
-        converter = PngConverter()
-        assert isinstance(converter, ImageConverter)
+    def test_png_format_supported(self):
+        """Test PNG format is supported by ImageConverter."""
+        assert FileFormat.PNG in ImageConverter.supported_formats
 
-    def test_webp_converter(self):
-        """Test WebP converter."""
-        assert FileFormat.WEBP in WebpConverter.supported_formats
-        converter = WebpConverter()
-        assert isinstance(converter, ImageConverter)
+    def test_webp_format_supported(self):
+        """Test WebP format is supported by ImageConverter."""
+        assert FileFormat.WEBP in ImageConverter.supported_formats
+
+    def test_all_formats_registered(self):
+        """Test all image formats are registered in converter registry."""
+        from markitai.converter.base import _converter_registry
+
+        for fmt in (FileFormat.JPEG, FileFormat.JPG, FileFormat.PNG, FileFormat.WEBP):
+            assert fmt in _converter_registry
+            assert _converter_registry[fmt] is ImageConverter
 
 
 class TestImagePlaceholder:

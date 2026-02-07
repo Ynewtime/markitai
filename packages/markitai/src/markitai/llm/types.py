@@ -88,7 +88,23 @@ class ImageAnalysis:
     llm_usage: LLMUsageByModel | None = None  # LLM usage stats
 
 
-class ImageAnalysisResult(BaseModel):
+class _CleanedStringMixin(BaseModel):
+    """Mixin that cleans control characters from string fields before validation.
+
+    Subclasses should list their string fields in the ``clean_control_chars``
+    validator decorator so that incoming values are sanitized automatically.
+    """
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def clean_control_chars(cls, v: str | None) -> str | None:
+        """Remove control characters that can cause JSON parsing errors."""
+        if not isinstance(v, str):
+            return v
+        return clean_control_characters(v)
+
+
+class ImageAnalysisResult(_CleanedStringMixin):
     """Pydantic model for structured image analysis output."""
 
     caption: str = Field(description="Short alt text for the image (10-30 characters)")
@@ -98,16 +114,8 @@ class ImageAnalysisResult(BaseModel):
         description="Text extracted from the image, preserving original layout",
     )
 
-    @field_validator("caption", "description", "extracted_text", mode="before")
-    @classmethod
-    def clean_control_chars(cls, v: str | None) -> str | None:
-        """Remove control characters that can cause JSON parsing errors."""
-        if v is None:
-            return None
-        return clean_control_characters(v)
 
-
-class SingleImageResult(BaseModel):
+class SingleImageResult(_CleanedStringMixin):
     """Result for a single image in batch analysis."""
 
     image_index: int = Field(description="Index of the image (1-based)")
@@ -117,14 +125,6 @@ class SingleImageResult(BaseModel):
         default=None,
         description="Text extracted from the image, preserving original layout",
     )
-
-    @field_validator("caption", "description", "extracted_text", mode="before")
-    @classmethod
-    def clean_control_chars(cls, v: str | None) -> str | None:
-        """Remove control characters that can cause JSON parsing errors."""
-        if v is None:
-            return None
-        return clean_control_characters(v)
 
 
 class BatchImageAnalysisResult(BaseModel):
@@ -138,8 +138,9 @@ class BatchImageAnalysisResult(BaseModel):
 class Frontmatter(BaseModel):
     """Pydantic model for LLM-generated frontmatter fields.
 
-    Note: title, source, and markitai_processed are generated programmatically,
-    not by the LLM. Only description and tags are LLM-generated.
+    Note: title, source, and markitai_processed are added programmatically
+    by build_frontmatter_dict(), not part of this LLM response model.
+    Only description and tags are LLM-generated.
     """
 
     description: str = Field(
@@ -178,7 +179,7 @@ class Frontmatter(BaseModel):
         return cleaned
 
 
-class DocumentProcessResult(BaseModel):
+class DocumentProcessResult(_CleanedStringMixin):
     """LLM document processing result."""
 
     cleaned_markdown: str = Field(
@@ -191,25 +192,8 @@ class DocumentProcessResult(BaseModel):
         description="Document metadata: title, summary, tags"
     )
 
-    @field_validator("cleaned_markdown", mode="before")
-    @classmethod
-    def clean_control_chars(cls, v: str | None) -> str | None:
-        """Remove control characters that can cause JSON parsing errors."""
-        if v is None:
-            return None
-        return clean_control_characters(v)
 
-
-class EnhancedDocumentResult(BaseModel):
-    """Pydantic model for complete document enhancement output (Vision+LLM combined)."""
-
-    cleaned_markdown: str = Field(description="Enhanced and cleaned markdown content")
-    frontmatter: Frontmatter = Field(description="Document metadata")
-
-    @field_validator("cleaned_markdown", mode="before")
-    @classmethod
-    def clean_control_chars(cls, v: str | None) -> str | None:
-        """Remove control characters that can cause JSON parsing errors."""
-        if v is None:
-            return None
-        return clean_control_characters(v)
+# EnhancedDocumentResult is structurally identical to DocumentProcessResult
+# (same fields: cleaned_markdown, frontmatter). Kept as an alias for backward
+# compatibility with code that references the name explicitly.
+EnhancedDocumentResult = DocumentProcessResult

@@ -49,7 +49,8 @@ def calculate_timeout(
     The timeout is calculated using the following formula:
     1. Start with base_timeout
     2. Add prompt_length / chars_per_second for input processing
-    3. Add expected_output_tokens / 4.0 if provided (generation time estimate)
+    3. Add expected_output_tokens / tokens_per_second if provided
+       (assumes ~4 tokens/sec generation speed)
     4. If has_images: multiply by image_multiplier
     5. Add per_image_seconds for each additional image (beyond the first)
     6. Clamp result to [base_timeout, max_timeout]

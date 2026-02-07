@@ -413,10 +413,8 @@ def register_providers() -> None:
 
     # Try to register Claude Agent provider (only if SDK is available)
     try:
-        from markitai.providers.claude_agent import (
-            ClaudeAgentProvider,
-            _is_claude_agent_sdk_available,
-        )
+        from markitai.providers.auth import _is_claude_agent_sdk_available
+        from markitai.providers.claude_agent import ClaudeAgentProvider
 
         if _is_claude_agent_sdk_available():
             provider = ClaudeAgentProvider()
@@ -436,10 +434,8 @@ def register_providers() -> None:
 
     # Try to register Copilot provider (only if SDK is available)
     try:
-        from markitai.providers.copilot import (
-            CopilotProvider,
-            _is_copilot_sdk_available,
-        )
+        from markitai.providers.auth import _is_copilot_sdk_available
+        from markitai.providers.copilot import CopilotProvider
 
         if _is_copilot_sdk_available():
             provider = CopilotProvider()

@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-# URL pattern for detecting URLs
-_URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
+from markitai.urls import _URL_PATTERN
 
 
 def is_url(s: str) -> bool:
@@ -36,6 +34,7 @@ def url_to_filename(url: str) -> str:
         https://example.com/path/to/doc -> doc.md
         https://example.com/ -> example_com.md
         https://youtube.com/watch?v=abc -> youtube_com_watch.md
+        https://example.com/search?q=test -> example_com_search.md
 
     Args:
         url: URL to convert
@@ -53,6 +52,11 @@ def url_to_filename(url: str) -> str:
         if filename:
             # Sanitize for cross-platform compatibility
             filename = sanitize_filename(filename)
+            # Include domain prefix when URL has query params (e.g. watch?v=abc)
+            # to avoid overly generic filenames like "watch.md"
+            if parsed.query:
+                domain = parsed.netloc.replace(".", "_").replace(":", "_")
+                return f"{sanitize_filename(domain)}_{filename}.md"
             return f"{filename}.md"
 
     # Fallback: use domain name
@@ -152,20 +156,15 @@ def get_report_file_path(
     Returns:
         Path to the report file
     """
+    from markitai.utils.output import resolve_name_conflict
+
     reports_dir = output_dir / "reports"
     base_path = reports_dir / f"markitai.{task_hash}.report.json"
 
-    if not base_path.exists():
-        return base_path
+    def _rename(seq: int) -> Path:
+        return reports_dir / f"markitai.{task_hash}.v{seq}.report.json"
 
-    if on_conflict == "skip":
-        return base_path  # Will be handled by caller
-    elif on_conflict == "overwrite":
-        return base_path
-    else:  # rename
-        seq = 2
-        while True:
-            new_path = reports_dir / f"markitai.{task_hash}.v{seq}.report.json"
-            if not new_path.exists():
-                return new_path
-            seq += 1
+    # resolve_name_conflict returns None for "skip", but callers of
+    # get_report_file_path expect the base path back (they handle
+    # skip themselves), so fall back to base_path.
+    return resolve_name_conflict(base_path, on_conflict, _rename) or base_path

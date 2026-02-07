@@ -1641,8 +1641,8 @@ class TestSplitTextIntoBatches:
     def test_splits_by_page_markers(self) -> None:
         """Test splitting text by page markers."""
         mixin = DocumentMixin()
-        # Mock the _split_text_by_pages method
-        mixin._split_text_by_pages = MagicMock(
+        # Mock the split_text_by_pages method
+        mixin.split_text_by_pages = MagicMock(
             return_value=["Page 1", "Page 2", "Page 3", "Page 4", "Page 5"]
         )
 
@@ -1657,7 +1657,7 @@ class TestSplitTextIntoBatches:
     def test_handles_single_batch(self) -> None:
         """Test with content that fits in single batch."""
         mixin = DocumentMixin()
-        mixin._split_text_by_pages = MagicMock(return_value=["Page 1", "Page 2"])
+        mixin.split_text_by_pages = MagicMock(return_value=["Page 1", "Page 2"])
 
         images = [Path("page1.jpg"), Path("page2.jpg")]
         batches = mixin._split_text_into_batches("full text", images, batch_size=10)
