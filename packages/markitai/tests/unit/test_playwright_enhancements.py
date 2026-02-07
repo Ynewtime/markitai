@@ -70,3 +70,12 @@ class TestDomCleanup:
         script = _build_dom_cleanup_script()
         assert "baseURI" in script
         assert "new URL" in script
+
+    def test_dom_cleanup_escapes_quotes_in_selectors(self):
+        """Verify selectors with double quotes are properly escaped in JS."""
+        from markitai.fetch_playwright import _build_dom_cleanup_script
+
+        script = _build_dom_cleanup_script()
+        # [role="banner"] must be escaped as [role=\"banner\"] inside JS strings
+        assert r"[role=\"banner\"]" in script
+        assert r"[role=\"navigation\"]" in script

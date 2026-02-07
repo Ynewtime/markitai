@@ -193,10 +193,12 @@ def _build_dom_cleanup_script() -> str:
     Returns:
         JavaScript code string for page.evaluate()
     """
+    import json
+
     from markitai.constants import DOM_NOISE_ATTRIBUTES, DOM_NOISE_SELECTORS
 
-    selectors_js = ", ".join(f'"{s}"' for s in DOM_NOISE_SELECTORS)
-    attributes_js = ", ".join(f'"{a}"' for a in DOM_NOISE_ATTRIBUTES)
+    selectors_js = ", ".join(json.dumps(s) for s in DOM_NOISE_SELECTORS)
+    attributes_js = ", ".join(json.dumps(a) for a in DOM_NOISE_ATTRIBUTES)
 
     return f"""
     () => {{
