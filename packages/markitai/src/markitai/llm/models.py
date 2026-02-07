@@ -132,8 +132,8 @@ def context_display_name(context: str) -> str:
         return context
     # Split context into path part and suffix (e.g., ':images')
     if (
-        ":" in context and context[1:3] != ":\\"
-    ):  # Avoid splitting Windows drive letters
+        ":" in context and context[1:3] != ":\\" and context[1:3] != ":/"
+    ):  # Avoid splitting Windows drive letters (C:\ and C:/)
         # Find the last colon that's not part of a Windows path
         parts = context.rsplit(":", 1)
         if len(parts) == 2 and not parts[1].startswith("\\"):
