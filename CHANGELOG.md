@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-02-07
+
+### Fixed
+
+- **SQLite ResourceWarning**: Close SQLite connections explicitly via `_connect()` context manager, preventing `ResourceWarning: unclosed database` on Python 3.13
+- **Windows path handling**: `context_display_name()` now handles `C:/` forward-slash Windows paths (was only handling `C:\`)
+- **Windows install hints**: `markitai doctor` shows platform-specific install commands (PowerShell/winget on Windows, curl on Unix)
+- **OAuth token expiry**: `markitai doctor` no longer reports "Token expired" when a valid refresh token exists
+- **Config get output**: `markitai config get` renders Pydantic models as formatted JSON with syntax highlighting instead of raw Python repr
+- **Copilot ProviderError**: Added missing `provider` kwarg when raising `ProviderError` for unsupported models
+- **Pyright warnings**: Resolved all Pyright warnings (lazy `__all__`, type narrowing, optional imports)
+
+### Changed
+
+- **26 documentation fixes**: Comprehensive audit fixing docstring-to-code mismatches across all modules (llm, providers, converter, utils, config)
+
 ## [0.5.1] - 2026-02-07
 
 ### Added
@@ -536,6 +552,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.5.2]: https://github.com/Ynewtime/markitai/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Ynewtime/markitai/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Ynewtime/markitai/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Ynewtime/markitai/compare/v0.4.1...v0.4.2
