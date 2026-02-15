@@ -9,6 +9,7 @@ from markitai.config import (
     BUILTIN_PRESETS,
     ConfigManager,
     EnvVarNotFoundError,
+    LiteLLMParams,
     MarkitaiConfig,
     PresetConfig,
     get_preset,
@@ -40,6 +41,45 @@ class TestResolveEnvValue:
         """Test that plain values are returned unchanged."""
         result = resolve_env_value("plain-value")
         assert result == "plain-value"
+
+
+class TestLiteLLMParamsResolvedApiBase:
+    """Tests for LiteLLMParams.get_resolved_api_base()."""
+
+    def test_api_base_none(self) -> None:
+        """Test returns None when api_base is not configured."""
+        params = LiteLLMParams(model="openai/gpt-4o")
+        assert params.get_resolved_api_base() is None
+
+    def test_api_base_plain_url(self) -> None:
+        """Test plain URL is returned unchanged."""
+        params = LiteLLMParams(
+            model="openai/gpt-4o", api_base="https://api.example.com/v1"
+        )
+        assert params.get_resolved_api_base() == "https://api.example.com/v1"
+
+    def test_api_base_env_syntax(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test env:VAR_NAME syntax resolves to environment variable."""
+        monkeypatch.setenv("TEST_API_BASE", "https://my-proxy.example.com/v1")
+        params = LiteLLMParams(model="openai/gpt-4o", api_base="env:TEST_API_BASE")
+        assert params.get_resolved_api_base() == "https://my-proxy.example.com/v1"
+
+    def test_api_base_env_missing_strict(self) -> None:
+        """Test raises EnvVarNotFoundError when env var missing in strict mode."""
+        params = LiteLLMParams(
+            model="openai/gpt-4o", api_base="env:NONEXISTENT_BASE_URL_12345"
+        )
+        with pytest.raises(EnvVarNotFoundError) as exc_info:
+            params.get_resolved_api_base(strict=True)
+        assert exc_info.value.var_name == "NONEXISTENT_BASE_URL_12345"
+
+    def test_api_base_env_missing_non_strict(self) -> None:
+        """Test returns None when env var missing in non-strict mode."""
+        params = LiteLLMParams(
+            model="openai/gpt-4o", api_base="env:NONEXISTENT_BASE_URL_12345"
+        )
+        result = params.get_resolved_api_base(strict=False)
+        assert result is None
 
 
 class TestMarkitaiConfig:

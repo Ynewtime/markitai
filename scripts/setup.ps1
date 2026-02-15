@@ -95,6 +95,21 @@ function i18n {
             "error_python_required"     { return "需要安装 Python 3.11+" }
             "error_setup_failed"        { return "安装失败" }
 
+            # Network / Mirrors
+            "section_network"           { return "网络环境" }
+            "mirror_no_proxy"           { return "未检测到代理，部分资源可能无法访问" }
+            "mirror_confirm"            { return "启用国内镜像加速? (推荐无代理环境使用)" }
+            "mirror_select"             { return "选择镜像源" }
+            "mirror_tuna"               { return "清华 TUNA (推荐)" }
+            "mirror_aliyun"             { return "阿里云" }
+            "mirror_tencent"            { return "腾讯云" }
+            "mirror_huawei"             { return "华为云" }
+            "mirror_enabled"            { return "已启用国内镜像加速" }
+            "mirror_skipped"            { return "已跳过镜像配置" }
+            "mirror_pypi"               { return "PyPI 镜像" }
+            "mirror_playwright"         { return "Playwright 镜像" }
+            "mirror_npm"                { return "npm 镜像" }
+
             # Warnings
             "warn_admin"                { return "警告: 以管理员身份运行" }
             "warn_admin_risk"           { return "以管理员运行安装脚本存在安全风险" }
@@ -183,6 +198,21 @@ function i18n {
             "error_uv_required"         { return "uv package manager is required" }
             "error_python_required"     { return "Python 3.11+ is required" }
             "error_setup_failed"        { return "Setup failed" }
+
+            # Network / Mirrors
+            "section_network"           { return "Network Environment" }
+            "mirror_no_proxy"           { return "No proxy detected, some resources may be inaccessible" }
+            "mirror_confirm"            { return "Enable China mirror acceleration? (recommended without proxy)" }
+            "mirror_select"             { return "Select mirror source" }
+            "mirror_tuna"               { return "Tsinghua TUNA (Recommended)" }
+            "mirror_aliyun"             { return "Alibaba Cloud" }
+            "mirror_tencent"            { return "Tencent Cloud" }
+            "mirror_huawei"             { return "Huawei Cloud" }
+            "mirror_enabled"            { return "China mirror acceleration enabled" }
+            "mirror_skipped"            { return "Mirror configuration skipped" }
+            "mirror_pypi"               { return "PyPI mirror" }
+            "mirror_playwright"         { return "Playwright mirror" }
+            "mirror_npm"                { return "npm mirror" }
 
             # Warnings
             "warn_admin"                { return "Warning: Running as administrator" }
@@ -447,6 +477,61 @@ function Test-WSLWarning {
             exit 1
         }
     }
+}
+
+# Check for proxy environment variables
+function Test-Proxy {
+    if ($env:HTTPS_PROXY -or $env:HTTP_PROXY -or $env:ALL_PROXY -or
+        $env:https_proxy -or $env:http_proxy -or $env:all_proxy) {
+        return $true
+    }
+    return $false
+}
+
+# Prompt user to enable China mirrors if no proxy is detected
+function Configure-Mirrors {
+    if (Test-Proxy) { return }
+
+    Clack-Warn (i18n "mirror_no_proxy")
+
+    if (-not (Clack-Confirm (i18n "mirror_confirm") "n")) {
+        Clack-Log (i18n "mirror_skipped")
+        return
+    }
+
+    # Show mirror source selection
+    Write-Host $S_BAR -ForegroundColor DarkGray
+    Write-Host $S_STEP_SUBMIT -ForegroundColor Cyan -NoNewline
+    $choice = Read-Host "  $(i18n 'mirror_select') [1]`n$S_BAR  1. $(i18n 'mirror_tuna')`n$S_BAR  2. $(i18n 'mirror_aliyun')`n$S_BAR  3. $(i18n 'mirror_tencent')`n$S_BAR  4. $(i18n 'mirror_huawei')`n$S_BAR  >"
+
+    if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
+
+    switch ($choice) {
+        "2" {
+            $env:UV_INDEX_URL = "https://mirrors.aliyun.com/pypi/simple/"
+            $env:NPM_CONFIG_REGISTRY = "https://registry.npmmirror.com"
+        }
+        "3" {
+            $env:UV_INDEX_URL = "https://mirrors.cloud.tencent.com/pypi/simple"
+            $env:NPM_CONFIG_REGISTRY = "https://mirrors.cloud.tencent.com/npm/"
+        }
+        "4" {
+            $env:UV_INDEX_URL = "https://repo.huaweicloud.com/repository/pypi/simple"
+            $env:NPM_CONFIG_REGISTRY = "https://mirrors.huaweicloud.com/repository/npm/"
+        }
+        default {
+            $env:UV_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
+            $env:NPM_CONFIG_REGISTRY = "https://registry.npmmirror.com"
+        }
+    }
+
+    # Playwright: only npmmirror CDN provides reliable browser binary mirrors
+    $env:PLAYWRIGHT_DOWNLOAD_HOST = "https://cdn.npmmirror.com/binaries/playwright"
+
+    Clack-Success (i18n "mirror_enabled")
+    Clack-Log "  $(i18n 'mirror_pypi'): $env:UV_INDEX_URL"
+    Clack-Log "  $(i18n 'mirror_npm'): $env:NPM_CONFIG_REGISTRY"
+    Clack-Log "  $(i18n 'mirror_playwright'): $env:PLAYWRIGHT_DOWNLOAD_HOST"
 }
 
 # Check execution policy
@@ -1235,6 +1320,7 @@ function Run-UserSetup {
     Test-ExecutionPolicy | Out-Null
     Test-AdminWarning
     Test-WSLWarning
+    Configure-Mirrors
 
     Clack-Section (i18n "section_core")
     if (-not (Install-UV)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
@@ -1266,6 +1352,7 @@ function Run-DevSetup {
     Test-ExecutionPolicy | Out-Null
     Test-AdminWarning
     Test-WSLWarning
+    Configure-Mirrors
 
     Clack-Section (i18n "section_prerequisites")
     if (-not (Install-UV)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }

@@ -139,7 +139,10 @@ class LiteLLMParams(BaseModel):
 
     model: str
     api_key: str | None = None
-    api_base: str | None = None
+    api_base: str | None = Field(
+        default=None,
+        description="Custom API base URL to override the provider's default endpoint. Supports env:VAR_NAME syntax. Passed directly to LiteLLM; works with any LiteLLM-supported provider. Not used by local providers (claude-agent/, copilot/) which manage endpoints via their own environment variables.",
+    )
     weight: int = DEFAULT_MODEL_WEIGHT
     max_tokens: int | None = None  # Override max_output_tokens for this model
 
@@ -157,6 +160,23 @@ class LiteLLMParams(BaseModel):
             EnvVarNotFoundError: If strict=True and environment variable not found.
         """
         return _resolve_api_key(self.api_key, strict=strict)
+
+    def get_resolved_api_base(self, strict: bool = True) -> str | None:
+        """Get API base URL with env: syntax resolved.
+
+        Args:
+            strict: If True, raises EnvVarNotFoundError when env var not found.
+                    If False, returns None when env var not found.
+
+        Returns:
+            The resolved API base URL, or None if not configured or env var not found.
+
+        Raises:
+            EnvVarNotFoundError: If strict=True and environment variable not found.
+        """
+        if self.api_base:
+            return resolve_env_value(self.api_base, strict=strict)
+        return None
 
 
 class ModelInfo(BaseModel):
