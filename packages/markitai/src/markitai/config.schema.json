@@ -295,6 +295,7 @@
             }
           ],
           "default": null,
+          "description": "Custom API base URL to override the provider's default endpoint. Supports env:VAR_NAME syntax. Passed directly to LiteLLM; works with any LiteLLM-supported provider. Not used by local providers (claude-agent/, copilot/) which manage endpoints via their own environment variables.",
           "title": "Api Base"
         },
         "weight": {

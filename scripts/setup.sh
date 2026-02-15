@@ -99,6 +99,21 @@ i18n() {
             error_python_required)      echo "需要安装 Python 3.11+" ;;
             error_setup_failed)         echo "安装失败" ;;
 
+            # Network / Mirrors
+            section_network)            echo "网络环境" ;;
+            mirror_no_proxy)            echo "未检测到代理，部分资源可能无法访问" ;;
+            mirror_confirm)             echo "启用国内镜像加速? (推荐无代理环境使用)" ;;
+            mirror_select)              echo "选择镜像源" ;;
+            mirror_tuna)                echo "清华 TUNA (推荐)" ;;
+            mirror_aliyun)              echo "阿里云" ;;
+            mirror_tencent)             echo "腾讯云" ;;
+            mirror_huawei)              echo "华为云" ;;
+            mirror_enabled)             echo "已启用国内镜像加速" ;;
+            mirror_skipped)             echo "已跳过镜像配置" ;;
+            mirror_pypi)                echo "PyPI 镜像" ;;
+            mirror_playwright)          echo "Playwright 镜像" ;;
+            mirror_npm)                 echo "npm 镜像" ;;
+
             # Warnings
             warn_root)                  echo "警告: 以 root 身份运行" ;;
             warn_root_risk)             echo "以 root 运行安装脚本存在安全风险" ;;
@@ -185,6 +200,21 @@ i18n() {
             error_uv_required)          echo "uv package manager is required" ;;
             error_python_required)      echo "Python 3.11+ is required" ;;
             error_setup_failed)         echo "Setup failed" ;;
+
+            # Network / Mirrors
+            section_network)            echo "Network Environment" ;;
+            mirror_no_proxy)            echo "No proxy detected, some resources may be inaccessible" ;;
+            mirror_confirm)             echo "Enable China mirror acceleration? (recommended without proxy)" ;;
+            mirror_select)              echo "Select mirror source" ;;
+            mirror_tuna)                echo "Tsinghua TUNA (Recommended)" ;;
+            mirror_aliyun)              echo "Alibaba Cloud" ;;
+            mirror_tencent)             echo "Tencent Cloud" ;;
+            mirror_huawei)              echo "Huawei Cloud" ;;
+            mirror_enabled)             echo "China mirror acceleration enabled" ;;
+            mirror_skipped)             echo "Mirror configuration skipped" ;;
+            mirror_pypi)                echo "PyPI mirror" ;;
+            mirror_playwright)          echo "Playwright mirror" ;;
+            mirror_npm)                 echo "npm mirror" ;;
 
             # Warnings
             warn_root)                  echo "Warning: Running as root" ;;
@@ -305,12 +335,14 @@ clack_log() {
 # Spinner with guide line
 # Usage: clack_spinner "message" command args...
 # Shows spinner while command runs, then shows result
+# On failure, displays last lines of stderr for debugging
 clack_spinner() {
     _cs_message="$1"
     shift
 
     # Spinner frames (ASCII compatible)
     _cs_pid=""
+    _cs_errfile=$(mktemp 2>/dev/null || echo "/tmp/clack_spinner_$$")
 
     # Start spinner in background
     (
@@ -323,8 +355,8 @@ clack_spinner() {
     ) &
     _cs_pid=$!
 
-    # Run the actual command
-    "$@" >/dev/null 2>&1
+    # Run the actual command, capture stderr for error reporting
+    "$@" >/dev/null 2>"$_cs_errfile"
     _cs_status=$?
 
     # Stop spinner
@@ -334,6 +366,14 @@ clack_spinner() {
     # Clear spinner line
     printf "\r\033[K"
 
+    # On failure, show last lines of stderr
+    if [ $_cs_status -ne 0 ] && [ -s "$_cs_errfile" ]; then
+        tail -10 "$_cs_errfile" | while IFS= read -r _cs_line; do
+            printf "${GRAY}│${NC}  ${DIM}%s${NC}\n" "$_cs_line"
+        done
+    fi
+
+    rm -f "$_cs_errfile" 2>/dev/null
     return $_cs_status
 }
 
@@ -472,6 +512,76 @@ warn_if_root() {
         fi
     fi
     return 0
+}
+
+# Check for proxy environment variables
+# Returns: 0 if proxy detected, 1 if not
+detect_proxy() {
+    if [ -n "${HTTPS_PROXY:-}" ] || [ -n "${HTTP_PROXY:-}" ] || [ -n "${ALL_PROXY:-}" ] || \
+       [ -n "${https_proxy:-}" ] || [ -n "${http_proxy:-}" ] || [ -n "${all_proxy:-}" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Prompt user to enable China mirrors if no proxy is detected
+# Sets: UV_INDEX_URL, PLAYWRIGHT_DOWNLOAD_HOST, NPM_CONFIG_REGISTRY
+configure_mirrors() {
+    if detect_proxy; then
+        return 0
+    fi
+
+    clack_warn "$(i18n mirror_no_proxy)"
+
+    if ! clack_confirm "$(i18n mirror_confirm)" "n"; then
+        clack_log "$(i18n mirror_skipped)"
+        return 0
+    fi
+
+    # Show mirror source selection
+    printf "${GRAY}│${NC}\n"
+    printf "${CYAN}◇${NC}  %s ${GRAY}[1]${NC}\n" "$(i18n mirror_select)"
+    printf "${GRAY}│${NC}  ${CYAN}1.${NC} %s\n" "$(i18n mirror_tuna)"
+    printf "${GRAY}│${NC}  ${GRAY}2.${NC} %s\n" "$(i18n mirror_aliyun)"
+    printf "${GRAY}│${NC}  ${GRAY}3.${NC} %s\n" "$(i18n mirror_tencent)"
+    printf "${GRAY}│${NC}  ${GRAY}4.${NC} %s\n" "$(i18n mirror_huawei)"
+    printf "${GRAY}│${NC}  > "
+
+    if [ -t 0 ]; then
+        read -r _mirror_choice
+    else
+        read -r _mirror_choice < /dev/tty
+        printf "\n"
+    fi
+
+    [ -z "$_mirror_choice" ] && _mirror_choice="1"
+
+    case "$_mirror_choice" in
+        2)
+            export UV_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"
+            export NPM_CONFIG_REGISTRY="https://registry.npmmirror.com"
+            ;;
+        3)
+            export UV_INDEX_URL="https://mirrors.cloud.tencent.com/pypi/simple"
+            export NPM_CONFIG_REGISTRY="https://mirrors.cloud.tencent.com/npm/"
+            ;;
+        4)
+            export UV_INDEX_URL="https://repo.huaweicloud.com/repository/pypi/simple"
+            export NPM_CONFIG_REGISTRY="https://mirrors.huaweicloud.com/repository/npm/"
+            ;;
+        *)
+            export UV_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
+            export NPM_CONFIG_REGISTRY="https://registry.npmmirror.com"
+            ;;
+    esac
+
+    # Playwright: only npmmirror CDN provides reliable browser binary mirrors
+    export PLAYWRIGHT_DOWNLOAD_HOST="https://cdn.npmmirror.com/binaries/playwright"
+
+    clack_success "$(i18n mirror_enabled)"
+    clack_log "  $(i18n mirror_pypi): $UV_INDEX_URL"
+    clack_log "  $(i18n mirror_npm): $NPM_CONFIG_REGISTRY"
+    clack_log "  $(i18n mirror_playwright): $PLAYWRIGHT_DOWNLOAD_HOST"
 }
 
 # ============================================================
@@ -1168,6 +1278,7 @@ run_user_setup() {
     clack_intro "$(i18n welcome)"
     clack_info "$(i18n mode_user)"
     warn_if_root
+    configure_mirrors
 
     clack_section "$(i18n section_core)"
     install_uv || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
@@ -1197,6 +1308,7 @@ run_dev_setup() {
     clack_intro "$(i18n welcome)"
     clack_info "$(i18n mode_dev)"
     warn_if_root
+    configure_mirrors
 
     clack_section "$(i18n section_prerequisites)"
     install_uv || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }

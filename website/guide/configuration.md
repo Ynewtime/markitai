@@ -251,6 +251,76 @@ Common errors and solutions:
 Use `markitai doctor` to check authentication status and get resolution hints.
 :::
 
+### Custom API Endpoint
+
+Use `api_base` to override a provider's default API endpoint. This value is passed directly to [LiteLLM](https://docs.litellm.ai/) and works with any LiteLLM-supported provider (OpenAI, Anthropic, Gemini, Azure, etc.). Supports `env:VAR_NAME` syntax just like `api_key`:
+
+```json
+{
+  "llm": {
+    "model_list": [
+      {
+        "model_name": "default",
+        "litellm_params": {
+          "model": "openai/your-model-name",
+          "api_key": "env:YOUR_API_KEY",
+          "api_base": "https://your-api-endpoint.com/v1"
+        }
+      }
+    ]
+  }
+}
+```
+
+Examples:
+
+```json
+// Local Ollama
+{
+  "model": "ollama/llama3.2",
+  "api_base": "http://localhost:11434"
+}
+
+// Azure OpenAI
+{
+  "model": "azure/gpt-4o",
+  "api_key": "env:AZURE_API_KEY",
+  "api_base": "https://your-resource.openai.azure.com"
+}
+
+// DeepSeek
+{
+  "model": "deepseek/deepseek-chat",
+  "api_key": "env:DEEPSEEK_API_KEY",
+  "api_base": "https://api.deepseek.com/v1"
+}
+
+// Any OpenAI-compatible provider
+{
+  "model": "openai/custom-model",
+  "api_key": "env:CUSTOM_API_KEY",
+  "api_base": "https://your-proxy-or-provider.com/v1"
+}
+
+// Reference environment variable
+{
+  "model": "anthropic/claude-sonnet-4-5-20250929",
+  "api_key": "env:ANTHROPIC_API_KEY",
+  "api_base": "env:ANTHROPIC_BASE_URL"
+}
+```
+
+::: tip
+Common use cases include self-hosted inference servers (vLLM, Ollama, LocalAI), regional API proxies, and third-party API gateways.
+:::
+
+::: warning Local Providers and `api_base`
+The `api_base` config field does **not** apply to local providers (`claude-agent/`, `copilot/`). These providers run as CLI subprocesses and manage API endpoints through their own environment variables:
+
+- **Claude Agent**: Set `ANTHROPIC_BASE_URL` to override the API endpoint. If `ANTHROPIC_API_KEY` is also set, the CLI will use it for direct API access instead of subscription authentication. Other routing options: `CLAUDE_CODE_USE_BEDROCK=1`, `CLAUDE_CODE_USE_VERTEX=1`, `CLAUDE_CODE_USE_FOUNDRY=1`.
+- **GitHub Copilot**: Endpoint is managed by the Copilot CLI internally and cannot be overridden.
+:::
+
 ### Vision Models
 
 For image analysis (`--alt`, `--desc`), Markitai automatically routes to vision-capable models. Vision capability is **auto-detected** from litellm by default - no configuration needed for most models.
@@ -647,4 +717,85 @@ Set a specific prompt file path:
 
 ::: tip
 The system/user split prevents LLM from accidentally including prompt instructions in its output. System prompts define the role and rules, while user prompts contain the actual content to process.
+:::
+
+## China Mainland Users / 中国大陆用户指南
+
+### Setup Script Mirror Acceleration
+
+安装脚本会自动检测代理环境变量（`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`）。如果未检测到代理，会询问是否启用国内镜像加速，并提供以下镜像源选择：
+
+| 镜像源 | PyPI | npm | 推荐地域 |
+|--------|------|-----|----------|
+| **清华 TUNA** (默认) | `pypi.tuna.tsinghua.edu.cn` | `registry.npmmirror.com` | 北方 / 通用 |
+| **阿里云** | `mirrors.aliyun.com` | `registry.npmmirror.com` | 东部 |
+| **腾讯云** | `mirrors.cloud.tencent.com` | `mirrors.cloud.tencent.com` | 南方 |
+| **华为云** | `repo.huaweicloud.com` | `mirrors.huaweicloud.com` | 北方 |
+
+Playwright 浏览器二进制文件统一使用 npmmirror CDN 镜像（`cdn.npmmirror.com`），这是目前唯一可靠的公共镜像。
+
+你也可以在运行安装脚本前手动设置（以清华 TUNA 为例）：
+
+**macOS / Linux / WSL (Bash/Zsh):**
+
+```bash
+export UV_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
+export PLAYWRIGHT_DOWNLOAD_HOST="https://cdn.npmmirror.com/binaries/playwright"
+export NPM_CONFIG_REGISTRY="https://registry.npmmirror.com"
+```
+
+**Windows (PowerShell):**
+
+```powershell
+$env:UV_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
+$env:PLAYWRIGHT_DOWNLOAD_HOST = "https://cdn.npmmirror.com/binaries/playwright"
+$env:NPM_CONFIG_REGISTRY = "https://registry.npmmirror.com"
+```
+
+### LLM API Access
+
+国内可用的 LLM 提供商及配置方式：
+
+| 提供商 | 可用性 | 说明 |
+|--------|--------|------|
+| **DeepSeek** | 直连可用 | 无需代理，直接使用 `deepseek/deepseek-chat` |
+| **Ollama** | 完全离线 | 本地模型，使用 `ollama/llama3.2` |
+| **API 代理服务** | 通过中转 | 通过 `api_base` 指向第三方中转服务 |
+| **OpenAI / Claude / Gemini** | 需代理 | 需代理或 `api_base` 中转 |
+
+使用 `api_base` 指向代理中转的示例配置：
+
+```json
+{
+  "llm": {
+    "model_list": [
+      {
+        "model_name": "default",
+        "litellm_params": {
+          "model": "openai/gpt-4o",
+          "api_key": "env:OPENAI_API_KEY",
+          "api_base": "https://your-api-proxy.com/v1"
+        }
+      }
+    ]
+  }
+}
+```
+
+### Proxy Configuration
+
+如已有代理，设置环境变量即可对所有网络请求生效：
+
+```bash
+export HTTPS_PROXY="http://127.0.0.1:7890"
+export HTTP_PROXY="http://127.0.0.1:7890"
+```
+
+```powershell
+$env:HTTPS_PROXY = "http://127.0.0.1:7890"
+$env:HTTP_PROXY = "http://127.0.0.1:7890"
+```
+
+::: tip
+设置了代理环境变量后，安装脚本会自动跳过镜像加速配置。
 :::

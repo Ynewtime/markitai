@@ -629,10 +629,9 @@ class LLMProcessor(VisionMixin, DocumentMixin):
             if api_key:
                 model_entry["litellm_params"]["api_key"] = api_key
 
-            if model_config.litellm_params.api_base:
-                model_entry["litellm_params"]["api_base"] = (
-                    model_config.litellm_params.api_base
-                )
+            api_base = model_config.litellm_params.get_resolved_api_base()
+            if api_base:
+                model_entry["litellm_params"]["api_base"] = api_base
 
             if model_config.litellm_params.weight != 1:
                 model_entry["litellm_params"]["weight"] = (
@@ -772,10 +771,9 @@ class LLMProcessor(VisionMixin, DocumentMixin):
             if api_key:
                 model_entry["litellm_params"]["api_key"] = api_key
 
-            if model_config.litellm_params.api_base:
-                model_entry["litellm_params"]["api_base"] = (
-                    model_config.litellm_params.api_base
-                )
+            api_base = model_config.litellm_params.get_resolved_api_base()
+            if api_base:
+                model_entry["litellm_params"]["api_base"] = api_base
 
             if model_config.litellm_params.weight != 1:
                 model_entry["litellm_params"]["weight"] = (

@@ -1251,6 +1251,82 @@ class TestLLMProcessorRouterCreation:
             router = processor.router
             assert isinstance(router, LocalProviderWrapper)
 
+    def test_router_resolves_api_base_plain_url(self, prompts_config: PromptsConfig):
+        """Test router passes plain api_base URL to litellm model list."""
+        config = LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o-mini",
+                        api_key="test-key",
+                        api_base="https://custom-proxy.example.com/v1",
+                    ),
+                )
+            ],
+        )
+        processor = LLMProcessor(config, prompts_config)
+
+        with patch("markitai.providers.is_local_provider_available", return_value=True):
+            router = processor.router
+            model_entry = router.model_list[0]
+            assert (
+                model_entry["litellm_params"]["api_base"]
+                == "https://custom-proxy.example.com/v1"
+            )
+
+    def test_router_resolves_api_base_env_syntax(
+        self, prompts_config: PromptsConfig, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Test router resolves env:VAR_NAME in api_base before passing to litellm."""
+        monkeypatch.setenv(
+            "TEST_ROUTER_API_BASE", "https://env-resolved-proxy.example.com/v1"
+        )
+        config = LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o-mini",
+                        api_key="test-key",
+                        api_base="env:TEST_ROUTER_API_BASE",
+                    ),
+                )
+            ],
+        )
+        processor = LLMProcessor(config, prompts_config)
+
+        with patch("markitai.providers.is_local_provider_available", return_value=True):
+            router = processor.router
+            model_entry = router.model_list[0]
+            assert (
+                model_entry["litellm_params"]["api_base"]
+                == "https://env-resolved-proxy.example.com/v1"
+            )
+
+    def test_router_omits_api_base_when_none(self, prompts_config: PromptsConfig):
+        """Test router does not include api_base when not configured."""
+        config = LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o-mini",
+                        api_key="test-key",
+                    ),
+                )
+            ],
+        )
+        processor = LLMProcessor(config, prompts_config)
+
+        with patch("markitai.providers.is_local_provider_available", return_value=True):
+            router = processor.router
+            model_entry = router.model_list[0]
+            assert "api_base" not in model_entry["litellm_params"]
+
     def test_semaphore_property(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
