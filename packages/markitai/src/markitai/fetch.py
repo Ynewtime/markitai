@@ -696,6 +696,10 @@ class SPADomainCache:
 # Global SPA domain cache instance (initialized lazily)
 _spa_domain_cache: SPADomainCache | None = None
 
+# CF Browser Rendering: Free plan allows 2 concurrent browser instances.
+# Semaphore serializes requests to avoid 429 rate-limit storms.
+_cf_br_semaphore = asyncio.Semaphore(2)
+
 
 def get_spa_domain_cache() -> SPADomainCache:
     """Get or create the global SPA domain cache instance.
@@ -1608,9 +1612,7 @@ async def fetch_with_static_conditional(
                 )
                 # Extract title from first heading
                 title = None
-                title_match = re.match(
-                    r"^#\s+(.+)$", markdown_content, re.MULTILINE
-                )
+                title_match = re.match(r"^#\s+(.+)$", markdown_content, re.MULTILINE)
                 if title_match:
                     title = title_match.group(1)
 
@@ -1756,6 +1758,11 @@ async def fetch_with_cloudflare(
 
     logger.debug(f"Fetching URL with CF Browser Rendering: {url}")
 
+    # CF Free plan: 2 concurrent browser instances.
+    # Serialize requests to avoid 429 rate-limit errors.
+    max_retries = 3
+    retry_base_delay = 2.0  # seconds
+
     try:
         # Use _detect_proxy() not get_proxy_for_url(endpoint), because
         # api.cloudflare.com is not in proxy_domains but may still need
@@ -1763,52 +1770,68 @@ async def fetch_with_cloudflare(
         proxy_url = _detect_proxy()
         proxy_config = proxy_url if proxy_url else None
 
-        async with httpx.AsyncClient(
-            timeout=max(timeout / 1000 + 10, 60.0),
-            proxy=proxy_config,
-        ) as client:
-            response = await client.post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {api_token}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            response.raise_for_status()
+        async with _cf_br_semaphore:
+            for attempt in range(max_retries):
+                async with httpx.AsyncClient(
+                    timeout=max(timeout / 1000 + 10, 60.0),
+                    proxy=proxy_config,
+                ) as client:
+                    response = await client.post(
+                        endpoint,
+                        headers={
+                            "Authorization": f"Bearer {api_token}",
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                    )
 
-            # CF REST API returns JSON envelope
-            data = response.json()
-            if not data.get("success"):
-                errors = data.get("errors", [])
-                error_msg = "; ".join(
-                    e.get("message", str(e)) for e in errors
-                )
-                raise FetchError(f"CF BR API error: {error_msg}")
+                    if response.status_code == 429:
+                        if attempt < max_retries - 1:
+                            delay = retry_base_delay * (2**attempt)
+                            logger.warning(
+                                f"CF BR rate limited (429), retrying in {delay}s "
+                                f"(attempt {attempt + 1}/{max_retries}): {url}"
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        raise FetchError(
+                            f"CF BR rate limit exceeded after {max_retries} retries: {url}"
+                        )
 
-            markdown_content = data.get("result", "")
+                    response.raise_for_status()
 
-            # Extract title from first heading
-            title = None
-            title_match = re.match(
-                r"^#\s+(.+)$", markdown_content, re.MULTILINE
-            )
-            if title_match:
-                title = title_match.group(1)
+                    # CF REST API returns JSON envelope
+                    data = response.json()
+                    if not data.get("success"):
+                        errors = data.get("errors", [])
+                        error_msg = "; ".join(e.get("message", str(e)) for e in errors)
+                        raise FetchError(f"CF BR API error: {error_msg}")
 
-            return FetchResult(
-                content=markdown_content,
-                strategy_used="cloudflare",
-                title=title,
-                url=url,
-                final_url=url,
-                metadata={
-                    "converter": "cloudflare-br",
-                    "browser_ms_used": response.headers.get(
-                        "X-Browser-Ms-Used"
-                    ),
-                },
-            )
+                    markdown_content = data.get("result", "")
+
+                    # Extract title from first heading
+                    title = None
+                    title_match = re.match(
+                        r"^#\s+(.+)$", markdown_content, re.MULTILINE
+                    )
+                    if title_match:
+                        title = title_match.group(1)
+
+                    return FetchResult(
+                        content=markdown_content,
+                        strategy_used="cloudflare",
+                        title=title,
+                        url=url,
+                        final_url=url,
+                        metadata={
+                            "converter": "cloudflare-br",
+                            "browser_ms_used": response.headers.get(
+                                "X-Browser-Ms-Used"
+                            ),
+                        },
+                    )
+            # Unreachable: loop always returns or raises on 429 exhaustion
+            raise FetchError(f"CF BR fetch failed after {max_retries} attempts: {url}")
     except FetchError:
         raise
     except Exception as e:
@@ -2068,8 +2091,12 @@ async def fetch_url(
                 # Advanced browser control
                 wait_for_selector=getattr(config.playwright, "wait_for_selector", None),
                 cookies=getattr(config.playwright, "cookies", None),
-                reject_resource_patterns=getattr(config.playwright, "reject_resource_patterns", None),
-                extra_http_headers=getattr(config.playwright, "extra_http_headers", None),
+                reject_resource_patterns=getattr(
+                    config.playwright, "reject_resource_patterns", None
+                ),
+                extra_http_headers=getattr(
+                    config.playwright, "extra_http_headers", None
+                ),
                 user_agent=getattr(config.playwright, "user_agent", None),
                 http_credentials=getattr(config.playwright, "http_credentials", None),
             )
@@ -2169,7 +2196,9 @@ async def fetch_url(
             # Advanced browser control
             wait_for_selector=getattr(config.playwright, "wait_for_selector", None),
             cookies=getattr(config.playwright, "cookies", None),
-            reject_resource_patterns=getattr(config.playwright, "reject_resource_patterns", None),
+            reject_resource_patterns=getattr(
+                config.playwright, "reject_resource_patterns", None
+            ),
             extra_http_headers=getattr(config.playwright, "extra_http_headers", None),
             user_agent=getattr(config.playwright, "user_agent", None),
             http_credentials=getattr(config.playwright, "http_credentials", None),
@@ -2310,8 +2339,12 @@ async def _fetch_multi_source(
                 # Advanced browser control
                 wait_for_selector=getattr(config.playwright, "wait_for_selector", None),
                 cookies=getattr(config.playwright, "cookies", None),
-                reject_resource_patterns=getattr(config.playwright, "reject_resource_patterns", None),
-                extra_http_headers=getattr(config.playwright, "extra_http_headers", None),
+                reject_resource_patterns=getattr(
+                    config.playwright, "reject_resource_patterns", None
+                ),
+                extra_http_headers=getattr(
+                    config.playwright, "extra_http_headers", None
+                ),
                 user_agent=getattr(config.playwright, "user_agent", None),
                 http_credentials=getattr(config.playwright, "http_credentials", None),
             )
@@ -2587,12 +2620,20 @@ async def _fetch_with_fallback(
                     output_dir=screenshot_kwargs.get("screenshot_dir"),
                     renderer=renderer,
                     # Advanced browser control
-                    wait_for_selector=getattr(config.playwright, "wait_for_selector", None),
+                    wait_for_selector=getattr(
+                        config.playwright, "wait_for_selector", None
+                    ),
                     cookies=getattr(config.playwright, "cookies", None),
-                    reject_resource_patterns=getattr(config.playwright, "reject_resource_patterns", None),
-                    extra_http_headers=getattr(config.playwright, "extra_http_headers", None),
+                    reject_resource_patterns=getattr(
+                        config.playwright, "reject_resource_patterns", None
+                    ),
+                    extra_http_headers=getattr(
+                        config.playwright, "extra_http_headers", None
+                    ),
                     user_agent=getattr(config.playwright, "user_agent", None),
-                    http_credentials=getattr(config.playwright, "http_credentials", None),
+                    http_credentials=getattr(
+                        config.playwright, "http_credentials", None
+                    ),
                 )
 
                 result = FetchResult(
@@ -2616,8 +2657,16 @@ async def _fetch_with_fallback(
                 cf = getattr(config, "cloudflare", None)
                 if cf is None:
                     continue
-                token = cf.get_resolved_api_token() if hasattr(cf, "get_resolved_api_token") else cf.api_token
-                acct = cf.get_resolved_account_id() if hasattr(cf, "get_resolved_account_id") else cf.account_id
+                token = (
+                    cf.get_resolved_api_token()
+                    if hasattr(cf, "get_resolved_api_token")
+                    else cf.api_token
+                )
+                acct = (
+                    cf.get_resolved_account_id()
+                    if hasattr(cf, "get_resolved_account_id")
+                    else cf.account_id
+                )
                 if not token or not acct:
                     logger.debug("Cloudflare credentials not configured, skipping")
                     continue

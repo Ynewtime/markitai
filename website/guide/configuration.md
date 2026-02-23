@@ -109,11 +109,26 @@ markitai config set llm.enabled true
     "playwright": {
       "timeout": 30000,
       "wait_for": "domcontentloaded",
-      "extra_wait_ms": 5000
+      "extra_wait_ms": 5000,
+      "wait_for_selector": null,
+      "cookies": null,
+      "reject_resource_patterns": null,
+      "extra_http_headers": null,
+      "user_agent": null,
+      "http_credentials": null
     },
     "jina": {
       "api_key": null,
       "timeout": 30
+    },
+    "cloudflare": {
+      "api_token": null,
+      "account_id": null,
+      "timeout": 30000,
+      "wait_until": "networkidle0",
+      "cache_ttl": 0,
+      "reject_resource_patterns": null,
+      "convert_enabled": false
     },
     "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   },
@@ -133,7 +148,7 @@ markitai config set llm.enabled true
 ```
 
 ::: tip
-Use `env:VAR_NAME` syntax to reference environment variables in the config file.
+Use `env:VAR_NAME` syntax to reference environment variables in the config file. For `JINA_API_KEY`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`, you can also just set the environment variable (or add it to `.env`) without configuring anything in the config file — markitai reads them automatically.
 :::
 
 ## Environment Variables
@@ -148,6 +163,8 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 | `DEEPSEEK_API_KEY` | DeepSeek API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `JINA_API_KEY` | Jina Reader API key |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token (Browser Rendering / Workers AI) |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
 
 ### Markitai Settings
 
@@ -536,6 +553,10 @@ Configure how URLs are fetched:
       "api_key": "env:JINA_API_KEY",
       "timeout": 30
     },
+    "cloudflare": {
+      "api_token": "env:CLOUDFLARE_API_TOKEN",
+      "account_id": "env:CLOUDFLARE_ACCOUNT_ID"
+    },
     "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   }
 }
@@ -549,6 +570,7 @@ Configure how URLs are fetched:
 | `static` | Use MarkItDown's built-in URL converter (fast, no JS) |
 | `playwright` | Use Playwright for JS-rendered pages (SPA support) |
 | `jina` | Use Jina Reader API |
+| `cloudflare` | Use Cloudflare Browser Rendering `/markdown` API |
 
 ### Playwright Settings
 
@@ -557,6 +579,75 @@ Configure how URLs are fetched:
 | `timeout` | `30000` | Page load timeout (ms) |
 | `wait_for` | `domcontentloaded` | Wait condition: `load`, `domcontentloaded`, `networkidle` |
 | `extra_wait_ms` | `5000` | Extra wait time for JS rendering |
+| `wait_for_selector` | `null` | CSS selector to wait for before extraction |
+| `cookies` | `null` | Cookies to set: `[{name, value, domain, path}]` |
+| `reject_resource_patterns` | `null` | Block resources matching patterns: `["**/*.css"]` |
+| `extra_http_headers` | `null` | Additional HTTP headers: `{"Accept-Language": "zh-CN"}` |
+| `user_agent` | `null` | Custom User-Agent string |
+| `http_credentials` | `null` | HTTP auth credentials: `{username, password}` |
+
+### Cloudflare Settings
+
+Cloudflare provides two capabilities through a unified `--cloudflare` flag:
+
+1. **Browser Rendering** (`/markdown` API) for URL-to-markdown conversion
+2. **Workers AI toMarkdown** for file-to-markdown conversion (PDF, Office, CSV, XML, images)
+
+```json
+{
+  "fetch": {
+    "cloudflare": {
+      "api_token": "env:CLOUDFLARE_API_TOKEN",
+      "account_id": "env:CLOUDFLARE_ACCOUNT_ID",
+      "timeout": 30000,
+      "wait_until": "networkidle0",
+      "cache_ttl": 0,
+      "reject_resource_patterns": null,
+      "convert_enabled": false
+    }
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `api_token` | `null` | Cloudflare API token (supports `env:` syntax) |
+| `account_id` | `null` | Cloudflare account ID (supports `env:` syntax) |
+| `timeout` | `30000` | Browser Rendering timeout (ms) |
+| `wait_until` | `networkidle0` | Wait event for BR: `load`, `domcontentloaded`, `networkidle0` |
+| `cache_ttl` | `0` | BR cache TTL in seconds (0 = no cache) |
+| `reject_resource_patterns` | `null` | Block resources matching regex patterns: `["/\\.css$/"]` |
+| `convert_enabled` | `false` | Enable Workers AI toMarkdown for file conversion |
+
+::: tip
+Browser Rendering is available on the Free plan. Workers AI toMarkdown is free for PDF/Office/CSV/XML conversions; image conversion uses Neurons quota.
+:::
+
+**How to obtain credentials:**
+
+1. **Account ID** — Log in to the [Cloudflare Dashboard](https://dash.cloudflare.com/). The Account ID is shown in the URL (`dash.cloudflare.com/<account_id>/...`) or on the right sidebar of any zone's **Overview** page.
+
+2. **API Token** — Go to [My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens) and click **Create Token**. Use the *Custom token* template with the following permissions:
+
+   | Permission | Access | Required for |
+   |------------|--------|--------------|
+   | Account / Cloudflare Workers AI | Read | `toMarkdown` file conversion |
+   | Account / Browser Rendering | Edit | `/markdown` URL rendering |
+
+   Set **Account Resources** to your target account, then create and copy the token.
+
+3. **Enable Browser Rendering** — In your Cloudflare dashboard, go to **Workers & Pages → Browser Rendering** and follow the prompts to enable it (available on Free plan).
+
+```bash
+export CLOUDFLARE_API_TOKEN="your-api-token"
+export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+```
+
+::: warning Limitations & Caveats
+- **Concurrency**: Free plan allows **2 concurrent browser instances**. Markitai automatically serializes CF BR requests and retries on 429 rate-limit errors with exponential backoff, so high `url_concurrency` values are safe but won't speed up CF BR fetching.
+- **Site compatibility**: Sites with aggressive anti-bot protection (e.g. x.com, twitter.com) may return 400 errors via CF BR. For these sites, use `--playwright` or `--jina` instead.
+- **File conversion quality**: For formats that have a local converter (PDF, DOCX, XLSX, etc.), CF Workers AI `toMarkdown` generally produces **lower quality** output than local converters (e.g. less accurate formatting, no image extraction). `--cloudflare` will warn when a better local converter is available. CF `toMarkdown` is most useful for formats without a local converter (`.numbers`, `.ods`, `.svg`, etc.).
+:::
 
 ### Fallback Patterns
 

@@ -11,6 +11,7 @@ Opinionated Markdown converter with native LLM enhancement support.
 - **Batch Processing** - Concurrent conversion, resume capability, progress display
 - **OCR Recognition** - Text extraction from scanned PDFs and images
 - **URL Conversion** - Direct webpage conversion with SPA browser rendering support
+- **Cloudflare Integration** - Cloud-based URL rendering (Browser Rendering) and file conversion (Workers AI toMarkdown) via `--cloudflare`
 - **Smart Caching** - LLM result caching, SPA domain learning, auto-proxy detection
 
 ## Installation
@@ -153,6 +154,8 @@ curl -fsSL https://gh.io/copilot-install | bash
 | `DEEPSEEK_API_KEY` | DeepSeek API Key |
 | `ANTHROPIC_API_KEY` | Anthropic API Key |
 | `JINA_API_KEY` | Jina Reader API Key (URL conversion) |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API Token (Browser Rendering / Workers AI) |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID |
 
 ## Dependencies
 

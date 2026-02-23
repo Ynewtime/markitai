@@ -363,14 +363,11 @@ class JinaConfig(BaseModel):
     def get_resolved_api_key(self, strict: bool = False) -> str | None:
         """Get API key with env: syntax resolved.
 
-        Args:
-            strict: If True, raises EnvVarNotFoundError when env var not found.
-                    If False (default), returns None when env var not found.
-
-        Returns:
-            The resolved API key, or None if not configured or env var not found.
+        Falls back to JINA_API_KEY env var when not set in config.
         """
-        return _resolve_api_key(self.api_key, strict=strict)
+        if self.api_key:
+            return _resolve_api_key(self.api_key, strict=strict)
+        return os.environ.get("JINA_API_KEY")
 
 
 class CloudflareConfig(BaseModel):
@@ -392,12 +389,22 @@ class CloudflareConfig(BaseModel):
     convert_enabled: bool = False  # Enable Workers AI toMarkdown for files
 
     def get_resolved_api_token(self, strict: bool = False) -> str | None:
-        """Get API token with env: syntax resolved."""
-        return _resolve_api_key(self.api_token, strict=strict)
+        """Get API token with env: syntax resolved.
+
+        Falls back to CLOUDFLARE_API_TOKEN env var when not set in config.
+        """
+        if self.api_token:
+            return _resolve_api_key(self.api_token, strict=strict)
+        return os.environ.get("CLOUDFLARE_API_TOKEN")
 
     def get_resolved_account_id(self, strict: bool = False) -> str | None:
-        """Get account ID with env: syntax resolved."""
-        return _resolve_api_key(self.account_id, strict=strict)
+        """Get account ID with env: syntax resolved.
+
+        Falls back to CLOUDFLARE_ACCOUNT_ID env var when not set in config.
+        """
+        if self.account_id:
+            return _resolve_api_key(self.account_id, strict=strict)
+        return os.environ.get("CLOUDFLARE_ACCOUNT_ID")
 
 
 class FetchConfig(BaseModel):

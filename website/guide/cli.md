@@ -222,8 +222,28 @@ Force Jina Reader API for URL fetching. A cloud-based alternative when browser r
 markitai https://example.com --jina
 ```
 
+### `--cloudflare`
+
+Use Cloudflare as the cloud backend. This is a unified switch:
+- **URL input**: Uses Cloudflare Browser Rendering `/markdown` API
+- **File input**: Uses Cloudflare Workers AI `toMarkdown` for file conversion
+
+Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` environment variables (or configure in `markitai.json`). Create an API token at [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) with *Browser Rendering: Edit* and *Workers AI: Read* permissions. See [Configuration → Cloudflare Settings](/guide/configuration#cloudflare-settings) for details.
+
+```bash
+# URL rendering via CF Browser Rendering
+markitai https://example.com --cloudflare
+
+# File conversion via CF Workers AI toMarkdown
+markitai document.pdf --cloudflare
+```
+
+::: tip
+Cloudflare Browser Rendering is available on the Free plan. Workers AI toMarkdown is free for PDF/Office/CSV/XML; image conversion uses Neurons quota.
+:::
+
 ::: warning
-`--playwright` and `--jina` are mutually exclusive. You can only use one at a time.
+`--playwright`, `--jina`, and `--cloudflare` are mutually exclusive. You can only use one at a time.
 :::
 
 ## Setup Commands
