@@ -74,6 +74,12 @@ def _get_markitdown() -> Any:
         # Enable Cloudflare Markdown for Agents content negotiation.
         # CF-enabled sites return text/markdown directly (higher quality, fewer tokens).
         # Non-CF sites return text/html as usual — zero impact on existing behavior.
+        #
+        # Note: This patches the singleton's internal requests.Session headers.
+        # Safe because _get_markitdown() is called once per process (guarded by
+        # `if _markitdown_instance is None`), and the session is never internally
+        # rebuilt by MarkItDown. If markitdown ever changes this, the test
+        # `test_markitdown_instance_has_accept_markdown_header` will catch it.
         _markitdown_instance._requests_session.headers.update(
             {"Accept": "text/markdown, text/html;q=0.9, */*;q=0.5"}
         )
@@ -1331,13 +1337,20 @@ async def fetch_with_cloudflare(
     if cache_ttl > 0:
         payload["cacheTTL"] = cache_ttl
 
-    # Resource filtering: use caller's patterns, or sensible defaults
+    # Resource filtering: use caller's patterns, or sensible defaults.
+    # CF BR uses JS-style regex string literals with leading/trailing slashes
+    # (e.g. "/\.css$/"), consistent with Puppeteer's page.route() patterns.
+    # Ref: CF docs examples all use "/\.css$/", "/\.woff2?$/", "/analytics/" format.
     if reject_resource_patterns is not None:
         payload["rejectRequestPattern"] = reject_resource_patterns
     else:
         # Default: skip fonts and stylesheets for faster rendering
         payload["rejectRequestPattern"] = [
-            r"/^.*\.(css|woff2?|ttf|eot|otf)(\?.*)?$/",
+            "/\\.css$/",
+            "/\\.woff2?$/",
+            "/\\.ttf$/",
+            "/\\.eot$/",
+            "/\\.otf$/",
         ]
 
     logger.debug(f"Fetching URL with CF Browser Rendering: {url}")
@@ -2092,13 +2105,21 @@ class CloudflareConverter(BaseConverter):
                 "Set in config: fetch.cloudflare.api_token and fetch.cloudflare.account_id"
             )
 
-        # Determine MIME type
+        # Determine MIME type with fallback.
+        # _MIME_OVERRIDES covers formats that mimetypes module may not know
+        # (e.g. .numbers, .ods). If all lookups fail, fall back to
+        # application/octet-stream and let CF's server-side detection handle it
+        # (CF inspects file magic bytes internally).
         ext = input_path.suffix.lower()
         mime = _MIME_OVERRIDES.get(ext)
         if not mime:
             mime, _ = mimetypes.guess_type(str(input_path))
         if not mime:
-            raise RuntimeError(f"Cannot determine MIME type for: {input_path}")
+            logger.warning(
+                f"Cannot determine MIME type for {input_path.name}, "
+                "falling back to application/octet-stream"
+            )
+            mime = "application/octet-stream"
 
         endpoint = (
             f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}"
@@ -2119,12 +2140,19 @@ class CloudflareConverter(BaseConverter):
             timeout=60.0,
             proxy=proxy_config,
         ) as client:
-            with open(input_path, "rb") as f:
-                response = await client.post(
-                    endpoint,
-                    headers={"Authorization": f"Bearer {self.api_token}"},
-                    files={"files": (input_path.name, f, mime)},
-                )
+            # Read file into memory asynchronously to avoid blocking the event loop.
+            # aiofiles is already a project dependency. For typical documents
+            # (PDF/Office < 50MB) this is safe; CF toMarkdown has no documented
+            # size limit but network upload is the real bottleneck anyway.
+            import aiofiles
+            async with aiofiles.open(input_path, "rb") as f:
+                file_content = await f.read()
+
+            response = await client.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {self.api_token}"},
+                files={"files": (input_path.name, file_content, mime)},
+            )
             response.raise_for_status()
 
             data = response.json()
@@ -2313,7 +2341,7 @@ git commit -m "feat(converter): add Cloudflare Workers AI toMarkdown backend
 
 **目的：** 使用真实 fixtures 目录和 CLI 命令验收全部 4 个 Task 的集成效果，确保输出正确。
 
-**前置条件：** Task 1-4 全部完成并通过回归测试。
+**前置条件：** Task 1-4 全部完成并通过回归测试。执行前先运行 Step 0 确认 fixtures 完整。
 
 **Fixtures 目录内容：**
 
@@ -2328,6 +2356,22 @@ packages/markitai/tests/fixtures/
 │   ├── file_example_XLS_100.xls
 │   └── file-sample_100kB.doc
 └── test.urls                           # 3 URLs including x.com
+```
+
+### Step 0: Fixtures 完整性前置检查
+
+```bash
+# 验证所有 E2E 所需的 fixture 文件存在
+FIXTURES="packages/markitai/tests/fixtures"
+FAIL=0
+for f in candy.JPG file-example_PDF_500_kB.pdf file_example_XLSX_100.xlsx \
+         Free_Test_Data_500KB_PPTX.pptx test.urls; do
+    [ -f "$FIXTURES/$f" ] && echo "✅ $f" || { echo "❌ $f MISSING"; FAIL=1; }
+done
+for f in file_example_PPT_250kB.ppt file_example_XLS_100.xls file-sample_100kB.doc; do
+    [ -f "$FIXTURES/sub_dir/$f" ] && echo "✅ sub_dir/$f" || { echo "❌ sub_dir/$f MISSING"; FAIL=1; }
+done
+[ $FAIL -eq 0 ] && echo "All fixtures present ✓" || echo "⛔ Fix missing fixtures before proceeding"
 ```
 
 ### Step 1: 基线测试（本地转换，不启用任何 CF 功能）
