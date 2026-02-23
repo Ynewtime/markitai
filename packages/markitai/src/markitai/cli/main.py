@@ -199,6 +199,13 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Force Jina Reader API for URL fetching.",
 )
 @click.option(
+    "--cloudflare",
+    "use_cloudflare",
+    is_flag=True,
+    help="Use Cloudflare cloud backend (BR for URLs, toMarkdown for files). "
+    "Requires CF API token and account ID in config. Available on CF Free plan.",
+)
+@click.option(
     "--verbose",
     is_flag=True,
     help="Enable verbose output.",
@@ -253,6 +260,7 @@ def app(
     llm_concurrency: int | None,
     use_playwright: bool,
     use_jina: bool,
+    use_cloudflare: bool,
     verbose: bool,
     quiet: bool,
     dry_run: bool,
@@ -448,9 +456,10 @@ def app(
             console.print()
 
     # Validate fetch strategy flags (mutually exclusive)
-    if use_playwright and use_jina:
+    strategy_flags = sum([use_playwright, use_jina, use_cloudflare])
+    if strategy_flags > 1:
         console.print(
-            "[red]Error: --playwright and --jina are mutually exclusive.[/red]"
+            "[red]Error: --playwright, --jina, and --cloudflare are mutually exclusive.[/red]"
         )
         ctx.exit(1)
 
@@ -463,6 +472,11 @@ def app(
     elif use_jina:
         fetch_strategy = FetchStrategy.JINA
         explicit_fetch_strategy = True
+    elif use_cloudflare:
+        fetch_strategy = FetchStrategy.CLOUDFLARE
+        explicit_fetch_strategy = True
+        # Also enable CF Workers AI toMarkdown for file conversion
+        cfg.fetch.cloudflare.convert_enabled = True
     else:
         # Use config default or auto
         fetch_strategy = FetchStrategy(cfg.fetch.strategy)

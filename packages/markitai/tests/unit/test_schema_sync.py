@@ -8,6 +8,7 @@ import pytest
 from markitai.config import (
     BatchConfig,
     CacheConfig,
+    CloudflareConfig,
     FetchConfig,
     ImageConfig,
     JinaConfig,
@@ -191,6 +192,13 @@ class TestModelFieldSync:
         """Verify all FetchConfig fields are in schema."""
         model_fields = set(FetchConfig.model_fields.keys())
         schema_fields = set(schema["$defs"]["FetchConfig"]["properties"].keys())
+        missing = model_fields - schema_fields
+        assert not missing, f"Fields missing from schema: {missing}"
+
+    def test_cloudflare_config_fields_match(self, schema: dict) -> None:
+        """Verify all CloudflareConfig fields are in schema."""
+        model_fields = set(CloudflareConfig.model_fields.keys())
+        schema_fields = set(schema["$defs"]["CloudflareConfig"]["properties"].keys())
         missing = model_fields - schema_fields
         assert not missing, f"Fields missing from schema: {missing}"
 

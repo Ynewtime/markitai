@@ -3376,3 +3376,195 @@ class TestContentNegotiation:
 
         # The key assertion: text/html response does NOT get the "server-markdown" path
         # (it falls through to markitdown conversion as before)
+
+
+class TestCloudflareStrategy:
+    """Tests for CF Browser Rendering fetch strategy."""
+
+    def test_cloudflare_strategy_exists(self):
+        """FetchStrategy enum has CLOUDFLARE value."""
+        from markitai.fetch import FetchStrategy
+
+        assert hasattr(FetchStrategy, "CLOUDFLARE")
+        assert FetchStrategy.CLOUDFLARE.value == "cloudflare"
+
+    def test_cloudflare_config_defaults(self):
+        """CloudflareConfig has sensible defaults."""
+        from markitai.config import CloudflareConfig
+
+        config = CloudflareConfig()
+        assert config.api_token is None
+        assert config.account_id is None
+        assert config.timeout == 30000
+        assert config.wait_until == "networkidle0"
+        assert config.cache_ttl == 0
+        assert config.reject_resource_patterns is None
+
+    def test_cloudflare_config_in_fetch_config(self):
+        """FetchConfig includes cloudflare section."""
+        from markitai.config import FetchConfig
+
+        config = FetchConfig()
+        assert hasattr(config, "cloudflare")
+        assert config.cloudflare.api_token is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_cloudflare_success(self):
+        """Successful CF BR fetch returns markdown content from JSON envelope."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        # CF REST API returns JSON envelope: {"success": true, "result": "<markdown>"}
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "success": True,
+            "result": "# Hello World\n\nContent from CF BR.",
+            "errors": [],
+            "messages": [],
+        }
+        mock_response.headers = {"X-Browser-Ms-Used": "1500"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("httpx.AsyncClient") as mock_client_class,
+        ):
+            mock_ctx = AsyncMock()
+            mock_ctx.__aenter__.return_value = mock_client
+            mock_ctx.__aexit__.return_value = None
+            mock_client_class.return_value = mock_ctx
+
+            result = await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="test-token",
+                account_id="test-account",
+            )
+
+        assert result.content == "# Hello World\n\nContent from CF BR."
+        assert result.strategy_used == "cloudflare"
+        assert result.metadata.get("browser_ms_used") == "1500"
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_cloudflare_api_success_false(self):
+        """CF API returns success=false with error details."""
+        from markitai.fetch import FetchError, fetch_with_cloudflare
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "success": False,
+            "result": None,
+            "errors": [{"code": 1000, "message": "Navigation timeout"}],
+            "messages": [],
+        }
+        mock_response.headers = {}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("httpx.AsyncClient") as mock_client_class,
+        ):
+            mock_ctx = AsyncMock()
+            mock_ctx.__aenter__.return_value = mock_client
+            mock_ctx.__aexit__.return_value = None
+            mock_client_class.return_value = mock_ctx
+
+            with pytest.raises(FetchError, match="CF BR API error"):
+                await fetch_with_cloudflare(
+                    url="https://example.com",
+                    api_token="test-token",
+                    account_id="test-account",
+                )
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_cloudflare_no_credentials(self):
+        """Raises FetchError when credentials are missing."""
+        from markitai.fetch import FetchError, fetch_with_cloudflare
+
+        with pytest.raises(FetchError, match="Cloudflare API token and account ID required"):
+            await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token=None,
+                account_id="test",
+            )
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_cloudflare_http_error(self):
+        """HTTP error (non-200) raises FetchError."""
+        from markitai.fetch import FetchError, fetch_with_cloudflare
+
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.text = "Forbidden"
+        mock_response.raise_for_status = MagicMock(
+            side_effect=Exception("403 Forbidden")
+        )
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("httpx.AsyncClient") as mock_client_class,
+        ):
+            mock_ctx = AsyncMock()
+            mock_ctx.__aenter__.return_value = mock_client
+            mock_ctx.__aexit__.return_value = None
+            mock_client_class.return_value = mock_ctx
+
+            with pytest.raises(FetchError, match="Cloudflare"):
+                await fetch_with_cloudflare(
+                    url="https://example.com",
+                    api_token="bad-token",
+                    account_id="test-account",
+                )
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_cloudflare_custom_reject_patterns(self):
+        """Custom reject_resource_patterns are sent in payload."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        captured_payload = {}
+
+        async def mock_post(url, headers=None, json=None):
+            nonlocal captured_payload
+            captured_payload = json or {}
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "success": True,
+                "result": "# Test\n\nContent for testing reject patterns.",
+                "errors": [],
+                "messages": [],
+            }
+            mock_resp.headers = {}
+            mock_resp.raise_for_status = MagicMock()
+            return mock_resp
+
+        mock_client = AsyncMock()
+        mock_client.post = mock_post
+
+        custom_patterns = ["/analytics/", "/\\.css$/", "/\\.woff2?$/"]
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("httpx.AsyncClient") as mock_client_class,
+        ):
+            mock_ctx = AsyncMock()
+            mock_ctx.__aenter__.return_value = mock_client
+            mock_ctx.__aexit__.return_value = None
+            mock_client_class.return_value = mock_ctx
+
+            await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="test-token",
+                account_id="test-account",
+                reject_resource_patterns=custom_patterns,
+            )
+
+        assert captured_payload.get("rejectRequestPattern") == custom_patterns

@@ -101,6 +101,10 @@ class TestMarkitaiConfig:
         assert config.image.format == "jpeg"
         assert config.ocr.enabled is False
         assert config.log.level == "INFO"
+        # Cloudflare config defaults
+        assert config.fetch.cloudflare.api_token is None
+        assert config.fetch.cloudflare.account_id is None
+        assert config.fetch.cloudflare.convert_enabled is False
 
     def test_custom_values(self, sample_config_dict: dict) -> None:
         """Test configuration with custom values."""

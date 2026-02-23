@@ -77,6 +77,72 @@
       "title": "CacheConfig",
       "type": "object"
     },
+    "CloudflareConfig": {
+      "description": "Cloudflare Browser Rendering + Workers AI configuration.\n\nUsed as a cloud-based fallback for URL fetching (Browser Rendering /markdown API)\nand file conversion (Workers AI toMarkdown API). Requires a Cloudflare account\nwith Browser Rendering enabled (available on Free plan).\n\nBoth api_token and account_id support env: syntax for environment variable resolution.",
+      "properties": {
+        "api_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Token"
+        },
+        "account_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Account Id"
+        },
+        "timeout": {
+          "default": 30000,
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "wait_until": {
+          "default": "networkidle0",
+          "title": "Wait Until",
+          "type": "string"
+        },
+        "cache_ttl": {
+          "default": 0,
+          "title": "Cache Ttl",
+          "type": "integer"
+        },
+        "reject_resource_patterns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reject Resource Patterns"
+        },
+        "convert_enabled": {
+          "default": false,
+          "title": "Convert Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "CloudflareConfig",
+      "type": "object"
+    },
     "FetchConfig": {
       "description": "URL fetch configuration for handling static and JS-rendered pages.",
       "properties": {
@@ -86,7 +152,8 @@
             "auto",
             "static",
             "playwright",
-            "jina"
+            "jina",
+            "cloudflare"
           ],
           "title": "Strategy",
           "type": "string"
@@ -96,6 +163,9 @@
         },
         "jina": {
           "$ref": "#/$defs/JinaConfig"
+        },
+        "cloudflare": {
+          "$ref": "#/$defs/CloudflareConfig"
         },
         "fallback_patterns": {
           "items": {

@@ -373,12 +373,42 @@ class JinaConfig(BaseModel):
         return _resolve_api_key(self.api_key, strict=strict)
 
 
+class CloudflareConfig(BaseModel):
+    """Cloudflare Browser Rendering + Workers AI configuration.
+
+    Used as a cloud-based fallback for URL fetching (Browser Rendering /markdown API)
+    and file conversion (Workers AI toMarkdown API). Requires a Cloudflare account
+    with Browser Rendering enabled (available on Free plan).
+
+    Both api_token and account_id support env: syntax for environment variable resolution.
+    """
+
+    api_token: str | None = None  # Supports env: syntax (CF API token)
+    account_id: str | None = None  # Supports env: syntax (CF account ID)
+    timeout: int = 30000  # milliseconds (for BR /markdown API)
+    wait_until: str = "networkidle0"  # CF BR wait event
+    cache_ttl: int = 0  # BR cache TTL in seconds (0 = no cache)
+    reject_resource_patterns: list[str] | None = None  # e.g. ["/\\.css$/"]
+    convert_enabled: bool = False  # Enable Workers AI toMarkdown for files
+
+    def get_resolved_api_token(self, strict: bool = False) -> str | None:
+        """Get API token with env: syntax resolved."""
+        return _resolve_api_key(self.api_token, strict=strict)
+
+    def get_resolved_account_id(self, strict: bool = False) -> str | None:
+        """Get account ID with env: syntax resolved."""
+        return _resolve_api_key(self.account_id, strict=strict)
+
+
 class FetchConfig(BaseModel):
     """URL fetch configuration for handling static and JS-rendered pages."""
 
-    strategy: Literal["auto", "static", "playwright", "jina"] = DEFAULT_FETCH_STRATEGY
+    strategy: Literal["auto", "static", "playwright", "jina", "cloudflare"] = (
+        DEFAULT_FETCH_STRATEGY
+    )
     playwright: PlaywrightConfig = Field(default_factory=PlaywrightConfig)
     jina: JinaConfig = Field(default_factory=JinaConfig)
+    cloudflare: CloudflareConfig = Field(default_factory=CloudflareConfig)
     fallback_patterns: list[str] = Field(
         default_factory=lambda: list(DEFAULT_FETCH_FALLBACK_PATTERNS)
     )
