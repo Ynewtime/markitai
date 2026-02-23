@@ -1093,12 +1093,25 @@ def _get_markitdown() -> Any:
     """Get or create the shared MarkItDown instance.
 
     Reusing a single instance avoids repeated initialization overhead.
+    Includes Accept header for CF Markdown for Agents content negotiation.
     """
     global _markitdown_instance
     if _markitdown_instance is None:
         from markitdown import MarkItDown
 
         _markitdown_instance = MarkItDown()
+        # Enable Cloudflare Markdown for Agents content negotiation.
+        # CF-enabled sites return text/markdown directly (higher quality, fewer tokens).
+        # Non-CF sites return text/html as usual — zero impact on existing behavior.
+        #
+        # Note: This patches the singleton's internal requests.Session headers.
+        # Safe because _get_markitdown() is called once per process (guarded by
+        # `if _markitdown_instance is None`), and the session is never internally
+        # rebuilt by MarkItDown. If markitdown ever changes this, the test
+        # `test_markitdown_instance_has_accept_markdown_header` will catch it.
+        _markitdown_instance._requests_session.headers.update(
+            {"Accept": "text/markdown, text/html;q=0.9, */*;q=0.5"}
+        )
     return _markitdown_instance
 
 
@@ -1539,7 +1552,10 @@ async def fetch_with_static_conditional(
     )
 
     # Build conditional request headers
-    headers: dict[str, str] = {}
+    # CF Markdown for Agents content negotiation
+    headers: dict[str, str] = {
+        "Accept": "text/markdown, text/html;q=0.9, */*;q=0.5",
+    }
     if cached_etag:
         headers["If-None-Match"] = cached_etag
     if cached_last_modified:
@@ -1579,6 +1595,43 @@ async def fetch_with_static_conditional(
                 f"[ConditionalFetch] {response.status_code} response, "
                 f"content-length={len(response.content)}"
             )
+
+            # Check if server returned markdown directly (CF Markdown for Agents)
+            content_type_header = response.headers.get("Content-Type", "")
+            if "text/markdown" in content_type_header:
+                markdown_content = response.text
+                token_hint = response.headers.get("x-markdown-tokens")
+                logger.debug(
+                    f"[ConditionalFetch] Server returned markdown directly"
+                    f"{f' (~{token_hint} tokens)' if token_hint else ''}"
+                )
+                # Extract title from first heading
+                title = None
+                title_match = re.match(
+                    r"^#\s+(.+)$", markdown_content, re.MULTILINE
+                )
+                if title_match:
+                    title = title_match.group(1)
+
+                fetch_result = FetchResult(
+                    content=markdown_content,
+                    strategy_used="static",
+                    title=title,
+                    url=url,
+                    final_url=str(response.url),
+                    metadata={
+                        "converter": "server-markdown",
+                        "conditional": True,
+                        "token_hint": int(token_hint) if token_hint else None,
+                    },
+                )
+
+                return ConditionalFetchResult(
+                    result=fetch_result,
+                    not_modified=False,
+                    etag=response_etag,
+                    last_modified=response_last_modified,
+                )
 
             # Determine file extension from Content-Type or URL
             content_type = response.headers.get("Content-Type", "")
