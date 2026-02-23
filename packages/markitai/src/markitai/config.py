@@ -345,6 +345,14 @@ class PlaywrightConfig(BaseModel):
     )
     extra_wait_ms: int = DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS  # Extra wait after load
 
+    # Advanced browser control (aligned with CF Browser Rendering API capabilities)
+    wait_for_selector: str | None = None  # CSS selector to wait for before extraction
+    cookies: list[dict[str, str]] | None = None  # [{name, value, domain, path}, ...]
+    reject_resource_patterns: list[str] | None = None  # ["**/*.css", "**/*.woff2"]
+    extra_http_headers: dict[str, str] | None = None  # {"Accept-Language": "zh-CN"}
+    user_agent: str | None = None  # Custom User-Agent string
+    http_credentials: dict[str, str] | None = None  # {username, password}
+
 
 class JinaConfig(BaseModel):
     """Jina Reader API configuration."""
