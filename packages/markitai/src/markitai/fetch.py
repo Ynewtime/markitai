@@ -1938,6 +1938,13 @@ async def fetch_url(
                 screenshot_config=screenshot_config,
                 output_dir=screenshot_dir,
                 renderer=_renderer,
+                # Advanced browser control
+                wait_for_selector=getattr(config.playwright, "wait_for_selector", None),
+                cookies=getattr(config.playwright, "cookies", None),
+                reject_resource_patterns=getattr(config.playwright, "reject_resource_patterns", None),
+                extra_http_headers=getattr(config.playwright, "extra_http_headers", None),
+                user_agent=getattr(config.playwright, "user_agent", None),
+                http_credentials=getattr(config.playwright, "http_credentials", None),
             )
 
             result = FetchResult(
@@ -2019,6 +2026,13 @@ async def fetch_url(
             screenshot_config=screenshot_config,
             output_dir=screenshot_dir,
             renderer=_renderer,
+            # Advanced browser control
+            wait_for_selector=getattr(config.playwright, "wait_for_selector", None),
+            cookies=getattr(config.playwright, "cookies", None),
+            reject_resource_patterns=getattr(config.playwright, "reject_resource_patterns", None),
+            extra_http_headers=getattr(config.playwright, "extra_http_headers", None),
+            user_agent=getattr(config.playwright, "user_agent", None),
+            http_credentials=getattr(config.playwright, "http_credentials", None),
         )
 
         result = FetchResult(
@@ -2153,6 +2167,13 @@ async def _fetch_multi_source(
                 screenshot_config=screenshot_config,
                 output_dir=screenshot_dir,
                 renderer=renderer,
+                # Advanced browser control
+                wait_for_selector=getattr(config.playwright, "wait_for_selector", None),
+                cookies=getattr(config.playwright, "cookies", None),
+                reject_resource_patterns=getattr(config.playwright, "reject_resource_patterns", None),
+                extra_http_headers=getattr(config.playwright, "extra_http_headers", None),
+                user_agent=getattr(config.playwright, "user_agent", None),
+                http_credentials=getattr(config.playwright, "http_credentials", None),
             )
             result = FetchResult(
                 content=pw_result.content,
@@ -2425,6 +2446,13 @@ async def _fetch_with_fallback(
                     screenshot_config=screenshot_kwargs.get("screenshot_config"),
                     output_dir=screenshot_kwargs.get("screenshot_dir"),
                     renderer=renderer,
+                    # Advanced browser control
+                    wait_for_selector=getattr(config.playwright, "wait_for_selector", None),
+                    cookies=getattr(config.playwright, "cookies", None),
+                    reject_resource_patterns=getattr(config.playwright, "reject_resource_patterns", None),
+                    extra_http_headers=getattr(config.playwright, "extra_http_headers", None),
+                    user_agent=getattr(config.playwright, "user_agent", None),
+                    http_credentials=getattr(config.playwright, "http_credentials", None),
                 )
 
                 result = FetchResult(

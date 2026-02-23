@@ -1,32 +1,5 @@
 {
   "$defs": {
-    "PlaywrightConfig": {
-      "description": "Playwright configuration for JS-rendered pages.",
-      "properties": {
-        "timeout": {
-          "default": 30000,
-          "title": "Timeout",
-          "type": "integer"
-        },
-        "wait_for": {
-          "default": "domcontentloaded",
-          "enum": [
-            "load",
-            "domcontentloaded",
-            "networkidle"
-          ],
-          "title": "Wait For",
-          "type": "string"
-        },
-        "extra_wait_ms": {
-          "default": 5000,
-          "title": "Extra Wait Ms",
-          "type": "integer"
-        }
-      },
-      "title": "PlaywrightConfig",
-      "type": "object"
-    },
     "BatchConfig": {
       "description": "Batch processing configuration.",
       "properties": {
@@ -63,7 +36,6 @@
           "default": 0,
           "minimum": 0,
           "title": "Heavy Task Limit",
-          "description": "Max concurrent heavy tasks (0 = auto-detect from RAM)",
           "type": "integer"
         }
       },
@@ -402,7 +374,7 @@
       "type": "object"
     },
     "ModelInfo": {
-      "description": "Model metadata.",
+      "description": "Model metadata. All fields are optional and auto-detected from litellm if not set.",
       "properties": {
         "supports_vision": {
           "anyOf": [
@@ -414,7 +386,6 @@
             }
           ],
           "default": null,
-          "description": "Optional. If not set, auto-detected from litellm.",
           "title": "Supports Vision"
         },
         "max_tokens": {
@@ -427,7 +398,6 @@
             }
           ],
           "default": null,
-          "description": "Optional. If not set, auto-detected from litellm.",
           "title": "Max Tokens"
         },
         "max_input_tokens": {
@@ -440,11 +410,9 @@
             }
           ],
           "default": null,
-          "description": "Optional. If not set, auto-detected from litellm.",
           "title": "Max Input Tokens"
         }
       },
-      "description": "Model metadata. All fields are optional and auto-detected from litellm if not set.",
       "title": "ModelInfo",
       "type": "object"
     },
@@ -492,6 +460,120 @@
       "title": "OutputConfig",
       "type": "object"
     },
+    "PlaywrightConfig": {
+      "description": "Playwright configuration for JS-rendered pages.",
+      "properties": {
+        "timeout": {
+          "default": 30000,
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "wait_for": {
+          "default": "domcontentloaded",
+          "enum": [
+            "load",
+            "domcontentloaded",
+            "networkidle"
+          ],
+          "title": "Wait For",
+          "type": "string"
+        },
+        "extra_wait_ms": {
+          "default": 5000,
+          "title": "Extra Wait Ms",
+          "type": "integer"
+        },
+        "wait_for_selector": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wait For Selector"
+        },
+        "cookies": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cookies"
+        },
+        "reject_resource_patterns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reject Resource Patterns"
+        },
+        "extra_http_headers": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Extra Http Headers"
+        },
+        "user_agent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Agent"
+        },
+        "http_credentials": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Http Credentials"
+        }
+      },
+      "title": "PlaywrightConfig",
+      "type": "object"
+    },
     "PresetConfig": {
       "description": "Preset configuration defining which features to enable.",
       "properties": {
@@ -525,7 +607,7 @@
       "type": "object"
     },
     "PromptsConfig": {
-      "description": "Prompts configuration for custom prompt overrides. Each prompt has a system and user variant.",
+      "description": "Prompts configuration for custom prompt overrides.\n\nEach prompt has a system and user variant:\n- system: Contains instructions and context\n- user: Contains the actual request with content placeholders",
       "properties": {
         "dir": {
           "default": "~/.markitai/prompts",
@@ -533,102 +615,242 @@
           "type": "string"
         },
         "cleaner_system": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Cleaner System"
         },
         "cleaner_user": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Cleaner User"
         },
         "image_caption_system": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Image Caption System"
         },
         "image_caption_user": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Image Caption User"
         },
         "image_description_system": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Image Description System"
         },
         "image_description_user": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Image Description User"
         },
         "image_analysis_system": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Image Analysis System"
         },
         "image_analysis_user": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Image Analysis User"
         },
         "page_content_system": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Page Content System"
         },
         "page_content_user": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Page Content User"
         },
         "document_enhance_system": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Document Enhance System"
         },
         "document_enhance_user": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Document Enhance User"
         },
         "document_enhance_complete_system": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Document Enhance Complete System"
         },
         "document_enhance_complete_user": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Document Enhance Complete User"
         },
         "document_process_system": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Document Process System"
         },
         "document_process_user": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Document Process User"
         },
         "document_vision_system": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Document Vision System"
         },
         "document_vision_user": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Document Vision User"
         },
         "url_enhance_system": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Url Enhance System"
         },
         "url_enhance_user": {
-          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": null,
           "title": "Url Enhance User"
         }

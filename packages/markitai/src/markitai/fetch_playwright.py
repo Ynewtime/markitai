@@ -303,12 +303,43 @@ class PlaywrightRenderer:
         extra_wait_ms: int = DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS,
         screenshot_config: ScreenshotConfig | None = None,
         output_dir: Path | None = None,
+        # Advanced browser control (aligned with CF Browser Rendering API)
+        wait_for_selector: str | None = None,
+        cookies: list[dict[str, str]] | None = None,
+        reject_resource_patterns: list[str] | None = None,
+        extra_http_headers: dict[str, str] | None = None,
+        user_agent: str | None = None,
+        http_credentials: dict[str, str] | None = None,
     ) -> PlaywrightFetchResult:
         """Fetch URL using a persistent browser instance."""
         browser = await self._ensure_browser()
-        context = await browser.new_context()
+
+        # Build context options from advanced config
+        ctx_options: dict[str, Any] = {}
+        if extra_http_headers:
+            ctx_options["extra_http_headers"] = extra_http_headers
+        if user_agent:
+            ctx_options["user_agent"] = user_agent
+        if http_credentials:
+            ctx_options["http_credentials"] = http_credentials
+
+        context = await browser.new_context(**ctx_options)
+
+        # Inject cookies before navigation
+        if cookies:
+            await context.add_cookies(cookies)
+
         try:
             page = await context.new_page()
+
+            # Set up resource filtering before navigation
+            if reject_resource_patterns:
+
+                async def _abort_route(route: Any) -> None:
+                    await route.abort()
+
+                for pattern in reject_resource_patterns:
+                    await page.route(pattern, _abort_route)
 
             # Map wait_for string to Playwright's literal type
             wait_until_map = {
@@ -320,7 +351,17 @@ class PlaywrightRenderer:
 
             await page.goto(url, timeout=timeout, wait_until=wait_until)
 
-            if extra_wait_ms > 0:
+            # Precise element waiting (preferred) or time-based fallback
+            if wait_for_selector:
+                try:
+                    await page.wait_for_selector(
+                        wait_for_selector, timeout=min(timeout, 10000)
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"wait_for_selector '{wait_for_selector}' timed out: {e}"
+                    )
+            elif extra_wait_ms > 0:
                 await asyncio.sleep(extra_wait_ms / 1000)
 
             # Auto-scroll to trigger lazy-loaded content
@@ -392,8 +433,30 @@ async def fetch_with_playwright(
     screenshot_config: ScreenshotConfig | None = None,
     output_dir: Path | None = None,
     renderer: PlaywrightRenderer | None = None,
+    # Advanced browser control
+    wait_for_selector: str | None = None,
+    cookies: list[dict[str, str]] | None = None,
+    reject_resource_patterns: list[str] | None = None,
+    extra_http_headers: dict[str, str] | None = None,
+    user_agent: str | None = None,
+    http_credentials: dict[str, str] | None = None,
 ) -> PlaywrightFetchResult:
     """Fetch URL using Playwright (reuses renderer if provided)."""
+    # Collect advanced kwargs
+    advanced_kwargs: dict[str, Any] = {}
+    if wait_for_selector is not None:
+        advanced_kwargs["wait_for_selector"] = wait_for_selector
+    if cookies is not None:
+        advanced_kwargs["cookies"] = cookies
+    if reject_resource_patterns is not None:
+        advanced_kwargs["reject_resource_patterns"] = reject_resource_patterns
+    if extra_http_headers is not None:
+        advanced_kwargs["extra_http_headers"] = extra_http_headers
+    if user_agent is not None:
+        advanced_kwargs["user_agent"] = user_agent
+    if http_credentials is not None:
+        advanced_kwargs["http_credentials"] = http_credentials
+
     if renderer:
         return await renderer.fetch(
             url,
@@ -402,6 +465,7 @@ async def fetch_with_playwright(
             extra_wait_ms=extra_wait_ms,
             screenshot_config=screenshot_config,
             output_dir=output_dir,
+            **advanced_kwargs,
         )
 
     # Legacy one-off path
@@ -413,6 +477,7 @@ async def fetch_with_playwright(
             extra_wait_ms=extra_wait_ms,
             screenshot_config=screenshot_config,
             output_dir=output_dir,
+            **advanced_kwargs,
         )
 
 

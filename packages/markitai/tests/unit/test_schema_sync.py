@@ -8,10 +8,13 @@ import pytest
 from markitai.config import (
     BatchConfig,
     CacheConfig,
+    FetchConfig,
     ImageConfig,
+    JinaConfig,
     LogConfig,
     OCRConfig,
     OutputConfig,
+    PlaywrightConfig,
     PresetConfig,
     PromptsConfig,
     RouterSettings,
@@ -167,6 +170,27 @@ class TestModelFieldSync:
         model_fields = set(CacheConfig.model_fields.keys())
         schema_fields = set(schema["$defs"]["CacheConfig"]["properties"].keys())
 
+        missing = model_fields - schema_fields
+        assert not missing, f"Fields missing from schema: {missing}"
+
+    def test_playwright_config_fields_match(self, schema: dict) -> None:
+        """Verify all PlaywrightConfig fields are in schema."""
+        model_fields = set(PlaywrightConfig.model_fields.keys())
+        schema_fields = set(schema["$defs"]["PlaywrightConfig"]["properties"].keys())
+        missing = model_fields - schema_fields
+        assert not missing, f"Fields missing from schema: {missing}"
+
+    def test_jina_config_fields_match(self, schema: dict) -> None:
+        """Verify all JinaConfig fields are in schema."""
+        model_fields = set(JinaConfig.model_fields.keys())
+        schema_fields = set(schema["$defs"]["JinaConfig"]["properties"].keys())
+        missing = model_fields - schema_fields
+        assert not missing, f"Fields missing from schema: {missing}"
+
+    def test_fetch_config_fields_match(self, schema: dict) -> None:
+        """Verify all FetchConfig fields are in schema."""
+        model_fields = set(FetchConfig.model_fields.keys())
+        schema_fields = set(schema["$defs"]["FetchConfig"]["properties"].keys())
         missing = model_fields - schema_fields
         assert not missing, f"Fields missing from schema: {missing}"
 

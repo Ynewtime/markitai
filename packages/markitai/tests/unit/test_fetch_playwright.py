@@ -1149,3 +1149,238 @@ class TestFetchWithIncompleteContent:
             )
 
             assert result is not None
+
+
+class TestPlaywrightConfigExtended:
+    """Tests for extended Playwright configuration."""
+
+    def test_default_new_fields_are_none(self):
+        """New fields default to None (no behavior change)."""
+        from markitai.config import PlaywrightConfig
+
+        config = PlaywrightConfig()
+        assert config.wait_for_selector is None
+        assert config.cookies is None
+        assert config.reject_resource_patterns is None
+        assert config.extra_http_headers is None
+        assert config.user_agent is None
+        assert config.http_credentials is None
+
+    def test_config_with_all_new_fields(self):
+        """All new fields can be set."""
+        from markitai.config import PlaywrightConfig
+
+        config = PlaywrightConfig(
+            wait_for_selector="#main-content",
+            cookies=[{"name": "session", "value": "abc", "domain": ".example.com", "path": "/"}],
+            reject_resource_patterns=["**/*.css", "**/*.woff2"],
+            extra_http_headers={"Accept-Language": "zh-CN"},
+            user_agent="MyBot/1.0",
+            http_credentials={"username": "user", "password": "pass"},
+        )
+        assert config.wait_for_selector == "#main-content"
+        assert len(config.cookies) == 1
+        assert config.cookies[0]["name"] == "session"
+        assert config.reject_resource_patterns == ["**/*.css", "**/*.woff2"]
+        assert config.extra_http_headers == {"Accept-Language": "zh-CN"}
+        assert config.user_agent == "MyBot/1.0"
+        assert config.http_credentials == {"username": "user", "password": "pass"}
+
+
+@requires_playwright
+class TestPlaywrightRendererEnhanced:
+    """Tests for enhanced Playwright renderer capabilities."""
+
+    @pytest.mark.asyncio
+    async def test_cookies_are_injected_into_context(self):
+        """Cookies are added to browser context before navigation."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        cookies = [{"name": "session", "value": "abc123", "domain": ".example.com", "path": "/"}]
+
+        mock_context = AsyncMock()
+        mock_page = AsyncMock()
+        long_content = "<html><body>" + "Test content here. " * 100 + "</body></html>"
+        mock_page.title = AsyncMock(return_value="Test")
+        mock_page.url = "https://example.com"
+        mock_page.content = AsyncMock(return_value=long_content)
+        mock_page.goto = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+        mock_context.add_cookies = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        mock_browser.close = AsyncMock()
+
+        mock_chromium = AsyncMock()
+        mock_chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_pw = AsyncMock()
+        mock_pw.chromium = mock_chromium
+        mock_pw.stop = AsyncMock()
+        mock_starter = AsyncMock()
+        mock_starter.start = AsyncMock(return_value=mock_pw)
+
+        with patch("playwright.async_api.async_playwright", return_value=mock_starter):
+            renderer = PlaywrightRenderer()
+            await renderer.fetch(
+                "https://example.com",
+                extra_wait_ms=0,
+                cookies=cookies,
+            )
+
+        mock_context.add_cookies.assert_called_once_with(cookies)
+
+    @pytest.mark.asyncio
+    async def test_wait_for_selector_is_called(self):
+        """wait_for_selector is called after navigation when configured."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        mock_context = AsyncMock()
+        mock_page = AsyncMock()
+        long_content = "<html><body>" + "Test content here. " * 100 + "</body></html>"
+        mock_page.title = AsyncMock(return_value="Test")
+        mock_page.url = "https://example.com"
+        mock_page.content = AsyncMock(return_value=long_content)
+        mock_page.goto = AsyncMock()
+        mock_page.wait_for_selector = AsyncMock(return_value=None)
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        mock_browser.close = AsyncMock()
+        mock_chromium = AsyncMock()
+        mock_chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_pw = AsyncMock()
+        mock_pw.chromium = mock_chromium
+        mock_pw.stop = AsyncMock()
+        mock_starter = AsyncMock()
+        mock_starter.start = AsyncMock(return_value=mock_pw)
+
+        with patch("playwright.async_api.async_playwright", return_value=mock_starter):
+            renderer = PlaywrightRenderer()
+            await renderer.fetch(
+                "https://example.com",
+                extra_wait_ms=0,
+                wait_for_selector="#main-content",
+            )
+
+        mock_page.wait_for_selector.assert_called_once()
+        call_args = mock_page.wait_for_selector.call_args
+        assert call_args[0][0] == "#main-content"
+
+    @pytest.mark.asyncio
+    async def test_resource_filtering_sets_up_routes(self):
+        """reject_resource_patterns installs route handlers."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        mock_context = AsyncMock()
+        mock_page = AsyncMock()
+        long_content = "<html><body>" + "Test content here. " * 100 + "</body></html>"
+        mock_page.title = AsyncMock(return_value="Test")
+        mock_page.url = "https://example.com"
+        mock_page.content = AsyncMock(return_value=long_content)
+        mock_page.goto = AsyncMock()
+        mock_page.route = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        mock_browser.close = AsyncMock()
+        mock_chromium = AsyncMock()
+        mock_chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_pw = AsyncMock()
+        mock_pw.chromium = mock_chromium
+        mock_pw.stop = AsyncMock()
+        mock_starter = AsyncMock()
+        mock_starter.start = AsyncMock(return_value=mock_pw)
+
+        with patch("playwright.async_api.async_playwright", return_value=mock_starter):
+            renderer = PlaywrightRenderer()
+            await renderer.fetch(
+                "https://example.com",
+                extra_wait_ms=0,
+                reject_resource_patterns=["**/*.css", "**/*.woff2"],
+            )
+
+        assert mock_page.route.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_extra_http_headers_passed_to_context(self):
+        """extra_http_headers are passed to new_context."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        mock_context = AsyncMock()
+        mock_page = AsyncMock()
+        long_content = "<html><body>" + "Test content here. " * 100 + "</body></html>"
+        mock_page.title = AsyncMock(return_value="Test")
+        mock_page.url = "https://example.com"
+        mock_page.content = AsyncMock(return_value=long_content)
+        mock_page.goto = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        mock_browser.close = AsyncMock()
+        mock_chromium = AsyncMock()
+        mock_chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_pw = AsyncMock()
+        mock_pw.chromium = mock_chromium
+        mock_pw.stop = AsyncMock()
+        mock_starter = AsyncMock()
+        mock_starter.start = AsyncMock(return_value=mock_pw)
+
+        with patch("playwright.async_api.async_playwright", return_value=mock_starter):
+            renderer = PlaywrightRenderer()
+            await renderer.fetch(
+                "https://example.com",
+                extra_wait_ms=0,
+                extra_http_headers={"Accept-Language": "zh-CN"},
+                user_agent="MyBot/1.0",
+            )
+
+        ctx_call = mock_browser.new_context.call_args
+        assert ctx_call.kwargs.get("extra_http_headers") == {"Accept-Language": "zh-CN"}
+        assert ctx_call.kwargs.get("user_agent") == "MyBot/1.0"
+
+    @pytest.mark.asyncio
+    async def test_no_new_params_preserves_existing_behavior(self):
+        """When no new params are set, behavior is identical to before."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        mock_context = AsyncMock()
+        mock_page = AsyncMock()
+        long_content = "<html><body>" + "Test content here. " * 100 + "</body></html>"
+        mock_page.title = AsyncMock(return_value="Test")
+        mock_page.url = "https://example.com"
+        mock_page.content = AsyncMock(return_value=long_content)
+        mock_page.goto = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        mock_browser.close = AsyncMock()
+        mock_chromium = AsyncMock()
+        mock_chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_pw = AsyncMock()
+        mock_pw.chromium = mock_chromium
+        mock_pw.stop = AsyncMock()
+        mock_starter = AsyncMock()
+        mock_starter.start = AsyncMock(return_value=mock_pw)
+
+        with patch("playwright.async_api.async_playwright", return_value=mock_starter):
+            renderer = PlaywrightRenderer()
+            result = await renderer.fetch("https://example.com", extra_wait_ms=0)
+
+        # No cookies added, no routes set, no selector waited
+        mock_context.add_cookies.assert_not_called()
+        mock_page.route.assert_not_called()
+        mock_page.wait_for_selector.assert_not_called()
+        # new_context called without extra kwargs
+        ctx_kwargs = mock_browser.new_context.call_args.kwargs
+        assert "extra_http_headers" not in ctx_kwargs
+        assert "user_agent" not in ctx_kwargs
