@@ -37,6 +37,18 @@ class FileFormat(Enum):
     JPG = "jpg"
     PNG = "png"
     WEBP = "webp"
+    SVG = "svg"
+
+    # Structured data
+    CSV = "csv"
+    XML = "xml"
+
+    # OpenDocument
+    ODS = "ods"
+    ODT = "odt"
+
+    # Apple
+    NUMBERS = "numbers"
 
     # Unknown
     UNKNOWN = "unknown"
@@ -58,6 +70,12 @@ EXTENSION_MAP: dict[str, FileFormat] = {
     ".jpg": FileFormat.JPG,
     ".png": FileFormat.PNG,
     ".webp": FileFormat.WEBP,
+    ".svg": FileFormat.SVG,
+    ".csv": FileFormat.CSV,
+    ".xml": FileFormat.XML,
+    ".ods": FileFormat.ODS,
+    ".odt": FileFormat.ODT,
+    ".numbers": FileFormat.NUMBERS,
 }
 
 

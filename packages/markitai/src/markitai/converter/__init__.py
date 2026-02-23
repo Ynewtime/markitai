@@ -21,6 +21,10 @@ from markitai.converter.office import DocxConverter, PptxConverter, XlsxConverte
 from markitai.converter.pdf import PdfConverter
 from markitai.converter.text import MarkdownConverter, TxtConverter
 
+# Cloudflare converter is NOT auto-registered with @register_converter.
+# It shouldn't override local converters by default. Instead, it's explicitly
+# selected in the workflow layer when cloudflare.convert_enabled is True.
+
 __all__ = [
     "BaseConverter",
     "ConvertResult",
