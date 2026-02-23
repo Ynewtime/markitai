@@ -148,6 +148,31 @@ def validate_and_detect_format(
         )
 
     ctx.converter = get_converter(ctx.effective_input, config=ctx.config)
+
+    # Cloudflare toMarkdown fallback for formats without local converter
+    if ctx.converter is None:
+        cf_config = (
+            ctx.config.fetch.cloudflare
+            if hasattr(ctx.config.fetch, "cloudflare")
+            else None
+        )
+        if cf_config and cf_config.convert_enabled:
+            from markitai.converter.cloudflare import (
+                CF_SUPPORTED_FORMATS,
+                CloudflareConverter,
+            )
+
+            if fmt in CF_SUPPORTED_FORMATS:
+                api_token = cf_config.get_resolved_api_token()
+                account_id = cf_config.get_resolved_account_id()
+                if api_token and account_id:
+                    ctx.converter = CloudflareConverter(
+                        api_token=api_token,
+                        account_id=account_id,
+                        config=ctx.config,
+                    )
+                    logger.debug(f"Using CF toMarkdown for {fmt.value}")
+
     if ctx.converter is None:
         return ConversionStepResult(
             success=False, error=f"No converter available for format: {fmt.value}"
@@ -195,7 +220,13 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
             f"Converting {ctx.input_path.name}..." + (" [HEAVY]" if is_heavy else "")
         )
 
-        if is_heavy:
+        # Check if converter supports async (e.g. CloudflareConverter)
+        if hasattr(ctx.converter, "convert_async"):
+            ctx.conversion_result = await ctx.converter.convert_async(
+                ctx.effective_input,
+                output_dir=ctx.output_dir,
+            )
+        elif is_heavy:
             async with get_heavy_task_semaphore(ctx.config.batch.heavy_task_limit):
                 ctx.conversion_result = await run_in_converter_thread(
                     ctx.converter.convert,
