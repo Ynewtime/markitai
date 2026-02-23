@@ -2475,7 +2475,12 @@ class TestFetchWithFallback:
             "PlaywrightResult",
             (),
             {
-                "content": "# Browser Content",
+                "content": (
+                    "# Browser Content\n\n"
+                    "This is a substantial page with enough meaningful text content "
+                    "to pass the content validation check that ensures fetched pages "
+                    "contain real content rather than login walls or error messages."
+                ),
                 "title": "Test",
                 "final_url": "https://example.com",
                 "metadata": {},
@@ -3103,7 +3108,12 @@ class TestFetchWithFallbackJsDetection:
             "PlaywrightResult",
             (),
             {
-                "content": "# Full Content after browser render",
+                "content": (
+                    "# Full Content after browser render\n\n"
+                    "This is a substantial page with enough meaningful text content "
+                    "to pass the content validation check that ensures fetched pages "
+                    "contain real content rather than login walls or error messages."
+                ),
                 "title": "Test",
                 "final_url": "https://example.com",
                 "metadata": {},

@@ -652,3 +652,84 @@ markitai ./docs --no-cache-for "file1.pdf,reports/**"
 ::: tip
 system/user 拆分可以防止 LLM 意外地将提示词指令包含在其输出中。system 提示词定义角色和规则，而 user 提示词包含实际要处理的内容。
 :::
+
+## 中国大陆用户指南
+
+### 安装脚本镜像加速
+
+安装脚本会自动检测代理环境变量（`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`）。如果未检测到代理，会询问是否启用国内镜像加速，并提供以下镜像源选择：
+
+| 镜像源 | PyPI | npm | 推荐地域 |
+|--------|------|-----|----------|
+| **清华 TUNA** (默认) | `pypi.tuna.tsinghua.edu.cn` | `registry.npmmirror.com` | 北方 / 通用 |
+| **阿里云** | `mirrors.aliyun.com` | `registry.npmmirror.com` | 东部 |
+| **腾讯云** | `mirrors.cloud.tencent.com` | `mirrors.cloud.tencent.com` | 南方 |
+| **华为云** | `repo.huaweicloud.com` | `mirrors.huaweicloud.com` | 北方 |
+
+Playwright 浏览器二进制文件统一使用 npmmirror CDN 镜像（`cdn.npmmirror.com`），这是目前唯一可靠的公共镜像。
+
+你也可以在运行安装脚本前手动设置（以清华 TUNA 为例）：
+
+**macOS / Linux / WSL (Bash/Zsh):**
+
+```bash
+export UV_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
+export PLAYWRIGHT_DOWNLOAD_HOST="https://cdn.npmmirror.com/binaries/playwright"
+export NPM_CONFIG_REGISTRY="https://registry.npmmirror.com"
+```
+
+**Windows (PowerShell):**
+
+```powershell
+$env:UV_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
+$env:PLAYWRIGHT_DOWNLOAD_HOST = "https://cdn.npmmirror.com/binaries/playwright"
+$env:NPM_CONFIG_REGISTRY = "https://registry.npmmirror.com"
+```
+
+### LLM API 访问
+
+国内可用的 LLM 提供商及配置方式：
+
+| 提供商 | 可用性 | 说明 |
+|--------|--------|------|
+| **DeepSeek** | 直连可用 | 无需代理，直接使用 `deepseek/deepseek-chat` |
+| **Ollama** | 完全离线 | 本地模型，使用 `ollama/llama3.2` |
+| **API 代理服务** | 通过中转 | 通过 `api_base` 指向第三方中转服务 |
+| **OpenAI / Claude / Gemini** | 需代理 | 需代理或 `api_base` 中转 |
+
+使用 `api_base` 指向代理中转的示例配置：
+
+```json
+{
+  "llm": {
+    "model_list": [
+      {
+        "model_name": "default",
+        "litellm_params": {
+          "model": "openai/gpt-4o",
+          "api_key": "env:OPENAI_API_KEY",
+          "api_base": "https://your-api-proxy.com/v1"
+        }
+      }
+    ]
+  }
+}
+```
+
+### 代理配置
+
+如已有代理，设置环境变量即可对所有网络请求生效：
+
+```bash
+export HTTPS_PROXY="http://127.0.0.1:7890"
+export HTTP_PROXY="http://127.0.0.1:7890"
+```
+
+```powershell
+$env:HTTPS_PROXY = "http://127.0.0.1:7890"
+$env:HTTP_PROXY = "http://127.0.0.1:7890"
+```
+
+::: tip
+设置了代理环境变量后，安装脚本会自动跳过镜像加速配置。
+:::

@@ -2173,17 +2173,33 @@ async def _fetch_multi_source(
         final_browser_content = browser_content
         strategy_used = "browser"
     elif browser_content:
-        # Both invalid, but browser has content → use browser with warning
-        primary_content = browser_content
-        final_browser_content = browser_content
-        strategy_used = "browser"
-        warning_message = (
-            f"Warning: Content may be incomplete. "
-            f"Static: {static_reason}, Browser: {browser_reason}"
-        )
+        # Both sources invalid — try Jina as last-resort fallback
         logger.warning(
-            f"[URL] Both sources invalid, using browser content with warning: "
-            f"static={static_reason}, browser={browser_reason}"
+            f"[URL] Both sources invalid (static={static_reason}, "
+            f"browser={browser_reason}), trying Jina fallback"
+        )
+        try:
+            api_key = config.jina.get_resolved_api_key()
+            jina_result = await fetch_with_jina(url, api_key, config.jina.timeout)
+            jina_invalid, jina_reason = _is_invalid_content(jina_result.content)
+            if not jina_invalid:
+                # Jina got valid content — attach screenshot if available
+                jina_result.screenshot_path = screenshot_path
+                jina_result.metadata["fallback"] = "jina"
+                if cache is not None:
+                    await cache.aset(url, jina_result)
+                return jina_result
+            logger.debug(f"[URL] Jina fallback also invalid: {jina_reason}")
+        except JinaRateLimitError:
+            logger.warning("[URL] Jina fallback failed: rate limit exceeded")
+        except Exception as e:
+            logger.debug(f"[URL] Jina fallback failed: {e}")
+
+        # All strategies produced invalid content → fail
+        raise FetchError(
+            f"All fetch strategies returned invalid content for {url}. "
+            f"Static: {static_reason}, Browser: {browser_reason}. "
+            f"The page may require authentication or have access restrictions."
         )
     elif static_content:
         # Both invalid, no browser but has static
@@ -2327,6 +2343,14 @@ async def _fetch_with_fallback(
                     spa_cache = get_spa_domain_cache()
                     spa_cache.record_spa_domain(url)
                     continue
+                # Validate content quality before accepting
+                is_invalid, reason = _is_invalid_content(result.content)
+                if is_invalid:
+                    logger.debug(
+                        f"Strategy {strat} returned invalid content: {reason}"
+                    )
+                    errors.append(f"{strat}: invalid content ({reason})")
+                    continue
                 return result
 
             elif strat == "playwright":
@@ -2352,7 +2376,7 @@ async def _fetch_with_fallback(
                     renderer=renderer,
                 )
 
-                return FetchResult(
+                result = FetchResult(
                     content=pw_result.content,
                     strategy_used="playwright",
                     title=pw_result.title,
@@ -2361,10 +2385,28 @@ async def _fetch_with_fallback(
                     metadata=pw_result.metadata,
                     screenshot_path=pw_result.screenshot_path,
                 )
+                # Validate content quality before accepting
+                is_invalid, reason = _is_invalid_content(result.content)
+                if is_invalid:
+                    logger.debug(
+                        f"Strategy {strat} returned invalid content: {reason}"
+                    )
+                    errors.append(f"{strat}: invalid content ({reason})")
+                    continue
+                return result
 
             elif strat == "jina":
                 api_key = config.jina.get_resolved_api_key()
-                return await fetch_with_jina(url, api_key, config.jina.timeout)
+                result = await fetch_with_jina(url, api_key, config.jina.timeout)
+                # Validate content quality before accepting
+                is_invalid, reason = _is_invalid_content(result.content)
+                if is_invalid:
+                    logger.debug(
+                        f"Strategy {strat} returned invalid content: {reason}"
+                    )
+                    errors.append(f"{strat}: invalid content ({reason})")
+                    continue
+                return result
 
         except JinaRateLimitError as e:
             errors.append(str(e))
