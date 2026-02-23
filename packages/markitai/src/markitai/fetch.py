@@ -2346,9 +2346,7 @@ async def _fetch_with_fallback(
                 # Validate content quality before accepting
                 is_invalid, reason = _is_invalid_content(result.content)
                 if is_invalid:
-                    logger.debug(
-                        f"Strategy {strat} returned invalid content: {reason}"
-                    )
+                    logger.debug(f"Strategy {strat} returned invalid content: {reason}")
                     errors.append(f"{strat}: invalid content ({reason})")
                     continue
                 return result
@@ -2388,9 +2386,7 @@ async def _fetch_with_fallback(
                 # Validate content quality before accepting
                 is_invalid, reason = _is_invalid_content(result.content)
                 if is_invalid:
-                    logger.debug(
-                        f"Strategy {strat} returned invalid content: {reason}"
-                    )
+                    logger.debug(f"Strategy {strat} returned invalid content: {reason}")
                     errors.append(f"{strat}: invalid content ({reason})")
                     continue
                 return result
@@ -2401,9 +2397,7 @@ async def _fetch_with_fallback(
                 # Validate content quality before accepting
                 is_invalid, reason = _is_invalid_content(result.content)
                 if is_invalid:
-                    logger.debug(
-                        f"Strategy {strat} returned invalid content: {reason}"
-                    )
+                    logger.debug(f"Strategy {strat} returned invalid content: {reason}")
                     errors.append(f"{strat}: invalid content ({reason})")
                     continue
                 return result
