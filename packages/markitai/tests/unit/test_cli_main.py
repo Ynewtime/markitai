@@ -656,6 +656,40 @@ class TestFetchStrategy:
         )
         assert result.exit_code == 0
 
+    def test_cloudflare_flag(self, tmp_path: Path, cli_runner: CliRunner) -> None:
+        """Test --cloudflare flag."""
+        output_dir = tmp_path / "out"
+
+        result = cli_runner.invoke(
+            app,
+            ["https://example.com", "-o", str(output_dir), "--cloudflare", "--dry-run"],
+        )
+        assert result.exit_code == 0
+
+    def test_mutually_exclusive_cloudflare_playwright(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Test error for mutually exclusive --cloudflare and --playwright."""
+        output_dir = tmp_path / "out"
+        result = cli_runner.invoke(
+            app,
+            ["https://example.com", "-o", str(output_dir), "--cloudflare", "--playwright"],
+        )
+        assert result.exit_code == 1
+        assert "mutually exclusive" in result.output
+
+    def test_mutually_exclusive_cloudflare_jina(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Test error for mutually exclusive --cloudflare and --jina."""
+        output_dir = tmp_path / "out"
+        result = cli_runner.invoke(
+            app,
+            ["https://example.com", "-o", str(output_dir), "--cloudflare", "--jina"],
+        )
+        assert result.exit_code == 1
+        assert "mutually exclusive" in result.output
+
 
 # =============================================================================
 # URL List Processing Tests

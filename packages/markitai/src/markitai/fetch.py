@@ -48,6 +48,7 @@ class FetchStrategy(Enum):
     AUTO = "auto"
     STATIC = "static"
     PLAYWRIGHT = "playwright"  # Playwright Python (recommended)
+    CLOUDFLARE = "cloudflare"  # CF Browser Rendering /markdown API
     JINA = "jina"
 
 
@@ -1688,6 +1689,132 @@ async def fetch_with_static_conditional(
         raise FetchError(f"Failed to fetch URL with conditional request: {e}")
 
 
+async def fetch_with_cloudflare(
+    url: str,
+    api_token: str | None = None,
+    account_id: str | None = None,
+    timeout: int = 30000,
+    wait_until: str = "networkidle0",
+    cache_ttl: int = 0,
+    reject_resource_patterns: list[str] | None = None,
+) -> FetchResult:
+    """Fetch URL using Cloudflare Browser Rendering /markdown API.
+
+    Args:
+        url: URL to fetch
+        api_token: CF API token
+        account_id: CF account ID
+        timeout: Timeout in milliseconds
+        wait_until: Wait event (load, domcontentloaded, networkidle0)
+        cache_ttl: Cache TTL in seconds (0 = no cache)
+        reject_resource_patterns: JS-style regex patterns to block
+
+    Returns:
+        FetchResult with markdown content
+
+    Raises:
+        FetchError: If fetch fails or credentials missing
+    """
+    import httpx
+
+    if not api_token or not account_id:
+        raise FetchError(
+            "Cloudflare API token and account ID required. "
+            "Set in config: fetch.cloudflare.api_token and fetch.cloudflare.account_id"
+        )
+
+    endpoint = (
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
+        f"/browser-rendering/markdown"
+    )
+
+    payload: dict[str, Any] = {
+        "url": url,
+        "rewriteLinksBaseURL": url,
+    }
+    if timeout:
+        payload["timeout"] = timeout
+    if wait_until:
+        payload["waitUntil"] = wait_until
+    if cache_ttl > 0:
+        payload["cacheTtl"] = cache_ttl
+
+    # Resource filtering: use caller's patterns, or sensible defaults.
+    # CF BR uses JS-style regex string literals with leading/trailing slashes
+    # (e.g. "/\.css$/"), consistent with Puppeteer's page.route() patterns.
+    if reject_resource_patterns is not None:
+        payload["rejectRequestPattern"] = reject_resource_patterns
+    else:
+        # Default: skip fonts and stylesheets for faster rendering
+        payload["rejectRequestPattern"] = [
+            "/\\.css$/",
+            "/\\.woff2?$/",
+            "/\\.ttf$/",
+            "/\\.eot$/",
+            "/\\.otf$/",
+        ]
+
+    logger.debug(f"Fetching URL with CF Browser Rendering: {url}")
+
+    try:
+        # Use _detect_proxy() not get_proxy_for_url(endpoint), because
+        # api.cloudflare.com is not in proxy_domains but may still need
+        # proxy in restricted network environments.
+        proxy_url = _detect_proxy()
+        proxy_config = proxy_url if proxy_url else None
+
+        async with httpx.AsyncClient(
+            timeout=max(timeout / 1000 + 10, 60.0),
+            proxy=proxy_config,
+        ) as client:
+            response = await client.post(
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {api_token}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+
+            # CF REST API returns JSON envelope
+            data = response.json()
+            if not data.get("success"):
+                errors = data.get("errors", [])
+                error_msg = "; ".join(
+                    e.get("message", str(e)) for e in errors
+                )
+                raise FetchError(f"CF BR API error: {error_msg}")
+
+            markdown_content = data.get("result", "")
+
+            # Extract title from first heading
+            title = None
+            title_match = re.match(
+                r"^#\s+(.+)$", markdown_content, re.MULTILINE
+            )
+            if title_match:
+                title = title_match.group(1)
+
+            return FetchResult(
+                content=markdown_content,
+                strategy_used="cloudflare",
+                title=title,
+                url=url,
+                final_url=url,
+                metadata={
+                    "converter": "cloudflare-br",
+                    "browser_ms_used": response.headers.get(
+                        "X-Browser-Ms-Used"
+                    ),
+                },
+            )
+    except FetchError:
+        raise
+    except Exception as e:
+        raise FetchError(f"Cloudflare BR fetch failed: {e}") from e
+
+
 async def fetch_with_jina(
     url: str,
     api_key: str | None = None,
@@ -1955,6 +2082,19 @@ async def fetch_url(
                 final_url=pw_result.final_url,
                 metadata=pw_result.metadata,
                 screenshot_path=pw_result.screenshot_path,
+            )
+        elif strategy == FetchStrategy.CLOUDFLARE:
+            cf = config.cloudflare
+            token = cf.get_resolved_api_token(strict=True)
+            acct = cf.get_resolved_account_id(strict=True)
+            result = await fetch_with_cloudflare(
+                url=url,
+                api_token=token,
+                account_id=acct,
+                timeout=cf.timeout,
+                wait_until=cf.wait_until,
+                cache_ttl=cf.cache_ttl,
+                reject_resource_patterns=cf.reject_resource_patterns,
             )
         elif strategy == FetchStrategy.JINA:
             api_key = config.jina.get_resolved_api_key()
@@ -2401,11 +2541,11 @@ async def _fetch_with_fallback(
 
     if start_with_browser:
         # Try browser first for known JS domains
-        # Priority: playwright > jina
-        strategies = ["playwright", "jina", "static"]
+        # Priority: playwright > cloudflare > jina
+        strategies = ["playwright", "cloudflare", "jina", "static"]
     else:
-        # Normal order: static -> playwright -> jina
-        strategies = ["static", "playwright", "jina"]
+        # Normal order: static -> playwright -> cloudflare -> jina
+        strategies = ["static", "playwright", "cloudflare", "jina"]
 
     for strat in strategies:
         try:
@@ -2463,6 +2603,32 @@ async def _fetch_with_fallback(
                     final_url=pw_result.final_url,
                     metadata=pw_result.metadata,
                     screenshot_path=pw_result.screenshot_path,
+                )
+                # Validate content quality before accepting
+                is_invalid, reason = _is_invalid_content(result.content)
+                if is_invalid:
+                    logger.debug(f"Strategy {strat} returned invalid content: {reason}")
+                    errors.append(f"{strat}: invalid content ({reason})")
+                    continue
+                return result
+
+            elif strat == "cloudflare":
+                cf = getattr(config, "cloudflare", None)
+                if cf is None:
+                    continue
+                token = cf.get_resolved_api_token() if hasattr(cf, "get_resolved_api_token") else cf.api_token
+                acct = cf.get_resolved_account_id() if hasattr(cf, "get_resolved_account_id") else cf.account_id
+                if not token or not acct:
+                    logger.debug("Cloudflare credentials not configured, skipping")
+                    continue
+                result = await fetch_with_cloudflare(
+                    url=url,
+                    api_token=token,
+                    account_id=acct,
+                    timeout=cf.timeout,
+                    wait_until=cf.wait_until,
+                    cache_ttl=cf.cache_ttl,
+                    reject_resource_patterns=cf.reject_resource_patterns,
                 )
                 # Validate content quality before accepting
                 is_invalid, reason = _is_invalid_content(result.content)
