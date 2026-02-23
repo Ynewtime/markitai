@@ -147,31 +147,47 @@ def validate_and_detect_format(
             success=False, error=f"Unsupported file format: {ctx.input_path.suffix}"
         )
 
-    ctx.converter = get_converter(ctx.effective_input, config=ctx.config)
+    # Check if Cloudflare toMarkdown is explicitly enabled (--cloudflare flag)
+    cf_config = (
+        ctx.config.fetch.cloudflare if hasattr(ctx.config.fetch, "cloudflare") else None
+    )
+    cf_forced = cf_config and cf_config.convert_enabled
 
-    # Cloudflare toMarkdown fallback for formats without local converter
-    if ctx.converter is None:
-        cf_config = (
-            ctx.config.fetch.cloudflare
-            if hasattr(ctx.config.fetch, "cloudflare")
-            else None
+    if cf_forced and cf_config is not None:
+        # --cloudflare: prefer CF converter over local converters
+        from markitai.converter.cloudflare import (
+            CF_SUPPORTED_FORMATS,
+            CloudflareConverter,
         )
-        if cf_config and cf_config.convert_enabled:
-            from markitai.converter.cloudflare import (
-                CF_SUPPORTED_FORMATS,
-                CloudflareConverter,
-            )
 
-            if fmt in CF_SUPPORTED_FORMATS:
-                api_token = cf_config.get_resolved_api_token()
-                account_id = cf_config.get_resolved_account_id()
-                if api_token and account_id:
-                    ctx.converter = CloudflareConverter(
-                        api_token=api_token,
-                        account_id=account_id,
-                        config=ctx.config,
+        if fmt in CF_SUPPORTED_FORMATS:
+            api_token = cf_config.get_resolved_api_token()
+            account_id = cf_config.get_resolved_account_id()
+            if api_token and account_id:
+                # Warn if a higher-quality local converter exists
+                local_converter = get_converter(ctx.effective_input, config=ctx.config)
+                if local_converter is not None:
+                    logger.warning(
+                        f"Using Cloudflare toMarkdown for {fmt.value} "
+                        f"(local converter available — output quality may be lower)"
                     )
-                    logger.debug(f"Using CF toMarkdown for {fmt.value}")
+                ctx.converter = CloudflareConverter(
+                    api_token=api_token,
+                    account_id=account_id,
+                    config=ctx.config,
+                )
+                logger.debug(f"Using CF toMarkdown for {fmt.value} (explicit)")
+            else:
+                return ConversionStepResult(
+                    success=False,
+                    error="--cloudflare requires CLOUDFLARE_API_TOKEN and "
+                    "CLOUDFLARE_ACCOUNT_ID. Set them as environment variables "
+                    "or in markitai.json under fetch.cloudflare.",
+                )
+
+    # Fall back to local converter if CF not used
+    if ctx.converter is None:
+        ctx.converter = get_converter(ctx.effective_input, config=ctx.config)
 
     if ctx.converter is None:
         return ConversionStepResult(

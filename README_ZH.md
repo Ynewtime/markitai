@@ -11,6 +11,7 @@
 - **批量处理** - 并发转换、断点续传、进度显示
 - **OCR 识别** - 扫描件 PDF 和图片的文字提取
 - **URL 转换** - 直接转换网页，支持 SPA 浏览器渲染
+- **Cloudflare 集成** - 云端 URL 渲染（Browser Rendering）和文件转换（Workers AI toMarkdown），通过 `--cloudflare` 启用
 - **智能缓存** - LLM 结果缓存、SPA 域名学习、自动代理检测
 
 ## 安装
@@ -153,6 +154,8 @@ curl -fsSL https://gh.io/copilot-install | bash
 | `DEEPSEEK_API_KEY` | DeepSeek API 密钥 |
 | `ANTHROPIC_API_KEY` | Anthropic API 密钥 |
 | `JINA_API_KEY` | Jina Reader API 密钥（URL 转换） |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API Token（Browser Rendering / Workers AI） |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID |
 
 ## 依赖项目
 

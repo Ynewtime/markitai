@@ -222,8 +222,28 @@ uv run playwright install-deps chromium
 markitai https://example.com --jina
 ```
 
+### `--cloudflare`
+
+使用 Cloudflare 作为云端后端。这是一个统一开关：
+- **URL 输入**：使用 Cloudflare Browser Rendering `/markdown` API
+- **文件输入**：使用 Cloudflare Workers AI `toMarkdown` 进行文件转换
+
+需要设置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 环境变量（或在 `markitai.json` 中配置）。在 [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) 创建 API Token，添加 *Browser Rendering: Edit* 和 *Workers AI: Read* 权限。详见[配置说明 → Cloudflare 设置](/zh/guide/configuration#cloudflare-设置)。
+
+```bash
+# 通过 CF Browser Rendering 渲染 URL
+markitai https://example.com --cloudflare
+
+# 通过 CF Workers AI toMarkdown 转换文件
+markitai document.pdf --cloudflare
+```
+
+::: tip
+Cloudflare Browser Rendering 在 Free 计划上可用。Workers AI toMarkdown 对 PDF/Office/CSV/XML 免费；图片转换使用 Neurons 配额。
+:::
+
 ::: warning
-`--playwright` 和 `--jina` 互斥，同时只能使用一个。
+`--playwright`、`--jina` 和 `--cloudflare` 三者互斥，同时只能使用一个。
 :::
 
 ## 初始化命令
