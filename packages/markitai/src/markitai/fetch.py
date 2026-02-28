@@ -2157,6 +2157,10 @@ async def fetch_url(
                 wait_until=cf.wait_until,
                 cache_ttl=cf.cache_ttl,
                 reject_resource_patterns=cf.reject_resource_patterns,
+                user_agent=cf.user_agent,
+                cookies=cf.cookies,
+                wait_for_selector=cf.wait_for_selector,
+                http_credentials=cf.http_credentials,
             )
         elif strategy == FetchStrategy.JINA:
             api_key = config.jina.get_resolved_api_key()
@@ -2681,6 +2685,10 @@ async def _fetch_with_fallback(
                     wait_until=cf.wait_until,
                     cache_ttl=cf.cache_ttl,
                     reject_resource_patterns=cf.reject_resource_patterns,
+                    user_agent=cf.user_agent,
+                    cookies=cf.cookies,
+                    wait_for_selector=cf.wait_for_selector,
+                    http_credentials=cf.http_credentials,
                 )
                 # Validate content quality before accepting
                 is_invalid, reason = _is_invalid_content(result.content)
