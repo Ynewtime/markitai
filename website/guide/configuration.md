@@ -603,6 +603,10 @@ Cloudflare provides two capabilities through a unified `--cloudflare` flag:
       "wait_until": "networkidle0",
       "cache_ttl": 0,
       "reject_resource_patterns": null,
+      "user_agent": null,
+      "cookies": null,
+      "wait_for_selector": null,
+      "http_credentials": null,
       "convert_enabled": false
     }
   }
@@ -617,6 +621,10 @@ Cloudflare provides two capabilities through a unified `--cloudflare` flag:
 | `wait_until` | `networkidle0` | Wait event for BR: `load`, `domcontentloaded`, `networkidle0` |
 | `cache_ttl` | `0` | BR cache TTL in seconds (0 = no cache) |
 | `reject_resource_patterns` | `null` | Block resources matching regex patterns: `["/\\.css$/"]` |
+| `user_agent` | `null` | Custom User-Agent string for Browser Rendering |
+| `cookies` | `null` | Cookies to set before navigation: `[{"name": "k", "value": "v", "url": "..."}]` |
+| `wait_for_selector` | `null` | CSS selector to wait for after page load (e.g. `"#content"`) |
+| `http_credentials` | `null` | HTTP Basic Auth: `{"username": "u", "password": "p"}` |
 | `convert_enabled` | `false` | Enable Workers AI toMarkdown for file conversion |
 
 ::: tip

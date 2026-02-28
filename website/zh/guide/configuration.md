@@ -533,6 +533,10 @@ Cloudflare 通过统一的 `--cloudflare` 标志提供两项能力：
       "wait_until": "networkidle0",
       "cache_ttl": 0,
       "reject_resource_patterns": null,
+      "user_agent": null,
+      "cookies": null,
+      "wait_for_selector": null,
+      "http_credentials": null,
       "convert_enabled": false
     }
   }
@@ -547,6 +551,10 @@ Cloudflare 通过统一的 `--cloudflare` 标志提供两项能力：
 | `wait_until` | `networkidle0` | BR 等待事件：`load`, `domcontentloaded`, `networkidle0` |
 | `cache_ttl` | `0` | BR 缓存 TTL（秒，0 = 不缓存） |
 | `reject_resource_patterns` | `null` | 屏蔽匹配正则的资源：`["/\\.css$/"]` |
+| `user_agent` | `null` | Browser Rendering 自定义 User-Agent |
+| `cookies` | `null` | 导航前设置的 Cookie：`[{"name": "k", "value": "v", "url": "..."}]` |
+| `wait_for_selector` | `null` | 页面加载后等待的 CSS 选择器（如 `"#content"`） |
+| `http_credentials` | `null` | HTTP Basic Auth：`{"username": "u", "password": "p"}` |
 | `convert_enabled` | `false` | 启用 Workers AI toMarkdown 文件转换 |
 
 ::: tip
