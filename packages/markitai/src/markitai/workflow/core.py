@@ -236,8 +236,10 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
             f"Converting {ctx.input_path.name}..." + (" [HEAVY]" if is_heavy else "")
         )
 
-        # Check if converter supports async (e.g. CloudflareConverter)
-        if hasattr(ctx.converter, "convert_async"):
+        # CloudflareConverter has a native async API — dispatch directly
+        from markitai.converter.cloudflare import CloudflareConverter
+
+        if isinstance(ctx.converter, CloudflareConverter):
             ctx.conversion_result = await ctx.converter.convert_async(
                 ctx.effective_input,
                 output_dir=ctx.output_dir,
