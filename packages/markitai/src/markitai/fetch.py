@@ -39,7 +39,7 @@ from markitai.constants import (
 )
 
 if TYPE_CHECKING:
-    from markitai.config import FetchConfig, ScreenshotConfig
+    from markitai.config import FetchConfig, PlaywrightConfig, ScreenshotConfig
 
 
 class FetchStrategy(Enum):
@@ -697,8 +697,42 @@ class SPADomainCache:
 _spa_domain_cache: SPADomainCache | None = None
 
 # CF Browser Rendering: Free plan allows 2 concurrent browser instances.
-# Semaphore serializes requests to avoid 429 rate-limit storms.
-_cf_br_semaphore = asyncio.Semaphore(2)
+# Semaphore is lazily initialized to avoid binding to a wrong event loop at import time.
+_cf_br_semaphore: asyncio.Semaphore | None = None
+
+
+def get_cf_semaphore() -> asyncio.Semaphore:
+    """Get or create the CF BR rate-limiting semaphore.
+
+    Lazily initialized to avoid binding to a wrong event loop at import time.
+    CF Free plan allows 2 concurrent browser instances.
+    """
+    global _cf_br_semaphore
+    if _cf_br_semaphore is None:
+        _cf_br_semaphore = asyncio.Semaphore(2)
+    return _cf_br_semaphore
+
+
+def _extract_markdown_title(content: str) -> str | None:
+    """Extract the first H1 title from markdown content."""
+    match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _get_playwright_advanced_kwargs(pw: PlaywrightConfig) -> dict[str, Any]:
+    """Extract advanced Playwright kwargs from config, omitting None values."""
+    return {
+        k: v
+        for k, v in {
+            "wait_for_selector": pw.wait_for_selector,
+            "cookies": pw.cookies,
+            "reject_resource_patterns": pw.reject_resource_patterns,
+            "extra_http_headers": pw.extra_http_headers,
+            "user_agent": pw.user_agent,
+            "http_credentials": pw.http_credentials,
+        }.items()
+        if v is not None
+    }
 
 
 def get_spa_domain_cache() -> SPADomainCache:
@@ -1610,11 +1644,7 @@ async def fetch_with_static_conditional(
                     f"[ConditionalFetch] Server returned markdown directly"
                     f"{f' (~{token_hint} tokens)' if token_hint else ''}"
                 )
-                # Extract title from first heading
-                title = None
-                title_match = re.match(r"^#\s+(.+)$", markdown_content, re.MULTILINE)
-                if title_match:
-                    title = title_match.group(1)
+                title = _extract_markdown_title(markdown_content)
 
                 fetch_result = FetchResult(
                     content=markdown_content,
@@ -1699,6 +1729,10 @@ async def fetch_with_cloudflare(
     wait_until: str = "networkidle0",
     cache_ttl: int = 0,
     reject_resource_patterns: list[str] | None = None,
+    user_agent: str | None = None,
+    cookies: list[dict[str, str]] | None = None,
+    wait_for_selector: str | None = None,
+    http_credentials: dict[str, str] | None = None,
 ) -> FetchResult:
     """Fetch URL using Cloudflare Browser Rendering /markdown API.
 
@@ -1710,6 +1744,10 @@ async def fetch_with_cloudflare(
         wait_until: Wait event (load, domcontentloaded, networkidle0)
         cache_ttl: Cache TTL in seconds (0 = no cache)
         reject_resource_patterns: JS-style regex patterns to block
+        user_agent: Custom User-Agent string
+        cookies: Cookies to set before navigation
+        wait_for_selector: CSS selector to wait for after page load
+        http_credentials: HTTP Basic Auth credentials {username, password}
 
     Returns:
         FetchResult with markdown content
@@ -1729,17 +1767,21 @@ async def fetch_with_cloudflare(
         f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
         f"/browser-rendering/markdown"
     )
+    # cacheTTL is a query parameter, not a body parameter
+    if cache_ttl > 0:
+        endpoint += f"?cacheTTL={cache_ttl}"
 
     payload: dict[str, Any] = {
         "url": url,
-        "rewriteLinksBaseURL": url,
     }
+    # timeout and waitUntil go inside gotoOptions, not at top level
+    goto_options: dict[str, Any] = {}
     if timeout:
-        payload["timeout"] = timeout
+        goto_options["timeout"] = timeout
     if wait_until:
-        payload["waitUntil"] = wait_until
-    if cache_ttl > 0:
-        payload["cacheTtl"] = cache_ttl
+        goto_options["waitUntil"] = wait_until
+    if goto_options:
+        payload["gotoOptions"] = goto_options
 
     # Resource filtering: use caller's patterns, or sensible defaults.
     # CF BR uses JS-style regex string literals with leading/trailing slashes
@@ -1756,6 +1798,15 @@ async def fetch_with_cloudflare(
             "/\\.otf$/",
         ]
 
+    if user_agent:
+        payload["userAgent"] = user_agent
+    if cookies:
+        payload["cookies"] = cookies
+    if wait_for_selector:
+        payload["waitForSelector"] = {"selector": wait_for_selector}
+    if http_credentials:
+        payload["authenticate"] = http_credentials
+
     logger.debug(f"Fetching URL with CF Browser Rendering: {url}")
 
     # CF Free plan: 2 concurrent browser instances.
@@ -1770,12 +1821,12 @@ async def fetch_with_cloudflare(
         proxy_url = _detect_proxy()
         proxy_config = proxy_url if proxy_url else None
 
-        async with _cf_br_semaphore:
-            for attempt in range(max_retries):
-                async with httpx.AsyncClient(
-                    timeout=max(timeout / 1000 + 10, 60.0),
-                    proxy=proxy_config,
-                ) as client:
+        async with get_cf_semaphore():
+            async with httpx.AsyncClient(
+                timeout=max(timeout / 1000 + 10, 60.0),
+                proxy=proxy_config,
+            ) as client:
+                for attempt in range(max_retries):
                     response = await client.post(
                         endpoint,
                         headers={
@@ -1809,13 +1860,7 @@ async def fetch_with_cloudflare(
 
                     markdown_content = data.get("result", "")
 
-                    # Extract title from first heading
-                    title = None
-                    title_match = re.match(
-                        r"^#\s+(.+)$", markdown_content, re.MULTILINE
-                    )
-                    if title_match:
-                        title = title_match.group(1)
+                    title = _extract_markdown_title(markdown_content)
 
                     return FetchResult(
                         content=markdown_content,
@@ -2088,17 +2133,7 @@ async def fetch_url(
                 screenshot_config=screenshot_config,
                 output_dir=screenshot_dir,
                 renderer=_renderer,
-                # Advanced browser control
-                wait_for_selector=getattr(config.playwright, "wait_for_selector", None),
-                cookies=getattr(config.playwright, "cookies", None),
-                reject_resource_patterns=getattr(
-                    config.playwright, "reject_resource_patterns", None
-                ),
-                extra_http_headers=getattr(
-                    config.playwright, "extra_http_headers", None
-                ),
-                user_agent=getattr(config.playwright, "user_agent", None),
-                http_credentials=getattr(config.playwright, "http_credentials", None),
+                **_get_playwright_advanced_kwargs(config.playwright),
             )
 
             result = FetchResult(
@@ -2193,15 +2228,7 @@ async def fetch_url(
             screenshot_config=screenshot_config,
             output_dir=screenshot_dir,
             renderer=_renderer,
-            # Advanced browser control
-            wait_for_selector=getattr(config.playwright, "wait_for_selector", None),
-            cookies=getattr(config.playwright, "cookies", None),
-            reject_resource_patterns=getattr(
-                config.playwright, "reject_resource_patterns", None
-            ),
-            extra_http_headers=getattr(config.playwright, "extra_http_headers", None),
-            user_agent=getattr(config.playwright, "user_agent", None),
-            http_credentials=getattr(config.playwright, "http_credentials", None),
+            **_get_playwright_advanced_kwargs(config.playwright),
         )
 
         result = FetchResult(
@@ -2336,17 +2363,7 @@ async def _fetch_multi_source(
                 screenshot_config=screenshot_config,
                 output_dir=screenshot_dir,
                 renderer=renderer,
-                # Advanced browser control
-                wait_for_selector=getattr(config.playwright, "wait_for_selector", None),
-                cookies=getattr(config.playwright, "cookies", None),
-                reject_resource_patterns=getattr(
-                    config.playwright, "reject_resource_patterns", None
-                ),
-                extra_http_headers=getattr(
-                    config.playwright, "extra_http_headers", None
-                ),
-                user_agent=getattr(config.playwright, "user_agent", None),
-                http_credentials=getattr(config.playwright, "http_credentials", None),
+                **_get_playwright_advanced_kwargs(config.playwright),
             )
             result = FetchResult(
                 content=pw_result.content,
@@ -2442,7 +2459,9 @@ async def _fetch_multi_source(
         except Exception as e:
             logger.debug(f"[URL] Jina fallback failed: {e}")
 
-        # All strategies produced invalid content → fail
+        # All strategies produced invalid content → fail loudly.
+        # Changed in v0.5.3: previously returned degraded browser content
+        # with a warning; now raises FetchError after exhausting Jina fallback.
         raise FetchError(
             f"All fetch strategies returned invalid content for {url}. "
             f"Static: {static_reason}, Browser: {browser_reason}. "
@@ -2523,9 +2542,7 @@ async def _fetch_multi_source(
 
     # If no title from browser, try to extract from primary content
     if not title and primary_content:
-        title_match = re.match(r"^#\s+(.+)$", primary_content, re.MULTILINE)
-        if title_match:
-            title = title_match.group(1)
+        title = _extract_markdown_title(primary_content)
 
     metadata: dict[str, Any] = {"single_source": True, "source": strategy_used}
     if warning_message:
@@ -2619,21 +2636,7 @@ async def _fetch_with_fallback(
                     screenshot_config=screenshot_kwargs.get("screenshot_config"),
                     output_dir=screenshot_kwargs.get("screenshot_dir"),
                     renderer=renderer,
-                    # Advanced browser control
-                    wait_for_selector=getattr(
-                        config.playwright, "wait_for_selector", None
-                    ),
-                    cookies=getattr(config.playwright, "cookies", None),
-                    reject_resource_patterns=getattr(
-                        config.playwright, "reject_resource_patterns", None
-                    ),
-                    extra_http_headers=getattr(
-                        config.playwright, "extra_http_headers", None
-                    ),
-                    user_agent=getattr(config.playwright, "user_agent", None),
-                    http_credentials=getattr(
-                        config.playwright, "http_credentials", None
-                    ),
+                    **_get_playwright_advanced_kwargs(config.playwright),
                 )
 
                 result = FetchResult(
