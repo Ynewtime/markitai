@@ -99,7 +99,7 @@ class TestCloudflareConverterIntegration:
         """Convert PDF fixture via CF toMarkdown."""
         from markitai.converter.cloudflare import CloudflareConverter
 
-        pdf_path = FIXTURES_DIR / "sample.pdf"
+        pdf_path = FIXTURES_DIR / "file-example_PDF_500_kB.pdf"
         if not pdf_path.exists():
             pytest.skip(f"Fixture not found: {pdf_path}")
 
@@ -109,14 +109,14 @@ class TestCloudflareConverterIntegration:
         assert result.metadata["converter"] == "cloudflare-tomarkdown"
 
     @pytest.mark.asyncio
-    async def test_convert_docx(self, cf_token, cf_account):
-        """Convert DOCX fixture via CF toMarkdown."""
+    async def test_convert_xlsx(self, cf_token, cf_account):
+        """Convert XLSX fixture via CF toMarkdown."""
         from markitai.converter.cloudflare import CloudflareConverter
 
-        docx_path = FIXTURES_DIR / "sample.docx"
-        if not docx_path.exists():
-            pytest.skip(f"Fixture not found: {docx_path}")
+        xlsx_path = FIXTURES_DIR / "file_example_XLSX_100.xlsx"
+        if not xlsx_path.exists():
+            pytest.skip(f"Fixture not found: {xlsx_path}")
 
         converter = CloudflareConverter(api_token=cf_token, account_id=cf_account)
-        result = await converter.convert_async(docx_path)
+        result = await converter.convert_async(xlsx_path)
         assert result.markdown
