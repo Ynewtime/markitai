@@ -673,7 +673,13 @@ class TestFetchStrategy:
         output_dir = tmp_path / "out"
         result = cli_runner.invoke(
             app,
-            ["https://example.com", "-o", str(output_dir), "--cloudflare", "--playwright"],
+            [
+                "https://example.com",
+                "-o",
+                str(output_dir),
+                "--cloudflare",
+                "--playwright",
+            ],
         )
         assert result.exit_code == 1
         assert "mutually exclusive" in result.output

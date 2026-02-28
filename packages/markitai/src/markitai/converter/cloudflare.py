@@ -14,6 +14,8 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
+import aiofiles
+
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -148,8 +150,6 @@ class CloudflareConverter(BaseConverter):
             proxy=proxy_config,
         ) as client:
             # Read file into memory asynchronously to avoid blocking the event loop.
-            import aiofiles
-
             async with aiofiles.open(input_path, "rb") as f:
                 file_content = await f.read()
 
