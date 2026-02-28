@@ -386,6 +386,12 @@ class CloudflareConfig(BaseModel):
     wait_until: str = "networkidle0"  # CF BR wait event
     cache_ttl: int = 0  # BR cache TTL in seconds (0 = no cache)
     reject_resource_patterns: list[str] | None = None  # e.g. ["/\\.css$/"]
+    user_agent: str | None = None  # Custom User-Agent for BR
+    cookies: list[dict[str, str]] | None = None  # Cookies to set before navigation
+    wait_for_selector: str | None = None  # CSS selector to wait for after load
+    http_credentials: dict[str, str] | None = (
+        None  # HTTP Basic Auth {username, password}
+    )
     convert_enabled: bool = False  # Enable Workers AI toMarkdown for files
 
     def get_resolved_api_token(self, strict: bool = False) -> str | None:
@@ -403,7 +409,7 @@ class CloudflareConfig(BaseModel):
         Falls back to CLOUDFLARE_ACCOUNT_ID env var when not set in config.
         """
         if self.account_id:
-            return _resolve_api_key(self.account_id, strict=strict)
+            return resolve_env_value(self.account_id, strict=strict)
         return os.environ.get("CLOUDFLARE_ACCOUNT_ID")
 
 
