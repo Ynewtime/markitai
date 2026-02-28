@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import tempfile
 from datetime import datetime, timedelta
@@ -2373,7 +2374,17 @@ class TestFetchWithFallback:
                 "playwright": type(
                     "PlaywrightConfig",
                     (),
-                    {"timeout": 30000, "wait_for": "load", "extra_wait_ms": 0},
+                    {
+                        "timeout": 30000,
+                        "wait_for": "load",
+                        "extra_wait_ms": 0,
+                        "wait_for_selector": None,
+                        "cookies": None,
+                        "reject_resource_patterns": None,
+                        "extra_http_headers": None,
+                        "user_agent": None,
+                        "http_credentials": None,
+                    },
                 )(),
             },
         )()
@@ -2419,7 +2430,17 @@ class TestFetchWithFallback:
                 "playwright": type(
                     "PlaywrightConfig",
                     (),
-                    {"timeout": 30000, "wait_for": "load", "extra_wait_ms": 0},
+                    {
+                        "timeout": 30000,
+                        "wait_for": "load",
+                        "extra_wait_ms": 0,
+                        "wait_for_selector": None,
+                        "cookies": None,
+                        "reject_resource_patterns": None,
+                        "extra_http_headers": None,
+                        "user_agent": None,
+                        "http_credentials": None,
+                    },
                 )(),
             },
         )()
@@ -2465,7 +2486,17 @@ class TestFetchWithFallback:
                 "playwright": type(
                     "PlaywrightConfig",
                     (),
-                    {"timeout": 30000, "wait_for": "load", "extra_wait_ms": 0},
+                    {
+                        "timeout": 30000,
+                        "wait_for": "load",
+                        "extra_wait_ms": 0,
+                        "wait_for_selector": None,
+                        "cookies": None,
+                        "reject_resource_patterns": None,
+                        "extra_http_headers": None,
+                        "user_agent": None,
+                        "http_credentials": None,
+                    },
                 )(),
                 "auto_proxy": False,
             },
@@ -2767,7 +2798,17 @@ class TestFetchMultiSourceAdditional:
                 "playwright": type(
                     "PlaywrightConfig",
                     (),
-                    {"timeout": 30000, "wait_for": "load", "extra_wait_ms": 0},
+                    {
+                        "timeout": 30000,
+                        "wait_for": "load",
+                        "extra_wait_ms": 0,
+                        "wait_for_selector": None,
+                        "cookies": None,
+                        "reject_resource_patterns": None,
+                        "extra_http_headers": None,
+                        "user_agent": None,
+                        "http_credentials": None,
+                    },
                 )(),
                 "auto_proxy": False,
             },
@@ -3089,7 +3130,17 @@ class TestFetchWithFallbackJsDetection:
                 "playwright": type(
                     "PlaywrightConfig",
                     (),
-                    {"timeout": 30000, "wait_for": "load", "extra_wait_ms": 0},
+                    {
+                        "timeout": 30000,
+                        "wait_for": "load",
+                        "extra_wait_ms": 0,
+                        "wait_for_selector": None,
+                        "cookies": None,
+                        "reject_resource_patterns": None,
+                        "extra_http_headers": None,
+                        "user_agent": None,
+                        "http_credentials": None,
+                    },
                 )(),
                 "auto_proxy": False,
             },
@@ -3352,7 +3403,9 @@ class TestContentNegotiation:
                 "Content-Type": "text/html; charset=utf-8",
                 "ETag": '"html123"',
             }
-            mock_resp.text = "<html><body><h1>Normal HTML</h1><p>Regular content.</p></body></html>"
+            mock_resp.text = (
+                "<html><body><h1>Normal HTML</h1><p>Regular content.</p></body></html>"
+            )
             mock_resp.content = mock_resp.text.encode()
             mock_resp.url = url
             return mock_resp
@@ -3370,7 +3423,7 @@ class TestContentNegotiation:
             mock_client_class.return_value = mock_context
 
             try:
-                result = await fetch_with_static_conditional("https://non-cf-site.com")
+                await fetch_with_static_conditional("https://non-cf-site.com")
             except Exception:
                 pass  # Conversion may fail in mock, we verify the path is HTML
 
@@ -3487,7 +3540,9 @@ class TestCloudflareStrategy:
         """Raises FetchError when credentials are missing."""
         from markitai.fetch import FetchError, fetch_with_cloudflare
 
-        with pytest.raises(FetchError, match="Cloudflare API token and account ID required"):
+        with pytest.raises(
+            FetchError, match="Cloudflare API token and account ID required"
+        ):
             await fetch_with_cloudflare(
                 url="https://example.com",
                 api_token=None,
@@ -3568,3 +3623,374 @@ class TestCloudflareStrategy:
             )
 
         assert captured_payload.get("rejectRequestPattern") == custom_patterns
+
+
+class TestCfBrSemaphore:
+    """Tests for CF BR semaphore lazy initialization."""
+
+    def test_get_cf_semaphore_returns_semaphore(self):
+        """get_cf_semaphore returns an asyncio.Semaphore."""
+        import asyncio
+
+        from markitai.fetch import get_cf_semaphore
+
+        sem = get_cf_semaphore()
+        assert isinstance(sem, asyncio.Semaphore)
+
+    def test_get_cf_semaphore_returns_same_instance(self):
+        """get_cf_semaphore returns the same instance on repeated calls."""
+        from markitai.fetch import get_cf_semaphore
+
+        sem1 = get_cf_semaphore()
+        sem2 = get_cf_semaphore()
+        assert sem1 is sem2
+
+
+class TestExtractMarkdownTitle:
+    """Tests for _extract_markdown_title helper."""
+
+    def test_extracts_h1_title(self):
+        from markitai.fetch import _extract_markdown_title
+
+        assert _extract_markdown_title("# Hello World\n\nContent") == "Hello World"
+
+    def test_returns_none_for_no_heading(self):
+        from markitai.fetch import _extract_markdown_title
+
+        assert _extract_markdown_title("No heading here") is None
+
+    def test_returns_none_for_empty_string(self):
+        from markitai.fetch import _extract_markdown_title
+
+        assert _extract_markdown_title("") is None
+
+    def test_extracts_first_h1_only(self):
+        from markitai.fetch import _extract_markdown_title
+
+        content = "Some text\n# First Title\n## Sub\n# Second"
+        assert _extract_markdown_title(content) == "First Title"
+
+
+class TestPlaywrightAdvancedKwargs:
+    """Tests for _get_playwright_advanced_kwargs helper."""
+
+    def test_returns_empty_when_all_none(self):
+        from markitai.config import PlaywrightConfig
+        from markitai.fetch import _get_playwright_advanced_kwargs
+
+        pw = PlaywrightConfig()
+        result = _get_playwright_advanced_kwargs(pw)
+        assert result == {}
+
+    def test_returns_set_values_only(self):
+        from markitai.config import PlaywrightConfig
+        from markitai.fetch import _get_playwright_advanced_kwargs
+
+        pw = PlaywrightConfig(
+            wait_for_selector="#main",
+            user_agent="TestBot/1.0",
+        )
+        result = _get_playwright_advanced_kwargs(pw)
+        assert result == {
+            "wait_for_selector": "#main",
+            "user_agent": "TestBot/1.0",
+        }
+
+    def test_returns_all_values_when_set(self):
+        from markitai.config import PlaywrightConfig
+        from markitai.fetch import _get_playwright_advanced_kwargs
+
+        pw = PlaywrightConfig(
+            wait_for_selector="div.content",
+            cookies=[{"name": "sid", "value": "abc", "domain": ".example.com"}],
+            reject_resource_patterns=["**/*.css"],
+            extra_http_headers={"Accept-Language": "zh-CN"},
+            user_agent="Bot/2.0",
+            http_credentials={"username": "u", "password": "p"},
+        )
+        result = _get_playwright_advanced_kwargs(pw)
+        assert len(result) == 6
+        assert result["wait_for_selector"] == "div.content"
+
+
+class TestCloudflareBRRetry:
+    """Tests for CF BR 429 rate-limit retry logic."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_cloudflare_429_retry_succeeds(self):
+        """CF BR retries on 429 and succeeds on next attempt."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        # First response: 429 rate limited
+        mock_429 = MagicMock()
+        mock_429.status_code = 429
+        mock_429.headers = {"Retry-After": "1"}
+
+        # Second response: 200 success
+        mock_200 = MagicMock()
+        mock_200.status_code = 200
+        mock_200.json.return_value = {
+            "success": True,
+            "result": "# Retry OK\n\nContent after retry.",
+            "errors": [],
+            "messages": [],
+        }
+        mock_200.headers = {"X-Browser-Ms-Used": "2000"}
+        mock_200.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=[mock_429, mock_200])
+
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("httpx.AsyncClient") as mock_client_class,
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            mock_ctx = AsyncMock()
+            mock_ctx.__aenter__.return_value = mock_client
+            mock_ctx.__aexit__.return_value = None
+            mock_client_class.return_value = mock_ctx
+
+            result = await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="test-token",
+                account_id="test-account",
+            )
+
+            assert result.content == "# Retry OK\n\nContent after retry."
+            assert result.strategy_used == "cloudflare"
+            mock_sleep.assert_called_once()  # Slept between retries
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_cloudflare_429_exhausted(self):
+        """CF BR raises FetchError after exhausting all retries on 429."""
+        from markitai.fetch import FetchError, fetch_with_cloudflare
+
+        mock_429 = MagicMock()
+        mock_429.status_code = 429
+        mock_429.headers = {"Retry-After": "1"}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_429)
+
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("httpx.AsyncClient") as mock_client_class,
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            mock_ctx = AsyncMock()
+            mock_ctx.__aenter__.return_value = mock_client
+            mock_ctx.__aexit__.return_value = None
+            mock_client_class.return_value = mock_ctx
+
+            with pytest.raises(FetchError, match="rate limit exceeded"):
+                await fetch_with_cloudflare(
+                    url="https://example.com",
+                    api_token="test-token",
+                    account_id="test-account",
+                )
+
+
+class TestCloudflareBRPayload:
+    """Tests for CF BR payload structure validation.
+
+    These tests use the captured_payload pattern to verify the exact JSON
+    structure sent to the CF API, preventing regressions like the
+    rewriteLinksBaseURL / top-level timeout bugs found during real API testing.
+    """
+
+    def _make_mock_client(self, captured: dict):
+        """Create a mock httpx client that captures the POST request."""
+
+        async def mock_post(url, headers=None, json=None):
+            captured["url"] = url
+            captured["payload"] = json or {}
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "success": True,
+                "result": "# Test",
+                "errors": [],
+                "messages": [],
+            }
+            mock_resp.headers = {}
+            mock_resp.raise_for_status = MagicMock()
+            return mock_resp
+
+        mock_client = AsyncMock()
+        mock_client.post = mock_post
+        return mock_client
+
+    @contextlib.contextmanager
+    def _patch_cf_client(self, captured: dict):
+        """Context manager to patch httpx and proxy for CF BR tests."""
+        mock_client = self._make_mock_client(captured)
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("httpx.AsyncClient") as mock_client_class,
+        ):
+            mock_ctx = AsyncMock()
+            mock_ctx.__aenter__.return_value = mock_client
+            mock_ctx.__aexit__.return_value = None
+            mock_client_class.return_value = mock_ctx
+            yield
+
+    @pytest.mark.asyncio
+    async def test_payload_goto_options_structure(self):
+        """timeout and waitUntil are inside gotoOptions, not at top level."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        captured: dict = {}
+        with self._patch_cf_client(captured):
+            await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="t",
+                account_id="a",
+                timeout=15000,
+                wait_until="load",
+            )
+
+        payload = captured["payload"]
+        assert "timeout" not in payload, "timeout must not be at top level"
+        assert "waitUntil" not in payload, "waitUntil must not be at top level"
+        assert payload["gotoOptions"]["timeout"] == 15000
+        assert payload["gotoOptions"]["waitUntil"] == "load"
+
+    @pytest.mark.asyncio
+    async def test_payload_cache_ttl_as_query_param(self):
+        """cacheTTL is a query parameter, not in the body."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        captured: dict = {}
+        with self._patch_cf_client(captured):
+            await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="t",
+                account_id="a",
+                cache_ttl=120,
+            )
+
+        assert "cacheTTL=120" in captured["url"]
+        assert "cacheTtl" not in captured["payload"]
+        assert "cacheTTL" not in captured["payload"]
+        assert "cache_ttl" not in captured["payload"]
+
+    @pytest.mark.asyncio
+    async def test_payload_no_forbidden_keys(self):
+        """Payload must not contain keys rejected by CF API."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        captured: dict = {}
+        with self._patch_cf_client(captured):
+            await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="t",
+                account_id="a",
+            )
+
+        payload = captured["payload"]
+        forbidden = ["rewriteLinksBaseURL", "cacheTtl", "timeout", "waitUntil"]
+        for key in forbidden:
+            assert key not in payload, f"Forbidden key '{key}' found in payload"
+
+    @pytest.mark.asyncio
+    async def test_payload_default_reject_patterns(self):
+        """Default rejectRequestPattern includes CSS and font patterns."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        captured: dict = {}
+        with self._patch_cf_client(captured):
+            await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="t",
+                account_id="a",
+            )
+
+        patterns = captured["payload"]["rejectRequestPattern"]
+        assert any(".css" in p for p in patterns)
+        assert any(".woff" in p for p in patterns)
+
+    @pytest.mark.asyncio
+    async def test_payload_user_agent(self):
+        """userAgent is set at payload top level."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        captured: dict = {}
+        with self._patch_cf_client(captured):
+            await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="t",
+                account_id="a",
+                user_agent="TestBot/1.0",
+            )
+
+        assert captured["payload"]["userAgent"] == "TestBot/1.0"
+
+    @pytest.mark.asyncio
+    async def test_payload_cookies(self):
+        """cookies array is set at payload top level."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        test_cookies = [
+            {"name": "session", "value": "abc123", "url": "https://example.com"}
+        ]
+        captured: dict = {}
+        with self._patch_cf_client(captured):
+            await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="t",
+                account_id="a",
+                cookies=test_cookies,
+            )
+
+        assert captured["payload"]["cookies"] == test_cookies
+
+    @pytest.mark.asyncio
+    async def test_payload_wait_for_selector_wrapped(self):
+        """waitForSelector is wrapped as {"selector": "..."} object."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        captured: dict = {}
+        with self._patch_cf_client(captured):
+            await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="t",
+                account_id="a",
+                wait_for_selector="#content",
+            )
+
+        assert captured["payload"]["waitForSelector"] == {"selector": "#content"}
+
+    @pytest.mark.asyncio
+    async def test_payload_authenticate(self):
+        """authenticate object is set at payload top level."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        creds = {"username": "user", "password": "pass"}
+        captured: dict = {}
+        with self._patch_cf_client(captured):
+            await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="t",
+                account_id="a",
+                http_credentials=creds,
+            )
+
+        assert captured["payload"]["authenticate"] == creds
+
+    @pytest.mark.asyncio
+    async def test_payload_none_params_omitted(self):
+        """None optional params are not included in payload."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        captured: dict = {}
+        with self._patch_cf_client(captured):
+            await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="t",
+                account_id="a",
+            )
+
+        payload = captured["payload"]
+        for key in ["userAgent", "cookies", "waitForSelector", "authenticate"]:
+            assert key not in payload, f"None param '{key}' should not be in payload"
