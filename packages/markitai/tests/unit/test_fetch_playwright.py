@@ -1172,7 +1172,14 @@ class TestPlaywrightConfigExtended:
 
         config = PlaywrightConfig(
             wait_for_selector="#main-content",
-            cookies=[{"name": "session", "value": "abc", "domain": ".example.com", "path": "/"}],
+            cookies=[
+                {
+                    "name": "session",
+                    "value": "abc",
+                    "domain": ".example.com",
+                    "path": "/",
+                }
+            ],
             reject_resource_patterns=["**/*.css", "**/*.woff2"],
             extra_http_headers={"Accept-Language": "zh-CN"},
             user_agent="MyBot/1.0",
@@ -1196,7 +1203,14 @@ class TestPlaywrightRendererEnhanced:
         """Cookies are added to browser context before navigation."""
         from markitai.fetch_playwright import PlaywrightRenderer
 
-        cookies = [{"name": "session", "value": "abc123", "domain": ".example.com", "path": "/"}]
+        cookies = [
+            {
+                "name": "session",
+                "value": "abc123",
+                "domain": ".example.com",
+                "path": "/",
+            }
+        ]
 
         mock_context = AsyncMock()
         mock_page = AsyncMock()
@@ -1374,7 +1388,7 @@ class TestPlaywrightRendererEnhanced:
 
         with patch("playwright.async_api.async_playwright", return_value=mock_starter):
             renderer = PlaywrightRenderer()
-            result = await renderer.fetch("https://example.com", extra_wait_ms=0)
+            await renderer.fetch("https://example.com", extra_wait_ms=0)
 
         # No cookies added, no routes set, no selector waited
         mock_context.add_cookies.assert_not_called()
