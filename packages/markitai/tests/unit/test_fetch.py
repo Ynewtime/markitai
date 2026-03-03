@@ -2366,6 +2366,11 @@ class TestFetchWithFallback:
             "MockConfig",
             (),
             {
+                "strategy": "auto",
+                "fallback_patterns": [],
+                "policy": type(
+                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                )(),
                 "jina": type(
                     "JinaConfig",
                     (),
@@ -2422,6 +2427,11 @@ class TestFetchWithFallback:
             "MockConfig",
             (),
             {
+                "strategy": "auto",
+                "fallback_patterns": [],
+                "policy": type(
+                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                )(),
                 "jina": type(
                     "JinaConfig",
                     (),
@@ -2478,6 +2488,11 @@ class TestFetchWithFallback:
             "MockConfig",
             (),
             {
+                "strategy": "auto",
+                "fallback_patterns": [],
+                "policy": type(
+                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                )(),
                 "jina": type(
                     "JinaConfig",
                     (),
@@ -2790,6 +2805,11 @@ class TestFetchMultiSourceAdditional:
             "MockConfig",
             (),
             {
+                "strategy": "auto",
+                "fallback_patterns": [],
+                "policy": type(
+                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                )(),
                 "jina": type(
                     "JinaConfig",
                     (),
@@ -3122,6 +3142,11 @@ class TestFetchWithFallbackJsDetection:
             "MockConfig",
             (),
             {
+                "strategy": "auto",
+                "fallback_patterns": [],
+                "policy": type(
+                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                )(),
                 "jina": type(
                     "JinaConfig",
                     (),
