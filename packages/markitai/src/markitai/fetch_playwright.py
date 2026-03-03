@@ -664,12 +664,21 @@ def _html_to_markdown(html: str) -> str:
     try:
         import io
 
-        from markitdown import MarkItDown
+        from markitdown import MarkItDown, StreamInfo
 
         md = MarkItDown()
         # MarkItDown uses convert_stream for in-memory content
         stream = io.BytesIO(html.encode("utf-8"))
-        result = md.convert_stream(stream, file_extension=".html")
+        # Force UTF-8 to avoid charset auto-detection false positives on cleaned HTML.
+        result = md.convert_stream(
+            stream,
+            file_extension=".html",
+            stream_info=StreamInfo(
+                mimetype="text/html",
+                extension=".html",
+                charset="utf-8",
+            ),
+        )
         return result.text_content if result and result.text_content else ""
     except Exception as e:
         logger.debug(f"markitdown conversion failed, using fallback: {e}")

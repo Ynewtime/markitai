@@ -120,6 +120,26 @@ class TestHtmlToMarkdown:
         result = _html_to_markdown(text)
         assert "plain text" in result
 
+    def test_forces_utf8_stream_info_for_markitdown(self):
+        """Passes explicit UTF-8 stream info to avoid charset mis-detection."""
+        from markitai.fetch_playwright import _html_to_markdown
+
+        html = "<html><body><p>软件工程师</p></body></html>"
+
+        with patch("markitdown.MarkItDown") as MockMarkItDown:
+            mock_md = MagicMock()
+            mock_result = MagicMock()
+            mock_result.text_content = "软件工程师"
+            mock_md.convert_stream.return_value = mock_result
+            MockMarkItDown.return_value = mock_md
+
+            result = _html_to_markdown(html)
+
+            assert result == "软件工程师"
+            _, kwargs = mock_md.convert_stream.call_args
+            assert "stream_info" in kwargs
+            assert kwargs["stream_info"].charset == "utf-8"
+
 
 class TestStripHtmlTags:
     """Tests for _strip_html_tags function."""
