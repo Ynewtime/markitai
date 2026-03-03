@@ -280,27 +280,30 @@ def register_providers() -> None:
 - `timeout.py`: 基于请求复杂度的自适应超时计算
 - `json_mode.py`: `StructuredOutputHandler` 统一 JSON 提取和验证
 
-### 6. URL 抓取 (`fetch.py`)
+### 6. URL 抓取 (`fetch.py` & `fetch_policy.py`)
 
 **职责**: Web 内容获取
 
 **策略模式**:
 ```
 AUTO（默认）
-├── STATIC: 静态 HTML（requests + BeautifulSoup）
+├── STATIC: 静态 HTML（httpx / curl-cffi）
 ├── PLAYWRIGHT: 动态渲染（Playwright）
+├── CLOUDFLARE: Cloudflare Browser Rendering
 └── JINA: Jina Reader API
 ```
 
-**SPA 检测与缓存**:
-- JavaScript 框架检测（React, Vue, Angular 等）
-- 域名 SPA 标记持久化
-- 智能策略选择
+**Fetch Policy Engine**:
+- **策略评分与排序**：基于域名特征和历史成功率动态调整抓取顺序。
+- **Domain Profiles**：支持为特定域名配置等待选择器和延迟。
+- **Session Persistence**：Playwright 支持按域名持久化会话，加速连续请求。
+- **SPA 检测与缓存**：自动识别并标记需要 JavaScript 渲染的域名。
 
 **配置选项**:
-- `strategy`: 抓取策略（auto/static/playwright/jina）
-- `fallback_patterns`: 回退策略的 URL 模式匹配
-- `playwright`: Playwright 浏览器配置
+- `strategy`: 抓取策略（auto/static/playwright/jina/cloudflare）
+- `policy`: 策略引擎配置（hops, enabled）
+- `domain_profiles`: 域名定制化配置
+- `playwright`: 浏览器配置，包括会话模式
 - `jina`: Jina API 配置
 
 ### 7. 批量处理 (`batch.py`)

@@ -1398,3 +1398,66 @@ class TestPlaywrightRendererEnhanced:
         ctx_kwargs = mock_browser.new_context.call_args.kwargs
         assert "extra_http_headers" not in ctx_kwargs
         assert "user_agent" not in ctx_kwargs
+
+
+@requires_playwright
+@pytest.mark.asyncio
+async def test_renderer_reuses_context_in_domain_persistent_mode():
+    from markitai.fetch_playwright import PlaywrightRenderer
+
+    # Create properly configured async mocks
+    mock_context = AsyncMock()
+    mock_page = AsyncMock()
+    long_content = "<html><body>" + "Test content here. " * 100 + "</body></html>"
+    mock_page.title = AsyncMock(return_value="Test Title")
+    mock_page.url = "https://x.com/final"
+    mock_page.content = AsyncMock(return_value=long_content)
+    mock_page.goto = AsyncMock()
+    mock_page.close = AsyncMock()
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+    mock_context.close = AsyncMock()
+
+    mock_browser = AsyncMock()
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
+    mock_browser.close = AsyncMock()
+
+    mock_chromium = AsyncMock()
+    mock_chromium.launch = AsyncMock(return_value=mock_browser)
+    mock_playwright_instance = AsyncMock()
+    mock_playwright_instance.chromium = mock_chromium
+    mock_playwright_instance.stop = AsyncMock()
+
+    mock_starter = AsyncMock()
+    mock_starter.start = AsyncMock(return_value=mock_playwright_instance)
+
+    with patch("playwright.async_api.async_playwright", return_value=mock_starter):
+        renderer = PlaywrightRenderer()
+        renderer.enable_domain_session_cache(ttl_seconds=600, max_contexts=8)
+
+        # fetch twice with same session_key
+        await renderer.fetch(
+            "https://x.com/a",
+            session_key="x.com",
+            persist_context=True,
+            extra_wait_ms=0,
+        )
+        await renderer.fetch(
+            "https://x.com/b",
+            session_key="x.com",
+            persist_context=True,
+            extra_wait_ms=0,
+        )
+
+        # browser.new_context should be called only once
+        assert mock_browser.new_context.call_count == 1
+        # page.close should be called for each fetch, but context should remain open
+        assert mock_page.close.call_count == 2
+        mock_context.close.assert_not_called()
+
+
+def test_fetch_builds_session_key_from_domain() -> None:
+    from markitai.fetch import _url_to_session_key
+
+    assert _url_to_session_key("https://x.com/a") == "x.com"
+    assert _url_to_session_key("https://x.com/b") == "x.com"
+    assert _url_to_session_key("https://example.com/test") == "example.com"

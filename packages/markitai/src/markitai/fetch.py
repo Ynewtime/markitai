@@ -24,6 +24,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import tempfile
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -37,6 +38,7 @@ from markitai.constants import (
     DEFAULT_JINA_BASE_URL,
     JS_REQUIRED_PATTERNS,
 )
+from markitai.fetch_http import get_static_http_client
 
 if TYPE_CHECKING:
     from markitai.config import FetchConfig, PlaywrightConfig, ScreenshotConfig
@@ -735,6 +737,42 @@ def _get_playwright_advanced_kwargs(pw: PlaywrightConfig) -> dict[str, Any]:
     }
 
 
+def _get_playwright_fetch_kwargs(
+    url: str,
+    config: FetchConfig,
+    screenshot_config: Any | None = None,
+    output_dir: Any | None = None,
+    renderer: Any | None = None,
+) -> dict[str, Any]:
+    """Resolve all Playwright fetch arguments including domain profile overrides."""
+    profile_overrides = _resolve_playwright_profile_overrides(
+        url, config.domain_profiles
+    )
+
+    kwargs = {
+        "timeout": config.playwright.timeout,
+        "wait_for": profile_overrides.get("wait_for", config.playwright.wait_for),
+        "extra_wait_ms": profile_overrides.get(
+            "extra_wait_ms", config.playwright.extra_wait_ms
+        ),
+        "proxy": _detect_proxy() if getattr(config, "auto_proxy", True) else None,
+        "screenshot_config": screenshot_config,
+        "output_dir": output_dir,
+        "renderer": renderer,
+    }
+
+    # Session persistence
+    if config.playwright.session_mode == "domain_persistent":
+        kwargs["session_key"] = _url_to_session_key(url)
+        kwargs["persist_context"] = True
+
+    advanced_kwargs = _get_playwright_advanced_kwargs(config.playwright)
+    kwargs.update(advanced_kwargs)
+    kwargs.update(profile_overrides)
+
+    return kwargs
+
+
 def get_spa_domain_cache() -> SPADomainCache:
     """Get or create the global SPA domain cache instance.
 
@@ -1202,11 +1240,14 @@ async def close_shared_clients() -> None:
         _playwright_renderer = None
 
 
-async def _get_playwright_renderer(proxy: str | None = None) -> Any:
+async def _get_playwright_renderer(
+    proxy: str | None = None, config: FetchConfig | None = None
+) -> Any:
     """Get or create the shared PlaywrightRenderer.
 
     Args:
         proxy: Optional proxy URL
+        config: Optional fetch configuration to enable session cache
 
     Returns:
         PlaywrightRenderer instance
@@ -1216,7 +1257,43 @@ async def _get_playwright_renderer(proxy: str | None = None) -> Any:
         from markitai.fetch_playwright import PlaywrightRenderer
 
         _playwright_renderer = PlaywrightRenderer(proxy=proxy)
+
+        # Enable domain-persistent session cache if configured
+        if config and config.playwright.session_mode == "domain_persistent":
+            _playwright_renderer.enable_domain_session_cache(
+                ttl_seconds=config.playwright.session_ttl_seconds,
+                max_contexts=8,  # Default limit
+            )
+
     return _playwright_renderer
+
+
+def _url_to_session_key(url: str) -> str:
+    """Extract session key (domain) from URL."""
+    from urllib.parse import urlparse
+
+    return urlparse(url).netloc.lower()
+
+
+def _resolve_playwright_profile_overrides(
+    url: str, domain_profiles: dict[str, Any]
+) -> dict[str, Any]:
+    """Resolve domain-specific Playwright overrides from config."""
+    from urllib.parse import urlparse
+
+    domain = urlparse(url).netloc.lower()
+    profile = domain_profiles.get(domain)
+    if not profile:
+        return {}
+
+    out: dict[str, Any] = {}
+    if profile.wait_for_selector:
+        out["wait_for_selector"] = profile.wait_for_selector
+    if profile.wait_for:
+        out["wait_for"] = profile.wait_for
+    if profile.extra_wait_ms is not None:
+        out["extra_wait_ms"] = profile.extra_wait_ms
+    return out
 
 
 def detect_js_required(content: str) -> bool:
@@ -1581,10 +1658,6 @@ async def fetch_with_static_conditional(
         - result with new content if 200 response
         - etag/last_modified for future conditional requests
     """
-    import tempfile
-
-    import httpx
-
     logger.debug(
         f"[ConditionalFetch] URL: {url}, etag={cached_etag is not None}, "
         f"last_modified={cached_last_modified is not None}"
@@ -1603,118 +1676,113 @@ async def fetch_with_static_conditional(
     try:
         # Detect proxy
         proxy_url = _detect_proxy()
-        proxy_config = proxy_url if proxy_url else None
+        client = get_static_http_client()
+        logger.debug(f"Fetching URL with static {client.name} strategy: {url}")
 
-        async with httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=30.0,
-            proxy=proxy_config,
-        ) as client:
-            response = await client.get(url, headers=headers)
+        response = await client.get(
+            url, headers=headers, timeout_s=30.0, proxy=proxy_url
+        )
 
-            # Extract response headers for future conditional requests
-            response_etag = response.headers.get("ETag")
-            response_last_modified = response.headers.get("Last-Modified")
+        # Extract response headers for future conditional requests
+        response_etag = response.headers.get("etag")
+        response_last_modified = response.headers.get("last_modified")
 
-            # 304 Not Modified - use cached content
-            if response.status_code == 304:
-                return ConditionalFetchResult(
-                    result=None,
-                    not_modified=True,
-                    etag=response_etag or cached_etag,
-                    last_modified=response_last_modified or cached_last_modified,
-                )
-
-            # Non-2xx response (except 304)
-            if response.status_code >= 400:
-                raise FetchError(f"HTTP {response.status_code} fetching URL: {url}")
-
-            # 200 OK (or other 2xx) - process new content
-            logger.debug(
-                f"[ConditionalFetch] {response.status_code} response, "
-                f"content-length={len(response.content)}"
+        # 304 Not Modified - use cached content
+        if response.status_code == 304:
+            return ConditionalFetchResult(
+                result=None,
+                not_modified=True,
+                etag=response_etag or cached_etag,
+                last_modified=response_last_modified or cached_last_modified,
             )
 
-            # Check if server returned markdown directly (CF Markdown for Agents)
-            content_type_header = response.headers.get("Content-Type", "")
-            if "text/markdown" in content_type_header:
-                markdown_content = response.text
-                token_hint = response.headers.get("x-markdown-tokens")
-                logger.debug(
-                    f"[ConditionalFetch] Server returned markdown directly"
-                    f"{f' (~{token_hint} tokens)' if token_hint else ''}"
-                )
-                title = _extract_markdown_title(markdown_content)
+        # Non-2xx response (except 304)
+        if response.status_code >= 400:
+            raise FetchError(f"HTTP {response.status_code} fetching URL: {url}")
 
-                fetch_result = FetchResult(
-                    content=markdown_content,
-                    strategy_used="static",
-                    title=title,
-                    url=url,
-                    final_url=str(response.url),
-                    metadata={
-                        "converter": "server-markdown",
-                        "conditional": True,
-                        "token_hint": int(token_hint) if token_hint else None,
-                    },
-                )
+        # 200 OK (or other 2xx) - process new content
+        logger.debug(
+            f"[ConditionalFetch] {response.status_code} response, "
+            f"content-length={len(response.content)}"
+        )
 
-                return ConditionalFetchResult(
-                    result=fetch_result,
-                    not_modified=False,
-                    etag=response_etag,
-                    last_modified=response_last_modified,
-                )
+        # Check if server returned markdown directly (CF Markdown for Agents)
+        content_type_header = response.headers.get("content-type", "")
+        if "text/markdown" in content_type_header:
+            markdown_content = response.text
+            token_hint = response.headers.get("x-markdown-tokens")
+            logger.debug(
+                f"[ConditionalFetch] Server returned markdown directly"
+                f"{f' (~{token_hint} tokens)' if token_hint else ''}"
+            )
+            title = _extract_markdown_title(markdown_content)
 
-            # Determine file extension from Content-Type or URL
-            content_type = response.headers.get("Content-Type", "")
-            if "text/html" in content_type:
-                suffix = ".html"
-            elif "application/pdf" in content_type:
-                suffix = ".pdf"
-            else:
-                # Fallback to URL extension
-                from urllib.parse import urlparse
+            fetch_result = FetchResult(
+                content=markdown_content,
+                strategy_used="static",
+                title=title,
+                url=url,
+                final_url=str(response.url),
+                metadata={
+                    "converter": "server-markdown",
+                    "conditional": True,
+                    "token_hint": int(token_hint) if token_hint else None,
+                    "client": client.name,
+                },
+            )
 
-                path = urlparse(url).path
-                suffix = Path(path).suffix or ".html"
+            return ConditionalFetchResult(
+                result=fetch_result,
+                not_modified=False,
+                etag=response_etag,
+                last_modified=response_last_modified,
+            )
 
-            # Save response to temp file for markitdown processing
-            with tempfile.NamedTemporaryFile(
-                suffix=suffix, delete=False, mode="wb"
-            ) as f:
-                f.write(response.content)
-                temp_path = Path(f.name)
+        # Determine file extension from Content-Type or URL
+        content_type = response.headers.get("Content-Type", "")
+        if "text/html" in content_type:
+            suffix = ".html"
+        elif "application/pdf" in content_type:
+            suffix = ".pdf"
+        else:
+            # Fallback to URL extension
+            from urllib.parse import urlparse
 
-            try:
-                # Use markitdown to convert
-                md = _get_markitdown()
-                md_result = md.convert(str(temp_path))
+            path = urlparse(url).path
+            suffix = Path(path).suffix or ".html"
 
-                if not md_result.text_content:
-                    raise FetchError(f"No content extracted from URL: {url}")
+        # Save response to temp file for markitdown processing
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False, mode="wb") as f:
+            f.write(response.content)
+            temp_path = Path(f.name)
 
-                fetch_result = FetchResult(
-                    content=md_result.text_content,
-                    strategy_used="static",
-                    title=md_result.title,
-                    url=url,
-                    final_url=str(response.url),
-                    metadata={"converter": "markitdown", "conditional": True},
-                )
+        try:
+            # Use markitdown to convert
+            md = _get_markitdown()
+            md_result = md.convert(str(temp_path))
 
-                return ConditionalFetchResult(
-                    result=fetch_result,
-                    not_modified=False,
-                    etag=response_etag,
-                    last_modified=response_last_modified,
-                )
-            finally:
-                # Cleanup temp file
-                temp_path.unlink(missing_ok=True)
+            if not md_result.text_content:
+                raise FetchError(f"No content extracted from URL: {url}")
 
-    except httpx.HTTPError as e:
-        raise FetchError(f"HTTP error fetching URL {url}: {e}")
+            fetch_result = FetchResult(
+                content=md_result.text_content,
+                strategy_used="static",
+                title=md_result.title,
+                url=url,
+                final_url=str(response.url),
+                metadata={"converter": "markitdown", "conditional": True},
+            )
+
+            return ConditionalFetchResult(
+                result=fetch_result,
+                not_modified=False,
+                etag=response_etag,
+                last_modified=response_last_modified,
+            )
+        finally:
+            # Cleanup temp file
+            temp_path.unlink(missing_ok=True)
+
     except Exception as e:
         if isinstance(e, FetchError):
             raise
@@ -2028,7 +2096,7 @@ async def fetch_url(
     ):
         # Only initialize global renderer if browser strategy is likely to be used
         proxy = _detect_proxy() if getattr(config, "auto_proxy", True) else None
-        _renderer = await _get_playwright_renderer(proxy=proxy)
+        _renderer = await _get_playwright_renderer(proxy=proxy, config=config)
 
     # When screenshot is enabled, use multi-source fetching strategy
     # This captures both static content and browser-rendered content
@@ -2126,14 +2194,13 @@ async def fetch_url(
 
             pw_result = await fetch_with_playwright(
                 url,
-                timeout=config.playwright.timeout,
-                wait_for=config.playwright.wait_for,
-                extra_wait_ms=config.playwright.extra_wait_ms,
-                proxy=_detect_proxy() if getattr(config, "auto_proxy", True) else None,
-                screenshot_config=screenshot_config,
-                output_dir=screenshot_dir,
-                renderer=_renderer,
-                **_get_playwright_advanced_kwargs(config.playwright),
+                **_get_playwright_fetch_kwargs(
+                    url,
+                    config,
+                    screenshot_config=screenshot_config,
+                    output_dir=screenshot_dir,
+                    renderer=_renderer,
+                ),
             )
 
             result = FetchResult(
@@ -2225,14 +2292,13 @@ async def fetch_url(
 
         pw_result = await fetch_with_playwright(
             url,
-            timeout=config.playwright.timeout,
-            wait_for=config.playwright.wait_for,
-            extra_wait_ms=config.playwright.extra_wait_ms,
-            proxy=_detect_proxy() if getattr(config, "auto_proxy", True) else None,
-            screenshot_config=screenshot_config,
-            output_dir=screenshot_dir,
-            renderer=_renderer,
-            **_get_playwright_advanced_kwargs(config.playwright),
+            **_get_playwright_fetch_kwargs(
+                url,
+                config,
+                screenshot_config=screenshot_config,
+                output_dir=screenshot_dir,
+                renderer=_renderer,
+            ),
         )
 
         result = FetchResult(
@@ -2360,14 +2426,13 @@ async def _fetch_multi_source(
             logger.debug("Using Playwright for browser fetch")
             pw_result = await fetch_with_playwright(
                 url,
-                timeout=config.playwright.timeout,
-                wait_for=config.playwright.wait_for,
-                extra_wait_ms=config.playwright.extra_wait_ms,
-                proxy=_detect_proxy() if getattr(config, "auto_proxy", True) else None,
-                screenshot_config=screenshot_config,
-                output_dir=screenshot_dir,
-                renderer=renderer,
-                **_get_playwright_advanced_kwargs(config.playwright),
+                **_get_playwright_fetch_kwargs(
+                    url,
+                    config,
+                    screenshot_config=screenshot_config,
+                    output_dir=screenshot_dir,
+                    renderer=renderer,
+                ),
             )
             result = FetchResult(
                 content=pw_result.content,
@@ -2608,6 +2673,9 @@ async def _fetch_with_fallback(
     )
     strategies = decision.order[: config.policy.max_strategy_hops]
 
+    # Resolve domain profile for telemetry
+    domain_profile_applied = decision.reason == "spa_or_pattern"
+
     for strat in strategies:
         try:
             if strat == "static":
@@ -2624,6 +2692,15 @@ async def _fetch_with_fallback(
                     logger.debug(f"Strategy {strat} returned invalid content: {reason}")
                     errors.append(f"{strat}: invalid content ({reason})")
                     continue
+
+                # Add telemetry
+                result.metadata.update(
+                    {
+                        "policy_reason": decision.reason,
+                        "policy_order": strategies,
+                        "profile_applied": domain_profile_applied,
+                    }
+                )
                 return result
 
             elif strat == "playwright":
@@ -2638,16 +2715,13 @@ async def _fetch_with_fallback(
 
                 pw_result = await fetch_with_playwright(
                     url,
-                    timeout=config.playwright.timeout,
-                    wait_for=config.playwright.wait_for,
-                    extra_wait_ms=config.playwright.extra_wait_ms,
-                    proxy=_detect_proxy()
-                    if getattr(config, "auto_proxy", True)
-                    else None,
-                    screenshot_config=screenshot_kwargs.get("screenshot_config"),
-                    output_dir=screenshot_kwargs.get("screenshot_dir"),
-                    renderer=renderer,
-                    **_get_playwright_advanced_kwargs(config.playwright),
+                    **_get_playwright_fetch_kwargs(
+                        url,
+                        config,
+                        screenshot_config=screenshot_kwargs.get("screenshot_config"),
+                        output_dir=screenshot_kwargs.get("screenshot_dir"),
+                        renderer=renderer,
+                    ),
                 )
 
                 result = FetchResult(
@@ -2665,6 +2739,15 @@ async def _fetch_with_fallback(
                     logger.debug(f"Strategy {strat} returned invalid content: {reason}")
                     errors.append(f"{strat}: invalid content ({reason})")
                     continue
+
+                # Add telemetry
+                result.metadata.update(
+                    {
+                        "policy_reason": decision.reason,
+                        "policy_order": strategies,
+                        "profile_applied": domain_profile_applied,
+                    }
+                )
                 return result
 
             elif strat == "cloudflare":
@@ -2703,6 +2786,15 @@ async def _fetch_with_fallback(
                     logger.debug(f"Strategy {strat} returned invalid content: {reason}")
                     errors.append(f"{strat}: invalid content ({reason})")
                     continue
+
+                # Add telemetry
+                result.metadata.update(
+                    {
+                        "policy_reason": decision.reason,
+                        "policy_order": strategies,
+                        "profile_applied": domain_profile_applied,
+                    }
+                )
                 return result
 
             elif strat == "jina":
@@ -2714,6 +2806,15 @@ async def _fetch_with_fallback(
                     logger.debug(f"Strategy {strat} returned invalid content: {reason}")
                     errors.append(f"{strat}: invalid content ({reason})")
                     continue
+
+                # Add telemetry
+                result.metadata.update(
+                    {
+                        "policy_reason": decision.reason,
+                        "policy_order": strategies,
+                        "profile_applied": domain_profile_applied,
+                    }
+                )
                 return result
 
         except JinaRateLimitError as e:
