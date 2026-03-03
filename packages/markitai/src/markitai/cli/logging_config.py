@@ -87,6 +87,22 @@ def _suppress_onnx_runtime_logs() -> None:
     os.environ.setdefault("ORT_CPP_LOG_SEVERITY_LEVEL", "3")
 
 
+def _suppress_mupdf_logs() -> None:
+    """Suppress MuPDF C-level logs that bypass Python logging.
+
+    MuPDF (via PyMuPDF) logs directly to stderr, which can clutter CLI output
+    with format warnings (e.g., "No common ancestor in structure tree").
+    """
+    try:
+        # PyMuPDF might not be installed in all environments
+        import fitz
+
+        if hasattr(fitz, "TOOLS") and hasattr(fitz.TOOLS, "mupdf_display_errors"):
+            fitz.TOOLS.mupdf_display_errors(False)
+    except ImportError:
+        pass
+
+
 # Warning messages to suppress (regex patterns)
 SUPPRESSED_WARNINGS = [
     # LiteLLM async cleanup
@@ -219,6 +235,9 @@ def setup_logging(
 
     # Suppress ONNX Runtime C++ logs (must be before any imports)
     _suppress_onnx_runtime_logs()
+
+    # Suppress MuPDF C-level logs (directly to stderr)
+    _suppress_mupdf_logs()
 
     # Suppress noisy warnings from dependencies
     _setup_warning_filters()

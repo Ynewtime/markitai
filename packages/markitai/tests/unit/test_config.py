@@ -307,3 +307,36 @@ class TestGetPreset:
         preset = get_preset("rich", config)
         assert preset is not None
         assert preset.llm is True  # Built-in value
+
+
+def test_fetch_policy_defaults_are_user_friendly() -> None:
+    from markitai.config import MarkitaiConfig
+
+    cfg = MarkitaiConfig()
+    assert cfg.fetch.policy.enabled is True
+    assert cfg.fetch.policy.max_strategy_hops == 4
+    assert cfg.fetch.playwright.session_mode == "isolated"
+    assert cfg.fetch.playwright.session_ttl_seconds == 600
+
+
+def test_fetch_config_accepts_domain_profile_overrides() -> None:
+    from markitai.config import MarkitaiConfig
+
+    cfg = MarkitaiConfig.model_validate(
+        {
+            "fetch": {
+                "domain_profiles": {
+                    "x.com": {
+                        "wait_for_selector": '[data-testid="tweetText"]',
+                        "wait_for": "domcontentloaded",
+                        "extra_wait_ms": 1200,
+                    }
+                }
+            }
+        }
+    )
+
+    assert (
+        cfg.fetch.domain_profiles["x.com"].wait_for_selector
+        == '[data-testid="tweetText"]'
+    )
