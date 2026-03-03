@@ -251,6 +251,16 @@ class PlaywrightFetchResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class CachedContext:
+    """Cached browser context with expiration."""
+
+    context: Any
+    created_at: float
+    last_used_at: float
+    session_key: str
+
+
 class PlaywrightRenderer:
     """Reusable Playwright renderer to avoid browser cold starts."""
 
@@ -260,11 +270,31 @@ class PlaywrightRenderer:
         self._browser: Any = None
         self._lock = asyncio.Lock()
 
+        # Session cache (domain-persistent mode)
+        self._context_cache: dict[str, CachedContext] = {}
+        self._session_cache_enabled = False
+        self._session_ttl_seconds = 600
+        self._max_contexts = 8
+
     async def __aenter__(self) -> PlaywrightRenderer:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await self.close()
+
+    def enable_domain_session_cache(self, ttl_seconds: int, max_contexts: int) -> None:
+        """Enable domain-persistent session caching.
+
+        Args:
+            ttl_seconds: TTL for cached contexts in seconds
+            max_contexts: Maximum number of contexts to cache
+        """
+        self._session_cache_enabled = True
+        self._session_ttl_seconds = ttl_seconds
+        self._max_contexts = max_contexts
+        logger.debug(
+            f"Playwright session cache enabled (TTL={ttl_seconds}s, max={max_contexts})"
+        )
 
     async def _ensure_browser(self) -> Any:
         if self._browser is not None:
@@ -295,6 +325,51 @@ class PlaywrightRenderer:
                 )
             return self._browser
 
+    async def _get_or_create_cached_context(
+        self, session_key: str, ctx_options: dict[str, Any]
+    ) -> Any:
+        """Get an existing cached context or create a new one."""
+        import time
+
+        now = time.time()
+
+        # 1. Check for existing context
+        if session_key in self._context_cache:
+            cached = self._context_cache[session_key]
+            # Check for expiration
+            if now - cached.last_used_at < self._session_ttl_seconds:
+                cached.last_used_at = now
+                logger.debug(f"Reusing cached Playwright context for: {session_key}")
+                return cached.context
+            else:
+                # Expired
+                logger.debug(f"Cached Playwright context expired for: {session_key}")
+                await cached.context.close()
+                del self._context_cache[session_key]
+
+        # 2. Enforce max contexts (LRU-ish)
+        if len(self._context_cache) >= self._max_contexts:
+            # Remove oldest (based on last_used_at)
+            oldest_key = min(
+                self._context_cache.keys(),
+                key=lambda k: self._context_cache[k].last_used_at,
+            )
+            logger.debug(f"Evicting Playwright context cache for: {oldest_key}")
+            await self._context_cache[oldest_key].context.close()
+            del self._context_cache[oldest_key]
+
+        # 3. Create new context
+        browser = await self._ensure_browser()
+        context = await browser.new_context(**ctx_options)
+        self._context_cache[session_key] = CachedContext(
+            context=context,
+            created_at=now,
+            last_used_at=now,
+            session_key=session_key,
+        )
+        logger.debug(f"Created new cached Playwright context for: {session_key}")
+        return context
+
     async def fetch(
         self,
         url: str,
@@ -310,10 +385,11 @@ class PlaywrightRenderer:
         extra_http_headers: dict[str, str] | None = None,
         user_agent: str | None = None,
         http_credentials: dict[str, str] | None = None,
+        # Session persistence
+        session_key: str | None = None,
+        persist_context: bool = False,
     ) -> PlaywrightFetchResult:
         """Fetch URL using a persistent browser instance."""
-        browser = await self._ensure_browser()
-
         # Build context options from advanced config
         ctx_options: dict[str, Any] = {}
         if extra_http_headers:
@@ -323,7 +399,13 @@ class PlaywrightRenderer:
         if http_credentials:
             ctx_options["http_credentials"] = http_credentials
 
-        context = await browser.new_context(**ctx_options)
+        if self._session_cache_enabled and persist_context and session_key:
+            context = await self._get_or_create_cached_context(session_key, ctx_options)
+            should_close_context = False
+        else:
+            browser = await self._ensure_browser()
+            context = await browser.new_context(**ctx_options)
+            should_close_context = True
 
         # Inject cookies before navigation
         if cookies:
@@ -411,11 +493,23 @@ class PlaywrightRenderer:
                 metadata={"renderer": "playwright", "wait_for": wait_for},
             )
         finally:
-            await context.close()
+            if should_close_context:
+                await context.close()
+            else:
+                # In persistent mode, close the page but keep the context
+                await page.close()
 
     async def close(self) -> None:
         """Close browser and playwright instances."""
         async with self._lock:
+            # Clean up context cache
+            for cached in self._context_cache.values():
+                try:
+                    await cached.context.close()
+                except Exception:
+                    pass
+            self._context_cache.clear()
+
             if self._browser:
                 await self._browser.close()
                 self._browser = None
@@ -440,6 +534,9 @@ async def fetch_with_playwright(
     extra_http_headers: dict[str, str] | None = None,
     user_agent: str | None = None,
     http_credentials: dict[str, str] | None = None,
+    # Session persistence
+    session_key: str | None = None,
+    persist_context: bool = False,
 ) -> PlaywrightFetchResult:
     """Fetch URL using Playwright (reuses renderer if provided)."""
     # Collect advanced kwargs
@@ -456,6 +553,10 @@ async def fetch_with_playwright(
         advanced_kwargs["user_agent"] = user_agent
     if http_credentials is not None:
         advanced_kwargs["http_credentials"] = http_credentials
+    if session_key is not None:
+        advanced_kwargs["session_key"] = session_key
+    if persist_context:
+        advanced_kwargs["persist_context"] = persist_context
 
     if renderer:
         return await renderer.fetch(
