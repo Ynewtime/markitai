@@ -336,6 +336,21 @@ class CacheConfig(BaseModel):
     global_dir: str = DEFAULT_GLOBAL_CACHE_DIR
 
 
+class FetchPolicyConfig(BaseModel):
+    """Configuration for fetch strategy policy engine."""
+
+    enabled: bool = True
+    max_strategy_hops: int = Field(default=4, ge=1, le=6)
+
+
+class DomainProfileConfig(BaseModel):
+    """Domain-specific overrides for fetch settings."""
+
+    wait_for_selector: str | None = None
+    wait_for: Literal["load", "domcontentloaded", "networkidle"] | None = None
+    extra_wait_ms: int | None = Field(default=None, ge=0, le=30000)
+
+
 class PlaywrightConfig(BaseModel):
     """Playwright configuration for JS-rendered pages."""
 
@@ -344,6 +359,9 @@ class PlaywrightConfig(BaseModel):
         DEFAULT_PLAYWRIGHT_WAIT_FOR
     )
     extra_wait_ms: int = DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS  # Extra wait after load
+
+    session_mode: Literal["isolated", "domain_persistent"] = "isolated"
+    session_ttl_seconds: int = Field(default=600, ge=60, le=7200)
 
     # Advanced browser control (aligned with CF Browser Rendering API capabilities)
     wait_for_selector: str | None = None  # CSS selector to wait for before extraction
@@ -422,6 +440,8 @@ class FetchConfig(BaseModel):
     playwright: PlaywrightConfig = Field(default_factory=PlaywrightConfig)
     jina: JinaConfig = Field(default_factory=JinaConfig)
     cloudflare: CloudflareConfig = Field(default_factory=CloudflareConfig)
+    policy: FetchPolicyConfig = Field(default_factory=FetchPolicyConfig)
+    domain_profiles: dict[str, DomainProfileConfig] = Field(default_factory=dict)
     fallback_patterns: list[str] = Field(
         default_factory=lambda: list(DEFAULT_FETCH_FALLBACK_PATTERNS)
     )

@@ -977,7 +977,20 @@ class LLMProcessor(VisionMixin, DocumentMixin):
 
         # Estimate input tokens (use gpt-4 tokenizer as reasonable approximation)
         try:
+            # Note: gpt-4 tokenizer does not account for images
             input_tokens = litellm.token_counter(model="gpt-4", messages=messages)
+
+            # Manual correction for images (token_counter often ignores them)
+            # Standard high-res image is ~1105-1445 tokens for most models
+            for msg in messages:
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict) and (
+                            item.get("type") == "image_url" or "image" in item
+                        ):
+                            # Add 1600 tokens per image as a safe buffer
+                            input_tokens += 1600
         except Exception:
             # Fallback: rough estimate based on character count
             total_chars = sum(len(str(m.get("content", ""))) for m in messages)
@@ -1007,54 +1020,42 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                         all_max_contexts.append(info["max_input_tokens"])
             if all_max_outputs:
                 max_output = min(all_max_outputs)
-                logger.debug(
-                    f"[DynamicTokens] Using min max_output across router models: {max_output}"
-                )
             if all_max_contexts:
                 max_context = min(all_max_contexts)
         elif target_model_id:
             info = get_model_info_cached(target_model_id)
             max_context = info.get("max_input_tokens")
             max_output = info.get("max_output_tokens")
-            if max_context and max_output:
-                logger.debug(
-                    f"[DynamicTokens] Using target model {target_model_id}: "
-                    f"context={max_context}, max_output={max_output}"
-                )
 
         # If target model info unavailable, return None to let LiteLLM handle it
         if not max_context or not max_output:
             logger.debug(
                 f"[DynamicTokens] Could not get limits for model={target_model_id}, "
-                f"returning None to use LiteLLM defaults"
+                "returning None to use LiteLLM defaults"
             )
             return None
 
         # Calculate available output space
         # Reserve buffer for safety (tokenizer differences, system overhead)
-        buffer = max(500, int(input_tokens * 0.1))  # 10% or 500, whichever is larger
+        # Use a larger buffer (2000) to avoid edge cases with large context models
+        buffer = max(2000, int(input_tokens * 0.2))
         available_context = max_context - input_tokens - buffer
-
-        # For table-heavy content, ensure output has at least 1.5x input tokens
-        # since reformatting tables to Markdown often expands token count
-        if is_table_heavy:
-            min_required_output = int(input_tokens * 1.5)
-            available_context = max(available_context, min_required_output)
-            logger.debug(
-                f"[DynamicTokens] Table-heavy content detected ({table_rows} rows), "
-                f"min_required_output={min_required_output}"
-            )
 
         # max_tokens = min(model's max_output, available context space)
         max_tokens = min(max_output, available_context)
+
+        # Apply a reasonable cap for standard document conversion
+        # 128k output is plenty for even the largest single page/chunk
+        # This prevents requesting "too many" tokens which some providers dislike
+        max_tokens = min(max_tokens, 128000)
 
         # Ensure reasonable minimum (higher for table-heavy content)
         min_floor = 4000 if is_table_heavy else 1000
         max_tokens = max(max_tokens, min_floor)
 
         logger.debug(
-            f"[DynamicTokens] input={input_tokens}, model={target_model_id}, "
-            f"max_output={max_output}, calculated={max_tokens}"
+            f"[DynamicTokens] input_est={input_tokens}, model={target_model_id}, "
+            f"max_output_lim={max_output}, calculated={max_tokens}"
         )
 
         return max_tokens
