@@ -2591,15 +2591,22 @@ async def _fetch_with_fallback(
     Returns:
         FetchResult from first successful strategy
     """
+    from urllib.parse import urlparse
+
+    from markitai.fetch_policy import FetchPolicyEngine
+
     errors = []
 
-    if start_with_browser:
-        # Try browser first for known JS domains
-        # Priority: playwright > cloudflare > jina
-        strategies = ["playwright", "cloudflare", "jina", "static"]
-    else:
-        # Normal order: static -> playwright -> cloudflare -> jina
-        strategies = ["static", "playwright", "cloudflare", "jina"]
+    domain = urlparse(url).netloc.lower()
+    engine = FetchPolicyEngine()
+    decision = engine.decide(
+        domain=domain,
+        known_spa=start_with_browser,
+        explicit_strategy=config.strategy if config.strategy != "auto" else None,
+        fallback_patterns=config.fallback_patterns,
+        policy_enabled=config.policy.enabled,
+    )
+    strategies = decision.order[: config.policy.max_strategy_hops]
 
     for strat in strategies:
         try:
