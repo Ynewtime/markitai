@@ -365,25 +365,19 @@ def create_url_processor(
                     assert (
                         screenshot_path is not None
                     )  # Guaranteed by use_vision_enhancement check
-                    _, cost, url_llm_usage = await process_url_with_vision(
-                        multi_source_content,
-                        screenshot_path,
-                        url,
-                        cfg,
-                        output_file,
-                        processor=shared_processor,
-                        original_title=fetch_result.title if fetch_result else None,
-                    )
-                    llm_cost = cost
 
-                    # Run image analysis in parallel if needed
                     if should_analyze_images:
-                        (
-                            _,
-                            image_cost,
-                            image_usage,
-                            img_analysis,
-                        ) = await analyze_images_with_llm(
+                        # Run vision enhancement and image analysis in parallel
+                        vision_task = process_url_with_vision(
+                            multi_source_content,
+                            screenshot_path,
+                            url,
+                            cfg,
+                            output_file,
+                            processor=shared_processor,
+                            original_title=fetch_result.title if fetch_result else None,
+                        )
+                        img_task = analyze_images_with_llm(
                             downloaded_images,
                             multi_source_content,
                             output_file,
@@ -392,8 +386,29 @@ def create_url_processor(
                             concurrency_limit=cfg.llm.concurrency,
                             processor=shared_processor,
                         )
+
+                        # Execute in parallel
+                        vision_result, img_result = await asyncio.gather(
+                            vision_task, img_task
+                        )
+
+                        # Unpack results
+                        _, cost, url_llm_usage = vision_result
+                        _, image_cost, image_usage, img_analysis = img_result
+
                         _merge_llm_usage(url_llm_usage, image_usage)
-                        llm_cost += image_cost
+                        llm_cost = cost + image_cost
+                    else:
+                        _, cost, url_llm_usage = await process_url_with_vision(
+                            multi_source_content,
+                            screenshot_path,
+                            url,
+                            cfg,
+                            output_file,
+                            processor=shared_processor,
+                            original_title=fetch_result.title if fetch_result else None,
+                        )
+                        llm_cost = cost
                 elif should_analyze_images:
                     # Standard processing with image analysis
                     doc_task = process_with_llm(
@@ -879,8 +894,3 @@ async def process_batch(
     )
     if total_failed > 0:
         raise SystemExit(10)  # PARTIAL_FAILURE
-
-
-# Backward compatibility aliases
-_create_process_file = create_process_file
-_create_url_processor = create_url_processor

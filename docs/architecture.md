@@ -2,7 +2,7 @@
 
 > 写给未来的自己，也写给每一个想深入理解这个项目的人。
 >
-> *版本：v0.5.1 | 最后更新：2026-02-07*
+> *版本：v0.6.0 | 最后更新：2026-03-04*
 
 ---
 
@@ -65,7 +65,8 @@ Markitai 由六个相互协作的子系统组成，每个都各司其职：
 #### 3. Converter 层 (`converter/` & `fetch.py`)
 这是"工人"。每种格式都有专门的转换器。
 - **PDF**：使用 `pymupdf4llm` 进行高质量提取。
-- **URL**：一个智能的策略链（Auto -> Static -> Browser -> Jina），能自动应对反爬和动态渲染。
+- **URL**：一个智能的策略链（Auto -> Static -> Playwright -> Cloudflare -> Jina），能自动应对反爬和动态渲染。
+- **Cloudflare**：`converter/cloudflare.py` 通过 Workers AI toMarkdown API 实现云端文档转换。
 
 #### 4. LLM 增强层 (`llm/`)
 这是"大脑"。它不直接调用 API，而是通过一个复杂的路由系统。
@@ -94,7 +95,9 @@ cli/
 │   │   ├── converter/*        # 格式转换器
 │   │   ├── llm/processor.py   # LLM 增强
 │   │   └── image.py           # 图像处理
-│   └── fetch.py               # URL 抓取
+│   ├── fetch.py               # URL 抓取
+│   ├── fetch_http.py          # 静态 HTTP 客户端 (httpx/curl-cffi)
+│   └── fetch_policy.py        # 策略引擎
 └── commands/                  # 子命令组
     ├── config.py              # config 子命令
     ├── cache.py               # cache 子命令
@@ -169,7 +172,7 @@ utils/
 - `LLMConfig`: LLM 相关设置
 - `OutputConfig`: 输出设置
 - `PromptsConfig`: Prompt 模板
-- `FetchConfig`: URL 抓取设置
+- `FetchConfig`: URL 抓取设置（含 `CloudflareConfig`, `FetchPolicyConfig`, `DomainProfileConfig`, `PlaywrightConfig`）
 - `BatchConfig`: 批量处理设置
 - `CacheConfig`: 缓存设置
 
@@ -191,6 +194,7 @@ utils/
 | `legacy.py` | DOC, XLS, PPT | LibreOffice 或 pywin32 |
 | `image.py` | PNG, JPG, WebP | rapidocr, opencv |
 | `text.py` | TXT, MD | - |
+| `cloudflare.py` | PDF, XLSX, DOCX, PPTX | Cloudflare Workers AI |
 
 **设计模式**: 模板方法
 ```python
@@ -452,7 +456,8 @@ graph LR
     CheckCache -- 是 --> Browser[Playwright]
     CheckCache -- 否 --> Static[静态抓取]
     Static -- 失败/JS检测 --> Browser
-    Browser -- 失败/反爬 --> Jina[Jina Reader]
+    Browser -- 失败/反爬 --> CF[Cloudflare BR]
+    CF -- 失败 --> Jina[Jina Reader]
     Jina -- 失败 --> Error(报错)
 ```
 
@@ -472,6 +477,8 @@ URL Input
         +---> STATIC ---> requests ---> HTML
         |
         +---> PLAYWRIGHT ---> Playwright ---> Rendered HTML
+        |
+        +---> CLOUDFLARE ---> CF BR API ---> Markdown
         |
         +---> JINA ---> Jina API ---> Markdown
         |

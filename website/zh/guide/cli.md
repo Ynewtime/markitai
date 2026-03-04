@@ -259,8 +259,8 @@ markitai init
 # 快速模式（不询问直接生成默认配置）
 markitai init --yes
 
-# 生成全局配置
-markitai init --global
+# 生成本地项目配置（./markitai.json）
+markitai init --local
 
 # 指定输出路径
 markitai init -o ./markitai.json

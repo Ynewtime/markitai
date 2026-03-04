@@ -81,7 +81,7 @@ class CurlCffiClient:
         timeout_s: float,
         proxy: str | None = None,
     ) -> StaticHttpResponse:
-        from curl_cffi.requests import AsyncSession
+        from curl_cffi.requests import AsyncSession  # type: ignore[import-not-found]
 
         async with AsyncSession(impersonate="chrome") as s:
             proxies = {"http": proxy, "https": proxy} if proxy else None

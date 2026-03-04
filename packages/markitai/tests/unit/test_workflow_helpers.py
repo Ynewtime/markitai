@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from markitai.workflow.helpers import (
-    LLMUsageAccumulator,
     add_basic_frontmatter,
     detect_language,
     format_standalone_image_markdown,
@@ -230,59 +229,6 @@ class TestMergeLlmUsage:
 
         assert "gpt-4" in target
         assert "claude-3" in target
-
-
-class TestLLMUsageAccumulator:
-    """Tests for LLMUsageAccumulator class."""
-
-    def test_initial_state(self):
-        """Test initial state is zero."""
-        acc = LLMUsageAccumulator()
-        assert acc.total_cost == 0.0
-        assert acc.usage == {}
-
-    def test_add_cost_and_usage(self):
-        """Test adding cost and usage."""
-        acc = LLMUsageAccumulator()
-        acc.add(
-            cost=0.05,
-            usage={
-                "gpt-4": {
-                    "requests": 1,
-                    "input_tokens": 100,
-                    "output_tokens": 50,
-                    "cost_usd": 0.05,
-                }
-            },
-        )
-
-        assert acc.total_cost == 0.05
-        assert acc.usage["gpt-4"]["requests"] == 1
-
-    def test_add_multiple_times(self):
-        """Test adding multiple times accumulates correctly."""
-        acc = LLMUsageAccumulator()
-        acc.add(cost=0.05, usage={"gpt-4": {"requests": 1}})
-        acc.add(cost=0.03, usage={"gpt-4": {"requests": 2}})
-
-        assert acc.total_cost == 0.08
-        assert acc.usage["gpt-4"]["requests"] == 3
-
-    def test_add_cost_only(self):
-        """Test adding cost without usage."""
-        acc = LLMUsageAccumulator()
-        acc.add(cost=0.10)
-        assert acc.total_cost == 0.10
-        assert acc.usage == {}
-
-    def test_reset(self):
-        """Test reset clears all state."""
-        acc = LLMUsageAccumulator()
-        acc.add(cost=0.05, usage={"gpt-4": {"requests": 1}})
-        acc.reset()
-
-        assert acc.total_cost == 0.0
-        assert acc.usage == {}
 
 
 class TestWriteImagesJson:
@@ -669,44 +615,3 @@ class TestMergeLlmUsageEdgeCases:
 
         assert target["gpt-4"]["requests"] == 5
         assert target["gpt-4"]["input_tokens"] == 1000
-
-
-class TestLLMUsageAccumulatorEdgeCases:
-    """Edge case tests for LLMUsageAccumulator class."""
-
-    def test_add_with_none_usage(self):
-        """Test adding with None usage is handled gracefully."""
-        acc = LLMUsageAccumulator()
-        acc.add(cost=0.05, usage=None)
-
-        assert acc.total_cost == 0.05
-        assert acc.usage == {}
-
-    def test_add_multiple_models(self):
-        """Test accumulating usage from multiple models."""
-        acc = LLMUsageAccumulator()
-        acc.add(
-            cost=0.05,
-            usage={"gpt-4": {"requests": 1, "input_tokens": 100}},
-        )
-        acc.add(
-            cost=0.03,
-            usage={"claude-3": {"requests": 2, "input_tokens": 200}},
-        )
-
-        assert acc.total_cost == 0.08
-        assert "gpt-4" in acc.usage
-        assert "claude-3" in acc.usage
-        assert acc.usage["gpt-4"]["requests"] == 1
-        assert acc.usage["claude-3"]["requests"] == 2
-
-    def test_reset_then_add(self):
-        """Test that add works correctly after reset."""
-        acc = LLMUsageAccumulator()
-        acc.add(cost=0.10, usage={"gpt-4": {"requests": 5}})
-        acc.reset()
-        acc.add(cost=0.02, usage={"claude-3": {"requests": 1}})
-
-        assert acc.total_cost == 0.02
-        assert "gpt-4" not in acc.usage
-        assert "claude-3" in acc.usage

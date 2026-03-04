@@ -78,6 +78,9 @@ markitai document.pdf --preset rich      # LLM + alt + desc + screenshot
 markitai document.pdf --preset standard  # LLM + alt + desc
 markitai document.pdf --preset minimal   # Basic conversion only
 
+# Cloudflare cloud rendering
+markitai https://example.com --cloudflare
+
 # Batch processing
 markitai ./docs -o ./output
 

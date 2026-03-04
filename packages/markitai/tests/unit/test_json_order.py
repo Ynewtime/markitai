@@ -7,7 +7,6 @@ from markitai.json_order import (
     _transform_summary,
     _transform_url_entry,
     order_dict,
-    order_dict_keys_sorted,
     order_images,
     order_report,
     order_state,
@@ -66,16 +65,6 @@ class TestOrderDict:
         """Test that non-dict values pass through unchanged."""
         assert order_dict("string", ["a"]) == "string"  # type: ignore
         assert order_dict(123, ["a"]) == 123  # type: ignore
-
-
-class TestOrderDictKeysSorted:
-    """Tests for order_dict_keys_sorted function."""
-
-    def test_alphabetical_sort(self) -> None:
-        """Test alphabetical key sorting."""
-        d = {"zebra": 1, "alpha": 2, "beta": 3}
-        result = order_dict_keys_sorted(d)
-        assert list(result.keys()) == ["alpha", "beta", "zebra"]
 
 
 class TestTransformSummary:

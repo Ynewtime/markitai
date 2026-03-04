@@ -217,21 +217,6 @@ def order_dict(d: dict[str, Any], field_order: list[str]) -> dict[str, Any]:
     return ordered
 
 
-def order_dict_keys_sorted(d: dict[str, Any]) -> dict[str, Any]:
-    """Reorder dict keys alphabetically.
-
-    Args:
-        d: Dictionary to reorder
-
-    Returns:
-        New dict with alphabetically sorted keys
-    """
-    if not isinstance(d, dict):
-        return d
-
-    return {k: d[k] for k in sorted(d.keys())}
-
-
 def _order_llm_usage(llm_usage: dict[str, Any]) -> dict[str, Any]:
     """Order llm_usage structure.
 
@@ -308,22 +293,6 @@ def _transform_url_entry(entry: dict[str, Any]) -> dict[str, Any]:
 
     # Order the result
     result = order_dict(result, URL_ENTRY_FIELD_ORDER)
-
-    # Order nested llm_usage
-    if "llm_usage" in result and isinstance(result["llm_usage"], dict):
-        ordered_usage = {}
-        for model in sorted(result["llm_usage"].keys()):
-            ordered_usage[model] = order_dict(
-                result["llm_usage"][model], LLM_MODEL_USAGE_FIELD_ORDER
-            )
-        result["llm_usage"] = ordered_usage
-
-    return result
-
-
-def _order_image_entry(entry: dict[str, Any]) -> dict[str, Any]:
-    """Order an image entry (formerly asset entry)."""
-    result = order_dict(entry, IMAGE_ENTRY_FIELD_ORDER)
 
     # Order nested llm_usage
     if "llm_usage" in result and isinstance(result["llm_usage"], dict):

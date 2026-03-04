@@ -17,6 +17,7 @@ These are required for specific features:
 | **FFmpeg** | Audio/video processing | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
 | **Jina API Key** | `--jina` (URL conversion) | Set `JINA_API_KEY` env var |
 | **LLM API Key** | `--llm` (AI enhancement) | Set `OPENAI_API_KEY` or provider-specific key |
+| **Cloudflare** | `--cloudflare` (cloud rendering & conversion) | Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` env vars |
 
 ::: tip Browser Automation
 For SPA websites (Twitter, React apps, etc.), Playwright is used automatically. Before first use, install the browser:
@@ -61,13 +62,13 @@ Pin specific versions using environment variables:
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.5.1"
+export MARKITAI_VERSION="0.6.0"
 export UV_VERSION="0.9.27"
 curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.5.0"
+$env:MARKITAI_VERSION = "0.6.0"
 $env:UV_VERSION = "0.9.27"
 irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
 ```

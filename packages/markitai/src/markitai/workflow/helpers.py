@@ -296,46 +296,6 @@ def merge_llm_usage(
         )
 
 
-class LLMUsageAccumulator:
-    """Accumulator for LLM usage statistics and cost.
-
-    This class centralizes the common pattern of tracking LLM cost and usage,
-    reducing the boilerplate of `llm_cost += cost` and `merge_llm_usage(usage, new_usage)`.
-
-    Example:
-        >>> acc = LLMUsageAccumulator()
-        >>> # After each LLM call
-        >>> acc.add(cost=0.05, usage={"gpt-4": {"requests": 1, ...}})
-        >>> acc.add(cost=0.03, usage={"gpt-4": {"requests": 1, ...}})
-        >>> # Get totals
-        >>> print(f"Total cost: ${acc.total_cost:.4f}")
-        >>> print(f"Usage by model: {acc.usage}")
-    """
-
-    def __init__(self) -> None:
-        """Initialize accumulator with zero cost and empty usage."""
-        self.total_cost: float = 0.0
-        self.usage: dict[str, dict[str, Any]] = {}
-
-    def add(
-        self, cost: float = 0.0, usage: dict[str, dict[str, Any]] | None = None
-    ) -> None:
-        """Add cost and usage statistics.
-
-        Args:
-            cost: Cost in USD to add
-            usage: Usage statistics by model to merge
-        """
-        self.total_cost += cost
-        if usage:
-            merge_llm_usage(self.usage, usage)
-
-    def reset(self) -> None:
-        """Reset accumulator to initial state."""
-        self.total_cost = 0.0
-        self.usage = {}
-
-
 def write_images_json(
     output_dir: Path,
     analysis_results: list[ImageAnalysisResult],

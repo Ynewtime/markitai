@@ -150,6 +150,9 @@
           "anyOf": [
             {
               "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
                 "type": "object"
               },
               "type": "array"
@@ -176,6 +179,9 @@
         "http_credentials": {
           "anyOf": [
             {
+              "additionalProperties": {
+                "type": "string"
+              },
               "type": "object"
             },
             {
@@ -192,6 +198,74 @@
         }
       },
       "title": "CloudflareConfig",
+      "type": "object"
+    },
+    "DomainProfileConfig": {
+      "description": "Domain-specific overrides for fetch settings.",
+      "properties": {
+        "wait_for_selector": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wait For Selector"
+        },
+        "wait_for": {
+          "anyOf": [
+            {
+              "enum": [
+                "load",
+                "domcontentloaded",
+                "networkidle"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wait For"
+        },
+        "extra_wait_ms": {
+          "anyOf": [
+            {
+              "maximum": 30000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Extra Wait Ms"
+        },
+        "prefer_strategy": {
+          "anyOf": [
+            {
+              "enum": [
+                "static",
+                "playwright",
+                "jina",
+                "cloudflare"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prefer Strategy"
+        }
+      },
+      "title": "DomainProfileConfig",
       "type": "object"
     },
     "FetchConfig": {
@@ -218,6 +292,16 @@
         "cloudflare": {
           "$ref": "#/$defs/CloudflareConfig"
         },
+        "policy": {
+          "$ref": "#/$defs/FetchPolicyConfig"
+        },
+        "domain_profiles": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DomainProfileConfig"
+          },
+          "title": "Domain Profiles",
+          "type": "object"
+        },
         "fallback_patterns": {
           "items": {
             "type": "string"
@@ -227,6 +311,25 @@
         }
       },
       "title": "FetchConfig",
+      "type": "object"
+    },
+    "FetchPolicyConfig": {
+      "description": "Configuration for fetch strategy policy engine.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "max_strategy_hops": {
+          "default": 4,
+          "maximum": 6,
+          "minimum": 1,
+          "title": "Max Strategy Hops",
+          "type": "integer"
+        }
+      },
+      "title": "FetchPolicyConfig",
       "type": "object"
     },
     "ImageConfig": {
@@ -327,6 +430,41 @@
           "default": 30,
           "title": "Timeout",
           "type": "integer"
+        },
+        "rpm": {
+          "default": 20,
+          "minimum": 1,
+          "title": "Rpm",
+          "type": "integer"
+        },
+        "no_cache": {
+          "default": false,
+          "title": "No Cache",
+          "type": "boolean"
+        },
+        "target_selector": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Selector"
+        },
+        "wait_for_selector": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wait For Selector"
         }
       },
       "title": "JinaConfig",
@@ -600,8 +738,24 @@
           "type": "string"
         },
         "extra_wait_ms": {
-          "default": 5000,
+          "default": 3000,
           "title": "Extra Wait Ms",
+          "type": "integer"
+        },
+        "session_mode": {
+          "default": "isolated",
+          "enum": [
+            "isolated",
+            "domain_persistent"
+          ],
+          "title": "Session Mode",
+          "type": "string"
+        },
+        "session_ttl_seconds": {
+          "default": 600,
+          "maximum": 7200,
+          "minimum": 60,
+          "title": "Session Ttl Seconds",
           "type": "integer"
         },
         "wait_for_selector": {

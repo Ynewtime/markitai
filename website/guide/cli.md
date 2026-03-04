@@ -259,8 +259,8 @@ markitai init
 # Quick mode (generate default config without prompts)
 markitai init --yes
 
-# Generate global config
-markitai init --global
+# Generate local project config (./markitai.json)
+markitai init --local
 
 # Specify output path
 markitai init -o ./markitai.json

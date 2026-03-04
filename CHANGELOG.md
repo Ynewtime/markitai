@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-04
+
+### Added
+
+- **Cloudflare Integration**: Unified cloud backend with two capabilities:
+  - **Browser Rendering**: `--cloudflare` flag for cloud-based URL rendering via CF `/markdown` API, with rate limiting, cache TTL, and advanced params (`user_agent`, `cookies`, `wait_for_selector`, `http_credentials`)
+  - **Workers AI toMarkdown**: Cloud-based document conversion for PDF/XLSX/DOCX/PPTX (converter backend)
+- **Fetch Policy Engine** (`fetch_policy.py`): Policy-driven strategy ordering with domain-specific profiles, session persistence, and adaptive targeting
+- **Domain Profiles**: Per-domain fetch config (`wait_for_selector`, `wait_for`, `extra_wait_ms`, `prefer_strategy`) in `markitai.json`
+- **Playwright Session Persistence**: `session_mode` (`isolated`/`domain_persistent`) and `session_ttl_seconds` for reusing browser contexts across requests
+- **Static HTTP Abstraction** (`fetch_http.py`): Pluggable HTTP backend with `httpx` (default) and `curl-cffi` (TLS fingerprint impersonation) via `MARKITAI_STATIC_HTTP` env var
+- **Content Validation Gate**: All fetch strategies now validate content quality before accepting results
+- **`api_base` env: syntax**: `"api_base": "env:MY_BASE_URL"` in model config for environment variable expansion
+- **CF Markdown for Agents**: Content negotiation via `Accept: text/markdown` header for Cloudflare-enabled sites
+
+### Changed
+
+- **Vision Router Fallback**: When all vision models are disabled (`weight=0`), falls back to main router with warning instead of crashing
+- **Playwright UTF-8 Encoding**: Force UTF-8 for HTML-to-Markdown conversion to prevent encoding errors
+- **Integration Test Resilience**: Cloudflare integration tests now skip on rate limit (429) instead of failing
+
+### Fixed
+
+- **ZeroDivisionError in Vision Router**: Models with `weight=0` (disabled) are now filtered out before litellm Router creation, preventing `division by zero` in `simple-shuffle` routing strategy
+- **Dead Code Cleanup**: Removed 21 dead functions/classes across 15+ files (backward compat aliases, deprecated functions, unused constants)
+
+### Removed
+
+- `_html_to_text`, `_normalize_bypass_list`, `_get_proxy_bypass`, `get_proxy_for_url`, `_url_to_session_id` from `fetch.py`
+- `sanitize_error_message` from `security.py`
+- `_deep_update`, `get_config` from `config.py`
+- `order_dict_keys_sorted`, `_order_image_entry` from `json_order.py`
+- `reset_consoles` from `console.py`
+- `get_llm_not_configured_hint` from `hints.py`
+- `remove_uncommented_screenshots`, `_UNCOMMENTED_SCREENSHOT_RE` from `llm/content.py`
+- `get_pending_urls`, `finish_url_processing` from `batch.py`
+- `LLMUsageAccumulator` from `workflow/helpers.py`
+- `DEFAULT_LOG_PANEL_MAX_LINES` from `constants.py`
+- Multiple backward-compatibility aliases from `cli/processors/`
+
 ## [0.5.2] - 2026-02-07
 
 ### Fixed
@@ -552,6 +592,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.6.0]: https://github.com/Ynewtime/markitai/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/Ynewtime/markitai/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Ynewtime/markitai/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Ynewtime/markitai/compare/v0.4.2...v0.5.0

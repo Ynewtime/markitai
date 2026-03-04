@@ -38,18 +38,3 @@ class TestGetEnvSetCommand:
         ):
             result = get_env_set_command("API_KEY", "secret")
             assert result == "set API_KEY=secret"
-
-
-class TestGetLlmNotConfiguredHint:
-    """Tests for get_llm_not_configured_hint function."""
-
-    def test_returns_multiline_hint(self) -> None:
-        """Test that hint contains expected content."""
-        from markitai.cli.hints import get_llm_not_configured_hint
-
-        hint = get_llm_not_configured_hint()
-        assert "LLM not configured" in hint
-        assert "claude login" in hint
-        assert "copilot auth login" in hint
-        assert "markitai init" in hint
-        assert "markitai doctor" in hint

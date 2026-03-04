@@ -54,40 +54,55 @@ class TestCloudflareBRIntegration:
     @pytest.mark.asyncio
     async def test_br_basic_url_fetch(self, cf_token, cf_account):
         """Fetch a simple URL via CF BR and get markdown."""
-        from markitai.fetch import fetch_with_cloudflare
+        from markitai.fetch import FetchError, fetch_with_cloudflare
 
-        result = await fetch_with_cloudflare(
-            url="https://example.com",
-            api_token=cf_token,
-            account_id=cf_account,
-        )
+        try:
+            result = await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token=cf_token,
+                account_id=cf_account,
+            )
+        except FetchError as e:
+            if "rate limit" in str(e).lower():
+                pytest.skip(f"CF rate limited: {e}")
+            raise
         assert result.content
         assert result.strategy_used == "cloudflare"
 
     @pytest.mark.asyncio
     async def test_br_with_user_agent(self, cf_token, cf_account):
         """CF BR respects custom userAgent."""
-        from markitai.fetch import fetch_with_cloudflare
+        from markitai.fetch import FetchError, fetch_with_cloudflare
 
-        result = await fetch_with_cloudflare(
-            url="https://httpbin.org/user-agent",
-            api_token=cf_token,
-            account_id=cf_account,
-            user_agent="MarkitaiTest/1.0",
-        )
+        try:
+            result = await fetch_with_cloudflare(
+                url="https://httpbin.org/user-agent",
+                api_token=cf_token,
+                account_id=cf_account,
+                user_agent="MarkitaiTest/1.0",
+            )
+        except FetchError as e:
+            if "rate limit" in str(e).lower():
+                pytest.skip(f"CF rate limited: {e}")
+            raise
         assert "MarkitaiTest" in result.content
 
     @pytest.mark.asyncio
     async def test_br_with_cache_ttl(self, cf_token, cf_account):
         """CF BR cache_ttl > 0 returns cached result."""
-        from markitai.fetch import fetch_with_cloudflare
+        from markitai.fetch import FetchError, fetch_with_cloudflare
 
-        result = await fetch_with_cloudflare(
-            url="https://example.com",
-            api_token=cf_token,
-            account_id=cf_account,
-            cache_ttl=60,
-        )
+        try:
+            result = await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token=cf_token,
+                account_id=cf_account,
+                cache_ttl=60,
+            )
+        except FetchError as e:
+            if "rate limit" in str(e).lower():
+                pytest.skip(f"CF rate limited: {e}")
+            raise
         assert result.content
 
 
@@ -97,6 +112,8 @@ class TestCloudflareConverterIntegration:
     @pytest.mark.asyncio
     async def test_convert_pdf(self, cf_token, cf_account):
         """Convert PDF fixture via CF toMarkdown."""
+        import httpx
+
         from markitai.converter.cloudflare import CloudflareConverter
 
         pdf_path = FIXTURES_DIR / "file-example_PDF_500_kB.pdf"
@@ -104,13 +121,20 @@ class TestCloudflareConverterIntegration:
             pytest.skip(f"Fixture not found: {pdf_path}")
 
         converter = CloudflareConverter(api_token=cf_token, account_id=cf_account)
-        result = await converter.convert_async(pdf_path)
+        try:
+            result = await converter.convert_async(pdf_path)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                pytest.skip(f"CF rate limited: {e}")
+            raise
         assert result.markdown
         assert result.metadata["converter"] == "cloudflare-tomarkdown"
 
     @pytest.mark.asyncio
     async def test_convert_xlsx(self, cf_token, cf_account):
         """Convert XLSX fixture via CF toMarkdown."""
+        import httpx
+
         from markitai.converter.cloudflare import CloudflareConverter
 
         xlsx_path = FIXTURES_DIR / "file_example_XLSX_100.xlsx"
@@ -118,5 +142,10 @@ class TestCloudflareConverterIntegration:
             pytest.skip(f"Fixture not found: {xlsx_path}")
 
         converter = CloudflareConverter(api_token=cf_token, account_id=cf_account)
-        result = await converter.convert_async(xlsx_path)
+        try:
+            result = await converter.convert_async(xlsx_path)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                pytest.skip(f"CF rate limited: {e}")
+            raise
         assert result.markdown

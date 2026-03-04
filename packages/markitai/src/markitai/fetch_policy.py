@@ -21,6 +21,8 @@ class FetchPolicyEngine:
         explicit_strategy: str | None,
         fallback_patterns: list[str],
         policy_enabled: bool,
+        has_jina_key: bool = False,
+        domain_prefer_strategy: str | None = None,
     ) -> FetchDecision:
         """Decide the fetch strategy order."""
         if explicit_strategy and explicit_strategy != "auto":
@@ -28,7 +30,21 @@ class FetchPolicyEngine:
                 order=[explicit_strategy], reason=f"explicit_{explicit_strategy}"
             )
 
+        # Domain-specific preference (highest priority after explicit)
+        if domain_prefer_strategy:
+            all_strategies = ["static", "playwright", "cloudflare", "jina"]
+            remaining = [s for s in all_strategies if s != domain_prefer_strategy]
+            return FetchDecision(
+                order=[domain_prefer_strategy] + remaining,
+                reason=f"domain_prefer_{domain_prefer_strategy}",
+            )
+
         if not policy_enabled:
+            if has_jina_key:
+                return FetchDecision(
+                    order=["static", "jina", "playwright", "cloudflare"],
+                    reason="disabled_jina_key",
+                )
             return FetchDecision(
                 order=["static", "playwright", "cloudflare", "jina"], reason="disabled"
             )
@@ -41,9 +57,20 @@ class FetchPolicyEngine:
         )
 
         if known_spa or is_fallback_domain:
+            if has_jina_key:
+                return FetchDecision(
+                    order=["playwright", "jina", "cloudflare", "static"],
+                    reason="spa_jina_key",
+                )
             return FetchDecision(
                 order=["playwright", "cloudflare", "jina", "static"],
                 reason="spa_or_pattern",
+            )
+
+        if has_jina_key:
+            return FetchDecision(
+                order=["static", "jina", "playwright", "cloudflare"],
+                reason="default_jina_key",
             )
 
         return FetchDecision(

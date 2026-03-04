@@ -78,6 +78,9 @@ markitai document.pdf --preset rich      # LLM + alt + desc + 截图
 markitai document.pdf --preset standard  # LLM + alt + desc
 markitai document.pdf --preset minimal   # 仅基础转换
 
+# Cloudflare 云端渲染
+markitai https://example.com --cloudflare
+
 # 批量处理
 markitai ./docs -o ./output
 

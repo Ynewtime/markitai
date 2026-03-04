@@ -41,10 +41,3 @@ def get_stderr_console() -> Console:
     if _stderr_console is None:
         _stderr_console = Console(stderr=True)
     return _stderr_console
-
-
-def reset_consoles() -> None:
-    """Reset console instances (for testing purposes)."""
-    global _console, _stderr_console
-    _console = None
-    _stderr_console = None

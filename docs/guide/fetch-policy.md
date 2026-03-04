@@ -31,7 +31,7 @@ You can tune the fetch policy in your `markitai.json`:
     },
     "domain_profiles": {
       "x.com": {
-        "wait_for_selector": "[data-testid="tweetText"]",
+        "wait_for_selector": "[data-testid=tweetText]",
         "wait_for": "domcontentloaded",
         "extra_wait_ms": 1200
       }
@@ -55,10 +55,9 @@ You can tune the fetch policy in your `markitai.json`:
 
 ## Static HTTP Adapters
 
-Markitai supports multiple backend adapters for static fetching:
+The Static strategy uses **httpx** by default. For sites with TLS fingerprint detection, optionally enable **curl-cffi**:
 
-- **httpx**: The default, fast and reliable Python HTTP client.
-- **curl-cffi**: (Optional) Uses `curl-impersonate` to mimic real browser TLS/HTTP signatures, helping bypass some anti-bot protections.
+- **httpx** (default): Built-in, fast and reliable.
+- **curl-cffi** (optional): Uses `curl-impersonate` to mimic Chrome TLS/HTTP signatures. Install via `uv pip install markitai[extra-fetch]` and set `MARKITAI_STATIC_HTTP=curl_cffi`.
 
-To enable `curl-cffi`, install it (`pip install curl-cffi`) and set the environment variable:
-`MARKITAI_STATIC_HTTP=curl_cffi`
+If curl-cffi is requested but not installed, Markitai silently falls back to httpx.

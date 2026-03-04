@@ -16,7 +16,6 @@ from markitai.fetch import (
     FetchStrategy,
     SPADomainCache,
     _url_to_screenshot_filename,
-    _url_to_session_id,
     detect_js_required,
     should_use_browser_for_domain,
 )
@@ -361,36 +360,6 @@ class TestFetchResultWithScreenshot:
         assert result.screenshot_path == screenshot
 
 
-class TestUrlToSessionId:
-    """Tests for _url_to_session_id function."""
-
-    def test_generates_stable_id(self) -> None:
-        """Test that same URL always generates same session ID."""
-        url = "https://example.com/page"
-        id1 = _url_to_session_id(url)
-        id2 = _url_to_session_id(url)
-        assert id1 == id2
-
-    def test_different_urls_different_ids(self) -> None:
-        """Test that different URLs generate different session IDs."""
-        id1 = _url_to_session_id("https://example.com/page1")
-        id2 = _url_to_session_id("https://example.com/page2")
-        assert id1 != id2
-
-    def test_id_format(self) -> None:
-        """Test that session ID has correct format."""
-        session_id = _url_to_session_id("https://example.com")
-        assert session_id.startswith("markitai-")
-        assert len(session_id) == len("markitai-") + 8  # 8 hex chars
-
-    def test_handles_special_characters(self) -> None:
-        """Test that URLs with special characters work."""
-        url = "https://example.com/page?query=1&foo=bar#section"
-        session_id = _url_to_session_id(url)
-        assert session_id.startswith("markitai-")
-        assert len(session_id) == len("markitai-") + 8
-
-
 class TestProxyDetection:
     """Tests for proxy auto-detection functions."""
 
@@ -450,33 +419,6 @@ class TestProxyDetection:
         with patch.dict("os.environ", {"HTTPS_PROXY": "http://second:2222"}):
             result = _detect_proxy(force_recheck=True)
             assert result == "http://second:2222"
-
-    def test_get_proxy_for_url_returns_proxy_for_blocked_sites(self) -> None:
-        """Test that proxy is returned for commonly blocked sites."""
-        from markitai.fetch import get_proxy_for_url
-
-        with patch.dict("os.environ", {"HTTPS_PROXY": "http://proxy:7890"}):
-            # Reset cache
-            from markitai import fetch
-
-            fetch._detected_proxy = None
-
-            assert get_proxy_for_url("https://x.com/user") == "http://proxy:7890"
-            fetch._detected_proxy = None
-            assert get_proxy_for_url("https://twitter.com/user") == "http://proxy:7890"
-            fetch._detected_proxy = None
-            assert (
-                get_proxy_for_url("https://www.youtube.com/watch")
-                == "http://proxy:7890"
-            )
-
-    def test_get_proxy_for_url_returns_empty_for_normal_sites(self) -> None:
-        """Test that no proxy is returned for normal sites."""
-        from markitai.fetch import get_proxy_for_url
-
-        # Normal sites should not trigger proxy
-        assert get_proxy_for_url("https://example.com") == ""
-        assert get_proxy_for_url("https://baidu.com") == ""
 
 
 class TestSPADomainCache:
@@ -930,99 +872,6 @@ class TestConditionalFetchResult:
         assert result.etag == '"def456"'
 
 
-class TestNormalizeBypassList:
-    """Tests for _normalize_bypass_list function."""
-
-    def test_empty_input(self) -> None:
-        """Test with empty input."""
-        from markitai.fetch import _normalize_bypass_list
-
-        assert _normalize_bypass_list("") == ""
-
-    def test_windows_local_marker_removed(self) -> None:
-        """Test that <local> marker is removed."""
-        from markitai.fetch import _normalize_bypass_list
-
-        result = _normalize_bypass_list("<local>,localhost")
-        assert "<local>" not in result
-        assert "localhost" in result
-
-    def test_wildcard_domain_normalized(self) -> None:
-        """Test *.domain.com -> .domain.com conversion."""
-        from markitai.fetch import _normalize_bypass_list
-
-        result = _normalize_bypass_list("*.example.com")
-        assert result == ".example.com"
-
-    def test_wildcard_prefix_normalized(self) -> None:
-        """Test *-prefix.domain.com extraction."""
-        from markitai.fetch import _normalize_bypass_list
-
-        result = _normalize_bypass_list("*-internal.company.com")
-        assert result == ".company.com"
-
-    def test_ip_wildcard_to_cidr(self) -> None:
-        """Test IP wildcard to CIDR conversion."""
-        from markitai.fetch import _normalize_bypass_list
-
-        result = _normalize_bypass_list("127.*")
-        assert result == "127.0.0.0/8"
-
-        result = _normalize_bypass_list("10.*")
-        assert result == "10.0.0.0/8"
-
-        result = _normalize_bypass_list("192.168.*")
-        assert result == "192.168.0.0/16"
-
-    def test_172_range_to_cidr(self) -> None:
-        """Test 172.16-31.* to CIDR conversion."""
-        from markitai.fetch import _normalize_bypass_list
-
-        result = _normalize_bypass_list("172.16.*")
-        assert result == "172.16.0.0/12"
-
-        result = _normalize_bypass_list("172.31.*")
-        assert result == "172.16.0.0/12"
-
-    def test_partial_ip_wildcard(self) -> None:
-        """Test partial IP wildcards like 100.64.*."""
-        from markitai.fetch import _normalize_bypass_list
-
-        result = _normalize_bypass_list("100.64.*")
-        assert result == "100.64"
-
-    def test_multiple_entries_deduplicated(self) -> None:
-        """Test that duplicate entries are removed."""
-        from markitai.fetch import _normalize_bypass_list
-
-        result = _normalize_bypass_list("*.example.com,*.example.com,localhost")
-        entries = result.split(",")
-        assert len(entries) == 2
-        assert ".example.com" in entries
-        assert "localhost" in entries
-
-    def test_plain_hostname_preserved(self) -> None:
-        """Test that plain hostnames are preserved."""
-        from markitai.fetch import _normalize_bypass_list
-
-        result = _normalize_bypass_list("localhost,myserver.local")
-        assert "localhost" in result
-        assert "myserver.local" in result
-
-    def test_complex_bypass_list(self) -> None:
-        """Test complex bypass list with multiple types."""
-        from markitai.fetch import _normalize_bypass_list
-
-        input_list = "<local>,*.internal.corp,127.*,192.168.*,myhost"
-        result = _normalize_bypass_list(input_list)
-
-        assert "<local>" not in result
-        assert ".internal.corp" in result
-        assert "127.0.0.0/8" in result
-        assert "192.168.0.0/16" in result
-        assert "myhost" in result
-
-
 class TestIsInvalidContent:
     """Tests for _is_invalid_content function."""
 
@@ -1142,160 +991,13 @@ class TestIsInvalidContent:
         assert reason == "too_short"
 
 
-class TestHtmlToText:
-    """Tests for _html_to_text function."""
-
-    def test_simple_html_extraction(self) -> None:
-        """Test basic HTML to text extraction."""
-        from markitai.fetch import _html_to_text
-
-        html = """
-        <html>
-        <body>
-        <h1>Title</h1>
-        <p>This is a paragraph.</p>
-        <p>Another paragraph here.</p>
-        </body>
-        </html>
-        """
-        result = _html_to_text(html)
-        assert "# Title" in result
-        assert "This is a paragraph" in result
-        assert "Another paragraph" in result
-
-    def test_removes_script_and_style(self) -> None:
-        """Test that script and style elements are removed."""
-        from markitai.fetch import _html_to_text
-
-        html = """
-        <html>
-        <head>
-        <style>body { color: red; }</style>
-        <script>alert('hello');</script>
-        </head>
-        <body>
-        <h1>Content</h1>
-        <p>Real text here.</p>
-        </body>
-        </html>
-        """
-        result = _html_to_text(html)
-        assert "color: red" not in result
-        assert "alert" not in result
-        assert "# Content" in result
-        assert "Real text" in result
-
-    def test_heading_levels(self) -> None:
-        """Test all heading levels are converted."""
-        from markitai.fetch import _html_to_text
-
-        html = """
-        <body>
-        <h1>H1</h1>
-        <h2>H2</h2>
-        <h3>H3</h3>
-        <h4>H4</h4>
-        <h5>H5</h5>
-        <h6>H6</h6>
-        </body>
-        """
-        result = _html_to_text(html)
-        assert "# H1" in result
-        assert "## H2" in result
-        assert "### H3" in result
-        assert "#### H4" in result
-        assert "##### H5" in result
-        assert "###### H6" in result
-
-    def test_list_items(self) -> None:
-        """Test list items are converted."""
-        from markitai.fetch import _html_to_text
-
-        html = """
-        <body>
-        <ul>
-        <li>Item 1</li>
-        <li>Item 2</li>
-        </ul>
-        </body>
-        """
-        result = _html_to_text(html)
-        assert "- Item 1" in result
-        assert "- Item 2" in result
-
-    def test_blockquote(self) -> None:
-        """Test blockquote is converted."""
-        from markitai.fetch import _html_to_text
-
-        html = """
-        <body>
-        <blockquote>This is a quote.</blockquote>
-        </body>
-        """
-        result = _html_to_text(html)
-        assert "> This is a quote" in result
-
-    def test_code_block(self) -> None:
-        """Test code block is converted."""
-        from markitai.fetch import _html_to_text
-
-        html = """
-        <body>
-        <pre>def hello():
-    print("world")</pre>
-        </body>
-        """
-        result = _html_to_text(html)
-        assert "```" in result
-        assert "def hello" in result
-
-    def test_main_content_area(self) -> None:
-        """Test extraction from main content area."""
-        from markitai.fetch import _html_to_text
-
-        html = """
-        <html>
-        <body>
-        <nav>Navigation</nav>
-        <main>
-        <h1>Main Content</h1>
-        <p>Important text.</p>
-        </main>
-        <footer>Footer</footer>
-        </body>
-        </html>
-        """
-        result = _html_to_text(html)
-        # nav and footer should be removed
-        assert "Navigation" not in result
-        assert "Footer" not in result
-        assert "Main Content" in result
-
-    def test_empty_html(self) -> None:
-        """Test empty HTML returns empty string."""
-        from markitai.fetch import _html_to_text
-
-        result = _html_to_text("")
-        assert result == ""
-
-    def test_no_body(self) -> None:
-        """Test HTML without body."""
-        from markitai.fetch import _html_to_text
-
-        html = "<html><head><title>Test</title></head></html>"
-        result = _html_to_text(html)
-        # Should return empty as no content found
-        assert result == ""
-
-
 class TestCompressScreenshot:
     """Tests for _compress_screenshot function."""
 
-    def test_compress_screenshot_basic(self, tmp_path: Path) -> None:
-        """Test basic screenshot compression."""
+    def test_compress_screenshot_skips_when_not_needed(self, tmp_path: Path) -> None:
+        """Test that compression is skipped for RGB JPEG within height limits."""
         from markitai.fetch import _compress_screenshot
 
-        # Create a test image
         try:
             from PIL import Image
         except ImportError:
@@ -1303,16 +1005,40 @@ class TestCompressScreenshot:
 
             pytest.skip("Pillow not installed")
 
-        # Create a simple test image
+        # Create a simple RGB JPEG image within limits
         img = Image.new("RGB", (800, 600), color="red")
+        screenshot_path = tmp_path / "test.jpg"
+        img.save(screenshot_path, "JPEG", quality=85)
+        original_size = screenshot_path.stat().st_size
+
+        # Compress - should skip since RGB and within max_height
+        _compress_screenshot(screenshot_path, quality=50)
+
+        # File size should be unchanged (skipped re-compression)
+        new_size = screenshot_path.stat().st_size
+        assert new_size == original_size
+
+    def test_compress_screenshot_compresses_tall_image(self, tmp_path: Path) -> None:
+        """Test that compression works for images exceeding max_height."""
+        from markitai.fetch import _compress_screenshot
+
+        try:
+            from PIL import Image
+        except ImportError:
+            import pytest
+
+            pytest.skip("Pillow not installed")
+
+        # Create a tall image that exceeds max_height
+        img = Image.new("RGB", (800, 1200), color="red")
         screenshot_path = tmp_path / "test.jpg"
         img.save(screenshot_path, "JPEG", quality=100)
         original_size = screenshot_path.stat().st_size
 
-        # Compress
-        _compress_screenshot(screenshot_path, quality=50)
+        # Compress with low max_height to trigger resize
+        _compress_screenshot(screenshot_path, quality=50, max_height=600)
 
-        # Check that file was compressed
+        # Check that file was compressed/resized
         new_size = screenshot_path.stat().st_size
         assert new_size < original_size
 
@@ -1376,72 +1102,6 @@ class TestCompressScreenshot:
 
         # File should still exist
         assert screenshot_path.exists()
-
-
-class TestGetProxyForUrl:
-    """Additional tests for get_proxy_for_url function."""
-
-    def setup_method(self) -> None:
-        """Reset proxy cache before each test."""
-        from markitai import fetch
-
-        fetch._detected_proxy = None
-        fetch._detected_proxy_bypass = None
-
-    def teardown_method(self) -> None:
-        """Reset proxy cache after each test."""
-        from markitai import fetch
-
-        fetch._detected_proxy = None
-        fetch._detected_proxy_bypass = None
-
-    def test_subdomain_matching(self) -> None:
-        """Test that subdomains of blocked sites use proxy."""
-        from markitai.fetch import get_proxy_for_url
-
-        with patch.dict("os.environ", {"HTTPS_PROXY": "http://proxy:8080"}):
-            from markitai import fetch
-
-            fetch._detected_proxy = None
-            assert (
-                get_proxy_for_url("https://api.twitter.com/v1") == "http://proxy:8080"
-            )
-
-            fetch._detected_proxy = None
-            assert get_proxy_for_url("https://mobile.x.com/user") == "http://proxy:8080"
-
-    def test_google_domain(self) -> None:
-        """Test Google domain uses proxy."""
-        from markitai.fetch import get_proxy_for_url
-
-        with patch.dict("os.environ", {"HTTPS_PROXY": "http://proxy:8080"}):
-            from markitai import fetch
-
-            fetch._detected_proxy = None
-            assert (
-                get_proxy_for_url("https://www.google.com/search")
-                == "http://proxy:8080"
-            )
-
-    def test_github_domain(self) -> None:
-        """Test GitHub domain uses proxy."""
-        from markitai.fetch import get_proxy_for_url
-
-        with patch.dict("os.environ", {"HTTPS_PROXY": "http://proxy:8080"}):
-            from markitai import fetch
-
-            fetch._detected_proxy = None
-            assert (
-                get_proxy_for_url("https://github.com/user/repo") == "http://proxy:8080"
-            )
-
-    def test_invalid_url_returns_empty(self) -> None:
-        """Test invalid URL returns empty proxy."""
-        from markitai.fetch import get_proxy_for_url
-
-        # Invalid URLs should not trigger proxy
-        assert get_proxy_for_url("not a url") == ""
-        assert get_proxy_for_url("") == ""
 
 
 class TestDetectJsRequiredEdgeCases:
@@ -1563,51 +1223,6 @@ class TestCriticalInvalidReasons:
         # Login required content
         _, reason = _is_invalid_content("You must be logged in to view this")
         assert reason in CRITICAL_INVALID_REASONS
-
-
-class TestGetProxyBypass:
-    """Tests for _get_proxy_bypass function."""
-
-    def setup_method(self) -> None:
-        """Reset proxy cache before each test."""
-        from markitai import fetch
-
-        fetch._detected_proxy = None
-        fetch._detected_proxy_bypass = None
-
-    def teardown_method(self) -> None:
-        """Reset proxy cache after each test."""
-        from markitai import fetch
-
-        fetch._detected_proxy = None
-        fetch._detected_proxy_bypass = None
-
-    def test_get_proxy_bypass_from_env(self) -> None:
-        """Test getting bypass list from NO_PROXY env var."""
-        from markitai.fetch import _get_proxy_bypass
-
-        with patch.dict(
-            "os.environ",
-            {"HTTPS_PROXY": "http://proxy:8080", "NO_PROXY": "localhost,127.0.0.1"},
-        ):
-            from markitai import fetch
-
-            fetch._detected_proxy = None
-            fetch._detected_proxy_bypass = None
-            bypass = _get_proxy_bypass()
-            assert "localhost" in bypass
-
-    def test_get_proxy_bypass_empty(self) -> None:
-        """Test empty bypass list."""
-        from markitai.fetch import _get_proxy_bypass
-
-        with patch.dict("os.environ", {"HTTPS_PROXY": "http://proxy:8080"}, clear=True):
-            from markitai import fetch
-
-            fetch._detected_proxy = None
-            fetch._detected_proxy_bypass = None
-            bypass = _get_proxy_bypass()
-            assert bypass == ""
 
 
 class TestFetchCacheComputeHash:
@@ -2860,6 +2475,176 @@ class TestFetchMultiSourceAdditional:
 
             assert "All fetch strategies failed" in str(exc_info.value)
 
+    @pytest.mark.asyncio
+    async def test_fetch_multi_source_jina_used_when_static_and_browser_invalid(
+        self,
+    ) -> None:
+        """When static/browser return invalid content but Jina returns valid, use Jina."""
+        from markitai.fetch import FetchResult, _fetch_multi_source
+
+        mock_config = type(
+            "MockConfig",
+            (),
+            {
+                "strategy": "auto",
+                "fallback_patterns": [],
+                "policy": type(
+                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                )(),
+                "domain_profiles": {},
+                "jina": type(
+                    "JinaConfig",
+                    (),
+                    {
+                        "get_resolved_api_key": lambda *_, **__: "test-key",
+                        "timeout": 30,
+                        "rpm": 20,
+                        "no_cache": False,
+                        "target_selector": None,
+                        "wait_for_selector": None,
+                    },
+                )(),
+                "playwright": type(
+                    "PlaywrightConfig",
+                    (),
+                    {
+                        "timeout": 30000,
+                        "wait_for": "load",
+                        "extra_wait_ms": 0,
+                        "wait_for_selector": None,
+                        "cookies": None,
+                        "reject_resource_patterns": None,
+                        "extra_http_headers": None,
+                        "user_agent": None,
+                        "http_credentials": None,
+                        "session_mode": "isolated",
+                        "session_ttl_seconds": 600,
+                    },
+                )(),
+                "auto_proxy": False,
+            },
+        )()
+
+        # Static returns JS-required page (invalid), browser not installed, Jina returns good content
+        static_result = MagicMock()
+        static_result.content = "Please enable JavaScript to continue"
+
+        jina_result = FetchResult(
+            content=(
+                "# Valid Markdown from Jina Reader\n\n"
+                "This is real content fetched by the Jina Reader API. "
+                "It contains enough text to pass the content validation threshold "
+                "which requires at least 100 characters of clean text after removing "
+                "all markdown syntax elements like headers, links, and images."
+            ),
+            strategy_used="jina",
+            title="Test Page",
+            url="https://example.com",
+            metadata={"api": "jina-reader"},
+        )
+
+        with (
+            patch(
+                "markitai.fetch.fetch_with_static",
+                new_callable=AsyncMock,
+                return_value=static_result,
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_available",
+                return_value=False,
+            ),
+            patch(
+                "markitai.fetch.fetch_with_jina",
+                new_callable=AsyncMock,
+                return_value=jina_result,
+            ),
+        ):
+            result = await _fetch_multi_source(
+                "https://example.com",
+                mock_config,
+            )
+            assert result.strategy_used == "jina"
+            assert "Valid Markdown" in result.content
+
+    @pytest.mark.asyncio
+    async def test_fetch_multi_source_no_jina_without_key(self) -> None:
+        """Without Jina API key, Jina should not be attempted."""
+        from markitai.fetch import _fetch_multi_source
+
+        mock_config = type(
+            "MockConfig",
+            (),
+            {
+                "strategy": "auto",
+                "fallback_patterns": [],
+                "policy": type(
+                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                )(),
+                "domain_profiles": {},
+                "jina": type(
+                    "JinaConfig",
+                    (),
+                    {
+                        "get_resolved_api_key": lambda *_, **__: None,
+                        "timeout": 30,
+                        "rpm": 20,
+                        "no_cache": False,
+                        "target_selector": None,
+                        "wait_for_selector": None,
+                    },
+                )(),
+                "playwright": type(
+                    "PlaywrightConfig",
+                    (),
+                    {
+                        "timeout": 30000,
+                        "wait_for": "load",
+                        "extra_wait_ms": 0,
+                        "wait_for_selector": None,
+                        "cookies": None,
+                        "reject_resource_patterns": None,
+                        "extra_http_headers": None,
+                        "user_agent": None,
+                        "http_credentials": None,
+                        "session_mode": "isolated",
+                        "session_ttl_seconds": 600,
+                    },
+                )(),
+                "auto_proxy": False,
+            },
+        )()
+
+        static_result = MagicMock()
+        static_result.content = (
+            "# Good Static Content\n\n"
+            "This is valid content with enough text to pass the validation threshold."
+        )
+
+        jina_mock = AsyncMock()
+
+        with (
+            patch(
+                "markitai.fetch.fetch_with_static",
+                new_callable=AsyncMock,
+                return_value=static_result,
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_available",
+                return_value=False,
+            ),
+            patch(
+                "markitai.fetch.fetch_with_jina",
+                jina_mock,
+            ),
+        ):
+            result = await _fetch_multi_source(
+                "https://example.com",
+                mock_config,
+            )
+            assert result.strategy_used == "static"
+            # Jina should NOT have been called (no API key)
+            jina_mock.assert_not_called()
+
 
 class TestDetectProxyAdditional:
     """Additional tests for proxy detection."""
@@ -3009,26 +2794,6 @@ class TestFetchCacheEvictionEdgeCases:
         stats = cache.stats()
         assert stats["count"] == 1
         cache.close()
-
-
-class TestNormalizeBypassListAdditional:
-    """Additional tests for _normalize_bypass_list function."""
-
-    def test_handles_whitespace(self) -> None:
-        """Test handling of whitespace in bypass list."""
-        from markitai.fetch import _normalize_bypass_list
-
-        result = _normalize_bypass_list("  localhost  ,  127.0.0.1  ")
-        assert "localhost" in result
-        assert "127.0.0.1" in result
-
-    def test_handles_empty_items(self) -> None:
-        """Test handling of empty items in bypass list."""
-        from markitai.fetch import _normalize_bypass_list
-
-        result = _normalize_bypass_list("localhost,,127.0.0.1,")
-        entries = [e for e in result.split(",") if e]
-        assert len(entries) == 2
 
 
 class TestFetchCacheThreadSafety:
@@ -4108,3 +3873,106 @@ def test_user_error_message_single_action_hint():
     assert "All fetch strategies failed" in str(e)
     assert "static: failed" in str(e)
     assert "playwright: failed" in str(e)
+
+
+class TestJinaRateLimiter:
+    """Tests for Jina rate limiter."""
+
+    @pytest.mark.asyncio
+    async def test_acquire_within_limit(self):
+        """Should not block when within RPM limit."""
+        from markitai.fetch import _JinaRateLimiter
+
+        limiter = _JinaRateLimiter(rpm=5)
+        # Should complete immediately for 5 requests
+        for _ in range(5):
+            await limiter.acquire()
+        assert len(limiter._timestamps) == 5
+
+    @pytest.mark.asyncio
+    async def test_acquire_resets_old_timestamps(self):
+        """Should remove timestamps older than 60s."""
+        import time
+
+        from markitai.fetch import _JinaRateLimiter
+
+        limiter = _JinaRateLimiter(rpm=2)
+        # Add an old timestamp
+        limiter._timestamps = [time.monotonic() - 61.0]
+        await limiter.acquire()
+        # Old timestamp should be removed, new one added
+        assert len(limiter._timestamps) == 1
+
+    @pytest.mark.asyncio
+    async def test_acquire_waits_when_at_capacity(self):
+        """Should wait when RPM limit is exhausted."""
+        import time
+
+        from markitai.fetch import _JinaRateLimiter
+
+        limiter = _JinaRateLimiter(rpm=2)
+        # Fill up the window
+        await limiter.acquire()
+        await limiter.acquire()
+        assert len(limiter._timestamps) == 2
+
+        # Simulate the oldest timestamp being 59.9s old (expires in 0.1s)
+        limiter._timestamps[0] = time.monotonic() - 59.9
+
+        start = time.monotonic()
+        await limiter.acquire()  # Should wait ~0.1s
+        elapsed = time.monotonic() - start
+        # Should have waited (at least a little) — allow margin for test jitter
+        assert elapsed >= 0.05
+
+    @pytest.mark.asyncio
+    async def test_acquire_does_not_block_others_while_waiting(self):
+        """Lock should be released during sleep so other coroutines can proceed."""
+        import asyncio
+        import time
+
+        from markitai.fetch import _JinaRateLimiter
+
+        limiter = _JinaRateLimiter(rpm=2)
+        # Fill up with timestamps that expire in 0.15s
+        now = time.monotonic()
+        limiter._timestamps = [now - 59.85, now - 59.85]
+
+        acquired = []
+
+        async def try_acquire(label: str) -> None:
+            await limiter.acquire()
+            acquired.append(label)
+
+        # Launch two concurrent acquires — both should eventually succeed
+        await asyncio.gather(try_acquire("a"), try_acquire("b"))
+        assert len(acquired) == 2
+
+    @pytest.mark.asyncio
+    async def test_global_limiter_singleton(self):
+        """Global limiter should be created once."""
+        import markitai.fetch as fetch_mod
+
+        old_limiter = fetch_mod._jina_rate_limiter
+        fetch_mod._jina_rate_limiter = None
+        try:
+            limiter1 = fetch_mod._get_jina_rate_limiter(20)
+            limiter2 = fetch_mod._get_jina_rate_limiter(20)
+            assert limiter1 is limiter2
+        finally:
+            fetch_mod._jina_rate_limiter = old_limiter
+
+    @pytest.mark.asyncio
+    async def test_global_limiter_recreates_on_rpm_change(self):
+        """Global limiter should recreate when rpm changes."""
+        import markitai.fetch as fetch_mod
+
+        old_limiter = fetch_mod._jina_rate_limiter
+        fetch_mod._jina_rate_limiter = None
+        try:
+            limiter1 = fetch_mod._get_jina_rate_limiter(20)
+            limiter2 = fetch_mod._get_jina_rate_limiter(100)
+            assert limiter1 is not limiter2
+            assert limiter2._rpm == 100
+        finally:
+            fetch_mod._jina_rate_limiter = old_limiter

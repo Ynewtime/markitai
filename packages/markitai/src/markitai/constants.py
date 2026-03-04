@@ -31,8 +31,8 @@ DEFAULT_RETRY_MAX_DELAY = 60.0  # seconds
 # When LLM returns malformed JSON, Instructor can retry with validation error
 # feedback, allowing the LLM to fix issues like incorrect escaping.
 # Common issues: unescaped quotes in CJK text (e.g., Chinese quoted phrases)
-# Increased to 2 to give model more chances to self-correct
-DEFAULT_INSTRUCTOR_MAX_RETRIES = 3
+# Set to 2: enough for LLM to self-correct common JSON issues
+DEFAULT_INSTRUCTOR_MAX_RETRIES = 2
 
 # Token limits
 DEFAULT_MAX_OUTPUT_TOKENS = 8192  # Conservative default for most models
@@ -49,7 +49,7 @@ DEFAULT_HEAVY_TASK_LIMIT = 0  # Heavy task semaphore limit (0 = auto-detect from
 
 # Batch sizes
 DEFAULT_MAX_IMAGES_PER_BATCH = 10  # Images per LLM vision call
-DEFAULT_MAX_PAGES_PER_BATCH = 5  # Pages per LLM call for document processing (reduced from 10 to avoid max_tokens)
+DEFAULT_MAX_PAGES_PER_BATCH = 10  # Pages per LLM call for document processing
 
 # Router settings
 DEFAULT_ROUTER_NUM_RETRIES = 2
@@ -109,7 +109,6 @@ DEFAULT_LOG_RETENTION = "7 days"
 # UI / Display
 # =============================================================================
 
-DEFAULT_LOG_PANEL_MAX_LINES = 8  # Lines shown in verbose mode log panel
 DEFAULT_JSON_INDENT = 2  # JSON output indentation
 
 # =============================================================================
@@ -157,7 +156,7 @@ DEFAULT_PLAYWRIGHT_WAIT_FOR = (
     "domcontentloaded"  # load | domcontentloaded | networkidle
 )
 DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS = (
-    5000  # Extra wait after load state (for JS rendering, SPAs need 5-8s)
+    3000  # Extra wait after load state (for JS rendering)
 )
 
 # Playwright auto-scroll settings (inspired by baoyu-skills url-to-markdown)
@@ -200,6 +199,7 @@ DOM_NOISE_ATTRIBUTES: tuple[str, ...] = (
 )
 
 DEFAULT_JINA_TIMEOUT = 30  # seconds
+DEFAULT_JINA_RPM = 20  # Jina free tier: 20 requests per minute
 DEFAULT_JINA_BASE_URL = "https://r.jina.ai"
 
 # Domains that typically require JavaScript rendering

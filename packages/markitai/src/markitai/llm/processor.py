@@ -295,6 +295,15 @@ class HybridRouter:
                 self._model_groups[model_name] = []
             self._model_groups[model_name].append((model_id, weight, True))
 
+        # Pre-compute image-capable models per group to avoid per-call filtering
+        self._image_capable_cache: dict[str, list[tuple[str, float, bool]]] = {}
+        for group_name, models in self._model_groups.items():
+            self._image_capable_cache[group_name] = [
+                (m, w, is_local)
+                for m, w, is_local in models
+                if self._is_image_capable(m)
+            ]
+
         # Log hybrid router configuration
         local_models = [m for m, _, is_local in self._all_models if is_local]
         standard_models = [m for m, _, is_local in self._all_models if not is_local]
@@ -342,16 +351,11 @@ class HybridRouter:
 
         # For image requests, prefer image-capable models
         if has_images and len(models) > 1:
-            image_capable = [
-                (m, w, is_local)
-                for m, w, is_local in models
-                if self._is_image_capable(m)
-            ]
+            image_capable = self._image_capable_cache.get(model_name, [])
             if image_capable:
                 if len(image_capable) < len(models):
-                    excluded = [
-                        m for m, _, _ in models if not self._is_image_capable(m)
-                    ]
+                    image_capable_ids = {m for m, _, _ in image_capable}
+                    excluded = [m for m, _, _ in models if m not in image_capable_ids]
                     logger.debug(
                         f"[HybridRouter] Image request: preferring image-capable "
                         f"models, excluding {excluded}"
@@ -525,6 +529,10 @@ class LLMProcessor(VisionMixin, DocumentMixin):
 
         # Register LiteLLM callback for additional details
         self._setup_callbacks()
+
+        # Eagerly initialize vision router to avoid first-call latency
+        if config.model_list:
+            _ = self.vision_router
 
     def _setup_callbacks(self) -> None:
         """Register LiteLLM callbacks and custom providers."""
@@ -759,6 +767,11 @@ class LLMProcessor(VisionMixin, DocumentMixin):
             if not is_local_provider_available(model_id):
                 continue
 
+            # weight <= 0 means model is disabled (e.g. no API quota)
+            if model_config.litellm_params.weight <= 0:
+                logger.debug(f"[Router] Skipping disabled model (weight=0): {model_id}")
+                continue
+
             model_entry = {
                 "model_name": model_config.model_name,
                 "litellm_params": {
@@ -892,21 +905,29 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                 m for m in self.config.model_list if self._is_vision_model(m)
             ]
 
-            if not vision_models:
-                # No dedicated vision models - fall back to main router
+            # Also check that at least one vision model is enabled (weight > 0)
+            enabled_vision = [m for m in vision_models if m.litellm_params.weight > 0]
+
+            if not enabled_vision:
+                # No enabled vision models - fall back to main router
+                reason = (
+                    "no vision-capable models configured"
+                    if not vision_models
+                    else "all vision models disabled (weight=0)"
+                )
                 logger.warning(
-                    "[Router] No vision-capable models configured, using main router"
+                    f"[Router] {reason}, falling back to main router for vision"
                 )
                 self._vision_router = self.router
             else:
                 model_names = [
-                    m.litellm_params.model.split("/")[-1] for m in vision_models
+                    m.litellm_params.model.split("/")[-1] for m in enabled_vision
                 ]
                 logger.info(
-                    f"[Router] Creating vision router with {len(vision_models)} models"
+                    f"[Router] Creating vision router with {len(enabled_vision)} models"
                 )
                 logger.debug(f"[Router] Vision models: {', '.join(model_names)}")
-                self._vision_router = self._create_router_from_models(vision_models)
+                self._vision_router = self._create_router_from_models(enabled_vision)
 
         return self._vision_router
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import tempfile
 import time
@@ -325,31 +324,6 @@ def check_symlink_safety(path: Path, allow_symlinks: bool = False) -> None:
                 raise ValueError(
                     f"Nested symlink not allowed: {current_path} -> {target} (in path {path})"
                 )
-
-
-def sanitize_error_message(error: Exception) -> str:
-    """Sanitize error message to remove sensitive information.
-
-    Args:
-        error: Exception to sanitize
-
-    Returns:
-        Sanitized error message
-    """
-    msg = str(error)
-
-    # Remove potential usernames in paths (must run BEFORE generic path replacement)
-    msg = re.sub(r"/home/[^/\s]+/", "/home/[USER]/", msg)
-    msg = re.sub(r"C:\\Users\\[^\\]+\\", r"C:\\Users\\[USER]\\", msg)
-
-    # Remove absolute paths (Unix style)
-    msg = re.sub(r"/[a-zA-Z0-9_\-./]+", "[PATH]", msg)
-
-    # Remove absolute paths (Windows style, including UNC paths)
-    msg = re.sub(r"[A-Za-z]:\\[a-zA-Z0-9_\-\\. ]+", "[PATH]", msg)
-    msg = re.sub(r"\\\\[a-zA-Z0-9_\-\\. ]+", "[PATH]", msg)
-
-    return msg
 
 
 def validate_file_size(path: Path, max_size_bytes: int) -> None:
