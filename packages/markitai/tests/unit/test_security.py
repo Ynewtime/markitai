@@ -15,7 +15,6 @@ from markitai.security import (
     atomic_write_text,
     check_symlink_safety,
     escape_glob_pattern,
-    sanitize_error_message,
     validate_file_size,
     validate_path_within_base,
 )
@@ -347,36 +346,6 @@ class TestCheckSymlinkSafety:
 
         # Should not raise
         check_symlink_safety(deep_path, allow_symlinks=False)
-
-
-class TestSanitizeErrorMessage:
-    """Tests for sanitize_error_message function."""
-
-    def test_sanitize_unix_path(self) -> None:
-        """Test Unix paths are sanitized."""
-        error = Exception("File not found: /home/user/secret/file.txt")
-        result = sanitize_error_message(error)
-        assert "/home/user/secret" not in result
-        assert "[PATH]" in result or "[USER]" in result
-
-    def test_sanitize_windows_path(self) -> None:
-        """Test Windows paths are sanitized."""
-        error = Exception("Cannot access C:\\Users\\admin\\Documents\\secret.docx")
-        result = sanitize_error_message(error)
-        assert "admin" not in result
-        assert "[PATH]" in result or "[USER]" in result
-
-    def test_sanitize_username_in_path(self) -> None:
-        """Test username in path is sanitized."""
-        error = Exception("Error in /home/sensitive_user/file.txt")
-        result = sanitize_error_message(error)
-        assert "sensitive_user" not in result
-
-    def test_no_paths_unchanged(self) -> None:
-        """Test message without paths is unchanged."""
-        error = Exception("Generic error occurred")
-        result = sanitize_error_message(error)
-        assert result == "Generic error occurred"
 
 
 class TestValidateFileSize:

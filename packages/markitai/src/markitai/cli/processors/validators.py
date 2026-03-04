@@ -197,12 +197,6 @@ def check_playwright_for_urls(cfg: Any, console: Console) -> None:
     )
 
 
-# Backward compatibility alias
-def check_agent_browser_for_urls(cfg: Any, console: Console) -> None:
-    """Deprecated: Use check_playwright_for_urls instead."""
-    check_playwright_for_urls(cfg, console)
-
-
 def warn_case_sensitivity_mismatches(
     files: list[Path],
     input_dir: Path,
@@ -264,10 +258,3 @@ def warn_case_sensitivity_mismatches(
             "Hint: Pattern matching is case-sensitive. "
             "Use exact case or patterns like '*.[jJ][pP][gG]'"
         )
-
-
-# Backward compatibility aliases
-_check_vision_model_config = check_vision_model_config
-_check_playwright_for_urls = check_playwright_for_urls
-_check_agent_browser_for_urls = check_agent_browser_for_urls  # Deprecated
-_warn_case_sensitivity_mismatches = warn_case_sensitivity_mismatches

@@ -706,35 +706,6 @@ class TestResumeFunctionality:
         assert Path("/path/file2.pdf") in pending
         assert Path("/path/file3.pdf") in pending
 
-    def test_batch_state_get_pending_urls(self) -> None:
-        """Test getting pending URLs from batch state."""
-        from markitai.batch import UrlState
-
-        state = BatchState()
-        state.urls = {
-            "https://example1.com": UrlState(
-                url="https://example1.com",
-                source_file="/path/urls.txt",
-                status=FileStatus.COMPLETED,
-            ),
-            "https://example2.com": UrlState(
-                url="https://example2.com",
-                source_file="/path/urls.txt",
-                status=FileStatus.PENDING,
-            ),
-            "https://example3.com": UrlState(
-                url="https://example3.com",
-                source_file="/path/urls.txt",
-                status=FileStatus.FAILED,
-            ),
-        }
-
-        pending = state.get_pending_urls()
-
-        assert len(pending) == 2
-        assert "https://example2.com" in pending
-        assert "https://example3.com" in pending
-
     def test_batch_processor_load_state(
         self,
         batch_config: BatchConfig,

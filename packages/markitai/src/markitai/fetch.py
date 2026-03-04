@@ -36,6 +36,7 @@ from loguru import logger
 
 from markitai.constants import (
     DEFAULT_JINA_BASE_URL,
+    DEFAULT_JINA_RPM,
     JS_REQUIRED_PATTERNS,
 )
 from markitai.fetch_http import get_static_http_client
@@ -840,84 +841,6 @@ _COMMON_PROXY_PORTS = [
 ]
 
 
-def _normalize_bypass_list(bypass: str) -> str:
-    """Normalize proxy bypass list to Linux no_proxy compatible format.
-
-    Converts Windows/macOS bypass patterns to standard no_proxy format:
-    - *.domain.com -> .domain.com (suffix match)
-    - *-prefix.domain.com -> .domain.com (extract base domain)
-    - <local> -> removed (Windows-specific)
-    - 127.* -> 127.0.0.0/8 (CIDR notation)
-    - 10.* -> 10.0.0.0/8
-    - 172.16-31.* -> 172.16.0.0/12
-    - 192.168.* -> 192.168.0.0/16
-
-    Args:
-        bypass: Raw bypass list from system config
-
-    Returns:
-        Normalized comma-separated bypass list
-    """
-    if not bypass:
-        return ""
-
-    # IP wildcard to CIDR mapping
-    ip_cidr_map = {
-        "127.*": "127.0.0.0/8",
-        "10.*": "10.0.0.0/8",
-        "192.168.*": "192.168.0.0/16",
-    }
-    # Add 172.16-31.* mappings
-    for i in range(16, 32):
-        ip_cidr_map[f"172.{i}.*"] = "172.16.0.0/12"
-
-    normalized = []
-    seen: set[str] = set()
-
-    for item in bypass.split(","):
-        item = item.strip()
-        if not item:
-            continue
-
-        # Skip Windows-specific markers
-        if item == "<local>":
-            continue
-
-        result = None
-
-        # Pattern: *.domain.com -> .domain.com
-        if item.startswith("*."):
-            result = item[1:]  # Remove leading *
-
-        # Pattern: *-prefix.domain.com or *suffix.domain.com -> .domain.com
-        # Extract the base domain after the first dot
-        elif item.startswith("*") and "." in item:
-            # Find first dot after the wildcard pattern
-            first_dot = item.find(".")
-            if first_dot > 0:
-                result = item[first_dot:]  # Keep from first dot onwards
-
-        # Handle IP wildcards with exact match
-        elif item in ip_cidr_map:
-            result = ip_cidr_map[item]
-
-        # Handle partial IP wildcards like 100.64.*, 7.*
-        elif item.endswith(".*"):
-            # Convert to base IP prefix (best effort compatibility)
-            base = item[:-2]  # Remove .*
-            result = base
-
-        else:
-            result = item
-
-        # Deduplicate
-        if result and result not in seen:
-            normalized.append(result)
-            seen.add(result)
-
-    return ",".join(normalized)
-
-
 def _get_system_proxy() -> tuple[str, str]:
     """Get system proxy settings from OS configuration.
 
@@ -1116,56 +1039,6 @@ def _detect_proxy(force_recheck: bool = False) -> str:
     return ""
 
 
-def _get_proxy_bypass() -> str:
-    """Get the proxy bypass list (NO_PROXY equivalent).
-
-    Returns:
-        Comma-separated list of hosts to bypass proxy
-    """
-    global _detected_proxy_bypass
-
-    # Ensure proxy detection has run
-    if _detected_proxy is None:
-        _detect_proxy()
-
-    return _detected_proxy_bypass or ""
-
-
-def get_proxy_for_url(url: str) -> str:
-    """Get proxy URL for a given target URL.
-
-    Only returns proxy for URLs that likely need it (e.g., blocked sites).
-
-    Args:
-        url: Target URL to fetch
-
-    Returns:
-        Proxy URL or empty string
-    """
-    # Domains that typically need proxy in China
-    proxy_domains = {
-        "x.com",
-        "twitter.com",
-        "facebook.com",
-        "instagram.com",
-        "youtube.com",
-        "google.com",
-        "github.com",  # Sometimes slow without proxy
-    }
-
-    try:
-        parsed = urlparse(url)
-        domain = parsed.netloc.lower()
-        # Check if domain matches any proxy domain
-        for pd in proxy_domains:
-            if domain == pd or domain.endswith("." + pd):
-                return _detect_proxy()
-    except Exception:
-        pass
-
-    return ""
-
-
 def _get_markitdown() -> Any:
     """Get or create the shared MarkItDown instance.
 
@@ -1190,6 +1063,45 @@ def _get_markitdown() -> Any:
             {"Accept": "text/markdown, text/html;q=0.9, */*;q=0.5"}
         )
     return _markitdown_instance
+
+
+class _JinaRateLimiter:
+    """Simple sliding-window rate limiter for Jina API calls."""
+
+    def __init__(self, rpm: int) -> None:
+        self._rpm = rpm
+        self._timestamps: list[float] = []
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        """Wait until a request slot is available."""
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                cutoff = now - 60.0
+                self._timestamps = [t for t in self._timestamps if t > cutoff]
+
+                if len(self._timestamps) < self._rpm:
+                    self._timestamps.append(time.monotonic())
+                    return  # Slot acquired
+
+                wait_time = self._timestamps[0] - cutoff
+
+            # Sleep OUTSIDE the lock so other coroutines can proceed
+            if wait_time > 0:
+                logger.debug(f"[Jina] Rate limit: waiting {wait_time:.1f}s")
+                await asyncio.sleep(wait_time)
+
+
+_jina_rate_limiter: _JinaRateLimiter | None = None
+
+
+def _get_jina_rate_limiter(rpm: int) -> _JinaRateLimiter:
+    """Get or create the global Jina rate limiter."""
+    global _jina_rate_limiter
+    if _jina_rate_limiter is None or _jina_rate_limiter._rpm != rpm:
+        _jina_rate_limiter = _JinaRateLimiter(rpm)
+    return _jina_rate_limiter
 
 
 def _get_jina_client(timeout: int = 30, proxy: str = "") -> Any:
@@ -1228,7 +1140,7 @@ async def close_shared_clients() -> None:
 
     Call this during cleanup to release resources.
     """
-    global _jina_client, _fetch_cache, _playwright_renderer
+    global _jina_client, _fetch_cache, _playwright_renderer, _jina_rate_limiter
     if _jina_client is not None:
         await _jina_client.aclose()
         _jina_client = None
@@ -1238,6 +1150,7 @@ async def close_shared_clients() -> None:
     if _playwright_renderer is not None:
         await _playwright_renderer.close()
         _playwright_renderer = None
+    _jina_rate_limiter = None
 
 
 async def _get_playwright_renderer(
@@ -1394,22 +1307,6 @@ def should_use_browser_for_domain(url: str, fallback_patterns: list[str]) -> boo
     return False
 
 
-def _url_to_session_id(url: str) -> str:
-    """Generate a stable session ID from URL for potential session reuse.
-
-    Using a hash-based session ID allows browser session caching
-    when the same URL is processed multiple times.
-
-    Args:
-        url: URL to generate session ID for
-
-    Returns:
-        Stable session ID like "markitai-a1b2c3d4"
-    """
-    url_hash = hashlib.sha256(url.encode()).hexdigest()[:8]
-    return f"markitai-{url_hash}"
-
-
 def _url_to_screenshot_filename(url: str) -> str:
     """Generate a safe filename for URL screenshot.
 
@@ -1484,14 +1381,26 @@ def _compress_screenshot(
     try:
         from PIL import Image
 
+        # Quick check: get image info without full decode
         with Image.open(screenshot_path) as img:
-            # Convert to RGB if necessary (for JPEG)
-            if img.mode in ("RGBA", "P"):
+            width, height = img.size
+            needs_resize = height > max_height
+            needs_convert = img.mode in ("RGBA", "P")
+
+        # Skip re-compression if image doesn't need resize or conversion
+        # Playwright already saves JPEG with specified quality
+        if not needs_resize and not needs_convert:
+            logger.debug(
+                f"Screenshot within limits ({width}x{height}), skipping re-compression"
+            )
+            return
+
+        # Only re-process if needed
+        with Image.open(screenshot_path) as img:
+            if needs_convert:
                 img = img.convert("RGB")
 
-            # Resize if too tall
-            width, height = img.size
-            if height > max_height:
+            if needs_resize:
                 ratio = max_height / height
                 new_width = int(width * ratio)
                 img = img.resize((new_width, max_height), Image.Resampling.LANCZOS)
@@ -1499,7 +1408,6 @@ def _compress_screenshot(
                     f"Resized screenshot from {width}x{height} to {new_width}x{max_height}"
                 )
 
-            # Save with compression
             img.save(screenshot_path, "JPEG", quality=quality, optimize=True)
             logger.debug(
                 f"Compressed screenshot to quality={quality}: {screenshot_path}"
@@ -1508,82 +1416,6 @@ def _compress_screenshot(
         logger.warning("Pillow not installed, skipping screenshot compression")
     except Exception as e:
         logger.warning(f"Failed to compress screenshot: {e}")
-
-
-def _html_to_text(html: str) -> str:
-    """Extract clean text from HTML content.
-
-    Args:
-        html: Raw HTML content
-
-    Returns:
-        Extracted text content formatted as markdown
-    """
-    try:
-        from bs4 import BeautifulSoup
-
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Remove script and style elements
-        for element in soup(["script", "style", "noscript", "nav", "footer", "header"]):
-            element.decompose()
-
-        # Extract text from main content areas
-        lines = []
-
-        # Try to find main content area
-        main = soup.find("main") or soup.find("article") or soup.find("body")
-        if not main:
-            return ""
-
-        for element in main.find_all(
-            ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote", "pre", "code"]
-        ):
-            text = element.get_text(strip=True)
-            if not text:
-                continue
-
-            tag = element.name
-            if tag == "h1":
-                lines.append(f"# {text}")
-            elif tag == "h2":
-                lines.append(f"## {text}")
-            elif tag == "h3":
-                lines.append(f"### {text}")
-            elif tag == "h4":
-                lines.append(f"#### {text}")
-            elif tag == "h5":
-                lines.append(f"##### {text}")
-            elif tag == "h6":
-                lines.append(f"###### {text}")
-            elif tag == "p":
-                lines.append(text)
-            elif tag == "li":
-                lines.append(f"- {text}")
-            elif tag == "blockquote":
-                lines.append(f"> {text}")
-            elif tag == "pre" or tag == "code":
-                lines.append(f"```\n{text}\n```")
-
-            lines.append("")
-
-        return "\n".join(lines).strip()
-
-    except ImportError:
-        logger.debug("BeautifulSoup not installed, using simple text extraction")
-        # Fallback: simple regex-based extraction
-        import re
-
-        # Remove tags
-        text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
-        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
-        text = re.sub(r"<[^>]+>", " ", text)
-        # Normalize whitespace
-        text = re.sub(r"\s+", " ", text).strip()
-        return text
-    except Exception as e:
-        logger.debug(f"HTML to text extraction failed: {e}")
-        return ""
 
 
 async def fetch_with_static(url: str) -> FetchResult:
@@ -1955,6 +1787,11 @@ async def fetch_with_jina(
     url: str,
     api_key: str | None = None,
     timeout: int = 30,
+    rpm: int = DEFAULT_JINA_RPM,
+    *,
+    no_cache: bool = False,
+    target_selector: str | None = None,
+    wait_for_selector: str | None = None,
 ) -> FetchResult:
     """Fetch URL using Jina Reader API with JSON mode.
 
@@ -1964,6 +1801,10 @@ async def fetch_with_jina(
         url: URL to fetch
         api_key: Optional Jina API key (for higher rate limits)
         timeout: Request timeout in seconds
+        rpm: Requests per minute limit
+        no_cache: Skip Jina server-side cache
+        target_selector: CSS selector for content extraction
+        wait_for_selector: Wait for element before extraction
 
     Returns:
         FetchResult with markdown content and extracted title
@@ -1973,6 +1814,9 @@ async def fetch_with_jina(
         JinaAPIError: If API returns error
         FetchError: If fetch fails
     """
+    limiter = _get_jina_rate_limiter(rpm)
+    await limiter.acquire()
+
     import json
 
     import httpx
@@ -1985,6 +1829,12 @@ async def fetch_with_jina(
     }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    if no_cache:
+        headers["X-No-Cache"] = "true"
+    if target_selector:
+        headers["X-Target-Selector"] = target_selector
+    if wait_for_selector:
+        headers["X-Wait-For-Selector"] = wait_for_selector
 
     try:
         client = _get_jina_client(timeout)
@@ -2231,7 +2081,15 @@ async def fetch_url(
             )
         elif strategy == FetchStrategy.JINA:
             api_key = config.jina.get_resolved_api_key()
-            result = await fetch_with_jina(url, api_key, config.jina.timeout)
+            result = await fetch_with_jina(
+                url,
+                api_key,
+                config.jina.timeout,
+                config.jina.rpm,
+                no_cache=config.jina.no_cache,
+                target_selector=config.jina.target_selector,
+                wait_for_selector=config.jina.wait_for_selector,
+            )
         elif strategy == FetchStrategy.STATIC:
             # For fresh fetch, use conditional to capture validators
             cond_result = await fetch_with_static_conditional(url)
@@ -2312,7 +2170,15 @@ async def fetch_url(
         )
     elif strategy == FetchStrategy.JINA:
         api_key = config.jina.get_resolved_api_key()
-        result = await fetch_with_jina(url, api_key, config.jina.timeout)
+        result = await fetch_with_jina(
+            url,
+            api_key,
+            config.jina.timeout,
+            config.jina.rpm,
+            no_cache=config.jina.no_cache,
+            target_selector=config.jina.target_selector,
+            wait_for_selector=config.jina.wait_for_selector,
+        )
     else:
         raise ValueError(f"Unknown fetch strategy: {strategy}")
 
@@ -2372,16 +2238,17 @@ async def _fetch_multi_source(
     skip_read_cache: bool = False,
     renderer: Any | None = None,
 ) -> FetchResult:
-    """Fetch URL using static-first strategy with browser fallback.
+    """Fetch URL using multi-source strategy with parallel fetching.
 
     Strategy:
-    1. Fetch both static and browser in parallel
+    1. Fetch static, browser, and Jina (when API key available) in parallel
     2. Validate content quality using _is_invalid_content()
-    3. If static is valid → use static only (ignore browser content)
+    3. If static is valid → use static only
     4. Else if browser is valid → use browser only
-    5. Else → use browser content with warning (both invalid)
+    5. Else if Jina is valid → use Jina content (with screenshot from browser if available)
+    6. Else → raise FetchError
 
-    Screenshot is always included when available.
+    Screenshot is always included when available (from browser fetch).
 
     Args:
         url: URL to fetch
@@ -2460,9 +2327,32 @@ async def _fetch_multi_source(
             logger.debug(f"[URL] Playwright fetch failed: {e}")
             return None, error_msg, not_installed
 
-    # Execute both fetches in parallel
-    static_content, browser_fetch_result = await asyncio.gather(
-        fetch_static(), fetch_browser()
+    # Task 3: Jina parallel fetch (when API key is available)
+    jina_key = config.jina.get_resolved_api_key()
+
+    async def fetch_jina() -> str | None:
+        """Fetch with Jina Reader API (only when API key is configured)."""
+        if not jina_key:
+            return None
+        try:
+            result = await fetch_with_jina(
+                url,
+                jina_key,
+                config.jina.timeout,
+                config.jina.rpm,
+                no_cache=config.jina.no_cache,
+                target_selector=config.jina.target_selector,
+                wait_for_selector=config.jina.wait_for_selector,
+            )
+            logger.debug(f"[URL] Jina fetch success: {len(result.content)} chars")
+            return result.content
+        except Exception as e:
+            logger.debug(f"[URL] Jina parallel fetch failed: {e}")
+            return None
+
+    # Execute fetches in parallel (Jina joins when API key is available)
+    static_content, browser_fetch_result, jina_content = await asyncio.gather(
+        fetch_static(), fetch_browser(), fetch_jina()
     )
     browser_result, browser_error, browser_not_installed = browser_fetch_result
 
@@ -2481,10 +2371,18 @@ async def _fetch_multi_source(
         else (True, "fetch_failed")
     )
 
+    jina_invalid, jina_reason = (
+        _is_invalid_content(jina_content)
+        if jina_content
+        else (True, "not_attempted" if not jina_key else "fetch_failed")
+    )
+
     if static_invalid:
         logger.debug(f"[URL] Static content invalid: {static_reason}")
     if browser_invalid:
         logger.debug(f"[URL] Browser content invalid: {browser_reason}")
+    if jina_content and jina_invalid:
+        logger.debug(f"[URL] Jina content invalid: {jina_reason}")
 
     # Determine which source to use (static-first strategy)
     primary_content = ""
@@ -2505,61 +2403,25 @@ async def _fetch_multi_source(
         primary_content = browser_content
         final_browser_content = browser_content
         strategy_used = "browser"
+    elif not jina_invalid:
+        # Static and browser invalid but Jina is valid
+        assert jina_content is not None
+        primary_content = jina_content
+        strategy_used = "jina"
     elif browser_content:
-        # Both sources invalid — try Jina as last-resort fallback
-        logger.warning(
-            f"[URL] Both sources invalid (static={static_reason}, "
-            f"browser={browser_reason}), trying Jina fallback"
-        )
-        try:
-            api_key = config.jina.get_resolved_api_key()
-            jina_result = await fetch_with_jina(url, api_key, config.jina.timeout)
-            jina_invalid, jina_reason = _is_invalid_content(jina_result.content)
-            if not jina_invalid:
-                # Jina got valid content — attach screenshot if available
-                jina_result.screenshot_path = screenshot_path
-                jina_result.metadata["fallback"] = "jina"
-                if cache is not None:
-                    await cache.aset(url, jina_result)
-                return jina_result
-            logger.debug(f"[URL] Jina fallback also invalid: {jina_reason}")
-        except JinaRateLimitError:
-            logger.warning("[URL] Jina fallback failed: rate limit exceeded")
-        except Exception as e:
-            logger.debug(f"[URL] Jina fallback failed: {e}")
-
-        # All strategies produced invalid content → fail loudly.
-        # Changed in v0.5.3: previously returned degraded browser content
-        # with a warning; now raises FetchError after exhausting Jina fallback.
+        # All three sources invalid — fail loudly
         raise FetchError(
             f"All fetch strategies returned invalid content for {url}. "
-            f"Static: {static_reason}, Browser: {browser_reason}. "
+            f"Static: {static_reason}, Browser: {browser_reason}, "
+            f"Jina: {jina_reason}. "
             f"The page may require authentication or have access restrictions."
         )
     elif static_content:
-        # Both invalid, no browser but has static
+        # No browser content, static is invalid
         # Check if this is a critical invalid reason (content is completely unusable)
         if static_reason in CRITICAL_INVALID_REASONS:
-            # Try Jina as fallback before giving up
-            # (screenshot won't be available, but content will be)
-            if browser_error or browser_not_installed:
-                try:
-                    api_key = config.jina.get_resolved_api_key()
-                    jina_result = await fetch_with_jina(
-                        url, api_key, config.jina.timeout
-                    )
-                    # Return Jina result (no screenshot available)
-                    jina_result.metadata["fallback"] = "jina"
-                    jina_result.metadata["browser_error"] = browser_error
-                    if cache is not None:
-                        await cache.aset(url, jina_result)
-                    return jina_result
-                except JinaRateLimitError:
-                    logger.warning("[URL] Jina fallback failed: rate limit exceeded")
-                except Exception as e:
-                    logger.warning(f"[URL] Jina fallback failed: {e}")
-
-            # Jina also failed or wasn't tried, generate appropriate error
+            # Jina was already tried in parallel — if it had valid content,
+            # we would have used it above. Generate appropriate error.
             browser_timed_out = (
                 browser_error is not None and "timed out" in browser_error.lower()
             )
@@ -2573,14 +2435,12 @@ async def _fetch_multi_source(
                     f"3) Use Jina API with --jina-api-key"
                 )
             elif browser_error:
-                # Browser was attempted but failed with other error
                 raise FetchError(
                     f"URL requires browser rendering: {url}. "
                     f"Browser fetch failed: {browser_error}. "
                     f"Install browser deps: sudo apt install libnspr4 libnss3 libatk1.0-0"
                 )
             elif browser_not_installed:
-                # Browser not installed
                 raise FetchError(
                     f"URL requires browser rendering: {url}. "
                     f"Reason: {static_reason}. "
@@ -2588,7 +2448,6 @@ async def _fetch_multi_source(
                     f"(Linux: also run 'uv run playwright install-deps chromium')"
                 )
             else:
-                # Browser available but returned no content
                 raise FetchError(
                     f"URL requires browser rendering: {url}. "
                     f"Browser returned no content. Check if the URL is accessible."
@@ -2664,12 +2523,17 @@ async def _fetch_with_fallback(
 
     domain = urlparse(url).netloc.lower()
     engine = FetchPolicyEngine()
+    jina_key = config.jina.get_resolved_api_key()
+    profile = config.domain_profiles.get(domain)
+    domain_prefer = profile.prefer_strategy if profile else None
     decision = engine.decide(
         domain=domain,
         known_spa=start_with_browser,
         explicit_strategy=config.strategy if config.strategy != "auto" else None,
         fallback_patterns=config.fallback_patterns,
         policy_enabled=config.policy.enabled,
+        has_jina_key=bool(jina_key),
+        domain_prefer_strategy=domain_prefer,
     )
     strategies = decision.order[: config.policy.max_strategy_hops]
 
@@ -2799,7 +2663,15 @@ async def _fetch_with_fallback(
 
             elif strat == "jina":
                 api_key = config.jina.get_resolved_api_key()
-                result = await fetch_with_jina(url, api_key, config.jina.timeout)
+                result = await fetch_with_jina(
+                    url,
+                    api_key,
+                    config.jina.timeout,
+                    config.jina.rpm,
+                    no_cache=config.jina.no_cache,
+                    target_selector=config.jina.target_selector,
+                    wait_for_selector=config.jina.wait_for_selector,
+                )
                 # Validate content quality before accepting
                 is_invalid, reason = _is_invalid_content(result.content)
                 if is_invalid:

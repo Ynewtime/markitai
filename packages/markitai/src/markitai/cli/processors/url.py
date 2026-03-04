@@ -1035,8 +1035,3 @@ async def process_url_screenshot_only(
             f"Screenshot-only extraction failed for {url}: {format_error_message(e)}"
         )
         raise
-
-
-# Backward compatibility aliases
-_build_multi_source_content = build_multi_source_content
-_process_url_with_vision = process_url_with_vision

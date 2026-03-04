@@ -24,6 +24,7 @@ from markitai.constants import (
     DEFAULT_IMAGE_MAX_HEIGHT,
     DEFAULT_IMAGE_MAX_WIDTH,
     DEFAULT_IMAGE_QUALITY,
+    DEFAULT_JINA_RPM,
     DEFAULT_JINA_TIMEOUT,
     DEFAULT_LLM_CONCURRENCY,
     DEFAULT_LOG_DIR,
@@ -349,6 +350,7 @@ class DomainProfileConfig(BaseModel):
     wait_for_selector: str | None = None
     wait_for: Literal["load", "domcontentloaded", "networkidle"] | None = None
     extra_wait_ms: int | None = Field(default=None, ge=0, le=30000)
+    prefer_strategy: Literal["static", "playwright", "jina", "cloudflare"] | None = None
 
 
 class PlaywrightConfig(BaseModel):
@@ -377,6 +379,14 @@ class JinaConfig(BaseModel):
 
     api_key: str | None = None  # Supports env: syntax
     timeout: int = DEFAULT_JINA_TIMEOUT  # seconds
+    rpm: int = Field(default=DEFAULT_JINA_RPM, ge=1)  # requests per minute limit
+    no_cache: bool = False  # Skip Jina server-side cache (X-No-Cache header)
+    target_selector: str | None = (
+        None  # CSS selector for content extraction (X-Target-Selector)
+    )
+    wait_for_selector: str | None = (
+        None  # Wait for element before extraction (X-Wait-For-Selector)
+    )
 
     def get_resolved_api_key(self, strict: bool = False) -> str | None:
         """Get API key with env: syntax resolved.
@@ -479,20 +489,6 @@ class MarkitaiConfig(BaseModel):
     cache: CacheConfig = Field(default_factory=CacheConfig)
     fetch: FetchConfig = Field(default_factory=FetchConfig)
     presets: dict[str, PresetConfig] = Field(default_factory=dict)
-
-
-def _deep_update(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
-    """Deep merge updates into base dict, preserving base structure.
-
-    Only updates keys that exist in updates, preserving other keys in base.
-    """
-    result = base.copy()
-    for key, value in updates.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_update(result[key], value)
-        else:
-            result[key] = value
-    return result
 
 
 def _set_nested_value(data: dict[str, Any], key_path: str, value: Any) -> None:
@@ -765,11 +761,6 @@ class ConfigManager:
 
 # Global config manager instance
 config_manager = ConfigManager()
-
-
-def get_config() -> MarkitaiConfig:
-    """Get the global configuration."""
-    return config_manager.config
 
 
 def get_preset(name: str, config: MarkitaiConfig | None = None) -> PresetConfig | None:

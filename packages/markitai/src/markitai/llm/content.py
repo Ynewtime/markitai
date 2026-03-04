@@ -27,7 +27,6 @@ _IMG_PATH_RE = re.compile(r"\]\(([^)]+)\)")
 _SLIDE_NUM_EXTRACT_RE = re.compile(r"Slide\s+(?:number:\s*)?(\d+)")
 _PAGE_NUM_EXTRACT_RE = re.compile(r"Page number:\s*(\d+)")
 _PAGE_REF_RE = re.compile(r"!\[Page\s+(\d+)\]")
-_UNCOMMENTED_SCREENSHOT_RE = re.compile(r"\n*!\[Page\s+\d+\]\(screenshots/[^)]+\)\s*$")
 _CODE_BLOCK_RE = re.compile(
     r"^```(?:ya?ml)?\s*\n?(.*?)\n?```$", re.DOTALL | re.IGNORECASE
 )
@@ -471,24 +470,6 @@ def restore_image_positions(text: str, mapping: dict[str, str]) -> str:
     return result
 
 
-def remove_uncommented_screenshots(content: str) -> str:
-    """Remove uncommented screenshot references that should be in comments.
-
-    Some LLM outputs incorrectly leave screenshot references as regular
-    markdown images instead of HTML comments. This function identifies
-    and removes them.
-
-    Args:
-        content: Markdown content
-
-    Returns:
-        Content with orphan screenshot references removed
-    """
-    # Pattern: ![Page X](screenshots/...) not inside HTML comment
-    # This is a heuristic - we look for screenshot references at the end
-    return _UNCOMMENTED_SCREENSHOT_RE.sub("", content)
-
-
 def clean_frontmatter(frontmatter: str) -> str:
     """Clean frontmatter by removing code block markers, --- markers, and prompt leakage.
 
@@ -624,7 +605,6 @@ __all__ = [
     "restore_image_positions",
     # Content fixing
     "fix_malformed_image_refs",
-    "remove_uncommented_screenshots",
     # Frontmatter utilities
     "clean_frontmatter",
     # Text utilities

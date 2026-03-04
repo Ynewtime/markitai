@@ -377,16 +377,23 @@ class SingleFileWorkflow:
                 basic_frontmatter = f"title: {source}\nsource: {source}"
                 return "", basic_frontmatter, 0.0, {}
 
-            # Use the screenshot extraction method for each page
-            # For documents with multiple pages, we extract each page and merge
-            all_content = []
-            for i, image_path in enumerate(image_paths, 1):
+            # Process all pages in parallel using asyncio.gather
+            async def _extract_page(i: int, image_path: Path) -> str:
                 page_source = f"{source}:page{i}"
                 cleaned, _ = await self.processor.extract_from_screenshot(
                     image_path, context=page_source
                 )
                 if cleaned.strip():
-                    all_content.append(f"<!-- Page {i} -->\n\n{cleaned}")
+                    return f"<!-- Page {i} -->\n\n{cleaned}"
+                return ""
+
+            page_results = await asyncio.gather(
+                *[
+                    _extract_page(i, image_path)
+                    for i, image_path in enumerate(image_paths, 1)
+                ]
+            )
+            all_content = [r for r in page_results if r]
 
             # Merge all page content
             merged_content = "\n\n".join(all_content)

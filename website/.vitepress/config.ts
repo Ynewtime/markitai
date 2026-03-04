@@ -33,6 +33,7 @@ export default defineConfig({
                 { text: '快速开始', link: '/zh/guide/getting-started' },
                 { text: '配置说明', link: '/zh/guide/configuration' },
                 { text: 'CLI 命令', link: '/zh/guide/cli' },
+                { text: '抓取策略', link: '/zh/guide/fetch-policy' },
               ],
             },
           ],
@@ -46,6 +47,14 @@ export default defineConfig({
         docFooter: {
           prev: '上一页',
           next: '下一页',
+        },
+        footer: {
+          message: '基于 MIT 许可证发布。',
+          copyright: 'Copyright © 2026-present',
+        },
+        editLink: {
+          pattern: 'https://github.com/Ynewtime/markitai/edit/main/website/:path',
+          text: '在 GitHub 上编辑此页',
         },
       },
     },
@@ -92,6 +101,7 @@ export default defineConfig({
             { text: 'Getting Started', link: '/guide/getting-started' },
             { text: 'Configuration', link: '/guide/configuration' },
             { text: 'CLI Reference', link: '/guide/cli' },
+            { text: 'Fetch Policy', link: '/guide/fetch-policy' },
           ],
         },
       ],

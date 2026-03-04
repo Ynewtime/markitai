@@ -511,30 +511,30 @@ class VisionMixin:
                 f"Batch image analysis failed: {format_error_message(e)}, "
                 "falling back to individual analysis"
             )
-            # Fallback: analyze each image individually (uses persistent cache)
-            # Pass context to maintain accurate per-file usage tracking
-            # Note: cached_results may already have some hits from the initial check
-            fallback_results: list[ImageAnalysis] = []
-            for i, image_path in enumerate(image_paths):
+
+            # Fallback: analyze each image concurrently (uses persistent cache)
+            async def _analyze_one(i: int, image_path: Path) -> ImageAnalysis:
                 if i in unsupported_results:
-                    # Use unsupported placeholder result
-                    fallback_results.append(unsupported_results[i])
-                elif i in cached_results:
-                    # Use already-cached result
-                    fallback_results.append(cached_results[i])
-                else:
-                    try:
-                        # analyze_image will also check/populate cache
-                        result = await self.analyze_image(image_path, language, context)
-                        fallback_results.append(result)
-                    except Exception:
-                        fallback_results.append(
-                            ImageAnalysis(
-                                caption="Image",
-                                description="Image analysis failed",
-                                extracted_text=None,
-                            )
-                        )
+                    return unsupported_results[i]
+                if i in cached_results:
+                    return cached_results[i]
+                try:
+                    return await self.analyze_image(image_path, language, context)
+                except Exception:
+                    return ImageAnalysis(
+                        caption="Image",
+                        description="Image analysis failed",
+                        extracted_text=None,
+                    )
+
+            fallback_results = list(
+                await asyncio.gather(
+                    *[
+                        _analyze_one(i, image_path)
+                        for i, image_path in enumerate(image_paths)
+                    ]
+                )
+            )
             return fallback_results
 
     async def _analyze_image_with_fallback(

@@ -188,14 +188,6 @@ class BatchState:
             if f.status in (FileStatus.PENDING, FileStatus.FAILED)
         ]
 
-    def get_pending_urls(self) -> list[str]:
-        """Get list of URLs that need processing."""
-        return [
-            u.url
-            for u in self.urls.values()
-            if u.status in (FileStatus.PENDING, FileStatus.FAILED)
-        ]
-
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization.
 
@@ -670,17 +662,6 @@ class BatchProcessor:
                 # Show domain of current URL being processed
                 domain = urlparse(url).netloc
                 self._progress.update(self._url_task_id, current=f"({domain})")
-
-    def finish_url_processing(self, completed: int, failed: int) -> None:
-        """Mark URL processing as complete.
-
-        Args:
-            completed: Number of URLs successfully processed
-            failed: Number of URLs that failed
-        """
-        if self._progress is not None and self._url_task_id is not None:
-            # Final status already shows count from update_url_status
-            pass
 
     def discover_files(
         self,

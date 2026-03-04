@@ -28,7 +28,7 @@ markitai init
 markitai init --yes
 
 # Create in specific location
-markitai init -o ~/.markitai/ --global
+markitai init --local  # creates ./markitai.json
 ```
 
 ### View Configuration
@@ -87,6 +87,7 @@ markitai config set llm.enabled true
   },
   "screenshot": {
     "enabled": false,
+    "screenshot_only": false,
     "viewport_width": 1920,
     "viewport_height": 1080,
     "quality": 75,
@@ -102,14 +103,16 @@ markitai config set llm.enabled true
     "concurrency": 10,
     "url_concurrency": 5,
     "scan_max_depth": 5,
-    "scan_max_files": 10000
+    "scan_max_files": 10000,
+    "state_flush_interval_seconds": 10,
+    "heavy_task_limit": 0
   },
   "fetch": {
     "strategy": "auto",
     "playwright": {
       "timeout": 30000,
       "wait_for": "domcontentloaded",
-      "extra_wait_ms": 5000,
+      "extra_wait_ms": 3000,
       "wait_for_selector": null,
       "cookies": null,
       "reject_resource_patterns": null,
@@ -119,7 +122,11 @@ markitai config set llm.enabled true
     },
     "jina": {
       "api_key": null,
-      "timeout": 30
+      "timeout": 30,
+      "rpm": 20,
+      "no_cache": false,
+      "target_selector": null,
+      "wait_for_selector": null
     },
     "cloudflare": {
       "api_token": null,
@@ -130,13 +137,21 @@ markitai config set llm.enabled true
       "reject_resource_patterns": null,
       "convert_enabled": false
     },
+    "policy": {
+      "enabled": true,
+      "max_strategy_hops": 4
+    },
+    "domain_profiles": {},
     "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   },
   "output": {
-    "on_conflict": "rename"
+    "dir": "./output",
+    "on_conflict": "rename",
+    "allow_symlinks": false
   },
   "log": {
     "level": "INFO",
+    "format": "text",
     "dir": "~/.markitai/logs",
     "rotation": "10 MB",
     "retention": "7 days"
@@ -173,6 +188,7 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 | `MARKITAI_CONFIG` | Path to configuration file |
 | `MARKITAI_LOG_DIR` | Directory for log files |
 | `MARKITAI_LOG_FORMAT` | Log format override (`text` or `json`) |
+| `MARKITAI_STATIC_HTTP` | Static HTTP backend: `httpx` (default) or `curl_cffi` (TLS impersonation) |
 
 ## LLM Configuration
 
@@ -452,6 +468,7 @@ Enable screenshot capture for documents and URLs:
 {
   "screenshot": {
     "enabled": false,
+    "screenshot_only": false,
     "viewport_width": 1920,
     "viewport_height": 1080,
     "quality": 75,
@@ -468,6 +485,7 @@ When enabled (`--screenshot` or `--preset rich`):
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `false` | Enable screenshot capture |
+| `screenshot_only` | `false` | Capture screenshots only, skip content extraction (see `--screenshot-only` CLI flag) |
 | `viewport_width` | `1920` | Browser viewport width for URL screenshots |
 | `viewport_height` | `1080` | Browser viewport height for URL screenshots |
 | `quality` | `75` | JPEG compression quality (1-100) |
@@ -478,6 +496,38 @@ Screenshots are saved to `output/screenshots/` directory.
 ::: tip
 For URLs, enabling `--screenshot` automatically upgrades the fetch strategy to `playwright` if needed. This ensures the page is fully rendered before capturing.
 :::
+
+## Presets
+
+Markitai includes three built-in presets (`rich`, `standard`, `minimal`). You can also define **custom presets** in the config file:
+
+```json
+{
+  "presets": {
+    "my-preset": {
+      "llm": true,
+      "ocr": false,
+      "alt": true,
+      "desc": false,
+      "screenshot": true
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `llm` | boolean | `false` | Enable LLM enhancement |
+| `ocr` | boolean | `false` | Enable OCR for scanned documents |
+| `alt` | boolean | `false` | Generate image alt text |
+| `desc` | boolean | `false` | Generate image descriptions |
+| `screenshot` | boolean | `false` | Enable screenshot capture |
+
+Use custom presets via the `--preset` CLI flag:
+
+```bash
+markitai document.pdf --preset my-preset
+```
 
 ## OCR Configuration
 
@@ -520,7 +570,9 @@ Control parallel processing:
     "concurrency": 10,
     "url_concurrency": 5,
     "scan_max_depth": 5,
-    "scan_max_files": 10000
+    "scan_max_files": 10000,
+    "state_flush_interval_seconds": 10,
+    "heavy_task_limit": 0
   }
 }
 ```
@@ -531,6 +583,8 @@ Control parallel processing:
 | `url_concurrency` | `5` | Max concurrent URL fetches (separate from files) |
 | `scan_max_depth` | `5` | Max directory depth to scan |
 | `scan_max_files` | `10000` | Max files to process in one run |
+| `state_flush_interval_seconds` | `10` | Interval for persisting batch state to disk |
+| `heavy_task_limit` | `0` | Limit for CPU-intensive tasks (0 = auto-detect based on RAM) |
 
 ::: tip
 URL fetching uses a separate concurrency pool because URLs can have high latency (e.g., browser-rendered pages). This prevents slow URLs from blocking local file processing.
@@ -547,11 +601,15 @@ Configure how URLs are fetched:
     "playwright": {
       "timeout": 30000,
       "wait_for": "domcontentloaded",
-      "extra_wait_ms": 5000
+      "extra_wait_ms": 3000
     },
     "jina": {
       "api_key": "env:JINA_API_KEY",
-      "timeout": 30
+      "timeout": 30,
+      "rpm": 20,
+      "no_cache": false,
+      "target_selector": null,
+      "wait_for_selector": null
     },
     "cloudflare": {
       "api_token": "env:CLOUDFLARE_API_TOKEN",
@@ -578,13 +636,26 @@ Configure how URLs are fetched:
 |---------|---------|-------------|
 | `timeout` | `30000` | Page load timeout (ms) |
 | `wait_for` | `domcontentloaded` | Wait condition: `load`, `domcontentloaded`, `networkidle` |
-| `extra_wait_ms` | `5000` | Extra wait time for JS rendering |
+| `extra_wait_ms` | `3000` | Extra wait time for JS rendering |
+| `session_mode` | `isolated` | Session mode: `isolated` (new context per request), `domain_persistent` (reuse context per domain) |
+| `session_ttl_seconds` | `600` | TTL for persistent sessions in seconds |
 | `wait_for_selector` | `null` | CSS selector to wait for before extraction |
 | `cookies` | `null` | Cookies to set: `[{name, value, domain, path}]` |
 | `reject_resource_patterns` | `null` | Block resources matching patterns: `["**/*.css"]` |
 | `extra_http_headers` | `null` | Additional HTTP headers: `{"Accept-Language": "zh-CN"}` |
 | `user_agent` | `null` | Custom User-Agent string |
 | `http_credentials` | `null` | HTTP auth credentials: `{username, password}` |
+
+### Jina Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `api_key` | `null` | Jina Reader API key (supports `env:` syntax) |
+| `timeout` | `30` | Request timeout in seconds |
+| `rpm` | `20` | Rate limit in requests per minute |
+| `no_cache` | `false` | Disable Jina's server-side cache |
+| `target_selector` | `null` | CSS selector to target specific page content |
+| `wait_for_selector` | `null` | CSS selector to wait for before extraction |
 
 ### Cloudflare Settings
 
@@ -657,6 +728,52 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 - **File conversion quality**: For formats that have a local converter (PDF, DOCX, XLSX, etc.), CF Workers AI `toMarkdown` generally produces **lower quality** output than local converters (e.g. less accurate formatting, no image extraction). `--cloudflare` will warn when a better local converter is available. CF `toMarkdown` is most useful for formats without a local converter (`.numbers`, `.ods`, `.svg`, etc.).
 :::
 
+### Fetch Policy Engine
+
+The policy engine intelligently orders fetch strategies based on domain characteristics and history. See the [Fetch Policy Guide](/guide/fetch-policy) for details.
+
+```json
+{
+  "fetch": {
+    "policy": {
+      "enabled": true,
+      "max_strategy_hops": 4
+    }
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `true` | Enable intelligent strategy ordering |
+| `max_strategy_hops` | `4` | Maximum number of strategies to attempt before giving up |
+
+### Domain Profiles
+
+Configure per-domain fetch overrides for sites with specific requirements:
+
+```json
+{
+  "fetch": {
+    "domain_profiles": {
+      "x.com": {
+        "wait_for_selector": "[data-testid=tweetText]",
+        "wait_for": "domcontentloaded",
+        "extra_wait_ms": 1200,
+        "prefer_strategy": "playwright"
+      }
+    }
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `wait_for_selector` | `null` | CSS selector to wait for before content extraction |
+| `wait_for` | `null` | Wait condition override: `load`, `domcontentloaded`, `networkidle` |
+| `extra_wait_ms` | `null` | Extra wait time override (ms) |
+| `prefer_strategy` | `null` | Preferred strategy: `static`, `playwright`, `cloudflare`, `jina` |
+
 ### Fallback Patterns
 
 Sites matching these patterns automatically use browser strategy:
@@ -687,6 +804,7 @@ Markitai uses a global cache stored at `~/.markitai/cache.db`.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `true` | Enable LLM result caching |
+| `no_cache` | `false` | Skip reading cache but still write (like `--no-cache` flag) |
 | `no_cache_patterns` | `[]` | Glob patterns to skip cache |
 | `max_size_bytes` | `536870912` (512MB) | Max cache size |
 | `global_dir` | `~/.markitai` | Global cache directory |
@@ -733,7 +851,9 @@ Control output file handling:
 
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
+| `dir` | - | `./output` | Output directory |
 | `on_conflict` | `rename`, `overwrite`, `skip` | `rename` | How to handle existing files |
+| `allow_symlinks` | - | `false` | Allow symlinks in output paths |
 
 ## Log Configuration
 
@@ -743,6 +863,7 @@ Configure logging behavior:
 {
   "log": {
     "level": "INFO",
+    "format": "text",
     "dir": "~/.markitai/logs",
     "rotation": "10 MB",
     "retention": "7 days"
@@ -752,7 +873,8 @@ Configure logging behavior:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `level` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `level` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `format` | `text` | Log format: `text` (human-readable) or `json` (structured) |
 | `dir` | `~/.markitai/logs` | Log file directory |
 | `rotation` | `10 MB` | Rotate when file exceeds this size |
 | `retention` | `7 days` | Delete logs older than this |
@@ -784,9 +906,7 @@ Customize LLM prompts for different tasks. Each prompt is split into **system** 
     "document_vision_system": null,
     "document_vision_user": null,
     "url_enhance_system": null,
-    "url_enhance_user": null,
-    "screenshot_extract_system": null,
-    "screenshot_extract_user": null
+    "url_enhance_user": null
   }
 }
 ```
