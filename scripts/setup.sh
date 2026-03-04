@@ -125,6 +125,8 @@ i18n() {
             run_tests)                  echo "运行测试" ;;
             run_cli)                    echo "运行 CLI" ;;
             interactive_mode)           echo "交互模式" ;;
+            configure_llm)              echo "配置 LLM" ;;
+            configure_env)              echo "配置环境变量" ;;
             convert_file)               echo "转换文件" ;;
             show_help)                  echo "显示帮助" ;;
 
@@ -227,6 +229,8 @@ i18n() {
             run_tests)                  echo "Run tests" ;;
             run_cli)                    echo "Run CLI" ;;
             interactive_mode)           echo "Interactive mode" ;;
+            configure_llm)              echo "Configure LLM" ;;
+            configure_env)              echo "Configure environment" ;;
             convert_file)               echo "Convert a file" ;;
             show_help)                  echo "Show help" ;;
 
@@ -1258,6 +1262,9 @@ print_user_completion() {
         "$(i18n interactive_mode):" \
         "  ${CYAN}markitai -I${NC}" \
         "" \
+        "$(i18n configure_llm):" \
+        "  ${CYAN}markitai config init${NC}" \
+        "" \
         "$(i18n convert_file):" \
         "  ${CYAN}markitai file.pdf${NC}" \
         "" \
@@ -1270,8 +1277,11 @@ print_user_completion() {
 print_dev_completion() {
     _project_root=$(get_project_root)
     clack_note "$(i18n quick_start)" \
-        "$(i18n activate_venv):" \
-        "  ${CYAN}source $_project_root/.venv/bin/activate${NC}" \
+        "$(i18n configure_env):" \
+        "  ${CYAN}cp .env.example .env${NC}" \
+        "" \
+        "$(i18n interactive_mode):" \
+        "  ${CYAN}uv run markitai -I${NC}" \
         "" \
         "$(i18n run_tests):" \
         "  ${CYAN}uv run pytest${NC}" \

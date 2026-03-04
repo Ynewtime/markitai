@@ -3,8 +3,8 @@
 # Auto-detects: language (en/zh), mode (user/dev)
 #
 # Usage:
-#   irm https://markitai.ynewtime.com/setup.ps1 | iex    # User install
-#   .\scripts\setup.ps1                                   # Dev setup (in repo)
+#   powershell -ExecutionPolicy ByPass -c "irm https://markitai.ynewtime.com/setup.ps1 | iex"   # User install
+#   .\scripts\setup.ps1                                                                         # Dev setup (in repo)
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -123,6 +123,8 @@ function i18n {
             "run_tests"                 { return "运行测试" }
             "run_cli"                   { return "运行 CLI" }
             "interactive_mode"          { return "交互模式" }
+            "configure_llm"             { return "配置 LLM" }
+            "configure_env"             { return "配置环境变量" }
             "convert_file"              { return "转换文件" }
             "show_help"                 { return "显示帮助" }
 
@@ -227,6 +229,8 @@ function i18n {
             "run_tests"                 { return "Run tests" }
             "run_cli"                   { return "Run CLI" }
             "interactive_mode"          { return "Interactive mode" }
+            "configure_llm"             { return "Configure LLM" }
+            "configure_env"             { return "Configure environment" }
             "convert_file"              { return "Convert a file" }
             "show_help"                 { return "Show help" }
 
@@ -1289,6 +1293,9 @@ function Print-UserCompletion {
         "$(i18n 'interactive_mode'):" `
         "  markitai -I" `
         "" `
+        "$(i18n 'configure_llm'):" `
+        "  markitai config init" `
+        "" `
         "$(i18n 'convert_file'):" `
         "  markitai file.pdf" `
         "" `
@@ -1300,8 +1307,11 @@ function Print-UserCompletion {
 function Print-DevCompletion {
     $projectRoot = Get-ProjectRoot
     Clack-Note (i18n "quick_start") `
-        "$(i18n 'activate_venv'):" `
-        "  $projectRoot\.venv\Scripts\Activate.ps1" `
+        "$(i18n 'configure_env'):" `
+        "  copy .env.example .env" `
+        "" `
+        "$(i18n 'interactive_mode'):" `
+        "  uv run markitai -I" `
         "" `
         "$(i18n 'run_tests'):" `
         "  uv run pytest" `

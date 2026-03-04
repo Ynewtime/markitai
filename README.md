@@ -23,7 +23,7 @@ Opinionated Markdown converter with native LLM enhancement support.
 curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
 ```
 
 ### Manual Installation

@@ -11,11 +11,38 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import questionary
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
+
+
+def _is_dev_mode() -> bool:
+    """Check if running in the markitai project directory (dev mode).
+
+    Mirrors the is_dev_mode() check in setup.sh.
+    """
+    cwd = Path.cwd()
+    pyproject = cwd / "pyproject.toml"
+    if pyproject.is_file() and (cwd / ".git").exists() and (cwd / "scripts").is_dir():
+        try:
+            return "markitai" in pyproject.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    return False
+
+
+def _get_default_env_path() -> Path:
+    """Return the default .env path based on dev vs installed mode.
+
+    Dev mode:  ./.env  (project root, loaded first by main.py)
+    Installed: ~/.markitai/.env  (global config dir)
+    """
+    if _is_dev_mode():
+        return Path.cwd() / ".env"
+    return Path.home() / ".markitai" / ".env"
 
 
 @dataclass
@@ -141,6 +168,14 @@ class InteractiveSession:
     provider_result: ProviderDetectionResult | None = None
 
 
+def _ask_or_exit(question: questionary.Question) -> Any:
+    """Run a questionary prompt; raise KeyboardInterrupt on Ctrl+C / None."""
+    result = question.ask()
+    if result is None:
+        raise KeyboardInterrupt
+    return result
+
+
 def prompt_input_type(session: InteractiveSession) -> str:
     """Prompt user to select input type."""
     choices = [
@@ -148,58 +183,62 @@ def prompt_input_type(session: InteractiveSession) -> str:
         questionary.Choice("Directory (batch)", value="directory"),
         questionary.Choice("URL", value="url"),
     ]
-    result = questionary.select(
-        "What would you like to convert?",
-        choices=choices,
-        style=questionary.Style(
-            [
-                ("highlighted", "bold"),
-                ("selected", "fg:cyan"),
-            ]
-        ),
-    ).ask()
+    result = _ask_or_exit(
+        questionary.select(
+            "What would you like to convert?",
+            choices=choices,
+            style=questionary.Style(
+                [
+                    ("highlighted", "bold"),
+                    ("selected", "fg:cyan"),
+                ]
+            ),
+        )
+    )
 
-    if result:
-        session.input_type = result
-    return result or "file"
+    session.input_type = result
+    return result
 
 
-def prompt_input_path(session: InteractiveSession) -> Path | str | None:
+def prompt_input_path(session: InteractiveSession) -> Path | str:
     """Prompt user for input path."""
     if session.input_type == "url":
-        result = questionary.text(
-            "Enter URL:",
-            validate=lambda x: len(x) > 0 or "URL cannot be empty",
-        ).ask()
+        result = _ask_or_exit(
+            questionary.text(
+                "Enter URL:",
+                validate=lambda x: len(x) > 0 or "URL cannot be empty",
+            )
+        )
     elif session.input_type == "directory":
-        result = questionary.path(
-            "Enter directory path:",
-            only_directories=True,
-        ).ask()
+        result = _ask_or_exit(
+            questionary.path(
+                "Enter directory path:",
+                only_directories=True,
+            )
+        )
     else:
-        result = questionary.path(
-            "Enter file path:",
-        ).ask()
+        result = _ask_or_exit(
+            questionary.path(
+                "Enter file path:",
+            )
+        )
 
-    if result:
-        if session.input_type == "url":
-            session.input_path = result  # Keep as string for URLs
-        else:
-            session.input_path = Path(result)
-        return session.input_path
-    return None
+    path: Path | str = result if session.input_type == "url" else Path(result)
+    session.input_path = path
+    return path
 
 
 def prompt_output_dir(session: InteractiveSession) -> Path:
     """Prompt user for output directory."""
-    result = questionary.path(
-        "Enter output directory:",
-        default=str(session.output_dir),
-        only_directories=True,
-    ).ask()
+    result = _ask_or_exit(
+        questionary.path(
+            "Enter output directory:",
+            default=str(session.output_dir),
+            only_directories=True,
+        )
+    )
 
-    if result:
-        session.output_dir = Path(result)
+    session.output_dir = Path(result)
     return session.output_dir
 
 
@@ -223,13 +262,14 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
             "(no CLI tools or API keys found)"
         )
 
-    result = questionary.confirm(
-        "Enable LLM enhancement? (better formatting, metadata)",
-        default=session.provider_result is not None,
-    ).ask()
+    result = _ask_or_exit(
+        questionary.confirm(
+            "Enable LLM enhancement? (better formatting, metadata)",
+            default=session.provider_result is not None,
+        )
+    )
 
-    if result is not None:
-        session.enable_llm = result
+    session.enable_llm = result
     return session.enable_llm
 
 
@@ -238,29 +278,30 @@ def prompt_llm_options(session: InteractiveSession) -> None:
     if not session.enable_llm:
         return
 
-    choices = questionary.checkbox(
-        "Select LLM features:",
-        choices=[
-            questionary.Choice(
-                "Generate alt text for images", value="alt", checked=False
-            ),
-            questionary.Choice(
-                "Generate image descriptions (JSON)", value="desc", checked=False
-            ),
-            questionary.Choice(
-                "Enable OCR for scanned documents", value="ocr", checked=False
-            ),
-            questionary.Choice(
-                "Take page screenshots", value="screenshot", checked=False
-            ),
-        ],
-    ).ask()
+    choices = _ask_or_exit(
+        questionary.checkbox(
+            "Select LLM features:",
+            choices=[
+                questionary.Choice(
+                    "Generate alt text for images", value="alt", checked=False
+                ),
+                questionary.Choice(
+                    "Generate image descriptions (JSON)", value="desc", checked=False
+                ),
+                questionary.Choice(
+                    "Enable OCR for scanned documents", value="ocr", checked=False
+                ),
+                questionary.Choice(
+                    "Take page screenshots", value="screenshot", checked=False
+                ),
+            ],
+        )
+    )
 
-    if choices:
-        session.enable_alt = "alt" in choices
-        session.enable_desc = "desc" in choices
-        session.enable_ocr = "ocr" in choices
-        session.enable_screenshot = "screenshot" in choices
+    session.enable_alt = "alt" in choices
+    session.enable_desc = "desc" in choices
+    session.enable_ocr = "ocr" in choices
+    session.enable_screenshot = "screenshot" in choices
 
 
 def prompt_configure_provider(session: InteractiveSession) -> bool:
@@ -277,10 +318,12 @@ def prompt_configure_provider(session: InteractiveSession) -> bool:
         questionary.Choice("Skip for now", value="skip"),
     ]
 
-    result = questionary.select(
-        "How would you like to configure LLM?",
-        choices=choices,
-    ).ask()
+    result = _ask_or_exit(
+        questionary.select(
+            "How would you like to configure LLM?",
+            choices=choices,
+        )
+    )
 
     if result == "skip":
         session.enable_llm = False
@@ -300,25 +343,23 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
 
     Saves API key to .env file and references it via env: prefix in config.
     """
-    provider = questionary.select(
-        "Select provider:",
-        choices=[
-            questionary.Choice("Anthropic (Claude)", value="anthropic"),
-            questionary.Choice("OpenAI", value="openai"),
-            questionary.Choice("Google (Gemini)", value="gemini"),
-            questionary.Choice("DeepSeek", value="deepseek"),
-        ],
-    ).ask()
+    provider = _ask_or_exit(
+        questionary.select(
+            "Select provider:",
+            choices=[
+                questionary.Choice("Anthropic (Claude)", value="anthropic"),
+                questionary.Choice("OpenAI", value="openai"),
+                questionary.Choice("Google (Gemini)", value="gemini"),
+                questionary.Choice("DeepSeek", value="deepseek"),
+            ],
+        )
+    )
 
-    if not provider:
-        return False
-
-    api_key = questionary.password(
-        f"Enter {provider.upper()} API key:",
-    ).ask()
-
-    if not api_key:
-        return False
+    api_key = _ask_or_exit(
+        questionary.password(
+            f"Enter {provider.upper()} API key:",
+        )
+    )
 
     model_map = {
         "anthropic": "anthropic/claude-sonnet-4-5-20250929",
@@ -334,9 +375,10 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
         "deepseek": "DEEPSEEK_API_KEY",
     }
 
-    # Save API key to .env file instead of config
+    # Save API key to .env file (project-local in dev mode, global otherwise)
     env_var = env_var_map[provider]
-    env_path = Path(".env")
+    env_path = _get_default_env_path()
+    env_path.parent.mkdir(parents=True, exist_ok=True)
     _append_env_var(env_path, env_var, api_key)
 
     # Save config with env: reference (no plaintext key)
@@ -389,12 +431,15 @@ def _append_env_var(env_path: Path, var_name: str, value: str) -> None:
 
 def _prompt_env_file(session: InteractiveSession) -> bool:
     """Prompt for .env file location."""
-    env_path = questionary.path(
-        "Enter .env file path:",
-        default=".env",
-    ).ask()
+    global_env = str(_get_default_env_path())
+    env_path = _ask_or_exit(
+        questionary.path(
+            "Enter .env file path:",
+            default=global_env,
+        )
+    )
 
-    if not env_path or not Path(env_path).exists():
+    if not Path(env_path).exists():
         get_console().print("[red]✗[/red] .env file not found")
         return False
 
@@ -416,6 +461,33 @@ def _prompt_env_file(session: InteractiveSession) -> bool:
     return False
 
 
+def _print_loaded_paths() -> None:
+    """Print detected config and .env file paths in the header."""
+    from markitai.config import ConfigManager
+
+    console = get_console()
+
+    # Detect config file
+    manager = ConfigManager()
+    manager.load()
+    config_path = manager.config_path
+    if config_path:
+        console.print(f"  [dim]Config:[/dim] {config_path}")
+
+    # Detect .env file(s)
+    env_paths = [
+        Path.cwd() / ".env",
+        Path.home() / ".markitai" / ".env",
+    ]
+    for env_p in env_paths:
+        if env_p.is_file():
+            console.print(f"  [dim].env:[/dim]   {env_p}")
+            break
+
+    if config_path or any(p.is_file() for p in env_paths):
+        console.print()
+
+
 def run_interactive() -> InteractiveSession:
     """Run the interactive CLI session.
 
@@ -428,6 +500,7 @@ def run_interactive() -> InteractiveSession:
     # Print header using unified UI
     console.print()
     ui.title("Markitai Interactive")
+    _print_loaded_paths()
     console.print("  Answer the following questions to configure your conversion.")
     console.print()
 
@@ -435,9 +508,7 @@ def run_interactive() -> InteractiveSession:
     prompt_input_type(session)
 
     # 2. Input path
-    if not prompt_input_path(session):
-        console.print("[red]✗[/red] No input path provided. Exiting.")
-        raise SystemExit(1)
+    prompt_input_path(session)
 
     # 3. Output directory
     prompt_output_dir(session)

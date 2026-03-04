@@ -72,14 +72,14 @@ def _resolve_output_path(output_path: Path | None, use_local: bool) -> Path:
 
 def _quick_init(target: Path) -> None:
     """Quick init - detect providers, generate config, no prompts."""
+    # Generate .env template if not exists
+    _ensure_env_template()
+
     if target.exists():
-        ui.warning(f"Config already exists: {target}")
-        console.print(f"  {ui.MARK_LINE} Use 'markitai config set' to modify")
         return
     providers = _detect_providers()
     config_data = _build_config(providers)
     _write_config(target, config_data)
-    ui.success(f"Configuration created: {target}")
 
 
 def _check_playwright_dep() -> tuple[str, str, bool]:
@@ -204,17 +204,21 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
     console.print()
 
     if available_count == 0:
-        env_cmd = get_env_set_command("GEMINI_API_KEY")
+        env_template = _ensure_env_template()
         ui.warning("No LLM providers detected")
         console.print()
         console.print("  Quick setup (choose one):")
         console.print()
         console.print("  [dim]•[/dim] Claude CLI:  [cyan]claude login[/cyan]")
         console.print("  [dim]•[/dim] Copilot CLI: [cyan]copilot auth login[/cyan]")
-        console.print(f"  [dim]•[/dim] API Key:     [cyan]{env_cmd}[/cyan]")
+        if env_template:
+            console.print(
+                f"  [dim]•[/dim] API Key:     edit [cyan]{env_template}[/cyan]"
+            )
+        else:
+            env_cmd = get_env_set_command("GEMINI_API_KEY")
+            console.print(f"  [dim]•[/dim] API Key:     [cyan]{env_cmd}[/cyan]")
         console.print()
-        console.print("  Run 'markitai init' again after setup.")
-        return
 
     # Phase 3: Choose config location
     if prompt_path:
@@ -328,6 +332,40 @@ def _build_config(
         }
 
     return config_data
+
+
+_ENV_TEMPLATE = """\
+# Markitai — LLM API Keys
+# Uncomment and fill in at least one key to enable LLM features.
+# Docs: https://markitai.ynewtime.com/guide/configuration
+
+# DEEPSEEK_API_KEY=
+# GEMINI_API_KEY=
+# OPENAI_API_KEY=
+# ANTHROPIC_API_KEY=
+# OPENROUTER_API_KEY=
+
+# Optional: Jina Reader API (URL conversion)
+# JINA_API_KEY=
+
+# Optional: Cloudflare (cloud rendering)
+# CLOUDFLARE_API_TOKEN=
+# CLOUDFLARE_ACCOUNT_ID=
+"""
+
+
+def _ensure_env_template() -> Path | None:
+    """Create ~/.markitai/.env template if it doesn't exist.
+
+    Returns:
+        Path to the .env file if created, None if already exists.
+    """
+    env_path = ConfigManager.DEFAULT_USER_CONFIG_DIR / ".env"
+    if env_path.exists():
+        return None
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text(_ENV_TEMPLATE, encoding="utf-8")
+    return env_path
 
 
 def _write_config(target: Path, config_data: dict) -> None:
