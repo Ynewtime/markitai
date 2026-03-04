@@ -699,42 +699,53 @@ function Install-Markitai {
     # Build Python command for --python argument
     $pythonArg = $script:PYTHON_CMD
 
-    # Check if already installed
-    $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
-    $isUpgrade = $false
-    if ($markitaiCmd) {
-        $oldVersion = & markitai --version 2>&1 | Select-Object -First 1
-        if ($oldVersion) {
-            $isUpgrade = $true
-        }
-    }
-
-    if (-not $isUpgrade) {
-        Clack-Info "$(i18n 'installing') $(i18n 'markitai')..."
-    }
-
-    # Always run uv tool install --upgrade to ensure latest version
     $uvExists = Get-Command uv -ErrorAction SilentlyContinue
-    if ($uvExists) {
-        $oldErrorAction = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        try {
-            $null = & uv tool install $pkg --python $pythonArg --upgrade 2>&1
-            $exitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $oldErrorAction
-        }
-        if ($exitCode -eq 0) {
-            # Refresh PATH
-            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+    if (-not $uvExists) {
+        Clack-Error "$(i18n 'markitai') $(i18n 'failed')"
+        Track-Install -Component "markitai" -Status "failed"
+        return $false
+    }
 
-            $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
-            $version = if ($markitaiCmd) { (& markitai --version 2>&1 | Select-Object -First 1).Split(' ')[-1] } else { (i18n "installed") }
-            if (-not $version) { $version = (i18n "installed") }
-            Clack-Success "$(i18n 'markitai') $version"
-            Track-Install -Component "markitai" -Status "installed"
-            return $true
+    $markitaiToolDir = Join-Path $uvToolsDir "markitai"
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $exitCode = 1
+
+    if (Test-Path $markitaiToolDir) {
+        # Already installed as uv tool — upgrade to latest version
+        try {
+            $null = & uv tool upgrade markitai 2>&1
+            $exitCode = $LASTEXITCODE
+        } catch {}
+
+        # Upgrade failed, try force reinstall
+        if ($exitCode -ne 0) {
+            try {
+                $null = & uv tool install $pkg --python $pythonArg --force 2>&1
+                $exitCode = $LASTEXITCODE
+            } catch {}
         }
+    } else {
+        # Fresh install
+        Clack-Info "$(i18n 'installing') $(i18n 'markitai')..."
+        try {
+            $null = & uv tool install $pkg --python $pythonArg 2>&1
+            $exitCode = $LASTEXITCODE
+        } catch {}
+    }
+
+    $ErrorActionPreference = $oldErrorAction
+
+    if ($exitCode -eq 0) {
+        # Refresh PATH
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+
+        $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
+        $version = if ($markitaiCmd) { (& markitai --version 2>&1 | Select-Object -First 1).Split(' ')[-1] } else { (i18n "installed") }
+        if (-not $version) { $version = (i18n "installed") }
+        Clack-Success "$(i18n 'markitai') $version"
+        Track-Install -Component "markitai" -Status "installed"
+        return $true
     }
 
     Clack-Error "$(i18n 'markitai') $(i18n 'failed')"
@@ -798,7 +809,7 @@ function Finalize-MarkitaiExtras {
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $null = & uv tool install $pkg --python $script:PYTHON_CMD --upgrade 2>&1
+        $null = & uv tool install $pkg --python $script:PYTHON_CMD --force 2>&1
     } catch {}
     $ErrorActionPreference = $oldErrorAction
 }
