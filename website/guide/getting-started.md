@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setu
 ```
 
 ```powershell [Windows]
-irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
 ```
 :::
 
@@ -70,7 +70,7 @@ curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setu
 ```powershell [Windows]
 $env:MARKITAI_VERSION = "0.6.0"
 $env:UV_VERSION = "0.9.27"
-irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
 ```
 :::
 
