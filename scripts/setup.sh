@@ -728,14 +728,34 @@ install_markitai() {
         _mi_pkg="markitai[$MARKITAI_EXTRAS]"
     fi
 
-    # Show installing message only for fresh installs
-    if ! command -v markitai >/dev/null 2>&1; then
-        clack_info "$(i18n installing) $(i18n markitai)..."
+    if ! command -v uv >/dev/null 2>&1; then
+        clack_error "$(i18n markitai) $(i18n failed)"
+        track_install "markitai" "failed"
+        return 1
     fi
 
-    # Always run uv tool install --upgrade to ensure latest version
-    if command -v uv >/dev/null 2>&1; then
-        if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --upgrade; then
+    # Upgrade existing installation, or fresh install
+    if [ -d "$_uv_tools_dir/markitai" ]; then
+        # Already installed as uv tool — upgrade to latest version
+        if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool upgrade markitai; then
+            export PATH="$HOME/.local/bin:$PATH"
+            _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
+            clack_success "$(i18n markitai) $_mi_version"
+            track_install "markitai" "installed"
+            return 0
+        fi
+        # Upgrade failed, try force reinstall
+        if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
+            export PATH="$HOME/.local/bin:$PATH"
+            _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
+            clack_success "$(i18n markitai) $_mi_version"
+            track_install "markitai" "installed"
+            return 0
+        fi
+    else
+        # Fresh install
+        clack_info "$(i18n installing) $(i18n markitai)..."
+        if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD"; then
             export PATH="$HOME/.local/bin:$PATH"
             _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
             clack_success "$(i18n markitai) $_mi_version"
@@ -791,7 +811,7 @@ finalize_markitai_extras() {
     else
         _mi_pkg="markitai[$MARKITAI_EXTRAS]"
     fi
-    uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --upgrade >/dev/null 2>&1 || true
+    uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force >/dev/null 2>&1 || true
 }
 
 # Sync project dependencies (Dev mode)
