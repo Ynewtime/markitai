@@ -36,25 +36,25 @@ def runner(cli_runner: CliRunner) -> CliRunner:
 @pytest.fixture
 def pptx_file(fixtures_dir: Path) -> Path:
     """Return the PPTX test fixture."""
-    return fixtures_dir / "Free_Test_Data_500KB_PPTX.pptx"
+    return fixtures_dir / "sample.pptx"
 
 
 @pytest.fixture
 def pdf_file(fixtures_dir: Path) -> Path:
     """Return the PDF test fixture."""
-    return fixtures_dir / "file-example_PDF_500_kB.pdf"
+    return fixtures_dir / "sample.pdf"
 
 
 @pytest.fixture
 def doc_file(fixtures_dir: Path) -> Path:
-    """Return the DOC test fixture in sub_dir."""
-    return fixtures_dir / "sub_dir" / "file-sample_100kB.doc"
+    """Return the DOC test fixture in legacy."""
+    return fixtures_dir / "legacy" / "sample.doc"
 
 
 @pytest.fixture
 def image_file(fixtures_dir: Path) -> Path:
     """Return the JPG test fixture."""
-    return fixtures_dir / "candy.JPG"
+    return fixtures_dir / "sample.jpg"
 
 
 # =============================================================================
@@ -183,7 +183,7 @@ class TestImageAltGeneration:
         assert result.exit_code == 0
 
         # Check output file exists
-        output_file = output_dir / "candy.JPG.md"
+        output_file = output_dir / "sample.jpg.md"
         assert output_file.exists()
 
         content = output_file.read_text(encoding="utf-8")
@@ -246,7 +246,7 @@ class TestPPTXHeaderFooterCleanup:
         assert result.exit_code == 0
 
         # Check output file exists
-        output_file = output_dir / "Free_Test_Data_500KB_PPTX.pptx.md"
+        output_file = output_dir / "sample.pptx.md"
         assert output_file.exists()
 
     @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
@@ -263,7 +263,7 @@ class TestPPTXHeaderFooterCleanup:
 
         assert result.exit_code == 0
 
-        output_file = output_dir / "Free_Test_Data_500KB_PPTX.pptx.md"
+        output_file = output_dir / "sample.pptx.md"
         content = output_file.read_text(encoding="utf-8")
 
         # Should not have common header/footer patterns
@@ -321,7 +321,7 @@ class TestSubdirectoryImagesJson:
         """Test that DOC file in subdirectory creates assets folder."""
         output_dir = tmp_path / "output"
 
-        # Process the doc file from sub_dir
+        # Process the doc file from legacy
         result = runner.invoke(
             app,
             [str(doc_file), "-o", str(output_dir)],
@@ -330,7 +330,7 @@ class TestSubdirectoryImagesJson:
         assert result.exit_code == 0
 
         # Check output structure
-        output_file = output_dir / "file-sample_100kB.doc.md"
+        output_file = output_dir / "sample.doc.md"
         assert output_file.exists()
 
         # If document has images, assets folder should be created

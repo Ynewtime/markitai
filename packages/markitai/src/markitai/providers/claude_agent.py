@@ -423,7 +423,6 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
             options_kwargs: dict[str, Any] = {
                 "allowed_tools": [],
                 "permission_mode": "bypassPermissions",
-                "allow_dangerously_skip_permissions": True,
                 "max_turns": 1,
                 "model": model_name,
             }

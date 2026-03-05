@@ -94,7 +94,7 @@ class TestBatchConversionResults:
     def test_pdf_converted(self, converted_fixtures: dict):
         """Test PDF file was converted."""
         output_dir = converted_fixtures["output_dir"]
-        pdf_output = output_dir / "file-example_PDF_500_kB.pdf.md"
+        pdf_output = output_dir / "sample.pdf.md"
         assert pdf_output.exists(), "PDF should be converted"
 
         content = pdf_output.read_text(encoding="utf-8")
@@ -104,7 +104,7 @@ class TestBatchConversionResults:
     def test_xlsx_converted(self, converted_fixtures: dict):
         """Test Excel file was converted with table structure."""
         output_dir = converted_fixtures["output_dir"]
-        xlsx_output = output_dir / "file_example_XLSX_100.xlsx.md"
+        xlsx_output = output_dir / "sample.xlsx.md"
         assert xlsx_output.exists(), "XLSX should be converted"
 
         content = xlsx_output.read_text(encoding="utf-8")
@@ -113,24 +113,24 @@ class TestBatchConversionResults:
     def test_pptx_converted(self, converted_fixtures: dict):
         """Test PowerPoint file was converted."""
         output_dir = converted_fixtures["output_dir"]
-        pptx_output = output_dir / "Free_Test_Data_500KB_PPTX.pptx.md"
+        pptx_output = output_dir / "sample.pptx.md"
         assert pptx_output.exists(), "PPTX should be converted"
 
     def test_jpg_converted(self, converted_fixtures: dict):
         """Test image file was converted."""
         output_dir = converted_fixtures["output_dir"]
-        jpg_output = output_dir / "candy.JPG.md"
+        jpg_output = output_dir / "sample.jpg.md"
         assert jpg_output.exists(), "JPG should be converted"
 
     @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_subdirectory_preserved(self, converted_fixtures: dict):
         """Test subdirectory structure is preserved."""
         output_dir = converted_fixtures["output_dir"]
-        sub_output = output_dir / "sub_dir"
+        sub_output = output_dir / "legacy"
         assert sub_output.exists(), "Subdirectory should be preserved"
 
         # Check legacy format files in subdirectory
-        doc_output = sub_output / "file-sample_100kB.doc.md"
+        doc_output = sub_output / "sample.doc.md"
         assert doc_output.exists(), "DOC in subdirectory should be converted"
 
     def test_report_generated(self, converted_fixtures: dict):
@@ -161,7 +161,7 @@ class TestBatchConversionResults:
     def test_frontmatter_structure(self, converted_fixtures: dict):
         """Test converted files have proper frontmatter."""
         output_dir = converted_fixtures["output_dir"]
-        pdf_output = output_dir / "file-example_PDF_500_kB.pdf.md"
+        pdf_output = output_dir / "sample.pdf.md"
         content = pdf_output.read_text(encoding="utf-8")
 
         parts = content.split("---", 2)
@@ -183,7 +183,7 @@ class TestSingleFileScenarios:
     @pytest.mark.slow
     def test_pdf_with_ocr(self, runner: CliRunner, fixtures_dir: Path, tmp_path: Path):
         """Test PDF conversion with OCR enabled."""
-        pdf_file = fixtures_dir / "file-example_PDF_500_kB.pdf"
+        pdf_file = fixtures_dir / "sample.pdf"
         output_dir = tmp_path / "output"
 
         result = runner.invoke(
@@ -192,13 +192,13 @@ class TestSingleFileScenarios:
         )
 
         assert result.exit_code == 0
-        assert (output_dir / "file-example_PDF_500_kB.pdf.md").exists()
+        assert (output_dir / "sample.pdf.md").exists()
 
     def test_pdf_with_screenshot(
         self, runner: CliRunner, fixtures_dir: Path, tmp_path: Path
     ):
         """Test PDF conversion with screenshots."""
-        pdf_file = fixtures_dir / "file-example_PDF_500_kB.pdf"
+        pdf_file = fixtures_dir / "sample.pdf"
         output_dir = tmp_path / "output"
 
         result = runner.invoke(
@@ -221,7 +221,7 @@ class TestPresetScenarios:
         self, runner: CliRunner, fixtures_dir: Path, tmp_path: Path
     ):
         """Test minimal preset produces clean output."""
-        pdf_file = fixtures_dir / "file-example_PDF_500_kB.pdf"
+        pdf_file = fixtures_dir / "sample.pdf"
         output_dir = tmp_path / "output"
 
         result = runner.invoke(
@@ -230,13 +230,13 @@ class TestPresetScenarios:
         )
 
         assert result.exit_code == 0
-        assert (output_dir / "file-example_PDF_500_kB.pdf.md").exists()
+        assert (output_dir / "sample.pdf.md").exists()
 
     def test_rich_preset_dry_run(
         self, runner: CliRunner, fixtures_dir: Path, tmp_path: Path
     ):
         """Test rich preset in dry run mode."""
-        pdf_file = fixtures_dir / "file-example_PDF_500_kB.pdf"
+        pdf_file = fixtures_dir / "sample.pdf"
         output_dir = tmp_path / "output"
 
         result = runner.invoke(
@@ -259,7 +259,7 @@ class TestURLListScenarios:
         self, runner: CliRunner, fixtures_dir: Path, tmp_path: Path
     ):
         """Test .urls file dry run."""
-        urls_file = fixtures_dir / "test.urls"
+        urls_file = fixtures_dir / "sample.urls"
         output_dir = tmp_path / "output"
 
         result = runner.invoke(
@@ -274,7 +274,7 @@ class TestURLListScenarios:
         self, runner: CliRunner, fixtures_dir: Path, tmp_path: Path
     ):
         """Test .urls file batch conversion (requires network)."""
-        urls_file = fixtures_dir / "test.urls"
+        urls_file = fixtures_dir / "sample.urls"
         output_dir = tmp_path / "output"
 
         result = runner.invoke(

@@ -303,4 +303,6 @@ IMAGE_EXTENSIONS: tuple[str, ...] = (
     ".webp",
     ".gif",
     ".bmp",
+    ".tiff",
+    ".tif",
 )

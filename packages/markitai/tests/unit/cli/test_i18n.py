@@ -14,6 +14,10 @@ class TestDetectLanguage:
         """Reset language cache before each test."""
         i18n._lang = None
 
+    def teardown_method(self) -> None:
+        """Reset language cache after each test."""
+        i18n._lang = None
+
     def test_detect_language_from_markitai_lang_zh(self) -> None:
         """Should detect Chinese from MARKITAI_LANG."""
         with patch.dict("os.environ", {"MARKITAI_LANG": "zh_CN"}, clear=True):
@@ -61,6 +65,10 @@ class TestGetLanguage:
         """Reset language cache before each test."""
         i18n._lang = None
 
+    def teardown_method(self) -> None:
+        """Reset language cache after each test."""
+        i18n._lang = None
+
     def test_get_language_caches_result(self) -> None:
         """Should cache the detected language."""
         with patch.dict("os.environ", {"MARKITAI_LANG": "zh"}, clear=True):
@@ -79,6 +87,10 @@ class TestSetLanguage:
 
     def setup_method(self) -> None:
         """Reset language cache before each test."""
+        i18n._lang = None
+
+    def teardown_method(self) -> None:
+        """Reset language cache after each test."""
         i18n._lang = None
 
     def test_set_language_overrides_detection(self) -> None:
@@ -100,6 +112,10 @@ class TestTranslate:
 
     def setup_method(self) -> None:
         """Reset language cache before each test."""
+        i18n._lang = None
+
+    def teardown_method(self) -> None:
+        """Reset language cache after each test."""
         i18n._lang = None
 
     def test_translate_english(self) -> None:

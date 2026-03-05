@@ -1527,6 +1527,32 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         # Read and encode image
         image_data = image_path.read_bytes()
 
+        # Convert LLM-unsupported formats (BMP, TIFF) to PNG
+        from markitai.utils.mime import LLM_CONVERTIBLE_EXTENSIONS
+
+        if image_path.suffix.lower() in LLM_CONVERTIBLE_EXTENSIONS:
+            try:
+                import io
+
+                from PIL import Image
+
+                with io.BytesIO(image_data) as buffer:
+                    img = Image.open(buffer)
+                    if img.mode != "RGB":
+                        img = img.convert("RGB")
+                    out = io.BytesIO()
+                    img.save(out, format="PNG")
+                    image_data = out.getvalue()
+                    out.close()
+                    logger.debug(
+                        "[LLM] Converted {} to PNG for LLM compatibility",
+                        image_path.name,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[LLM] Failed to convert {} to PNG: {}", image_path.name, e
+                )
+
         # Check size limit (5MB API limit after base64 encoding)
         # Base64 encoding increases size by ~33%, so 5MB / 1.33 ≈ 3.76MB
         # Using 3.5MB raw bytes to ensure base64 encoded size stays under 5MB

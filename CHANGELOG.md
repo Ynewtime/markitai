@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-03-06
+
+### Added
+
+- **Extended Format Support**: 20+ new file formats via markitdown and kreuzberg converters
+  - **Markitdown-based**: HTML/HTM/XHTML, CSV, EPUB, MSG, IPYNB (Jupyter Notebook), Apple Numbers
+  - **Kreuzberg-based** (optional dependency): TSV, XML, ODS, ODT, SVG, RTF, RST, ORG, TEX, EML
+  - Kreuzberg is a pure Rust wheel — install with `uv pip install markitai[kreuzberg]`
+- **Extended Image Support**: GIF, BMP, TIFF now supported by ImageConverter; BMP/TIFF auto-converted to PNG for LLM vision APIs
+- **LLM Vision Format Helpers**: `is_llm_supported_image()`, `get_llm_effective_mime()` in `utils/mime.py` for transparent BMP/TIFF → PNG handling
+
+### Fixed
+
+- **Claude Agent SDK v0.1.46 compatibility**: Removed deprecated `allow_dangerously_skip_permissions` parameter (`permission_mode="bypassPermissions"` is sufficient)
+- **i18n test isolation**: Fixed global state leak in `test_i18n.py` causing 3 integration tests to fail when run in full suite
+- **Import-time log leakage**: Kreuzberg registration logs changed from `logger.debug` to `logger.trace` to prevent terminal noise before CLI log setup
+
+### Changed
+
+- **Converter registry**: New `FileFormat` enum members for all added formats; kreuzberg registers as gap-filler (only for formats without native converters)
+- **Test fixtures**: Renamed to consistent `sample.*` naming convention; added fixtures for all new formats; removed orphaned `sample.mobi`
+- **Markitdown lazy init**: `MarkItDown()` in `markitdown_ext.py` now initialized on first use instead of import time
+
 ## [0.7.0] - 2026-03-05
 
 ### Added
@@ -622,6 +645,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.8.0]: https://github.com/Ynewtime/markitai/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Ynewtime/markitai/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Ynewtime/markitai/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Ynewtime/markitai/compare/v0.5.2...v0.6.0

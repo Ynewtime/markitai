@@ -25,10 +25,10 @@
    ```
 
 3. Test fixtures are located in `tests/fixtures/`:
-   - `file-example_PDF_500_kB.pdf` - Sample PDF
-   - `Free_Test_Data_500KB_PPTX.pptx` - Sample PPTX
-   - `file-sample_100kB.doc` - Legacy Word format
-   - `file_example_XLS_100.xls` - Legacy Excel format
+   - `sample.pdf` - Sample PDF
+   - `sample.pptx` - Sample PPTX
+   - `sample.doc` - Legacy Word format
+   - `sample.xls` - Legacy Excel format
 
 ---
 
@@ -38,10 +38,10 @@
 
 ```bash
 # Run
-markitai tests/fixtures/file-sample_100kB.doc -o /tmp/markitai-test
+markitai tests/fixtures/sample.doc -o /tmp/markitai-test
 
 # Verify
-- [ ] Output file exists: /tmp/markitai-test/file-sample_100kB.doc.md
+- [ ] Output file exists: /tmp/markitai-test/sample.doc.md
 - [ ] Markdown format is correct
 - [ ] No conversion errors in console
 ```
@@ -50,10 +50,10 @@ markitai tests/fixtures/file-sample_100kB.doc -o /tmp/markitai-test
 
 ```bash
 # Run
-markitai tests/fixtures/file-example_PDF_500_kB.pdf -o /tmp/markitai-test
+markitai tests/fixtures/sample.pdf -o /tmp/markitai-test
 
 # Verify
-- [ ] Output file exists: /tmp/markitai-test/file-example_PDF_500_kB.pdf.md
+- [ ] Output file exists: /tmp/markitai-test/sample.pdf.md
 - [ ] Images extracted to assets/ directory
 - [ ] Image references in markdown are correct
 ```
@@ -62,10 +62,10 @@ markitai tests/fixtures/file-example_PDF_500_kB.pdf -o /tmp/markitai-test
 
 ```bash
 # Run
-markitai tests/fixtures/Free_Test_Data_500KB_PPTX.pptx -o /tmp/markitai-test
+markitai tests/fixtures/sample.pptx -o /tmp/markitai-test
 
 # Verify
-- [ ] Output file exists: /tmp/markitai-test/Free_Test_Data_500KB_PPTX.pptx.md
+- [ ] Output file exists: /tmp/markitai-test/sample.pptx.md
 - [ ] Slides are separated with clear markers
 - [ ] Embedded images are extracted
 ```
@@ -80,7 +80,7 @@ markitai tests/fixtures/Free_Test_Data_500KB_PPTX.pptx -o /tmp/markitai-test
 
 ```bash
 # Requires API key configured
-markitai tests/fixtures/file-example_PDF_500_kB.pdf --preset rich -o /tmp/markitai-test
+markitai tests/fixtures/sample.pdf --preset rich -o /tmp/markitai-test
 
 # Verify
 - [ ] Base .md file created
@@ -93,7 +93,7 @@ markitai tests/fixtures/file-example_PDF_500_kB.pdf --preset rich -o /tmp/markit
 ### 5. Standard Preset
 
 ```bash
-markitai tests/fixtures/file-example_PDF_500_kB.pdf --preset standard -o /tmp/markitai-test
+markitai tests/fixtures/sample.pdf --preset standard -o /tmp/markitai-test
 
 # Verify
 - [ ] .md and .llm.md files created
@@ -105,7 +105,7 @@ markitai tests/fixtures/file-example_PDF_500_kB.pdf --preset standard -o /tmp/ma
 ### 6. Minimal Preset
 
 ```bash
-markitai tests/fixtures/file-example_PDF_500_kB.pdf --preset minimal -o /tmp/markitai-test
+markitai tests/fixtures/sample.pdf --preset minimal -o /tmp/markitai-test
 
 # Verify
 - [ ] Only base .md file created
@@ -116,7 +116,7 @@ markitai tests/fixtures/file-example_PDF_500_kB.pdf --preset minimal -o /tmp/mar
 ### 7. Preset Override
 
 ```bash
-markitai tests/fixtures/file-example_PDF_500_kB.pdf --preset rich --no-desc -o /tmp/markitai-test
+markitai tests/fixtures/sample.pdf --preset rich --no-desc -o /tmp/markitai-test
 
 # Verify
 - [ ] .llm.md created (from preset)
@@ -133,7 +133,7 @@ markitai tests/fixtures/file-example_PDF_500_kB.pdf --preset rich --no-desc -o /
 ### 8. LLM Clean + Frontmatter
 
 ```bash
-markitai tests/fixtures/file-example_PDF_500_kB.pdf --llm -o /tmp/markitai-test
+markitai tests/fixtures/sample.pdf --llm -o /tmp/markitai-test
 
 # Verify
 - [ ] .llm.md file has YAML frontmatter
@@ -144,7 +144,7 @@ markitai tests/fixtures/file-example_PDF_500_kB.pdf --llm -o /tmp/markitai-test
 ### 9. Image Alt Text Generation
 
 ```bash
-markitai tests/fixtures/file-example_PDF_500_kB.pdf --alt -o /tmp/markitai-test
+markitai tests/fixtures/sample.pdf --alt -o /tmp/markitai-test
 
 # Verify
 - [ ] Images in markdown have meaningful alt text (not empty)
@@ -154,7 +154,7 @@ markitai tests/fixtures/file-example_PDF_500_kB.pdf --alt -o /tmp/markitai-test
 ### 10. Image Description Generation
 
 ```bash
-markitai tests/fixtures/file-example_PDF_500_kB.pdf --alt --desc -o /tmp/markitai-test
+markitai tests/fixtures/sample.pdf --alt --desc -o /tmp/markitai-test
 
 # Verify
 - [ ] images.json file created in output directory
@@ -168,7 +168,7 @@ markitai tests/fixtures/file-example_PDF_500_kB.pdf --alt --desc -o /tmp/markita
 ### 11. OCR Mode (Local)
 
 ```bash
-markitai tests/fixtures/file-example_PDF_500_kB.pdf --ocr -o /tmp/markitai-test
+markitai tests/fixtures/sample.pdf --ocr -o /tmp/markitai-test
 
 # Verify
 - [ ] Text extracted using RapidOCR
@@ -178,7 +178,7 @@ markitai tests/fixtures/file-example_PDF_500_kB.pdf --ocr -o /tmp/markitai-test
 ### 12. OCR + LLM Vision Mode
 
 ```bash
-markitai tests/fixtures/file-example_PDF_500_kB.pdf --ocr --llm --screenshot -o /tmp/markitai-test
+markitai tests/fixtures/sample.pdf --ocr --llm --screenshot -o /tmp/markitai-test
 
 # Verify
 - [ ] Page screenshots generated
@@ -287,7 +287,7 @@ markitai config get llm.enabled
 ### 20. Dry Run Mode
 
 ```bash
-markitai tests/fixtures/file-example_PDF_500_kB.pdf --dry-run
+markitai tests/fixtures/sample.pdf --dry-run
 
 # Verify
 - [ ] Shows "Would convert" message

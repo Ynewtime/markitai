@@ -204,11 +204,14 @@ class TestCloudflareConverterIntegration:
         assert type(converter).__name__ != "CloudflareConverter"
 
     def test_cf_formats_detected(self):
-        """New formats (svg, csv, etc.) are detected but have no local converter."""
+        """New formats (svg, csv, etc.) are detected and not handled by CloudflareConverter by default."""
         from markitai.converter.base import get_converter
 
         assert detect_format("data.csv") == FileFormat.CSV
-        assert get_converter("data.csv") is None  # No local converter
+        # CSV may have a kreuzberg fallback converter, but NOT a CloudflareConverter
+        converter = get_converter("data.csv")
+        if converter is not None:
+            assert type(converter).__name__ != "CloudflareConverter"
 
     def test_cf_converter_supports_new_formats(self):
         """CloudflareConverter handles formats that local converters don't."""

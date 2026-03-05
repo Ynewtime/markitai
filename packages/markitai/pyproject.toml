@@ -1,6 +1,6 @@
 [project]
 name = "markitai"
-version = "0.7.0"
+version = "0.8.0"
 description = "Opinionated Markdown converter with native LLM enhancement support"
 license = "MIT"
 readme = "README.md"
@@ -55,6 +55,7 @@ copilot = ["github-copilot-sdk>=0.1.0"]
 gemini-cli = ["google-auth>=2.0.0", "google-auth-oauthlib>=1.0.0"]
 browser = ["playwright>=1.50.0"]
 extra-fetch = ["curl-cffi>=0.7.0"]
+kreuzberg = ["kreuzberg>=4.4.0"]
 all = [
     "claude-agent-sdk>=0.1.0",
     "github-copilot-sdk>=0.1.0",
@@ -62,6 +63,7 @@ all = [
     "google-auth-oauthlib>=1.0.0",
     "playwright>=1.50.0",
     "curl-cffi>=0.7.0",
+    "kreuzberg>=4.4.0",
 ]
 
 [dependency-groups]

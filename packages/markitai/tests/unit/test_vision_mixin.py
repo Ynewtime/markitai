@@ -1291,16 +1291,22 @@ class TestEdgeCases:
             pass  # The real test is that it returns the cached empty values
 
     @pytest.mark.asyncio
-    async def test_bmp_format_unsupported(
+    async def test_bmp_format_converted_to_png(
         self, mock_processor: MockVisionProcessor, tmp_path: Path
     ):
-        """BMP format is not supported for LLM vision."""
+        """BMP format is auto-converted to PNG for LLM vision."""
+        # Create a valid 1x1 BMP file
+        from PIL import Image
+
         bmp_file = tmp_path / "image.bmp"
-        bmp_file.write_bytes(b"BM" + b"\x00" * 50)
+        img = Image.new("RGB", (1, 1), color="red")
+        img.save(bmp_file, format="BMP")
 
         result = await mock_processor.analyze_image(bmp_file)
 
-        assert "not supported" in result.description.lower()
+        # Should go through normal analysis (not blocked as unsupported)
+        assert result.caption != ""
+        assert "not supported" not in result.description.lower()
 
     @pytest.mark.asyncio
     async def test_ico_format_unsupported(

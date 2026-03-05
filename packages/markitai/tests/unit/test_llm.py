@@ -991,15 +991,20 @@ class TestLLMSupportedImageFormat:
         """Test that common supported formats are recognized."""
         from markitai.utils.mime import is_llm_supported_image
 
-        # Supported formats
+        # Natively supported formats
         assert is_llm_supported_image(".jpg") is True
         assert is_llm_supported_image(".jpeg") is True
         assert is_llm_supported_image(".png") is True
         assert is_llm_supported_image(".gif") is True
         assert is_llm_supported_image(".webp") is True
+        # Convertible formats (auto-converted to PNG before sending)
+        assert is_llm_supported_image(".bmp") is True
+        assert is_llm_supported_image(".tiff") is True
+        assert is_llm_supported_image(".tif") is True
         # Case insensitive
         assert is_llm_supported_image(".JPG") is True
         assert is_llm_supported_image(".PNG") is True
+        assert is_llm_supported_image(".BMP") is True
 
     def test_unsupported_formats(self):
         """Test that unsupported formats are rejected."""
@@ -1007,7 +1012,5 @@ class TestLLMSupportedImageFormat:
 
         # Unsupported formats
         assert is_llm_supported_image(".svg") is False
-        assert is_llm_supported_image(".bmp") is False
         assert is_llm_supported_image(".ico") is False
-        assert is_llm_supported_image(".tiff") is False
         assert is_llm_supported_image(".unknown") is False

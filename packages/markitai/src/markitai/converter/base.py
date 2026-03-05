@@ -38,10 +38,14 @@ class FileFormat(Enum):
     PNG = "png"
     WEBP = "webp"
     SVG = "svg"
+    GIF = "gif"
+    BMP = "bmp"
+    TIFF = "tiff"
 
     # Structured data
     CSV = "csv"
     XML = "xml"
+    TSV = "tsv"
 
     # OpenDocument
     ODS = "ods"
@@ -49,6 +53,27 @@ class FileFormat(Enum):
 
     # Apple
     NUMBERS = "numbers"
+
+    # E-book
+    EPUB = "epub"
+
+    # Rich text / markup
+    RTF = "rtf"
+    RST = "rst"
+    ORG = "org"
+    TEX = "tex"
+
+    # Web
+    HTML = "html"
+    HTM = "htm"
+    XHTML = "xhtml"
+
+    # Email
+    EML = "eml"
+    MSG = "msg"
+
+    # Notebook
+    IPYNB = "ipynb"
 
     # Unknown
     UNKNOWN = "unknown"
@@ -76,6 +101,22 @@ EXTENSION_MAP: dict[str, FileFormat] = {
     ".ods": FileFormat.ODS,
     ".odt": FileFormat.ODT,
     ".numbers": FileFormat.NUMBERS,
+    ".gif": FileFormat.GIF,
+    ".bmp": FileFormat.BMP,
+    ".tiff": FileFormat.TIFF,
+    ".tif": FileFormat.TIFF,
+    ".tsv": FileFormat.TSV,
+    ".epub": FileFormat.EPUB,
+    ".rtf": FileFormat.RTF,
+    ".rst": FileFormat.RST,
+    ".org": FileFormat.ORG,
+    ".tex": FileFormat.TEX,
+    ".html": FileFormat.HTML,
+    ".htm": FileFormat.HTM,
+    ".xhtml": FileFormat.XHTML,
+    ".eml": FileFormat.EML,
+    ".msg": FileFormat.MSG,
+    ".ipynb": FileFormat.IPYNB,
 }
 
 
