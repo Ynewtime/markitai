@@ -305,12 +305,12 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
                 return {"type": "json_schema", "schema": schema}
 
         if format_type == "json_object":
-            # Basic JSON mode - use a permissive schema
+            # Basic JSON mode — additionalProperties must be false per SDK docs
             return {
                 "type": "json_schema",
                 "schema": {
                     "type": "object",
-                    "additionalProperties": True,
+                    "additionalProperties": False,
                 },
             }
 
@@ -368,14 +368,36 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         # Check if messages contain images
         contains_images = has_images(messages)
 
+        # Extract system messages for the SDK's system_prompt parameter
+        system_parts: list[str] = []
+        non_system_messages: list[dict[str, Any]] = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    # Extract text from content blocks
+                    text = "\n".join(
+                        p.get("text", "")
+                        for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    )
+                else:
+                    text = content
+                if text:
+                    system_parts.append(text)
+            else:
+                non_system_messages.append(msg)
+
+        system_prompt = "\n\n".join(system_parts) if system_parts else None
+
         if contains_images:
             logger.debug("[ClaudeAgent] Using streaming input for multimodal content")
             # Use streaming input for multimodal messages
             prompt: str | AsyncIterator[dict[str, Any]] = self._messages_to_stream(
-                messages
+                non_system_messages
             )
         else:
-            prompt = messages_to_prompt(messages)
+            prompt = messages_to_prompt(non_system_messages)
             logger.debug(
                 f"[ClaudeAgent] Calling model={model_name}, prompt_length={len(prompt)}"
             )
@@ -401,9 +423,14 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
             options_kwargs: dict[str, Any] = {
                 "allowed_tools": [],
                 "permission_mode": "bypassPermissions",
+                "allow_dangerously_skip_permissions": True,
                 "max_turns": 1,
                 "model": model_name,
             }
+
+            # Pass system prompt via SDK's dedicated parameter
+            if system_prompt:
+                options_kwargs["system_prompt"] = system_prompt
 
             # Add output_format if structured output is requested
             if output_format:

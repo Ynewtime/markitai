@@ -74,12 +74,17 @@ def _build_resolution_hint(provider: str) -> str:
     if provider == "claude-agent":
         return (
             "Run 'claude auth login' to authenticate with Claude Code CLI.\n"
+            "Alternatively, set a cloud provider env var:\n"
+            "  CLAUDE_CODE_USE_BEDROCK=1, CLAUDE_CODE_USE_VERTEX=1, "
+            "or CLAUDE_CODE_USE_FOUNDRY=1\n"
             "If Claude Code CLI is not installed, install it with:\n"
             f"  {_get_cli_install_cmd('claude')}"
         )
     elif provider == "copilot":
         return (
             "Run 'copilot auth login' to authenticate with GitHub Copilot.\n"
+            "Alternatively, set GH_TOKEN or GITHUB_TOKEN env var "
+            "(requires 'Copilot Requests' permission).\n"
             "If Copilot CLI is not installed, install it with:\n"
             f"  {_get_cli_install_cmd('copilot')}"
         )
@@ -117,13 +122,28 @@ def _is_claude_agent_sdk_available() -> bool:
 
 
 def _check_copilot_config_auth() -> AuthStatus:
-    """Check Copilot authentication by reading config file.
+    """Check Copilot authentication by reading config file or env vars.
 
-    Copilot CLI stores auth info in ~/.copilot/config.json
+    Checks (in order):
+    1. GH_TOKEN / GITHUB_TOKEN environment variables (personal access token)
+    2. ~/.copilot/config.json for logged_in_users
 
     Returns:
         AuthStatus with authentication result
     """
+    # Check env var auth first (GH_TOKEN / GITHUB_TOKEN)
+    import os
+
+    gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if gh_token:
+        return AuthStatus(
+            provider="copilot",
+            authenticated=True,
+            user="token",
+            expires_at=None,
+            error=None,
+        )
+
     config_path = Path.home() / ".copilot" / "config.json"
 
     if not config_path.exists():
@@ -169,13 +189,34 @@ def _check_copilot_config_auth() -> AuthStatus:
 
 
 def _check_claude_credentials_auth() -> AuthStatus:
-    """Check Claude authentication by reading credentials file.
+    """Check Claude authentication by reading credentials file or env vars.
 
-    Claude Code CLI stores auth info in ~/.claude/.credentials.json
+    Checks (in order):
+    1. CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX / CLAUDE_CODE_USE_FOUNDRY
+       environment variables (cloud provider auth)
+    2. ~/.claude/.credentials.json for OAuth tokens
 
     Returns:
         AuthStatus with authentication result
     """
+    # Check cloud provider env var auth first
+    import os
+
+    cloud_providers = {
+        "CLAUDE_CODE_USE_BEDROCK": "bedrock",
+        "CLAUDE_CODE_USE_VERTEX": "vertex",
+        "CLAUDE_CODE_USE_FOUNDRY": "foundry",
+    }
+    for env_var, cloud_name in cloud_providers.items():
+        if os.environ.get(env_var):
+            return AuthStatus(
+                provider="claude-agent",
+                authenticated=True,
+                user=f"cloud: {cloud_name}",
+                expires_at=None,
+                error=None,
+            )
+
     credentials_path = Path.home() / ".claude" / ".credentials.json"
 
     if not credentials_path.exists():

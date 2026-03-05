@@ -36,6 +36,11 @@ Markitai 支持多种 LLM 提供商：
    claude login
    ```
 
+   **替代认证方式**（云平台）：设置以下环境变量之一即可跳过 `claude login`：
+   - `CLAUDE_CODE_USE_BEDROCK=1`（AWS Bedrock）
+   - `CLAUDE_CODE_USE_VERTEX=1`（Google Vertex AI）
+   - `CLAUDE_CODE_USE_FOUNDRY=1`（Azure Foundry）
+
 3. **安装 Python SDK**
    ```bash
    uv sync --extra claude-agent
@@ -106,6 +111,8 @@ LLM 成本报告:
    gh auth login
    gh copilot --version  # 验证安装
    ```
+
+   **替代认证方式**：设置 `GH_TOKEN` 或 `GITHUB_TOKEN` 环境变量（需要 Personal Access Token 具有 "Copilot Requests" 权限）。
 
 3. **安装 Python SDK**
    ```bash

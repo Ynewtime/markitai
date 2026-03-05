@@ -211,7 +211,7 @@ Markitai also supports local providers that use CLI authentication and subscript
 - **GitHub Copilot** (`copilot/`): Uses [GitHub Copilot SDK](https://github.com/github/copilot-sdk) with Copilot CLI authentication
 
 These providers require:
-1. The respective CLI tool installed and authenticated
+1. The respective CLI tool installed and authenticated (or environment variable auth — see below)
 2. Optional SDK package: `uv add markitai[claude-agent]` or `uv add markitai[copilot]`
 
 **Install Claude Code CLI:**
@@ -277,7 +277,7 @@ Common errors and solutions:
 |-------|----------|
 | "SDK not installed" | `uv add markitai[copilot]` or `uv add markitai[claude-agent]` |
 | "CLI not found" | Install and authenticate the CLI tool ([Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli), [Claude Code](https://claude.ai/code)) |
-| "Not authenticated" | Run `copilot auth login` or `claude auth login` |
+| "Not authenticated" | Run `copilot auth login` or `claude auth login`. Alternatively: set `GH_TOKEN`/`GITHUB_TOKEN` for Copilot, or `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1` for Claude |
 | "Rate limit" | Wait and retry, or check your subscription quota |
 | "Request timeout" | Timeout is adaptive; for very large documents, processing may take longer |
 
@@ -351,7 +351,7 @@ Common use cases include self-hosted inference servers (vLLM, Ollama, LocalAI), 
 The `api_base` config field does **not** apply to local providers (`claude-agent/`, `copilot/`). These providers run as CLI subprocesses and manage API endpoints through their own environment variables:
 
 - **Claude Agent**: Set `ANTHROPIC_BASE_URL` to override the API endpoint. If `ANTHROPIC_API_KEY` is also set, the CLI will use it for direct API access instead of subscription authentication. Other routing options: `CLAUDE_CODE_USE_BEDROCK=1`, `CLAUDE_CODE_USE_VERTEX=1`, `CLAUDE_CODE_USE_FOUNDRY=1`.
-- **GitHub Copilot**: Endpoint is managed by the Copilot CLI internally and cannot be overridden.
+- **GitHub Copilot**: Endpoint is managed by the Copilot CLI internally and cannot be overridden. For token-based auth, set `GH_TOKEN` or `GITHUB_TOKEN` with a personal access token that has the "Copilot Requests" permission.
 :::
 
 ### Vision Models
