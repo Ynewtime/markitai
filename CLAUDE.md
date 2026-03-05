@@ -19,7 +19,7 @@ packages/markitai/
 │   │   └── processors/     # CLI 处理器 (batch, file, url, llm, validators)
 │   ├── converter/          # 格式转换器 (base, pdf, office, image, text, legacy, cloudflare)
 │   ├── llm/                # LLM 集成 (processor, cache, content, document, models, vision)
-│   ├── providers/          # 自定义 LLM 提供商 (claude-agent, copilot)
+│   ├── providers/          # 自定义 LLM 提供商 (claude-agent, copilot, chatgpt, gemini-cli)
 │   ├── prompts/            # LLM 提示词模板
 │   ├── utils/              # 工具模块 (executor, frontmatter, mime, output, paths, progress, text)
 │   └── workflow/           # 转换流水线 (core, single, helpers)

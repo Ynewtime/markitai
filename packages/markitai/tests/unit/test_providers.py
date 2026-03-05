@@ -1240,3 +1240,52 @@ class TestClaudeAgentPromptCaching:
         # Original messages should not be modified
         assert messages[0] == original_system
         assert messages[1] == original_user
+
+
+class TestNewProviderIdentification:
+    """Tests for chatgpt/ and gemini-cli/ provider identification."""
+
+    def test_chatgpt_model_is_local(self) -> None:
+        """Test that chatgpt models are identified as local."""
+        from markitai.providers import is_local_provider_model
+
+        assert is_local_provider_model("chatgpt/gpt-5.2") is True
+        assert is_local_provider_model("chatgpt/gpt-5.2-codex") is True
+
+    def test_gemini_cli_model_is_local(self) -> None:
+        """Test that gemini-cli models are identified as local."""
+        from markitai.providers import is_local_provider_model
+
+        assert is_local_provider_model("gemini-cli/gemini-2.5-pro") is True
+        assert is_local_provider_model("gemini-cli/gemini-2.5-flash") is True
+
+    def test_chatgpt_model_info(self) -> None:
+        """Test that chatgpt models return valid model info."""
+        from markitai.providers import get_local_provider_model_info
+
+        info = get_local_provider_model_info("chatgpt/gpt-5.2")
+        assert info is not None
+        assert "max_input_tokens" in info
+        assert "max_output_tokens" in info
+        assert "supports_vision" in info
+
+    def test_gemini_cli_model_info(self) -> None:
+        """Test that gemini-cli models return valid model info."""
+        from markitai.providers import get_local_provider_model_info
+
+        info = get_local_provider_model_info("gemini-cli/gemini-2.5-pro")
+        assert info is not None
+        assert "max_input_tokens" in info
+        assert "max_output_tokens" in info
+        assert "supports_vision" in info
+
+    def test_validate_local_provider_deps_gemini_cli(self) -> None:
+        """Test dependency validation for gemini-cli models."""
+        from unittest.mock import patch
+
+        from markitai.providers import validate_local_provider_deps
+
+        with patch("importlib.util.find_spec", return_value=None):
+            warnings = validate_local_provider_deps(["gemini-cli/gemini-2.5-pro"])
+            assert len(warnings) >= 1
+            assert any("google-auth" in w for w in warnings)

@@ -88,6 +88,18 @@ def _build_resolution_hint(provider: str) -> str:
             "If Copilot CLI is not installed, install it with:\n"
             f"  {_get_cli_install_cmd('copilot')}"
         )
+    elif provider == "chatgpt":
+        return (
+            "ChatGPT provider uses OAuth Device Code Flow.\n"
+            "Run any chatgpt/ model to trigger automatic login,\n"
+            "or install and authenticate via: pip install litellm && litellm --model chatgpt/gpt-5.2"
+        )
+    elif provider == "gemini-cli":
+        return (
+            "Install Gemini CLI and run 'gemini login' to authenticate,\n"
+            "or markitai will trigger OAuth login automatically on first use.\n"
+            "Requires: uv add 'markitai\\[gemini-cli]'"
+        )
     return "Please authenticate with the provider CLI."
 
 
@@ -283,6 +295,104 @@ def _check_claude_credentials_auth() -> AuthStatus:
         )
 
 
+def _check_chatgpt_auth() -> AuthStatus:
+    """Check ChatGPT authentication by reading LiteLLM's chatgpt auth file.
+
+    Checks ~/.config/litellm/chatgpt/auth.json for access_token.
+
+    Returns:
+        AuthStatus with authentication result
+    """
+    auth_path = Path.home() / ".config" / "litellm" / "chatgpt" / "auth.json"
+
+    if not auth_path.exists():
+        return AuthStatus(
+            provider="chatgpt",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error="Auth file not found (~/.config/litellm/chatgpt/auth.json)",
+        )
+
+    try:
+        data: dict[str, Any] = json.loads(auth_path.read_text(encoding="utf-8"))
+        access_token = data.get("access_token")
+
+        if access_token:
+            return AuthStatus(
+                provider="chatgpt",
+                authenticated=True,
+                user="chatgpt",
+                expires_at=None,
+                error=None,
+            )
+        else:
+            return AuthStatus(
+                provider="chatgpt",
+                authenticated=False,
+                user=None,
+                expires_at=None,
+                error="No access token found",
+            )
+    except Exception as e:
+        return AuthStatus(
+            provider="chatgpt",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error=f"Failed to read auth file: {e}",
+        )
+
+
+def _check_gemini_cli_auth() -> AuthStatus:
+    """Check Gemini CLI authentication by reading OAuth credentials.
+
+    Checks ~/.gemini/oauth_creds.json for access_token.
+
+    Returns:
+        AuthStatus with authentication result
+    """
+    creds_path = Path.home() / ".gemini" / "oauth_creds.json"
+
+    if not creds_path.exists():
+        return AuthStatus(
+            provider="gemini-cli",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error="Credentials file not found (~/.gemini/oauth_creds.json)",
+        )
+
+    try:
+        data: dict[str, Any] = json.loads(creds_path.read_text(encoding="utf-8"))
+        access_token = data.get("access_token")
+
+        if access_token:
+            return AuthStatus(
+                provider="gemini-cli",
+                authenticated=True,
+                user="gemini-cli",
+                expires_at=None,
+                error=None,
+            )
+        else:
+            return AuthStatus(
+                provider="gemini-cli",
+                authenticated=False,
+                user=None,
+                expires_at=None,
+                error="No access token found",
+            )
+    except Exception as e:
+        return AuthStatus(
+            provider="gemini-cli",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error=f"Failed to read credentials: {e}",
+        )
+
+
 class AuthManager:
     """Singleton manager for provider authentication status.
 
@@ -364,6 +474,10 @@ class AuthManager:
             return self._check_copilot()
         elif provider == "claude-agent":
             return self._check_claude()
+        elif provider == "chatgpt":
+            return _check_chatgpt_auth()
+        elif provider == "gemini-cli":
+            return _check_gemini_cli_auth()
         else:
             return AuthStatus(
                 provider=provider,
@@ -414,4 +528,6 @@ __all__ = [
     "_is_claude_agent_sdk_available",
     "_check_copilot_config_auth",
     "_check_claude_credentials_auth",
+    "_check_chatgpt_auth",
+    "_check_gemini_cli_auth",
 ]

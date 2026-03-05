@@ -26,6 +26,10 @@ Provider prefixes:
         - Full model strings: claude-sonnet-4-5-20250929, claude-opus-4-6, etc.
     - copilot/<model>: Uses GitHub Copilot SDK (Copilot CLI authentication)
         Use direct model names: gpt-4.1, claude-sonnet-4.5, gemini-2.5-pro, etc.
+    - chatgpt/<model>: Uses ChatGPT subscription (OAuth Device Code Flow)
+        Models: gpt-5.2, gpt-5.2-codex, etc.
+    - gemini-cli/<model>: Uses Google AI subscription (OAuth via Gemini CLI)
+        Models: gemini-2.5-pro, gemini-2.5-flash, etc.
 """
 
 from __future__ import annotations
@@ -394,6 +398,16 @@ def validate_local_provider_deps(models: list[str]) -> list[str]:
                 "\n   Auth: copilot auth login"
             )
 
+    # Check for gemini-cli models
+    uses_gemini_cli = any(m.startswith("gemini-cli/") for m in models)
+    if uses_gemini_cli:
+        if not importlib.util.find_spec("google.auth"):
+            warnings.append(
+                "⚠️  gemini-cli/ models: google-auth not installed (token refresh disabled)."
+                "\n   Install for full support: uv add 'markitai\\[gemini-cli]'"
+                "\n   Without it, only unexpired tokens from Gemini CLI will work."
+            )
+
     return warnings
 
 
@@ -453,6 +467,36 @@ def register_providers() -> None:
     except Exception as e:
         logger.warning(f"[Providers] Failed to register copilot provider: {e}")
 
+    # Register ChatGPT provider (uses LiteLLM's built-in authenticator)
+    try:
+        from markitai.providers.chatgpt import ChatGPTProvider
+
+        chatgpt_provider = ChatGPTProvider()
+        litellm.custom_provider_map.append(
+            {"provider": "chatgpt", "custom_handler": chatgpt_provider}
+        )
+        _providers["chatgpt"] = chatgpt_provider
+        logger.debug("[Providers] Registered chatgpt provider")
+    except ImportError as e:
+        logger.debug(f"[Providers] chatgpt provider not available: {e}")
+    except Exception as e:
+        logger.warning(f"[Providers] Failed to register chatgpt provider: {e}")
+
+    # Register Gemini CLI provider (optional google-auth dependency)
+    try:
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        gemini_cli_provider = GeminiCLIProvider()
+        litellm.custom_provider_map.append(
+            {"provider": "gemini-cli", "custom_handler": gemini_cli_provider}
+        )
+        _providers["gemini-cli"] = gemini_cli_provider
+        logger.debug("[Providers] Registered gemini-cli provider")
+    except ImportError as e:
+        logger.debug(f"[Providers] gemini-cli provider not available: {e}")
+    except Exception as e:
+        logger.warning(f"[Providers] Failed to register gemini-cli provider: {e}")
+
     _registered = True
 
 
@@ -471,8 +515,8 @@ def get_provider(name: str) -> CustomLLM | None:
 def is_local_provider_model(model: str) -> bool:
     """Check if a model uses a local provider.
 
-    Local providers (claude-agent/, copilot/) use CLI authentication
-    and support vision-capable models like Claude and GPT-4o/5.2.
+    Local providers (claude-agent/, copilot/, chatgpt/, gemini-cli/) use
+    CLI/OAuth authentication and support vision-capable models.
 
     Args:
         model: Model identifier (e.g., "claude-agent/sonnet")
@@ -480,7 +524,7 @@ def is_local_provider_model(model: str) -> bool:
     Returns:
         True if model uses a local provider
     """
-    return model.startswith(("claude-agent/", "copilot/"))
+    return model.startswith(("claude-agent/", "copilot/", "chatgpt/", "gemini-cli/"))
 
 
 def is_local_provider_available(model: str) -> bool:
@@ -499,6 +543,13 @@ def is_local_provider_available(model: str) -> bool:
         return importlib.util.find_spec("claude_agent_sdk") is not None
     if model.startswith("copilot/"):
         return importlib.util.find_spec("copilot") is not None
+    if model.startswith("chatgpt/"):
+        # chatgpt/ uses LiteLLM's built-in authenticator, always available
+        return True
+    if model.startswith("gemini-cli/"):
+        # Provider handles missing google-auth internally with clear error messages.
+        # Always return True so models aren't silently filtered out.
+        return True
     # Non-local provider models are always "available" (API key validity checked elsewhere)
     return True
 
@@ -614,6 +665,16 @@ def _resolve_litellm_model(model: str) -> str | None:
         # Copilot models: strip prefix and use directly
         # e.g., "copilot/gpt-4.1" → "gpt-4.1"
         return model.replace("copilot/", "")
+
+    if model.startswith("chatgpt/"):
+        # ChatGPT models: strip prefix
+        # e.g., "chatgpt/gpt-5.2" → "gpt-5.2"
+        return model.replace("chatgpt/", "")
+
+    if model.startswith("gemini-cli/"):
+        # Gemini CLI models: strip prefix
+        # e.g., "gemini-cli/gemini-2.5-pro" → "gemini-2.5-pro"
+        return model.replace("gemini-cli/", "")
 
     return None
 

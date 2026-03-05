@@ -1,17 +1,19 @@
 [project]
 name = "markitai-workspace"
-version = "0.6.1"
+version = "0.7.0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "markitai",
 ]
 
 [project.optional-dependencies]
-# LLM provider SDKs (same as packages/markitai/pyproject.toml)
-claude-agent = ["claude-agent-sdk>=0.1.0"]
-copilot = ["github-copilot-sdk>=0.1.0"]
-browser = ["playwright>=1.50.0"]
-all = ["claude-agent-sdk>=0.1.0", "github-copilot-sdk>=0.1.0", "playwright>=1.50.0"]
+# Forward extras to sub-package — single source of truth in packages/markitai/pyproject.toml
+claude-agent = ["markitai[claude-agent]"]
+copilot = ["markitai[copilot]"]
+gemini-cli = ["markitai[gemini-cli]"]
+browser = ["markitai[browser]"]
+extra-fetch = ["markitai[extra-fetch]"]
+all = ["markitai[all]"]
 
 [tool.uv.workspace]
 members = ["packages/*"]

@@ -2,7 +2,7 @@
 
 > 写给未来的自己，也写给每一个想深入理解这个项目的人。
 >
-> *版本：v0.6.1 | 最后更新：2026-03-05*
+> *版本：v0.7.0 | 最后更新：2026-03-05*
 
 ---
 
@@ -271,6 +271,13 @@ def register_providers() -> None:
   - 动态版本解析：自动查找 LiteLLM 数据库中的最新版本
 - `copilot/*`: GitHub Copilot CLI（订阅制）
   - 直接使用模型名: `gpt-4.1`, `claude-sonnet-4.5`, `gemini-2.5-pro` 等
+- `chatgpt/*`: ChatGPT 订阅（OAuth Device Code Flow）
+  - 使用 Responses API，无需额外 SDK
+  - 模型: `gpt-5.2`, `codex-mini` 等
+- `gemini-cli/*`: Gemini CLI OAuth 认证（订阅制）
+  - 复用 `~/.gemini/oauth_creds.json` 凭据，自动刷新令牌
+  - 可选 SDK: `uv add markitai[gemini-cli]`
+  - 模型: `gemini-2.5-pro`, `gemini-2.5-flash` 等
 
 **辅助函数**:
 - `count_tokens()`: Token 计数（tiktoken 或估算）

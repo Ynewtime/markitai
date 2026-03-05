@@ -476,7 +476,10 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
                 RateLimitError_cls=RateLimitError,
             )
 
-            raise RuntimeError(f"Claude Agent SDK error: {e}") from e
+            from markitai.providers.auth import get_auth_resolution_hint
+
+            hint = get_auth_resolution_hint("claude-agent")
+            raise RuntimeError(f"Claude Agent SDK error: {e}\n\n{hint}") from e
 
         elapsed = time.time() - start_time
 

@@ -79,6 +79,28 @@ def _check_copilot_auth() -> bool:
         return False
 
 
+def _check_chatgpt_auth() -> bool:
+    """Check if ChatGPT provider is authenticated."""
+    from markitai.providers.auth import _check_chatgpt_auth as check_fn
+
+    try:
+        status = check_fn()
+        return status.authenticated
+    except Exception:
+        return False
+
+
+def _check_gemini_cli_auth() -> bool:
+    """Check if Gemini CLI is authenticated."""
+    from markitai.providers.auth import _check_gemini_cli_auth as check_fn
+
+    try:
+        status = check_fn()
+        return status.authenticated
+    except Exception:
+        return False
+
+
 def detect_all_llm_providers() -> list[ProviderDetectionResult]:
     """Auto-detect all available LLM providers.
 
@@ -86,11 +108,13 @@ def detect_all_llm_providers() -> list[ProviderDetectionResult]:
     ordered by priority:
     1. Claude CLI (if installed and authenticated)
     2. Copilot CLI (if installed and authenticated)
-    3. ANTHROPIC_API_KEY environment variable
-    4. OPENAI_API_KEY environment variable
-    5. GEMINI_API_KEY environment variable
-    6. DEEPSEEK_API_KEY environment variable
-    7. OPENROUTER_API_KEY environment variable
+    3. ChatGPT (if authenticated via OAuth)
+    4. Gemini CLI (if authenticated via OAuth)
+    5. ANTHROPIC_API_KEY environment variable
+    6. OPENAI_API_KEY environment variable
+    7. GEMINI_API_KEY environment variable
+    8. DEEPSEEK_API_KEY environment variable
+    9. OPENROUTER_API_KEY environment variable
 
     Returns:
         List of all detected providers (may be empty).
@@ -121,7 +145,29 @@ def detect_all_llm_providers() -> list[ProviderDetectionResult]:
                 )
             )
 
-    # 3-7. Check environment variables
+    # 3. Check ChatGPT (OAuth)
+    if _check_chatgpt_auth():
+        results.append(
+            ProviderDetectionResult(
+                provider="chatgpt",
+                model="chatgpt/gpt-5.2",
+                authenticated=True,
+                source="cli",
+            )
+        )
+
+    # 4. Check Gemini CLI (OAuth)
+    if _check_gemini_cli_auth():
+        results.append(
+            ProviderDetectionResult(
+                provider="gemini-cli",
+                model="gemini-cli/gemini-2.5-pro",
+                authenticated=True,
+                source="cli",
+            )
+        )
+
+    # 5-9. Check environment variables
     env_providers = [
         ("ANTHROPIC_API_KEY", "anthropic", "anthropic/claude-sonnet-4-5-20250929"),
         ("OPENAI_API_KEY", "openai", "openai/gpt-5.2"),

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-03-05
+
+### Added
+
+- **ChatGPT Provider** (`chatgpt/`): Subscription-based provider using ChatGPT OAuth Device Code Flow and Responses API. No extra SDK required — uses LiteLLM's built-in authenticator. Models: `chatgpt/gpt-5.2`, `chatgpt/codex-mini`, etc.
+- **Gemini CLI Provider** (`gemini-cli/`): Uses Google's Gemini CLI OAuth credentials (`~/.gemini/oauth_creds.json`) with automatic token refresh. Optional SDK: `uv add markitai[gemini-cli]`. Models: `gemini-cli/gemini-2.5-pro`, `gemini-cli/gemini-2.5-flash`, etc.
+- **Weight=0 Model Disabling**: Setting `weight: 0` in model config now explicitly disables the model (excluded from routing). Useful for temporarily disabling models without removing config.
+- **Interactive Mode Enhancements**: Updated onboarding wizard with ChatGPT and Gemini CLI provider options
+
+### Fixed
+
+- **ZeroDivisionError in Router**: Models with `weight=0` are now filtered before LiteLLM Router creation, preventing `division by zero` in `simple-shuffle` routing strategy when all selected models have zero weight
+- **Router Weight Selection**: `_select_model` fallback uses `random.choice()` instead of `random.uniform(0, 0)` when all models have zero weight
+
+### Changed
+
+- **Weight Field Semantics**: `weight` field description updated to clarify that 0 = disabled. Minimum value enforced at 0 (negative weights rejected by validation)
+
 ## [0.6.1] - 2026-03-05
 
 ### Fixed
@@ -604,6 +622,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.7.0]: https://github.com/Ynewtime/markitai/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Ynewtime/markitai/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Ynewtime/markitai/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/Ynewtime/markitai/compare/v0.5.1...v0.5.2

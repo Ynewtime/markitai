@@ -570,10 +570,10 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         except FileNotFoundError as e:
             # CLI not installed or not found in PATH
             logger.error(f"[Copilot] CLI not found: {e}")
-            raise RuntimeError(
-                "Copilot CLI not installed or not in PATH. "
-                "See: https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli"
-            )
+            from markitai.providers.auth import get_auth_resolution_hint
+
+            hint = get_auth_resolution_hint("copilot")
+            raise RuntimeError(f"Copilot CLI not installed or not in PATH.\n\n{hint}")
         except ConnectionError as e:
             # Server connection failed
             logger.error(f"[Copilot] Connection failed: {e}")
@@ -597,7 +597,10 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                 RateLimitError_cls=RateLimitError,
             )
 
-            raise RuntimeError(f"GitHub Copilot SDK error: {e}") from e
+            from markitai.providers.auth import get_auth_resolution_hint
+
+            hint = get_auth_resolution_hint("copilot")
+            raise RuntimeError(f"GitHub Copilot SDK error: {e}\n\n{hint}") from e
         finally:
             # Clean up session (release resources)
             if session is not None:

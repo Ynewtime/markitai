@@ -531,6 +531,8 @@
         },
         "weight": {
           "default": 1,
+          "description": "Routing weight for load balancing. 0 = disabled (model excluded from routing). Higher values get more traffic.",
+          "minimum": 0,
           "title": "Weight",
           "type": "integer"
         },
