@@ -116,7 +116,7 @@ class TestCloudflareConverterIntegration:
 
         from markitai.converter.cloudflare import CloudflareConverter
 
-        pdf_path = FIXTURES_DIR / "file-example_PDF_500_kB.pdf"
+        pdf_path = FIXTURES_DIR / "sample.pdf"
         if not pdf_path.exists():
             pytest.skip(f"Fixture not found: {pdf_path}")
 
@@ -137,7 +137,7 @@ class TestCloudflareConverterIntegration:
 
         from markitai.converter.cloudflare import CloudflareConverter
 
-        xlsx_path = FIXTURES_DIR / "file_example_XLSX_100.xlsx"
+        xlsx_path = FIXTURES_DIR / "sample.xlsx"
         if not xlsx_path.exists():
             pytest.skip(f"Fixture not found: {xlsx_path}")
 

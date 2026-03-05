@@ -404,11 +404,11 @@ class TestClaudeAgentIntegration:
         assert parsed == expected_json
 
     @pytest.mark.asyncio
-    async def test_bypass_permissions_requires_dangerous_flag(self) -> None:
-        """Test that bypassPermissions includes allow_dangerously_skip_permissions.
+    async def test_bypass_permissions_mode(self) -> None:
+        """Test that bypassPermissions is set in ClaudeAgentOptions.
 
-        Per the official Claude Agent SDK docs, using permission_mode="bypassPermissions"
-        requires allow_dangerously_skip_permissions=True in ClaudeAgentOptions.
+        Per the official Claude Agent SDK docs, permission_mode="bypassPermissions"
+        allows the agent to run without interactive permission prompts.
         """
         from markitai.providers.claude_agent import ClaudeAgentProvider
 
@@ -472,10 +472,10 @@ class TestClaudeAgentIntegration:
                 messages=[{"role": "user", "content": "Hello!"}],
             )
 
-        # Verify allow_dangerously_skip_permissions=True was passed
+        # Verify permission_mode="bypassPermissions" was passed
         options_call_kwargs = mock_options_class.call_args[1]
         assert options_call_kwargs.get("permission_mode") == "bypassPermissions"
-        assert options_call_kwargs.get("allow_dangerously_skip_permissions") is True
+        assert "allow_dangerously_skip_permissions" not in options_call_kwargs
 
     @pytest.mark.asyncio
     async def test_system_message_passed_as_system_prompt(self) -> None:

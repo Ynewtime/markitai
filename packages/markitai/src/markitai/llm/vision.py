@@ -30,7 +30,10 @@ from markitai.llm.types import (
     ImageAnalysis,
     ImageAnalysisResult,
 )
-from markitai.utils.mime import get_mime_type, is_llm_supported_image
+from markitai.utils.mime import (
+    get_llm_effective_mime,
+    is_llm_supported_image,
+)
 from markitai.utils.text import clean_control_characters, format_error_message
 
 if TYPE_CHECKING:
@@ -112,8 +115,8 @@ class VisionMixin:
                 extracted_text=cached.get("extracted_text"),
             )
 
-        # Determine MIME type
-        mime_type = get_mime_type(image_path.suffix)
+        # Determine MIME type (converts BMP/TIFF → image/png)
+        mime_type = get_llm_effective_mime(image_path.suffix)
 
         # Get language name for prompt
         lang_name = "English" if language == "en" else "中文"
@@ -367,7 +370,7 @@ class VisionMixin:
 
         for i, image_path in enumerate(uncached_paths, 1):
             _, base64_image = self._get_cached_image(image_path)  # type: ignore[attr-defined]
-            mime_type = get_mime_type(image_path.suffix)
+            mime_type = get_llm_effective_mime(image_path.suffix)
 
             # Unique image label that won't conflict with document content
             content_parts.append(
@@ -842,8 +845,8 @@ class VisionMixin:
         # Get cached image data and base64 encoding
         _, base64_image = self._get_cached_image(image_path)  # type: ignore[attr-defined]
 
-        # Determine MIME type
-        mime_type = get_mime_type(image_path.suffix)
+        # Determine MIME type (converts BMP/TIFF → image/png)
+        mime_type = get_llm_effective_mime(image_path.suffix)
 
         # Use separated system/user prompts to improve instruction following
         # Language is set to "与源文档一致" (match source document)

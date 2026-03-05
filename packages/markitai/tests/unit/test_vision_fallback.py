@@ -97,12 +97,12 @@ class TestVisionUnsupportedFormat:
         assert "not supported" in result.description
 
     @pytest.mark.asyncio
-    async def test_bmp_returns_placeholder_analysis(self, mixin):
-        """BMP files should return a placeholder analysis without LLM call."""
-        bmp_path = Path("/tmp/test_image.bmp")
-        result = await mixin.analyze_image(bmp_path)
+    async def test_ico_returns_placeholder_analysis(self, mixin):
+        """ICO files should return a placeholder analysis without LLM call."""
+        ico_path = Path("/tmp/test_icon.ico")
+        result = await mixin.analyze_image(ico_path)
 
-        assert result.caption == "test_image"
+        assert result.caption == "test_icon"
         assert "not supported" in result.description
 
 

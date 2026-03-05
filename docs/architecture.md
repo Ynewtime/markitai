@@ -2,7 +2,7 @@
 
 > 写给未来的自己，也写给每一个想深入理解这个项目的人。
 >
-> *版本：v0.7.0 | 最后更新：2026-03-05*
+> *版本：v0.8.0 | 最后更新：2026-03-06*
 
 ---
 
@@ -192,8 +192,10 @@ utils/
 | `pdf.py` | PDF | pymupdf4llm |
 | `office.py` | PPTX, DOCX, XLSX | markitdown, python-pptx |
 | `legacy.py` | DOC, XLS, PPT | LibreOffice 或 pywin32 |
-| `image.py` | PNG, JPG, WebP | rapidocr, opencv |
+| `image.py` | PNG, JPG, WebP, GIF, BMP, TIFF | rapidocr, opencv |
 | `text.py` | TXT, MD | - |
+| `markitdown_ext.py` | HTML, HTM, XHTML, CSV, EPUB, MSG, IPYNB, Numbers | markitdown |
+| `kreuzberg.py` | TSV, XML, ODS, ODT, SVG, RTF, RST, ORG, TEX, EML | kreuzberg (可选) |
 | `cloudflare.py` | PDF, XLSX, DOCX, PPTX | Cloudflare Workers AI |
 
 **设计模式**: 模板方法

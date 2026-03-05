@@ -736,12 +736,12 @@ class TestContextPathExtraction:
         """Test matching against absolute paths with :suffix (e.g., from image analysis)."""
         cache = PersistentCache(
             global_dir=tmp_path,
-            no_cache_patterns=["*.JPG", "*.pdf"],
+            no_cache_patterns=["*.jpg", "*.pdf"],
         )
         # Absolute path with :images suffix (common in image analysis)
         assert (
             cache._should_skip_cache(
-                "/home/user/project/tests/fixtures/candy.JPG:images"
+                "/home/user/project/tests/fixtures/sample.jpg:images"
             )
             is True
         )
@@ -763,23 +763,23 @@ class TestContextPathExtraction:
         """Test matching against absolute paths without suffix."""
         cache = PersistentCache(
             global_dir=tmp_path,
-            no_cache_patterns=["*.JPG"],
+            no_cache_patterns=["*.jpg"],
         )
         # Absolute path without suffix
-        assert cache._should_skip_cache("/home/user/project/candy.JPG") is True
+        assert cache._should_skip_cache("/home/user/project/sample.jpg") is True
         assert (
-            cache._should_skip_cache("C:\\Users\\test\\candy.JPG") is True
+            cache._should_skip_cache("C:\\Users\\test\\sample.jpg") is True
         )  # Windows path
 
     def test_relative_path_still_works(self, tmp_path: Path):
         """Test that relative paths still work correctly."""
         cache = PersistentCache(
             global_dir=tmp_path,
-            no_cache_patterns=["sub_dir/*.doc", "*.JPG"],
+            no_cache_patterns=["legacy/*.doc", "*.jpg"],
         )
         # Relative paths should work as before
-        assert cache._should_skip_cache("sub_dir/file.doc") is True
-        assert cache._should_skip_cache("candy.JPG") is True
+        assert cache._should_skip_cache("legacy/file.doc") is True
+        assert cache._should_skip_cache("sample.jpg") is True
         assert cache._should_skip_cache("other/file.doc") is False
 
     def test_glob_pattern_with_absolute_path(self, tmp_path: Path):
@@ -789,16 +789,9 @@ class TestContextPathExtraction:
             no_cache_patterns=["**/*.xls"],
         )
         # Filename should be extracted and matched
+        assert cache._should_skip_cache("/home/user/project/legacy/sample.xls") is True
         assert (
-            cache._should_skip_cache(
-                "/home/user/project/sub_dir/file_example_XLS_100.xls"
-            )
-            is True
-        )
-        assert (
-            cache._should_skip_cache(
-                "/home/user/project/sub_dir/file_example_XLS_100.xls:images"
-            )
+            cache._should_skip_cache("/home/user/project/legacy/sample.xls:images")
             is True
         )
 
@@ -807,28 +800,29 @@ class TestContextPathExtraction:
         cache = PersistentCache(global_dir=tmp_path)
 
         # Simple filename
-        assert cache._extract_matchable_path("candy.JPG") == "candy.JPG"
+        assert cache._extract_matchable_path("sample.jpg") == "sample.jpg"
 
         # Relative path
-        assert cache._extract_matchable_path("sub/candy.JPG") == "candy.JPG"
+        assert cache._extract_matchable_path("sub/sample.jpg") == "sample.jpg"
 
         # Absolute path
-        assert cache._extract_matchable_path("/home/user/candy.JPG") == "candy.JPG"
+        assert cache._extract_matchable_path("/home/user/sample.jpg") == "sample.jpg"
 
         # Path with suffix
         assert (
-            cache._extract_matchable_path("/home/user/candy.JPG:images") == "candy.JPG"
+            cache._extract_matchable_path("/home/user/sample.jpg:images")
+            == "sample.jpg"
         )
 
         # Windows path
         assert (
-            cache._extract_matchable_path("C:\\Users\\test\\candy.JPG") == "candy.JPG"
+            cache._extract_matchable_path("C:\\Users\\test\\sample.jpg") == "sample.jpg"
         )
 
         # Windows path with suffix
         assert (
-            cache._extract_matchable_path("C:\\Users\\test\\candy.JPG:clean")
-            == "candy.JPG"
+            cache._extract_matchable_path("C:\\Users\\test\\sample.jpg:clean")
+            == "sample.jpg"
         )
 
 

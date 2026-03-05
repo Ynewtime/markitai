@@ -28,6 +28,9 @@ class ImageConverter(BaseConverter):
         FileFormat.JPG,
         FileFormat.PNG,
         FileFormat.WEBP,
+        FileFormat.GIF,
+        FileFormat.BMP,
+        FileFormat.TIFF,
     ]
 
     def convert(
@@ -155,5 +158,13 @@ class ImageConverter(BaseConverter):
 
 
 # Register ImageConverter for all supported image formats
-for _fmt in (FileFormat.JPEG, FileFormat.JPG, FileFormat.PNG, FileFormat.WEBP):
+for _fmt in (
+    FileFormat.JPEG,
+    FileFormat.JPG,
+    FileFormat.PNG,
+    FileFormat.WEBP,
+    FileFormat.GIF,
+    FileFormat.BMP,
+    FileFormat.TIFF,
+):
     register_converter(_fmt)(ImageConverter)
