@@ -15,6 +15,7 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/ci.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
