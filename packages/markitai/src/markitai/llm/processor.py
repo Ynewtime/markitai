@@ -83,6 +83,8 @@ class LocalProviderWrapper:
     # handles resizing automatically via _resize_image_if_needed()
     _IMAGE_CAPABLE_PATTERNS = (
         "claude-agent/",  # All claude-agent models support vision
+        "chatgpt/",  # All ChatGPT models support vision (GPT-5.x)
+        "gemini-cli/",  # All Gemini CLI models support vision
         "copilot/claude-",  # All Copilot Claude models
         "copilot/gemini-",  # All Copilot Gemini models
         "copilot/gpt-4.1",  # GPT-4.1 series
@@ -169,17 +171,26 @@ class LocalProviderWrapper:
         if len(models) == 1:
             return models[0][0]
 
+        # Filter out weight<=0 models (disabled by user)
+        active = [(m, w) for m, w in models if w > 0]
+        if not active:
+            # All weights are 0 — uniform random selection
+            return random.choice(models)[0]
+
+        if len(active) == 1:
+            return active[0][0]
+
         # Weighted random selection
-        total_weight = sum(w for _, w in models)
+        total_weight = sum(w for _, w in active)
         r = random.uniform(0, total_weight)
         cumulative = 0.0
-        for model_id, weight in models:
+        for model_id, weight in active:
             cumulative += weight
             if r <= cumulative:
                 return model_id
 
         # Fallback to last model (shouldn't happen)
-        return models[-1][0]
+        return active[-1][0]
 
     async def acompletion(
         self,
@@ -206,7 +217,24 @@ class LocalProviderWrapper:
         # Remove metadata since litellm.acompletion doesn't support it
         kwargs.pop("metadata", None)
 
-        # Call litellm directly (which will use custom_provider_map)
+        # Check if this model's provider has a directly registered handler.
+        # This is needed for providers like chatgpt/ where LiteLLM has a
+        # native handler that takes priority over custom_provider_map.
+        # We call ALL local provider handlers directly for consistency.
+        if "/" in model_id:
+            from markitai.providers import get_provider
+
+            provider_prefix = model_id.split("/", 1)[0]
+            handler = get_provider(provider_prefix)
+            if handler is not None:
+                response = await handler.acompletion(
+                    model=model_id,
+                    messages=messages,
+                    **kwargs,
+                )
+                return response
+
+        # Fallback to litellm.acompletion for models without a registered handler
         response = await litellm.acompletion(
             model=model_id,
             messages=messages,
@@ -365,16 +393,25 @@ class HybridRouter:
         if len(models) == 1:
             return models[0][0]
 
+        # Filter out weight<=0 models (disabled by user)
+        active = [(m, w, loc) for m, w, loc in models if w > 0]
+        if not active:
+            # All weights are 0 — uniform random selection
+            return random.choice(models)[0]
+
+        if len(active) == 1:
+            return active[0][0]
+
         # Weighted random selection
-        total_weight = sum(w for _, w, _ in models)
+        total_weight = sum(w for _, w, _ in active)
         r = random.uniform(0, total_weight)
         cumulative = 0.0
-        for model_id, weight, _ in models:
+        for model_id, weight, _ in active:
             cumulative += weight
             if r <= cumulative:
                 return model_id
 
-        return models[-1][0]
+        return active[-1][0]
 
     async def acompletion(
         self,
@@ -625,6 +662,11 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                 skipped_models.append(model_id)
                 continue
 
+            # weight <= 0 means model is disabled (e.g. no API quota)
+            if model_config.litellm_params.weight <= 0:
+                logger.debug(f"[Router] Skipping disabled model (weight=0): {model_id}")
+                continue
+
             model_entry = {
                 "model_name": model_config.model_name,
                 "litellm_params": {
@@ -662,6 +704,14 @@ class LLMProcessor(VisionMixin, DocumentMixin):
             )
 
         if not model_list:
+            disabled_count = sum(
+                1 for m in self.config.model_list if m.litellm_params.weight <= 0
+            )
+            if disabled_count == len(self.config.model_list):
+                raise ValueError(
+                    f"All {disabled_count} configured models have weight=0 (disabled). "
+                    "Set weight > 0 on at least one model to enable it."
+                )
             raise ValueError(
                 "No available models after filtering. "
                 "Check that required SDKs are installed for configured models."
@@ -801,6 +851,12 @@ class LLMProcessor(VisionMixin, DocumentMixin):
             model_list.append(model_entry)
 
         if not model_list:
+            disabled_count = sum(1 for m in models if m.litellm_params.weight <= 0)
+            if disabled_count == len(models):
+                raise ValueError(
+                    f"All {disabled_count} configured models have weight=0 (disabled). "
+                    "Set weight > 0 on at least one model to enable it."
+                )
             raise ValueError(
                 "No available models after filtering. "
                 "Check that required SDKs are installed for configured models."
@@ -1084,18 +1140,34 @@ class LLMProcessor(VisionMixin, DocumentMixin):
     def _get_router_primary_model(
         self, router: Router | LocalProviderWrapper | HybridRouter
     ) -> str | None:
-        """Get the primary model ID from a Router's model_list.
+        """Get the highest-weight model ID from a Router's model_list.
+
+        Returns the model with the greatest weight, which is most likely
+        to be selected during routing. Used for dynamic max_tokens calculation
+        and error reporting.
 
         Args:
             router: LiteLLM Router, LocalProviderWrapper, or HybridRouter instance
 
         Returns:
-            Model ID string (e.g., "deepseek/deepseek-chat"), or None if unavailable
+            Model ID string (e.g., "chatgpt/gpt-5.3"), or None if unavailable
         """
         try:
             model_list = router.model_list
-            if model_list and len(model_list) > 0:
-                return model_list[0].get("litellm_params", {}).get("model")
+            if not model_list:
+                return None
+
+            best_model = None
+            best_weight = -1.0
+            for config in model_list:
+                params = config.get("litellm_params", {})
+                model_id = params.get("model", "")
+                weight = params.get("weight", 1.0)
+                if weight > best_weight:
+                    best_weight = weight
+                    best_model = model_id
+
+            return best_model
         except Exception:
             pass
         return None
@@ -1263,10 +1335,34 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                 except Exception as e:
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                     status_code = getattr(e, "status_code", "N/A")
-                    logger.error(
-                        f"[LLM:{call_id}] Failed: status={status_code} "
-                        f"{format_error_message(e)} time={elapsed_ms:.0f}ms"
+
+                    # Check for authentication errors and provide friendly hints
+                    error_msg_lower = str(e).lower()
+                    auth_patterns = (
+                        "authentication",
+                        "api_key",
+                        "api key",
+                        "unauthorized",
+                        "401",
+                        "403",
+                        "invalid x-api-key",
+                        "incorrect api key",
                     )
+                    if any(p in error_msg_lower for p in auth_patterns):
+                        target = self._get_router_primary_model(active_router)
+                        logger.error(
+                            f"[LLM:{call_id}] Authentication failed for model "
+                            f"'{target}':\n"
+                            f"  {format_error_message(e)}\n\n"
+                            f"  Hint: Use MODEL=<provider/model> with the "
+                            f"corresponding API key env var,\n"
+                            f"  or run 'markitai init' to configure interactively."
+                        )
+                    else:
+                        logger.error(
+                            f"[LLM:{call_id}] Failed: status={status_code} "
+                            f"{format_error_message(e)} time={elapsed_ms:.0f}ms"
+                        )
                     raise
 
         # Should not reach here, but just in case

@@ -16,7 +16,7 @@ import base64
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -352,11 +352,138 @@ class TestLocalProviderWrapper:
         selected = wrapper._select_model("default")
         assert selected == "claude-agent/sonnet"
 
+    def test_select_model_skips_zero_weight(self):
+        """weight=0 models should never be selected when others have weight > 0."""
+        model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "claude-agent/haiku", "weight": 0},
+            },
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "copilot/gpt-5", "weight": 0},
+            },
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 20},
+            },
+        ]
+        wrapper = LocalProviderWrapper(model_list)
+        # Run 50 times — should always pick the non-zero weight model
+        for _ in range(50):
+            selected = wrapper._select_model("default")
+            assert selected == "chatgpt/gpt-5.3"
+
+    def test_select_model_all_zero_weight_still_works(self):
+        """If all weights are 0, should still select a model (uniform fallback)."""
+        model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "claude-agent/haiku", "weight": 0},
+            },
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "copilot/gpt-5", "weight": 0},
+            },
+        ]
+        wrapper = LocalProviderWrapper(model_list)
+        selected = wrapper._select_model("default")
+        assert selected in ("claude-agent/haiku", "copilot/gpt-5")
+
     def test_select_model_unknown_name(self):
         """Test selecting unknown model name returns the name."""
         wrapper = LocalProviderWrapper([])
         selected = wrapper._select_model("unknown-model")
         assert selected == "unknown-model"
+
+    @pytest.mark.asyncio
+    async def test_acompletion_calls_registered_handler_directly(self):
+        """Should call registered custom handler directly, bypassing litellm.acompletion.
+
+        This is critical for providers like chatgpt/ where LiteLLM has a native
+        handler that would take priority over custom_provider_map entries.
+        """
+        mock_handler = AsyncMock()
+        mock_response = MagicMock()
+        mock_handler.acompletion.return_value = mock_response
+
+        model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 1.0},
+            }
+        ]
+        wrapper = LocalProviderWrapper(model_list)
+        messages = [{"role": "user", "content": "Hello"}]
+
+        with patch("markitai.providers.get_provider", return_value=mock_handler):
+            result = await wrapper.acompletion("default", messages)
+
+        assert result is mock_response
+        mock_handler.acompletion.assert_called_once_with(
+            model="chatgpt/gpt-5.3",
+            messages=messages,
+        )
+
+    @pytest.mark.asyncio
+    async def test_acompletion_falls_back_to_litellm_when_no_handler(self):
+        """Should fall back to litellm.acompletion when no handler is registered."""
+        mock_response = MagicMock()
+
+        model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "some-provider/model", "weight": 1.0},
+            }
+        ]
+        wrapper = LocalProviderWrapper(model_list)
+        messages = [{"role": "user", "content": "Hello"}]
+
+        with (
+            patch("markitai.providers.get_provider", return_value=None),
+            patch("markitai.llm.processor.litellm") as mock_litellm,
+        ):
+            mock_litellm.acompletion = AsyncMock(return_value=mock_response)
+            result = await wrapper.acompletion("default", messages)
+
+        assert result is mock_response
+
+    @pytest.mark.asyncio
+    async def test_acompletion_strips_metadata_before_handler_call(self):
+        """Should strip metadata kwarg before calling the handler."""
+        mock_handler = AsyncMock()
+        mock_handler.acompletion.return_value = MagicMock()
+
+        model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 1.0},
+            }
+        ]
+        wrapper = LocalProviderWrapper(model_list)
+        messages = [{"role": "user", "content": "Hello"}]
+
+        with patch("markitai.providers.get_provider", return_value=mock_handler):
+            await wrapper.acompletion(
+                "default", messages, metadata={"key": "val"}, max_tokens=1000
+            )
+
+        # metadata should be stripped, max_tokens preserved
+        call_kwargs = mock_handler.acompletion.call_args
+        assert "metadata" not in call_kwargs.kwargs
+        assert call_kwargs.kwargs["max_tokens"] == 1000
+
+    def test_image_capable_includes_chatgpt(self):
+        """chatgpt/ models should be recognized as image-capable."""
+        wrapper = LocalProviderWrapper([])
+        assert wrapper._is_image_capable("chatgpt/gpt-5.3") is True
+        assert wrapper._is_image_capable("chatgpt/codex-mini") is True
+
+    def test_image_capable_includes_gemini_cli(self):
+        """gemini-cli/ models should be recognized as image-capable."""
+        wrapper = LocalProviderWrapper([])
+        assert wrapper._is_image_capable("gemini-cli/gemini-2.5-pro") is True
+        assert wrapper._is_image_capable("gemini-cli/gemini-2.5-flash") is True
 
 
 # =============================================================================
@@ -422,6 +549,58 @@ class TestHybridRouter:
 
         messages_text = [{"role": "user", "content": "Hello"}]
         assert hybrid._has_images(messages_text) is False
+
+    def test_select_model_skips_zero_weight(self):
+        """weight=0 models should never be selected in HybridRouter."""
+        standard_router = MagicMock()
+        standard_router.model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "deepseek/deepseek-chat", "weight": 0},
+            },
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "gemini/gemini-2.5-flash", "weight": 0},
+            },
+        ]
+
+        local_wrapper = LocalProviderWrapper(
+            [
+                {
+                    "model_name": "default",
+                    "litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 20},
+                }
+            ]
+        )
+
+        hybrid = HybridRouter(standard_router, local_wrapper)
+        # Run 50 times — should always pick the non-zero weight model
+        for _ in range(50):
+            selected = hybrid._select_model("default")
+            assert selected == "chatgpt/gpt-5.3"
+
+    def test_select_model_all_zero_weight_still_works(self):
+        """If all weights are 0, HybridRouter should still select a model."""
+        standard_router = MagicMock()
+        standard_router.model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "deepseek/deepseek-chat", "weight": 0},
+            },
+        ]
+
+        local_wrapper = LocalProviderWrapper(
+            [
+                {
+                    "model_name": "default",
+                    "litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 0},
+                }
+            ]
+        )
+
+        hybrid = HybridRouter(standard_router, local_wrapper)
+        selected = hybrid._select_model("default")
+        assert selected in ("deepseek/deepseek-chat", "chatgpt/gpt-5.3")
 
 
 # =============================================================================
@@ -1121,10 +1300,26 @@ class TestLLMProcessorDynamicMaxTokens:
 class TestLLMProcessorRouterHelpers:
     """Tests for router helper methods."""
 
-    def test_get_router_primary_model(
+    def test_get_router_primary_model_returns_highest_weight(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
-        """Test getting primary model from router."""
+        """Should return the highest-weight model, not model_list[0]."""
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        mock_router = MagicMock()
+        mock_router.model_list = [
+            {"litellm_params": {"model": "deepseek/deepseek-chat", "weight": 0}},
+            {"litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 20}},
+            {"litellm_params": {"model": "gemini/gemini-2.5-flash", "weight": 0}},
+        ]
+
+        result = processor._get_router_primary_model(mock_router)
+        assert result == "chatgpt/gpt-5.3"
+
+    def test_get_router_primary_model_default_weight(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig
+    ):
+        """Models without explicit weight should default to 1.0."""
         processor = LLMProcessor(llm_config, prompts_config)
 
         mock_router = MagicMock()
@@ -1134,6 +1329,7 @@ class TestLLMProcessorRouterHelpers:
         ]
 
         result = processor._get_router_primary_model(mock_router)
+        # Both have default weight 1.0, first one wins
         assert result == "openai/gpt-4o"
 
     def test_get_router_primary_model_empty(
@@ -1326,6 +1522,66 @@ class TestLLMProcessorRouterCreation:
             router = processor.router
             model_entry = router.model_list[0]
             assert "api_base" not in model_entry["litellm_params"]
+
+    def test_create_router_filters_weight_zero_models(
+        self, prompts_config: PromptsConfig
+    ):
+        """Test that _create_router excludes weight=0 models from the Router.
+
+        This prevents LiteLLM's simple_shuffle from hitting ZeroDivisionError
+        when all deployments have weight=0.
+        """
+        config = LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o-mini",
+                        api_key="test-key",
+                        weight=0,
+                    ),
+                ),
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o",
+                        api_key="test-key",
+                        weight=10,
+                    ),
+                ),
+            ],
+        )
+        processor = LLMProcessor(config, prompts_config)
+
+        with patch("markitai.providers.is_local_provider_available", return_value=True):
+            router = processor.router
+            model_ids = [e["litellm_params"]["model"] for e in router.model_list]
+            # weight=0 model should be excluded
+            assert "openai/gpt-4o-mini" not in model_ids
+            assert "openai/gpt-4o" in model_ids
+
+    def test_create_router_all_weight_zero_raises(self, prompts_config: PromptsConfig):
+        """Test that _create_router raises ValueError when all models are weight=0."""
+        config = LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o-mini",
+                        api_key="test-key",
+                        weight=0,
+                    ),
+                ),
+            ],
+        )
+
+        with (
+            patch("markitai.providers.is_local_provider_available", return_value=True),
+            pytest.raises(ValueError, match="weight=0.*disabled"),
+        ):
+            LLMProcessor(config, prompts_config)
 
     def test_semaphore_property(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig

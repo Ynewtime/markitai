@@ -144,7 +144,11 @@ class LiteLLMParams(BaseModel):
         default=None,
         description="Custom API base URL to override the provider's default endpoint. Supports env:VAR_NAME syntax. Passed directly to LiteLLM; works with any LiteLLM-supported provider. Not used by local providers (claude-agent/, copilot/) which manage endpoints via their own environment variables.",
     )
-    weight: int = DEFAULT_MODEL_WEIGHT
+    weight: int = Field(
+        default=DEFAULT_MODEL_WEIGHT,
+        ge=0,
+        description="Routing weight for load balancing. 0 = disabled (model excluded from routing). Higher values get more traffic.",
+    )
     max_tokens: int | None = None  # Override max_output_tokens for this model
 
     def get_resolved_api_key(self, strict: bool = True) -> str | None:

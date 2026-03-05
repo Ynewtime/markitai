@@ -16,7 +16,7 @@
 | **Playwright** | `--playwright`（SPA 渲染） | 包随 markitai 安装，浏览器需运行 `uv run playwright install chromium` |
 | **FFmpeg** | 音视频处理 | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
 | **Jina API 密钥** | `--jina`（URL 转换） | 设置 `JINA_API_KEY` 环境变量 |
-| **LLM API 密钥** | `--llm`（AI 增强） | 设置 `OPENAI_API_KEY` 或对应提供商的密钥 |
+| **LLM API 密钥** | `--llm`（AI 增强） | 设置 `OPENAI_API_KEY` 或对应提供商的密钥。订阅制提供商（`chatgpt/`、`gemini-cli/`、`claude-agent/`、`copilot/`）使用 CLI/OAuth 认证 |
 | **Cloudflare** | `--cloudflare`（云端渲染与转换） | 设置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 环境变量 |
 
 ::: tip 浏览器自动化
@@ -62,13 +62,13 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Yne
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.6.1"
+export MARKITAI_VERSION="0.7.0"
 export UV_VERSION="0.9.27"
 curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.6.1"
+$env:MARKITAI_VERSION = "0.7.0"
 $env:UV_VERSION = "0.9.27"
 powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
 ```

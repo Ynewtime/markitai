@@ -209,10 +209,12 @@ Markitai 还支持使用 CLI 认证和订阅额度的本地提供商：
 
 - **Claude Agent** (`claude-agent/`): 使用 [Claude Agent SDK](https://github.com/anthropics/claude-code) 通过 Claude Code CLI 认证
 - **GitHub Copilot** (`copilot/`): 使用 [GitHub Copilot SDK](https://github.com/github/copilot-sdk) 通过 Copilot CLI 认证
+- **ChatGPT** (`chatgpt/`): 使用 ChatGPT 订阅，通过 OAuth Device Code Flow 和 Responses API 认证，无需额外 SDK
+- **Gemini CLI** (`gemini-cli/`): 使用 Google Gemini CLI OAuth 凭据（`~/.gemini/oauth_creds.json`），支持自动令牌刷新
 
 这些提供商需要：
-1. 安装并认证对应的 CLI 工具
-2. 可选 SDK 包：`uv add markitai[claude-agent]` 或 `uv add markitai[copilot]`
+1. 安装并认证对应的 CLI 工具（或使用环境变量认证——见下文）
+2. 可选 SDK 包：`uv add markitai[claude-agent]`、`uv add markitai[copilot]` 或 `uv add markitai[gemini-cli]`
 
 **安装 Claude Code CLI：**
 ```bash
@@ -232,6 +234,23 @@ curl -fsSL https://gh.io/copilot-install | bash
 winget install GitHub.Copilot
 ```
 
+**ChatGPT（无需安装 CLI）：**
+
+ChatGPT 提供商首次使用时通过 OAuth Device Code Flow 认证——只需配置模型并按照浏览器提示操作即可。
+
+**安装 Gemini CLI（可选）：**
+
+Gemini CLI 提供商可复用现有 Gemini CLI 凭据。安装 CLI 并认证，或让内置 OAuth 流程自动处理：
+
+```bash
+# 安装 Gemini CLI（可选——提供商有内置 OAuth）
+npm install -g @anthropic-ai/gemini-cli
+gemini  # 首次运行时触发 OAuth 登录
+
+# 安装 google-auth 以支持自动令牌刷新
+uv add 'markitai[gemini-cli]'
+```
+
 ### 模型命名
 
 使用 LiteLLM 模型命名规范：
@@ -248,6 +267,8 @@ provider/model-name
 - `ollama/llama3.2`
 - `claude-agent/sonnet`（本地，需要 Claude Code CLI）
 - `copilot/gpt-5.2`（本地，需要 Copilot CLI）
+- `chatgpt/gpt-5.2`（本地，需要 ChatGPT 订阅）
+- `gemini-cli/gemini-2.5-pro`（本地，需要 Gemini CLI 或 OAuth）
 
 Claude Agent SDK 支持的模型：
 - 别名（推荐）：`sonnet`、`opus`、`haiku`、`inherit`
@@ -259,6 +280,12 @@ GitHub Copilot SDK 支持的模型：
 - Google: `gemini-2.5-pro`、`gemini-3-flash`
 - 可用性取决于您的 Copilot 订阅
 
+ChatGPT 支持的模型：
+- `gpt-5.2`、`gpt-5.2-codex`、`codex-mini` 等
+
+Gemini CLI 支持的模型：
+- `gemini-2.5-pro`、`gemini-2.5-flash`、`gemini-3-flash-preview` 等
+
 ::: warning 模型下线通知
 以下模型将于 **2025年2月13日** 下线：
 - `gpt-4o`、`gpt-4.1`、`gpt-4.1-mini`、`o4-mini`、`gpt-5`
@@ -267,7 +294,7 @@ GitHub Copilot SDK 支持的模型：
 :::
 
 ::: tip 本地提供商支持 Vision
-本地提供商（`claude-agent/`、`copilot/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-5.2`、`copilot/claude-sonnet-4.5`）。
+本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`、`gemini-cli/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-5.2`、`gemini-cli/gemini-2.5-pro`）。
 :::
 
 ::: tip 本地提供商故障排除
@@ -275,9 +302,9 @@ GitHub Copilot SDK 支持的模型：
 
 | 错误 | 解决方案 |
 |------|----------|
-| "SDK 未安装" | `uv add markitai[copilot]` 或 `uv add markitai[claude-agent]` |
+| "SDK 未安装" | `uv add markitai[copilot]`、`uv add markitai[claude-agent]` 或 `uv add markitai[gemini-cli]` |
 | "CLI 未找到" | 安装并认证 CLI 工具（[Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli)、[Claude Code](https://claude.ai/code)） |
-| "未认证" | 运行 `copilot auth login` 或 `claude auth login` |
+| "未认证" | 运行 `copilot auth login` 或 `claude auth login`。也可：为 Copilot 设置 `GH_TOKEN`/`GITHUB_TOKEN`，为 Claude 设置 `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1`。ChatGPT 首次使用时自动触发 OAuth。Gemini CLI 复用 `~/.gemini/oauth_creds.json`。 |
 | "速率限制" | 等待后重试，或检查订阅额度 |
 | "请求超时" | 超时是自适应的；处理非常大的文档可能需要更长时间 |
 
@@ -348,10 +375,12 @@ GitHub Copilot SDK 支持的模型：
 :::
 
 ::: warning 本地提供商与 `api_base`
-`api_base` 配置字段**不适用于**本地提供商（`claude-agent/`、`copilot/`）。这些提供商作为 CLI 子进程运行，通过各自的环境变量管理 API 端点：
+`api_base` 配置字段**不适用于**本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`、`gemini-cli/`）。这些提供商作为 CLI 子进程运行或使用 OAuth，内部管理 API 端点：
 
 - **Claude Agent**: 设置 `ANTHROPIC_BASE_URL` 覆盖 API 端点。如果同时设置了 `ANTHROPIC_API_KEY`，CLI 将使用它进行直接 API 访问而非订阅认证。其他路由选项：`CLAUDE_CODE_USE_BEDROCK=1`、`CLAUDE_CODE_USE_VERTEX=1`、`CLAUDE_CODE_USE_FOUNDRY=1`。
-- **GitHub Copilot**: 端点由 Copilot CLI 内部管理，不可覆盖。
+- **GitHub Copilot**: 端点由 Copilot CLI 内部管理，不可覆盖。基于令牌的认证请设置 `GH_TOKEN` 或 `GITHUB_TOKEN`。
+- **ChatGPT**: 使用 OpenAI Responses API 端点，通过 LiteLLM 内置 OAuth Device Code Flow 认证。
+- **Gemini CLI**: 使用 Google Code Assist API 端点，从 `~/.gemini/oauth_creds.json` 读取凭据。
 :::
 
 ### Vision 模型
@@ -404,9 +433,32 @@ GitHub Copilot SDK 支持的模型：
 | `timeout` | 秒 | 120 | 请求超时时间（自适应计算的基础值） |
 | `concurrency` | 1-20 | 10 | 最大并发 LLM 请求数 |
 
+#### 模型权重
+
+`model_list` 中每个模型的 `litellm_params` 支持 `weight` 参数来控制流量分配：
+
+```json
+{
+  "model_name": "default",
+  "litellm_params": {
+    "model": "gemini/gemini-2.5-flash",
+    "api_key": "env:GEMINI_API_KEY",
+    "weight": 10
+  }
+}
+```
+
+| 值 | 行为 |
+|----|------|
+| `weight: 0` | **禁用** — 模型完全排除在路由之外 |
+| `weight: 1`（默认） | 正常优先级 |
+| `weight: 10` | 被选中的概率是 weight=1 模型的 10 倍 |
+
+设置 `weight: 0` 可临时禁用某个模型而无需删除其配置。至少需要一个模型的 `weight > 0`。
+
 ### 自适应超时
 
-本地 provider（`claude-agent/`、`copilot/`）使用基于请求复杂度的**自适应超时计算**：
+本地 provider（`claude-agent/`、`copilot/`、`chatgpt/`、`gemini-cli/`）使用基于请求复杂度的**自适应超时计算**：
 
 - 基础超时：最小 60 秒，最大 600 秒
 - 考虑因素：提示词长度、图片数量、预期输出长度

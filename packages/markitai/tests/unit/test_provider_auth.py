@@ -720,3 +720,188 @@ class TestClaudeEnvVarAuth:
 
         assert status.authenticated is True
         assert status.error is None
+
+
+class TestChatGPTAuth:
+    """Tests for ChatGPT authentication checks."""
+
+    def test_chatgpt_auth_authenticated(self, tmp_path: Path) -> None:
+        """Test _check_chatgpt_auth when token exists."""
+        from markitai.providers.auth import _check_chatgpt_auth
+
+        auth_dir = tmp_path / ".config" / "litellm" / "chatgpt"
+        auth_dir.mkdir(parents=True)
+        auth_file = auth_dir / "auth.json"
+        auth_file.write_text(json.dumps({"access_token": "test-token-123"}))
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_chatgpt_auth()
+
+        assert status.provider == "chatgpt"
+        assert status.authenticated is True
+
+    def test_chatgpt_auth_no_file(self, tmp_path: Path) -> None:
+        """Test _check_chatgpt_auth when auth file doesn't exist."""
+        from markitai.providers.auth import _check_chatgpt_auth
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_chatgpt_auth()
+
+        assert status.authenticated is False
+        assert "not found" in (status.error or "").lower()
+
+    def test_chatgpt_auth_no_token(self, tmp_path: Path) -> None:
+        """Test _check_chatgpt_auth when file exists but no token."""
+        from markitai.providers.auth import _check_chatgpt_auth
+
+        auth_dir = tmp_path / ".config" / "litellm" / "chatgpt"
+        auth_dir.mkdir(parents=True)
+        auth_file = auth_dir / "auth.json"
+        auth_file.write_text(json.dumps({}))
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_chatgpt_auth()
+
+        assert status.authenticated is False
+        assert "No access token" in (status.error or "")
+
+    def test_chatgpt_auth_invalid_json(self, tmp_path: Path) -> None:
+        """Test _check_chatgpt_auth when file has invalid JSON."""
+        from markitai.providers.auth import _check_chatgpt_auth
+
+        auth_dir = tmp_path / ".config" / "litellm" / "chatgpt"
+        auth_dir.mkdir(parents=True)
+        auth_file = auth_dir / "auth.json"
+        auth_file.write_text("not json")
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_chatgpt_auth()
+
+        assert status.authenticated is False
+        assert "Failed to read" in (status.error or "")
+
+
+class TestGeminiCLIAuth:
+    """Tests for Gemini CLI authentication checks."""
+
+    def test_gemini_cli_auth_authenticated(self, tmp_path: Path) -> None:
+        """Test _check_gemini_cli_auth when credentials exist."""
+        from markitai.providers.auth import _check_gemini_cli_auth
+
+        gemini_dir = tmp_path / ".gemini"
+        gemini_dir.mkdir()
+        creds_file = gemini_dir / "oauth_creds.json"
+        creds_file.write_text(
+            json.dumps({"access_token": "ya29.xxx", "refresh_token": "1//xxx"})
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_gemini_cli_auth()
+
+        assert status.provider == "gemini-cli"
+        assert status.authenticated is True
+
+    def test_gemini_cli_auth_no_file(self, tmp_path: Path) -> None:
+        """Test _check_gemini_cli_auth when credentials file doesn't exist."""
+        from markitai.providers.auth import _check_gemini_cli_auth
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_gemini_cli_auth()
+
+        assert status.authenticated is False
+        assert "not found" in (status.error or "").lower()
+
+    def test_gemini_cli_auth_no_token(self, tmp_path: Path) -> None:
+        """Test _check_gemini_cli_auth when file exists but no token."""
+        from markitai.providers.auth import _check_gemini_cli_auth
+
+        gemini_dir = tmp_path / ".gemini"
+        gemini_dir.mkdir()
+        creds_file = gemini_dir / "oauth_creds.json"
+        creds_file.write_text(json.dumps({"refresh_token": "1//xxx"}))
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_gemini_cli_auth()
+
+        assert status.authenticated is False
+        assert "No access token" in (status.error or "")
+
+    def test_gemini_cli_auth_invalid_json(self, tmp_path: Path) -> None:
+        """Test _check_gemini_cli_auth when file has invalid JSON."""
+        from markitai.providers.auth import _check_gemini_cli_auth
+
+        gemini_dir = tmp_path / ".gemini"
+        gemini_dir.mkdir()
+        creds_file = gemini_dir / "oauth_creds.json"
+        creds_file.write_text("{broken")
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_gemini_cli_auth()
+
+        assert status.authenticated is False
+        assert "Failed to read" in (status.error or "")
+
+
+class TestAuthManagerNewProviders:
+    """Tests for AuthManager with chatgpt and gemini-cli providers."""
+
+    @pytest.fixture(autouse=True)
+    def reset_auth_manager(self) -> None:
+        """Reset AuthManager singleton before each test."""
+        from markitai.providers.auth import AuthManager
+
+        AuthManager._instance = None  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_check_auth_chatgpt(self, tmp_path: Path) -> None:
+        """Test AuthManager.check_auth for chatgpt provider."""
+        from markitai.providers.auth import AuthManager
+
+        manager = AuthManager()
+
+        auth_dir = tmp_path / ".config" / "litellm" / "chatgpt"
+        auth_dir.mkdir(parents=True)
+        (auth_dir / "auth.json").write_text(json.dumps({"access_token": "tok"}))
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = await manager.check_auth("chatgpt")
+
+        assert status.provider == "chatgpt"
+        assert status.authenticated is True
+
+    @pytest.mark.asyncio
+    async def test_check_auth_gemini_cli(self, tmp_path: Path) -> None:
+        """Test AuthManager.check_auth for gemini-cli provider."""
+        from markitai.providers.auth import AuthManager
+
+        manager = AuthManager()
+
+        gemini_dir = tmp_path / ".gemini"
+        gemini_dir.mkdir()
+        (gemini_dir / "oauth_creds.json").write_text(
+            json.dumps({"access_token": "ya29.xxx"})
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = await manager.check_auth("gemini-cli")
+
+        assert status.provider == "gemini-cli"
+        assert status.authenticated is True
+
+
+class TestNewResolutionHints:
+    """Tests for resolution hints for new providers."""
+
+    def test_chatgpt_resolution_hint(self) -> None:
+        """Test resolution hint for chatgpt provider."""
+        from markitai.providers.auth import get_auth_resolution_hint
+
+        hint = get_auth_resolution_hint("chatgpt")
+        assert "chatgpt" in hint.lower() or "oauth" in hint.lower()
+
+    def test_gemini_cli_resolution_hint(self) -> None:
+        """Test resolution hint for gemini-cli provider."""
+        from markitai.providers.auth import get_auth_resolution_hint
+
+        hint = get_auth_resolution_hint("gemini-cli")
+        assert "gemini" in hint.lower()
