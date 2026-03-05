@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-03-05
+
+### Fixed
+
+- **Claude Agent SDK compliance**: Add `allow_dangerously_skip_permissions=True` when using `bypassPermissions`, pass system messages via SDK's `system_prompt` parameter instead of XML tags, set `additionalProperties: false` in JSON object schema
+- **Auth pre-check gaps**: Detect `GH_TOKEN`/`GITHUB_TOKEN` env vars as valid Copilot authentication, detect `CLAUDE_CODE_USE_BEDROCK`/`VERTEX`/`FOUNDRY` env vars as valid Claude authentication
+- **Resolution hints**: Include env var alternatives in authentication error messages
+
+### Changed
+
+- **Docs**: Update configuration guide and ai-tools-setup with env var auth methods
+
 ## [0.6.0] - 2026-03-04
 
 ### Added
@@ -592,6 +604,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.6.1]: https://github.com/Ynewtime/markitai/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Ynewtime/markitai/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/Ynewtime/markitai/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Ynewtime/markitai/compare/v0.5.0...v0.5.1
