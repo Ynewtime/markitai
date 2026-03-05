@@ -15,6 +15,13 @@ repos:
         files: ^README\.md$
         pass_filenames: false
 
+      - id: sync-agent-instructions
+        name: sync agent instructions from CLAUDE.md
+        entry: bash -c 'cp CLAUDE.md AGENTS.md && cp CLAUDE.md .cursorrules && cp CLAUDE.md .github/copilot-instructions.md && git add AGENTS.md .cursorrules .github/copilot-instructions.md'
+        language: system
+        files: ^CLAUDE\.md$
+        pass_filenames: false
+
       - id: pyright
         name: pyright
         entry: uv run pyright
