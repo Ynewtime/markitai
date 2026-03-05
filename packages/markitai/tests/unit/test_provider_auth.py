@@ -258,6 +258,29 @@ class TestAuthManagerCheckAuth:
         assert "max" in (status.user or "")
 
 
+class TestAuthManagerUnknownProvider:
+    """Tests for unknown provider handling."""
+
+    @pytest.fixture(autouse=True)
+    def reset_auth_manager(self) -> None:
+        """Reset AuthManager singleton before each test."""
+        from markitai.providers.auth import AuthManager
+
+        AuthManager._instance = None  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_check_auth_unknown_provider(self) -> None:
+        """Unknown provider should return unauthenticated with error."""
+        from markitai.providers.auth import AuthManager
+
+        manager = AuthManager()
+        status = await manager.check_auth("nonexistent-provider")
+
+        assert status.authenticated is False
+        assert "Unknown provider" in (status.error or "")
+        assert status.provider == "nonexistent-provider"
+
+
 class TestAuthManagerNoConfigFile:
     """Tests for scenarios where config files don't exist."""
 
@@ -443,6 +466,20 @@ class TestResolutionHints:
         assert hint is not None
         assert len(hint) > 0
 
+    def test_copilot_hint_mentions_gh_token(self) -> None:
+        """Resolution hint for copilot should mention GH_TOKEN as alternative."""
+        from markitai.providers.auth import get_auth_resolution_hint
+
+        hint = get_auth_resolution_hint("copilot")
+        assert "GH_TOKEN" in hint or "GITHUB_TOKEN" in hint
+
+    def test_claude_hint_mentions_cloud_env_vars(self) -> None:
+        """Resolution hint for claude should mention cloud provider env vars."""
+        from markitai.providers.auth import get_auth_resolution_hint
+
+        hint = get_auth_resolution_hint("claude-agent")
+        assert "CLAUDE_CODE_USE_BEDROCK" in hint
+
 
 class TestSDKAvailabilityHelpers:
     """Tests for SDK availability helper functions."""
@@ -562,3 +599,124 @@ class TestConfigFileAuth:
 
         assert status.authenticated is False
         assert "No access token" in (status.error or "")
+
+
+class TestCopilotEnvVarAuth:
+    """Tests for Copilot authentication via GH_TOKEN / GITHUB_TOKEN env vars.
+
+    The Copilot CLI supports authenticating via personal access tokens set in
+    GH_TOKEN or GITHUB_TOKEN environment variables (with "Copilot Requests"
+    permission). The auth pre-check should detect these as valid auth.
+    """
+
+    def test_copilot_auth_detects_gh_token(self, tmp_path: Path) -> None:
+        """GH_TOKEN env var should be detected as valid Copilot auth."""
+        from markitai.providers.auth import _check_copilot_config_auth
+
+        # No config file exists, but GH_TOKEN is set
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch.dict("os.environ", {"GH_TOKEN": "ghp_test123"}, clear=False),
+        ):
+            status = _check_copilot_config_auth()
+
+        assert status.authenticated is True
+        assert status.provider == "copilot"
+
+    def test_copilot_auth_detects_github_token(self, tmp_path: Path) -> None:
+        """GITHUB_TOKEN env var should be detected as valid Copilot auth."""
+        from markitai.providers.auth import _check_copilot_config_auth
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch.dict("os.environ", {"GITHUB_TOKEN": "ghp_test456"}, clear=False),
+        ):
+            status = _check_copilot_config_auth()
+
+        assert status.authenticated is True
+        assert status.provider == "copilot"
+
+    def test_copilot_auth_gh_token_priority_over_missing_config(
+        self, tmp_path: Path
+    ) -> None:
+        """GH_TOKEN should authenticate even when config file is absent."""
+        from markitai.providers.auth import _check_copilot_config_auth
+
+        # Explicitly no .copilot directory
+        assert not (tmp_path / ".copilot").exists()
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch.dict("os.environ", {"GH_TOKEN": "ghp_valid"}, clear=False),
+        ):
+            status = _check_copilot_config_auth()
+
+        assert status.authenticated is True
+        assert status.error is None
+
+
+class TestClaudeEnvVarAuth:
+    """Tests for Claude authentication via Bedrock/Vertex/Foundry env vars.
+
+    Claude Code CLI supports authenticating via cloud provider env vars:
+    - CLAUDE_CODE_USE_BEDROCK (AWS Bedrock)
+    - CLAUDE_CODE_USE_VERTEX (Google Vertex AI)
+    - CLAUDE_CODE_USE_FOUNDRY (Azure Foundry)
+    The auth pre-check should detect these as valid auth.
+    """
+
+    def test_claude_auth_detects_bedrock_env_var(self, tmp_path: Path) -> None:
+        """CLAUDE_CODE_USE_BEDROCK=1 should be detected as valid Claude auth."""
+        from markitai.providers.auth import _check_claude_credentials_auth
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch.dict("os.environ", {"CLAUDE_CODE_USE_BEDROCK": "1"}, clear=False),
+        ):
+            status = _check_claude_credentials_auth()
+
+        assert status.authenticated is True
+        assert status.provider == "claude-agent"
+
+    def test_claude_auth_detects_vertex_env_var(self, tmp_path: Path) -> None:
+        """CLAUDE_CODE_USE_VERTEX=1 should be detected as valid Claude auth."""
+        from markitai.providers.auth import _check_claude_credentials_auth
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch.dict("os.environ", {"CLAUDE_CODE_USE_VERTEX": "1"}, clear=False),
+        ):
+            status = _check_claude_credentials_auth()
+
+        assert status.authenticated is True
+        assert status.provider == "claude-agent"
+
+    def test_claude_auth_detects_foundry_env_var(self, tmp_path: Path) -> None:
+        """CLAUDE_CODE_USE_FOUNDRY=1 should be detected as valid Claude auth."""
+        from markitai.providers.auth import _check_claude_credentials_auth
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch.dict("os.environ", {"CLAUDE_CODE_USE_FOUNDRY": "1"}, clear=False),
+        ):
+            status = _check_claude_credentials_auth()
+
+        assert status.authenticated is True
+        assert status.provider == "claude-agent"
+
+    def test_claude_auth_env_var_overrides_missing_credentials(
+        self, tmp_path: Path
+    ) -> None:
+        """Bedrock env var should authenticate even without credentials file."""
+        from markitai.providers.auth import _check_claude_credentials_auth
+
+        assert not (tmp_path / ".claude").exists()
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch.dict("os.environ", {"CLAUDE_CODE_USE_BEDROCK": "1"}, clear=False),
+        ):
+            status = _check_claude_credentials_auth()
+
+        assert status.authenticated is True
+        assert status.error is None

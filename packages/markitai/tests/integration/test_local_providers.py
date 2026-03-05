@@ -403,6 +403,179 @@ class TestClaudeAgentIntegration:
         parsed = json.loads(content)
         assert parsed == expected_json
 
+    @pytest.mark.asyncio
+    async def test_bypass_permissions_requires_dangerous_flag(self) -> None:
+        """Test that bypassPermissions includes allow_dangerously_skip_permissions.
+
+        Per the official Claude Agent SDK docs, using permission_mode="bypassPermissions"
+        requires allow_dangerously_skip_permissions=True in ClaudeAgentOptions.
+        """
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        # Mock SDK components
+        mock_text_block = MagicMock()
+        mock_text_block.text = "Response"
+
+        mock_assistant_message = MagicMock()
+        mock_assistant_message.content = [mock_text_block]
+
+        mock_result_message = MagicMock()
+        mock_result_message.usage = {"input_tokens": 10, "output_tokens": 5}
+        mock_result_message.total_cost_usd = 0.0
+        mock_result_message.structured_output = None
+
+        mock_client = AsyncMock()
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response():
+            yield mock_assistant_message
+            yield mock_result_message
+
+        mock_client.receive_response = mock_receive_response
+
+        mock_sdk_client_class = MagicMock()
+        mock_sdk_client_instance = AsyncMock()
+        mock_sdk_client_instance.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_sdk_client_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_sdk_client_class.return_value = mock_sdk_client_instance
+
+        mock_types = MagicMock()
+        mock_types.AssistantMessage = type(mock_assistant_message)
+        mock_types.ResultMessage = type(mock_result_message)
+        mock_types.TextBlock = type(mock_text_block)
+
+        # Capture ClaudeAgentOptions call args
+        mock_options_class = MagicMock()
+        mock_sdk = MagicMock(
+            ClaudeSDKClient=mock_sdk_client_class,
+            ClaudeAgentOptions=mock_options_class,
+            types=mock_types,
+        )
+
+        with (
+            patch(
+                "markitai.providers.claude_agent._is_claude_agent_sdk_available",
+                return_value=True,
+            ),
+            patch.dict(
+                "sys.modules",
+                {
+                    "claude_agent_sdk": mock_sdk,
+                    "claude_agent_sdk.types": mock_types,
+                },
+            ),
+        ):
+            await provider.acompletion(
+                model="claude-agent/sonnet",
+                messages=[{"role": "user", "content": "Hello!"}],
+            )
+
+        # Verify allow_dangerously_skip_permissions=True was passed
+        options_call_kwargs = mock_options_class.call_args[1]
+        assert options_call_kwargs.get("permission_mode") == "bypassPermissions"
+        assert options_call_kwargs.get("allow_dangerously_skip_permissions") is True
+
+    @pytest.mark.asyncio
+    async def test_system_message_passed_as_system_prompt(self) -> None:
+        """Test that system messages use the SDK's system_prompt parameter.
+
+        Per the official SDK, system messages should be passed via the
+        system_prompt option in ClaudeAgentOptions, not wrapped in XML tags.
+        """
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        mock_text_block = MagicMock()
+        mock_text_block.text = "Response"
+
+        mock_assistant_message = MagicMock()
+        mock_assistant_message.content = [mock_text_block]
+
+        mock_result_message = MagicMock()
+        mock_result_message.usage = {"input_tokens": 10, "output_tokens": 5}
+        mock_result_message.total_cost_usd = 0.0
+        mock_result_message.structured_output = None
+
+        mock_client = AsyncMock()
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response():
+            yield mock_assistant_message
+            yield mock_result_message
+
+        mock_client.receive_response = mock_receive_response
+
+        mock_sdk_client_class = MagicMock()
+        mock_sdk_client_instance = AsyncMock()
+        mock_sdk_client_instance.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_sdk_client_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_sdk_client_class.return_value = mock_sdk_client_instance
+
+        mock_types = MagicMock()
+        mock_types.AssistantMessage = type(mock_assistant_message)
+        mock_types.ResultMessage = type(mock_result_message)
+        mock_types.TextBlock = type(mock_text_block)
+
+        mock_options_class = MagicMock()
+        mock_sdk = MagicMock(
+            ClaudeSDKClient=mock_sdk_client_class,
+            ClaudeAgentOptions=mock_options_class,
+            types=mock_types,
+        )
+
+        system_text = "You are a helpful assistant for code review."
+        messages = [
+            {"role": "system", "content": system_text},
+            {"role": "user", "content": "Review this code."},
+        ]
+
+        with (
+            patch(
+                "markitai.providers.claude_agent._is_claude_agent_sdk_available",
+                return_value=True,
+            ),
+            patch.dict(
+                "sys.modules",
+                {
+                    "claude_agent_sdk": mock_sdk,
+                    "claude_agent_sdk.types": mock_types,
+                },
+            ),
+        ):
+            await provider.acompletion(
+                model="claude-agent/sonnet",
+                messages=messages,
+            )
+
+        # Verify system_prompt was passed to ClaudeAgentOptions
+        options_call_kwargs = mock_options_class.call_args[1]
+        assert "system_prompt" in options_call_kwargs
+        assert system_text in options_call_kwargs["system_prompt"]
+
+        # Verify the prompt passed to client.query does NOT contain <system> tags
+        prompt_arg = mock_client.query.call_args[0][0]
+        if isinstance(prompt_arg, str):
+            assert "<system>" not in prompt_arg
+
+    def test_json_object_schema_uses_additional_properties_false(self) -> None:
+        """Test that json_object format uses additionalProperties: false.
+
+        Per the official Claude structured output docs, all objects must have
+        additionalProperties set to false.
+        """
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        result = provider._convert_response_format({"type": "json_object"})
+
+        assert result is not None
+        schema = result.get("schema", {})
+        assert schema.get("additionalProperties") is False
+
 
 # =============================================================================
 # TestCopilotIntegration
