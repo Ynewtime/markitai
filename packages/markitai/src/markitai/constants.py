@@ -319,8 +319,9 @@ IMAGE_EXTENSIONS: tuple[str, ...] = (
 )
 
 # Metadata directory namespace — isolates markitai metadata (assets, screenshots,
-# reports) from user content to prevent collisions with input directories.
+# reports, states) from user content to prevent collisions with input directories.
 MARKITAI_META_DIR = ".markitai"
 ASSETS_REL_PATH = f"{MARKITAI_META_DIR}/assets"
 SCREENSHOTS_REL_PATH = f"{MARKITAI_META_DIR}/screenshots"
 REPORTS_REL_PATH = f"{MARKITAI_META_DIR}/reports"
+STATES_REL_PATH = f"{MARKITAI_META_DIR}/states"

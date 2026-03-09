@@ -18,9 +18,9 @@ packages/markitai/
 ├── src/markitai/
 │   ├── cli/                # Click CLI
 │   │   ├── main.py         # 入口 (MarkitaiGroup, 全局选项, .env 加载)
-│   │   ├── commands/       # 子命令 (cache, config, doctor, init)
+│   │   ├── commands/       # 子命令 (auth, cache, config, doctor, init)
 │   │   ├── processors/     # 处理器 (batch, file, url, llm, validators)
-│   │   ├── framework.py    # CLI 基础框架
+│   │   ├── framework.py    # CLI 基础框架 (懒加载命令, 参数解析)
 │   │   ├── hints.py        # 错误提示与建议
 │   │   ├── interactive.py  # 交互模式向导
 │   │   └── console.py, ui.py, i18n.py, logging_config.py
@@ -28,10 +28,13 @@ packages/markitai/
 │   │   ├── base.py         # BaseConverter 抽象类, ConvertResult, 注册机制
 │   │   ├── pdf.py          # PDF (pymupdf4llm, OCR, LLM vision)
 │   │   ├── office.py       # DOCX/PPTX/XLSX (markitdown)
-│   │   ├── image.py        # 图片直传
+│   │   ├── markitdown_ext.py # HTML/CSV/EPUB/MSG/IPYNB/Numbers (markitdown)
+│   │   ├── kreuzberg.py    # TSV/XML/ODS/ODT/SVG/RTF/RST/ORG/TEX/EML
+│   │   ├── image.py        # 图片直传 (GIF/BMP/TIFF→PNG 转码)
 │   │   ├── text.py         # 纯文本
 │   │   ├── cloudflare.py   # Cloudflare Workers AI
-│   │   └── legacy.py       # 旧格式兜底
+│   │   ├── legacy.py       # 旧格式兜底
+│   │   └── _patches.py     # 兼容性补丁 (openpyxl/pptx)
 │   ├── llm/                # LLM 集成
 │   │   ├── processor.py    # LLMProcessor, HybridRouter, 路由逻辑
 │   │   ├── cache.py        # PersistentCache (SQLite, LRU)
@@ -47,6 +50,7 @@ packages/markitai/
 │   │   ├── chatgpt.py      # chatgpt/* (OAuth Device Code + Responses API)
 │   │   ├── gemini_cli.py   # gemini-cli/* (Gemini CLI OAuth)
 │   │   ├── auth.py         # AuthManager 单例, AuthStatus, 凭据检查
+│   │   ├── oauth_display.py # OAuth Device Code 显示辅助
 │   │   ├── errors.py       # 错误层次: ProviderError -> Auth/Quota/Timeout/SDK
 │   │   ├── timeout.py      # 自适应超时计算
 │   │   ├── json_mode.py    # StructuredOutputHandler (JSON 提取/验证)
@@ -55,9 +59,21 @@ packages/markitai/
 │   ├── utils/              # 工具模块
 │   │   ├── executor.py     # 共享 ThreadPoolExecutor (CPU 密集型任务)
 │   │   ├── frontmatter.py  # YAML frontmatter 生成
+│   │   ├── markdown_quality.py # Markdown 质量评分
 │   │   ├── mime.py, output.py, paths.py, progress.py, text.py
 │   │   ├── cli_helpers.py  # CLI 辅助
 │   │   └── office.py       # LibreOffice 集成
+│   ├── webextract/         # 原生 HTML 内容提取
+│   │   ├── pipeline.py     # 提取流水线 (HTML → clean HTML → Markdown)
+│   │   ├── scoring.py      # 候选内容节点评分与选择
+│   │   ├── sanitize.py     # HTML 清洗 (XSS 防护, 危险标签移除)
+│   │   ├── standardize.py  # 内容标准化 (链接, 图片, 代码块)
+│   │   ├── metadata.py     # 元数据提取 (OpenGraph, JSON-LD, meta)
+│   │   ├── schema.py       # Schema.org 回退逻辑
+│   │   ├── dom.py          # DOM 解析工具
+│   │   ├── elements/       # 元素处理 (code, footnotes, images)
+│   │   ├── extractors/     # 站点专用提取器 (GitHub Issues, X/Twitter)
+│   │   └── types.py, constants.py
 │   ├── workflow/           # 转换流水线
 │   │   ├── core.py         # ConversionContext, 主流水线编排
 │   │   ├── single.py       # 单文件处理
@@ -89,12 +105,13 @@ packages/markitai/
 - **PDF**: pymupdf4llm
 - **Office**: markitdown (Microsoft)
 - **OCR**: rapidocr
+- **HTML**: BeautifulSoup4 (webextract 原生提取)
 - **浏览器**: Playwright (可选)
 - **校验**: Pydantic v2
 - **日志**: Loguru
 - **终端 UI**: Rich
 - **安全扫描**: Bandit
-- **Pre-commit**: ruff check, ruff format, pyright, bandit
+- **Pre-commit**: ruff check, ruff format, sync-readme, sync-agent-instructions, pyright
 
 ## 开发命令
 
@@ -176,7 +193,7 @@ ProviderError (base, 携带 provider + retryable 属性)
 └── SDKNotAvailableError (不可重试, 需安装 SDK)
 ```
 
-**认证**: `AuthManager` 单例缓存认证状态；支持 CLI 认证和环境变量认证两种模式
+**认证**: `AuthManager` 单例缓存认证状态；支持 CLI 认证 (`markitai auth`) 和环境变量认证两种模式
 
 ### LLM 集成 (llm/)
 
@@ -184,21 +201,31 @@ ProviderError (base, 携带 provider + retryable 属性)
 - `HybridRouter` — 在标准 LiteLLM 模型和 4 个本地提供商间路由；weight=0 模型在 Router 创建前过滤
 - `DocumentMixin` — 文档处理、Vision 增强、分页批处理
 - `VisionMixin` — 图片分析（alt text、描述、OCR）
-- `PersistentCache` — SQLite LLM 缓存，LRU 淘汰，100MB 限制
+- `PersistentCache` — SQLite LLM 缓存，LRU 淘汰，512MB 限制
 - `ContentProtection` — 代码块保护、智能截断
 
 ### URL 抓取 (fetch.py, fetch_policy.py)
 
-- **策略模式**: static (httpx/curl-cffi) → playwright → cloudflare → jina
+- **策略模式**: defuddle → jina → static (httpx/curl-cffi) → playwright → cloudflare
 - **FetchPolicyEngine**: 基于域名特征和历史成功率动态排序策略
 - **内容校验门**: 所有策略的结果需通过内容质量校验才被接受
 - **自动 SPA 检测**: `JS_REQUIRED_PATTERNS` 识别需要浏览器渲染的站点
+- **原生提取**: `webextract/` 模块在 LLM 前提供 HTML→Markdown 转换
 
 ### 批处理 (batch.py)
 
 - `BatchState` 跟踪 `FileStatus`: PENDING → IN_PROGRESS → COMPLETED/FAILED
-- 状态持久化 `state.json`，报告持久化 `report.json`，支持 `--resume`
+- 状态持久化 `.markitai/states/`，报告持久化 `.markitai/reports/`，支持 `--resume`
 - 可配置并发度，按模型和文件跟踪费用
+
+### 元数据命名空间 (.markitai/)
+
+所有产出的元数据文件统一存放在输出目录下的 `.markitai/` 子目录，避免与用户内容冲突：
+- `MARKITAI_META_DIR = ".markitai"`
+- `ASSETS_REL_PATH = ".markitai/assets"` — 提取的图片资源
+- `SCREENSHOTS_REL_PATH = ".markitai/screenshots"` — 页面截图
+- `REPORTS_REL_PATH = ".markitai/reports"` — 批处理报告
+- `STATES_REL_PATH = ".markitai/states"` — 批处理断点状态
 
 ### 安全 (security.py)
 
@@ -217,7 +244,8 @@ ProviderError (base, 携带 provider + retryable 属性)
 - DEFAULT_BATCH_CONCURRENCY: 10
 - DEFAULT_MODEL_WEIGHT: 1（weight=0 禁用模型）
 - DEFAULT_PLAYWRIGHT_TIMEOUT: 30000 ms
-- DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS: 5000
+- DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS: 3000
+- DEFAULT_CACHE_SIZE_LIMIT: 512 MB
 
 ## 测试约定
 

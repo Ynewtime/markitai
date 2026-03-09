@@ -27,7 +27,7 @@ from rich.progress import (
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
-from markitai.constants import MARKITAI_META_DIR
+from markitai.constants import REPORTS_REL_PATH, STATES_REL_PATH
 from markitai.json_order import order_report, order_state
 from markitai.security import atomic_write_json
 from markitai.utils.text import format_error_message
@@ -547,7 +547,7 @@ class BatchProcessor:
 
         Format: states/markitai.<hash>.state.json
         """
-        states_dir = self.output_dir / MARKITAI_META_DIR / "states"
+        states_dir = self.output_dir / STATES_REL_PATH
         return states_dir / f"markitai.{self.task_hash}.state.json"
 
     def _get_report_file_path(self) -> Path:
@@ -556,7 +556,7 @@ class BatchProcessor:
         Format: reports/markitai.<hash>.report.json
         Respects on_conflict strategy for rename.
         """
-        reports_dir = self.output_dir / MARKITAI_META_DIR / "reports"
+        reports_dir = self.output_dir / REPORTS_REL_PATH
         base_path = reports_dir / f"markitai.{self.task_hash}.report.json"
 
         if not base_path.exists():

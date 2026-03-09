@@ -17,7 +17,11 @@ from click import Context
 # the heavy command modules at module level.  The short_help string is
 # used by format_help() so that displaying --help never triggers imports.
 _LAZY_COMMANDS: dict[str, tuple[str, str, str]] = {
-    "auth": ("markitai.cli.commands.auth", "auth", "Authentication helpers."),
+    "auth": (
+        "markitai.cli.commands.auth",
+        "auth",
+        "Authentication helpers for local providers.",
+    ),
     "cache": ("markitai.cli.commands.cache", "cache", "Cache management commands."),
     "config": (
         "markitai.cli.commands.config",
@@ -63,6 +67,9 @@ class MarkitaiGroup(click.Group):
         "-j",
         "--batch-concurrency",
         "--url-concurrency",
+        "-g",
+        "--glob",
+        "--max-depth",
     }
 
     def list_commands(self, ctx: Context) -> list[str]:
