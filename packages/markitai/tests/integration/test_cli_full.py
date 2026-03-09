@@ -459,7 +459,8 @@ class TestURLFetchStrategyOptions:
             [str(sample_txt), "-o", str(output_dir), "--playwright", "--jina"],
         )
         assert result.exit_code != 0
-        assert "mutually exclusive" in result.output.lower()
+        output = result.output.lower()
+        assert "mutually" in output and "exclusive" in output
 
 
 # =============================================================================
@@ -749,7 +750,7 @@ class TestBatchConversion:
         )
         assert result.exit_code == 0
 
-        reports_dir = output_dir / "reports"
+        reports_dir = output_dir / ".markitai" / "reports"
         assert reports_dir.exists()
         report_files = list(reports_dir.glob("*.json"))
         assert len(report_files) == 1

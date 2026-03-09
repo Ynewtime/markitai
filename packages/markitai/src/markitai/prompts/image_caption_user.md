@@ -1,1 +1,1 @@
-请为这张图片生成简短描述。
+Please generate a short description for this image.

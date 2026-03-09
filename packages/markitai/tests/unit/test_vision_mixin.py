@@ -236,7 +236,7 @@ def sample_png_file(tmp_path: Path, sample_png_bytes: bytes) -> Path:
 
 @pytest.fixture
 def sample_svg_file(tmp_path: Path) -> Path:
-    """Create a sample SVG file for testing (unsupported format)."""
+    """Create a sample SVG file for testing."""
     svg_path = tmp_path / "test_image.svg"
     svg_path.write_text("<svg></svg>")
     return svg_path
@@ -300,8 +300,9 @@ class TestAnalyzeImage:
     async def test_unsupported_format_returns_placeholder(
         self, mock_processor: MockVisionProcessor, sample_svg_file: Path
     ):
-        """Unsupported formats (SVG) return placeholder result."""
-        result = await mock_processor.analyze_image(sample_svg_file)
+        """SVG returns a placeholder result when rasterization support is unavailable."""
+        with patch("markitai.utils.mime.importlib.util.find_spec", return_value=None):
+            result = await mock_processor.analyze_image(sample_svg_file)
 
         assert result.caption == "test_image"  # stem of filename
         assert "not supported" in result.description.lower()
@@ -365,29 +366,8 @@ class TestAnalyzeImage:
             # Verify cache.set was called
             mock_processor._persistent_cache.set.assert_called_once()
             call_args = mock_processor._persistent_cache.set.call_args
-            assert call_args[0][0] == "image_analysis:en"  # cache_key
+            assert call_args[0][0] == "image_analysis"  # cache_key
             assert call_args[1]["model"] == "vision"
-
-    @pytest.mark.asyncio
-    async def test_language_chinese(
-        self, mock_processor: MockVisionProcessor, sample_png_file: Path
-    ):
-        """Chinese language uses correct prompt."""
-        with patch.object(
-            mock_processor,
-            "_analyze_image_with_fallback",
-            new_callable=AsyncMock,
-        ) as mock_fallback:
-            mock_fallback.return_value = ImageAnalysis(
-                caption="图片说明",
-                description="图片描述",
-            )
-
-            await mock_processor.analyze_image(sample_png_file, language="zh")
-
-            # Verify Chinese prompt was used
-            calls = mock_processor._prompt_manager.get_prompt.call_args_list
-            assert any("中文" in str(call) for call in calls)
 
 
 # =============================================================================
@@ -472,7 +452,7 @@ class TestAnalyzeImagesBatch:
         """Results maintain original order."""
         call_count = 0
 
-        async def mock_analyze(paths: list[Path], lang: str, ctx: str):
+        async def mock_analyze(paths: list[Path], context: str = ""):
             nonlocal call_count
             call_count += 1
             return [
@@ -506,13 +486,14 @@ class TestAnalyzeBatch:
     async def test_all_unsupported_formats(
         self, mock_processor: MockVisionProcessor, tmp_path: Path
     ):
-        """All unsupported formats return placeholders."""
+        """Unsupported SVG inputs return placeholders when rasterization is unavailable."""
         svg1 = tmp_path / "img1.svg"
         svg2 = tmp_path / "img2.svg"
         svg1.write_text("<svg>1</svg>")
         svg2.write_text("<svg>2</svg>")
 
-        result = await mock_processor.analyze_batch([svg1, svg2], "en")
+        with patch("markitai.utils.mime.importlib.util.find_spec", return_value=None):
+            result = await mock_processor.analyze_batch([svg1, svg2])
 
         assert len(result) == 2
         assert all("not supported" in r.description.lower() for r in result)
@@ -524,9 +505,7 @@ class TestAnalyzeBatch:
         multiple_png_files: list[Path],
     ):
         """All cached images return cached results."""
-        result = await mock_processor_with_cache.analyze_batch(
-            multiple_png_files[:2], "en"
-        )
+        result = await mock_processor_with_cache.analyze_batch(multiple_png_files[:2])
 
         assert len(result) == 2
         assert all(r.caption == "Cached caption" for r in result)
@@ -584,7 +563,7 @@ class TestAnalyzeBatch:
             mock_client.chat.completions.create_with_completion = mock_create
 
             result = await mock_processor.analyze_batch(
-                multiple_png_files, "en", context="test"
+                multiple_png_files, context="test"
             )
 
             assert len(result) == 5
@@ -615,7 +594,7 @@ class TestAnalyzeBatch:
                     description="Fallback desc",
                 )
 
-                _ = await mock_processor.analyze_batch(multiple_png_files[:2], "en")
+                _ = await mock_processor.analyze_batch(multiple_png_files[:2])
 
                 # Should fall back to individual analysis
                 assert mock_single.call_count == 2
@@ -658,7 +637,7 @@ class TestAnalyzeBatch:
                     description="Fallback desc",
                 )
 
-                await mock_processor.analyze_batch([sample_png_file], "en")
+                await mock_processor.analyze_batch([sample_png_file])
 
                 # Should fall back due to truncation
                 mock_single.assert_called_once()
@@ -1086,50 +1065,6 @@ class TestAnalyzeWithTwoCalls:
         assert result.llm_usage["test/model"]["output_tokens"] == 100
 
     @pytest.mark.asyncio
-    async def test_chinese_language_detection(
-        self, mock_processor: MockVisionProcessor
-    ):
-        """Chinese language is detected from system prompt."""
-        messages = [
-            {"role": "system", "content": "分析图片，使用中文回复"},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "描述"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/png;base64,x"},
-                    },
-                ],
-            },
-        ]
-
-        prompt_calls = []
-
-        def capture_prompt(name, **kwargs):
-            prompt_calls.append((name, kwargs))
-            return f"Mock prompt: {name}"
-
-        mock_processor._prompt_manager.get_prompt.side_effect = capture_prompt
-
-        async def mock_call_llm(model, messages, context=""):
-            return LLMResponse(
-                content="结果",
-                model="test/model",
-                input_tokens=50,
-                output_tokens=20,
-                cost_usd=0.0005,
-            )
-
-        mock_processor._call_llm = mock_call_llm
-
-        await mock_processor._analyze_with_two_calls(messages)
-
-        # Should use Chinese language
-        lang_params = [call[1].get("language") for call in prompt_calls]
-        assert "中文" in lang_params
-
-    @pytest.mark.asyncio
     async def test_old_message_format(self, mock_processor: MockVisionProcessor):
         """Old message format (no system role) is handled."""
         messages = [
@@ -1259,7 +1194,7 @@ class TestEdgeCases:
         in_progress = 0
         max_concurrent = 0
 
-        async def mock_analyze(paths, lang, ctx):
+        async def mock_analyze(paths, context=""):
             nonlocal in_progress, max_concurrent
             in_progress += 1
             max_concurrent = max(max_concurrent, in_progress)
@@ -1399,7 +1334,7 @@ class TestBatchResultPadding:
             mock_client.chat.completions.create_with_completion = mock_create
 
             result = await mock_processor.analyze_batch(
-                multiple_png_files[:3], "en", context="test"
+                multiple_png_files[:3], context="test"
             )
 
             # Should have 3 results (padded)
@@ -1444,7 +1379,7 @@ class TestUsageTracking:
 
             mock_client.chat.completions.create_with_completion = mock_create
 
-            await mock_processor.analyze_batch([sample_png_file], "en", "test.pdf")
+            await mock_processor.analyze_batch([sample_png_file], context="test.pdf")
 
             # Check usage was tracked
             assert "gpt-4-vision" in mock_processor._usage
@@ -1486,7 +1421,7 @@ class TestUsageTracking:
             mock_client.chat.completions.create_with_completion = mock_create
 
             results = await mock_processor.analyze_batch(
-                multiple_png_files[:3], "en", "test"
+                multiple_png_files[:3], context="test"
             )
 
             # Each result should have per-image usage

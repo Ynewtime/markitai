@@ -37,12 +37,12 @@ class TestDoctorDepsCommand:
                 "markitai.fetch_playwright.is_playwright_browser_installed"
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
-            patch("shutil.which") as mock_which,
+            patch("markitai.cli.commands.doctor.shutil.which", return_value=None),
+            patch("markitai.utils.office.find_libreoffice", return_value=None),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = False
             mock_browser.return_value = False
-            mock_which.return_value = None
 
             result = runner.invoke(doctor)
 
@@ -65,12 +65,12 @@ class TestDoctorDepsCommand:
                 "markitai.fetch_playwright.is_playwright_browser_installed"
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
-            patch("shutil.which") as mock_which,
+            patch("markitai.cli.commands.doctor.shutil.which", return_value=None),
+            patch("markitai.utils.office.find_libreoffice", return_value=None),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = False
             mock_browser.return_value = False
-            mock_which.return_value = None
 
             result = runner.invoke(doctor, ["--json"])
 
@@ -111,12 +111,12 @@ class TestPlaywrightDependency:
                 "markitai.fetch_playwright.is_playwright_browser_installed"
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
-            patch("shutil.which") as mock_which,
+            patch("markitai.cli.commands.doctor.shutil.which", return_value=None),
+            patch("markitai.utils.office.find_libreoffice", return_value=None),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = True
             mock_browser.return_value = True
-            mock_which.return_value = None
 
             result = runner.invoke(doctor, ["--json"])
 
@@ -136,12 +136,12 @@ class TestPlaywrightDependency:
                 "markitai.fetch_playwright.is_playwright_browser_installed"
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
-            patch("shutil.which") as mock_which,
+            patch("markitai.cli.commands.doctor.shutil.which", return_value=None),
+            patch("markitai.utils.office.find_libreoffice", return_value=None),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = True
             mock_browser.return_value = False
-            mock_which.return_value = None
 
             result = runner.invoke(doctor, ["--json"])
 
@@ -161,12 +161,12 @@ class TestPlaywrightDependency:
                 "markitai.fetch_playwright.is_playwright_browser_installed"
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
-            patch("shutil.which") as mock_which,
+            patch("markitai.cli.commands.doctor.shutil.which", return_value=None),
+            patch("markitai.utils.office.find_libreoffice", return_value=None),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = False
             mock_browser.return_value = False
-            mock_which.return_value = None
 
             result = runner.invoke(doctor, ["--json"])
 

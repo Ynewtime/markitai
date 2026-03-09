@@ -7,9 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from markitdown import MarkItDown
 
-from markitai.constants import DEFAULT_RENDER_DPI
+from markitai.constants import DEFAULT_RENDER_DPI, SCREENSHOTS_REL_PATH
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -35,6 +34,8 @@ class OfficeConverter(BaseConverter):
 
     def __init__(self, config: MarkitaiConfig | None = None) -> None:
         super().__init__(config)
+        from markitdown import MarkItDown
+
         self._markitdown = MarkItDown()
 
     def convert(
@@ -194,7 +195,7 @@ class PptxConverter(OfficeConverter):
             markdown_parts.append("\n\n<!-- Slide images for reference -->")
             for slide_info in slide_images:
                 markdown_parts.append(
-                    f"<!-- ![Slide {slide_info['page']}](screenshots/{slide_info['name']}) -->"
+                    f"<!-- ![Slide {slide_info['page']}]({SCREENSHOTS_REL_PATH}/{slide_info['name']}) -->"
                 )
 
         markdown = "\n".join(markdown_parts)

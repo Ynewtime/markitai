@@ -12,12 +12,17 @@ from __future__ import annotations
 
 import re
 
+from markitai.constants import SCREENSHOTS_REL_PATH
+
 # Pre-compiled regex patterns for hot path functions
 _IMAGE_LINK_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _SLIDE_COMMENT_RE = re.compile(r"<!--\s*Slide\s+(?:number:\s*)?\d+\s*-->")
 _PAGE_NUMBER_COMMENT_RE = re.compile(r"<!--\s*Page number:\s*\d+\s*-->")
 _PAGE_HEADER_COMMENT_RE = re.compile(r"<!--\s*Page images for reference\s*-->")
 _PAGE_IMG_COMMENT_RE = re.compile(r"<!--\s*!\[Page\s+\d+\]\([^)]*\)\s*-->")
+_SCREENSHOT_HEADER_COMMENT_RE = re.compile(r"<!--\s*Screenshot for reference\s*-->")
+_SCREENSHOT_IMG_COMMENT_RE = re.compile(r"<!--\s*!\[Screenshot\]\([^)]*\)\s*-->")
 _PAGE_NUM_MARKER_RE = re.compile(r"<!--\s*Page number:\s*\d+\s*-->")
 _SLIDE_NUM_MARKER_RE = re.compile(r"<!--\s*Slide number:\s*\d+\s*-->")
 _HALLUCINATED_SLIDE_RE = re.compile(r"<!--\s*Slide\s+number:\s*\d+\s*-->\s*\n?")
@@ -111,8 +116,9 @@ def extract_protected_content(content: str) -> dict[str, list[str]]:
         "page_comments": [],
     }
 
-    # Extract image links
-    protected["images"] = _IMAGE_LINK_RE.findall(content)
+    # Extract image links, excluding HTML comments because commented screenshot/page
+    # references are restored separately via page_comments.
+    protected["images"] = _IMAGE_LINK_RE.findall(_HTML_COMMENT_RE.sub("", content))
 
     # Extract slide comments: <!-- Slide X --> or <!-- Slide number: X -->
     protected["slides"] = _SLIDE_COMMENT_RE.findall(content)
@@ -122,10 +128,12 @@ def extract_protected_content(content: str) -> dict[str, list[str]]:
 
     # Extract page image comments
     # Pattern 1: <!-- Page images for reference -->
-    # Pattern 2: <!-- ![Page X](screenshots/...) -->
+    # Pattern 2: <!-- ![Page X](.markitai/screenshots/...) -->
     protected["page_comments"] = _PAGE_HEADER_COMMENT_RE.findall(
         content
     ) + _PAGE_IMG_COMMENT_RE.findall(content)
+    protected["page_comments"] += _SCREENSHOT_HEADER_COMMENT_RE.findall(content)
+    protected["page_comments"] += _SCREENSHOT_IMG_COMMENT_RE.findall(content)
 
     return protected
 
@@ -176,6 +184,16 @@ def protect_content(content: str) -> tuple[str, dict[str, str]]:
         result = result.replace(match.group(0), placeholder, 1)
         page_idx += 1
     for match in _PAGE_IMG_COMMENT_RE.finditer(result):
+        placeholder = f"__MARKITAI_PAGE_{page_idx}__"
+        mapping[placeholder] = match.group(0)
+        result = result.replace(match.group(0), placeholder, 1)
+        page_idx += 1
+    for match in _SCREENSHOT_HEADER_COMMENT_RE.finditer(result):
+        placeholder = f"__MARKITAI_PAGE_{page_idx}__"
+        mapping[placeholder] = match.group(0)
+        result = result.replace(match.group(0), placeholder, 1)
+        page_idx += 1
+    for match in _SCREENSHOT_IMG_COMMENT_RE.finditer(result):
         placeholder = f"__MARKITAI_PAGE_{page_idx}__"
         mapping[placeholder] = match.group(0)
         result = result.replace(match.group(0), placeholder, 1)
@@ -313,14 +331,12 @@ def unprotect_content(
                 # Don't append orphan slides to the end - they look wrong
             result = "\n".join(lines)
 
-        # Log missing page number markers but do NOT restore them
-        # Reason: If LLM removed a page marker, we should respect that decision
-        # Programmatic restoration often inserts markers at wrong positions
+        # Log missing page number markers. The document layer decides whether to
+        # fall back to the original paginated content when markers are lost.
         missing_page_nums = [
             p for p in protected.get("page_numbers", []) if p not in result
         ]
         if missing_page_nums:
-            # Extract page numbers for logging
             missing_nums = []
             for page_marker in missing_page_nums:
                 match = _PAGE_NUM_EXTRACT_RE.search(page_marker)
@@ -334,7 +350,9 @@ def unprotect_content(
         # Restore missing page comments at end
         # Only restore if not already present (avoid duplicates)
         page_header = "<!-- Page images for reference -->"
+        screenshot_header = "<!-- Screenshot for reference -->"
         has_page_header = page_header in result
+        has_screenshot_header = screenshot_header in result
 
         for comment in protected.get("page_comments", []):
             if comment not in result:
@@ -343,6 +361,10 @@ def unprotect_content(
                     if not has_page_header:
                         result = result.rstrip() + "\n\n" + comment
                         has_page_header = True
+                elif comment == screenshot_header:
+                    if not has_screenshot_header:
+                        result = result.rstrip() + "\n\n" + comment
+                        has_screenshot_header = True
                 # For individual page image comments, check if already exists
                 else:
                     # Extract page number to check for duplicates
@@ -353,6 +375,8 @@ def unprotect_content(
                         page_pattern = rf"!\[Page\s+{page_num}\]"
                         if not re.search(page_pattern, result):
                             result = result.rstrip() + "\n" + comment
+                    else:
+                        result = result.rstrip() + "\n" + comment
 
     return result
 
@@ -433,7 +457,7 @@ def protect_image_positions(
 
     Args:
         text: Original markdown content
-        exclude_screenshots: If True, skip screenshot references (screenshots/ paths)
+        exclude_screenshots: If True, skip screenshot references (.markitai/screenshots/ paths)
 
     Returns:
         Tuple of (content with placeholders, mapping of placeholder -> original)
@@ -445,7 +469,7 @@ def protect_image_positions(
     for img_idx, match in enumerate(_IMAGE_LINK_RE.finditer(result)):
         img_ref = match.group(0)
         # Skip screenshot placeholders if requested (handled separately in document processing)
-        if exclude_screenshots and "screenshots/" in img_ref:
+        if exclude_screenshots and f"{SCREENSHOTS_REL_PATH}/" in img_ref:
             continue
         placeholder = f"__MARKITAI_IMG_{img_idx}__"
         mapping[placeholder] = img_ref

@@ -344,10 +344,10 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         Raises:
             RuntimeError: If SDK is not available or authentication fails
         """
-        # Log ignored parameters at DEBUG level
+        # Log ignored parameters at TRACE level to keep file logs compact
         ignored_params = [k for k in kwargs if k in self._UNSUPPORTED_PARAMS]
         if ignored_params:
-            logger.debug(f"[ClaudeAgent] Ignoring unsupported params: {ignored_params}")
+            logger.trace(f"[ClaudeAgent] Ignoring unsupported params: {ignored_params}")
 
         if not _is_claude_agent_sdk_available():
             raise RuntimeError(
@@ -408,7 +408,7 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
 
         # Calculate adaptive timeout based on message content
         timeout = calculate_timeout_from_messages(messages)
-        logger.debug(f"[ClaudeAgent] Using adaptive timeout: {timeout}s")
+        logger.trace(f"[ClaudeAgent] Using adaptive timeout: {timeout}s")
 
         start_time = time.time()
         result_text = ""
@@ -434,7 +434,7 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
             # Add output_format if structured output is requested
             if output_format:
                 options_kwargs["output_format"] = output_format
-                logger.debug("[ClaudeAgent] Using structured output mode")
+                logger.trace("[ClaudeAgent] Using structured output mode")
 
             options = claude_agent_sdk.ClaudeAgentOptions(**options_kwargs)
 
@@ -483,7 +483,7 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         elapsed = time.time() - start_time
 
         cost_str = f", cost=${total_cost_usd:.4f}" if total_cost_usd > 0 else ""
-        logger.debug(
+        logger.trace(
             f"[ClaudeAgent] Completed in {elapsed:.2f}s, "
             f"response_length={len(result_text)}{cost_str}"
         )
@@ -491,6 +491,19 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
         # Build usage object
         input_tokens = usage_info.get("input_tokens", 0)
         output_tokens = usage_info.get("output_tokens", 0)
+
+        # Claude Agent SDK may under-report input tokens (known issue).
+        # Estimate from message content when SDK value seems too low.
+        if input_tokens < 50:
+            estimated = (
+                sum(len(str(m.get("content", ""))) for m in messages) // 4
+            )  # ~4 chars per token heuristic
+            if estimated > input_tokens:
+                logger.trace(
+                    f"[ClaudeAgent] SDK reported input_tokens={input_tokens}, "
+                    f"estimated={estimated}, using estimate"
+                )
+                input_tokens = estimated
 
         # Determine content for response
         # If structured output is available, serialize it as JSON string

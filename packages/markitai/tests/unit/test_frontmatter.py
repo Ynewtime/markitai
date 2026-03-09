@@ -95,6 +95,11 @@ More content."""
         content = "#   Title with spaces   \n\nContent"
         assert extract_title_from_content(content) == "Title with spaces"
 
+    def test_strip_markdown_formatting_from_heading_title(self) -> None:
+        """Markdown emphasis should not leak into extracted titles."""
+        content = "# **Bold Title**\n\nContent"
+        assert extract_title_from_content(content) == "Bold Title"
+
     def test_h1_with_multiple_hashes(self) -> None:
         """Should only match single # for H1."""
         content = "## Not H1\n### Also not H1\n# This is H1\n\nContent"
@@ -155,6 +160,16 @@ class TestBuildFrontmatterDict:
 
         assert result["title"] == "Explicit Title"
 
+    def test_explicit_title_strips_markdown_formatting(self) -> None:
+        """Explicit titles should be normalized for frontmatter."""
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description="Description",
+            title="**Explicit Title**",
+        )
+
+        assert result["title"] == "Explicit Title"
+
     def test_title_from_content_extraction(self) -> None:
         """Should extract title from content when not provided explicitly."""
         content = "# Extracted Title\n\nSome content."
@@ -165,6 +180,16 @@ class TestBuildFrontmatterDict:
         )
 
         assert result["title"] == "Extracted Title"
+
+    def test_structured_sources_do_not_derive_title_from_content(self) -> None:
+        """Structured files should keep a stable source-based title."""
+        result = build_frontmatter_dict(
+            source="sample.tsv",
+            description="Dataset",
+            content="# Employee Roster\n\nTabular content.",
+        )
+
+        assert result["title"] == "sample.tsv"
 
     def test_title_fallback_to_source_filename(self) -> None:
         """Should fallback to source filename when no title extractable."""
@@ -208,12 +233,12 @@ class TestBuildFrontmatterDict:
 
     def test_timestamp_is_current(self) -> None:
         """Timestamp should be close to current time."""
-        before = datetime.now().replace(microsecond=0)
+        before = datetime.now().astimezone().replace(microsecond=0)
         result = build_frontmatter_dict(
             source="doc.pdf",
             description="Description",
         )
-        after = datetime.now().replace(microsecond=0)
+        after = datetime.now().astimezone().replace(microsecond=0)
 
         timestamp = datetime.fromisoformat(result["markitai_processed"])
         # Allow 1 second tolerance for test execution time
@@ -420,3 +445,118 @@ class TestFrontmatterToYaml:
         desc_pos = yaml_str.find("description:")
 
         assert title_pos < source_pos < desc_pos
+
+
+class TestBuildFrontmatterConsistency:
+    """Tests for frontmatter consistency fixes.
+
+    Issue 1: External strategy metadata (defuddle author, etc.) should be preserved.
+    Issue 2: markitai_processed format must be consistent; fetch_strategy in .llm.md.
+    Issue 3: YAML special characters must be properly escaped.
+    """
+
+    def test_fetch_strategy_accepted_by_build_frontmatter_dict(self) -> None:
+        """build_frontmatter_dict should accept and include fetch_strategy."""
+        result = build_frontmatter_dict(
+            source="https://example.com",
+            description="A page",
+            fetch_strategy="defuddle",
+        )
+        assert result["fetch_strategy"] == "defuddle"
+
+    def test_fetch_strategy_in_field_order(self) -> None:
+        """fetch_strategy should appear after markitai_processed in output."""
+        result = build_frontmatter_dict(
+            source="https://example.com",
+            description="A page",
+            tags=["test"],
+            fetch_strategy="static",
+        )
+        keys = list(result.keys())
+        assert keys.index("markitai_processed") < keys.index("fetch_strategy")
+
+    def test_fetch_strategy_omitted_when_none(self) -> None:
+        """fetch_strategy should not appear when not provided."""
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description="A doc",
+        )
+        assert "fetch_strategy" not in result
+
+    def test_extra_meta_preserved(self) -> None:
+        """Extra metadata from external strategies should be preserved."""
+        extra = {"author": "John", "published": "2024-01-15", "domain": "example.com"}
+        result = build_frontmatter_dict(
+            source="https://example.com",
+            description="A page",
+            extra_meta=extra,
+        )
+        assert result["author"] == "John"
+        assert result["published"] == "2024-01-15"
+        assert result["domain"] == "example.com"
+
+    def test_extra_meta_does_not_override_canonical_fields(self) -> None:
+        """Extra metadata must not override canonical fields like title/source."""
+        extra = {"title": "WRONG", "source": "WRONG", "markitai_processed": "WRONG"}
+        result = build_frontmatter_dict(
+            source="https://example.com",
+            description="A page",
+            title="Correct Title",
+            extra_meta=extra,
+        )
+        assert result["title"] == "Correct Title"
+        assert result["source"] == "https://example.com"
+        assert result["markitai_processed"] != "WRONG"
+
+    def test_extra_meta_appears_after_canonical_fields(self) -> None:
+        """Extra metadata fields should come after canonical fields in order."""
+        extra = {"author": "John"}
+        result = build_frontmatter_dict(
+            source="https://example.com",
+            description="A page",
+            extra_meta=extra,
+        )
+        keys = list(result.keys())
+        assert keys.index("markitai_processed") < keys.index("author")
+
+    def test_timestamp_format_consistent(self) -> None:
+        """markitai_processed should use ISO 8601 with milliseconds + timezone."""
+        import re
+
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description="A doc",
+        )
+        ts = result["markitai_processed"]
+        # Should match: 2026-03-06T14:20:21.123+08:00
+        assert re.match(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$", ts
+        ), f"Timestamp format wrong: {ts}"
+
+    def test_yaml_special_chars_in_title(self) -> None:
+        """Titles with YAML special characters should produce valid YAML."""
+        import yaml
+
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description="A doc",
+            title='Title: with "quotes" and [brackets]',
+        )
+        yaml_str = frontmatter_to_yaml(result)
+        # Must be parseable
+        parsed = yaml.safe_load(yaml_str)
+        assert parsed["title"] == 'Title: with "quotes" and [brackets]'
+
+    def test_yaml_special_chars_in_extra_meta(self) -> None:
+        """Extra meta values with special chars should produce valid YAML."""
+        import yaml
+
+        extra = {"author": "O'Brien & Sons: Ltd."}
+        result = build_frontmatter_dict(
+            source="doc.pdf",
+            description="A doc",
+            extra_meta=extra,
+        )
+        yaml_str = frontmatter_to_yaml(result)
+        parsed = yaml.safe_load(yaml_str)
+        assert parsed["author"] == "O'Brien & Sons: Ltd."

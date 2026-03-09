@@ -120,9 +120,9 @@ class TestProtectContentImagesNotProtected:
 
     def test_images_pass_through(self):
         """Images should not be replaced with placeholders."""
-        text = "Text.\n\n![Image](assets/doc.0001.jpg)\n\nMore text."
+        text = "Text.\n\n![Image](.markitai/assets/doc.0001.jpg)\n\nMore text."
         protected, mapping = protect_content(text)
         # Images should remain as-is (not protected)
-        assert "![Image](assets/doc.0001.jpg)" in protected
+        assert "![Image](.markitai/assets/doc.0001.jpg)" in protected
         # No image-related mappings
         assert not any("IMG" in k for k in mapping)

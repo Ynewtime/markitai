@@ -136,7 +136,7 @@ class TestBatchConversionResults:
     def test_report_generated(self, converted_fixtures: dict):
         """Test conversion report was generated."""
         output_dir = converted_fixtures["output_dir"]
-        reports_dir = output_dir / "reports"
+        reports_dir = output_dir / ".markitai" / "reports"
         assert reports_dir.exists(), "Reports directory should exist"
 
         report_files = list(reports_dir.glob("*.json"))
@@ -146,7 +146,7 @@ class TestBatchConversionResults:
     def test_report_structure(self, converted_fixtures: dict):
         """Test report has correct structure."""
         output_dir = converted_fixtures["output_dir"]
-        reports_dir = output_dir / "reports"
+        reports_dir = output_dir / ".markitai" / "reports"
         report_files = list(reports_dir.glob("*.json"))
         report = json.loads(report_files[0].read_text(encoding="utf-8"))
 
@@ -363,7 +363,7 @@ class TestReportVerification:
     def test_report_timing(self, converted_fixtures: dict):
         """Test report contains timing information."""
         output_dir = converted_fixtures["output_dir"]
-        reports_dir = output_dir / "reports"
+        reports_dir = output_dir / ".markitai" / "reports"
         report_files = list(reports_dir.glob("*.json"))
         report = json.loads(report_files[0].read_text(encoding="utf-8"))
 
@@ -373,7 +373,7 @@ class TestReportVerification:
     def test_report_documents(self, converted_fixtures: dict):
         """Test report documents list."""
         output_dir = converted_fixtures["output_dir"]
-        reports_dir = output_dir / "reports"
+        reports_dir = output_dir / ".markitai" / "reports"
         report_files = list(reports_dir.glob("*.json"))
         report = json.loads(report_files[0].read_text(encoding="utf-8"))
 

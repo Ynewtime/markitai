@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from markitai.utils.text import clean_control_characters, format_error_message
+from markitai.utils.text import (
+    clean_control_characters,
+    format_error_message,
+    preview_items_for_log,
+)
 
 
 class TestCleanControlCharacters:
@@ -246,3 +250,18 @@ class TestFormatErrorMessageIntegration:
             assert "Traceback" not in result
             # Should get a useful message
             assert "timed out" in result or "Timeout" in result
+
+
+class TestPreviewItemsForLog:
+    """Tests for preview_items_for_log helper."""
+
+    def test_returns_full_list_when_within_limit(self) -> None:
+        """Short lists should be rendered in full."""
+        assert preview_items_for_log(["a", "b"], max_items=3) == "a, b"
+
+    def test_truncates_with_more_suffix(self) -> None:
+        """Long lists should be summarized with a +N more suffix."""
+        assert (
+            preview_items_for_log(["a", "b", "c", "d", "e"], max_items=3)
+            == "a, b, c, +2 more"
+        )

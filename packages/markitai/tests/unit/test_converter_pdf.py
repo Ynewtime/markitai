@@ -77,19 +77,19 @@ class TestFixImagePaths:
     def test_fix_absolute_paths(self) -> None:
         """Test fixing absolute image paths to relative."""
         converter = PdfConverter()
-        image_path = Path("/tmp/output/assets")
+        image_path = Path("/tmp/output/.markitai/assets")
 
-        markdown = "![](C:/tmp/output/assets/image1.jpg)"
+        markdown = "![](C:/tmp/output/.markitai/assets/image1.jpg)"
         # On POSIX, this won't match since the path uses Windows format
         # Test with POSIX path
         markdown = f"![]({image_path.as_posix()}/image1.jpg)"
         result = converter._fix_image_paths(markdown, image_path)
-        assert result == "![](assets/image1.jpg)"
+        assert result == "![](.markitai/assets/image1.jpg)"
 
     def test_fix_multiple_images(self) -> None:
         """Test fixing multiple image paths."""
         converter = PdfConverter()
-        image_path = Path("/home/user/output/assets")
+        image_path = Path("/home/user/output/.markitai/assets")
 
         markdown = f"""# Document
 
@@ -100,56 +100,56 @@ Some text here.
 ![Second image]({image_path.as_posix()}/image2.jpg)
 """
         result = converter._fix_image_paths(markdown, image_path)
-        assert "![First image](assets/image1.png)" in result
-        assert "![Second image](assets/image2.jpg)" in result
+        assert "![First image](.markitai/assets/image1.png)" in result
+        assert "![Second image](.markitai/assets/image2.jpg)" in result
         assert image_path.as_posix() not in result
 
     def test_preserve_alt_text(self) -> None:
         """Test that alt text is preserved when fixing paths."""
         converter = PdfConverter()
-        image_path = Path("/tmp/assets")
+        image_path = Path("/tmp/.markitai/assets")
 
         markdown = f"![Alt text with spaces]({image_path.as_posix()}/image.png)"
         result = converter._fix_image_paths(markdown, image_path)
-        assert result == "![Alt text with spaces](assets/image.png)"
+        assert result == "![Alt text with spaces](.markitai/assets/image.png)"
 
     def test_empty_alt_text(self) -> None:
         """Test fixing paths with empty alt text."""
         converter = PdfConverter()
-        image_path = Path("/tmp/assets")
+        image_path = Path("/tmp/.markitai/assets")
 
         markdown = f"![]({image_path.as_posix()}/image.png)"
         result = converter._fix_image_paths(markdown, image_path)
-        assert result == "![](assets/image.png)"
+        assert result == "![](.markitai/assets/image.png)"
 
     def test_no_change_for_relative_paths(self) -> None:
         """Test that relative paths are not changed incorrectly."""
         converter = PdfConverter()
         image_path = Path("/different/path")
 
-        markdown = "![](assets/image.png)"
+        markdown = "![](.markitai/assets/image.png)"
         result = converter._fix_image_paths(markdown, image_path)
-        assert result == "![](assets/image.png)"
+        assert result == "![](.markitai/assets/image.png)"
 
     def test_special_characters_in_path(self) -> None:
         """Test handling of special regex characters in path."""
         converter = PdfConverter()
         # Path with special regex characters
-        image_path = Path("/tmp/test[1]/assets")
+        image_path = Path("/tmp/test[1]/.markitai/assets")
 
         markdown = f"![]({image_path.as_posix()}/image.png)"
         result = converter._fix_image_paths(markdown, image_path)
-        assert result == "![](assets/image.png)"
+        assert result == "![](.markitai/assets/image.png)"
 
     def test_cross_platform_path(self) -> None:
         """Test that POSIX paths work on all platforms."""
         converter = PdfConverter()
         # Use a path that would be different on Windows vs POSIX
-        image_path = Path("/home/user/documents/output/assets")
+        image_path = Path("/home/user/documents/output/.markitai/assets")
 
         markdown = f"![test]({image_path.as_posix()}/document.pdf-1-0.jpg)"
         result = converter._fix_image_paths(markdown, image_path)
-        assert result == "![test](assets/document.pdf-1-0.jpg)"
+        assert result == "![test](.markitai/assets/document.pdf-1-0.jpg)"
 
 
 class TestCollectEmbeddedImages:
@@ -303,7 +303,7 @@ class TestConvertBasic:
         _ = converter.convert(pdf_file, output_dir)
 
         # Check that assets directory was created
-        assets_dir = output_dir / "assets"
+        assets_dir = output_dir / ".markitai" / "assets"
         assert assets_dir.exists()
 
         # Verify pymupdf4llm was called with correct image_path
@@ -578,7 +578,7 @@ class TestImageCompression:
         """Test that images are compressed when config.image.compress=True."""
         # Create a fake image file
         output_dir = tmp_path / "output"
-        assets_dir = output_dir / "assets"
+        assets_dir = output_dir / ".markitai" / "assets"
         assets_dir.mkdir(parents=True)
 
         pdf_file = tmp_path / "test.pdf"

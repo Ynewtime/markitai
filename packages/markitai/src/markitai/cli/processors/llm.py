@@ -13,15 +13,18 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from markitai.config import MarkitaiConfig
-from markitai.constants import DEFAULT_MAX_IMAGES_PER_BATCH, IMAGE_EXTENSIONS
+from markitai.constants import (
+    ASSETS_REL_PATH,
+    DEFAULT_MAX_IMAGES_PER_BATCH,
+    IMAGE_EXTENSIONS,
+    MARKITAI_META_DIR,
+    SCREENSHOTS_REL_PATH,
+)
 from markitai.image import ImageProcessor
 from markitai.security import atomic_write_text
 from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import (
     create_llm_processor,
-)
-from markitai.workflow.helpers import (
-    detect_language as _detect_language,
 )
 from markitai.workflow.single import ImageAnalysisResult
 
@@ -35,8 +38,12 @@ async def process_with_llm(
     cfg: MarkitaiConfig,
     output_file: Path,
     page_images: list[dict] | None = None,
+    screenshot_path: Path | None = None,
     processor: LLMProcessor | None = None,
     original_markdown: str | None = None,
+    fetch_strategy: str | None = None,
+    extra_meta: dict[str, Any] | None = None,
+    title: str | None = None,
 ) -> tuple[str, float, dict[str, dict[str, Any]]]:
     """Process markdown with LLM and write enhanced version to .llm.md file.
 
@@ -65,7 +72,13 @@ async def process_with_llm(
         if processor is None:
             processor = create_llm_processor(cfg)
 
-        cleaned, frontmatter = await processor.process_document(markdown, source)
+        cleaned, frontmatter = await processor.process_document(
+            markdown,
+            source,
+            fetch_strategy=fetch_strategy,
+            extra_meta=extra_meta,
+            title=title,
+        )
 
         # Remove hallucinated image URLs (URLs that don't exist in original)
         original_for_comparison = original_markdown if original_markdown else markdown
@@ -74,7 +87,7 @@ async def process_with_llm(
         )
 
         # Validate local image references - remove non-existent assets
-        assets_dir = output_file.parent / "assets"
+        assets_dir = output_file.parent / MARKITAI_META_DIR / "assets"
         if assets_dir.exists():
             cleaned = ImageProcessor.remove_nonexistent_images(cleaned, assets_dir)
 
@@ -91,7 +104,7 @@ async def process_with_llm(
 
             # Build the complete page images section
             commented_images = [
-                f"<!-- ![Page {img['page']}](screenshots/{img['name']}) -->"
+                f"<!-- ![Page {img['page']}]({SCREENSHOTS_REL_PATH}/{img['name']}) -->"
                 for img in sorted(page_images, key=lambda x: x.get("page", 0))
             ]
 
@@ -109,6 +122,15 @@ async def process_with_llm(
                         if not re.search(rf"!\[Page\s+{page_num}\]", llm_content):
                             # Append missing page comment
                             llm_content = llm_content.rstrip() + "\n" + comment
+
+        if screenshot_path:
+            screenshot_header = "<!-- Screenshot for reference -->"
+            if screenshot_header not in llm_content:
+                screenshot_comment = (
+                    f"\n\n{screenshot_header}\n"
+                    f"<!-- ![Screenshot]({SCREENSHOTS_REL_PATH}/{screenshot_path.name}) -->"
+                )
+                llm_content += screenshot_comment
 
         atomic_write_text(llm_output, llm_content)
         logger.info(f"Written LLM version: {llm_output}")
@@ -159,6 +181,8 @@ async def analyze_images_with_llm(
     input_path: Path | None = None,
     concurrency_limit: int | None = None,  # noqa: ARG001 - kept for API compat
     processor: LLMProcessor | None = None,
+    llm_ready_event: asyncio.Event | None = None,
+    llm_ready_timeout: float = 300.0,
 ) -> tuple[str, float, dict[str, dict[str, Any]], ImageAnalysisResult | None]:
     """Analyze images with LLM Vision using batch processing.
 
@@ -176,6 +200,8 @@ async def analyze_images_with_llm(
         input_path: Source input file path (for absolute path in JSON)
         concurrency_limit: Deprecated - concurrency controlled by processor.semaphore
         processor: Optional shared LLMProcessor (created if not provided)
+        llm_ready_event: Optional event set by the parallel LLM task after writing .llm.md
+        llm_ready_timeout: Timeout in seconds for awaiting the event (default 300s)
 
     Returns:
         Tuple of (updated_markdown, cost_usd, llm_usage, image_analysis_result):
@@ -201,14 +227,10 @@ async def analyze_images_with_llm(
         )
         context = f"{source_path}:images"
 
-        # Detect document language from markdown content
-        language = _detect_language(markdown)
-
         # Use batch analysis
         logger.info(f"Analyzing {len(image_paths)} images in batches...")
         analyses = await processor.analyze_images_batch(
             image_paths,
-            language=language,
             max_images_per_batch=DEFAULT_MAX_IMAGES_PER_BATCH,
             context=context,
         )
@@ -246,7 +268,7 @@ async def analyze_images_with_llm(
             # Update alt text in markdown (if alt_enabled)
             if alt_enabled and not is_standalone_image:
                 old_pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(image_path.name)}\)"
-                new_ref = f"![{analysis.caption}](assets/{image_path.name})"
+                new_ref = f"![{analysis.caption}]({ASSETS_REL_PATH}/{image_path.name})"
                 markdown = re.sub(old_pattern, new_ref, markdown)
 
         # Update .llm.md file
@@ -259,7 +281,7 @@ async def analyze_images_with_llm(
                 rich_content = format_standalone_image_markdown(
                     input_path,
                     analysis,
-                    f"assets/{input_path.name}",
+                    f"{ASSETS_REL_PATH}/{input_path.name}",
                     include_frontmatter=True,
                 )
                 # Normalize whitespace (ensure headers have blank lines before/after)
@@ -269,13 +291,25 @@ async def analyze_images_with_llm(
                 atomic_write_text(llm_output, rich_content)
         elif alt_enabled:
             # For other files, update alt text in .llm.md
-            # Wait for .llm.md file to exist (it's written by parallel doc processing)
-            max_wait_seconds = 120  # Max wait time
-            poll_interval = 0.5  # Check every 0.5 seconds
-            waited = 0.0
-            while not llm_output.exists() and waited < max_wait_seconds:
-                await asyncio.sleep(poll_interval)
-                waited += poll_interval
+            # Wait for .llm.md file to be ready
+            if llm_ready_event is not None:
+                try:
+                    await asyncio.wait_for(
+                        llm_ready_event.wait(), timeout=llm_ready_timeout
+                    )
+                except TimeoutError:
+                    logger.debug(
+                        f"[ImageAnalysis] Event timeout after {llm_ready_timeout}s, "
+                        f"checking file existence as fallback"
+                    )
+            else:
+                # Legacy polling fallback (when no event is provided)
+                max_wait_seconds = 300
+                poll_interval = 0.5
+                waited = 0.0
+                while not llm_output.exists() and waited < max_wait_seconds:
+                    await asyncio.sleep(poll_interval)
+                    waited += poll_interval
 
             if llm_output.exists():
                 llm_content = llm_output.read_text(encoding="utf-8")
@@ -283,12 +317,14 @@ async def analyze_images_with_llm(
                     if analysis is None:
                         continue
                     old_pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(image_path.name)}\)"
-                    new_ref = f"![{analysis.caption}](assets/{image_path.name})"
+                    new_ref = (
+                        f"![{analysis.caption}]({ASSETS_REL_PATH}/{image_path.name})"
+                    )
                     llm_content = re.sub(old_pattern, new_ref, llm_content)
                 atomic_write_text(llm_output, llm_content)
             else:
                 logger.warning(
-                    f"Skipped alt text update: {llm_output} not created within {max_wait_seconds}s"
+                    f"Skipped alt text update: {llm_output} not created within timeout"
                 )
 
         # Build analysis result for caller to aggregate
@@ -323,6 +359,7 @@ async def enhance_document_with_vision(
     cfg: MarkitaiConfig,
     source: str = "document",
     processor: LLMProcessor | None = None,
+    original_title: str | None = None,
 ) -> tuple[str, str, float, dict[str, dict[str, Any]]]:
     """Enhance document by combining extracted text with page images.
 
@@ -338,6 +375,7 @@ async def enhance_document_with_vision(
         cfg: Configuration
         source: Source file name for logging context
         processor: Optional shared LLMProcessor (created if not provided)
+        original_title: Optional explicit document title from converter metadata
 
     Returns:
         Tuple of (cleaned_markdown, frontmatter_yaml, cost_usd, llm_usage)
@@ -361,7 +399,10 @@ async def enhance_document_with_vision(
 
         # Call the combined enhancement method (clean + frontmatter)
         cleaned_content, frontmatter = await processor.enhance_document_complete(
-            extracted_text, image_paths, source=source
+            extracted_text,
+            image_paths,
+            source=source,
+            original_title=original_title,
         )
 
         # Get usage for THIS file only, not global cumulative usage
@@ -375,7 +416,17 @@ async def enhance_document_with_vision(
     except Exception as e:
         logger.error(f"Document enhancement failed: {format_error_message(e)}")
         # Return original text with basic frontmatter as fallback
-        basic_frontmatter = f"title: {source}\nsource: {source}"
+        from markitai.utils.frontmatter import (
+            build_frontmatter_dict,
+            frontmatter_to_yaml,
+        )
+
+        basic_frontmatter = frontmatter_to_yaml(
+            build_frontmatter_dict(
+                source=source,
+                title=original_title or source,
+            )
+        ).strip()
         return extracted_text, basic_frontmatter, 0.0, {}
 
 

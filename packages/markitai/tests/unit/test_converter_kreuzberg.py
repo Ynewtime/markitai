@@ -202,7 +202,6 @@ class TestKreuzbergConverter:
             FileFormat.XML,
             FileFormat.ODS,
             FileFormat.ODT,
-            FileFormat.SVG,
             FileFormat.RTF,
             FileFormat.RST,
             FileFormat.ORG,

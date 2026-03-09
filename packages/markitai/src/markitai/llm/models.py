@@ -68,7 +68,7 @@ def get_model_info_cached(model: str) -> dict[str, Any]:
         if supports_vision is not None:
             result["supports_vision"] = bool(supports_vision)
     except Exception:
-        logger.debug(f"[ModelInfo] Could not get info for {model}, using defaults")
+        logger.trace(f"[ModelInfo] Could not get info for {model}, using defaults")
 
     _model_info_cache[model] = result
     return result

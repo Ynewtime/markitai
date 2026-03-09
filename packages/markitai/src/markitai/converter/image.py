@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 
 from loguru import logger
 
+from markitai.constants import ASSETS_REL_PATH
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -31,7 +33,9 @@ class ImageConverter(BaseConverter):
         FileFormat.GIF,
         FileFormat.BMP,
         FileFormat.TIFF,
+        FileFormat.SVG,
     ]
+    _preview_transcode_suffixes = {".bmp", ".tif", ".tiff"}
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
@@ -106,13 +110,34 @@ class ImageConverter(BaseConverter):
 
         assets_dir = ensure_assets_dir(output_dir)
 
+        if input_path.suffix.lower() in self._preview_transcode_suffixes:
+            dest_path = assets_dir / self._transcoded_asset_name(input_path)
+            if not dest_path.exists():
+                self._transcode_to_png(input_path, dest_path)
+                logger.debug(f"Transcoded {input_path.name} to {dest_path.name}")
+            return f"{ASSETS_REL_PATH}/{dest_path.name}"
+
         # Copy image to assets directory
         dest_path = assets_dir / input_path.name
         if not dest_path.exists():
             shutil.copy2(input_path, dest_path)
             logger.debug(f"Copied {input_path.name} to {dest_path}")
 
-        return f"assets/{input_path.name}"
+        return f"{ASSETS_REL_PATH}/{input_path.name}"
+
+    def _transcode_to_png(self, input_path: Path, dest_path: Path) -> None:
+        """Transcode less-compatible image formats to PNG for markdown previews."""
+        from PIL import Image
+
+        with Image.open(input_path) as image:
+            image.save(dest_path, format="PNG")
+
+    def _transcoded_asset_name(self, input_path: Path) -> str:
+        """Build a stable, unique preview asset name for transcoded images."""
+        source_id = hashlib.sha256(
+            str(input_path.resolve()).encode("utf-8")
+        ).hexdigest()[:12]
+        return f"{input_path.stem}-{source_id}.png"
 
     def _convert_with_ocr(self, input_path: Path, image_ref_path: str) -> str:
         """Convert image using OCR.
@@ -166,5 +191,6 @@ for _fmt in (
     FileFormat.GIF,
     FileFormat.BMP,
     FileFormat.TIFF,
+    FileFormat.SVG,
 ):
     register_converter(_fmt)(ImageConverter)

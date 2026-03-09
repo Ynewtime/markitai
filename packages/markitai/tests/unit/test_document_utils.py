@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 
 from markitai.llm.document import (
     DocumentMixin,
@@ -55,11 +56,11 @@ class TestProtectImagePositions:
 
     def test_screenshots_excluded(self) -> None:
         """Test that screenshots/ paths are excluded from protection."""
-        text = "![screenshot](screenshots/page.jpg) and ![regular](image.png)"
+        text = "![screenshot](.markitai/screenshots/page.jpg) and ![regular](image.png)"
         protected, mapping = DocumentMixin._protect_image_positions(text)
 
         # Screenshot should remain, regular image should be protected
-        assert "![screenshot](screenshots/page.jpg)" in protected
+        assert "![screenshot](.markitai/screenshots/page.jpg)" in protected
         assert "![regular](image.png)" not in protected
         assert len(mapping) == 1
 
@@ -278,6 +279,109 @@ class TestBuildFallbackFrontmatter:
 
         # Should not start with --- (markers are added by format_llm_output)
         assert not result.startswith("---")
+
+    def test_uses_extra_meta_description(self) -> None:
+        """Fallback should use description from extra_meta when available."""
+        mixin = DocumentMixin()
+        result = mixin._build_fallback_frontmatter(
+            "test.pdf",
+            "Content",
+            extra_meta={"description": "A great article about testing"},
+        )
+        assert "A great article about testing" in result
+
+    def test_uses_extra_meta_tags(self) -> None:
+        """Fallback should use tags from extra_meta when available."""
+        mixin = DocumentMixin()
+        result = mixin._build_fallback_frontmatter(
+            "test.pdf",
+            "Content",
+            extra_meta={"tags": ["python", "testing"]},
+        )
+        assert "python" in result
+        assert "testing" in result
+
+    def test_ignores_empty_extra_meta_description(self) -> None:
+        """Empty description in extra_meta should not be used."""
+        mixin = DocumentMixin()
+        result = mixin._build_fallback_frontmatter(
+            "test.pdf",
+            "Content",
+            extra_meta={"description": "  "},
+        )
+        assert "description: ''" in result
+
+    def test_ignores_non_string_extra_meta_description(self) -> None:
+        """Non-string description in extra_meta should not be used."""
+        mixin = DocumentMixin()
+        result = mixin._build_fallback_frontmatter(
+            "test.pdf",
+            "Content",
+            extra_meta={"description": 42},
+        )
+        assert "description: ''" in result
+
+    def test_no_extra_meta_still_works(self) -> None:
+        """No extra_meta should produce empty description as before."""
+        mixin = DocumentMixin()
+        result = mixin._build_fallback_frontmatter("test.pdf", "Content")
+        assert "description:" in result
+
+
+class TestStabilizePagedMarkdown:
+    """Tests for DocumentMixin._stabilize_paged_markdown."""
+
+    def test_restores_slide_section_when_body_text_is_dropped(self) -> None:
+        """Slide documents should keep short body text that the LLM removes."""
+        mixin = DocumentMixin()
+        original = """<!-- Slide number: 1 -->
+
+# FREE TEST DATA
+
+PPT FILE
+
+<!-- Slide number: 2 -->
+
+# FREE TEST DATA
+
+Lorem ipsum
+"""
+        cleaned = """<!-- Slide number: 1 -->
+
+# FREE TEST DATA
+
+<!-- Slide number: 2 -->
+
+# FREE TEST DATA
+
+Lorem ipsum
+"""
+
+        stabilized = mixin._stabilize_paged_markdown(original, cleaned, "sample.pptx")
+
+        assert "PPT FILE" in stabilized
+        assert stabilized == original.strip()
+
+    def test_restores_image_only_slide_when_llm_injects_text(self) -> None:
+        """Image-only slides should not gain extra OCR prose in the final output."""
+        mixin = DocumentMixin()
+        original = """<!-- Slide number: 8 -->
+
+![Logo Description automatically generated](.markitai/assets/sample.pptx.0001.jpg)
+"""
+        cleaned = """<!-- Slide number: 8 -->
+
+![Logo with text FreeTestData and slogan Your Slogan Here](.markitai/assets/sample.pptx.0001.jpg)
+
+FTD
+FREE TEST DATA
+8
+"""
+
+        stabilized = mixin._stabilize_paged_markdown(original, cleaned, "sample.pptx")
+
+        assert "FTD" not in stabilized
+        assert stabilized == original.strip()
 
 
 class TestValidateNoPromptLeakage:
@@ -701,6 +805,86 @@ class TestProcessDocumentAsync:
         assert "source: test.md" in frontmatter
 
     @pytest.mark.asyncio
+    async def test_process_document_preserves_original_when_page_markers_are_lost(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_instructor_result_factory,
+    ) -> None:
+        """Paged documents should fall back when the cleaned output loses markers."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        original = """<!-- Page number: 1 -->
+
+# Page 1
+
+Original first page.
+
+<!-- Page number: 2 -->
+
+# Page 2
+
+Original second page.
+"""
+        result, raw = mock_instructor_result_factory(
+            cleaned_markdown="# Page 1\n\nOriginal first page.\n\nOriginal second page.",
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, _ = await processor.process_document(original, "test.pdf")
+
+        assert cleaned.strip() == original.strip()
+
+    @pytest.mark.asyncio
+    async def test_process_document_logs_warning_on_instructor_failure(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_llm_response_factory,
+    ) -> None:
+        """process_document should log warning when structured processing fails."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        clean_response = mock_llm_response_factory(content="# Cleaned\n\nContent.")
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(return_value=clean_response)
+        processor._router = mock_router
+
+        with (
+            patch("markitai.llm.document.instructor.from_litellm") as mock_instr,
+            patch("markitai.llm.document.logger") as mock_logger,
+        ):
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                side_effect=ValueError("Instructor parse failed")
+            )
+            mock_instr.return_value = mock_client
+
+            await processor.process_document("# Raw", "test.md")
+
+        # Verify warning was logged (not silently swallowed)
+        warning_calls = [
+            call
+            for call in mock_logger.warning.call_args_list
+            if "Structured document processing failed" in str(call)
+        ]
+        assert len(warning_calls) >= 1
+
+    @pytest.mark.asyncio
     async def test_process_document_preserves_original_title(
         self,
         llm_config: LLMConfig,
@@ -735,6 +919,212 @@ class TestProcessDocumentAsync:
 
         # Original title should be preserved in output frontmatter
         assert "Original Title" in frontmatter
+
+    @pytest.mark.asyncio
+    async def test_process_document_uses_original_content_when_page_markers_missing(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_instructor_result_factory,
+    ) -> None:
+        """Paginated content should fall back to the original when markers are lost."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+        processor.clean_markdown = AsyncMock(
+            side_effect=AssertionError("cleaner should not run")
+        )
+
+        original_content = """<!-- Page number: 1 -->
+
+# Page 1
+
+Alpha
+
+<!-- Page number: 2 -->
+
+# Page 2
+
+Beta
+
+<!-- Page number: 3 -->
+
+# Page 3
+
+Gamma
+"""
+        result, raw = mock_instructor_result_factory(
+            cleaned_markdown="# Summary\n\nAlpha\n\nBeta",
+            description="Preserved pagination",
+            tags=["pdf", "pages"],
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, frontmatter = await processor.process_document(
+                original_content, "test.pdf"
+            )
+
+        assert cleaned.rstrip() == original_content.rstrip()
+        assert "# Summary" not in cleaned
+        assert "<!-- Page number: 3 -->" in cleaned
+        assert "description: Preserved pagination" in frontmatter
+        assert "source: test.pdf" in frontmatter
+
+    def test_stabilize_paged_markdown_restores_slide_text_when_cleaned_drops_body(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+    ) -> None:
+        """Slide-marked documents should restore slide body text if it disappears."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+        original = """<!-- Slide number: 1 -->
+
+# FREE TEST DATA
+
+PPT FILE
+
+<!-- Slide number: 2 -->
+
+# FREE TEST DATA
+
+Slide body
+"""
+        cleaned = """<!-- Slide number: 1 -->
+
+# FREE TEST DATA
+
+<!-- Slide number: 2 -->
+
+# FREE TEST DATA
+
+Slide body
+"""
+
+        stabilized = processor._stabilize_paged_markdown(
+            original,
+            cleaned,
+            "sample.pptx",
+        )
+
+        assert "PPT FILE" in stabilized
+        assert stabilized.rstrip() == original.rstrip()
+
+    @pytest.mark.asyncio
+    async def test_process_document_restores_screenshot_reference_comments(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_instructor_result_factory,
+    ) -> None:
+        """URL screenshot reference comments should survive document cleanup."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        result, raw = mock_instructor_result_factory(
+            cleaned_markdown="# Cleaned\n\nContent",
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, _ = await processor.process_document(
+                "# Source\n\nContent\n\n<!-- Screenshot for reference -->\n"
+                "<!-- ![Screenshot](.markitai/screenshots/example.full.jpg) -->",
+                "https://example.com/article",
+            )
+
+        assert "<!-- Screenshot for reference -->" in cleaned
+        assert (
+            "<!-- ![Screenshot](.markitai/screenshots/example.full.jpg) -->" in cleaned
+        )
+
+    @pytest.mark.asyncio
+    async def test_process_document_uses_stable_title_for_structured_files(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_instructor_result_factory,
+    ) -> None:
+        """Structured files should not drift title based on cleaned markdown."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        result, raw = mock_instructor_result_factory(
+            cleaned_markdown="# Reminder\n\nStructured content.",
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            _, frontmatter = await processor.process_document(
+                "heading: Reminder\nbody: Structured content.", "sample.xml"
+            )
+
+        assert "title: sample.xml" in frontmatter
+
+    @pytest.mark.asyncio
+    async def test_process_document_uses_input_title_when_llm_heading_drifts(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_instructor_result_factory,
+    ) -> None:
+        """Document titles should come from the input when no explicit title exists."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        result, raw = mock_instructor_result_factory(
+            cleaned_markdown="# Drifted LLM Title\n\nContent",
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            _, frontmatter = await processor.process_document(
+                "# Canonical Input Title\n\nContent",
+                "sample.pdf",
+            )
+
+        assert "title: Canonical Input Title" in frontmatter
 
     @pytest.mark.asyncio
     async def test_process_document_cache_hit(
@@ -926,6 +1316,181 @@ class TestEnhanceDocumentCompleteAsync:
         assert "source: test.md" in frontmatter
 
     @pytest.mark.asyncio
+    async def test_enhance_document_complete_reverts_suspicious_page_expansion(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        sample_test_image: Path,
+        mock_enhanced_result_factory,
+    ) -> None:
+        """Vision output should fall back to original page chunks when later pages bloat."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        original = """<!-- Page number: 1 -->
+
+# Page 1
+
+Alpha.
+
+<!-- Page number: 2 -->
+
+# Page 2
+
+Beta.
+
+<!-- Page number: 3 -->
+
+# Page 3
+
+Borrowed paragraph from page 3.
+
+<!-- Page number: 4 -->
+
+![](.markitai/assets/page4.jpg)
+
+# Sparse page
+
+<!-- Page number: 5 -->
+
+Tail.
+"""
+        bloated = """__MARKITAI_PAGENUM_0__
+
+# Page 1
+
+Alpha.
+
+__MARKITAI_PAGENUM_1__
+
+# Page 2
+
+Beta.
+
+__MARKITAI_PAGENUM_2__
+
+# Page 3
+
+Borrowed paragraph from page 3.
+
+__MARKITAI_PAGENUM_3__
+
+![Alt text](.markitai/assets/page4.jpg)
+
+# Sparse page
+
+Borrowed paragraph from page 3.
+
+Borrowed paragraph from page 3.
+
+Borrowed paragraph from page 3.
+
+Borrowed paragraph from page 3.
+
+Borrowed paragraph from page 3.
+
+__MARKITAI_PAGENUM_4__
+
+Borrowed paragraph from page 3.
+
+Borrowed paragraph from page 3.
+
+Borrowed paragraph from page 3.
+
+Tail.
+"""
+        result, raw = mock_enhanced_result_factory(cleaned_markdown=bloated)
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+        processor._vision_router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, _ = await processor.enhance_document_complete(
+                original,
+                [sample_test_image] * 5,
+                "test.pdf",
+                max_pages_per_batch=10,
+            )
+
+        assert cleaned.strip() == original.strip()
+
+    @pytest.mark.asyncio
+    async def test_enhance_document_complete_single_batch_preserves_original_title(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        sample_test_image: Path,
+        mock_enhanced_result_factory,
+    ) -> None:
+        """Single-batch vision enhancement should preserve explicit title."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        result, raw = mock_enhanced_result_factory(
+            cleaned_markdown="# Chapter 1: Test Content\n\nEnhanced content."
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+        processor._vision_router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            _, frontmatter = await processor.enhance_document_complete(
+                "# Chapter 1: Test Content",
+                [sample_test_image],
+                "sample.epub",
+                original_title="Canonical Document Title",
+                max_pages_per_batch=10,
+            )
+
+        assert "Canonical Document Title" in frontmatter
+
+    @pytest.mark.asyncio
+    async def test_enhance_document_complete_cache_hit_preserves_original_title(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        sample_test_image: Path,
+    ) -> None:
+        """Cached vision enhancement should still preserve explicit title."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+        processor._persistent_cache.get = MagicMock(
+            return_value={
+                "cleaned_markdown": "# Chapter 1: Test Content",
+                "description": "Cached description",
+                "tags": ["cached"],
+            }
+        )
+
+        _, frontmatter = await processor.enhance_document_complete(
+            "# Chapter 1: Test Content",
+            [sample_test_image],
+            "sample.epub",
+            original_title="Canonical Document Title",
+        )
+
+        assert "Canonical Document Title" in frontmatter
+
+    @pytest.mark.asyncio
     async def test_enhance_document_complete_fallback_on_combined_failure(
         self,
         llm_config: LLMConfig,
@@ -1055,6 +1620,38 @@ class TestEnhanceUrlWithVisionAsync:
         assert "markitai_processed" in frontmatter
 
     @pytest.mark.asyncio
+    async def test_enhance_url_with_vision_cache_hit_preserves_source_metadata(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        sample_test_image: Path,
+    ) -> None:
+        """Cache-hit frontmatter should include threaded fetch metadata."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        cached_result = {
+            "cleaned_markdown": "# Cached URL Content",
+            "description": "A cached URL",
+            "tags": ["web"],
+        }
+        processor._persistent_cache.get = MagicMock(return_value=cached_result)
+
+        _, frontmatter = await processor.enhance_url_with_vision(
+            "# Original Content",
+            sample_test_image,
+            "https://example.com",
+            fetch_strategy="defuddle",
+            extra_meta={"author": "Jane", "published": "2024-01-15"},
+        )
+
+        parsed = yaml.safe_load(frontmatter)
+        assert parsed["fetch_strategy"] == "defuddle"
+        assert parsed["author"] == "Jane"
+        assert parsed["published"] == "2024-01-15"
+
+    @pytest.mark.asyncio
     async def test_enhance_url_with_vision_calls_vision_llm(
         self,
         llm_config: LLMConfig,
@@ -1091,6 +1688,48 @@ class TestEnhanceUrlWithVisionAsync:
 
         assert "Enhanced URL" in cleaned
         assert "description:" in frontmatter
+
+    @pytest.mark.asyncio
+    async def test_enhance_url_with_vision_includes_source_metadata(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        sample_test_image: Path,
+        mock_enhanced_result_factory,
+    ) -> None:
+        """Fresh vision frontmatter should include fetch metadata."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        result, raw = mock_enhanced_result_factory(
+            cleaned_markdown="# Enhanced URL\n\nContent from vision.",
+            description="URL content description",
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._vision_router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            _, frontmatter = await processor.enhance_url_with_vision(
+                "# Original\n\nContent",
+                sample_test_image,
+                "https://example.com/page",
+                fetch_strategy="static",
+                extra_meta={"author": "Jane", "published": "2024-01-15"},
+            )
+
+        parsed = yaml.safe_load(frontmatter)
+        assert parsed["fetch_strategy"] == "static"
+        assert parsed["author"] == "Jane"
+        assert parsed["published"] == "2024-01-15"
 
     @pytest.mark.asyncio
     async def test_enhance_url_with_vision_removes_hallucinated_markers(
@@ -1415,6 +2054,42 @@ class TestEnhanceWithFrontmatterAsync:
         # Slide marker should be restored
         assert "<!-- Slide number: 1 -->" in cleaned
 
+    @pytest.mark.asyncio
+    async def test_enhance_with_frontmatter_uses_input_title_when_missing_explicit_title(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        sample_test_image: Path,
+        mock_enhanced_result_factory,
+    ) -> None:
+        """Vision enhancement should derive title from input text before LLM drift."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        result, raw = mock_enhanced_result_factory(
+            cleaned_markdown="# Drifted LLM Title\n\nEnhanced content.",
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._vision_router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            _, frontmatter = await processor._enhance_with_frontmatter(
+                "# Canonical Input Title\n\nOriginal content.",
+                [sample_test_image],
+                "sample.pdf",
+            )
+
+        assert "title: Canonical Input Title" in frontmatter
+
 
 class TestCacheInteractionPatterns:
     """Tests for cache interaction patterns."""
@@ -1534,6 +2209,92 @@ class TestErrorHandlingAsync:
         assert "source: test.md" in frontmatter
 
     @pytest.mark.asyncio
+    async def test_process_document_skips_cleaner_after_non_retryable_provider_error(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+    ) -> None:
+        """A fatal provider error should skip the cleaner fallback."""
+        from markitai.llm import LLMProcessor
+        from markitai.providers.errors import ProviderError
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        original_content = "# Original\n\nContent"
+        fatal_error = ProviderError(
+            "Session error: Execution failed: Error: Failed to list models",
+            provider="copilot",
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(
+            side_effect=AssertionError("cleaner should not run")
+        )
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                side_effect=fatal_error
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, frontmatter = await processor.process_document(
+                original_content, "test.md"
+            )
+
+        assert cleaned == original_content
+        assert "source: test.md" in frontmatter
+        mock_router.acompletion.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_process_document_skips_cleaner_after_wrapped_provider_error(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+    ) -> None:
+        """Wrapped instructor retry failures should also skip the cleaner fallback."""
+        from instructor.core.exceptions import FailedAttempt, InstructorRetryException
+
+        from markitai.llm import LLMProcessor
+        from markitai.providers.errors import ProviderError
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        original_content = "# Original\n\nContent"
+        fatal_error = ProviderError(
+            "Session error: Execution failed: Error: Failed to list models",
+            provider="copilot",
+        )
+        wrapped_error = InstructorRetryException(
+            "Session error: Execution failed: Error: Failed to list models",
+            n_attempts=1,
+            total_usage=0,
+            failed_attempts=[FailedAttempt(1, fatal_error)],
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(
+            side_effect=AssertionError("cleaner should not run")
+        )
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                side_effect=wrapped_error
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, frontmatter = await processor.process_document(
+                original_content, "test.md"
+            )
+
+        assert cleaned == original_content
+        assert "source: test.md" in frontmatter
+        mock_router.acompletion.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_enhance_document_complete_handles_batch_failure(
         self,
         llm_config: LLMConfig,
@@ -1587,20 +2348,24 @@ class TestRemoveUncommentedScreenshots:
 
     def test_removes_page_screenshot_references(self) -> None:
         """Test that page screenshot references are removed."""
-        content = "# Title\n\n![Page 1](screenshots/doc.page0001.jpg)\n\nContent"
+        content = (
+            "# Title\n\n![Page 1](.markitai/screenshots/doc.page0001.jpg)\n\nContent"
+        )
         result = DocumentMixin._remove_uncommented_screenshots(content)
 
-        assert "![Page 1](screenshots/doc.page0001.jpg)" not in result
+        assert "![Page 1](.markitai/screenshots/doc.page0001.jpg)" not in result
         assert "# Title" in result
         assert "Content" in result
 
     def test_preserves_regular_screenshots(self) -> None:
         """Test that regular screenshots are preserved."""
-        content = "# Title\n\n![Screenshot](screenshots/regular.jpg)\n\nContent"
+        content = (
+            "# Title\n\n![Screenshot](.markitai/screenshots/regular.jpg)\n\nContent"
+        )
         result = DocumentMixin._remove_uncommented_screenshots(content)
 
         # Regular screenshots without .pageNNNN pattern should be preserved
-        assert "![Screenshot](screenshots/regular.jpg)" in result
+        assert "![Screenshot](.markitai/screenshots/regular.jpg)" in result
 
     def test_removes_markitai_page_labels(self) -> None:
         """Test that MARKITAI page labels are removed."""
@@ -1616,23 +2381,23 @@ class TestRemoveUncommentedScreenshots:
 Content
 
 <!-- Page images for reference -->
-![Page 1](screenshots/doc.page0001.jpg)"""
+![Page 1](.markitai/screenshots/doc.page0001.jpg)"""
 
         result = DocumentMixin._remove_uncommented_screenshots(content)
 
         # Should be converted to comment
-        assert "<!-- ![Page 1](screenshots/doc.page0001.jpg) -->" in result
+        assert "<!-- ![Page 1](.markitai/screenshots/doc.page0001.jpg) -->" in result
 
     def test_preserves_already_commented_images(self) -> None:
         """Test that already commented images remain unchanged."""
         content = """# Title
 
 <!-- Page images for reference -->
-<!-- ![Page 1](screenshots/doc.page0001.jpg) -->"""
+<!-- ![Page 1](.markitai/screenshots/doc.page0001.jpg) -->"""
 
         result = DocumentMixin._remove_uncommented_screenshots(content)
 
-        assert "<!-- ![Page 1](screenshots/doc.page0001.jpg) -->" in result
+        assert "<!-- ![Page 1](.markitai/screenshots/doc.page0001.jpg) -->" in result
 
 
 class TestSplitTextIntoBatches:
@@ -1665,3 +2430,45 @@ class TestSplitTextIntoBatches:
         assert len(batches) == 1
         assert "Page 1" in batches[0]
         assert "Page 2" in batches[0]
+
+
+class TestFallbackFrontmatterTitle:
+    """Tests for fallback frontmatter using cleaned title after cleaner succeeds."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_uses_cleaned_title_not_original(self) -> None:
+        """When structured processing fails but cleaning changes the title,
+        fallback frontmatter should reflect the cleaned title."""
+        mixin = DocumentMixin()
+        mixin._config = MagicMock()
+        mixin._config.prompts = MagicMock()
+        mixin._prompts_config = MagicMock()
+
+        original_markdown = "# Old Tittle With Typo\n\nSome content here."
+        cleaned_markdown = "# Corrected Title\n\nSome content here."
+        original_title = "Old Tittle With Typo"
+
+        # Mock _process_document_combined to fail (trigger fallback)
+        mixin._process_document_combined = AsyncMock(
+            side_effect=Exception("structured processing failed")
+        )
+
+        # Mock clean_markdown to return content with corrected title
+        mixin.clean_markdown = AsyncMock(return_value=cleaned_markdown)
+
+        # Mock content protection methods (no-op)
+        mixin.extract_protected_content = MagicMock(return_value={})
+        mixin.protect_content = MagicMock(return_value=(original_markdown, {}))
+
+        cleaned, frontmatter = await mixin.process_document(
+            original_markdown,
+            source="test.pdf",
+            title=original_title,
+        )
+
+        assert cleaned == cleaned_markdown
+        # Frontmatter should contain the CLEANED title, not the original
+        assert "Corrected Title" in frontmatter, (
+            f"Fallback frontmatter should use cleaned title. Got: {frontmatter}"
+        )
+        assert "Old Tittle With Typo" not in frontmatter

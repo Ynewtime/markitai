@@ -41,7 +41,7 @@ from markitai.cli.logging_config import (
 from markitai.cli.processors.validators import (
     check_vision_model_config as _check_vision_model_config,
 )
-from markitai.config import ConfigManager
+from markitai.config import ConfigManager, EnvVarNotFoundError
 
 # Import utilities from refactored modules
 from markitai.utils.cli_helpers import (
@@ -187,10 +187,29 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Number of concurrent URL fetches (default from config, separate from file processing).",
 )
 @click.option(
+    "--glob",
+    "-g",
+    "glob_patterns",
+    multiple=True,
+    help="Restrict directory batch discovery to matching relative paths. Repeatable. Prefix with ! to exclude; use single quotes in shells with history expansion. Only applies to directory input.",
+)
+@click.option(
+    "--max-depth",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Override recursive directory scan depth for batch discovery. 0 = only the input directory.",
+)
+@click.option(
     "--playwright",
     "use_playwright",
     is_flag=True,
     help="Force browser rendering for URLs via Playwright.",
+)
+@click.option(
+    "--defuddle",
+    "use_defuddle",
+    is_flag=True,
+    help="Force Defuddle API for URL fetching (free, no auth, best content cleaning).",
 )
 @click.option(
     "--jina",
@@ -258,6 +277,9 @@ def app(
     batch_concurrency: int | None,
     url_concurrency: int | None,
     llm_concurrency: int | None,
+    glob_patterns: tuple[str, ...],
+    max_depth: int | None,
+    use_defuddle: bool,
     use_playwright: bool,
     use_jina: bool,
     use_cloudflare: bool,
@@ -447,6 +469,8 @@ def app(
         cfg.batch.url_concurrency = url_concurrency
     if llm_concurrency is not None:
         cfg.llm.concurrency = llm_concurrency
+    if max_depth is not None:
+        cfg.batch.scan_max_depth = max_depth
 
     # Validate vision model configuration if image analysis is enabled
     _check_vision_model_config(cfg, console, verbose)
@@ -468,17 +492,20 @@ def app(
             console.print()
 
     # Validate fetch strategy flags (mutually exclusive)
-    strategy_flags = sum([use_playwright, use_jina, use_cloudflare])
+    strategy_flags = sum([use_defuddle, use_playwright, use_jina, use_cloudflare])
     if strategy_flags > 1:
         console.print(
-            "[red]Error: --playwright, --jina, and --cloudflare are mutually exclusive.[/red]"
+            "[red]Error: --defuddle, --playwright, --jina, and --cloudflare are mutually exclusive.[/red]"
         )
         ctx.exit(1)
 
     # Determine fetch strategy
     from markitai.fetch import FetchStrategy
 
-    if use_playwright:
+    if use_defuddle:
+        fetch_strategy = FetchStrategy.DEFUDDLE
+        explicit_fetch_strategy = True
+    elif use_playwright:
         fetch_strategy = FetchStrategy.PLAYWRIGHT
         explicit_fetch_strategy = True
     elif use_jina:
@@ -506,6 +533,59 @@ def app(
         logger.debug(f"Output directory: {output.resolve()}")
 
     async def run_workflow() -> None:
+        # Pre-flight auth check for local providers (weight > 0)
+        if cfg.llm.enabled and cfg.llm.model_list:
+            from markitai.providers import preflight_auth_check
+            from markitai.providers.auth import (
+                attempt_login,
+                get_auth_resolution_hint,
+            )
+
+            auth_results = await preflight_auth_check(cfg.llm.model_list)
+            is_interactive = sys.stderr.isatty()
+
+            for status in auth_results:
+                if status.authenticated:
+                    continue
+
+                # ChatGPT auto-authenticates on first API call
+                if status.provider == "chatgpt":
+                    stderr_console.print(
+                        f"[dim]  i {status.provider}: will auto-authenticate"
+                        " via Device Code Flow on first call[/dim]"
+                    )
+                    continue
+
+                stderr_console.print(
+                    f"[yellow]  ! {status.provider}: {status.error}[/yellow]"
+                )
+
+                if is_interactive:
+                    try:
+                        response = click.prompt(
+                            f"    Login to {status.provider} now?",
+                            type=click.Choice(["y", "n"], case_sensitive=False),
+                            default="y",
+                            err=True,
+                        )
+                        if response.lower() == "y":
+                            login_result = await attempt_login(status.provider)
+                            if login_result.authenticated:
+                                stderr_console.print(
+                                    f"    [green]✓[/green] {status.provider}"
+                                    f" authenticated as {login_result.user}"
+                                )
+                            else:
+                                stderr_console.print(
+                                    f"    [red]✗[/red] Login failed:"
+                                    f" {login_result.error}"
+                                )
+                    except (EOFError, KeyboardInterrupt):
+                        stderr_console.print()
+                else:
+                    hint = get_auth_resolution_hint(status.provider)
+                    stderr_console.print(f"    [dim]{hint}[/dim]")
+
         # Helper to get effective output directory (CLI -o or config fallback)
         def get_effective_output() -> Path | None:
             if output is not None:
@@ -585,6 +665,7 @@ def app(
                 log_file_path=log_file_path,
                 fetch_strategy=fetch_strategy,
                 explicit_fetch_strategy=explicit_fetch_strategy,
+                glob_patterns=glob_patterns,
             )
             return
 
@@ -624,7 +705,20 @@ def app(
             except Exception:
                 pass  # Ignore cleanup errors
 
-    asyncio.run(run_workflow_with_cleanup())
+    try:
+        asyncio.run(run_workflow_with_cleanup())
+    except EnvVarNotFoundError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        ctx.exit(1)
+    except ValueError as e:
+        error_msg = str(e)
+        if (
+            "missing environment variable" in error_msg
+            or "No available models" in error_msg
+        ):
+            console.print(f"[red]Error: {error_msg}[/red]")
+            ctx.exit(1)
+        raise
 
 
 # =============================================================================

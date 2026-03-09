@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from markitai.constants import ASSETS_REL_PATH, SCREENSHOTS_REL_PATH
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -431,6 +432,57 @@ class LegacyOfficeConverter(BaseConverter):
         self._pptx_converter = PptxConverter(config)
         self._soffice_path = find_libreoffice()
 
+    @staticmethod
+    def _rewrite_converted_artifact_names(
+        result: ConvertResult,
+        converted_name: str,
+        original_name: str,
+    ) -> ConvertResult:
+        """Rewrite derived asset names back to the original legacy filename."""
+        if converted_name == original_name:
+            return result
+
+        def rename_path(path: Path) -> Path:
+            new_name = path.name.replace(converted_name, original_name, 1)
+            if new_name == path.name:
+                return path
+            new_path = path.with_name(new_name)
+            if path.exists():
+                path.replace(new_path)
+            return new_path
+
+        for image in result.images:
+            image.path = rename_path(image.path)
+            image.original_name = image.original_name.replace(
+                converted_name, original_name, 1
+            )
+
+        page_images = result.metadata.get("page_images")
+        if isinstance(page_images, list):
+            for page_image in page_images:
+                if not isinstance(page_image, dict):
+                    continue
+
+                name = page_image.get("name")
+                if isinstance(name, str):
+                    page_image["name"] = name.replace(converted_name, original_name, 1)
+
+                path_str = page_image.get("path")
+                if isinstance(path_str, str):
+                    new_path = rename_path(Path(path_str))
+                    page_image["path"] = str(new_path)
+                    page_image["name"] = new_path.name
+
+        result.markdown = result.markdown.replace(
+            f"({ASSETS_REL_PATH}/{converted_name}",
+            f"({ASSETS_REL_PATH}/{original_name}",
+        )
+        result.markdown = result.markdown.replace(
+            f"({SCREENSHOTS_REL_PATH}/{converted_name}",
+            f"({SCREENSHOTS_REL_PATH}/{original_name}",
+        )
+        return result
+
     def _convert_legacy_format(
         self,
         input_path: Path,
@@ -570,6 +622,11 @@ class LegacyOfficeConverter(BaseConverter):
             # Process with appropriate converter based on target format
             if target_format == "pptx":
                 result = self._pptx_converter.convert(converted_path, output_dir)
+                result = self._rewrite_converted_artifact_names(
+                    result,
+                    converted_path.name,
+                    input_path.name,
+                )
             else:
                 result = self._office_converter.convert(converted_path, output_dir)
 

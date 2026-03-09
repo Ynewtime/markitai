@@ -16,13 +16,39 @@ Usage:
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
+
+
+def _email_from_jwt(id_token: str) -> str | None:
+    """Extract email from a JWT id_token without external libraries.
+
+    Args:
+        id_token: A JWT string (header.payload.signature).
+
+    Returns:
+        Email address if found, None otherwise.
+    """
+    try:
+        parts = id_token.split(".")
+        if len(parts) < 2:
+            return None
+        payload = parts[1]
+        # Add base64 padding
+        payload += "=" * (4 - len(payload) % 4)
+        data: dict[str, Any] = json.loads(base64.urlsafe_b64decode(payload))
+        email = data.get("email")
+        return email if isinstance(email, str) and email else None
+    except Exception:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +64,7 @@ class AuthStatus:
         user: Username or email if available
         expires_at: Token expiration time if known
         error: Error message if not authenticated
+        details: Provider-specific metadata for diagnostics/UI
     """
 
     provider: str
@@ -45,6 +72,7 @@ class AuthStatus:
     user: str | None
     expires_at: datetime | None
     error: str | None
+    details: dict[str, Any] | None = None
 
 
 # Platform-specific install commands for CLI tools
@@ -82,7 +110,7 @@ def _build_resolution_hint(provider: str) -> str:
         )
     elif provider == "copilot":
         return (
-            "Run 'copilot auth login' to authenticate with GitHub Copilot.\n"
+            "Run 'copilot login' to authenticate with GitHub Copilot.\n"
             "Alternatively, set GH_TOKEN or GITHUB_TOKEN env var "
             "(requires 'Copilot Requests' permission).\n"
             "If Copilot CLI is not installed, install it with:\n"
@@ -96,8 +124,8 @@ def _build_resolution_hint(provider: str) -> str:
         )
     elif provider == "gemini-cli":
         return (
-            "Install Gemini CLI and run 'gemini login' to authenticate,\n"
-            "or markitai will trigger OAuth login automatically on first use.\n"
+            "Run 'markitai auth gemini login' to create a managed Gemini profile,\n"
+            "or run 'gemini login' to reuse your shared Gemini CLI credentials.\n"
             "Requires: uv add 'markitai\\[gemini-cli]'"
         )
     return "Please authenticate with the provider CLI."
@@ -154,6 +182,7 @@ def _check_copilot_config_auth() -> AuthStatus:
             user="token",
             expires_at=None,
             error=None,
+            details={"source": "env", "verification": "credentials-only"},
         )
 
     config_path = Path.home() / ".copilot" / "config.json"
@@ -181,6 +210,7 @@ def _check_copilot_config_auth() -> AuthStatus:
                 user=username,
                 expires_at=None,
                 error=None,
+                details={"source": "config", "verification": "credentials-only"},
             )
         else:
             return AuthStatus(
@@ -198,6 +228,56 @@ def _check_copilot_config_auth() -> AuthStatus:
             expires_at=None,
             error=f"Failed to read config: {e}",
         )
+
+
+def _resolve_cli_path(command: str) -> str | None:
+    """Resolve a CLI path and reject mismatched executables.
+
+    This prevents accidental execution of unrelated binaries when tests or
+    environments monkeypatch ``shutil.which()`` too broadly.
+    """
+    import shutil
+
+    cli_path = shutil.which(command)
+    if not cli_path:
+        return None
+
+    cli_name = Path(cli_path).name.lower()
+    expected_names = {command.lower()}
+    if sys.platform.startswith("win"):
+        expected_names.add(f"{command.lower()}.exe")
+
+    if cli_name not in expected_names:
+        return None
+
+    return cli_path
+
+
+def _claude_cli_email() -> str | None:
+    """Try to extract email from `claude auth status` JSON output.
+
+    Runs `claude auth status` with a short timeout.  Returns the email
+    string on success, or ``None`` if the CLI is unavailable / fails.
+    """
+    import subprocess
+
+    cli_path = _resolve_cli_path("claude")
+    if not cli_path:
+        return None
+    try:
+        proc = subprocess.run(
+            [cli_path, "auth", "status"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if proc.returncode != 0:
+            return None
+        data: dict[str, Any] = json.loads(proc.stdout)
+        email = data.get("email")
+        return email if isinstance(email, str) and email else None
+    except Exception:
+        return None
 
 
 def _check_claude_credentials_auth() -> AuthStatus:
@@ -268,12 +348,14 @@ def _check_claude_credentials_auth() -> AuthStatus:
                         error="Token expired (no refresh token)",
                     )
 
-            # Get subscription type as user info
+            # Try to get email from `claude auth status` CLI
+            email = _claude_cli_email()
             subscription = oauth_data.get("subscriptionType", "unknown")
+            user = email if email else f"subscription: {subscription}"
             return AuthStatus(
                 provider="claude-agent",
                 authenticated=True,
-                user=f"subscription: {subscription}",
+                user=user,
                 expires_at=expires_at,
                 error=None,
             )
@@ -319,10 +401,12 @@ def _check_chatgpt_auth() -> AuthStatus:
         access_token = data.get("access_token")
 
         if access_token:
+            # Try to extract email from id_token JWT
+            user = _email_from_jwt(data.get("id_token", "")) or "chatgpt"
             return AuthStatus(
                 provider="chatgpt",
                 authenticated=True,
-                user="chatgpt",
+                user=user,
                 expires_at=None,
                 error=None,
             )
@@ -347,50 +431,146 @@ def _check_chatgpt_auth() -> AuthStatus:
 def _check_gemini_cli_auth() -> AuthStatus:
     """Check Gemini CLI authentication by reading OAuth credentials.
 
-    Checks ~/.gemini/oauth_creds.json for access_token.
+    Checks Markitai-managed Gemini profiles first, then falls back to
+    ~/.gemini/oauth_creds.json.
 
     Returns:
         AuthStatus with authentication result
     """
-    creds_path = Path.home() / ".gemini" / "oauth_creds.json"
+    home = Path.home()
+    managed_dir = home / ".markitai" / "auth"
+    active_profile_path = managed_dir / "gemini-current.json"
+    shared_creds_path = home / ".gemini" / "oauth_creds.json"
 
-    if not creds_path.exists():
-        return AuthStatus(
-            provider="gemini-cli",
-            authenticated=False,
-            user=None,
-            expires_at=None,
-            error="Credentials file not found (~/.gemini/oauth_creds.json)",
-        )
+    def _read_json(path: Path) -> dict[str, Any] | None:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
 
-    try:
-        data: dict[str, Any] = json.loads(creds_path.read_text(encoding="utf-8"))
+    def _expires_at(data: dict[str, Any]) -> datetime | None:
+        expiry_date_ms = data.get("expiry_date")
+        if not expiry_date_ms:
+            return None
+        try:
+            return datetime.fromtimestamp(expiry_date_ms / 1000, tz=UTC)
+        except (TypeError, ValueError, OSError):
+            return None
+
+    def _status_from_data(
+        data: dict[str, Any],
+        *,
+        source: str,
+        path: Path,
+    ) -> AuthStatus | None:
         access_token = data.get("access_token")
+        if not access_token:
+            return None
 
-        if access_token:
-            return AuthStatus(
-                provider="gemini-cli",
-                authenticated=True,
-                user="gemini-cli",
-                expires_at=None,
-                error=None,
-            )
-        else:
-            return AuthStatus(
-                provider="gemini-cli",
-                authenticated=False,
-                user=None,
-                expires_at=None,
-                error="No access token found",
-            )
-    except Exception as e:
+        email = data.get("email")
+        if not email:
+            # Fall back to extracting email from id_token JWT
+            email = _email_from_jwt(data.get("id_token", ""))
+        project_id = data.get("project_id")
+        auth_mode = data.get("auth_mode")
+        user = email if isinstance(email, str) and email else "gemini-cli"
+        return AuthStatus(
+            provider="gemini-cli",
+            authenticated=True,
+            user=user,
+            expires_at=_expires_at(data),
+            error=None,
+            details={
+                "source": source,
+                "project_id": (
+                    str(project_id) if isinstance(project_id, str) else None
+                ),
+                "auth_mode": str(auth_mode) if isinstance(auth_mode, str) else None,
+                "credential_path": str(path),
+            },
+        )
+
+    active_data = _read_json(active_profile_path)
+    if active_data:
+        credential_path = active_data.get("credential_path")
+        if isinstance(credential_path, str) and credential_path:
+            managed_path = Path(credential_path)
+            try:
+                managed_path.resolve().relative_to(managed_dir.resolve())
+            except ValueError:
+                logger.warning(
+                    "[Auth] credential_path points outside managed dir, "
+                    f"ignoring: {managed_path}"
+                )
+                managed_path = None  # type: ignore[assignment]
+            if managed_path is not None and managed_path.exists():
+                managed_data = _read_json(managed_path)
+                if managed_data:
+                    status = _status_from_data(
+                        managed_data,
+                        source="markitai",
+                        path=managed_path,
+                    )
+                    if status is not None:
+                        return status
+
+    if managed_dir.exists():
+        managed_profiles = sorted(
+            (
+                path
+                for path in managed_dir.glob("gemini-*.json")
+                if path.name != active_profile_path.name
+            ),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for managed_path in managed_profiles:
+            managed_data = _read_json(managed_path)
+            if managed_data:
+                status = _status_from_data(
+                    managed_data,
+                    source="markitai",
+                    path=managed_path,
+                )
+                if status is not None:
+                    return status
+
+    if not shared_creds_path.exists():
         return AuthStatus(
             provider="gemini-cli",
             authenticated=False,
             user=None,
             expires_at=None,
-            error=f"Failed to read credentials: {e}",
+            error=(
+                "Credentials file not found (~/.markitai/auth or "
+                "~/.gemini/oauth_creds.json)"
+            ),
         )
+
+    shared_data = _read_json(shared_creds_path)
+    if shared_data is None:
+        return AuthStatus(
+            provider="gemini-cli",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error="Failed to read credentials: invalid JSON",
+        )
+    status = _status_from_data(
+        shared_data,
+        source="gemini-cli",
+        path=shared_creds_path,
+    )
+    if status is not None:
+        return status
+    return AuthStatus(
+        provider="gemini-cli",
+        authenticated=False,
+        user=None,
+        expires_at=None,
+        error="No access token found",
+    )
 
 
 class AuthManager:
@@ -520,10 +700,152 @@ class AuthManager:
             del self._cache[provider]
 
 
+async def _login_copilot() -> AuthStatus:
+    """Run `copilot login` interactively.
+
+    Returns:
+        AuthStatus after the login attempt.
+    """
+    import asyncio
+
+    cli_path = _resolve_cli_path("copilot")
+    if not cli_path:
+        return AuthStatus(
+            provider="copilot",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error="Copilot CLI not found in PATH",
+        )
+
+    proc = await asyncio.create_subprocess_exec(cli_path, "login")
+    await proc.wait()
+
+    if proc.returncode != 0:
+        return AuthStatus(
+            provider="copilot",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error=f"Login failed (exit code {proc.returncode})",
+        )
+
+    AuthManager().clear_cache("copilot")
+    return _check_copilot_config_auth()
+
+
+async def _login_claude_agent() -> AuthStatus:
+    """Run `claude auth login` interactively.
+
+    Returns:
+        AuthStatus after the login attempt.
+    """
+    import asyncio
+
+    cli_path = _resolve_cli_path("claude")
+    if not cli_path:
+        return AuthStatus(
+            provider="claude-agent",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error="Claude CLI not found in PATH",
+        )
+
+    proc = await asyncio.create_subprocess_exec(cli_path, "auth", "login")
+    await proc.wait()
+
+    if proc.returncode != 0:
+        return AuthStatus(
+            provider="claude-agent",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error=f"Login failed (exit code {proc.returncode})",
+        )
+
+    AuthManager().clear_cache("claude-agent")
+    return _check_claude_credentials_auth()
+
+
+async def _login_gemini_cli() -> AuthStatus:
+    """Run Gemini OAuth login via GeminiCLIProvider.alogin().
+
+    Returns:
+        AuthStatus after the login attempt.
+    """
+    from markitai.providers.gemini_cli import GeminiCLIProvider
+
+    try:
+        provider = GeminiCLIProvider()
+        await provider.alogin()
+    except Exception as e:
+        return AuthStatus(
+            provider="gemini-cli",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error=f"Login failed: {e}",
+        )
+
+    AuthManager().clear_cache("gemini-cli")
+    return _check_gemini_cli_auth()
+
+
+async def _login_chatgpt() -> AuthStatus:
+    """Return informational status — ChatGPT auto-authenticates on first call.
+
+    Returns:
+        AuthStatus with auto_login detail flag.
+    """
+    return AuthStatus(
+        provider="chatgpt",
+        authenticated=False,
+        user=None,
+        expires_at=None,
+        error=None,
+        details={"auto_login": True},
+    )
+
+
+async def attempt_login(provider: str) -> AuthStatus:
+    """Attempt interactive login for a provider.
+
+    Dispatches to the appropriate login flow:
+    - copilot: subprocess `copilot login`
+    - claude-agent: subprocess `claude auth login`
+    - gemini-cli: programmatic OAuth via GeminiCLIProvider.alogin()
+    - chatgpt: informational (auto-authenticates on first API call)
+
+    Args:
+        provider: Provider name (e.g., "copilot", "claude-agent")
+
+    Returns:
+        AuthStatus after the login attempt.
+    """
+    if provider == "copilot":
+        return await _login_copilot()
+    elif provider == "claude-agent":
+        return await _login_claude_agent()
+    elif provider == "gemini-cli":
+        return await _login_gemini_cli()
+    elif provider == "chatgpt":
+        return await _login_chatgpt()
+    else:
+        return AuthStatus(
+            provider=provider,
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error=f"Unknown provider: {provider}",
+        )
+
+
 __all__ = [
     "AuthStatus",
     "AuthManager",
     "get_auth_resolution_hint",
+    "attempt_login",
     "_is_copilot_sdk_available",
     "_is_claude_agent_sdk_available",
     "_check_copilot_config_auth",

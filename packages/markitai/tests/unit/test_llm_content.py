@@ -101,12 +101,28 @@ Page 2 content
         """Test extracting page image comments."""
         content = """
 <!-- Page images for reference -->
-<!-- ![Page 1](screenshots/page1.png) -->
+<!-- ![Page 1](.markitai/screenshots/page1.png) -->
 Content here
 """
         protected = extract_protected_content(content)
 
         assert len(protected["page_comments"]) == 2
+
+    def test_extract_screenshot_reference_comments(self) -> None:
+        """Test extracting screenshot reference comments used by URL outputs."""
+        content = """
+<!-- Screenshot for reference -->
+<!-- ![Screenshot](.markitai/screenshots/page.full.jpg) -->
+Content here
+"""
+        protected = extract_protected_content(content)
+
+        assert len(protected["page_comments"]) == 2
+        assert "<!-- Screenshot for reference -->" in protected["page_comments"]
+        assert (
+            "<!-- ![Screenshot](.markitai/screenshots/page.full.jpg) -->"
+            in protected["page_comments"]
+        )
 
     def test_extract_empty_content(self) -> None:
         """Test extracting from empty content."""
@@ -161,7 +177,17 @@ Slide 1
     def test_protect_page_image_comments(self) -> None:
         """Test protecting page image comments."""
         content = """<!-- Page images for reference -->
-<!-- ![Page 1](screenshots/page1.png) -->
+<!-- ![Page 1](.markitai/screenshots/page1.png) -->
+Content"""
+        protected_content, mapping = protect_content(content)
+
+        assert "__MARKITAI_PAGE_" in protected_content
+        assert len(mapping) == 2
+
+    def test_protect_screenshot_reference_comments(self) -> None:
+        """Test protecting screenshot reference comments."""
+        content = """<!-- Screenshot for reference -->
+<!-- ![Screenshot](.markitai/screenshots/page.full.jpg) -->
 Content"""
         protected_content, mapping = protect_content(content)
 

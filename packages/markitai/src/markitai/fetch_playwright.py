@@ -36,6 +36,17 @@ from markitai.constants import (
     DEFAULT_PLAYWRIGHT_WAIT_FOR,
 )
 
+try:
+    from markitai.webextract import (
+        coerce_source_frontmatter,
+        extract_web_content,
+        is_native_markdown_acceptable,
+    )
+except ImportError:  # pragma: no cover - optional during staged implementation
+    extract_web_content = None  # type: ignore[assignment]
+    coerce_source_frontmatter = None  # type: ignore[assignment]
+    is_native_markdown_acceptable = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     from markitai.config import ScreenshotConfig
 
@@ -466,6 +477,29 @@ class PlaywrightRenderer:
             final_url = page.url
             html_content = await page.content()
             markdown_content = _html_to_markdown(html_content)
+            metadata: dict[str, Any] = {"renderer": "playwright", "wait_for": wait_for}
+
+            if extract_web_content is not None:
+                # If extract_web_content is available, the other webextract functions are too
+                assert is_native_markdown_acceptable is not None
+                assert coerce_source_frontmatter is not None
+                try:
+                    extracted = extract_web_content(html_content, final_url or url)
+                except Exception as e:
+                    logger.debug(f"Native webextract failed, using fallback: {e}")
+                else:
+                    native_markdown = getattr(extracted, "markdown", "")
+                    if is_native_markdown_acceptable(native_markdown):
+                        markdown_content = native_markdown
+                        source_frontmatter = coerce_source_frontmatter(
+                            getattr(extracted, "metadata", None)
+                        )
+                        if source_frontmatter:
+                            metadata["source_frontmatter"] = source_frontmatter
+                            title = source_frontmatter.get("title") or title
+                        metadata["webextract_diagnostics"] = dict(
+                            getattr(extracted, "diagnostics", {}) or {}
+                        )
 
             if _is_content_incomplete(markdown_content):
                 try:
@@ -490,7 +524,7 @@ class PlaywrightRenderer:
                 title=title,
                 final_url=final_url,
                 screenshot_path=screenshot_path,
-                metadata={"renderer": "playwright", "wait_for": wait_for},
+                metadata=metadata,
             )
         finally:
             if should_close_context:

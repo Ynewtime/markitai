@@ -5,8 +5,10 @@ from __future__ import annotations
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 
 from markitai.config import MarkitaiConfig
 
@@ -442,8 +444,8 @@ class TestGetSavedImages:
         from markitai.workflow.core import get_saved_images
 
         sample_context.output_dir.mkdir(parents=True)
-        assets_dir = sample_context.output_dir / "assets"
-        assets_dir.mkdir()
+        assets_dir = sample_context.output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
         # Create test images
         (assets_dir / f"{sample_context.input_path.name}.image1.png").touch()
@@ -460,8 +462,8 @@ class TestGetSavedImages:
         from markitai.workflow.core import get_saved_images
 
         sample_context.output_dir.mkdir(parents=True)
-        assets_dir = sample_context.output_dir / "assets"
-        assets_dir.mkdir()
+        assets_dir = sample_context.output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
         # Create mixed files
         (assets_dir / f"{sample_context.input_path.name}.image1.png").touch()
@@ -527,6 +529,26 @@ class TestWriteBaseMarkdown:
 
         assert result.success is False
         assert result.error is not None
+
+    def test_normalizes_markdown_before_frontmatter(
+        self, sample_context: ConversionContext
+    ) -> None:
+        """Base markdown output should run shared cleanup before writing."""
+        from markitai.workflow.core import write_base_markdown
+
+        sample_context.output_dir.mkdir(parents=True)
+        sample_context.output_file = sample_context.output_dir / "output.md"
+        sample_context.conversion_result = ConvertResult(
+            markdown="[Title\n\nDescription](/docs)\n\n__MARKITAI_FILE_ASSET__",
+            metadata={"format": "TXT"},
+        )
+
+        result = write_base_markdown(sample_context)
+
+        assert result.success is True
+        content = sample_context.output_file.read_text()
+        assert "[Title](/docs)" in content
+        assert "__MARKITAI" not in content
 
 
 # =============================================================================
@@ -670,13 +692,15 @@ class TestApplyAltTextUpdates:
             assets: list[dict]
 
         llm_file = tmp_path / "test.llm.md"
-        original_content = "# Test\n\n![](assets/test_image.png)\n\nSome text."
+        original_content = (
+            "# Test\n\n![](.markitai/assets/test_image.png)\n\nSome text."
+        )
         llm_file.write_text(original_content)
 
         analysis = MockImageAnalysisResult(
             assets=[
                 {
-                    "asset": str(tmp_path / "assets" / "test_image.png"),
+                    "asset": str(tmp_path / ".markitai" / "assets" / "test_image.png"),
                     "alt": "A test image",
                 }
             ]
@@ -686,7 +710,7 @@ class TestApplyAltTextUpdates:
 
         assert result is True
         updated_content = llm_file.read_text()
-        assert "![A test image](assets/test_image.png)" in updated_content
+        assert "![A test image](.markitai/assets/test_image.png)" in updated_content
 
     def test_no_update_when_no_match(self, tmp_path: Path) -> None:
         """Test returns False when no images match."""
@@ -704,7 +728,10 @@ class TestApplyAltTextUpdates:
 
         analysis = MockImageAnalysisResult(
             assets=[
-                {"asset": str(tmp_path / "assets" / "other.png"), "alt": "Other image"}
+                {
+                    "asset": str(tmp_path / ".markitai" / "assets" / "other.png"),
+                    "alt": "Other image",
+                }
             ]
         )
 
@@ -725,11 +752,16 @@ class TestApplyAltTextUpdates:
             assets: list[dict]
 
         llm_file = tmp_path / "test.llm.md"
-        original_content = "# Test\n\n![](assets/image.png)"
+        original_content = "# Test\n\n![](.markitai/assets/image.png)"
         llm_file.write_text(original_content)
 
         analysis = MockImageAnalysisResult(
-            assets=[{"asset": str(tmp_path / "assets" / "image.png"), "alt": ""}]
+            assets=[
+                {
+                    "asset": str(tmp_path / ".markitai" / "assets" / "image.png"),
+                    "alt": "",
+                }
+            ]
         )
 
         result = apply_alt_text_updates(llm_file, analysis)
@@ -749,20 +781,20 @@ class TestApplyAltTextUpdates:
         llm_file = tmp_path / "test.llm.md"
         original_content = (
             "# Test\n\n"
-            "![](assets/image1.png)\n\n"
+            "![](.markitai/assets/image1.png)\n\n"
             "Some text\n\n"
-            "![old alt](assets/image2.jpg)"
+            "![old alt](.markitai/assets/image2.jpg)"
         )
         llm_file.write_text(original_content)
 
         analysis = MockImageAnalysisResult(
             assets=[
                 {
-                    "asset": str(tmp_path / "assets" / "image1.png"),
+                    "asset": str(tmp_path / ".markitai" / "assets" / "image1.png"),
                     "alt": "First image",
                 },
                 {
-                    "asset": str(tmp_path / "assets" / "image2.jpg"),
+                    "asset": str(tmp_path / ".markitai" / "assets" / "image2.jpg"),
                     "alt": "Second image",
                 },
             ]
@@ -772,8 +804,8 @@ class TestApplyAltTextUpdates:
 
         assert result is True
         updated_content = llm_file.read_text()
-        assert "![First image](assets/image1.png)" in updated_content
-        assert "![Second image](assets/image2.jpg)" in updated_content
+        assert "![First image](.markitai/assets/image1.png)" in updated_content
+        assert "![Second image](.markitai/assets/image2.jpg)" in updated_content
 
 
 class TestRunInConverterThread:
@@ -831,6 +863,9 @@ class TestProcessWithVisionLLM:
         processor.format_llm_output = MagicMock(return_value="# LLM Content")
         processor.get_context_cost = MagicMock(return_value=0.05)
         processor.get_context_usage = MagicMock(return_value={"gpt-4": {"requests": 1}})
+        processor._stabilize_paged_markdown = MagicMock(
+            side_effect=lambda _original, cleaned, _source: cleaned
+        )
         return processor
 
     @pytest.mark.asyncio
@@ -905,8 +940,8 @@ class TestProcessWithVisionLLM:
         output_dir.mkdir(parents=True)
 
         # Create test page images
-        screenshots_dir = output_dir / "screenshots"
-        screenshots_dir.mkdir()
+        screenshots_dir = output_dir / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
         page1 = screenshots_dir / "page1.png"
         page1.write_bytes(b"fake image")
 
@@ -941,6 +976,335 @@ class TestProcessWithVisionLLM:
 
             assert result.success is True
             mock_workflow_instance.enhance_with_vision.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_passes_converter_title_to_vision_workflow(
+        self,
+        sample_txt_path: Path,
+        tmp_path: Path,
+        default_config: MarkitaiConfig,
+        mock_processor,
+    ) -> None:
+        """Vision workflow should receive converter-provided title."""
+        from unittest.mock import AsyncMock, patch
+
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_with_vision_llm,
+        )
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True)
+        screenshots_dir = output_dir / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
+        page1 = screenshots_dir / "page1.png"
+        page1.write_bytes(b"fake image")
+
+        ctx = ConversionContext(
+            input_path=sample_txt_path,
+            output_dir=output_dir,
+            config=default_config,
+            shared_processor=mock_processor,
+        )
+        ctx.output_file = output_dir / "test.md"
+        ctx.output_file.touch()
+        ctx.conversion_result = ConvertResult(
+            markdown="# Chapter 1",
+            metadata={
+                "title": "Canonical Document Title",
+                "page_images": [{"page": 1, "name": "page1.png", "path": str(page1)}],
+            },
+        )
+
+        with patch("markitai.workflow.single.SingleFileWorkflow") as MockWorkflow:
+            mock_workflow_instance = MockWorkflow.return_value
+            mock_workflow_instance.enhance_with_vision = AsyncMock(
+                return_value=(
+                    "# Enhanced",
+                    "title: Canonical Document Title",
+                    0.05,
+                    {"gpt-4": {"requests": 1}},
+                )
+            )
+
+            result = await process_with_vision_llm(ctx)
+
+        assert result.success is True
+        mock_workflow_instance.enhance_with_vision.assert_awaited_once_with(
+            "# Chapter 1",
+            [{"page": 1, "name": "page1.png", "path": str(page1)}],
+            source=sample_txt_path.name,
+            original_title="Canonical Document Title",
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_redundant_stabilization_in_core_vision_path(
+        self,
+        sample_txt_path: Path,
+        tmp_path: Path,
+        default_config: MarkitaiConfig,
+        mock_processor,
+    ) -> None:
+        """Core vision path should NOT call _stabilize_paged_markdown directly.
+
+        Stabilization is the responsibility of enhance_with_vision() in single.py;
+        core.py must not duplicate those calls.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_with_vision_llm,
+        )
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True)
+        screenshots_dir = output_dir / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
+        page1 = screenshots_dir / "page1.png"
+        page1.write_bytes(b"fake image")
+
+        raw_markdown = """<!-- Page number: 1 -->
+
+# Page 1
+
+Alpha
+
+Repeated baseline drift
+"""
+
+        def format_output(markdown: str, frontmatter: str, **_: object) -> str:
+            return f"---\n{frontmatter}\n---\n\n{markdown}"
+
+        mock_processor.format_llm_output = MagicMock(side_effect=format_output)
+
+        ctx = ConversionContext(
+            input_path=sample_txt_path,
+            output_dir=output_dir,
+            config=default_config,
+            shared_processor=mock_processor,
+        )
+        ctx.output_file = output_dir / "test.md"
+        ctx.output_file.write_text(
+            f"---\ntitle: Test\n---\n\n{raw_markdown}",
+            encoding="utf-8",
+        )
+        ctx.conversion_result = ConvertResult(
+            markdown=raw_markdown,
+            metadata={
+                "page_images": [{"page": 1, "name": "page1.png", "path": str(page1)}]
+            },
+        )
+
+        enhanced_content = "<!-- Page number: 1 -->\n\n# Page 1\n\nAlpha"
+
+        with patch("markitai.workflow.single.SingleFileWorkflow") as MockWorkflow:
+            mock_workflow_instance = MockWorkflow.return_value
+            mock_workflow_instance.enhance_with_vision = AsyncMock(
+                return_value=(
+                    enhanced_content,
+                    "title: Test",
+                    0.05,
+                    {"gpt-4": {"requests": 1}},
+                )
+            )
+            mock_processor._stabilize_paged_markdown = MagicMock()
+
+            result = await process_with_vision_llm(ctx)
+
+        assert result.success is True
+        # core.py must NOT call _stabilize_paged_markdown — that is single.py's job
+        mock_processor._stabilize_paged_markdown.assert_not_called()
+        llm_output = ctx.output_file.with_suffix(".llm.md").read_text()
+        assert "Alpha" in llm_output
+
+    @pytest.mark.asyncio
+    async def test_screenshot_only_passes_converter_title_to_extraction_workflow(
+        self,
+        sample_txt_path: Path,
+        tmp_path: Path,
+        default_config: MarkitaiConfig,
+        mock_processor,
+    ) -> None:
+        """Screenshot-only vision mode should also receive converter title."""
+        from unittest.mock import AsyncMock, patch
+
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_with_vision_llm,
+        )
+
+        default_config.screenshot.screenshot_only = True
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True)
+        screenshots_dir = output_dir / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
+        page1 = screenshots_dir / "page1.png"
+        page1.write_bytes(b"fake image")
+
+        ctx = ConversionContext(
+            input_path=sample_txt_path,
+            output_dir=output_dir,
+            config=default_config,
+            shared_processor=mock_processor,
+        )
+        ctx.output_file = output_dir / "test.md"
+        ctx.output_file.touch()
+        ctx.conversion_result = ConvertResult(
+            markdown="# Chapter 1",
+            metadata={
+                "title": "Canonical Document Title",
+                "page_images": [{"page": 1, "name": "page1.png", "path": str(page1)}],
+            },
+        )
+
+        with patch("markitai.workflow.single.SingleFileWorkflow") as MockWorkflow:
+            mock_workflow_instance = MockWorkflow.return_value
+            mock_workflow_instance.extract_from_screenshots = AsyncMock(
+                return_value=(
+                    "# Enhanced",
+                    "title: Canonical Document Title",
+                    0.05,
+                    {"gpt-4": {"requests": 1}},
+                )
+            )
+
+            result = await process_with_vision_llm(ctx)
+
+        assert result.success is True
+        mock_workflow_instance.extract_from_screenshots.assert_awaited_once_with(
+            [{"page": 1, "name": "page1.png", "path": str(page1)}],
+            source=sample_txt_path.name,
+            original_title="Canonical Document Title",
+        )
+
+    @pytest.mark.asyncio
+    async def test_screenshot_only_does_not_reference_extracted_text(
+        self,
+        sample_txt_path: Path,
+        tmp_path: Path,
+        default_config: MarkitaiConfig,
+        mock_processor,
+    ) -> None:
+        """Screenshot-only mode must not reference extracted_text (unbound in that branch)."""
+        from unittest.mock import AsyncMock, patch
+
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_with_vision_llm,
+        )
+
+        default_config.screenshot.screenshot_only = True
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True)
+        screenshots_dir = output_dir / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
+        page1 = screenshots_dir / "page1.png"
+        page1.write_bytes(b"fake image")
+
+        ctx = ConversionContext(
+            input_path=sample_txt_path,
+            output_dir=output_dir,
+            config=default_config,
+            shared_processor=mock_processor,
+        )
+        ctx.output_file = output_dir / "test.md"
+        ctx.output_file.touch()
+        ctx.conversion_result = ConvertResult(
+            markdown="# Original from converter",
+            metadata={
+                "page_images": [{"page": 1, "name": "page1.png", "path": str(page1)}],
+            },
+        )
+
+        with patch("markitai.workflow.single.SingleFileWorkflow") as MockWorkflow:
+            mock_workflow_instance = MockWorkflow.return_value
+            mock_workflow_instance.extract_from_screenshots = AsyncMock(
+                return_value=(
+                    "# Enhanced from screenshots",
+                    "title: Enhanced",
+                    0.05,
+                    {"gpt-4": {"requests": 1}},
+                )
+            )
+
+            # Must not raise UnboundLocalError for extracted_text
+            result = await process_with_vision_llm(ctx)
+
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_preserves_base_timestamp_before_vision_llm_output(
+        self,
+        sample_txt_path: Path,
+        tmp_path: Path,
+        default_config: MarkitaiConfig,
+        mock_processor,
+    ) -> None:
+        """Vision path should keep base .md older than the generated .llm.md."""
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_with_vision_llm,
+            write_base_markdown,
+        )
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True)
+        screenshots_dir = output_dir / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
+        page1 = screenshots_dir / "page1.png"
+        page1.write_bytes(b"fake image")
+
+        ctx = ConversionContext(
+            input_path=sample_txt_path,
+            output_dir=output_dir,
+            config=default_config,
+            shared_processor=mock_processor,
+        )
+        ctx.output_file = output_dir / "test.md"
+        ctx.conversion_result = ConvertResult(
+            markdown="# Test",
+            metadata={
+                "page_images": [{"page": 1, "name": "page1.png", "path": str(page1)}]
+            },
+        )
+
+        with patch(
+            "markitai.utils.frontmatter.frontmatter_timestamp",
+            side_effect=["2026-03-07T11:50:42.843+08:00"],
+        ):
+            base_result = write_base_markdown(ctx)
+
+        assert base_result.success is True
+
+        with patch("markitai.workflow.single.SingleFileWorkflow") as MockWorkflow:
+            mock_workflow_instance = MockWorkflow.return_value
+            mock_workflow_instance.enhance_with_vision = AsyncMock(
+                return_value=(
+                    "# Enhanced",
+                    "title: Test\nmarkitai_processed: '2026-03-07T11:51:58.318+08:00'",
+                    0.05,
+                    {"gpt-4": {"requests": 1}},
+                )
+            )
+            mock_processor.format_llm_output = MagicMock(
+                side_effect=lambda markdown, frontmatter, **_: (
+                    f"---\n{frontmatter}\n---\n\n{markdown}"
+                )
+            )
+
+            result = await process_with_vision_llm(ctx)
+
+        assert result.success is True
+
+        base_frontmatter = yaml.safe_load(ctx.output_file.read_text().split("---")[1])
+        llm_frontmatter = yaml.safe_load(
+            ctx.output_file.with_suffix(".llm.md").read_text().split("---")[1]
+        )
+        assert base_frontmatter["markitai_processed"] == "2026-03-07T11:50:42.843+08:00"
+        assert llm_frontmatter["markitai_processed"] == "2026-03-07T11:51:58.318+08:00"
 
 
 class TestProcessWithStandardLLM:
@@ -1004,8 +1368,8 @@ class TestProcessWithStandardLLM:
 
         output_dir = tmp_path / "output"
         output_dir.mkdir(parents=True)
-        assets_dir = output_dir / "assets"
-        assets_dir.mkdir()
+        assets_dir = output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
         # Create saved image in assets
         saved_image = assets_dir / "test.png.image1.png"
@@ -1020,7 +1384,7 @@ class TestProcessWithStandardLLM:
         ctx.output_file = output_dir / "test.png.md"
         ctx.output_file.touch()
         ctx.conversion_result = ConvertResult(
-            markdown="![](assets/test.png.image1.png)",
+            markdown="![](.markitai/assets/test.png.image1.png)",
             metadata={},
         )
 
@@ -1035,6 +1399,199 @@ class TestProcessWithStandardLLM:
 
             assert result.success is True
             mock_workflow_instance.analyze_images.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_passes_converter_title_to_document_processing(
+        self,
+        tmp_path: Path,
+        default_config: MarkitaiConfig,
+        mock_processor,
+    ) -> None:
+        """Converter-provided titles should flow into standard LLM processing."""
+        from unittest.mock import AsyncMock, patch
+
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_with_standard_llm,
+        )
+
+        epub_file = tmp_path / "sample.epub"
+        epub_file.write_text("fake epub payload")
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True)
+
+        ctx = ConversionContext(
+            input_path=epub_file,
+            output_dir=output_dir,
+            config=default_config,
+            shared_processor=mock_processor,
+        )
+        ctx.output_file = output_dir / "sample.epub.md"
+        ctx.output_file.touch()
+        ctx.conversion_result = ConvertResult(
+            markdown=(
+                "**Title:** Test EPUB Document\n\n"
+                "## Test EPUB Document\n\n"
+                "# Chapter 1: Test Content"
+            ),
+            metadata={"title": "Test EPUB Document"},
+        )
+
+        with patch("markitai.workflow.single.SingleFileWorkflow") as MockWorkflow:
+            mock_workflow_instance = MockWorkflow.return_value
+            mock_workflow_instance.process_document_with_llm = AsyncMock(
+                return_value=(ctx.conversion_result.markdown, 0.01, {})
+            )
+            mock_workflow_instance.analyze_images = AsyncMock(
+                return_value=(ctx.conversion_result.markdown, 0.0, {}, None)
+            )
+
+            result = await process_with_standard_llm(ctx)
+
+        assert result.success is True
+        mock_workflow_instance.process_document_with_llm.assert_awaited_once_with(
+            ctx.conversion_result.markdown,
+            "sample.epub",
+            ctx.output_file,
+            title="Test EPUB Document",
+        )
+
+    @pytest.mark.asyncio
+    async def test_standard_llm_does_not_regenerate_base_timestamp(
+        self,
+        sample_txt_path: Path,
+        tmp_path: Path,
+        default_config: MarkitaiConfig,
+        mock_processor,
+    ) -> None:
+        """Standard LLM path should not rewrite base .md with a newer timestamp."""
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_with_standard_llm,
+            write_base_markdown,
+        )
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True)
+
+        mock_processor.process_document.return_value = (
+            "# Cleaned",
+            "title: Test\nmarkitai_processed: '2026-03-07T11:50:43.800+08:00'",
+        )
+        mock_processor.format_llm_output = MagicMock(
+            side_effect=lambda markdown, frontmatter, **_: (
+                f"---\n{frontmatter}\n---\n\n{markdown}"
+            )
+        )
+
+        ctx = ConversionContext(
+            input_path=sample_txt_path,
+            output_dir=output_dir,
+            config=default_config,
+            shared_processor=mock_processor,
+        )
+        ctx.output_file = output_dir / "test.md"
+        ctx.conversion_result = ConvertResult(
+            markdown="# Test\n\nContent",
+            metadata={},
+        )
+
+        with patch(
+            "markitai.utils.frontmatter.frontmatter_timestamp",
+            side_effect=[
+                "2026-03-07T11:50:43.799+08:00",
+                "2026-03-07T11:50:43.801+08:00",
+            ],
+        ):
+            base_result = write_base_markdown(ctx)
+            assert base_result.success is True
+            result = await process_with_standard_llm(ctx)
+
+        assert result.success is True
+
+        base_frontmatter = yaml.safe_load(ctx.output_file.read_text().split("---")[1])
+        llm_frontmatter = yaml.safe_load(
+            ctx.output_file.with_suffix(".llm.md").read_text().split("---")[1]
+        )
+        assert base_frontmatter["markitai_processed"] == "2026-03-07T11:50:43.799+08:00"
+        assert llm_frontmatter["markitai_processed"] == "2026-03-07T11:50:43.800+08:00"
+
+    @pytest.mark.asyncio
+    async def test_standard_llm_restabilizes_written_llm_output(
+        self,
+        sample_txt_path: Path,
+        tmp_path: Path,
+        default_config: MarkitaiConfig,
+        mock_processor,
+    ) -> None:
+        """Standard LLM should stabilize the final .llm.md body against base markdown."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_with_standard_llm,
+        )
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True)
+        original_markdown = """<!-- Page number: 1 -->
+
+# Page 1
+
+Alpha
+"""
+        drifted_markdown = """<!-- Page number: 1 -->
+
+# Page 1
+
+Alpha
+
+Extra drift
+"""
+        mock_processor._stabilize_paged_markdown = MagicMock(
+            return_value=original_markdown
+        )
+
+        ctx = ConversionContext(
+            input_path=sample_txt_path,
+            output_dir=output_dir,
+            config=default_config,
+            shared_processor=mock_processor,
+        )
+        ctx.output_file = output_dir / "test.md"
+        ctx.output_file.write_text(
+            f"---\ntitle: Test\n---\n\n{original_markdown}",
+            encoding="utf-8",
+        )
+        ctx.conversion_result = ConvertResult(
+            markdown=original_markdown,
+            metadata={},
+        )
+
+        async def write_drifted_llm(
+            *args: object, **kwargs: object
+        ) -> tuple[str, float, dict]:
+            del args, kwargs
+            llm_output = ctx.output_file.with_suffix(".llm.md")
+            llm_output.write_text(
+                f"---\ntitle: Test\n---\n\n{drifted_markdown}",
+                encoding="utf-8",
+            )
+            return original_markdown, 0.01, {}
+
+        with patch("markitai.workflow.single.SingleFileWorkflow") as MockWorkflow:
+            mock_workflow_instance = MockWorkflow.return_value
+            mock_workflow_instance.process_document_with_llm = AsyncMock(
+                side_effect=write_drifted_llm
+            )
+
+            result = await process_with_standard_llm(ctx)
+
+        assert result.success is True
+        llm_output = ctx.output_file.with_suffix(".llm.md").read_text(encoding="utf-8")
+        assert "Extra drift" not in llm_output
+        assert "Alpha" in llm_output
 
 
 class TestAnalyzeEmbeddedImages:
@@ -1114,8 +1671,8 @@ class TestAnalyzeEmbeddedImages:
 
         output_dir = tmp_path / "output"
         output_dir.mkdir(parents=True)
-        assets_dir = output_dir / "assets"
-        assets_dir.mkdir()
+        assets_dir = output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
         # Create images - one page screenshot, one embedded
         page_screenshot = assets_dir / f"{sample_txt_path.name}.page1.png"
@@ -1205,8 +1762,8 @@ class TestGetSavedImagesEdgeCases:
 
         output_dir = tmp_path / "output"
         output_dir.mkdir()
-        assets_dir = output_dir / "assets"
-        assets_dir.mkdir()
+        assets_dir = output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
         # Create matching image
         (assets_dir / "test[1].txt.image1.png").touch()
@@ -1227,8 +1784,8 @@ class TestGetSavedImagesEdgeCases:
         from markitai.workflow.core import get_saved_images
 
         sample_context.output_dir.mkdir(parents=True)
-        assets_dir = sample_context.output_dir / "assets"
-        assets_dir.mkdir()
+        assets_dir = sample_context.output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
         # Create images with various case extensions
         (assets_dir / f"{sample_context.input_path.name}.image1.PNG").touch()
@@ -1237,6 +1794,100 @@ class TestGetSavedImagesEdgeCases:
 
         images = get_saved_images(sample_context)
         assert len(images) == 3
+
+
+class TestGetSavedImagesTranscoded:
+    """Tests for get_saved_images with transcoded image formats (BMP/TIFF→PNG)."""
+
+    def test_finds_transcoded_bmp_via_metadata(
+        self, tmp_path: Path, default_config: MarkitaiConfig
+    ) -> None:
+        """BMP files are transcoded to PNG with a hash suffix; get_saved_images must find them."""
+        from markitai.workflow.core import ConversionContext, get_saved_images
+
+        input_file = tmp_path / "sample.bmp"
+        input_file.write_bytes(b"fake bmp")
+
+        output_dir = tmp_path / "output"
+        assets_dir = output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+
+        # Simulate the transcoded PNG that ImageConverter creates
+        transcoded = assets_dir / "sample-56b050ec0595.png"
+        transcoded.touch()
+
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=output_dir,
+            config=default_config,
+        )
+        # Simulate conversion_result with asset_path metadata
+        ctx.conversion_result = ConvertResult(
+            markdown="# sample\n\n![sample](.markitai/assets/sample-56b050ec0595.png)\n",
+            metadata={"asset_path": ".markitai/assets/sample-56b050ec0595.png"},
+        )
+
+        images = get_saved_images(ctx)
+        assert len(images) == 1
+        assert images[0].name == "sample-56b050ec0595.png"
+
+    def test_finds_transcoded_tiff_via_metadata(
+        self, tmp_path: Path, default_config: MarkitaiConfig
+    ) -> None:
+        """TIFF files are also transcoded; get_saved_images must find them."""
+        from markitai.workflow.core import ConversionContext, get_saved_images
+
+        input_file = tmp_path / "photo.tiff"
+        input_file.write_bytes(b"fake tiff")
+
+        output_dir = tmp_path / "output"
+        assets_dir = output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+
+        transcoded = assets_dir / "photo-aabbccdd1122.png"
+        transcoded.touch()
+
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=output_dir,
+            config=default_config,
+        )
+        ctx.conversion_result = ConvertResult(
+            markdown="# photo\n\n![photo](.markitai/assets/photo-aabbccdd1122.png)\n",
+            metadata={"asset_path": ".markitai/assets/photo-aabbccdd1122.png"},
+        )
+
+        images = get_saved_images(ctx)
+        assert len(images) == 1
+        assert images[0].name == "photo-aabbccdd1122.png"
+
+    def test_non_transcoded_jpg_still_works(
+        self, tmp_path: Path, default_config: MarkitaiConfig
+    ) -> None:
+        """JPG files are NOT transcoded; existing glob logic must still work."""
+        from markitai.workflow.core import ConversionContext, get_saved_images
+
+        input_file = tmp_path / "sample.jpg"
+        input_file.write_bytes(b"fake jpg")
+
+        output_dir = tmp_path / "output"
+        assets_dir = output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        (assets_dir / "sample.jpg").touch()
+
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=output_dir,
+            config=default_config,
+        )
+        ctx.conversion_result = ConvertResult(
+            markdown="# sample\n\n![sample](.markitai/assets/sample.jpg)\n",
+            metadata={"asset_path": ".markitai/assets/sample.jpg"},
+        )
+
+        images = get_saved_images(ctx)
+        assert len(images) == 1
+        assert images[0].name == "sample.jpg"
 
 
 class TestConvertDocumentCore:
@@ -1561,4 +2212,4 @@ class TestConvertDocumentCore:
         # Output should contain image reference
         content = ctx.output_file.read_text()
         assert "test.png" in content
-        assert "assets/test.png" in content  # Image copied to assets
+        assert ".markitai/assets/test.png" in content  # Image copied to assets

@@ -180,6 +180,104 @@ class TestSingleFileWorkflowProcessDocument:
         assert mock_processor.process_document.called
         assert cost >= 0
 
+    @pytest.mark.asyncio
+    async def test_process_document_forwards_explicit_title(
+        self, mock_config, tmp_path: Path
+    ) -> None:
+        """Explicit titles should be forwarded to the LLM document processor."""
+        processor = MagicMock()
+        processor.process_document = AsyncMock(
+            return_value=("# Processed Content", "title: Test EPUB Document")
+        )
+        processor.format_llm_output = MagicMock(
+            return_value="---\ntitle: Test EPUB Document\n---\n\n# Processed Content"
+        )
+        processor.get_context_cost = MagicMock(return_value=0.05)
+        processor.get_context_usage = MagicMock(return_value={})
+
+        workflow = SingleFileWorkflow(mock_config, processor=processor)
+
+        output_file = tmp_path / "sample.epub.md"
+        output_file.write_text("placeholder")
+
+        await workflow.process_document_with_llm(
+            markdown=(
+                "**Title:** Test EPUB Document\n\n"
+                "## Test EPUB Document\n\n"
+                "# Chapter 1: Test Content"
+            ),
+            source="sample.epub",
+            output_file=output_file,
+            title="Test EPUB Document",
+        )
+
+        processor.process_document.assert_awaited_once_with(
+            (
+                "**Title:** Test EPUB Document\n\n"
+                "## Test EPUB Document\n\n"
+                "# Chapter 1: Test Content"
+            ),
+            "sample.epub",
+            title="Test EPUB Document",
+        )
+
+        llm_output = output_file.with_suffix(".llm.md")
+        assert llm_output.exists()
+        assert "title: Test EPUB Document" in llm_output.read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_process_document_applies_final_paged_stabilization(
+        self, mock_config, tmp_path: Path
+    ) -> None:
+        """The final writer should stabilize paged markdown before formatting."""
+        processor = MagicMock()
+        original = """<!-- Page number: 1 -->
+
+# Page 1
+
+Alpha.
+
+<!-- Page number: 2 -->
+
+Tail.
+"""
+        processor.process_document = AsyncMock(
+            return_value=(
+                "<!-- Page number: 1 -->\n\n# Page 1\n\nAlpha.\n\n"
+                "<!-- Page number: 2 -->\n\nBorrowed paragraph.\n\nTail.",
+                "title: Test\nsource: doc.pdf",
+            )
+        )
+        processor._stabilize_paged_markdown = MagicMock(return_value=original)
+
+        def _format(markdown: str, frontmatter: str, source: str | None = None) -> str:
+            del source
+            return f"---\n{frontmatter}\n---\n\n{markdown}"
+
+        processor.format_llm_output = MagicMock(side_effect=_format)
+        processor.get_context_cost = MagicMock(return_value=0.05)
+        processor.get_context_usage = MagicMock(return_value={})
+
+        workflow = SingleFileWorkflow(mock_config, processor=processor)
+
+        output_file = tmp_path / "doc.pdf.md"
+        output_file.write_text(f"---\ntitle: Base\n---\n\n{original}")
+
+        await workflow.process_document_with_llm(
+            markdown=original,
+            source="doc.pdf",
+            output_file=output_file,
+        )
+
+        processor._stabilize_paged_markdown.assert_called_once_with(
+            original,
+            processor.process_document.return_value[0],
+            "doc.pdf",
+        )
+        llm_output = output_file.with_suffix(".llm.md")
+        assert llm_output.exists()
+        assert "Borrowed paragraph." not in llm_output.read_text(encoding="utf-8")
+
 
 class TestSingleFileWorkflowAnalyzeImages:
     """Tests for SingleFileWorkflow.analyze_images method."""
@@ -239,16 +337,16 @@ class TestSingleFileWorkflowAnalyzeImages:
         workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
 
         # Create test image file
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
         image_file = assets_dir / "test.png"
         image_file.write_bytes(b"fake image data")
 
         output_file = tmp_path / "output.md"
-        output_file.write_text("# Content\n\n![](assets/test.png)")
+        output_file.write_text("# Content\n\n![](.markitai/assets/test.png)")
 
         markdown, cost, usage, result = await workflow.analyze_images(
-            markdown="# Content\n\n![](assets/test.png)",
+            markdown="# Content\n\n![](.markitai/assets/test.png)",
             image_paths=[image_file],
             output_file=output_file,
         )
@@ -265,8 +363,8 @@ class TestSingleFileWorkflowAnalyzeImages:
         workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
 
         # Create test image file
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
         image_file = assets_dir / "standalone.png"
         image_file.write_bytes(b"fake image data")
 
@@ -274,10 +372,10 @@ class TestSingleFileWorkflowAnalyzeImages:
         input_path.write_bytes(b"fake image data")
 
         output_file = tmp_path / "standalone.png.md"
-        output_file.write_text("# standalone\n\n![](assets/standalone.png)")
+        output_file.write_text("# standalone\n\n![](.markitai/assets/standalone.png)")
 
         markdown, cost, usage, result = await workflow.analyze_images(
-            markdown="# standalone\n\n![](assets/standalone.png)",
+            markdown="# standalone\n\n![](.markitai/assets/standalone.png)",
             image_paths=[image_file],
             output_file=output_file,
             input_path=input_path,  # Pass original image as input
@@ -320,6 +418,16 @@ class TestSingleFileWorkflowEnhanceWithVision:
                 "title: Enhanced\nmarkitai_processed: 2026-01-01",  # frontmatter
             )
         )
+
+        def _stabilize(
+            original: str,
+            cleaned: str,
+            source: str,
+        ) -> str:
+            del original, source
+            return cleaned
+
+        processor._stabilize_paged_markdown = MagicMock(side_effect=_stabilize)
         processor.get_context_cost = MagicMock(return_value=0.10)
         processor.get_context_usage = MagicMock(return_value={"gpt-4": {"requests": 1}})
         return processor
@@ -351,6 +459,32 @@ class TestSingleFileWorkflowEnhanceWithVision:
         assert mock_processor.enhance_document_complete.called
         assert "Enhanced" in frontmatter
         assert "Enhanced Content" in markdown
+
+    @pytest.mark.asyncio
+    async def test_enhance_with_vision_forwards_original_title(
+        self, mock_config, mock_processor, tmp_path: Path
+    ) -> None:
+        """Vision workflow should forward explicit title to document enhancer."""
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        img1 = tmp_path / "page1.png"
+        img1.write_bytes(b"fake image 1")
+
+        page_images = [{"path": str(img1), "page": 1}]
+
+        await workflow.enhance_with_vision(
+            extracted_text="# Chapter 1",
+            page_images=page_images,
+            source="doc.pdf",
+            original_title="Canonical Document Title",
+        )
+
+        mock_processor.enhance_document_complete.assert_awaited_once_with(
+            "# Chapter 1",
+            [img1],
+            source="doc.pdf",
+            original_title="Canonical Document Title",
+        )
 
     @pytest.mark.asyncio
     async def test_enhance_with_vision_sorts_by_page(
@@ -387,6 +521,56 @@ class TestSingleFileWorkflowEnhanceWithVision:
         assert image_paths[0].name == "page1.png"
         assert image_paths[1].name == "page2.png"
         assert image_paths[2].name == "page3.png"
+
+    @pytest.mark.asyncio
+    async def test_enhance_with_vision_applies_final_paged_stabilization(
+        self, mock_config, tmp_path: Path
+    ) -> None:
+        """Vision workflow should stabilize paged markdown before returning it."""
+        processor = MagicMock()
+        processor.enhance_document_complete = AsyncMock(
+            return_value=(
+                "<!-- Page number: 1 -->\n\n# Page 1\n\nAlpha.\n\n"
+                "<!-- Page number: 2 -->\n\nBorrowed paragraph.\n\nTail.",
+                "title: Enhanced\nmarkitai_processed: 2026-01-01",
+            )
+        )
+        original = """<!-- Page number: 1 -->
+
+# Page 1
+
+Alpha.
+
+<!-- Page number: 2 -->
+
+Tail.
+"""
+        processor._stabilize_paged_markdown = MagicMock(return_value=original)
+        processor.get_context_cost = MagicMock(return_value=0.10)
+        processor.get_context_usage = MagicMock(return_value={"gpt-4": {"requests": 1}})
+
+        workflow = SingleFileWorkflow(mock_config, processor=processor)
+
+        img1 = tmp_path / "page1.png"
+        img1.write_bytes(b"fake image 1")
+        img2 = tmp_path / "page2.png"
+        img2.write_bytes(b"fake image 2")
+
+        markdown, _, _, _ = await workflow.enhance_with_vision(
+            extracted_text=original,
+            page_images=[
+                {"path": str(img1), "page": 1},
+                {"path": str(img2), "page": 2},
+            ],
+            source="doc.pdf",
+        )
+
+        processor._stabilize_paged_markdown.assert_called_once_with(
+            original,
+            processor.enhance_document_complete.return_value[0],
+            "doc.pdf",
+        )
+        assert markdown == original
 
     @pytest.mark.asyncio
     async def test_enhance_with_vision_handles_error(
@@ -481,6 +665,34 @@ class TestSingleFileWorkflowExtractFromScreenshots:
         assert "Page content" in markdown
 
     @pytest.mark.asyncio
+    async def test_extract_from_screenshots_preserves_original_title(
+        self, mock_config, mock_processor, tmp_path: Path
+    ) -> None:
+        """Screenshot-only extraction should preserve explicit document title."""
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        img1 = tmp_path / "page1.png"
+        img1.write_bytes(b"fake image")
+
+        page_images = [{"path": str(img1), "page": 1}]
+
+        markdown, frontmatter, cost, usage = await workflow.extract_from_screenshots(
+            page_images=page_images,
+            source="doc.pdf",
+            original_title="Canonical Document Title",
+        )
+
+        assert "Canonical Document Title" in frontmatter
+        mock_processor.extract_from_screenshot.assert_awaited_once_with(
+            img1,
+            context="doc.pdf:page1",
+            original_title="Canonical Document Title",
+        )
+        assert "Page content" in markdown
+        assert cost == 0.05
+        assert usage == {"gpt-4": {"requests": 1}}
+
+    @pytest.mark.asyncio
     async def test_extract_from_screenshots_multiple_pages(
         self, mock_config, mock_processor, tmp_path: Path
     ):
@@ -488,7 +700,7 @@ class TestSingleFileWorkflowExtractFromScreenshots:
         # Make each call return different content
         call_count = [0]
 
-        async def mock_extract(image_path, context=None):
+        async def mock_extract(image_path, context=None, original_title=None):
             call_count[0] += 1
             return (f"Content from page {call_count[0]}", "")
 
@@ -631,22 +843,22 @@ class TestSingleFileWorkflowAnalyzeImagesAltTextUpdate:
         """Test that alt text is updated in returned markdown."""
         workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
 
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
         image_file = assets_dir / "sunset.png"
         image_file.write_bytes(b"fake image")
 
         output_file = tmp_path / "output.md"
-        output_file.write_text("# Content\n\n![](assets/sunset.png)")
+        output_file.write_text("# Content\n\n![](.markitai/assets/sunset.png)")
 
         markdown, cost, usage, result = await workflow.analyze_images(
-            markdown="# Content\n\n![](assets/sunset.png)",
+            markdown="# Content\n\n![](.markitai/assets/sunset.png)",
             image_paths=[image_file],
             output_file=output_file,
         )
 
         # Alt text should be updated in the returned markdown
-        assert "![A beautiful sunset](assets/sunset.png)" in markdown
+        assert "![A beautiful sunset](.markitai/assets/sunset.png)" in markdown
 
     @pytest.mark.asyncio
     async def test_handles_failed_analysis(
@@ -657,16 +869,16 @@ class TestSingleFileWorkflowAnalyzeImagesAltTextUpdate:
         mock_processor.analyze_image = AsyncMock(return_value=None)
         workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
 
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
         image_file = assets_dir / "broken.png"
         image_file.write_bytes(b"fake")
 
         output_file = tmp_path / "output.md"
-        output_file.write_text("# Content\n\n![](assets/broken.png)")
+        output_file.write_text("# Content\n\n![](.markitai/assets/broken.png)")
 
         markdown, cost, usage, result = await workflow.analyze_images(
-            markdown="# Content\n\n![](assets/broken.png)",
+            markdown="# Content\n\n![](.markitai/assets/broken.png)",
             image_paths=[image_file],
             output_file=output_file,
         )

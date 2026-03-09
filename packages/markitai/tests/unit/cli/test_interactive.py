@@ -18,7 +18,10 @@ class TestProviderDetection:
     def test_detect_claude_cli_authenticated(self) -> None:
         """Should detect authenticated Claude CLI."""
         with (
-            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch(
+                "markitai.cli.interactive.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
+            ),
             patch(
                 "markitai.cli.interactive._check_claude_auth",
                 return_value=True,
@@ -34,7 +37,7 @@ class TestProviderDetection:
         """Should detect authenticated Copilot CLI when Claude not available."""
         with (
             patch(
-                "shutil.which",
+                "markitai.cli.interactive.shutil.which",
                 side_effect=lambda x: "/usr/bin/copilot" if x == "copilot" else None,
             ),
             patch(
@@ -50,7 +53,7 @@ class TestProviderDetection:
     def test_detect_anthropic_api_key(self) -> None:
         """Should detect ANTHROPIC_API_KEY environment variable."""
         with (
-            patch("shutil.which", return_value=None),
+            patch("markitai.cli.interactive.shutil.which", return_value=None),
             patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
             patch(
                 "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
@@ -65,7 +68,7 @@ class TestProviderDetection:
     def test_detect_openai_api_key(self) -> None:
         """Should detect OPENAI_API_KEY when no other provider available."""
         with (
-            patch("shutil.which", return_value=None),
+            patch("markitai.cli.interactive.shutil.which", return_value=None),
             patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
             patch(
                 "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
@@ -80,7 +83,7 @@ class TestProviderDetection:
     def test_detect_gemini_api_key(self) -> None:
         """Should detect GEMINI_API_KEY when no other provider available."""
         with (
-            patch("shutil.which", return_value=None),
+            patch("markitai.cli.interactive.shutil.which", return_value=None),
             patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
             patch(
                 "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
@@ -95,7 +98,7 @@ class TestProviderDetection:
     def test_detect_deepseek_api_key(self) -> None:
         """Should detect DEEPSEEK_API_KEY when no higher-priority provider available."""
         with (
-            patch("shutil.which", return_value=None),
+            patch("markitai.cli.interactive.shutil.which", return_value=None),
             patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
             patch(
                 "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
@@ -110,7 +113,7 @@ class TestProviderDetection:
     def test_detect_openrouter_api_key(self) -> None:
         """Should detect OPENROUTER_API_KEY when no higher-priority provider available."""
         with (
-            patch("shutil.which", return_value=None),
+            patch("markitai.cli.interactive.shutil.which", return_value=None),
             patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
             patch(
                 "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
@@ -125,7 +128,7 @@ class TestProviderDetection:
     def test_detect_no_provider(self) -> None:
         """Should return None when no provider detected."""
         with (
-            patch("shutil.which", return_value=None),
+            patch("markitai.cli.interactive.shutil.which", return_value=None),
             patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
             patch(
                 "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
@@ -139,7 +142,7 @@ class TestProviderDetection:
         """Should return all available providers, not just the first."""
         with (
             patch(
-                "shutil.which",
+                "markitai.cli.interactive.shutil.which",
                 side_effect=lambda x: "/usr/bin/claude" if x == "claude" else None,
             ),
             patch(
@@ -164,7 +167,7 @@ class TestProviderDetection:
     def test_detect_chatgpt_provider(self) -> None:
         """Should detect ChatGPT when authenticated."""
         with (
-            patch("shutil.which", return_value=None),
+            patch("markitai.cli.interactive.shutil.which", return_value=None),
             patch("markitai.cli.interactive._check_chatgpt_auth", return_value=True),
             patch(
                 "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
@@ -179,7 +182,7 @@ class TestProviderDetection:
     def test_detect_gemini_cli_provider(self) -> None:
         """Should detect Gemini CLI when authenticated."""
         with (
-            patch("shutil.which", return_value=None),
+            patch("markitai.cli.interactive.shutil.which", return_value=None),
             patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
             patch("markitai.cli.interactive._check_gemini_cli_auth", return_value=True),
             patch.dict("os.environ", {}, clear=True),

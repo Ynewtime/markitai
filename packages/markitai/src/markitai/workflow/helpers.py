@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from loguru import logger
 
+from markitai.constants import MARKITAI_META_DIR
 from markitai.json_order import order_images
 from markitai.security import atomic_write_json
 from markitai.utils.paths import ensure_dir
@@ -24,9 +25,14 @@ if TYPE_CHECKING:
 FRONTMATTER_FIELD_ORDER = [
     "title",
     "source",
+    "author",
+    "site",
+    "published",
+    "canonical_url",
     "description",
     "tags",
     "markitai_processed",
+    "fetch_strategy",
 ]
 
 # Patterns to detect prompt leakage in frontmatter keys
@@ -40,6 +46,30 @@ PROMPT_LEAKAGE_KEY_PATTERNS = [
     r"任务\s*\d",  # "任务 1" or "任务1"
     r"Task\s*\d",  # "Task 1" or "Task1"
 ]
+
+
+def maybe_stabilize_markdown(
+    processor: Any, baseline: str, content: str, source: str
+) -> str:
+    """Apply paged markdown stabilization if the processor supports it.
+
+    Args:
+        processor: LLMProcessor instance (checked for _stabilize_paged_markdown).
+        baseline: Original markdown before LLM processing.
+        content: LLM-processed markdown to stabilize.
+        source: Source identifier for logging.
+
+    Returns:
+        Stabilized content if the processor supports it, otherwise the
+        original *content* unchanged.
+    """
+    stabilize = getattr(processor, "_stabilize_paged_markdown", None)
+    if callable(stabilize):
+        stabilized = stabilize(baseline, content, source)
+        if stabilized != content:
+            logger.warning(f"[{source}] Stabilized paged markdown output")
+        return stabilized
+    return content
 
 
 def normalize_frontmatter(frontmatter: str | dict[str, Any]) -> str:
@@ -118,61 +148,6 @@ def normalize_frontmatter(frontmatter: str | dict[str, Any]) -> str:
     return "\n".join(ordered_lines)
 
 
-# Language code to full name mapping for LLM prompts
-LANGUAGE_NAMES: dict[str, str] = {
-    "zh": "Chinese",
-    "en": "English",
-}
-
-
-def detect_language(content: str) -> str:
-    """Detect the primary language of the content.
-
-    Uses a simple heuristic: if more than 10% of characters are CJK,
-    consider it Chinese.
-
-    Args:
-        content: Text content to analyze
-
-    Returns:
-        Language code: "zh" for Chinese, "en" for English/other
-    """
-    if not content:
-        return "en"
-
-    # Count CJK characters (Chinese, Japanese, Korean)
-    cjk_count = 0
-    total_count = 0
-
-    for char in content:
-        if char.isalpha():
-            total_count += 1
-            # CJK Unified Ideographs range
-            if "\u4e00" <= char <= "\u9fff":
-                cjk_count += 1
-
-    if total_count == 0:
-        return "en"
-
-    # If more than 10% CJK characters, consider it Chinese
-    if cjk_count / total_count > 0.1:
-        return "zh"
-
-    return "en"
-
-
-def get_language_name(language_code: str) -> str:
-    """Get full language name from language code.
-
-    Args:
-        language_code: Language code ("zh" or "en")
-
-    Returns:
-        Full language name ("Chinese" or "English")
-    """
-    return LANGUAGE_NAMES.get(language_code, "English")
-
-
 def add_basic_frontmatter(
     content: str,
     source: str,
@@ -181,6 +156,7 @@ def add_basic_frontmatter(
     output_dir: Path | None = None,
     dedupe: bool = True,
     title: str | None = None,
+    extra_meta: dict[str, Any] | None = None,
 ) -> str:
     """Add basic frontmatter (title, source, markitai_processed) to markdown content.
 
@@ -207,23 +183,34 @@ def add_basic_frontmatter(
         # Second pass: long text block deduplication (for social media content)
         content = dedupe_long_text_blocks(content)
 
-    # Use provided title, or extract from first heading, or fallback to source
-    if not title:
-        title = source
-        lines = content.strip().split("\n")
+    from markitai.utils.markdown_quality import normalize_markdown
+
+    content = normalize_markdown(content)
+
+    from markitai.utils.frontmatter import resolve_document_title
+
+    def extract_heading_title(markdown: str) -> str:
+        lines = markdown.strip().split("\n")
         for line in lines:
             # Match markdown headings (# followed by space), not hashtags
             if line.startswith("# ") or (
                 len(line) > 1 and line[0] == "#" and line[1] in "# "
             ):
-                # Remove # and ** markers, strip whitespace
-                extracted = line.lstrip("#").strip()
-                extracted = extracted.replace("**", "").strip()
+                extracted = line.lstrip("#").strip().replace("**", "").strip()
                 if extracted:
-                    title = extracted
-                    break
+                    return extracted
+        return ""
 
-    timestamp = datetime.now().astimezone().isoformat()
+    title = resolve_document_title(
+        source=source,
+        explicit_title=title,
+        content=content,
+        extractor=extract_heading_title,
+    )
+
+    from markitai.utils.frontmatter import frontmatter_timestamp
+
+    timestamp = frontmatter_timestamp()
 
     # Normalize title: replace newlines with spaces and collapse whitespace
     if title:
@@ -238,6 +225,20 @@ def add_basic_frontmatter(
     # Add fetch_strategy if provided
     if fetch_strategy:
         frontmatter_dict["fetch_strategy"] = fetch_strategy
+
+    # Merge extra metadata from external strategies (after canonical fields)
+    if extra_meta:
+        canonical_keys = {
+            "title",
+            "source",
+            "description",
+            "tags",
+            "markitai_processed",
+            "fetch_strategy",
+        }
+        for key, value in extra_meta.items():
+            if key not in canonical_keys and value is not None:
+                frontmatter_dict[key] = value
 
     frontmatter_yaml = normalize_frontmatter(frontmatter_dict)
 
@@ -331,7 +332,7 @@ def write_images_json(
                 assets_dir = image_path.parent
             else:
                 # Fallback to default assets directory
-                assets_dir = output_dir / "assets"
+                assets_dir = output_dir / MARKITAI_META_DIR / "assets"
 
             if assets_dir not in images_by_dir:
                 images_by_dir[assets_dir] = []
@@ -430,20 +431,17 @@ def format_standalone_image_markdown(
 
     # Frontmatter (for .llm.md files)
     if include_frontmatter:
-        timestamp = datetime.now().astimezone().isoformat()
-        frontmatter_lines = [
-            "---",
-            f"title: {input_path.stem}",
-            f"description: {analysis.caption}",
-            f"source: {input_path.name}",
-            "tags:",
-            "- image",
-            "- analysis",
-            f"markitai_processed: {timestamp}",
-            "---",
-            "",
-        ]
-        sections.append("\n".join(frontmatter_lines))
+        from markitai.utils.frontmatter import frontmatter_timestamp
+
+        fm_dict: dict[str, Any] = {
+            "title": input_path.stem,
+            "description": analysis.caption,
+            "source": input_path.name,
+            "tags": ["image", "analysis"],
+            "markitai_processed": frontmatter_timestamp(),
+        }
+        fm_yaml = normalize_frontmatter(fm_dict)
+        sections.append(f"---\n{fm_yaml}\n---\n")
 
     # Title
     sections.append(f"# {input_path.stem}\n")

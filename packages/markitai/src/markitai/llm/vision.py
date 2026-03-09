@@ -66,9 +66,7 @@ class VisionMixin:
         _persistent_cache: Any  # PersistentCache from processor.py
         _prompt_manager: PromptManager
 
-    async def analyze_image(
-        self, image_path: Path, language: str = "en", context: str = ""
-    ) -> ImageAnalysis:
+    async def analyze_image(self, image_path: Path, context: str = "") -> ImageAnalysis:
         """
         Analyze an image using vision model.
 
@@ -79,7 +77,6 @@ class VisionMixin:
 
         Args:
             image_path: Path to the image file
-            language: Language for output (e.g., "en", "zh")
             context: Context identifier for usage tracking (e.g., source filename)
 
         Returns:
@@ -98,10 +95,10 @@ class VisionMixin:
         # Get cached image data and base64 encoding
         _, base64_image = self._get_cached_image(image_path)  # type: ignore[attr-defined]
 
-        # Check persistent cache using image hash + language as key
+        # Check persistent cache using image hash as key
         # Use SHA256 hash of base64 as image fingerprint to avoid collisions
         # (JPEG files share the same header, so first N chars are identical)
-        cache_key = f"image_analysis:{language}"
+        cache_key = "image_analysis"
         image_fingerprint = hashlib.sha256(base64_image.encode()).hexdigest()
         cached = self._persistent_cache.get(  # type: ignore[attr-defined]
             cache_key, image_fingerprint, context=context
@@ -118,12 +115,9 @@ class VisionMixin:
         # Determine MIME type (converts BMP/TIFF → image/png)
         mime_type = get_llm_effective_mime(image_path.suffix)
 
-        # Get language name for prompt
-        lang_name = "English" if language == "en" else "中文"
-
         # Use separated system/user prompts to improve instruction following
         system_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "image_analysis_system", language=lang_name
+            "image_analysis_system"
         )
         user_prompt = self._prompt_manager.get_prompt("image_analysis_user")  # type: ignore[attr-defined]
 
@@ -166,7 +160,6 @@ class VisionMixin:
     async def analyze_images_batch(
         self,
         image_paths: list[Path],
-        language: str = "en",
         max_images_per_batch: int = DEFAULT_MAX_IMAGES_PER_BATCH,
         context: str = "",
     ) -> list[ImageAnalysis]:
@@ -181,7 +174,6 @@ class VisionMixin:
 
         Args:
             image_paths: List of image paths to analyze
-            language: Language for output ("en" or "zh")
             max_images_per_batch: Max images per LLM call (default 10)
             context: Context identifier for usage tracking (e.g., source filename)
 
@@ -222,7 +214,7 @@ class VisionMixin:
             """Process a single batch with backpressure control."""
             async with batch_semaphore:
                 try:
-                    results = await self.analyze_batch(batch_paths, language, context)
+                    results = await self.analyze_batch(batch_paths, context=context)
                     return (batch_num, results)
                 except Exception as e:
                     logger.warning(
@@ -270,7 +262,6 @@ class VisionMixin:
     async def analyze_batch(
         self,
         image_paths: list[Path],
-        language: str,
         context: str = "",
     ) -> list[ImageAnalysis]:
         """Batch image analysis using Instructor.
@@ -280,7 +271,6 @@ class VisionMixin:
 
         Args:
             image_paths: List of image paths to analyze
-            language: Language for output ("en" or "zh")
             context: Context identifier for usage tracking
 
         Returns:
@@ -307,7 +297,7 @@ class VisionMixin:
 
         # Check persistent cache for all images first
         # Use same cache key format as analyze_image for consistency
-        cache_key = f"image_analysis:{language}"
+        cache_key = "image_analysis"
         cached_results: dict[int, ImageAnalysis] = {}
         uncached_indices: list[int] = []
         image_fingerprints: dict[int, str] = {}
@@ -348,20 +338,13 @@ class VisionMixin:
             f"{len(uncached_indices)} misses"
         )
 
-        # Get language name for prompt
-        lang_name = "English" if language == "en" else "中文"
-
         # Use separated system/user prompts to improve instruction following
         system_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "image_analysis_system", language=lang_name
+            "image_analysis_system"
         )
 
         # Build batch user prompt
-        batch_header = (
-            f"请依次分析以下 {len(uncached_paths)} 张图片。"
-            if language == "zh"
-            else f"Analyze the following {len(uncached_paths)} images in order."
-        )
+        batch_header = f"Analyze the following {len(uncached_paths)} images in order."
         batch_footer = "\n\nReturn a JSON object with an 'images' array containing results for each image in order."
         user_prompt = f"{batch_header}{batch_footer}"
 
@@ -522,7 +505,7 @@ class VisionMixin:
                 if i in cached_results:
                     return cached_results[i]
                 try:
-                    return await self.analyze_image(image_path, language, context)
+                    return await self.analyze_image(image_path, context=context)
                 except Exception:
                     return ImageAnalysis(
                         caption="Image",
@@ -752,21 +735,14 @@ class VisionMixin:
         # Old format: [user_msg_with_image]
         if messages[0].get("role") == "system":
             user_content = messages[1]["content"]
-            system_content = messages[0]["content"]
         else:
             user_content = messages[0]["content"]
-            system_content = ""
 
         image_content = user_content[1]  # The image part
 
-        # Detect language from system prompt
-        lang_name = "English"
-        if isinstance(system_content, str) and "中文" in system_content:
-            lang_name = "中文"
-
         # Generate caption using system/user prompts
         caption_system = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "image_caption_system", language=lang_name
+            "image_caption_system"
         )
         caption_user = self._prompt_manager.get_prompt("image_caption_user")  # type: ignore[attr-defined]
         caption_response = await self._call_llm(  # type: ignore[attr-defined]
@@ -786,7 +762,7 @@ class VisionMixin:
 
         # Generate description using system/user prompts
         desc_system = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "image_description_system", language=lang_name
+            "image_description_system"
         )
         desc_user = self._prompt_manager.get_prompt("image_description_user")  # type: ignore[attr-defined]
         desc_response = await self._call_llm(  # type: ignore[attr-defined]
@@ -849,9 +825,8 @@ class VisionMixin:
         mime_type = get_llm_effective_mime(image_path.suffix)
 
         # Use separated system/user prompts to improve instruction following
-        # Language is set to "与源文档一致" (match source document)
         system_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "page_content_system", language="与源文档一致"
+            "page_content_system"
         )
         user_prompt = self._prompt_manager.get_prompt("page_content_user")  # type: ignore[attr-defined]
 

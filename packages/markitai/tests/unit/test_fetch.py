@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import tempfile
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1389,15 +1389,29 @@ class TestFetchWithStatic:
     async def test_fetch_with_static_success(self) -> None:
         """Test successful static fetch."""
         from markitai.fetch import fetch_with_static
+        from markitai.fetch_http import StaticHttpResponse
 
-        # Mock markitdown conversion
+        mock_response = StaticHttpResponse(
+            content=b"plain text body",
+            status_code=200,
+            headers={"content-type": "text/plain"},
+            url="https://example.com",
+        )
+        mock_client = MagicMock()
+        mock_client.name = "httpx"
+        mock_client.get = AsyncMock(return_value=mock_response)
+
         mock_result = type(
             "MockResult",
             (),
             {"text_content": "# Test Page\n\nSome content here.", "title": "Test Page"},
         )()
 
-        with patch("markitai.fetch._get_markitdown") as mock_get_md:
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch("markitai.fetch._get_markitdown") as mock_get_md,
+        ):
             mock_md = type("MockMD", (), {"convert": lambda _self, _url: mock_result})()
             mock_get_md.return_value = mock_md
 
@@ -1412,10 +1426,24 @@ class TestFetchWithStatic:
     async def test_fetch_with_static_no_content(self) -> None:
         """Test static fetch with no content raises error."""
         from markitai.fetch import FetchError, fetch_with_static
+        from markitai.fetch_http import StaticHttpResponse
 
+        mock_response = StaticHttpResponse(
+            content=b"plain text body",
+            status_code=200,
+            headers={"content-type": "text/plain"},
+            url="https://example.com",
+        )
+        mock_client = MagicMock()
+        mock_client.name = "httpx"
+        mock_client.get = AsyncMock(return_value=mock_response)
         mock_result = type("MockResult", (), {"text_content": "", "title": None})()
 
-        with patch("markitai.fetch._get_markitdown") as mock_get_md:
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch("markitai.fetch._get_markitdown") as mock_get_md,
+        ):
             mock_md = type("MockMD", (), {"convert": lambda _self, _url: mock_result})()
             mock_get_md.return_value = mock_md
 
@@ -1428,8 +1456,23 @@ class TestFetchWithStatic:
     async def test_fetch_with_static_exception(self) -> None:
         """Test static fetch handles exceptions."""
         from markitai.fetch import FetchError, fetch_with_static
+        from markitai.fetch_http import StaticHttpResponse
 
-        with patch("markitai.fetch._get_markitdown") as mock_get_md:
+        mock_response = StaticHttpResponse(
+            content=b"plain text body",
+            status_code=200,
+            headers={"content-type": "text/plain"},
+            url="https://example.com",
+        )
+        mock_client = MagicMock()
+        mock_client.name = "httpx"
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch("markitai.fetch._get_markitdown") as mock_get_md,
+        ):
             mock_md = type(
                 "MockMD",
                 (),
@@ -1444,7 +1487,7 @@ class TestFetchWithStatic:
             with pytest.raises(FetchError) as exc_info:
                 await fetch_with_static("https://example.com")
 
-            assert "Failed to fetch URL" in str(exc_info.value)
+            assert "Network error" in str(exc_info.value)
 
 
 class TestFetchWithJina:
@@ -1729,7 +1772,7 @@ class TestFetchWithStaticConditional:
 
     @pytest.mark.asyncio
     async def test_conditional_fetch_200_new_content(self) -> None:
-        """Test conditional fetch returns 200 with new content."""
+        """Test conditional fetch falls back when native extraction fails."""
         from markitai.fetch import fetch_with_static_conditional
 
         mock_headers = {
@@ -1744,6 +1787,7 @@ class TestFetchWithStaticConditional:
             key, default
         )
         mock_response.content = b"<html><body><h1>New Content</h1></body></html>"
+        mock_response.text = "<html><body><h1>New Content</h1></body></html>"
         mock_response.url = "https://example.com"
 
         mock_client = MagicMock()
@@ -1757,6 +1801,10 @@ class TestFetchWithStaticConditional:
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
             patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch(
+                "markitai.fetch.extract_web_content",
+                side_effect=RuntimeError("native failure"),
+            ),
             patch("markitai.fetch._get_markitdown") as mock_get_md,
         ):
             mock_md = MagicMock()
@@ -1768,6 +1816,7 @@ class TestFetchWithStaticConditional:
             assert result.not_modified is False
             assert result.result is not None
             assert result.result.content == "# New Content"
+            assert result.result.metadata["converter"] == "markitdown"
             assert result.etag == '"new-etag"'
 
     @pytest.mark.asyncio
@@ -2172,6 +2221,81 @@ class TestFetchWithFallback:
 
             assert result.strategy_used == "playwright"
 
+    @pytest.mark.asyncio
+    async def test_fetch_with_fallback_skips_external_strategies_for_localhost(
+        self,
+    ) -> None:
+        """Local/private URLs should not be sent to external fetch services."""
+        from markitai.fetch import FetchResult, _fetch_with_fallback
+
+        mock_config = type(
+            "MockConfig",
+            (),
+            {
+                "strategy": "auto",
+                "fallback_patterns": [],
+                "policy": type(
+                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                )(),
+                "domain_profiles": {},
+                "jina": type(
+                    "JinaConfig",
+                    (),
+                    {"get_resolved_api_key": lambda *_, **__: None, "timeout": 30},
+                )(),
+                "playwright": type(
+                    "PlaywrightConfig",
+                    (),
+                    {
+                        "timeout": 30000,
+                        "wait_for": "load",
+                        "extra_wait_ms": 0,
+                        "wait_for_selector": None,
+                        "cookies": None,
+                        "reject_resource_patterns": None,
+                        "extra_http_headers": None,
+                        "user_agent": None,
+                        "http_credentials": None,
+                        "session_mode": "isolated",
+                        "session_ttl_seconds": 600,
+                    },
+                )(),
+            },
+        )()
+
+        mock_result = FetchResult(
+            content=(
+                "# Local Content\n\n"
+                "This is enough local content to pass validation without "
+                "needing any third-party fetch providers involved."
+            ),
+            strategy_used="static",
+            url="http://127.0.0.1:8000",
+        )
+
+        with (
+            patch(
+                "markitai.fetch.fetch_with_static",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ) as mock_static,
+            patch("markitai.fetch.detect_js_required", return_value=False),
+            patch(
+                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+            ) as mock_defuddle,
+            patch(
+                "markitai.fetch.fetch_with_jina", new_callable=AsyncMock
+            ) as mock_jina,
+        ):
+            result = await _fetch_with_fallback(
+                "http://127.0.0.1:8000", mock_config, start_with_browser=False
+            )
+
+        assert result.strategy_used == "static"
+        mock_static.assert_called_once()
+        mock_defuddle.assert_not_called()
+        mock_jina.assert_not_called()
+
 
 class TestFetchCacheIntegration:
     """Integration tests for FetchCache class."""
@@ -2308,6 +2432,32 @@ class TestFetchCacheIntegration:
         assert cached.metadata == {"key1": "value1", "key2": 123, "nested": {"a": "b"}}
         cache.close()
 
+    def test_cache_metadata_serializes_date_values(self, tmp_path: Path) -> None:
+        """Cache should serialize date-like metadata values for round-tripping."""
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test_cache.db")
+        url = "https://example.com/article"
+
+        result = FetchResult(
+            content="# Article",
+            strategy_used="defuddle",
+            url=url,
+            metadata={
+                "source_frontmatter": {
+                    "title": "Article",
+                    "published": date(2024, 1, 15),
+                }
+            },
+        )
+
+        cache.set(url, result)
+
+        cached = cache.get(url)
+        assert cached is not None
+        assert cached.metadata["source_frontmatter"]["published"] == "2024-01-15"
+        cache.close()
+
     def test_cache_url_hash_collision_handling(self, tmp_path: Path) -> None:
         """Test that different URLs don't collide."""
         from markitai.fetch import FetchCache, FetchResult
@@ -2413,28 +2563,42 @@ class TestIsInvalidContentAdditional:
         assert is_invalid is False
 
 
-class TestFetchMultiSourceAdditional:
-    """Additional tests for _fetch_multi_source function."""
+class TestScreenshotDecoupled:
+    """Tests for screenshot decoupled from content strategy.
 
-    @pytest.mark.asyncio
-    async def test_fetch_multi_source_both_fail_raises_error(self) -> None:
-        """Test multi-source fetch raises error when all strategies fail."""
-        from markitai.fetch import FetchError, _fetch_multi_source
+    After the refactor, screenshot=True should NOT trigger parallel multi-source
+    fetching. Instead, content is fetched serially via FetchPolicyEngine, and
+    screenshot is captured separately via playwright if needed.
+    """
 
-        mock_config = type(
+    def _make_config(self, *, jina_key: str | None = None) -> object:
+        """Create a mock FetchConfig for testing."""
+        return type(
             "MockConfig",
             (),
             {
                 "strategy": "auto",
                 "fallback_patterns": [],
                 "policy": type(
-                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                    "Policy", (), {"enabled": True, "max_strategy_hops": 5}
                 )(),
                 "domain_profiles": {},
                 "jina": type(
                     "JinaConfig",
                     (),
-                    {"get_resolved_api_key": lambda *_, **__: None, "timeout": 30},
+                    {
+                        "get_resolved_api_key": lambda *_, **__: jina_key,
+                        "timeout": 30,
+                        "rpm": 20,
+                        "no_cache": False,
+                        "target_selector": None,
+                        "wait_for_selector": None,
+                    },
+                )(),
+                "defuddle": type(
+                    "DefuddleConfig",
+                    (),
+                    {"timeout": 30, "rpm": 20},
                 )(),
                 "playwright": type(
                     "PlaywrightConfig",
@@ -2453,197 +2617,342 @@ class TestFetchMultiSourceAdditional:
                         "session_ttl_seconds": 600,
                     },
                 )(),
+                "cloudflare": type(
+                    "CloudflareConfig",
+                    (),
+                    {
+                        "get_resolved_api_token": lambda *_, **__: None,
+                        "get_resolved_account_id": lambda *_, **__: None,
+                        "api_token": None,
+                        "account_id": None,
+                        "timeout": 30000,
+                        "wait_until": "networkidle0",
+                        "cache_ttl": 0,
+                        "reject_resource_patterns": None,
+                        "user_agent": None,
+                        "cookies": None,
+                        "wait_for_selector": None,
+                        "http_credentials": None,
+                    },
+                )(),
                 "auto_proxy": False,
             },
         )()
 
-        with (
-            patch(
-                "markitai.fetch.fetch_with_static",
-                new_callable=AsyncMock,
-                side_effect=Exception("Static failed"),
-            ),
-            patch(
-                "markitai.fetch_playwright.is_playwright_available", return_value=False
-            ),
-        ):
-            with pytest.raises(FetchError) as exc_info:
-                await _fetch_multi_source(
-                    "https://example.com",
-                    mock_config,
-                )
-
-            assert "All fetch strategies failed" in str(exc_info.value)
+    def _valid_content(self, label: str = "default") -> str:
+        """Return content that passes _is_invalid_content validation."""
+        return (
+            f"# Content from {label}\n\n"
+            "This is valid content with enough text to pass the content validation "
+            "threshold which requires at least 100 characters of clean text after "
+            "removing all markdown syntax elements like headers, links, and images. "
+            "Adding more text to be safe and ensure validation passes correctly."
+        )
 
     @pytest.mark.asyncio
-    async def test_fetch_multi_source_jina_used_when_static_and_browser_invalid(
+    async def test_screenshot_mode_defuddle_wins_with_separate_screenshot(
         self,
     ) -> None:
-        """When static/browser return invalid content but Jina returns valid, use Jina."""
-        from markitai.fetch import FetchResult, _fetch_multi_source
+        """When screenshot=True and defuddle wins content, playwright runs
+        separately just for screenshot. Result has defuddle content + screenshot.
 
-        mock_config = type(
-            "MockConfig",
-            (),
-            {
-                "strategy": "auto",
-                "fallback_patterns": [],
-                "policy": type(
-                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
-                )(),
-                "domain_profiles": {},
-                "jina": type(
-                    "JinaConfig",
-                    (),
-                    {
-                        "get_resolved_api_key": lambda *_, **__: "test-key",
-                        "timeout": 30,
-                        "rpm": 20,
-                        "no_cache": False,
-                        "target_selector": None,
-                        "wait_for_selector": None,
-                    },
-                )(),
-                "playwright": type(
-                    "PlaywrightConfig",
-                    (),
-                    {
-                        "timeout": 30000,
-                        "wait_for": "load",
-                        "extra_wait_ms": 0,
-                        "wait_for_selector": None,
-                        "cookies": None,
-                        "reject_resource_patterns": None,
-                        "extra_http_headers": None,
-                        "user_agent": None,
-                        "http_credentials": None,
-                        "session_mode": "isolated",
-                        "session_ttl_seconds": 600,
-                    },
-                )(),
-                "auto_proxy": False,
-            },
-        )()
+        Key behavioral test: fetch_with_static should NOT be called because
+        serial mode stops after defuddle succeeds. In the old parallel mode,
+        all strategies would run simultaneously via asyncio.gather.
+        """
+        from markitai.fetch import FetchResult, fetch_url
 
-        # Static returns JS-required page (invalid), browser not installed, Jina returns good content
-        static_result = MagicMock()
-        static_result.content = "Please enable JavaScript to continue"
+        mock_config = self._make_config()
 
-        jina_result = FetchResult(
-            content=(
-                "# Valid Markdown from Jina Reader\n\n"
-                "This is real content fetched by the Jina Reader API. "
-                "It contains enough text to pass the content validation threshold "
-                "which requires at least 100 characters of clean text after removing "
-                "all markdown syntax elements like headers, links, and images."
-            ),
-            strategy_used="jina",
-            title="Test Page",
+        defuddle_result = FetchResult(
+            content=self._valid_content("defuddle"),
+            strategy_used="defuddle",
+            title="Defuddle Title",
             url="https://example.com",
-            metadata={"api": "jina-reader"},
+            metadata={"api": "defuddle"},
         )
+
+        # Playwright result for screenshot-only call
+        pw_screenshot_result = MagicMock()
+        pw_screenshot_result.screenshot_path = Path("/tmp/screenshot.jpg")
+        pw_screenshot_result.content = "browser content"
+        pw_screenshot_result.title = "Browser Title"
+        pw_screenshot_result.final_url = "https://example.com"
+        pw_screenshot_result.metadata = {}
 
         with (
             patch(
+                "markitai.fetch.fetch_with_defuddle",
+                new_callable=AsyncMock,
+                return_value=defuddle_result,
+            ),
+            patch(
                 "markitai.fetch.fetch_with_static",
                 new_callable=AsyncMock,
-                return_value=static_result,
-            ),
+                return_value=MagicMock(
+                    content=self._valid_content("static"),
+                ),
+            ) as mock_static,
+            patch(
+                "markitai.fetch_playwright.fetch_with_playwright",
+                new_callable=AsyncMock,
+                return_value=pw_screenshot_result,
+            ) as mock_pw,
             patch(
                 "markitai.fetch_playwright.is_playwright_available",
-                return_value=False,
+                return_value=True,
             ),
             patch(
-                "markitai.fetch.fetch_with_jina",
+                "markitai.fetch._get_playwright_renderer",
                 new_callable=AsyncMock,
-                return_value=jina_result,
+                return_value=MagicMock(),
             ),
         ):
-            result = await _fetch_multi_source(
+            result = await fetch_url(
                 "https://example.com",
+                FetchStrategy.AUTO,
                 mock_config,
+                screenshot=True,
+                screenshot_dir=Path("/tmp"),
             )
-            assert result.strategy_used == "jina"
-            assert "Valid Markdown" in result.content
+
+            # Content should come from defuddle (the winning strategy)
+            assert result.strategy_used == "defuddle"
+            assert "Content from defuddle" in result.content
+            # Screenshot should come from separate playwright call
+            assert result.screenshot_path == Path("/tmp/screenshot.jpg")
+            # KEY: Static should NOT be called (serial stops at defuddle)
+            mock_static.assert_not_called()
+            # Playwright should have been called (for screenshot only)
+            mock_pw.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_fetch_multi_source_no_jina_without_key(self) -> None:
-        """Without Jina API key, Jina should not be attempted."""
-        from markitai.fetch import _fetch_multi_source
+    async def test_screenshot_mode_playwright_wins_naturally(self) -> None:
+        """When screenshot=True and playwright wins as content strategy,
+        screenshot is already captured — no extra call needed."""
+        from markitai.fetch import fetch_url
 
-        mock_config = type(
-            "MockConfig",
-            (),
-            {
-                "strategy": "auto",
-                "fallback_patterns": [],
-                "policy": type(
-                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
-                )(),
-                "domain_profiles": {},
-                "jina": type(
-                    "JinaConfig",
-                    (),
-                    {
-                        "get_resolved_api_key": lambda *_, **__: None,
-                        "timeout": 30,
-                        "rpm": 20,
-                        "no_cache": False,
-                        "target_selector": None,
-                        "wait_for_selector": None,
-                    },
-                )(),
-                "playwright": type(
-                    "PlaywrightConfig",
-                    (),
-                    {
-                        "timeout": 30000,
-                        "wait_for": "load",
-                        "extra_wait_ms": 0,
-                        "wait_for_selector": None,
-                        "cookies": None,
-                        "reject_resource_patterns": None,
-                        "extra_http_headers": None,
-                        "user_agent": None,
-                        "http_credentials": None,
-                        "session_mode": "isolated",
-                        "session_ttl_seconds": 600,
-                    },
-                )(),
-                "auto_proxy": False,
-            },
-        )()
+        mock_config = self._make_config()
 
-        static_result = MagicMock()
-        static_result.content = (
-            "# Good Static Content\n\n"
-            "This is valid content with enough text to pass the validation threshold."
-        )
+        # Defuddle fails
+        defuddle_error = Exception("defuddle down")
 
-        jina_mock = AsyncMock()
+        # Playwright succeeds with both content and screenshot
+        pw_result = MagicMock()
+        pw_result.content = self._valid_content("playwright")
+        pw_result.title = "PW Title"
+        pw_result.final_url = "https://example.com"
+        pw_result.metadata = {}
+        pw_result.screenshot_path = Path("/tmp/screenshot.jpg")
 
         with (
             patch(
+                "markitai.fetch.fetch_with_defuddle",
+                new_callable=AsyncMock,
+                side_effect=defuddle_error,
+            ),
+            patch(
+                "markitai.fetch.fetch_with_jina",
+                new_callable=AsyncMock,
+                side_effect=Exception("jina down"),
+            ),
+            patch(
                 "markitai.fetch.fetch_with_static",
                 new_callable=AsyncMock,
-                return_value=static_result,
+                side_effect=Exception("static down"),
+            ),
+            patch(
+                "markitai.fetch_playwright.fetch_with_playwright",
+                new_callable=AsyncMock,
+                return_value=pw_result,
+            ) as mock_pw,
+            patch(
+                "markitai.fetch_playwright.is_playwright_available",
+                return_value=True,
+            ),
+            patch(
+                "markitai.fetch._get_playwright_renderer",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
+        ):
+            result = await fetch_url(
+                "https://example.com",
+                FetchStrategy.AUTO,
+                mock_config,
+                screenshot=True,
+                screenshot_dir=Path("/tmp"),
+            )
+
+            assert result.strategy_used == "playwright"
+            assert "Content from playwright" in result.content
+            assert result.screenshot_path == Path("/tmp/screenshot.jpg")
+            # Playwright called only once (content+screenshot in same call)
+            mock_pw.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_screenshot_mode_no_playwright_available(self) -> None:
+        """When screenshot=True but playwright is not available,
+        content still works, screenshot is None (graceful degradation)."""
+        from markitai.fetch import FetchResult, fetch_url
+
+        mock_config = self._make_config()
+
+        defuddle_result = FetchResult(
+            content=self._valid_content("defuddle"),
+            strategy_used="defuddle",
+            title="Defuddle Title",
+            url="https://example.com",
+            metadata={"api": "defuddle"},
+        )
+
+        with (
+            patch(
+                "markitai.fetch.fetch_with_defuddle",
+                new_callable=AsyncMock,
+                return_value=defuddle_result,
             ),
             patch(
                 "markitai.fetch_playwright.is_playwright_available",
                 return_value=False,
             ),
             patch(
-                "markitai.fetch.fetch_with_jina",
-                jina_mock,
+                "markitai.fetch._get_playwright_renderer",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
-            result = await _fetch_multi_source(
+            result = await fetch_url(
                 "https://example.com",
+                FetchStrategy.AUTO,
                 mock_config,
+                screenshot=True,
+                screenshot_dir=Path("/tmp"),
             )
-            assert result.strategy_used == "static"
-            # Jina should NOT have been called (no API key)
-            jina_mock.assert_not_called()
+
+            # Content should still work
+            assert result.strategy_used == "defuddle"
+            assert "Content from defuddle" in result.content
+            # Screenshot should be None (graceful degradation)
+            assert result.screenshot_path is None
+
+    @pytest.mark.asyncio
+    async def test_screenshot_mode_cache_hit_still_captures_screenshot(
+        self, tmp_path: Path
+    ) -> None:
+        """Cache hits should still honor a requested screenshot."""
+        from markitai.fetch import FetchCache, FetchResult, fetch_url
+
+        mock_config = self._make_config()
+        cache = FetchCache(tmp_path / "test_cache.db")
+        url = "https://example.com/cached"
+
+        cache.set(
+            url,
+            FetchResult(
+                content=self._valid_content("cached"),
+                strategy_used="defuddle",
+                title="Cached Title",
+                url=url,
+                metadata={"api": "defuddle"},
+            ),
+        )
+
+        pw_screenshot_result = MagicMock()
+        pw_screenshot_result.screenshot_path = (
+            tmp_path / "screenshots" / "cached.full.jpg"
+        )
+        pw_screenshot_result.title = "Browser Title"
+        pw_screenshot_result.final_url = url
+        pw_screenshot_result.metadata = {}
+
+        with (
+            patch(
+                "markitai.fetch_playwright.fetch_with_playwright",
+                new_callable=AsyncMock,
+                return_value=pw_screenshot_result,
+            ) as mock_pw,
+            patch(
+                "markitai.fetch_playwright.is_playwright_available",
+                return_value=True,
+            ),
+            patch(
+                "markitai.fetch._get_playwright_renderer",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
+            patch(
+                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+            ) as mock_defuddle,
+        ):
+            result = await fetch_url(
+                url,
+                FetchStrategy.DEFUDDLE,
+                mock_config,
+                cache=cache,
+                screenshot=True,
+                screenshot_dir=tmp_path / "screenshots",
+            )
+
+        assert result.cache_hit is True
+        assert result.screenshot_path == pw_screenshot_result.screenshot_path
+        mock_pw.assert_called_once()
+        mock_defuddle.assert_not_called()
+        cache.close()
+
+    @pytest.mark.asyncio
+    async def test_explicit_defuddle_rejects_private_url(self) -> None:
+        """Explicit defuddle fetches should reject private/local URLs."""
+        from markitai.fetch import FetchError, fetch_url
+
+        mock_config = self._make_config()
+
+        with (
+            patch(
+                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+            ) as mock_defuddle,
+            pytest.raises(FetchError, match="private"),
+        ):
+            await fetch_url(
+                "http://127.0.0.1:8000/private",
+                FetchStrategy.DEFUDDLE,
+                mock_config,
+                explicit_strategy=True,
+            )
+
+        mock_defuddle.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_configured_cloudflare_strategy_works_without_explicit_mode(
+        self,
+    ) -> None:
+        """Configured Cloudflare strategy should work when not marked explicit."""
+        from markitai.fetch import FetchResult, fetch_url
+
+        mock_config = self._make_config()
+        cloudflare_result = FetchResult(
+            content=self._valid_content("cloudflare"),
+            strategy_used="cloudflare",
+            title="Cloudflare Title",
+            url="https://example.com",
+            final_url="https://example.com",
+            metadata={"api": "cloudflare"},
+        )
+
+        with patch(
+            "markitai.fetch.fetch_with_cloudflare",
+            new_callable=AsyncMock,
+            return_value=cloudflare_result,
+        ) as mock_cloudflare:
+            result = await fetch_url(
+                "https://example.com",
+                FetchStrategy.CLOUDFLARE,
+                mock_config,
+                explicit_strategy=False,
+            )
+
+        assert result is cloudflare_result
+        mock_cloudflare.assert_awaited_once()
 
 
 class TestDetectProxyAdditional:
@@ -3230,6 +3539,136 @@ class TestContentNegotiation:
 
         # The key assertion: text/html response does NOT get the "server-markdown" path
         # (it falls through to markitdown conversion as before)
+
+    @pytest.mark.asyncio
+    async def test_conditional_fetch_html_response_prefers_native_webextract(self):
+        """HTML responses should prefer native webextract when available."""
+        from dataclasses import dataclass
+
+        from markitai.fetch import fetch_with_static_conditional
+
+        @dataclass
+        class _Metadata:
+            title: str | None = None
+            author: str | None = None
+
+        async def mock_get(url, headers=None, timeout_s=30.0, proxy=None):
+            del headers, timeout_s, proxy
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.headers = {
+                "content-type": "text/html; charset=utf-8",
+                "etag": '"html123"',
+            }
+            mock_resp.content = (
+                b"<html><body><article><h1>Normal HTML</h1>"
+                b"<p>Regular content.</p></article></body></html>"
+            )
+            mock_resp.url = url
+            return mock_resp
+
+        mock_client = AsyncMock()
+        mock_client.name = "httpx"
+        mock_client.get = mock_get
+
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch("markitai.fetch.extract_web_content", create=True) as mock_extract,
+        ):
+            mock_extract.return_value = MagicMock(
+                markdown="# Normal HTML\n\nRegular content.",
+                metadata=_Metadata(title="Normal HTML", author="Jane"),
+                diagnostics={"extractor": "generic"},
+            )
+
+            result = await fetch_with_static_conditional("https://non-cf-site.com")
+
+        assert result.not_modified is False
+        assert result.result is not None
+        assert result.result.content == "# Normal HTML\n\nRegular content."
+        assert result.result.metadata["converter"] == "native-html"
+        assert result.result.metadata["source_frontmatter"]["author"] == "Jane"
+
+    @pytest.mark.asyncio
+    async def test_conditional_fetch_html_uses_declared_charset_for_native_webextract(
+        self,
+    ):
+        """Native extraction should decode HTML using the declared response charset."""
+        from dataclasses import dataclass
+
+        from markitai.fetch import fetch_with_static_conditional
+        from markitai.fetch_http import StaticHttpResponse
+
+        @dataclass
+        class _Metadata:
+            title: str | None = None
+
+        html = (
+            "<html><body><article><h1>中文标题</h1>"
+            "<p>这是正文内容。</p></article></body></html>"
+        )
+        response = StaticHttpResponse(
+            content=html.encode("gbk"),
+            status_code=200,
+            headers={
+                "content-type": "text/html; charset=gbk",
+                "etag": '"gbk123"',
+            },
+            url="https://example.cn",
+        )
+
+        mock_client = AsyncMock()
+        mock_client.name = "httpx"
+        mock_client.get = AsyncMock(return_value=response)
+
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch("markitai.fetch.extract_web_content", create=True) as mock_extract,
+        ):
+            mock_extract.return_value = MagicMock(
+                markdown="# 中文标题\n\n这是正文内容。",
+                metadata=_Metadata(title="中文标题"),
+                diagnostics={"extractor": "generic"},
+            )
+
+            result = await fetch_with_static_conditional("https://example.cn")
+
+        assert result.result is not None
+        assert mock_extract.call_args.args[0].startswith("<html>")
+        assert "中文标题" in mock_extract.call_args.args[0]
+        assert result.result.content == "# 中文标题\n\n这是正文内容。"
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_static_reuses_conditional_pipeline(self):
+        """Plain static fetch should reuse the conditional pipeline."""
+        from markitai.fetch import FetchResult, fetch_with_static
+
+        expected = FetchResult(
+            content="# Title\n\nBody",
+            strategy_used="static",
+            title="Title",
+            url="https://example.com/post",
+            final_url="https://example.com/post",
+            metadata={"converter": "native-html"},
+        )
+
+        with patch("markitai.fetch.fetch_with_static_conditional") as mock_conditional:
+            mock_conditional.return_value = type(
+                "MockConditionalFetchResult",
+                (),
+                {
+                    "result": expected,
+                    "not_modified": False,
+                    "etag": None,
+                    "last_modified": None,
+                },
+            )()
+
+            result = await fetch_with_static("https://example.com/post")
+
+        assert result is expected
 
 
 class TestCloudflareStrategy:
@@ -3875,15 +4314,15 @@ def test_user_error_message_single_action_hint():
     assert "playwright: failed" in str(e)
 
 
-class TestJinaRateLimiter:
+class TestSlidingWindowRateLimiter:
     """Tests for Jina rate limiter."""
 
     @pytest.mark.asyncio
     async def test_acquire_within_limit(self):
         """Should not block when within RPM limit."""
-        from markitai.fetch import _JinaRateLimiter
+        from markitai.fetch import _SlidingWindowRateLimiter
 
-        limiter = _JinaRateLimiter(rpm=5)
+        limiter = _SlidingWindowRateLimiter(rpm=5)
         # Should complete immediately for 5 requests
         for _ in range(5):
             await limiter.acquire()
@@ -3894,9 +4333,9 @@ class TestJinaRateLimiter:
         """Should remove timestamps older than 60s."""
         import time
 
-        from markitai.fetch import _JinaRateLimiter
+        from markitai.fetch import _SlidingWindowRateLimiter
 
-        limiter = _JinaRateLimiter(rpm=2)
+        limiter = _SlidingWindowRateLimiter(rpm=2)
         # Add an old timestamp
         limiter._timestamps = [time.monotonic() - 61.0]
         await limiter.acquire()
@@ -3908,9 +4347,9 @@ class TestJinaRateLimiter:
         """Should wait when RPM limit is exhausted."""
         import time
 
-        from markitai.fetch import _JinaRateLimiter
+        from markitai.fetch import _SlidingWindowRateLimiter
 
-        limiter = _JinaRateLimiter(rpm=2)
+        limiter = _SlidingWindowRateLimiter(rpm=2)
         # Fill up the window
         await limiter.acquire()
         await limiter.acquire()
@@ -3931,9 +4370,9 @@ class TestJinaRateLimiter:
         import asyncio
         import time
 
-        from markitai.fetch import _JinaRateLimiter
+        from markitai.fetch import _SlidingWindowRateLimiter
 
-        limiter = _JinaRateLimiter(rpm=2)
+        limiter = _SlidingWindowRateLimiter(rpm=2)
         # Fill up with timestamps that expire in 0.15s
         now = time.monotonic()
         limiter._timestamps = [now - 59.85, now - 59.85]
@@ -3976,3 +4415,48 @@ class TestJinaRateLimiter:
             assert limiter2._rpm == 100
         finally:
             fetch_mod._jina_rate_limiter = old_limiter
+
+
+class TestDefuddleUrlEncoding:
+    """Tests for URL encoding in fetch_with_defuddle."""
+
+    @pytest.mark.asyncio
+    async def test_query_string_encoded_in_defuddle_url(self):
+        """Target URL with query params must be percent-encoded so they are not
+        interpreted as Defuddle's own query parameters."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from urllib.parse import quote
+
+        from markitai.fetch import fetch_with_defuddle
+
+        target_url = "https://example.com/page?foo=1&bar=2"
+        expected_encoded = quote(target_url, safe="")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = (
+            "# Article\n\nContent here is long enough to pass validation."
+        )
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("markitai.fetch._get_defuddle_client", return_value=mock_client),
+            patch("markitai.fetch._get_defuddle_rate_limiter") as mock_limiter_fn,
+        ):
+            mock_limiter = AsyncMock()
+            mock_limiter_fn.return_value = mock_limiter
+
+            await fetch_with_defuddle(target_url)
+
+        # The URL passed to client.get must have the target URL encoded
+        actual_url = mock_client.get.call_args[0][0]
+        assert expected_encoded in actual_url, (
+            f"Target URL query string was not encoded. Got: {actual_url}"
+        )
+        # Specifically, raw '?' from target URL should NOT appear after the base URL
+        path_after_base = actual_url.split("defuddle.md/", 1)[-1]
+        assert "?" not in path_after_base, (
+            f"Raw '?' from target URL leaks as query separator: {actual_url}"
+        )

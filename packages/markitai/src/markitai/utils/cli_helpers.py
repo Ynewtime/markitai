@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from markitai.constants import MARKITAI_META_DIR
 from markitai.urls import _URL_PATTERN
 
 
@@ -158,7 +159,7 @@ def get_report_file_path(
     """
     from markitai.utils.output import resolve_name_conflict
 
-    reports_dir = output_dir / "reports"
+    reports_dir = output_dir / MARKITAI_META_DIR / "reports"
     base_path = reports_dir / f"markitai.{task_hash}.report.json"
 
     def _rename(seq: int) -> Path:

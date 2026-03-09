@@ -33,13 +33,8 @@ class PromptManager:
         "page_content_system",
         "page_content_user",
         # Document prompts
-        "document_enhance_system",
-        "document_enhance_user",
         "document_process_system",
         "document_process_user",
-        "document_enhance_complete_system",
-        "document_enhance_complete_user",
-        # Unified document vision prompt (replaces document_enhance + document_enhance_complete)
         "document_vision_system",
         "document_vision_user",
         # URL prompts

@@ -210,7 +210,7 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
         console.print("  Quick setup (choose one):")
         console.print()
         console.print("  [dim]•[/dim] Claude CLI:  [cyan]claude login[/cyan]")
-        console.print("  [dim]•[/dim] Copilot CLI: [cyan]copilot auth login[/cyan]")
+        console.print("  [dim]•[/dim] Copilot CLI: [cyan]copilot login[/cyan]")
         if env_template:
             console.print(
                 f"  [dim]•[/dim] API Key:     edit [cyan]{env_template}[/cyan]"

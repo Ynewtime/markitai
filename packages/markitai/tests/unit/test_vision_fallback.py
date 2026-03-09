@@ -1,8 +1,10 @@
 """Tests for vision analysis fallback mechanisms."""
 
+from __future__ import annotations
+
 import hashlib
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -89,9 +91,13 @@ class TestVisionUnsupportedFormat:
 
     @pytest.mark.asyncio
     async def test_svg_returns_placeholder_analysis(self, mixin):
-        """SVG files should return a placeholder analysis without LLM call."""
+        """SVG returns a placeholder when SVG rasterization support is unavailable."""
+        import markitai.utils.mime as mime_mod
+
         svg_path = Path("/tmp/test.svg")
-        result = await mixin.analyze_image(svg_path)
+        with patch("markitai.utils.mime.importlib.util.find_spec", return_value=None):
+            mime_mod._HAS_CAIROSVG = None  # reset cache
+            result = await mixin.analyze_image(svg_path)
 
         assert result.caption == "test"
         assert "not supported" in result.description

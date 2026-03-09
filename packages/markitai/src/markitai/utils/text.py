@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Any
 
 
@@ -191,6 +192,26 @@ def format_error_message(error: Any, max_length: int = 200) -> str:
     return result
 
 
+def preview_items_for_log(items: Sequence[str], max_items: int = 3) -> str:
+    """Format a compact preview for list-like log fields.
+
+    Args:
+        items: Items to preview
+        max_items: Maximum number of items to render inline
+
+    Returns:
+        A comma-separated preview with an optional ``+N more`` suffix
+    """
+    if not items:
+        return ""
+
+    preview = ", ".join(items[:max_items])
+    remaining = len(items) - max_items
+    if remaining > 0:
+        return f"{preview}, +{remaining} more"
+    return preview
+
+
 def clean_residual_placeholders(content: str) -> str:
     """Remove residual MARKITAI placeholders from content.
 
@@ -320,7 +341,7 @@ def fix_malformed_image_refs(content: str) -> str:
     )
 
     # Remove images with empty paths: ![alt](assets/) or ![alt]()
-    content = re.sub(r"!\[[^\]]*\]\((?:assets/)?\)\s*\n?", "", content)
+    content = re.sub(r"!\[[^\]]*\]\((?:\.markitai/assets/)?\)\s*\n?", "", content)
 
     # Fix extra closing parenthesis: ![alt](path)) -> ![alt](path)
     content = re.sub(r"(!\[[^\]]*\]\([^)]+\))\)+", r"\1", content)

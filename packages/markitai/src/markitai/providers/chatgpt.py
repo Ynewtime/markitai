@@ -41,6 +41,10 @@ from loguru import logger
 from markitai.providers.auth import get_auth_resolution_hint
 from markitai.providers.common import UNSUPPORTED_PARAMS, sync_completion
 from markitai.providers.errors import AuthenticationError, ProviderError
+from markitai.providers.oauth_display import (
+    DeviceCodeInterceptor,
+    show_oauth_success,
+)
 
 if TYPE_CHECKING:
     from litellm.types.utils import ModelResponse
@@ -310,18 +314,28 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
             AuthenticationError: If authentication fails.
             ProviderError: If the API request fails.
         """
-        # Log ignored parameters at DEBUG level
+        # Log ignored parameters at TRACE level to keep file logs compact
         ignored_params = [k for k in kwargs if k in self._UNSUPPORTED_PARAMS]
         if ignored_params:
-            logger.debug(f"[ChatGPT] Ignoring unsupported params: {ignored_params}")
+            logger.trace(f"[ChatGPT] Ignoring unsupported params: {ignored_params}")
 
         # Strip provider prefix from model name
         model_name = model.replace("chatgpt/", "")
 
-        # Authenticate
+        # Authenticate — intercept device code stdout from LiteLLM
+        import sys
+
         try:
             authenticator = self._get_authenticator()
-            access_token = authenticator.get_access_token()
+            interceptor = DeviceCodeInterceptor()
+            original_stdout = sys.stdout
+            sys.stdout = interceptor  # type: ignore[assignment]
+            try:
+                access_token = authenticator.get_access_token()
+            finally:
+                sys.stdout = original_stdout
+            if interceptor.displayed:
+                show_oauth_success("chatgpt")
         except AuthenticationError:
             raise
         except Exception as e:
@@ -406,12 +420,17 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
             ),
         )
 
-        # Store cost in hidden params for downstream retrieval
-        # ChatGPT is subscription-based, so cost is always 0
+        # Estimate cost using LiteLLM pricing for the underlying model
+        # ChatGPT is subscription-based, but we estimate equivalent API cost
+        from markitai.providers import estimate_model_cost
+
+        cost_result = estimate_model_cost(model_name, input_tokens, output_tokens)
         model_response._hidden_params = {
-            "total_cost_usd": 0.0,
+            "total_cost_usd": cost_result.cost_usd,
             "cost_is_estimated": True,
-            "cost_source": "chatgpt_subscription",
+            "cost_source": cost_result.source
+            if cost_result.cost_usd > 0
+            else "chatgpt_subscription",
         }
 
         return model_response

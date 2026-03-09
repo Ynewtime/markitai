@@ -340,6 +340,67 @@ class TestFormatLLMOutput:
         assert result.count("---") == 2
         assert "title: Test" in result
 
+    def test_strip_boundary_rules_from_markdown_body(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig
+    ):
+        """Leading/trailing body separators should not leak into final output."""
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        result = processor.format_llm_output(
+            "---\n\n# Slide 1\n\nContent\n\n---\n<!-- Page images for reference -->",
+            "title: Test\nsource: test.pptx",
+        )
+
+        assert result.startswith("---\n")
+        assert result.count("---") == 2
+        assert "---\n\n---\n\n# Slide 1" not in result
+        assert "\n---\n<!-- Page images for reference -->" not in result
+        assert "<!-- Page images for reference -->" in result
+
+    def test_preserve_internal_horizontal_rule_in_markdown_body(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig
+    ):
+        """Legitimate internal horizontal rules should still be preserved."""
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        result = processor.format_llm_output(
+            "# Title\n\n---\n\nBody",
+            "title: Test\nsource: test.md",
+        )
+
+        assert "\n# Title\n\n---\n\nBody" in result
+
+    def test_strip_leading_separator_from_markdown(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig
+    ):
+        """Test stripping leaked markdown separators from cleaned content."""
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        result = processor.format_llm_output(
+            "---\n\n# Content", "title: Test\nsource: test.md"
+        )
+
+        assert result.count("---") == 2
+        assert "\n\n---\n\n# Content" not in result
+        assert result.endswith("# Content")
+
+    def test_strip_leaked_frontmatter_block_from_markdown_body(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig
+    ):
+        """A leaked body frontmatter block should be removed before final formatting."""
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        result = processor.format_llm_output(
+            "---\ntags: []\ndescription: ''\n---\n\n<!-- Slide number: 1 -->\n\n# Slide",
+            "title: Test\nsource: test.pptx",
+        )
+
+        assert result.startswith("---\n")
+        assert result.count("---") == 2
+        assert "tags: []" not in result
+        assert "description: ''" not in result
+        assert "<!-- Slide number: 1 -->" in result
+
 
 class TestCleanFrontmatter:
     """Tests for _clean_frontmatter method."""
@@ -639,9 +700,9 @@ class TestFixMalformedImageRefs:
 
     def test_fix_real_world_case(self):
         """Test fixing a real-world malformed image reference."""
-        content = "![Grouped bar chart](assets/file.pdf-0-0.jpg))"
+        content = "![Grouped bar chart](.markitai/assets/file.pdf-0-0.jpg))"
         result = LLMProcessor.fix_malformed_image_refs(content)
-        assert result == "![Grouped bar chart](assets/file.pdf-0-0.jpg)"
+        assert result == "![Grouped bar chart](.markitai/assets/file.pdf-0-0.jpg)"
 
     def test_preserve_normal_image(self):
         """Test that normal images are not modified."""
@@ -714,7 +775,7 @@ End"""
         content = """<!-- Slide number: 1 -->
 Content
 <!-- Page images for reference -->
-<!-- ![Page 1](screenshots/img.jpg) -->"""
+<!-- ![Page 1](.markitai/screenshots/img.jpg) -->"""
         chunks = LLMProcessor.split_text_by_pages(content, 1)
         assert "<!-- Page images for reference -->" not in chunks[0]
 
@@ -868,7 +929,7 @@ class TestParallelImageBatchAnalysis:
         """Test analyzing empty image list."""
         processor = LLMProcessor(llm_config, prompts_config)
 
-        results = await processor.analyze_images_batch([], "en", 10, "test")
+        results = await processor.analyze_images_batch([], 10, "test")
         assert results == []
 
     async def test_analyze_images_batch_single(
@@ -894,7 +955,7 @@ class TestParallelImageBatchAnalysis:
                 return_value=[ImageAnalysis(caption="Test", description="Test image")]
             ),
         ):
-            results = await processor.analyze_images_batch([img_path], "en", 10, "test")
+            results = await processor.analyze_images_batch([img_path], 10, "test")
 
         assert len(results) == 1
         assert results[0].caption == "Test"
@@ -920,7 +981,7 @@ class TestParallelImageBatchAnalysis:
         # Track batch calls
         batch_calls = []
 
-        async def mock_analyze_batch(paths, lang, ctx):
+        async def mock_analyze_batch(paths, context=""):
             batch_calls.append(len(paths))
             return [
                 ImageAnalysis(caption=f"Image {i}", description=f"Description {i}")
@@ -931,7 +992,7 @@ class TestParallelImageBatchAnalysis:
             processor, "analyze_batch", new=AsyncMock(side_effect=mock_analyze_batch)
         ):
             results = await processor.analyze_images_batch(
-                image_paths, "en", max_images_per_batch=10, context="test"
+                image_paths, max_images_per_batch=10, context="test"
             )
 
         # Should have 3 batches
@@ -964,7 +1025,7 @@ class TestParallelImageBatchAnalysis:
             new=AsyncMock(side_effect=Exception("API Error")),
         ):
             results = await processor.analyze_images_batch(
-                image_paths, "en", max_images_per_batch=10, context="test"
+                image_paths, max_images_per_batch=10, context="test"
             )
 
         # Should return placeholder results
@@ -1011,6 +1072,31 @@ class TestLLMSupportedImageFormat:
         from markitai.utils.mime import is_llm_supported_image
 
         # Unsupported formats
-        assert is_llm_supported_image(".svg") is False
         assert is_llm_supported_image(".ico") is False
         assert is_llm_supported_image(".unknown") is False
+
+    def test_svg_supported_when_cairosvg_available(self):
+        """SVG should be supported when cairosvg is installed."""
+        from unittest.mock import MagicMock, patch
+
+        import markitai.utils.mime as mime_mod
+        from markitai.utils.mime import is_llm_supported_image
+
+        mock_spec = MagicMock()
+        with patch(
+            "markitai.utils.mime.importlib.util.find_spec", return_value=mock_spec
+        ):
+            mime_mod._HAS_CAIROSVG = None  # reset cache
+            assert is_llm_supported_image(".svg") is True
+            assert is_llm_supported_image(".SVG") is True
+
+    def test_svg_unsupported_when_cairosvg_missing(self):
+        """SVG should NOT be supported when cairosvg is not installed."""
+        from unittest.mock import patch
+
+        import markitai.utils.mime as mime_mod
+        from markitai.utils.mime import is_llm_supported_image
+
+        with patch("markitai.utils.mime.importlib.util.find_spec", return_value=None):
+            mime_mod._HAS_CAIROSVG = None  # reset cache
+            assert is_llm_supported_image(".svg") is False

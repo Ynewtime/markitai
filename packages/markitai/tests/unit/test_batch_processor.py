@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -471,6 +471,249 @@ class TestCreateUrlProcessor:
 
             # When LLM is enabled but no usage, it's a cache hit
             assert result.cache_hit is True
+
+    @pytest.mark.asyncio
+    async def test_url_processor_vision_forwards_source_metadata(
+        self,
+        default_config: MarkitaiConfig,
+        sample_output_dir: Path,
+        sample_input_dir: Path,
+    ) -> None:
+        """Batch vision path should forward fetch metadata to vision processing."""
+        from markitai.cli.processors.batch import create_url_processor
+
+        default_config.llm.enabled = True
+        default_config.cache.enabled = False
+        default_config.screenshot.enabled = True
+
+        screenshot_path = sample_output_dir / "screenshots" / "example.full.jpg"
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        screenshot_path.write_bytes(b"fake image data")
+
+        fetch_result = MagicMock()
+        fetch_result.content = "# Test Content"
+        fetch_result.strategy_used = "static"
+        fetch_result.cache_hit = False
+        fetch_result.screenshot_path = screenshot_path
+        fetch_result.title = "Original Page Title"
+        fetch_result.static_content = "# Static source"
+        fetch_result.browser_content = "# Browser source"
+        fetch_result.metadata = {
+            "source_frontmatter": {
+                "author": "Jane",
+                "published": "2024-01-15",
+                "canonical_url": "https://example.com/canonical",
+            }
+        }
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new=AsyncMock(return_value=fetch_result),
+            ),
+            patch(
+                "markitai.cli.processors.url.process_url_with_vision",
+                new=AsyncMock(return_value=("# Test Content", 0.0, {})),
+            ) as mock_vision,
+        ):
+            process_url = create_url_processor(
+                cfg=default_config,
+                output_dir=sample_output_dir,
+                fetch_strategy=None,
+                explicit_fetch_strategy=False,
+                shared_processor=None,
+                renderer=None,
+            )
+
+            result, _ = await process_url(
+                "https://example.com/article",
+                sample_input_dir / "urls.txt",
+                None,
+            )
+
+        assert result.success is True
+        mock_vision.assert_awaited_once_with(
+            "# Test Content",
+            screenshot_path,
+            "https://example.com/article",
+            default_config,
+            sample_output_dir / "article.md",
+            processor=None,
+            original_title="Original Page Title",
+            fetch_strategy="static",
+            extra_meta=fetch_result.metadata["source_frontmatter"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_url_processor_releases_image_wait_when_document_llm_fails(
+        self,
+        default_config: MarkitaiConfig,
+        sample_output_dir: Path,
+        sample_input_dir: Path,
+    ) -> None:
+        """Document LLM failure should release parallel image analysis promptly."""
+        from markitai.cli.processors.batch import create_url_processor
+
+        default_config.llm.enabled = True
+        default_config.cache.enabled = False
+        default_config.image.alt_enabled = True
+
+        image_path = sample_output_dir / "assets" / "example.png"
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(b"fake")
+
+        fetch_result = MagicMock()
+        fetch_result.content = "# Test Content"
+        fetch_result.strategy_used = "static"
+        fetch_result.cache_hit = False
+        fetch_result.screenshot_path = None
+        fetch_result.title = "Original Page Title"
+        fetch_result.static_content = None
+        fetch_result.browser_content = None
+        fetch_result.metadata = {}
+
+        finished = asyncio.Event()
+        observed: dict[str, Any] = {}
+
+        async def fake_analyze_images(*args: Any, **kwargs: Any):
+            observed["event"] = kwargs.get("llm_ready_event")
+            try:
+                await observed["event"].wait()
+                return (args[1], 0.0, {}, None)
+            finally:
+                finished.set()
+
+        download_result = MagicMock()
+        download_result.updated_markdown = "# Test Content"
+        download_result.downloaded_paths = [image_path]
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new=AsyncMock(return_value=fetch_result),
+            ),
+            patch(
+                "markitai.image.download_url_images",
+                new=AsyncMock(return_value=download_result),
+            ),
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new=AsyncMock(side_effect=RuntimeError("LLM boom")),
+            ),
+            patch(
+                "markitai.cli.processors.llm.analyze_images_with_llm",
+                new=fake_analyze_images,
+            ),
+        ):
+            process_url = create_url_processor(
+                cfg=default_config,
+                output_dir=sample_output_dir,
+                fetch_strategy=None,
+                explicit_fetch_strategy=False,
+                shared_processor=None,
+                renderer=None,
+            )
+
+            result, _ = await process_url(
+                "https://example.com/article",
+                sample_input_dir / "urls.txt",
+                None,
+            )
+
+        assert result.success is False
+        assert result.error is not None
+        assert "LLM boom" in result.error
+        await asyncio.wait_for(finished.wait(), timeout=0.2)
+        assert observed["event"] is not None
+        assert observed["event"].is_set() is True
+
+    @pytest.mark.asyncio
+    async def test_url_processor_releases_image_wait_when_vision_llm_fails(
+        self,
+        default_config: MarkitaiConfig,
+        sample_output_dir: Path,
+        sample_input_dir: Path,
+    ) -> None:
+        """Vision LLM failure should also release parallel image analysis promptly."""
+        from markitai.cli.processors.batch import create_url_processor
+
+        default_config.llm.enabled = True
+        default_config.cache.enabled = False
+        default_config.screenshot.enabled = True
+        default_config.image.alt_enabled = True
+
+        screenshot_path = sample_output_dir / "screenshots" / "example.full.jpg"
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        screenshot_path.write_bytes(b"fake image data")
+
+        image_path = sample_output_dir / "assets" / "example.png"
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(b"fake")
+
+        fetch_result = MagicMock()
+        fetch_result.content = "# Test Content"
+        fetch_result.strategy_used = "static"
+        fetch_result.cache_hit = False
+        fetch_result.screenshot_path = screenshot_path
+        fetch_result.title = "Original Page Title"
+        fetch_result.static_content = "# Static source"
+        fetch_result.browser_content = "# Browser source"
+        fetch_result.metadata = {}
+
+        finished = asyncio.Event()
+        observed: dict[str, Any] = {}
+
+        async def fake_analyze_images(*args: Any, **kwargs: Any):
+            observed["event"] = kwargs.get("llm_ready_event")
+            try:
+                await observed["event"].wait()
+                return (args[1], 0.0, {}, None)
+            finally:
+                finished.set()
+
+        download_result = MagicMock()
+        download_result.updated_markdown = "# Test Content"
+        download_result.downloaded_paths = [image_path]
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new=AsyncMock(return_value=fetch_result),
+            ),
+            patch(
+                "markitai.image.download_url_images",
+                new=AsyncMock(return_value=download_result),
+            ),
+            patch(
+                "markitai.cli.processors.url.process_url_with_vision",
+                new=AsyncMock(side_effect=RuntimeError("Vision boom")),
+            ),
+            patch(
+                "markitai.cli.processors.llm.analyze_images_with_llm",
+                new=fake_analyze_images,
+            ),
+        ):
+            process_url = create_url_processor(
+                cfg=default_config,
+                output_dir=sample_output_dir,
+                fetch_strategy=None,
+                explicit_fetch_strategy=False,
+                shared_processor=None,
+                renderer=None,
+            )
+
+            result, _ = await process_url(
+                "https://example.com/article",
+                sample_input_dir / "urls.txt",
+                None,
+            )
+
+        assert result.success is False
+        assert result.error is not None
+        assert "Vision boom" in result.error
+        await asyncio.wait_for(finished.wait(), timeout=0.2)
+        assert observed["event"] is not None
+        assert observed["event"].is_set() is True
 
 
 # =============================================================================

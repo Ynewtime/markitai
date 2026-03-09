@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -367,7 +369,7 @@ class TestProcessUrlWithVision:
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
 
-        screenshot_path = tmp_path / "screenshots" / "test.full.jpg"
+        screenshot_path = tmp_path / ".markitai" / "screenshots" / "test.full.jpg"
         screenshot_path.parent.mkdir(parents=True)
         screenshot_path.write_bytes(b"fake image data")
 
@@ -406,12 +408,57 @@ class TestProcessUrlWithVision:
         assert "Screenshot for reference" in llm_content
 
     @pytest.mark.asyncio
+    async def test_vision_processing_success_forwards_source_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        """Successful vision processing should forward fetch metadata."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+
+        screenshot_path = tmp_path / ".markitai" / "screenshots" / "test.full.jpg"
+        screenshot_path.parent.mkdir(parents=True)
+        screenshot_path.write_bytes(b"fake image data")
+
+        output_file = tmp_path / "output.md"
+        output_file.write_text("# Original content")
+
+        mock_processor = MagicMock()
+        mock_processor.enhance_url_with_vision = AsyncMock(
+            return_value=("Cleaned content", {"title": "Test Page"})
+        )
+        mock_processor.format_llm_output = MagicMock(return_value="formatted")
+        mock_processor.get_context_cost = MagicMock(return_value=0.0)
+        mock_processor.get_context_usage = MagicMock(return_value={})
+
+        extra_meta = {"author": "Jane", "published": "2024-01-15"}
+
+        await process_url_with_vision(
+            content="# Original content",
+            screenshot_path=screenshot_path,
+            url="https://example.com",
+            cfg=cfg,
+            output_file=output_file,
+            processor=mock_processor,
+            fetch_strategy="defuddle",
+            extra_meta=extra_meta,
+        )
+
+        mock_processor.enhance_url_with_vision.assert_awaited_once_with(
+            "# Original content",
+            screenshot_path,
+            context="https://example.com",
+            original_title=None,
+            fetch_strategy="defuddle",
+            extra_meta=extra_meta,
+        )
+
+    @pytest.mark.asyncio
     async def test_vision_processing_fallback_on_error(self, tmp_path: Path) -> None:
         """Test fallback to standard processing when vision fails."""
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
 
-        screenshot_path = tmp_path / "screenshots" / "test.full.jpg"
+        screenshot_path = tmp_path / ".markitai" / "screenshots" / "test.full.jpg"
         screenshot_path.parent.mkdir(parents=True)
         screenshot_path.write_bytes(b"fake image data")
 
@@ -451,7 +498,7 @@ class TestProcessUrlScreenshotOnly:
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
 
-        screenshot_path = tmp_path / "screenshots" / "test.full.jpg"
+        screenshot_path = tmp_path / ".markitai" / "screenshots" / "test.full.jpg"
         screenshot_path.parent.mkdir(parents=True)
         screenshot_path.write_bytes(b"fake image data")
 
@@ -495,7 +542,7 @@ class TestProcessUrlScreenshotOnly:
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
 
-        screenshot_path = tmp_path / "screenshots" / "test.full.jpg"
+        screenshot_path = tmp_path / ".markitai" / "screenshots" / "test.full.jpg"
         screenshot_path.parent.mkdir(parents=True)
         screenshot_path.write_bytes(b"fake image data")
 
@@ -529,7 +576,7 @@ class TestProcessUrlScreenshotOnly:
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
 
-        screenshot_path = tmp_path / "screenshots" / "test.full.jpg"
+        screenshot_path = tmp_path / ".markitai" / "screenshots" / "test.full.jpg"
         screenshot_path.parent.mkdir(parents=True)
         screenshot_path.write_bytes(b"fake image data")
 
@@ -595,6 +642,63 @@ class TestProcessUrlSuccessPath:
         assert "source:" in content  # frontmatter
 
     @pytest.mark.asyncio
+    async def test_single_url_report_preserves_llm_model_names(
+        self, tmp_path: Path
+    ) -> None:
+        """Single URL reports should keep per-model usage on each URL entry."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.cache.enabled = False
+
+        mock_result = MagicMock()
+        mock_result.content = "# Test Page\n\nSome content here."
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Test Page"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+
+        llm_usage = {
+            "chatgpt/gpt-5.4": {
+                "requests": 1,
+                "input_tokens": 123,
+                "output_tokens": 45,
+                "cost_usd": 0.0075,
+            }
+        }
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new_callable=AsyncMock,
+                return_value=("# Cleaned", 0.0075, llm_usage),
+            ),
+        ):
+            await process_url(
+                url="https://example.com/test",
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        report_files = list(
+            (tmp_path / ".markitai" / "reports").glob("markitai.*.report.json")
+        )
+        assert len(report_files) == 1
+        report = json.loads(report_files[0].read_text())
+        url_entry = report["url_sources"]["cli"]["urls"]["https://example.com/test"]
+        assert "chatgpt/gpt-5.4" in url_entry["llm_usage"]
+        assert url_entry["llm_usage"]["chatgpt/gpt-5.4"]["requests"] == 1
+
+    @pytest.mark.asyncio
     async def test_url_with_cache_hit(self, tmp_path: Path) -> None:
         """Test URL conversion with cache hit."""
         cfg = MarkitaiConfig()
@@ -637,6 +741,89 @@ class TestProcessUrlSuccessPath:
         # Output file should be created
         output_file = tmp_path / "cached.md"
         assert output_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_cancels_parallel_image_analysis(
+        self, tmp_path: Path
+    ) -> None:
+        """Document LLM failures should not leak the paired image-analysis task."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.cache.enabled = False
+        cfg.image.alt_enabled = True
+
+        mock_result = MagicMock()
+        mock_result.content = "# Test Page\n\nSome content here."
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Test Page"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+
+        download_result = MagicMock()
+        download_result.updated_markdown = "# Test Page\n\nSome content here."
+        download_result.downloaded_paths = [
+            tmp_path / ".markitai" / "assets" / "image.png"
+        ]
+        download_result.failed_urls = []
+
+        image_task_cancelled = asyncio.Event()
+        image_task_ref: asyncio.Task[object] | None = None
+
+        async def _failing_process_with_llm(*args, **kwargs):
+            raise RuntimeError("doc llm failed")
+
+        async def _waiting_image_analysis(*args, **kwargs):
+            nonlocal image_task_ref
+            image_task_ref = asyncio.current_task()
+            llm_ready_event = kwargs["llm_ready_event"]
+            try:
+                await llm_ready_event.wait()
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                image_task_cancelled.set()
+                raise
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "markitai.image.download_url_images",
+                new_callable=AsyncMock,
+                return_value=download_result,
+            ),
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new_callable=AsyncMock,
+                side_effect=_failing_process_with_llm,
+            ),
+            patch(
+                "markitai.cli.processors.llm.analyze_images_with_llm",
+                new_callable=AsyncMock,
+                side_effect=_waiting_image_analysis,
+            ),
+            patch("markitai.cli.processors.url.ui.error"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await process_url(
+                url="https://example.com/test",
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        assert exc_info.value.code == 1
+        assert image_task_cancelled.is_set()
+
+        if image_task_ref is not None and not image_task_ref.done():
+            image_task_ref.cancel()
+            await asyncio.gather(image_task_ref, return_exceptions=True)
 
 
 class TestProcessUrlBatchSuccessPath:
@@ -689,7 +876,7 @@ class TestProcessUrlBatchSuccessPath:
         assert (tmp_path / "page2.md").exists()
 
         # Check report was created
-        reports_dir = tmp_path / "reports"
+        reports_dir = tmp_path / ".markitai" / "reports"
         assert reports_dir.exists()
         report_files = list(reports_dir.glob("markitai.*.report.json"))
         assert len(report_files) == 1

@@ -314,7 +314,7 @@ def test_fetch_policy_defaults_are_user_friendly() -> None:
 
     cfg = MarkitaiConfig()
     assert cfg.fetch.policy.enabled is True
-    assert cfg.fetch.policy.max_strategy_hops == 4
+    assert cfg.fetch.policy.max_strategy_hops == 5
     assert cfg.fetch.playwright.session_mode == "isolated"
     assert cfg.fetch.playwright.session_ttl_seconds == 600
 

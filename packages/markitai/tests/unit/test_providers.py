@@ -230,6 +230,72 @@ class TestRegisterProviders:
         register_providers()
         register_providers()
 
+    def test_register_providers_logs_single_summary(self) -> None:
+        """Provider registration should log one compact summary line."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        import markitai.providers as providers_module
+        from markitai.providers import register_providers
+
+        original_registered = providers_module._registered
+        original_providers = dict(providers_module._providers)
+        providers_module._registered = False
+        providers_module._providers.clear()
+
+        fake_litellm = MagicMock()
+        fake_litellm.custom_provider_map = []
+
+        try:
+            with (
+                patch.dict(sys.modules, {"litellm": fake_litellm}),
+                patch(
+                    "markitai.providers.auth._is_claude_agent_sdk_available",
+                    return_value=True,
+                ),
+                patch(
+                    "markitai.providers.auth._is_copilot_sdk_available",
+                    return_value=True,
+                ),
+                patch(
+                    "markitai.providers.claude_agent.ClaudeAgentProvider",
+                    return_value=MagicMock(),
+                ),
+                patch(
+                    "markitai.providers.copilot.CopilotProvider",
+                    return_value=MagicMock(),
+                ),
+                patch(
+                    "markitai.providers.chatgpt.ChatGPTProvider",
+                    return_value=MagicMock(),
+                ),
+                patch(
+                    "markitai.providers.gemini_cli.GeminiCLIProvider",
+                    return_value=MagicMock(),
+                ),
+                patch("markitai.providers.logger.debug") as mock_debug,
+            ):
+                register_providers()
+
+            debug_messages = [
+                call.args[0] for call in mock_debug.call_args_list if call.args
+            ]
+            assert (
+                "[Providers] Registered custom providers: "
+                "claude-agent, copilot, chatgpt, gemini-cli" in debug_messages
+            )
+            assert all(
+                "Registered claude-agent provider" not in msg
+                and "Registered copilot provider" not in msg
+                and "Registered chatgpt provider" not in msg
+                and "Registered gemini-cli provider" not in msg
+                for msg in debug_messages
+            )
+        finally:
+            providers_module._registered = original_registered
+            providers_module._providers.clear()
+            providers_module._providers.update(original_providers)
+
 
 class TestCountTokens:
     """Tests for count_tokens function."""
@@ -264,12 +330,12 @@ class TestCountTokens:
         assert tokens > 0
 
 
-class TestCalculateCopilotCost:
-    """Tests for calculate_copilot_cost function.
+class TestEstimateModelCost:
+    """Tests for estimate_model_cost function.
 
-    Note: calculate_copilot_cost returns CopilotCostResult with:
+    Note: estimate_model_cost returns ProviderCostResult with:
     - cost_usd: The estimated cost
-    - is_estimated: Always True for Copilot (subscription-based)
+    - is_estimated: Always True (estimated from LiteLLM pricing)
     - source: "litellm", "litellm_fuzzy", "fallback", or "none"
     - matched_model: The model name used for pricing lookup
     """
@@ -279,7 +345,7 @@ class TestCalculateCopilotCost:
         import litellm
         import pytest
 
-        from markitai.providers import calculate_copilot_cost
+        from markitai.providers import estimate_model_cost
 
         # Use a well-known model that exists in LiteLLM
         model = "gpt-4o"
@@ -290,7 +356,7 @@ class TestCalculateCopilotCost:
         except Exception:
             pytest.skip("LiteLLM model info not available")
 
-        result = calculate_copilot_cost(model, 1000, 500)
+        result = estimate_model_cost(model, 1000, 500)
         expected = 1000 * input_cost + 500 * output_cost
         assert abs(result.cost_usd - expected) < 0.000001
         assert result.is_estimated is True
@@ -299,14 +365,14 @@ class TestCalculateCopilotCost:
 
     def test_calculate_cost_fallback_to_hardcoded(self) -> None:
         """Test cost calculation falls back to hardcoded pricing when LiteLLM fails."""
-        from markitai.providers import calculate_copilot_cost
+        from markitai.providers import estimate_model_cost
 
         # Use a model that definitely won't exist in LiteLLM (neither exact nor fuzzy)
         # but exists in our hardcoded COPILOT_MODEL_PRICING
         # Note: With fuzzy matching, many models will match LiteLLM entries,
         # so we need a truly unique model name from our fallback table
         model = "completely-unknown-xyz-999"
-        result = calculate_copilot_cost(model, 10000, 5000)
+        result = estimate_model_cost(model, 10000, 5000)
 
         # Should return 0 cost with "none" source for truly unknown models
         assert result.is_estimated is True
@@ -315,9 +381,9 @@ class TestCalculateCopilotCost:
 
     def test_calculate_cost_unknown_model(self) -> None:
         """Test cost calculation for unknown model returns 0 with 'none' source."""
-        from markitai.providers import calculate_copilot_cost
+        from markitai.providers import estimate_model_cost
 
-        result = calculate_copilot_cost("unknown-model-xyz-12345", 1000, 500)
+        result = estimate_model_cost("unknown-model-xyz-12345", 1000, 500)
         assert result.cost_usd == 0.0
         assert result.is_estimated is True
         assert result.source == "none"
@@ -325,13 +391,13 @@ class TestCalculateCopilotCost:
 
     def test_calculate_cost_prefix_matching_fallback(self) -> None:
         """Test cost calculation uses prefix matching when LiteLLM and exact match fail."""
-        from markitai.providers import calculate_copilot_cost
+        from markitai.providers import estimate_model_cost
 
         # Use a model variant that's unlikely to be in LiteLLM but matches our prefix
         # If this model is in LiteLLM, the test verifies LiteLLM is used
         # If not, it verifies prefix matching works
         model = "gpt-5.1-codex-mini"
-        result = calculate_copilot_cost(model, 1000, 500)
+        result = estimate_model_cost(model, 1000, 500)
 
         # Cost should be non-zero (either from LiteLLM or hardcoded)
         assert result.cost_usd > 0
@@ -341,11 +407,11 @@ class TestCalculateCopilotCost:
 
     def test_fuzzy_matching_finds_similar_model(self) -> None:
         """Test fuzzy matching finds models with different naming conventions."""
-        from markitai.providers import calculate_copilot_cost
+        from markitai.providers import estimate_model_cost
 
         # Copilot uses "claude-haiku-4.5" but LiteLLM has "claude-haiku-4-5"
         # Fuzzy matching should find it
-        result = calculate_copilot_cost("claude-haiku-4.5", 1000, 500)
+        result = estimate_model_cost("claude-haiku-4.5", 1000, 500)
 
         # Should find via fuzzy match or fallback
         assert result.cost_usd >= 0
@@ -354,11 +420,11 @@ class TestCalculateCopilotCost:
             # Fuzzy matched to a LiteLLM model
             assert result.matched_model is not None
 
-    def test_copilot_cost_result_has_all_attributes(self) -> None:
-        """Test CopilotCostResult has all expected attributes."""
-        from markitai.providers import calculate_copilot_cost
+    def test_provider_cost_result_has_all_attributes(self) -> None:
+        """Test ProviderCostResult has all expected attributes."""
+        from markitai.providers import estimate_model_cost
 
-        result = calculate_copilot_cost("gpt-4o", 100, 50)
+        result = estimate_model_cost("gpt-4o", 100, 50)
 
         # Check all attributes exist
         assert hasattr(result, "cost_usd")
@@ -762,6 +828,134 @@ class TestCopilotProvider:
 
         # Claude models should NOT be in unsupported list
         assert "claude-sonnet-4.5" not in unsupported
+
+
+class TestCopilotAuthCheck:
+    """Tests for Copilot auth fast-check on startup."""
+
+    async def test_get_client_raises_auth_error_when_not_authenticated(self) -> None:
+        """_get_client raises AuthenticationError when CLI is not authenticated."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        mock_auth_status = MagicMock()
+        mock_auth_status.isAuthenticated = False
+        mock_auth_status.statusMessage = "Not authenticated"
+
+        mock_client = AsyncMock()
+        mock_client.get_auth_status.return_value = mock_auth_status
+
+        mock_cls = MagicMock(return_value=mock_client)
+
+        with patch("copilot.CopilotClient", mock_cls):
+            import pytest
+
+            from markitai.providers.errors import AuthenticationError
+
+            with pytest.raises(AuthenticationError, match="not authenticated"):
+                await provider._get_client()
+
+        # Client should NOT be cached (auth failed)
+        assert provider._client is None
+
+    async def test_get_client_succeeds_when_authenticated(self) -> None:
+        """_get_client returns client when CLI is authenticated."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        mock_auth_status = MagicMock()
+        mock_auth_status.isAuthenticated = True
+
+        mock_client = AsyncMock()
+        mock_client.get_auth_status.return_value = mock_auth_status
+
+        mock_cls = MagicMock(return_value=mock_client)
+
+        with patch("copilot.CopilotClient", mock_cls):
+            result = await provider._get_client()
+
+        assert result is mock_client
+        assert provider._client is mock_client
+
+    async def test_get_client_stops_client_on_auth_failure(self) -> None:
+        """Client is stopped if auth check fails to prevent process leak."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        mock_auth_status = MagicMock()
+        mock_auth_status.isAuthenticated = False
+        mock_auth_status.statusMessage = "Not authenticated"
+
+        mock_client = AsyncMock()
+        mock_client.get_auth_status.return_value = mock_auth_status
+
+        mock_cls = MagicMock(return_value=mock_client)
+
+        with patch("copilot.CopilotClient", mock_cls):
+            import pytest
+
+            from markitai.providers.errors import AuthenticationError
+
+            with pytest.raises(AuthenticationError):
+                await provider._get_client()
+
+        # Client should have been stopped to avoid process leak
+        mock_client.stop.assert_called_once()
+
+    async def test_acompletion_caches_non_retryable_model_listing_failure(
+        self,
+    ) -> None:
+        """Model listing failures should fail fast after the first fatal error."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        import pytest
+
+        from markitai.providers.copilot import CopilotProvider
+        from markitai.providers.errors import ProviderError
+
+        provider = CopilotProvider()
+
+        mock_auth_status = MagicMock()
+        mock_auth_status.isAuthenticated = True
+
+        mock_client = AsyncMock()
+        mock_client.get_auth_status.return_value = mock_auth_status
+        mock_client.create_session.side_effect = RuntimeError(
+            "Session error: Execution failed: Error: Failed to list models"
+        )
+
+        mock_cls = MagicMock(return_value=mock_client)
+
+        with (
+            patch(
+                "markitai.providers.copilot._is_copilot_sdk_available",
+                return_value=True,
+            ),
+            patch("copilot.CopilotClient", mock_cls),
+            patch("copilot.PermissionHandler", MagicMock(approve_all=MagicMock())),
+        ):
+            messages = [{"role": "user", "content": "Hello"}]
+
+            with pytest.raises(ProviderError, match="Failed to list models"):
+                await provider.acompletion("copilot/gpt-5.1-codex-mini", messages)
+
+            with pytest.raises(ProviderError, match="Failed to list models"):
+                await provider.acompletion("copilot/gpt-5.1-codex-mini", messages)
+
+        mock_cls.assert_called_once()
+        mock_client.start.assert_awaited_once()
+        mock_client.create_session.assert_awaited_once()
+        mock_client.stop.assert_awaited_once()
+        assert provider._client is None
 
 
 class TestClaudeAgentAdaptiveTimeout:

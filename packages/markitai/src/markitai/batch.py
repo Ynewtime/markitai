@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
+import glob as glob_module
 import json
+import re
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,6 +27,7 @@ from rich.progress import (
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.constants import MARKITAI_META_DIR
 from markitai.json_order import order_report, order_state
 from markitai.security import atomic_write_json
 from markitai.utils.text import format_error_message
@@ -80,6 +84,47 @@ class FileState:
     cost_usd: float = 0.0
     llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
     cache_hit: bool = False
+
+
+@dataclass(frozen=True)
+class _CompiledGlobPattern:
+    """Matcher for include/exclude glob patterns relative to the scan root."""
+
+    pattern: str
+    regex: re.Pattern[str] | None = None
+
+    def match(self, relative_path: str) -> bool:
+        """Return whether the relative path matches the pattern."""
+        if self.regex is not None:
+            return bool(self.regex.match(relative_path))
+        return _match_relative_glob(relative_path, self.pattern)
+
+
+def _match_relative_glob(relative_path: str, pattern: str) -> bool:
+    """Match pathspec-like globs without depending on glob.translate()."""
+    path_parts = [part for part in relative_path.split("/") if part]
+    pattern_parts = [part for part in pattern.split("/") if part]
+
+    def _match(path_index: int, pattern_index: int) -> bool:
+        if pattern_index == len(pattern_parts):
+            return path_index == len(path_parts)
+
+        current = pattern_parts[pattern_index]
+        if current == "**":
+            for next_index in range(path_index, len(path_parts) + 1):
+                if _match(next_index, pattern_index + 1):
+                    return True
+            return False
+
+        if path_index >= len(path_parts):
+            return False
+
+        if not fnmatch.fnmatchcase(path_parts[path_index], current):
+            return False
+
+        return _match(path_index + 1, pattern_index + 1)
+
+    return _match(0, 0)
 
 
 @dataclass
@@ -474,11 +519,18 @@ class BatchProcessor:
             for k, v in self.task_options.items()
             if k
             in (
+                "llm",
+                "ocr",
+                "screenshot",
+                "alt",
+                "desc",
                 "llm_enabled",
                 "ocr_enabled",
                 "screenshot_enabled",
                 "image_alt_enabled",
                 "image_desc_enabled",
+                "scan_max_depth",
+                "glob_patterns",
             )
         }
 
@@ -504,7 +556,7 @@ class BatchProcessor:
         Format: reports/markitai.<hash>.report.json
         Respects on_conflict strategy for rename.
         """
-        reports_dir = self.output_dir / "reports"
+        reports_dir = self.output_dir / MARKITAI_META_DIR / "reports"
         base_path = reports_dir / f"markitai.{self.task_hash}.report.json"
 
         if not base_path.exists():
@@ -667,6 +719,7 @@ class BatchProcessor:
         self,
         input_path: Path,
         extensions: set[str],
+        glob_patterns: list[str] | None = None,
     ) -> list[Path]:
         """
         Discover files to process.
@@ -674,6 +727,8 @@ class BatchProcessor:
         Args:
             input_path: Input file or directory
             extensions: Set of valid file extensions (e.g., {".docx", ".pdf"})
+            glob_patterns: Optional pathspec-like globs relative to input_path.
+                Prefix a pattern with ! to exclude after inclusions match.
 
         Returns:
             List of file paths
@@ -690,14 +745,29 @@ class BatchProcessor:
         files: list[Path] = []
         max_depth = max(0, self.config.scan_max_depth)
         max_files = max(1, self.config.scan_max_files)
+        positive_globs, negative_globs = self._compile_glob_patterns(glob_patterns)
 
         def should_include(path: Path) -> bool:
             try:
-                validate_path_within_base(path, input_resolved)
+                resolved_path = validate_path_within_base(path, input_resolved)
             except ValueError:
                 logger.warning(f"Skipping file outside input directory: {path}")
                 return False
-            return path.is_file()
+
+            if not path.is_file():
+                return False
+
+            if not positive_globs and not negative_globs:
+                return True
+
+            relative_path = resolved_path.relative_to(input_resolved).as_posix()
+            if positive_globs and not any(
+                pattern.match(relative_path) for pattern in positive_globs
+            ):
+                return False
+            if any(pattern.match(relative_path) for pattern in negative_globs):
+                return False
+            return True
 
         for ext in extensions:
             # Search both lowercase and uppercase variants (Linux glob is case-sensitive)
@@ -729,6 +799,48 @@ class BatchProcessor:
                     files.append(f)
 
         return sorted(set(files))
+
+    @staticmethod
+    def _compile_glob_patterns(
+        glob_patterns: list[str] | None,
+    ) -> tuple[list[_CompiledGlobPattern], list[_CompiledGlobPattern]]:
+        """Compile include/exclude glob patterns relative to the scan root."""
+        positive_patterns: list[_CompiledGlobPattern] = []
+        negative_patterns: list[_CompiledGlobPattern] = []
+
+        for raw_pattern in glob_patterns or []:
+            normalized = raw_pattern.strip()
+            if not normalized:
+                continue
+
+            is_exclusion = normalized.startswith("!")
+            pattern = normalized[1:] if is_exclusion else normalized
+            while pattern.startswith("./"):
+                pattern = pattern[2:]
+            pattern = pattern.lstrip("/")
+            if not pattern:
+                continue
+
+            translate = getattr(glob_module, "translate", None)
+            regex: re.Pattern[str] | None = None
+            if callable(translate):
+                try:
+                    regex = re.compile(
+                        translate(
+                            pattern,
+                            recursive=True,
+                            include_hidden=True,
+                        )
+                    )
+                except TypeError:
+                    regex = None
+            compiled = _CompiledGlobPattern(pattern=pattern, regex=regex)
+            if is_exclusion:
+                negative_patterns.append(compiled)
+            else:
+                positive_patterns.append(compiled)
+
+        return positive_patterns, negative_patterns
 
     def load_state(self) -> BatchState | None:
         """Load state from state file if exists (for resume capability)."""

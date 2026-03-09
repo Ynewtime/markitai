@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -74,6 +75,7 @@ from markitai.providers.timeout import (
     calculate_timeout,
     calculate_timeout_from_messages,
 )
+from markitai.utils.text import preview_items_for_log
 
 if TYPE_CHECKING:
     from litellm.llms.custom_llm import CustomLLM
@@ -205,8 +207,8 @@ def _find_litellm_model_fuzzy(model: str) -> str | None:
         return None
 
 
-class CopilotCostResult:
-    """Result of Copilot cost calculation with estimation metadata."""
+class ProviderCostResult:
+    """Result of model cost estimation with metadata."""
 
     __slots__ = ("cost_usd", "is_estimated", "source", "matched_model")
 
@@ -223,18 +225,15 @@ class CopilotCostResult:
         self.matched_model = matched_model
 
 
-def calculate_copilot_cost(
+def estimate_model_cost(
     model: str, input_tokens: int, output_tokens: int
-) -> CopilotCostResult:
-    """Calculate estimated cost for Copilot API usage.
+) -> ProviderCostResult:
+    """Estimate cost for a model using LiteLLM pricing data.
 
     Attempts to find pricing in the following order:
     1. Exact match in LiteLLM's model pricing database
     2. Fuzzy match in LiteLLM's database (for naming convention differences)
     3. Fallback to COPILOT_MODEL_PRICING constants
-
-    Note: All costs are ESTIMATED. Copilot is subscription-based, so actual
-    costs are included in your subscription fee, not billed per token.
 
     Args:
         model: Model name (e.g., "gpt-4.1", "claude-sonnet-4.5")
@@ -242,7 +241,7 @@ def calculate_copilot_cost(
         output_tokens: Number of output tokens
 
     Returns:
-        CopilotCostResult with cost_usd and estimation metadata
+        ProviderCostResult with cost_usd and estimation metadata
     """
     import litellm
 
@@ -254,9 +253,9 @@ def calculate_copilot_cost(
 
         if input_cost is not None and output_cost is not None:
             cost = input_tokens * input_cost + output_tokens * output_cost
-            return CopilotCostResult(
+            return ProviderCostResult(
                 cost_usd=cost,
-                is_estimated=True,  # Always estimated for Copilot (subscription)
+                is_estimated=True,
                 source="litellm",
                 matched_model=model,
             )
@@ -273,7 +272,7 @@ def calculate_copilot_cost(
 
             if input_cost is not None and output_cost is not None:
                 cost = input_tokens * input_cost + output_tokens * output_cost
-                return CopilotCostResult(
+                return ProviderCostResult(
                     cost_usd=cost,
                     is_estimated=True,
                     source="litellm_fuzzy",
@@ -294,7 +293,7 @@ def calculate_copilot_cost(
     if pricing is not None:
         input_price, output_price = pricing
         cost = (input_tokens * input_price + output_tokens * output_price) / 1_000_000
-        return CopilotCostResult(
+        return ProviderCostResult(
             cost_usd=cost,
             is_estimated=True,
             source="fallback",
@@ -302,7 +301,7 @@ def calculate_copilot_cost(
         )
 
     # 4. No pricing found
-    return CopilotCostResult(
+    return ProviderCostResult(
         cost_usd=0.0,
         is_estimated=True,
         source="none",
@@ -395,7 +394,7 @@ def validate_local_provider_deps(models: list[str]) -> list[str]:
             warnings.append(
                 "⚠️  Copilot CLI not installed. copilot/ models require CLI auth."
                 "\n   Install: pnpm add -g @github/copilot"
-                "\n   Auth: copilot auth login"
+                "\n   Auth: copilot login"
             )
 
     # Check for gemini-cli models
@@ -425,6 +424,8 @@ def register_providers() -> None:
 
     import litellm
 
+    registered_providers: list[str] = []
+
     # Try to register Claude Agent provider (only if SDK is available)
     try:
         from markitai.providers.auth import _is_claude_agent_sdk_available
@@ -436,13 +437,13 @@ def register_providers() -> None:
                 {"provider": "claude-agent", "custom_handler": provider}
             )
             _providers["claude-agent"] = provider
-            logger.debug("[Providers] Registered claude-agent provider")
+            registered_providers.append("claude-agent")
         else:
-            logger.debug(
+            logger.trace(
                 "[Providers] claude-agent provider skipped: claude_agent_sdk not installed"
             )
     except ImportError as e:
-        logger.debug(f"[Providers] claude-agent provider not available: {e}")
+        logger.trace(f"[Providers] claude-agent provider not available: {e}")
     except Exception as e:
         logger.warning(f"[Providers] Failed to register claude-agent provider: {e}")
 
@@ -457,13 +458,13 @@ def register_providers() -> None:
                 {"provider": "copilot", "custom_handler": provider}
             )
             _providers["copilot"] = provider
-            logger.debug("[Providers] Registered copilot provider")
+            registered_providers.append("copilot")
         else:
-            logger.debug(
+            logger.trace(
                 "[Providers] copilot provider skipped: copilot SDK not installed"
             )
     except ImportError as e:
-        logger.debug(f"[Providers] copilot provider not available: {e}")
+        logger.trace(f"[Providers] copilot provider not available: {e}")
     except Exception as e:
         logger.warning(f"[Providers] Failed to register copilot provider: {e}")
 
@@ -476,9 +477,9 @@ def register_providers() -> None:
             {"provider": "chatgpt", "custom_handler": chatgpt_provider}
         )
         _providers["chatgpt"] = chatgpt_provider
-        logger.debug("[Providers] Registered chatgpt provider")
+        registered_providers.append("chatgpt")
     except ImportError as e:
-        logger.debug(f"[Providers] chatgpt provider not available: {e}")
+        logger.trace(f"[Providers] chatgpt provider not available: {e}")
     except Exception as e:
         logger.warning(f"[Providers] Failed to register chatgpt provider: {e}")
 
@@ -491,11 +492,17 @@ def register_providers() -> None:
             {"provider": "gemini-cli", "custom_handler": gemini_cli_provider}
         )
         _providers["gemini-cli"] = gemini_cli_provider
-        logger.debug("[Providers] Registered gemini-cli provider")
+        registered_providers.append("gemini-cli")
     except ImportError as e:
-        logger.debug(f"[Providers] gemini-cli provider not available: {e}")
+        logger.trace(f"[Providers] gemini-cli provider not available: {e}")
     except Exception as e:
         logger.warning(f"[Providers] Failed to register gemini-cli provider: {e}")
+
+    if registered_providers:
+        logger.debug(
+            "[Providers] Registered custom providers: "
+            f"{preview_items_for_log(registered_providers, max_items=4)}"
+        )
 
     _registered = True
 
@@ -632,7 +639,7 @@ def _find_latest_claude_model(alias: str) -> str | None:
 
         # Cache the result
         _claude_model_cache[alias] = result
-        logger.debug(f"[Providers] Resolved Claude alias '{alias}' → '{result}'")
+        logger.trace(f"[Providers] Resolved Claude alias '{alias}' → '{result}'")
         return result
 
     except Exception as e:
@@ -719,6 +726,66 @@ def get_local_provider_model_info(model: str) -> dict[str, int | bool] | None:
         return dict(LOCAL_PROVIDER_DEFAULT_MODEL_INFO)
 
 
+# Provider prefixes that use OAuth and benefit from pre-flight auth check
+# All local provider prefixes (for extracting provider name from model ID)
+_LOCAL_PROVIDER_PREFIXES = ("claude-agent/", "copilot/", "chatgpt/", "gemini-cli/")
+
+
+async def preflight_auth_check(
+    model_configs: Sequence[object],
+) -> list[AuthStatus]:
+    """Check authentication status for active local providers.
+
+    Runs before the main workflow to detect auth issues early and show
+    actionable messages before progress bars appear.
+
+    Only checks providers with weight > 0. Skips disabled models.
+
+    Args:
+        model_configs: List of ModelConfig objects from cfg.llm.model_list.
+
+    Returns:
+        List of AuthStatus for checked providers.
+    """
+    # Extract unique local provider names from active models (weight > 0)
+    local_providers: set[str] = set()
+    for mc in model_configs:
+        model_id: str = mc.litellm_params.model  # type: ignore[attr-defined]
+        weight: int = mc.litellm_params.weight  # type: ignore[attr-defined]
+        if weight <= 0:
+            continue
+        for prefix in _LOCAL_PROVIDER_PREFIXES:
+            if model_id.startswith(prefix):
+                local_providers.add(prefix.rstrip("/"))
+                break
+
+    if not local_providers:
+        return []
+
+    manager = AuthManager()
+    results: list[AuthStatus] = []
+    for provider in sorted(local_providers):
+        status = await manager.check_auth(provider, force_refresh=True)
+        results.append(status)
+        if status.authenticated:
+            details = status.details or {}
+            if (
+                provider == "copilot"
+                and details.get("verification") == "credentials-only"
+            ):
+                user_suffix = f" for {status.user}" if status.user else ""
+                logger.debug(
+                    "[Preflight] copilot credentials detected"
+                    f"{user_suffix} (runtime capability not verified)"
+                )
+            else:
+                logger.debug(f"[Preflight] {provider} authenticated as {status.user}")
+        else:
+            logger.warning(f"[Preflight] {provider} not authenticated: {status.error}")
+
+    return results
+
+
 __all__ = [
     # Core provider functions
     "register_providers",
@@ -730,8 +797,9 @@ __all__ = [
     "is_local_provider_available",
     "get_local_provider_model_info",
     "count_tokens",
-    "calculate_copilot_cost",
-    "CopilotCostResult",
+    "estimate_model_cost",
+    "ProviderCostResult",
+    "preflight_auth_check",
     # Error classes
     "ProviderError",
     "AuthenticationError",

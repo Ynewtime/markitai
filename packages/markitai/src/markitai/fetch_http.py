@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import codecs
 import os
+import re
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -19,8 +21,28 @@ class StaticHttpResponse:
     url: str
 
     @property
+    def encoding(self) -> str | None:
+        """Best-effort charset parsed from the response headers."""
+        content_type = self.headers.get("content-type", "")
+        match = re.search(r"charset=([^\s;]+)", content_type, re.IGNORECASE)
+        if not match:
+            return None
+
+        encoding = match.group(1).strip().strip("\"'")
+        try:
+            codecs.lookup(encoding)
+        except LookupError:
+            return None
+        return encoding
+
+    @property
     def text(self) -> str:
         """Get response content as string."""
+        if self.encoding:
+            try:
+                return self.content.decode(self.encoding)
+            except UnicodeDecodeError:
+                pass
         return self.content.decode("utf-8", errors="replace")
 
 
@@ -85,11 +107,13 @@ class CurlCffiClient:
 
         async with AsyncSession(impersonate="chrome") as s:
             proxies = {"http": proxy, "https": proxy} if proxy else None
-            resp = await s.get(url, headers=headers, timeout=timeout_s, proxies=proxies)
+            resp = await s.get(url, headers=headers, timeout=timeout_s, proxies=proxies)  # type: ignore[reportArgumentType]  # curl_cffi stub mismatch
             return StaticHttpResponse(
                 content=resp.content,
                 status_code=resp.status_code,
-                headers={k.lower(): v for k, v in resp.headers.items()},
+                headers={
+                    k.lower(): v for k, v in resp.headers.items() if v is not None
+                },
                 url=resp.url,
             )
 

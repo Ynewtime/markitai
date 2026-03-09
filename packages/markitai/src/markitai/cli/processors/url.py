@@ -14,6 +14,7 @@ from loguru import logger
 from markitai.cli import ui
 from markitai.cli.console import get_console
 from markitai.config import MarkitaiConfig
+from markitai.constants import SCREENSHOTS_REL_PATH
 from markitai.json_order import order_report
 from markitai.security import atomic_write_json, atomic_write_text
 from markitai.utils.cli_helpers import (
@@ -42,6 +43,9 @@ if TYPE_CHECKING:
     from markitai.llm import LLMProcessor
 
 console = get_console()
+
+# Re-export from package for backwards compatibility
+from markitai.cli.processors import run_parallel_llm_tasks as _run_parallel_llm_tasks
 
 
 async def process_url(
@@ -186,6 +190,8 @@ async def process_url(
             used_strategy = fetch_result.strategy_used
             original_markdown = fetch_result.content
             screenshot_path = fetch_result.screenshot_path
+            # Extract source frontmatter from external strategies (defuddle, etc.)
+            source_extra_meta = fetch_result.metadata.get("source_frontmatter")
             logger.info(f"Fetched via {used_strategy}: {url}")
         except JinaRateLimitError:
             ui.error("Jina Reader rate limit exceeded (free tier: 20 RPM)")
@@ -275,7 +281,9 @@ async def process_url(
             and screenshot_path is not None
         ):
             # .md file just references the screenshot (not as HTML comment)
-            screenshot_ref = f"![Screenshot](screenshots/{screenshot_path.name})"
+            screenshot_ref = (
+                f"![Screenshot]({SCREENSHOTS_REL_PATH}/{screenshot_path.name})"
+            )
             base_content = _add_basic_frontmatter(
                 screenshot_ref,
                 url,
@@ -283,6 +291,7 @@ async def process_url(
                 screenshot_path=None,  # Don't add screenshot again
                 output_dir=output_dir,
                 title=fetch_result.title,
+                extra_meta=source_extra_meta,
             )
         else:
             base_content = _add_basic_frontmatter(
@@ -292,6 +301,7 @@ async def process_url(
                 screenshot_path=screenshot_path,
                 output_dir=output_dir,
                 title=fetch_result.title,
+                extra_meta=source_extra_meta,
             )
         atomic_write_text(output_file, base_content)
         logger.info(f"Written output: {output_file}")
@@ -369,6 +379,8 @@ async def process_url(
                         cfg,
                         output_file,
                         original_title=fetch_result.title,
+                        fetch_strategy=used_strategy,
+                        extra_meta=source_extra_meta,
                     )
                     llm_cost += doc_cost
                     _merge_llm_usage(llm_usage, doc_usage)
@@ -396,13 +408,24 @@ async def process_url(
                 # Standard processing with image analysis (no screenshot/vision)
                 progress.start_spinner("Processing document and images with LLM...")
 
-                # Create parallel tasks
-                doc_task = process_with_llm(
-                    markdown_for_llm,
-                    url,  # Use URL as source identifier
-                    cfg,
-                    output_file,
-                )
+                # Create event for signaling .llm.md readiness
+                llm_ready_event = asyncio.Event()
+
+                async def _doc_with_signal():
+                    try:
+                        return await process_with_llm(
+                            markdown_for_llm,
+                            url,  # Use URL as source identifier
+                            cfg,
+                            output_file,
+                            screenshot_path=screenshot_path,
+                            fetch_strategy=used_strategy,
+                            extra_meta=source_extra_meta,
+                            title=fetch_result.title,
+                        )
+                    finally:
+                        llm_ready_event.set()
+
                 img_task = analyze_images_with_llm(
                     downloaded_images,
                     markdown_for_llm,
@@ -410,10 +433,15 @@ async def process_url(
                     cfg,
                     Path(url),  # Use URL as source path
                     concurrency_limit=cfg.llm.concurrency,
+                    llm_ready_event=llm_ready_event,
                 )
 
-                # Execute in parallel
-                doc_result, img_result = await asyncio.gather(doc_task, img_task)
+                # Execute in parallel without leaking the losing task on failure
+                doc_result, img_result = await _run_parallel_llm_tasks(
+                    _doc_with_signal(),
+                    img_task,
+                    llm_ready_event,
+                )
 
                 # Unpack results
                 _, doc_cost, doc_usage = doc_result
@@ -431,6 +459,10 @@ async def process_url(
                     url,  # Use URL as source identifier
                     cfg,
                     output_file,
+                    screenshot_path=screenshot_path,
+                    fetch_strategy=used_strategy,
+                    extra_meta=source_extra_meta,
+                    title=fetch_result.title,
                 )
                 llm_cost += doc_cost
                 _merge_llm_usage(llm_usage, doc_usage)
@@ -509,11 +541,7 @@ async def process_url(
                     "images": images_count,
                     "screenshots": screenshots_count,
                     "duration": duration,
-                    "llm_usage": {
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "cost_usd": llm_cost,
-                    },
+                    "llm_usage": llm_usage,
                 }
             },
         }
@@ -681,6 +709,7 @@ async def process_url_batch(
                     )
                     url_fetch_strategy = fetch_result.strategy_used
                     markdown_content = fetch_result.content
+                    source_extra_meta = fetch_result.metadata.get("source_frontmatter")
                     cache_status = " [cache]" if fetch_result.cache_hit else ""
                     logger.info(
                         f"Fetched via {url_fetch_strategy}{cache_status}: {url}"
@@ -742,6 +771,7 @@ async def process_url_batch(
                     fetch_strategy=url_fetch_strategy,
                     output_dir=output_dir,
                     title=fetch_result.title,
+                    extra_meta=source_extra_meta,
                 )
                 atomic_write_text(output_file, base_content)
 
@@ -755,6 +785,10 @@ async def process_url_batch(
                         url,
                         cfg,
                         output_file,
+                        screenshot_path=fetch_result.screenshot_path,
+                        fetch_strategy=url_fetch_strategy,
+                        extra_meta=source_extra_meta,
+                        title=fetch_result.title,
                     )
                     llm_cost += doc_cost
                     _merge_llm_usage(llm_usage, doc_usage)
@@ -882,6 +916,8 @@ async def process_url_with_vision(
     output_file: Path,
     processor: LLMProcessor | None = None,
     original_title: str | None = None,
+    fetch_strategy: str | None = None,
+    extra_meta: dict[str, Any] | None = None,
 ) -> tuple[str, float, dict[str, dict[str, Any]]]:
     """Process URL content with vision enhancement using screenshot.
 
@@ -908,7 +944,12 @@ async def process_url_with_vision(
 
         # Use URL-specific vision enhancement (no slide/page marker protection)
         cleaned_content, frontmatter = await processor.enhance_url_with_vision(
-            content, screenshot_path, context=url, original_title=original_title
+            content,
+            screenshot_path,
+            context=url,
+            original_title=original_title,
+            fetch_strategy=fetch_strategy,
+            extra_meta=extra_meta,
         )
 
         # Format and write LLM output
@@ -920,7 +961,7 @@ async def process_url_with_vision(
         # Add screenshot reference as comment
         screenshot_comment = (
             f"\n\n<!-- Screenshot for reference -->\n"
-            f"<!-- ![Screenshot](screenshots/{screenshot_path.name}) -->"
+            f"<!-- ![Screenshot]({SCREENSHOTS_REL_PATH}/{screenshot_path.name}) -->"
         )
         llm_content += screenshot_comment
 
@@ -937,6 +978,11 @@ async def process_url_with_vision(
             f"Vision enhancement failed for {url}: {format_error_message(e)}, "
             "falling back to standard processing"
         )
+        from rich.console import Console
+
+        Console(stderr=True).print(
+            f"[yellow]Warning: Vision enhancement failed for {url}, falling back to standard processing[/yellow]"
+        )
         # Fallback to standard processing
         result = await process_with_llm(
             content,
@@ -944,6 +990,9 @@ async def process_url_with_vision(
             cfg,
             output_file,
             processor=processor,
+            fetch_strategy=fetch_strategy,
+            extra_meta=extra_meta,
+            title=original_title,
         )
 
         # Add screenshot comment to .llm.md file even in fallback path
@@ -951,7 +1000,7 @@ async def process_url_with_vision(
         llm_output = output_file.with_suffix(".llm.md")
         screenshot_comment = (
             f"\n\n<!-- Screenshot for reference -->\n"
-            f"<!-- ![Screenshot](screenshots/{screenshot_path.name}) -->"
+            f"<!-- ![Screenshot]({SCREENSHOTS_REL_PATH}/{screenshot_path.name}) -->"
         )
 
         if llm_output.exists():
@@ -968,7 +1017,9 @@ async def process_url_with_vision(
             # with the content and screenshot reference
             from markitai.workflow.helpers import add_basic_frontmatter
 
-            llm_content = add_basic_frontmatter(content, url)
+            llm_content = add_basic_frontmatter(
+                content, url, fetch_strategy=fetch_strategy, extra_meta=extra_meta
+            )
             llm_content += screenshot_comment
             atomic_write_text(llm_output, llm_content)
             logger.info(f"Created fallback LLM file with screenshot: {llm_output}")
@@ -1018,7 +1069,7 @@ async def process_url_screenshot_only(
         # Add screenshot reference as comment
         screenshot_comment = (
             f"\n\n<!-- Screenshot for reference -->\n"
-            f"<!-- ![Screenshot](screenshots/{screenshot_path.name}) -->"
+            f"<!-- ![Screenshot]({SCREENSHOTS_REL_PATH}/{screenshot_path.name}) -->"
         )
         llm_content += screenshot_comment
 

@@ -23,6 +23,7 @@ from markitai.utils.output import resolve_output_path
 from markitai.utils.paths import (
     ensure_assets_dir,
     ensure_dir,
+    ensure_reports_dir,
     ensure_screenshots_dir,
     ensure_subdir,
 )
@@ -56,6 +57,7 @@ __all__ = [
     # Paths
     "ensure_assets_dir",
     "ensure_dir",
+    "ensure_reports_dir",
     "ensure_screenshots_dir",
     "ensure_subdir",
     # Text

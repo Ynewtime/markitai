@@ -1,1 +1,1 @@
-请分析这张图片。
+Please analyze this image.

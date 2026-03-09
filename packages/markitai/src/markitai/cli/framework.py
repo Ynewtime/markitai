@@ -17,6 +17,7 @@ from click import Context
 # the heavy command modules at module level.  The short_help string is
 # used by format_help() so that displaying --help never triggers imports.
 _LAZY_COMMANDS: dict[str, tuple[str, str, str]] = {
+    "auth": ("markitai.cli.commands.auth", "auth", "Authentication helpers."),
     "cache": ("markitai.cli.commands.cache", "cache", "Cache management commands."),
     "config": (
         "markitai.cli.commands.config",

@@ -10,6 +10,39 @@ This package contains processing functions for different input types:
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
+
+async def run_parallel_llm_tasks(
+    document_coro: Any,
+    image_coro: Any,
+    llm_ready_event: asyncio.Event,
+) -> tuple[Any, Any]:
+    """Run document and image LLM tasks together without leaking pending work.
+
+    On failure, signals the event, cancels outstanding tasks, and re-raises.
+    """
+    document_task = asyncio.create_task(document_coro)
+    image_task = asyncio.create_task(image_coro)
+
+    try:
+        return await asyncio.gather(document_task, image_task)
+    except Exception:
+        llm_ready_event.set()
+
+        pending_tasks = [
+            task for task in (document_task, image_task) if not task.done()
+        ]
+        for task in pending_tasks:
+            task.cancel()
+
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+        raise
+
+
 from markitai.cli.processors.batch import process_batch
 from markitai.cli.processors.file import process_single_file
 from markitai.cli.processors.llm import (

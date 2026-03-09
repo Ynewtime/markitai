@@ -200,6 +200,24 @@
       "title": "CloudflareConfig",
       "type": "object"
     },
+    "DefuddleConfig": {
+      "description": "Defuddle content extraction API configuration.\n\nDefuddle (https://defuddle.md) extracts clean article content from web pages,\nremoving clutter like ads, sidebars, and navigation. Returns Markdown with\nrich YAML frontmatter (title, author, published, description, word_count).\n\nNOTE: Rate limit is undocumented. The default RPM is conservative.\nNOTE: JS rendering capability of the API is unconfirmed \u2014 SPA-heavy sites\nmay still need playwright as fallback.",
+      "properties": {
+        "timeout": {
+          "default": 30,
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "rpm": {
+          "default": 20,
+          "minimum": 1,
+          "title": "Rpm",
+          "type": "integer"
+        }
+      },
+      "title": "DefuddleConfig",
+      "type": "object"
+    },
     "DomainProfileConfig": {
       "description": "Domain-specific overrides for fetch settings.",
       "properties": {
@@ -251,6 +269,7 @@
             {
               "enum": [
                 "static",
+                "defuddle",
                 "playwright",
                 "jina",
                 "cloudflare"
@@ -276,12 +295,16 @@
           "enum": [
             "auto",
             "static",
+            "defuddle",
             "playwright",
             "jina",
             "cloudflare"
           ],
           "title": "Strategy",
           "type": "string"
+        },
+        "defuddle": {
+          "$ref": "#/$defs/DefuddleConfig"
         },
         "playwright": {
           "$ref": "#/$defs/PlaywrightConfig"
@@ -322,7 +345,7 @@
           "type": "boolean"
         },
         "max_strategy_hops": {
-          "default": 4,
+          "default": 5,
           "maximum": 6,
           "minimum": 1,
           "title": "Max Strategy Hops",
@@ -1010,54 +1033,6 @@
           ],
           "default": null,
           "title": "Page Content User"
-        },
-        "document_enhance_system": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Document Enhance System"
-        },
-        "document_enhance_user": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Document Enhance User"
-        },
-        "document_enhance_complete_system": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Document Enhance Complete System"
-        },
-        "document_enhance_complete_user": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Document Enhance Complete User"
         },
         "document_process_system": {
           "anyOf": [

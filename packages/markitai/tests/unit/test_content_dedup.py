@@ -22,21 +22,21 @@ class TestPatternConsolidation:
         """protect_image_positions should support exclude_screenshots parameter."""
         from markitai.llm.content import protect_image_positions
 
-        md = "![alt](assets/doc.0001.jpg)\n![Page 1](screenshots/page1.jpg)"
+        md = "![alt](.markitai/assets/doc.0001.jpg)\n![Page 1](.markitai/screenshots/page1.jpg)"
         protected, mapping = protect_image_positions(md, exclude_screenshots=True)
         # Only the assets image should be protected, not the screenshot
-        assert "screenshots/page1.jpg" in protected
-        assert "assets/doc.0001.jpg" not in protected
+        assert ".markitai/screenshots/page1.jpg" in protected
+        assert ".markitai/assets/doc.0001.jpg" not in protected
 
     def test_protect_image_positions_includes_all_by_default(self):
         """Without exclude_screenshots, all images should be protected."""
         from markitai.llm.content import protect_image_positions
 
-        md = "![alt](assets/doc.0001.jpg)\n![Page 1](screenshots/page1.jpg)"
+        md = "![alt](.markitai/assets/doc.0001.jpg)\n![Page 1](.markitai/screenshots/page1.jpg)"
         protected, mapping = protect_image_positions(md, exclude_screenshots=False)
         # Both images should be protected
-        assert "assets/doc.0001.jpg" not in protected
-        assert "screenshots/page1.jpg" not in protected
+        assert ".markitai/assets/doc.0001.jpg" not in protected
+        assert ".markitai/screenshots/page1.jpg" not in protected
         assert len(mapping) == 2
 
     def test_protect_and_restore_roundtrip(self):
@@ -46,7 +46,7 @@ class TestPatternConsolidation:
             restore_image_positions,
         )
 
-        original = "Text\n![img](assets/test.jpg)\nMore text\n![img2](assets/test2.png)"
+        original = "Text\n![img](.markitai/assets/test.jpg)\nMore text\n![img2](.markitai/assets/test2.png)"
         protected, mapping = protect_image_positions(original)
         restored = restore_image_positions(protected, mapping)
         assert restored == original
@@ -55,8 +55,8 @@ class TestPatternConsolidation:
         """DocumentMixin._protect_image_positions should delegate to content module."""
         from markitai.llm.document import DocumentMixin
 
-        md = "![alt](assets/doc.jpg)\n![Page 1](screenshots/page1.jpg)"
+        md = "![alt](.markitai/assets/doc.jpg)\n![Page 1](.markitai/screenshots/page1.jpg)"
         protected, mapping = DocumentMixin._protect_image_positions(md)
         # Should exclude screenshots (like the old behavior)
-        assert "screenshots/page1.jpg" in protected
-        assert "assets/doc.jpg" not in protected
+        assert ".markitai/screenshots/page1.jpg" in protected
+        assert ".markitai/assets/doc.jpg" not in protected

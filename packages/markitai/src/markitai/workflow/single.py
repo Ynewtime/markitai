@@ -11,7 +11,9 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.constants import ASSETS_REL_PATH, SCREENSHOTS_REL_PATH
 from markitai.security import atomic_write_text
+from markitai.utils.frontmatter import build_frontmatter_dict, frontmatter_to_yaml
 from markitai.utils.text import format_error_message
 
 if TYPE_CHECKING:
@@ -35,6 +37,37 @@ class WorkflowResult:
     llm_cost: float = 0.0
     llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
     image_analysis: ImageAnalysisResult | None = None
+
+
+def _read_markdown_body(output_file: Path, fallback: str) -> str:
+    """Read the body markdown from an existing Markitai output file."""
+    if not output_file.exists():
+        return fallback
+
+    content = output_file.read_text(encoding="utf-8")
+    if content.startswith("---\n"):
+        closing = content.find("\n---\n", 4)
+        if closing != -1:
+            return content[closing + 5 :].lstrip("\n")
+    return content
+
+
+def _fallback_frontmatter(source: str, title: str | None) -> str:
+    """Build minimal frontmatter for error/fallback paths.
+
+    Args:
+        source: Source file name.
+        title: Optional explicit title; falls back to source if None.
+
+    Returns:
+        YAML frontmatter string (without surrounding ``---`` fences).
+    """
+    return frontmatter_to_yaml(
+        build_frontmatter_dict(
+            source=source,
+            title=title or source,
+        )
+    ).strip()
 
 
 class SingleFileWorkflow:
@@ -93,6 +126,7 @@ class SingleFileWorkflow:
         source: str,
         output_file: Path,
         page_images: list[dict] | None = None,
+        title: str | None = None,
     ) -> tuple[str, float, dict[str, dict[str, Any]]]:
         """Process markdown with LLM (clean + frontmatter).
 
@@ -101,13 +135,23 @@ class SingleFileWorkflow:
             source: Source file name
             output_file: Output file path for .llm.md
             page_images: Optional list of page image info dicts
+            title: Optional explicit title from converter metadata
 
         Returns:
             Tuple of (markdown, cost_usd, llm_usage)
         """
         try:
             cleaned, frontmatter = await self.processor.process_document(
-                markdown, source
+                markdown,
+                source,
+                title=title,
+            )
+
+            from markitai.workflow.helpers import maybe_stabilize_markdown
+
+            baseline_markdown = _read_markdown_body(output_file, markdown)
+            cleaned = maybe_stabilize_markdown(
+                self.processor, baseline_markdown, cleaned, source
             )
 
             # Write LLM version
@@ -119,7 +163,7 @@ class SingleFileWorkflow:
             # Append commented image links if provided
             if page_images:
                 commented_images = [
-                    f"<!-- ![Page {img['page']}](screenshots/{img['name']}) -->"
+                    f"<!-- ![Page {img['page']}]({SCREENSHOTS_REL_PATH}/{img['name']}) -->"
                     for img in sorted(page_images, key=lambda x: x.get("page", 0))
                 ]
                 llm_content += "\n\n<!-- Page images for reference -->\n" + "\n".join(
@@ -136,6 +180,11 @@ class SingleFileWorkflow:
 
         except Exception as e:
             logger.error(f"LLM processing failed: {format_error_message(e)}")
+            from rich.console import Console
+
+            Console(stderr=True).print(
+                f"[yellow]Warning: LLM processing failed: {format_error_message(e)}[/yellow]"
+            )
             return markdown, 0.0, {}
 
     async def analyze_images(
@@ -159,7 +208,6 @@ class SingleFileWorkflow:
             Tuple of (updated markdown, cost_usd, llm_usage, image_analysis_result)
         """
         from markitai.llm import ImageAnalysis
-        from markitai.workflow.helpers import detect_language
 
         alt_enabled = self.config.image.alt_enabled
         desc_enabled = self.config.image.desc_enabled
@@ -171,8 +219,6 @@ class SingleFileWorkflow:
         context = f"{source_path}:images"
 
         try:
-            # Detect document language from markdown content
-            language = detect_language(markdown)
 
             async def analyze_single_image(
                 image_path: Path,
@@ -181,7 +227,7 @@ class SingleFileWorkflow:
                 timestamp = datetime.now().astimezone().isoformat()
                 try:
                     analysis = await self.processor.analyze_image(
-                        image_path, language=language, context=context
+                        image_path, context=context
                     )
                     return image_path, analysis, timestamp
                 except Exception as e:
@@ -231,7 +277,9 @@ class SingleFileWorkflow:
                 # Update alt text in markdown (if alt_enabled)
                 if alt_enabled:
                     old_pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(image_path.name)}\)"
-                    new_ref = f"![{analysis_caption}](assets/{image_path.name})"
+                    new_ref = (
+                        f"![{analysis_caption}]({ASSETS_REL_PATH}/{image_path.name})"
+                    )
                     markdown = re.sub(old_pattern, new_ref, markdown)
 
             # Check if this is a standalone image file
@@ -254,10 +302,13 @@ class SingleFileWorkflow:
                 assert input_path is not None
                 _, analysis, _ = results[0]
                 if analysis:
+                    # Use actual asset filename (may differ from input for
+                    # transcoded formats like BMP/TIFF→PNG)
+                    asset_name = image_paths[0].name
                     rich_content = format_standalone_image_markdown(
                         input_path,
                         analysis,
-                        f"assets/{input_path.name}",
+                        f"{ASSETS_REL_PATH}/{asset_name}",
                         include_frontmatter=True,
                     )
                     rich_content = normalize_markdown_whitespace(rich_content)
@@ -299,6 +350,7 @@ class SingleFileWorkflow:
         extracted_text: str,
         page_images: list[dict],
         source: str = "document",
+        original_title: str | None = None,
     ) -> tuple[str, str, float, dict[str, dict[str, Any]]]:
         """Enhance document by combining extracted text with page images.
 
@@ -306,6 +358,7 @@ class SingleFileWorkflow:
             extracted_text: Text extracted by pymupdf4llm/markitdown
             page_images: List of page image info dicts with 'path' key
             source: Source file name for logging context
+            original_title: Optional explicit document title from converter metadata
 
         Returns:
             Tuple of (cleaned_markdown, frontmatter_yaml, cost_usd, llm_usage)
@@ -329,7 +382,16 @@ class SingleFileWorkflow:
                 cleaned_content,
                 frontmatter,
             ) = await self.processor.enhance_document_complete(
-                extracted_text, image_paths, source=source
+                extracted_text,
+                image_paths,
+                source=source,
+                original_title=original_title,
+            )
+
+            from markitai.workflow.helpers import maybe_stabilize_markdown
+
+            cleaned_content = maybe_stabilize_markdown(
+                self.processor, extracted_text, cleaned_content, source
             )
 
             # Use context-based tracking for accurate per-file usage in concurrent scenarios
@@ -342,13 +404,23 @@ class SingleFileWorkflow:
 
         except Exception as e:
             logger.error(f"Document enhancement failed: {format_error_message(e)}")
-            basic_frontmatter = f"title: {source}\nsource: {source}"
-            return extracted_text, basic_frontmatter, 0.0, {}
+            from rich.console import Console
+
+            Console(stderr=True).print(
+                f"[yellow]Warning: Vision enhancement failed: {format_error_message(e)}[/yellow]"
+            )
+            return (
+                extracted_text,
+                _fallback_frontmatter(source, original_title),
+                0.0,
+                {},
+            )
 
     async def extract_from_screenshots(
         self,
         page_images: list[dict],
         source: str = "document",
+        original_title: str | None = None,
     ) -> tuple[str, str, float, dict[str, dict[str, Any]]]:
         """Extract content purely from page screenshots (screenshot-only mode).
 
@@ -358,6 +430,7 @@ class SingleFileWorkflow:
         Args:
             page_images: List of page image info dicts with 'path' key
             source: Source file name for logging context
+            original_title: Optional explicit document title from converter metadata
 
         Returns:
             Tuple of (extracted_markdown, frontmatter_yaml, cost_usd, llm_usage)
@@ -374,14 +447,15 @@ class SingleFileWorkflow:
                 logger.warning(
                     f"[{source}] No page images for screenshot-only extraction"
                 )
-                basic_frontmatter = f"title: {source}\nsource: {source}"
-                return "", basic_frontmatter, 0.0, {}
+                return "", _fallback_frontmatter(source, original_title), 0.0, {}
 
             # Process all pages in parallel using asyncio.gather
             async def _extract_page(i: int, image_path: Path) -> str:
                 page_source = f"{source}:page{i}"
                 cleaned, _ = await self.processor.extract_from_screenshot(
-                    image_path, context=page_source
+                    image_path,
+                    context=page_source,
+                    original_title=original_title,
                 )
                 if cleaned.strip():
                     return f"<!-- Page {i} -->\n\n{cleaned}"
@@ -399,15 +473,11 @@ class SingleFileWorkflow:
             merged_content = "\n\n".join(all_content)
 
             # Generate frontmatter for the merged content
-            from markitai.utils.frontmatter import (
-                build_frontmatter_dict,
-                frontmatter_to_yaml,
-            )
-
             frontmatter_dict = build_frontmatter_dict(
                 source=source,
                 description="",  # Will be empty, could be enhanced
                 tags=[],
+                title=original_title,
                 content=merged_content,
             )
             frontmatter = frontmatter_to_yaml(frontmatter_dict).strip()
@@ -423,5 +493,4 @@ class SingleFileWorkflow:
             logger.error(
                 f"Screenshot-only extraction failed: {format_error_message(e)}"
             )
-            basic_frontmatter = f"title: {source}\nsource: {source}"
-            return "", basic_frontmatter, 0.0, {}
+            return "", _fallback_frontmatter(source, original_title), 0.0, {}

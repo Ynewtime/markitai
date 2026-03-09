@@ -1,1 +1,1 @@
-请详细描述这张图片的内容。
+Please describe this image in detail.
