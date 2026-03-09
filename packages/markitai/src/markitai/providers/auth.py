@@ -28,6 +28,33 @@ from typing import Any
 from loguru import logger
 
 
+def _email_from_google_userinfo(access_token: str) -> str | None:
+    """Fetch email from Google userinfo API using an access token.
+
+    Args:
+        access_token: A valid Google OAuth2 access token.
+
+    Returns:
+        Email address if available, None on any failure.
+    """
+    try:
+        import httpx
+
+        resp = httpx.get(
+            "https://www.googleapis.com/oauth2/v1/userinfo",
+            params={"alt": "json"},
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            email = data.get("email")
+            return email if isinstance(email, str) and email else None
+    except Exception:
+        pass
+    return None
+
+
 def _email_from_jwt(id_token: str) -> str | None:
     """Extract email from a JWT id_token without external libraries.
 
@@ -472,6 +499,9 @@ def _check_gemini_cli_auth() -> AuthStatus:
         if not email:
             # Fall back to extracting email from id_token JWT
             email = _email_from_jwt(data.get("id_token", ""))
+        if not email and isinstance(access_token, str):
+            # Fall back to Google userinfo API
+            email = _email_from_google_userinfo(access_token)
         project_id = data.get("project_id")
         auth_mode = data.get("auth_mode")
         user = email if isinstance(email, str) and email else "gemini-cli"
