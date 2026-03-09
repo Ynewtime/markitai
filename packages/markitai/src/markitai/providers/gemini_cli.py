@@ -464,7 +464,14 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
         # Suppress raw stdout from google-auth-oauthlib's run_local_server
         # (it prints "Please visit this URL...") and show Rich-styled output
         with suppress_stdout():
-            return flow.run_local_server(port=GEMINI_CLI_REDIRECT_PORT)
+            try:
+                return flow.run_local_server(port=GEMINI_CLI_REDIRECT_PORT)
+            except OSError:
+                # Port occupied (e.g. Gemini CLI running) — let OS pick a free port
+                logger.debug(
+                    f"[GeminiCLI] Port {GEMINI_CLI_REDIRECT_PORT} busy, using ephemeral port"
+                )
+                return flow.run_local_server(port=0)
 
     def _run_oauth_flow(self) -> Any:  # google.oauth2.credentials.Credentials
         """Run OAuth flow and persist the shared Gemini CLI credentials.
@@ -710,7 +717,9 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
             if token_result is not None:
                 return token_result
 
-        # 5. No valid credentials — need google-auth-oauthlib for OAuth flow
+        # 5. No valid credentials — fail fast instead of launching interactive
+        # OAuth browser flow during an LLM call (which would disrupt spinners).
+        # Interactive auth should go through alogin() / preflight / `markitai auth`.
         if not _GOOGLE_AUTH_AVAILABLE:
             raise SDKNotAvailableError(
                 "google-auth is required for the gemini-cli provider "
@@ -720,21 +729,16 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
                 install_command="uv add 'markitai[gemini-cli]'",
             )
 
-        try:
-            creds = self._run_oauth_flow()
-            return creds.token, self._compute_token_cache_deadline(creds, None), None
-        except SDKNotAvailableError:
-            raise
-        except Exception as e:
-            raise AuthenticationError(
-                f"Failed to authenticate with Gemini CLI: {e}",
-                provider="gemini-cli",
-                resolution_hint=(
-                    "Run 'markitai auth gemini login' to create a managed "
-                    "profile, or 'gemini login' to reuse Gemini CLI auth.\n"
-                    "Requires: uv add 'markitai[gemini-cli]'"
-                ),
-            ) from e
+        raise AuthenticationError(
+            "No valid Gemini credentials found. "
+            "Run 'markitai auth gemini login' to authenticate.",
+            provider="gemini-cli",
+            resolution_hint=(
+                "Run 'markitai auth gemini login' to create a managed "
+                "profile, or 'gemini login' to reuse Gemini CLI auth.\n"
+                "Requires: uv add 'markitai[gemini-cli]'"
+            ),
+        )
 
     @staticmethod
     def _extract_project_id(data: dict[str, Any] | None) -> str | None:

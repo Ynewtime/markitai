@@ -970,28 +970,24 @@ class TestGetAccessToken:
         assert token == "ya29.refreshed-token"
         mock_creds.refresh.assert_called_once()
 
-    async def test_no_creds_triggers_oauth_flow(self) -> None:
-        """Missing credentials triggers OAuth flow."""
+    async def test_no_creds_raises_auth_error(self) -> None:
+        """Missing credentials raises AuthenticationError (no inline OAuth)."""
+        from markitai.providers.errors import AuthenticationError
         from markitai.providers.gemini_cli import GeminiCLIProvider
 
         provider = GeminiCLIProvider()
-
-        mock_new_creds = MagicMock()
-        mock_new_creds.token = "ya29.new-oauth-token"
 
         with (
             patch.object(
                 provider, "_get_credential_payload_candidates", return_value=[]
             ),
-            patch.object(provider, "_run_oauth_flow", return_value=mock_new_creds),
-            patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
+            pytest.raises(AuthenticationError, match="No valid Gemini credentials"),
         ):
-            token = await provider._get_access_token()
+            await provider._get_access_token()
 
-        assert token == "ya29.new-oauth-token"
-
-    async def test_refresh_failure_triggers_oauth_flow(self) -> None:
-        """If refresh fails, falls back to OAuth flow."""
+    async def test_refresh_failure_raises_auth_error(self) -> None:
+        """If all credentials fail to refresh, raises AuthenticationError."""
+        from markitai.providers.errors import AuthenticationError
         from markitai.providers.gemini_cli import (
             GeminiCLIProvider,
             GeminiCredentialRecord,
@@ -1013,9 +1009,6 @@ class TestGetAccessToken:
         mock_creds.refresh_token = "1//refresh"
         mock_creds.refresh.side_effect = Exception("Refresh failed")
 
-        mock_new_creds = MagicMock()
-        mock_new_creds.token = "ya29.fresh-from-oauth"
-
         with (
             patch.object(
                 provider,
@@ -1025,14 +1018,13 @@ class TestGetAccessToken:
             patch.object(
                 provider, "_build_credentials_from_data", return_value=mock_creds
             ),
-            patch.object(provider, "_run_oauth_flow", return_value=mock_new_creds),
-            patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
             patch("markitai.providers.gemini_cli._google_auth_requests") as mock_req,
         ):
             mock_req.Request.return_value = MagicMock()
-            token = await provider._get_access_token()
-
-        assert token == "ya29.fresh-from-oauth"
+            with pytest.raises(
+                AuthenticationError, match="No valid Gemini credentials"
+            ):
+                await provider._get_access_token()
 
 
 # ===================================================================

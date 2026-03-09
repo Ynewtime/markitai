@@ -551,14 +551,6 @@ def app(
                 if status.authenticated:
                     continue
 
-                # ChatGPT auto-authenticates on first API call
-                if status.provider == "chatgpt":
-                    stderr_console.print(
-                        f"[dim]  i {status.provider}: will auto-authenticate"
-                        " via Device Code Flow on first call[/dim]"
-                    )
-                    continue
-
                 stderr_console.print(
                     f"[yellow]  ! {status.provider}:"
                     f" {escape(status.error or '')}[/yellow]"
