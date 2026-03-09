@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 # Optional: cairosvg for SVG → PNG rasterization (LLM vision)
 try:
     import cairosvg
-except ImportError:
+except (ImportError, OSError):
     cairosvg = None  # type: ignore[assignment]
 
 from markitai.constants import (
