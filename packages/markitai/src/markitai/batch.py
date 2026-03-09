@@ -547,7 +547,7 @@ class BatchProcessor:
 
         Format: states/markitai.<hash>.state.json
         """
-        states_dir = self.output_dir / "states"
+        states_dir = self.output_dir / MARKITAI_META_DIR / "states"
         return states_dir / f"markitai.{self.task_hash}.state.json"
 
     def _get_report_file_path(self) -> Path:
