@@ -9,7 +9,9 @@ from markitai.config import (
     BatchConfig,
     CacheConfig,
     CloudflareConfig,
+    DomainProfileConfig,
     FetchConfig,
+    FetchPolicyConfig,
     ImageConfig,
     JinaConfig,
     LLMConfig,
@@ -124,6 +126,22 @@ class TestSchemaSync:
         assert schema_props["domain_profiles"]["default"] == {}
         assert schema_props["fallback_patterns"]["default"] == model.fallback_patterns
 
+    def test_fetch_policy_config_new_fields(self, schema: dict) -> None:
+        """Verify FetchPolicyConfig new fields in schema."""
+        props = schema["$defs"]["FetchPolicyConfig"]["properties"]
+        assert "strategy_priority" in props
+        assert props["strategy_priority"]["default"] is None
+        assert "local_only_patterns" in props
+        assert props["local_only_patterns"]["default"] == []
+        assert "inherit_no_proxy" in props
+        assert props["inherit_no_proxy"]["default"] is True
+
+    def test_domain_profile_strategy_priority_in_schema(self, schema: dict) -> None:
+        """Verify DomainProfileConfig.strategy_priority in schema."""
+        props = schema["$defs"]["DomainProfileConfig"]["properties"]
+        assert "strategy_priority" in props
+        assert props["strategy_priority"]["default"] is None
+
 
 class TestModelFieldSync:
     """Tests to verify model fields exist in schema."""
@@ -224,6 +242,20 @@ class TestModelFieldSync:
         """Verify all CloudflareConfig fields are in schema."""
         model_fields = set(CloudflareConfig.model_fields.keys())
         schema_fields = set(schema["$defs"]["CloudflareConfig"]["properties"].keys())
+        missing = model_fields - schema_fields
+        assert not missing, f"Fields missing from schema: {missing}"
+
+    def test_fetch_policy_config_fields_match(self, schema: dict) -> None:
+        """Verify all FetchPolicyConfig fields are in schema."""
+        model_fields = set(FetchPolicyConfig.model_fields.keys())
+        schema_fields = set(schema["$defs"]["FetchPolicyConfig"]["properties"].keys())
+        missing = model_fields - schema_fields
+        assert not missing, f"Fields missing from schema: {missing}"
+
+    def test_domain_profile_config_fields_match(self, schema: dict) -> None:
+        """Verify all DomainProfileConfig fields are in schema."""
+        model_fields = set(DomainProfileConfig.model_fields.keys())
+        schema_fields = set(schema["$defs"]["DomainProfileConfig"]["properties"].keys())
         missing = model_fields - schema_fields
         assert not missing, f"Fields missing from schema: {missing}"
 

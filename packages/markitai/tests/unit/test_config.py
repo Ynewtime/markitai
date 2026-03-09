@@ -4,11 +4,14 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from markitai.config import (
     BUILTIN_PRESETS,
     ConfigManager,
+    DomainProfileConfig,
     EnvVarNotFoundError,
+    FetchPolicyConfig,
     LiteLLMParams,
     MarkitaiConfig,
     PresetConfig,
@@ -340,3 +343,63 @@ def test_fetch_config_accepts_domain_profile_overrides() -> None:
         cfg.fetch.domain_profiles["x.com"].wait_for_selector
         == '[data-testid="tweetText"]'
     )
+
+
+class TestFetchPolicyConfigValidation:
+    """Tests for FetchPolicyConfig new fields."""
+
+    def test_defaults(self) -> None:
+        cfg = FetchPolicyConfig()
+        assert cfg.strategy_priority is None
+        assert cfg.local_only_patterns == []
+        assert cfg.inherit_no_proxy is True
+
+    def test_valid_strategy_priority(self) -> None:
+        cfg = FetchPolicyConfig(strategy_priority=["static", "playwright"])
+        assert cfg.strategy_priority == ["static", "playwright"]
+
+    def test_invalid_strategy_name(self) -> None:
+        with pytest.raises(ValidationError, match="invalid_strategy"):
+            FetchPolicyConfig(strategy_priority=["static", "invalid"])
+
+    def test_duplicate_strategies(self) -> None:
+        with pytest.raises(ValidationError, match="duplicate"):
+            FetchPolicyConfig(strategy_priority=["static", "static"])
+
+    def test_empty_strategy_priority_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="empty"):
+            FetchPolicyConfig(strategy_priority=[])
+
+    def test_valid_local_only_patterns(self) -> None:
+        cfg = FetchPolicyConfig(
+            local_only_patterns=[".corp.com", "10.0.0.0/8", "localhost"]
+        )
+        assert len(cfg.local_only_patterns) == 3
+
+    def test_empty_pattern_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="empty"):
+            FetchPolicyConfig(local_only_patterns=[""])
+
+    def test_invalid_cidr_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="CIDR"):
+            FetchPolicyConfig(local_only_patterns=["999.0.0.0/8"])
+
+
+class TestDomainProfileStrategyPriority:
+    """Tests for DomainProfileConfig.strategy_priority."""
+
+    def test_default_none(self) -> None:
+        cfg = DomainProfileConfig()
+        assert cfg.strategy_priority is None
+
+    def test_valid_priority(self) -> None:
+        cfg = DomainProfileConfig(strategy_priority=["static"])
+        assert cfg.strategy_priority == ["static"]
+
+    def test_invalid_strategy(self) -> None:
+        with pytest.raises(ValidationError, match="invalid_strategy"):
+            DomainProfileConfig(strategy_priority=["bogus"])
+
+    def test_duplicate_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="duplicate"):
+            DomainProfileConfig(strategy_priority=["static", "static"])

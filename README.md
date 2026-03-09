@@ -14,6 +14,7 @@ Opinionated Markdown converter with native LLM enhancement support.
 - **URL Conversion** - Smart strategy chain (Defuddle → Jina → Static → Playwright → Cloudflare) with SPA auto-detection
 - **Cloudflare Integration** - Cloud-based URL rendering (Browser Rendering) and file conversion (Workers AI toMarkdown) via `--cloudflare`
 - **Smart Caching** - LLM result caching, SPA domain learning, auto-proxy detection
+- **Fetch Security** - Configurable strategy priority, domain/IP exemption with NO_PROXY support for information security compliance
 
 ## Installation
 

@@ -234,6 +234,17 @@ JS_REQUIRED_PATTERNS: tuple[str, ...] = (
     "requires javascript",
 )
 
+# Fetch strategy categories
+ALL_FETCH_STRATEGIES: tuple[str, ...] = (
+    "defuddle",
+    "jina",
+    "static",
+    "playwright",
+    "cloudflare",
+)
+EXTERNAL_STRATEGIES: tuple[str, ...] = ("defuddle", "jina", "cloudflare")
+LOCAL_STRATEGIES: tuple[str, ...] = ("static", "playwright")
+
 # =============================================================================
 # Local LLM Provider Settings
 # =============================================================================

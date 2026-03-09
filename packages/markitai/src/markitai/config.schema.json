@@ -282,6 +282,23 @@
           ],
           "default": null,
           "title": "Prefer Strategy"
+        },
+        "strategy_priority": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": ["static", "defuddle", "playwright", "jina", "cloudflare"],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Custom strategy order for this domain. Overrides global and prefer_strategy.",
+          "title": "Strategy Priority"
         }
       },
       "title": "DomainProfileConfig",
@@ -359,6 +376,38 @@
           "minimum": 1,
           "title": "Max Strategy Hops",
           "type": "integer"
+        },
+        "strategy_priority": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": ["static", "defuddle", "playwright", "jina", "cloudflare"],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Custom global strategy order. Overrides the default priority.",
+          "title": "Strategy Priority"
+        },
+        "local_only_patterns": {
+          "default": [],
+          "description": "Domain/IP patterns that must use local-only strategies (NO_PROXY syntax).",
+          "items": {
+            "type": "string"
+          },
+          "title": "Local Only Patterns",
+          "type": "array"
+        },
+        "inherit_no_proxy": {
+          "default": true,
+          "description": "Merge NO_PROXY env var into local_only_patterns at runtime.",
+          "title": "Inherit No Proxy",
+          "type": "boolean"
         }
       },
       "title": "FetchPolicyConfig",

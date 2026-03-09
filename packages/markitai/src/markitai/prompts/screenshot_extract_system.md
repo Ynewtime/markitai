@@ -74,4 +74,4 @@ Generate the following fields based on extracted content:
   - Keep each tag under 30 characters
   - Examples: `AI`, `软件工程`, `web-development`, `人工智能`
 
-**Output language must match the source content** (Chinese content → Chinese metadata)
+**Output language must match the body content** — determine language from the main visible text, not from UI elements (Chinese body → Chinese metadata)

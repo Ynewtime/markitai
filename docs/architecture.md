@@ -347,7 +347,11 @@ AUTO（默认）
 **配置选项**:
 - `strategy`: 抓取策略（auto/static/playwright/jina/cloudflare）
 - `policy`: 策略引擎配置（hops, enabled）
+  - `strategy_priority`（全局策略优先级）
+  - `local_only_patterns`（域名/IP 豁免模式）
+  - `inherit_no_proxy`（是否继承 NO_PROXY 环境变量）
 - `domain_profiles`: 域名定制化配置
+  - `strategy_priority`（域名级策略优先级覆盖）
 - `playwright`: 浏览器配置，包括会话模式
 - `jina`: Jina API 配置
 
