@@ -815,7 +815,7 @@ async def _login_gemini_cli() -> AuthStatus:
             authenticated=False,
             user=None,
             expires_at=None,
-            error=f"Login failed: {e}",
+            error=str(e),
         )
 
     AuthManager().clear_cache("gemini-cli")
@@ -836,6 +836,30 @@ async def _login_chatgpt() -> AuthStatus:
         error=None,
         details={"auto_login": True},
     )
+
+
+def can_attempt_login(provider: str) -> bool:
+    """Check if interactive login is possible for a provider.
+
+    Returns False when required dependencies (CLIs or libraries)
+    are missing, so the caller can skip the login prompt and show
+    an install hint instead.
+
+    Args:
+        provider: Provider name (e.g., "gemini-cli", "claude-agent")
+
+    Returns:
+        True if login can be attempted.
+    """
+    if provider == "gemini-cli":
+        return importlib.util.find_spec("google_auth_oauthlib") is not None
+    if provider == "claude-agent":
+        return _resolve_cli_path("claude") is not None
+    if provider == "copilot":
+        return _resolve_cli_path("copilot") is not None
+    if provider == "chatgpt":
+        return True  # Auto-authenticates via Device Code Flow
+    return False
 
 
 async def attempt_login(provider: str) -> AuthStatus:
@@ -876,6 +900,7 @@ __all__ = [
     "AuthManager",
     "get_auth_resolution_hint",
     "attempt_login",
+    "can_attempt_login",
     "_is_copilot_sdk_available",
     "_is_claude_agent_sdk_available",
     "_check_copilot_config_auth",

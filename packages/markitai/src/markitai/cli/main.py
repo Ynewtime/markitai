@@ -535,9 +535,12 @@ def app(
     async def run_workflow() -> None:
         # Pre-flight auth check for local providers (weight > 0)
         if cfg.llm.enabled and cfg.llm.model_list:
+            from rich.markup import escape
+
             from markitai.providers import preflight_auth_check
             from markitai.providers.auth import (
                 attempt_login,
+                can_attempt_login,
                 get_auth_resolution_hint,
             )
 
@@ -557,10 +560,11 @@ def app(
                     continue
 
                 stderr_console.print(
-                    f"[yellow]  ! {status.provider}: {status.error}[/yellow]"
+                    f"[yellow]  ! {status.provider}:"
+                    f" {escape(status.error or '')}[/yellow]"
                 )
 
-                if is_interactive:
+                if is_interactive and can_attempt_login(status.provider):
                     try:
                         response = click.prompt(
                             f"    Login to {status.provider} now?",
@@ -578,7 +582,7 @@ def app(
                             else:
                                 stderr_console.print(
                                     f"    [red]✗[/red] Login failed:"
-                                    f" {login_result.error}"
+                                    f" {escape(login_result.error or '')}"
                                 )
                     except (EOFError, KeyboardInterrupt):
                         stderr_console.print()
