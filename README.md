@@ -6,11 +6,12 @@ Opinionated Markdown converter with native LLM enhancement support.
 
 ## Features
 
-- **Multi-format Support** - DOCX/DOC, PPTX/PPT, XLSX/XLS, PDF, TXT, MD, JPG/PNG/WebP, URLs
+- **Multi-format Support** - DOCX/DOC, PPTX/PPT, XLSX/XLS, PDF, HTML, EPUB, CSV, TXT, MD, JPG/PNG/WebP/GIF/BMP/TIFF, URLs, and 10+ more via optional converters
 - **LLM Enhancement** - Format cleaning, metadata generation, image analysis
+- **Local Providers** - Use existing Claude Code, GitHub Copilot, ChatGPT, or Gemini CLI subscriptions — no API keys needed
 - **Batch Processing** - Concurrent conversion, resume capability, progress display
 - **OCR Recognition** - Text extraction from scanned PDFs and images
-- **URL Conversion** - Direct webpage conversion with SPA browser rendering support
+- **URL Conversion** - Smart strategy chain (Defuddle → Jina → Static → Playwright → Cloudflare) with SPA auto-detection
 - **Cloudflare Integration** - Cloud-based URL rendering (Browser Rendering) and file conversion (Workers AI toMarkdown) via `--cloudflare`
 - **Smart Caching** - LLM result caching, SPA domain learning, auto-proxy detection
 
@@ -95,13 +96,16 @@ markitai urls.urls -o ./output
 
 ```
 output/
-├── document.docx.md        # Basic Markdown
-├── document.docx.llm.md    # LLM-enhanced version
-├── assets/
-│   ├── document.docx.0001.jpg
-│   └── images.json         # Image descriptions
-├── screenshots/            # Page screenshots (with --screenshot)
-│   └── example_com.full.jpg
+├── document.docx.md            # Basic Markdown
+├── document.docx.llm.md        # LLM-enhanced version
+├── .markitai/                   # Metadata namespace (isolated from user content)
+│   ├── assets/
+│   │   ├── document.docx.0001.jpg
+│   │   └── images.json         # Image descriptions
+│   ├── screenshots/            # Page screenshots (with --screenshot)
+│   │   └── example_com.full.jpg
+│   ├── reports/                # Conversion reports (JSON)
+│   └── states/                 # Batch state files (for --resume)
 ```
 
 ## Configuration
@@ -129,7 +133,7 @@ Config file location: `./markitai.json` or `~/.markitai/config.json`
 
 ### Local Providers (Subscription-based)
 
-Use your existing Claude Code or GitHub Copilot subscription:
+Use your existing subscriptions — no API keys needed:
 
 ```bash
 # Claude Agent (requires Claude Code CLI)
@@ -137,15 +141,27 @@ markitai document.pdf --llm  # Configure claude-agent/sonnet in config
 
 # GitHub Copilot (requires Copilot CLI)
 markitai document.pdf --llm  # Configure copilot/gpt-5.2 in config
+
+# ChatGPT (OAuth Device Code — no SDK needed)
+markitai auth login chatgpt  # One-time browser login
+markitai document.pdf --llm  # Configure chatgpt/gpt-5.2 in config
+
+# Gemini CLI (reuses ~/.gemini/oauth_creds.json)
+markitai document.pdf --llm  # Configure gemini-cli/gemini-2.5-pro in config
 ```
 
-Install CLI tools:
+Install CLI tools (for claude-agent / copilot):
 ```bash
 # Claude Code CLI
 curl -fsSL https://claude.ai/install.sh | bash
 
 # GitHub Copilot CLI
 curl -fsSL https://gh.io/copilot-install | bash
+```
+
+Check provider authentication status:
+```bash
+markitai auth status
 ```
 
 ## Environment Variables

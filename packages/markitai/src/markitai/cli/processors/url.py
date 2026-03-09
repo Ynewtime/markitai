@@ -70,7 +70,7 @@ async def process_url(
     - LLM enhancement via --llm flag for document cleaning and frontmatter
     - Image downloading and analysis via --alt/--desc flags
 
-    Note: --screenshot and --ocr are not supported for URLs.
+    Note: --ocr is not supported for URLs (ignored if set).
 
     Args:
         url: URL to convert (http:// or https://)

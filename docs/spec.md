@@ -1,5 +1,7 @@
 # Markitai 技术规格文档
 
+> **已归档**：本文档停留在 v0.5.1，不再维护。当前架构请参阅 [architecture.md](./architecture.md)，开发规范请参阅 [CLAUDE.md](../CLAUDE.md)。
+
 > 版本: 0.5.1
 > 最后更新: 2026-02-07
 
