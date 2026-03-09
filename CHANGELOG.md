@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-03-09
+
+### Fixed
+
+- **Provider Auth Preflight**: Add `can_attempt_login()` guard to skip login prompt when provider SDK is missing; fix Rich markup swallowing `[gemini-cli]` via `escape()`; fix "Login failed: Login failed:" duplication
+- **Install Scripts Extras Parsing**: Fix greedy regex (`\[.*\]` → `\[[^]]*\]`) that captured TOML outer brackets, corrupting extras names like `gemini-cli}]`
+- **Install Scripts Resilience**: Progressive fallback when full extras install fails (retry without SDK-dependent extras); fix `set -e` silent exit on `uv tool install` failure; fix PowerShell 5.x `Join-Path` 3-arg incompatibility
+- **Install Scripts Extras Strategy**: Merge-based finalize (no longer replaces manually tracked extras); generic receipt parsing (future-proof for new extras)
+
+### Added
+
+- `markitai doctor --suggest-extras` as single source of truth for install scripts to query recommended extras
+- `can_attempt_login()` provider guard with `get_auth_resolution_hint()` fallback messages
+- i18n key `not_found` for zh-CN and en in both setup scripts
+
 ## [0.9.0] - 2026-03-09
 
 ### Added
@@ -672,6 +687,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.9.1]: https://github.com/Ynewtime/markitai/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Ynewtime/markitai/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/Ynewtime/markitai/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Ynewtime/markitai/compare/v0.7.0...v0.8.0
