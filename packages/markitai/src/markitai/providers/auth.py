@@ -823,19 +823,58 @@ async def _login_gemini_cli() -> AuthStatus:
 
 
 async def _login_chatgpt() -> AuthStatus:
-    """Return informational status — ChatGPT auto-authenticates on first call.
+    """Trigger ChatGPT Device Code Flow authentication.
+
+    Calls LiteLLM's Authenticator.get_access_token() which handles the
+    full device code flow: request code → display prompt → poll for
+    completion → exchange for tokens → save to disk.
+
+    The DeviceCodeInterceptor captures stdout from the authenticator and
+    re-displays the device code in Rich format on stderr.
 
     Returns:
-        AuthStatus with auto_login detail flag.
+        AuthStatus after the login attempt.
     """
-    return AuthStatus(
-        provider="chatgpt",
-        authenticated=False,
-        user=None,
-        expires_at=None,
-        error=None,
-        details={"auto_login": True},
+    try:
+        from litellm.llms.chatgpt.authenticator import Authenticator
+    except ImportError:
+        return AuthStatus(
+            provider="chatgpt",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error="LiteLLM chatgpt authenticator not available",
+        )
+
+    import sys
+
+    from markitai.providers.oauth_display import (
+        DeviceCodeInterceptor,
+        show_oauth_success,
     )
+
+    authenticator = Authenticator()
+    interceptor = DeviceCodeInterceptor()
+    original_stdout = sys.stdout
+    sys.stdout = interceptor  # type: ignore[assignment]
+    try:
+        authenticator.get_access_token()
+    except Exception as e:
+        return AuthStatus(
+            provider="chatgpt",
+            authenticated=False,
+            user=None,
+            expires_at=None,
+            error=str(e),
+        )
+    finally:
+        sys.stdout = original_stdout
+
+    if interceptor.displayed:
+        show_oauth_success("chatgpt")
+
+    AuthManager().clear_cache("chatgpt")
+    return _check_chatgpt_auth()
 
 
 def can_attempt_login(provider: str) -> bool:
@@ -858,7 +897,14 @@ def can_attempt_login(provider: str) -> bool:
     if provider == "copilot":
         return _resolve_cli_path("copilot") is not None
     if provider == "chatgpt":
-        return True  # Auto-authenticates via Device Code Flow
+        try:
+            from litellm.llms.chatgpt.authenticator import (
+                Authenticator,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+            )
+
+            return True
+        except ImportError:
+            return False
     return False
 
 
@@ -869,7 +915,7 @@ async def attempt_login(provider: str) -> AuthStatus:
     - copilot: subprocess `copilot login`
     - claude-agent: subprocess `claude auth login`
     - gemini-cli: programmatic OAuth via GeminiCLIProvider.alogin()
-    - chatgpt: informational (auto-authenticates on first API call)
+    - chatgpt: Device Code Flow via LiteLLM Authenticator
 
     Args:
         provider: Provider name (e.g., "copilot", "claude-agent")

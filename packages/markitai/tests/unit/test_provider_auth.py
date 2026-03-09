@@ -1273,14 +1273,54 @@ class TestAttemptLogin:
 
         assert result.authenticated is True
 
-    async def test_chatgpt_login_returns_auto_login_info(self) -> None:
-        """attempt_login('chatgpt') returns info about auto-login."""
+    async def test_chatgpt_login_success(self) -> None:
+        """attempt_login('chatgpt') performs Device Code Flow and returns auth status."""
         from markitai.providers.auth import attempt_login
 
-        result = await attempt_login("chatgpt")
+        mock_authenticator = MagicMock()
+        mock_authenticator.get_access_token.return_value = "fake-token"
+
+        with (
+            patch(
+                "markitai.providers.auth.Authenticator",
+                return_value=mock_authenticator,
+                create=True,
+            ),
+            patch(
+                "markitai.providers.auth._check_chatgpt_auth",
+                return_value=AuthStatus(
+                    provider="chatgpt",
+                    authenticated=True,
+                    user="user@example.com",
+                    expires_at=None,
+                    error=None,
+                ),
+            ) as mock_check,
+            patch.dict(
+                "sys.modules",
+                {
+                    "litellm.llms.chatgpt.authenticator": MagicMock(
+                        Authenticator=MagicMock(return_value=mock_authenticator)
+                    )
+                },
+            ),
+        ):
+            result = await attempt_login("chatgpt")
+
         assert result.provider == "chatgpt"
-        assert result.details is not None
-        assert result.details.get("auto_login") is True
+        assert result.authenticated is True
+        mock_check.assert_called_once()
+
+    async def test_chatgpt_login_import_failure(self) -> None:
+        """attempt_login('chatgpt') returns error when authenticator unavailable."""
+        from markitai.providers.auth import attempt_login
+
+        with patch.dict("sys.modules", {"litellm.llms.chatgpt.authenticator": None}):
+            result = await attempt_login("chatgpt")
+
+        assert result.provider == "chatgpt"
+        assert result.authenticated is False
+        assert "not available" in (result.error or "")
 
     async def test_unknown_provider_returns_error(self) -> None:
         """attempt_login with unknown provider returns error."""
@@ -1363,11 +1403,26 @@ class TestCanAttemptLogin:
         with patch("markitai.providers.auth._resolve_cli_path", return_value=None):
             assert can_attempt_login("copilot") is False
 
-    def test_chatgpt_always_true(self) -> None:
-        """ChatGPT auto-authenticates, always returns True."""
+    def test_chatgpt_with_authenticator(self) -> None:
+        """Returns True when chatgpt authenticator is importable."""
         from markitai.providers.auth import can_attempt_login
 
-        assert can_attempt_login("chatgpt") is True
+        with patch.dict(
+            "sys.modules",
+            {
+                "litellm.llms.chatgpt.authenticator": MagicMock(
+                    Authenticator=MagicMock()
+                )
+            },
+        ):
+            assert can_attempt_login("chatgpt") is True
+
+    def test_chatgpt_without_authenticator(self) -> None:
+        """Returns False when chatgpt authenticator is not available."""
+        from markitai.providers.auth import can_attempt_login
+
+        with patch.dict("sys.modules", {"litellm.llms.chatgpt.authenticator": None}):
+            assert can_attempt_login("chatgpt") is False
 
     def test_unknown_provider(self) -> None:
         """Unknown providers return False."""
