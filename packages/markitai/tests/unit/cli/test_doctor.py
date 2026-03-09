@@ -16,18 +16,37 @@ def cli_runner() -> CliRunner:
     return CliRunner()
 
 
+@pytest.fixture
+def mock_config() -> object:
+    """Provide a minimal isolated config for doctor tests."""
+    from unittest.mock import MagicMock
+
+    config = MagicMock()
+    config.llm.model_list = []
+    config.ocr = MagicMock()
+    config.ocr.lang = "en"
+    return config
+
+
 class TestDoctorUnifiedUI:
     """Tests for unified UI output in doctor command."""
 
-    def test_doctor_unified_ui_output(self, cli_runner: CliRunner) -> None:
+    def test_doctor_unified_ui_output(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
         """Test doctor command uses unified UI components."""
         # Mock dependencies as OK
         with (
-            patch("shutil.which", return_value="/usr/bin/soffice"),
+            patch("markitai.cli.commands.doctor.ConfigManager") as mock_config_manager,
+            patch(
+                "markitai.cli.commands.doctor.shutil.which",
+                return_value="/usr/bin/soffice",
+            ),
             patch(
                 "markitai.utils.office.find_libreoffice",
                 return_value="/usr/bin/soffice",
             ),
+            patch("markitai.fetch_playwright.clear_browser_cache"),
             patch(
                 "markitai.fetch_playwright.is_playwright_available", return_value=True
             ),
@@ -36,6 +55,7 @@ class TestDoctorUnifiedUI:
                 return_value=True,
             ),
         ):
+            mock_config_manager.return_value.load.return_value = mock_config
             result = cli_runner.invoke(doctor)
 
             # Should use unified symbols
@@ -44,14 +64,21 @@ class TestDoctorUnifiedUI:
             # Should NOT use Rich table format
             assert "Dependency Status" not in result.output
 
-    def test_doctor_shows_sections(self, cli_runner: CliRunner) -> None:
+    def test_doctor_shows_sections(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
         """Test doctor command shows section headers."""
         with (
-            patch("shutil.which", return_value="/usr/bin/soffice"),
+            patch("markitai.cli.commands.doctor.ConfigManager") as mock_config_manager,
+            patch(
+                "markitai.cli.commands.doctor.shutil.which",
+                return_value="/usr/bin/soffice",
+            ),
             patch(
                 "markitai.utils.office.find_libreoffice",
                 return_value="/usr/bin/soffice",
             ),
+            patch("markitai.fetch_playwright.clear_browser_cache"),
             patch(
                 "markitai.fetch_playwright.is_playwright_available", return_value=True
             ),
@@ -60,6 +87,7 @@ class TestDoctorUnifiedUI:
                 return_value=True,
             ),
         ):
+            mock_config_manager.return_value.load.return_value = mock_config
             result = cli_runner.invoke(doctor)
 
             # Should contain section headers (in English or Chinese)

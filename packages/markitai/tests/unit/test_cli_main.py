@@ -466,7 +466,7 @@ class TestErrorHandling:
             ],
         )
         assert result.exit_code == 1
-        assert "mutually exclusive" in result.output
+        assert "exclusive" in result.output
 
     def test_invalid_preset(self, tmp_path: Path, cli_runner: CliRunner) -> None:
         """Test error handling for invalid preset."""
@@ -479,6 +479,39 @@ class TestErrorHandling:
         )
         # Click validates Choice options
         assert result.exit_code != 0
+
+    def test_missing_env_var_shows_friendly_error(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Test that missing env var API key shows friendly error, not traceback."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "file.txt").write_text("content")
+        output_dir = tmp_path / "out"
+
+        config = {
+            "llm": {
+                "enabled": True,
+                "model_list": [
+                    {
+                        "model_name": "default",
+                        "litellm_params": {
+                            "model": "gemini/gemini-2.0-flash",
+                            "api_key": "env:NONEXISTENT_CLI_TEST_KEY_999",
+                        },
+                    }
+                ],
+            }
+        }
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps(config))
+
+        result = cli_runner.invoke(
+            app, [str(input_dir), "-o", str(output_dir), "-c", str(config_file)]
+        )
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "NONEXISTENT_CLI_TEST_KEY_999" in result.output
 
 
 # =============================================================================
@@ -682,7 +715,7 @@ class TestFetchStrategy:
             ],
         )
         assert result.exit_code == 1
-        assert "mutually exclusive" in result.output
+        assert "exclusive" in result.output
 
     def test_mutually_exclusive_cloudflare_jina(
         self, tmp_path: Path, cli_runner: CliRunner
@@ -694,7 +727,7 @@ class TestFetchStrategy:
             ["https://example.com", "-o", str(output_dir), "--cloudflare", "--jina"],
         )
         assert result.exit_code == 1
-        assert "mutually exclusive" in result.output
+        assert "exclusive" in result.output
 
 
 # =============================================================================
@@ -922,3 +955,100 @@ class TestBatchMode:
             app, [str(input_dir), "-o", str(output_dir), "--resume"]
         )
         assert result.exit_code == 0
+
+    def test_batch_mode_glob_filters_directory_input(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Test repeated --glob filters only affect directory batch mode."""
+        input_dir = tmp_path / "input"
+        include_dir = input_dir / "reports"
+        exclude_dir = include_dir / "private"
+        include_dir.mkdir(parents=True)
+        exclude_dir.mkdir(parents=True)
+
+        (include_dir / "public.pdf").write_text("public")
+        (exclude_dir / "secret.pdf").write_text("secret")
+        (input_dir / "notes.txt").write_text("notes")
+        output_dir = tmp_path / "out"
+
+        result = cli_runner.invoke(
+            app,
+            [
+                str(input_dir),
+                "-o",
+                str(output_dir),
+                "--dry-run",
+                "-g",
+                "reports/**/*.pdf",
+                "-g",
+                "!reports/private/**",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "Files (1)" in result.output
+        assert "public.pdf" in result.output
+        assert "secret.pdf" not in result.output
+
+    def test_batch_mode_max_depth_overrides_config(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Test --max-depth limits discovery depth for directory batch mode."""
+        input_dir = tmp_path / "input"
+        nested_dir = input_dir / "nested"
+        input_dir.mkdir()
+        nested_dir.mkdir()
+
+        (input_dir / "root.txt").write_text("root")
+        (nested_dir / "deep.txt").write_text("deep")
+        output_dir = tmp_path / "out"
+
+        result = cli_runner.invoke(
+            app,
+            [
+                str(input_dir),
+                "-o",
+                str(output_dir),
+                "--dry-run",
+                "--max-depth",
+                "0",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "Files (1)" in result.output
+        assert "root.txt" in result.output
+        assert "deep.txt" not in result.output
+
+    def test_batch_mode_glob_filters_url_list_files(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Test repeated --glob filters also constrain discovered .urls files."""
+        input_dir = tmp_path / "input"
+        include_dir = input_dir / "feeds"
+        exclude_dir = input_dir / "archive"
+        include_dir.mkdir(parents=True)
+        exclude_dir.mkdir(parents=True)
+
+        (include_dir / "links.urls").write_text("https://example.com/feed\n")
+        (exclude_dir / "old.urls").write_text("https://example.com/archive\n")
+        output_dir = tmp_path / "out"
+
+        result = cli_runner.invoke(
+            app,
+            [
+                str(input_dir),
+                "-o",
+                str(output_dir),
+                "--dry-run",
+                "-g",
+                "feeds/**",
+                "-g",
+                "!archive/**",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "URLs (1)" in result.output
+        assert "https://example.com/feed" in result.output
+        assert "https://example.com/archive" not in result.output

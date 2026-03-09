@@ -7,11 +7,14 @@ API calls, token refresh, and dependency checking.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from markitai.providers.gemini_cli import GeminiCredentialRecord
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,6 +38,33 @@ def _make_creds_json(
     }
     if expiry_date is not None:
         data["expiry_date"] = expiry_date
+    return data
+
+
+def _make_managed_creds_json(
+    *,
+    access_token: str = "ya29.managed-token",
+    refresh_token: str = "1//managed-refresh-token",
+    expiry_date: int | None = None,
+    client_id: str = "managed-client-id",
+    client_secret: str = "managed-client-secret",
+    email: str = "gemini@example.com",
+    project_id: str | None = "demo-project",
+    auth_mode: str | None = "google-one",
+    source: str = "markitai",
+) -> dict[str, Any]:
+    """Build a Markitai-managed credentials JSON dict."""
+    data = _make_creds_json(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expiry_date=expiry_date,
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    data["email"] = email
+    data["project_id"] = project_id
+    data["auth_mode"] = auth_mode
+    data["source"] = source
     return data
 
 
@@ -224,6 +254,57 @@ class TestLoadCredentials:
         assert result is not None
         # refresh_token should be None since it was not in the JSON
         assert result.refresh_token is None
+
+    def test_prefers_markitai_managed_credentials_over_shared_cli(
+        self, tmp_path: Path
+    ) -> None:
+        """Managed profile should win over ~/.gemini/oauth_creds.json."""
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        managed_dir = tmp_path / ".markitai" / "auth"
+        managed_dir.mkdir(parents=True)
+        managed_file = managed_dir / "gemini-profile.json"
+        managed_file.write_text(
+            json.dumps(_make_managed_creds_json(access_token="ya29.managed-preferred")),
+            encoding="utf-8",
+        )
+        active_file = managed_dir / "gemini-current.json"
+        active_file.write_text(
+            json.dumps({"credential_path": str(managed_file)}),
+            encoding="utf-8",
+        )
+
+        shared_file = tmp_path / ".gemini" / "oauth_creds.json"
+        shared_file.parent.mkdir()
+        shared_file.write_text(
+            json.dumps(_make_creds_json(access_token="ya29.shared-fallback")),
+            encoding="utf-8",
+        )
+
+        provider = GeminiCLIProvider()
+
+        with (
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: managed_dir),
+            ),
+            patch.object(
+                type(provider),
+                "_active_profile_path",
+                new_callable=lambda: property(lambda _self: active_file),
+            ),
+            patch.object(
+                type(provider),
+                "_creds_path",
+                new_callable=lambda: property(lambda _self: shared_file),
+            ),
+            patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", False),
+        ):
+            result = provider._load_credentials()
+
+        assert result is not None
+        assert result.token == "ya29.managed-preferred"
 
 
 # ===================================================================
@@ -517,6 +598,45 @@ class TestProjectDiscovery:
 
         assert result is None
 
+    async def test_uses_bound_project_from_managed_profile(
+        self, tmp_path: Path
+    ) -> None:
+        """Managed profiles should use their bound project without discovery."""
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        managed_dir = tmp_path / ".markitai" / "auth"
+        managed_dir.mkdir(parents=True)
+        managed_file = managed_dir / "gemini-profile.json"
+        managed_file.write_text(
+            json.dumps(_make_managed_creds_json(project_id="bound-project")),
+            encoding="utf-8",
+        )
+        active_file = managed_dir / "gemini-current.json"
+        active_file.write_text(
+            json.dumps({"credential_path": str(managed_file)}),
+            encoding="utf-8",
+        )
+
+        provider = GeminiCLIProvider()
+
+        with (
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: managed_dir),
+            ),
+            patch.object(
+                type(provider),
+                "_active_profile_path",
+                new_callable=lambda: property(lambda _self: active_file),
+            ),
+            patch("markitai.providers.gemini_cli.httpx") as mock_httpx,
+        ):
+            result = await provider._get_project_id("test-token")
+
+        assert result == "bound-project"
+        mock_httpx.AsyncClient.assert_not_called()
+
 
 # ===================================================================
 # API call tests (mock httpx)
@@ -562,44 +682,13 @@ class TestACompletion:
         assert result.usage.completion_tokens == 25
         assert result.usage.total_tokens == 40
 
-    async def test_retries_on_429(self) -> None:
-        """429 response triggers retry with wait, eventually succeeds."""
-        from markitai.providers.gemini_cli import GeminiCLIProvider
+    async def test_429_raises_quota_error_immediately(self) -> None:
+        """GeminiCLI should raise QuotaError on first 429 (no internal retries).
 
-        provider = GeminiCLIProvider()
-
-        # First call returns 429, second returns 200
-        mock_429 = MagicMock()
-        mock_429.status_code = 429
-        mock_429.text = '{"error":{"message":"reset after 1s."}}'
-
-        mock_200 = MagicMock()
-        mock_200.status_code = 200
-        mock_200.json.return_value = _gemini_api_response(text="After retry")
-
-        with (
-            patch.object(provider, "_get_access_token", return_value="test-token"),
-            patch.object(provider, "_get_project_id", return_value=None),
-            patch("markitai.providers.gemini_cli.httpx") as mock_httpx,
-            patch("markitai.providers.gemini_cli.asyncio") as mock_asyncio,
-        ):
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(side_effect=[mock_429, mock_200])
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_httpx.AsyncClient.return_value = mock_client
-            mock_asyncio.sleep = AsyncMock()
-
-            result = await provider.acompletion(
-                "gemini-cli/gemini-2.5-flash-lite",
-                [{"role": "user", "content": "Hello"}],
-            )
-
-        assert result.choices[0].message.content == "After retry"
-        mock_asyncio.sleep.assert_called_once_with(2.0)  # 1s + 1s buffer
-
-    async def test_429_exhausted_raises_quota_error(self) -> None:
-        """Raises QuotaError after MAX_429_RETRIES attempts."""
+        With MAX_429_RETRIES=0, the provider does not retry internally.
+        The QuotaError is raised immediately so the Router can set a cooldown
+        and route subsequent requests to other models.
+        """
         from markitai.providers.errors import QuotaError
         from markitai.providers.gemini_cli import GeminiCLIProvider
 
@@ -607,27 +696,30 @@ class TestACompletion:
 
         mock_429 = MagicMock()
         mock_429.status_code = 429
-        mock_429.text = '{"error":{"message":"reset after 5s."}}'
+        mock_429.text = '{"error":{"message":"reset after 57s."}}'
 
         with (
             patch.object(provider, "_get_access_token", return_value="test-token"),
             patch.object(provider, "_get_project_id", return_value=None),
             patch("markitai.providers.gemini_cli.httpx") as mock_httpx,
-            patch("markitai.providers.gemini_cli.asyncio") as mock_asyncio,
         ):
             mock_client = AsyncMock()
-            # All calls return 429
             mock_client.post = AsyncMock(return_value=mock_429)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_httpx.AsyncClient.return_value = mock_client
-            mock_asyncio.sleep = AsyncMock()
 
-            with pytest.raises(QuotaError):
+            with pytest.raises(QuotaError) as exc_info:
                 await provider.acompletion(
                     "gemini-cli/gemini-2.5-flash-lite",
                     [{"role": "user", "content": "Hello"}],
                 )
+
+            # Only one HTTP call (no retries)
+            assert mock_client.post.call_count == 1
+            # Error message includes the response text so Router can parse
+            # retry-after time via its regex r"(\d+)\s*s"
+            assert "reset after 57s" in str(exc_info.value)
 
     async def test_auth_failure_raises_authentication_error(self) -> None:
         """401 response raises AuthenticationError."""
@@ -658,6 +750,39 @@ class TestACompletion:
                 )
 
             assert exc_info.value.provider == "gemini-cli"
+
+    async def test_auth_failure_clears_cached_token(self) -> None:
+        """401 responses should invalidate the in-memory token cache."""
+        from markitai.providers.errors import AuthenticationError
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+        provider._cached_token = "stale-token"
+        provider._token_expiry = time.monotonic() + 3000
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+
+        with (
+            patch.object(provider, "_get_access_token", return_value="stale-token"),
+            patch.object(provider, "_get_project_id", return_value=None),
+            patch("markitai.providers.gemini_cli.httpx") as mock_httpx,
+        ):
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_httpx.AsyncClient.return_value = mock_client
+
+            with pytest.raises(AuthenticationError):
+                await provider.acompletion(
+                    "gemini-cli/gemini-2.5-pro",
+                    [{"role": "user", "content": "Hello"}],
+                )
+
+        assert provider._cached_token is None
+        assert provider._token_expiry == 0.0
 
     async def test_api_error_raises_provider_error(self) -> None:
         """Non-401 API errors raise ProviderError."""
@@ -764,25 +889,54 @@ class TestGetAccessToken:
 
     async def test_returns_valid_token(self) -> None:
         """Returns access_token when credentials are valid."""
-        from markitai.providers.gemini_cli import GeminiCLIProvider
+        from markitai.providers.gemini_cli import (
+            GeminiCLIProvider,
+            GeminiCredentialRecord,
+        )
 
         provider = GeminiCLIProvider()
+        record = GeminiCredentialRecord(
+            path=Path("/tmp/valid.json"),
+            source="gemini-cli",
+            email=None,
+            project_id=None,
+            auth_mode=None,
+        )
 
         mock_creds = MagicMock()
         mock_creds.token = "ya29.valid-token"
         mock_creds.valid = True
         mock_creds.expired = False
 
-        with patch.object(provider, "_load_credentials", return_value=mock_creds):
+        with (
+            patch.object(
+                provider,
+                "_get_credential_payload_candidates",
+                return_value=[(record, {"access_token": mock_creds.token})],
+            ),
+            patch.object(
+                provider, "_build_credentials_from_data", return_value=mock_creds
+            ),
+        ):
             token = await provider._get_access_token()
 
         assert token == "ya29.valid-token"
 
     async def test_refreshes_expired_token(self) -> None:
         """Expired token triggers refresh."""
-        from markitai.providers.gemini_cli import GeminiCLIProvider
+        from markitai.providers.gemini_cli import (
+            GeminiCLIProvider,
+            GeminiCredentialRecord,
+        )
 
         provider = GeminiCLIProvider()
+        record = GeminiCredentialRecord(
+            path=Path("/tmp/expired.json"),
+            source="gemini-cli",
+            email=None,
+            project_id=None,
+            auth_mode=None,
+        )
 
         mock_creds = MagicMock()
         mock_creds.token = "ya29.expired-token"
@@ -799,7 +953,14 @@ class TestGetAccessToken:
         mock_creds.refresh.side_effect = fake_refresh
 
         with (
-            patch.object(provider, "_load_credentials", return_value=mock_creds),
+            patch.object(
+                provider,
+                "_get_credential_payload_candidates",
+                return_value=[(record, {"access_token": mock_creds.token})],
+            ),
+            patch.object(
+                provider, "_build_credentials_from_data", return_value=mock_creds
+            ),
             patch.object(provider, "_save_credentials"),
             patch("markitai.providers.gemini_cli._google_auth_requests") as mock_req,
         ):
@@ -819,7 +980,9 @@ class TestGetAccessToken:
         mock_new_creds.token = "ya29.new-oauth-token"
 
         with (
-            patch.object(provider, "_load_credentials", return_value=None),
+            patch.object(
+                provider, "_get_credential_payload_candidates", return_value=[]
+            ),
             patch.object(provider, "_run_oauth_flow", return_value=mock_new_creds),
             patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
         ):
@@ -829,9 +992,19 @@ class TestGetAccessToken:
 
     async def test_refresh_failure_triggers_oauth_flow(self) -> None:
         """If refresh fails, falls back to OAuth flow."""
-        from markitai.providers.gemini_cli import GeminiCLIProvider
+        from markitai.providers.gemini_cli import (
+            GeminiCLIProvider,
+            GeminiCredentialRecord,
+        )
 
         provider = GeminiCLIProvider()
+        record = GeminiCredentialRecord(
+            path=Path("/tmp/oauth-fallback.json"),
+            source="gemini-cli",
+            email=None,
+            project_id=None,
+            auth_mode=None,
+        )
 
         mock_creds = MagicMock()
         mock_creds.token = "ya29.old"
@@ -844,7 +1017,14 @@ class TestGetAccessToken:
         mock_new_creds.token = "ya29.fresh-from-oauth"
 
         with (
-            patch.object(provider, "_load_credentials", return_value=mock_creds),
+            patch.object(
+                provider,
+                "_get_credential_payload_candidates",
+                return_value=[(record, {"access_token": mock_creds.token})],
+            ),
+            patch.object(
+                provider, "_build_credentials_from_data", return_value=mock_creds
+            ),
             patch.object(provider, "_run_oauth_flow", return_value=mock_new_creds),
             patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
             patch("markitai.providers.gemini_cli._google_auth_requests") as mock_req,
@@ -853,6 +1033,219 @@ class TestGetAccessToken:
             token = await provider._get_access_token()
 
         assert token == "ya29.fresh-from-oauth"
+
+
+# ===================================================================
+# Token caching / concurrency tests
+# ===================================================================
+
+
+class TestTokenCaching:
+    """Tests for token caching and concurrent safety (T4)."""
+
+    async def test_falls_back_to_shared_credentials_when_managed_refresh_fails(
+        self,
+    ) -> None:
+        """Managed refresh failures should not block valid shared CLI creds."""
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+        managed_record = GeminiCredentialRecord(
+            path=Path("/tmp/managed.json"),
+            source="markitai",
+            email="managed@example.com",
+            project_id="managed-project",
+            auth_mode="google-one",
+        )
+        shared_record = GeminiCredentialRecord(
+            path=Path("/tmp/shared.json"),
+            source="gemini-cli",
+            email=None,
+            project_id=None,
+            auth_mode=None,
+        )
+        managed_payload = _make_managed_creds_json(access_token="ya29.stale-managed")
+        shared_payload = _make_creds_json(access_token="ya29.shared-fallback")
+
+        managed_creds = MagicMock()
+        managed_creds.token = "ya29.stale-managed"
+        managed_creds.valid = False
+        managed_creds.expired = True
+        managed_creds.refresh_token = "1//managed-refresh"
+        managed_creds.refresh.side_effect = Exception("refresh revoked")
+
+        shared_creds = MagicMock()
+        shared_creds.token = "ya29.shared-fallback"
+        shared_creds.valid = True
+        shared_creds.expired = False
+
+        with (
+            patch.object(
+                provider,
+                "_get_credential_payload_candidates",
+                return_value=[
+                    (managed_record, managed_payload),
+                    (shared_record, shared_payload),
+                ],
+            ),
+            patch.object(
+                provider,
+                "_build_credentials_from_data",
+                side_effect=[managed_creds, shared_creds],
+            ),
+            patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
+            patch(
+                "markitai.providers.gemini_cli._google_auth_requests"
+            ) as mock_requests,
+        ):
+            mock_requests.Request.return_value = object()
+            token = await provider._get_access_token()
+
+        assert token == "ya29.shared-fallback"
+        assert provider._cached_token_source == str(shared_record.path)
+
+    async def test_token_cached_across_calls(self) -> None:
+        """Second call should use cached token, not reload from disk."""
+        import time as _time
+
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+
+        with (
+            patch.object(
+                provider, "_get_credential_payload_candidates", return_value=[]
+            ),
+            patch.object(
+                provider,
+                "_acquire_token",
+                new_callable=AsyncMock,
+                return_value=("ya29.cached-token", _time.monotonic() + 3000, None),
+            ) as mock_acquire,
+        ):
+            token1 = await provider._get_access_token()
+            token2 = await provider._get_access_token()
+
+        assert token1 == "ya29.cached-token"
+        assert token2 == "ya29.cached-token"
+        # _acquire_token should be called only once; second call
+        # hits the in-memory cache.
+        mock_acquire.assert_awaited_once()
+
+    async def test_expired_cache_reloads(self) -> None:
+        """Token is reloaded after cache expiry."""
+        import time as _time
+
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+
+        with (
+            patch.object(
+                provider, "_get_credential_payload_candidates", return_value=[]
+            ),
+            patch.object(
+                provider,
+                "_acquire_token",
+                new_callable=AsyncMock,
+                side_effect=[
+                    ("ya29.fresh", _time.monotonic() + 3000, None),
+                    ("ya29.refreshed", _time.monotonic() + 3000, None),
+                ],
+            ) as mock_acquire,
+        ):
+            # First call populates cache
+            await provider._get_access_token()
+            assert mock_acquire.await_count == 1
+
+            # Simulate cache expiry by backdating _token_expiry
+            provider._token_expiry = _time.monotonic() - 1
+
+            # Second call should reload
+            await provider._get_access_token()
+            assert mock_acquire.await_count == 2
+
+    async def test_cache_expiry_tracks_real_token_expiry(self) -> None:
+        """In-memory cache should not outlive the credential expiry."""
+        from datetime import UTC, datetime, timedelta
+
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+        record = GeminiCredentialRecord(
+            path=Path("/tmp/short-lived.json"),
+            source="gemini-cli",
+            email=None,
+            project_id=None,
+            auth_mode=None,
+        )
+
+        mock_creds = MagicMock()
+        mock_creds.token = "ya29.short-lived"
+        mock_creds.valid = True
+        mock_creds.expired = False
+        mock_creds.expiry = datetime.now(UTC) + timedelta(seconds=120)
+
+        before = time.monotonic()
+        with (
+            patch.object(
+                provider,
+                "_get_credential_payload_candidates",
+                return_value=[(record, {"access_token": mock_creds.token})],
+            ),
+            patch.object(
+                provider, "_build_credentials_from_data", return_value=mock_creds
+            ),
+        ):
+            token = await provider._get_access_token()
+
+        remaining = provider._token_expiry - before
+        assert token == "ya29.short-lived"
+        assert 0 < remaining < 3000
+        assert remaining <= 120
+
+    async def test_raw_token_cache_uses_expiry_date_metadata(self) -> None:
+        """Raw tokens should still respect expiry_date from the credential payload."""
+        from datetime import UTC, datetime, timedelta
+
+        from markitai.providers.gemini_cli import (
+            GeminiCLIProvider,
+            _RawToken,
+        )
+
+        provider = GeminiCLIProvider()
+        expiry = datetime.now(UTC) + timedelta(seconds=180)
+        record = GeminiCredentialRecord(
+            path=Path("/tmp/gemini.json"),
+            source="shared",
+            email=None,
+            project_id=None,
+            auth_mode=None,
+        )
+        payload = {
+            "access_token": "ya29.raw",
+            "expiry_date": int(expiry.timestamp() * 1000),
+        }
+
+        before = time.monotonic()
+        with (
+            patch.object(
+                provider,
+                "_get_credential_payload_candidates",
+                return_value=[(record, payload)],
+            ),
+            patch.object(
+                provider,
+                "_build_credentials_from_data",
+                return_value=_RawToken("ya29.raw"),
+            ),
+        ):
+            token = await provider._get_access_token()
+
+        remaining = provider._token_expiry - before
+        assert token == "ya29.raw"
+        assert 0 < remaining < 3000
+        assert remaining <= 180
 
 
 # ===================================================================
@@ -904,6 +1297,59 @@ class TestOAuthFlow:
         assert "expiry_date" in saved
         assert isinstance(saved["expiry_date"], int)
         assert "expiry" not in saved  # should NOT use ISO format
+
+    async def test_alogin_saves_managed_profile_and_marks_active(
+        self, tmp_path: Path
+    ) -> None:
+        """Gemini login should save a Markitai-managed profile and activate it."""
+        from datetime import UTC, datetime
+
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+        managed_dir = tmp_path / ".markitai" / "auth"
+        active_file = managed_dir / "gemini-current.json"
+
+        mock_creds = MagicMock()
+        mock_creds.token = "ya29.oauth-token"
+        mock_creds.refresh_token = "1//new-refresh"
+        mock_creds.client_id = "test-client-id"
+        mock_creds.client_secret = "test-secret"
+        mock_creds.expiry = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+
+        with (
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: managed_dir),
+            ),
+            patch.object(
+                type(provider),
+                "_active_profile_path",
+                new_callable=lambda: property(lambda _self: active_file),
+            ),
+            patch.object(
+                provider, "_create_oauth_credentials", return_value=mock_creds
+            ),
+            patch.object(
+                provider,
+                "_fetch_user_email",
+                new=AsyncMock(return_value="me@example.com"),
+            ),
+            patch.object(
+                provider,
+                "_resolve_login_project",
+                new=AsyncMock(return_value="demo-project"),
+            ),
+        ):
+            record = await provider.alogin(mode="google-one")
+
+        assert record.email == "me@example.com"
+        assert record.project_id == "demo-project"
+        assert record.source == "markitai"
+        assert record.path.exists()
+        active = json.loads(active_file.read_text(encoding="utf-8"))
+        assert active == {"credential_path": str(record.path)}
 
 
 # ===================================================================
@@ -1101,3 +1547,209 @@ class TestConstants:
 
         assert ".gemini" in str(GEMINI_CLI_CREDS_PATH)
         assert str(GEMINI_CLI_CREDS_PATH).endswith("oauth_creds.json")
+
+
+# ===================================================================
+# OAuth UX tests
+# ===================================================================
+
+
+class TestOAuthUX:
+    """Tests for OAuth flow UX improvements (Rich output, stdout suppression)."""
+
+    def test_oauth_suppresses_stdout(self, tmp_path: Path) -> None:
+        """run_local_server stdout output is captured and not leaked."""
+        import sys
+        from io import StringIO
+
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+        creds_file = tmp_path / "oauth_creds.json"
+
+        mock_creds = MagicMock()
+        mock_creds.token = "ya29.oauth-token"
+        mock_creds.refresh_token = "1//refresh"
+        mock_creds.client_id = "test-client-id"
+        mock_creds.client_secret = "test-secret"
+        mock_creds.expiry = None
+
+        def fake_run_local_server(**kwargs: Any) -> MagicMock:
+            # Simulate google-auth-oauthlib printing to stdout
+            print("Please visit this URL to authorize this application:")
+            print("https://accounts.google.com/o/oauth2/auth?redirect=...")
+            return mock_creds
+
+        mock_flow = MagicMock()
+        mock_flow.run_local_server = fake_run_local_server
+
+        # Capture actual stdout to verify nothing leaks
+        captured_stdout = StringIO()
+        original_stdout = sys.stdout
+
+        with (
+            patch.object(
+                type(provider),
+                "_creds_path",
+                new_callable=lambda: property(lambda _self: creds_file),
+            ),
+            patch("markitai.providers.gemini_cli._OAUTHLIB_AVAILABLE", True),
+            patch("markitai.providers.gemini_cli._InstalledAppFlow") as mock_flow_cls,
+        ):
+            mock_flow_cls.from_client_config.return_value = mock_flow
+            sys.stdout = captured_stdout
+            try:
+                provider._run_oauth_flow()
+            finally:
+                sys.stdout = original_stdout
+
+        # The raw "Please visit this URL" should NOT appear in stdout
+        leaked = captured_stdout.getvalue()
+        assert "Please visit this URL" not in leaked
+
+    def test_oauth_shows_success_message(self, tmp_path: Path) -> None:
+        """OAuth flow shows success message after completion."""
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+        creds_file = tmp_path / "oauth_creds.json"
+
+        mock_creds = MagicMock()
+        mock_creds.token = "ya29.oauth-token"
+        mock_creds.refresh_token = "1//refresh"
+        mock_creds.client_id = "test-client-id"
+        mock_creds.client_secret = "test-secret"
+        mock_creds.expiry = None
+
+        mock_flow = MagicMock()
+        mock_flow.run_local_server.return_value = mock_creds
+
+        with (
+            patch.object(
+                type(provider),
+                "_creds_path",
+                new_callable=lambda: property(lambda _self: creds_file),
+            ),
+            patch("markitai.providers.gemini_cli._OAUTHLIB_AVAILABLE", True),
+            patch("markitai.providers.gemini_cli._InstalledAppFlow") as mock_flow_cls,
+            patch("markitai.providers.gemini_cli.show_oauth_start") as mock_start,
+            patch("markitai.providers.gemini_cli.show_oauth_success") as mock_success,
+        ):
+            mock_flow_cls.from_client_config.return_value = mock_flow
+            provider._run_oauth_flow()
+
+        mock_start.assert_called_once_with("gemini-cli")
+        mock_success.assert_called_once()
+        call_kwargs = mock_success.call_args
+        assert call_kwargs[0][0] == "gemini-cli"
+
+
+# ===================================================================
+# Token refresh retry tests
+# ===================================================================
+
+
+class TestTokenRefreshRetry:
+    """Tests for token refresh retry with exponential backoff."""
+
+    async def test_retry_succeeds_on_second_attempt(self) -> None:
+        """Token refresh retries on transient error and succeeds."""
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+        record = GeminiCredentialRecord(
+            path=Path("/tmp/creds.json"),
+            source="gemini-cli",
+            email=None,
+            project_id=None,
+            auth_mode=None,
+        )
+        payload = _make_creds_json()
+
+        mock_creds = MagicMock()
+        mock_creds.token = "ya29.refreshed"
+        mock_creds.valid = False
+        mock_creds.expired = True
+        mock_creds.refresh_token = "1//refresh"
+        mock_creds.expiry = None
+
+        # First refresh fails (transient SSL error), second succeeds
+        call_count = 0
+
+        def refresh_side_effect(request: Any) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("SSLEOFError: EOF occurred")
+            # Second call succeeds — creds.token is already set
+            mock_creds.valid = True
+            mock_creds.expired = False
+
+        mock_creds.refresh.side_effect = refresh_side_effect
+
+        with (
+            patch.object(
+                provider,
+                "_build_credentials_from_data",
+                return_value=mock_creds,
+            ),
+            patch.object(provider, "_save_credentials"),
+            patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
+            patch(
+                "markitai.providers.gemini_cli._google_auth_requests"
+            ) as mock_requests,
+            patch("markitai.providers.gemini_cli.asyncio.sleep") as mock_sleep,
+        ):
+            mock_sleep.return_value = None
+            mock_requests.Request.return_value = object()
+            result = await provider._try_credentials_candidate(record, payload)
+
+        assert result is not None
+        assert result[0] == "ya29.refreshed"
+        # Should have retried once
+        assert call_count == 2
+        # Should have slept between retries
+        mock_sleep.assert_called_once()
+
+    async def test_retry_exhausted_returns_none(self) -> None:
+        """Returns None after all retry attempts are exhausted."""
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+        record = GeminiCredentialRecord(
+            path=Path("/tmp/creds.json"),
+            source="gemini-cli",
+            email=None,
+            project_id=None,
+            auth_mode=None,
+        )
+        payload = _make_creds_json()
+
+        mock_creds = MagicMock()
+        mock_creds.token = "ya29.stale"
+        mock_creds.valid = False
+        mock_creds.expired = True
+        mock_creds.refresh_token = "1//refresh"
+
+        # All refresh attempts fail
+        mock_creds.refresh.side_effect = Exception("SSLEOFError: persistent")
+
+        with (
+            patch.object(
+                provider,
+                "_build_credentials_from_data",
+                return_value=mock_creds,
+            ),
+            patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
+            patch(
+                "markitai.providers.gemini_cli._google_auth_requests"
+            ) as mock_requests,
+            patch("markitai.providers.gemini_cli.asyncio.sleep") as mock_sleep,
+        ):
+            mock_sleep.return_value = None
+            mock_requests.Request.return_value = object()
+            result = await provider._try_credentials_candidate(record, payload)
+
+        assert result is None
+        # Should have tried 3 times (1 original + 2 retries)
+        assert mock_creds.refresh.call_count == 3

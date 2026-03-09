@@ -576,6 +576,152 @@ class TestClaudeAgentIntegration:
         schema = result.get("schema", {})
         assert schema.get("additionalProperties") is False
 
+    @pytest.mark.asyncio
+    async def test_estimates_input_tokens_when_sdk_underreports(self) -> None:
+        """When SDK reports very low input_tokens, estimate from message content."""
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        # Mock SDK components
+        mock_text_block = MagicMock()
+        mock_text_block.text = "Response"
+
+        mock_assistant_message = MagicMock()
+        mock_assistant_message.content = [mock_text_block]
+
+        # SDK under-reports input_tokens (only 5 for a long message)
+        mock_result_message = MagicMock()
+        mock_result_message.usage = MagicMock(
+            input_tokens=5,
+            output_tokens=100,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+        )
+        mock_result_message.total_cost_usd = 0.001
+        mock_result_message.structured_output = None
+
+        mock_client = AsyncMock()
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response():
+            yield mock_assistant_message
+            yield mock_result_message
+
+        mock_client.receive_response = mock_receive_response
+
+        mock_sdk_client_class = MagicMock()
+        mock_sdk_client_instance = AsyncMock()
+        mock_sdk_client_instance.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_sdk_client_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_sdk_client_class.return_value = mock_sdk_client_instance
+
+        mock_types = MagicMock()
+        mock_types.AssistantMessage = type(mock_assistant_message)
+        mock_types.ResultMessage = type(mock_result_message)
+        mock_types.TextBlock = type(mock_text_block)
+
+        # Long message content (~2000 chars -> ~500 estimated tokens)
+        long_content = "This is a detailed document about software architecture. " * 40
+
+        with (
+            patch(
+                "markitai.providers.claude_agent._is_claude_agent_sdk_available",
+                return_value=True,
+            ),
+            patch.dict(
+                "sys.modules",
+                {
+                    "claude_agent_sdk": MagicMock(
+                        ClaudeSDKClient=mock_sdk_client_class,
+                        ClaudeAgentOptions=MagicMock(),
+                        types=mock_types,
+                    ),
+                    "claude_agent_sdk.types": mock_types,
+                },
+            ),
+        ):
+            response = await provider.acompletion(
+                model="claude-agent/sonnet",
+                messages=[{"role": "user", "content": long_content}],
+            )
+
+        # Verify input tokens were estimated (should be ~len(long_content)//4)
+        assert response.usage.prompt_tokens > 5
+        expected_estimate = len(long_content) // 4
+        assert response.usage.prompt_tokens == expected_estimate
+        assert response.usage.completion_tokens == 100
+
+    @pytest.mark.asyncio
+    async def test_preserves_input_tokens_when_sdk_reports_enough(self) -> None:
+        """When SDK reports >= 50 input_tokens, use the SDK value as-is."""
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        mock_text_block = MagicMock()
+        mock_text_block.text = "Response"
+
+        mock_assistant_message = MagicMock()
+        mock_assistant_message.content = [mock_text_block]
+
+        # SDK reports a reasonable input_tokens value
+        mock_result_message = MagicMock()
+        mock_result_message.usage = MagicMock(
+            input_tokens=500,
+            output_tokens=100,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+        )
+        mock_result_message.total_cost_usd = 0.001
+        mock_result_message.structured_output = None
+
+        mock_client = AsyncMock()
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response():
+            yield mock_assistant_message
+            yield mock_result_message
+
+        mock_client.receive_response = mock_receive_response
+
+        mock_sdk_client_class = MagicMock()
+        mock_sdk_client_instance = AsyncMock()
+        mock_sdk_client_instance.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_sdk_client_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_sdk_client_class.return_value = mock_sdk_client_instance
+
+        mock_types = MagicMock()
+        mock_types.AssistantMessage = type(mock_assistant_message)
+        mock_types.ResultMessage = type(mock_result_message)
+        mock_types.TextBlock = type(mock_text_block)
+
+        with (
+            patch(
+                "markitai.providers.claude_agent._is_claude_agent_sdk_available",
+                return_value=True,
+            ),
+            patch.dict(
+                "sys.modules",
+                {
+                    "claude_agent_sdk": MagicMock(
+                        ClaudeSDKClient=mock_sdk_client_class,
+                        ClaudeAgentOptions=MagicMock(),
+                        types=mock_types,
+                    ),
+                    "claude_agent_sdk.types": mock_types,
+                },
+            ),
+        ):
+            response = await provider.acompletion(
+                model="claude-agent/sonnet",
+                messages=[{"role": "user", "content": "Hello!"}],
+            )
+
+        # SDK value should be preserved when >= 50
+        assert response.usage.prompt_tokens == 500
+        assert response.usage.completion_tokens == 100
+
 
 # =============================================================================
 # TestCopilotIntegration
@@ -584,6 +730,112 @@ class TestClaudeAgentIntegration:
 
 class TestCopilotIntegration:
     """Integration tests for CopilotProvider with mocked SDK."""
+
+    @pytest.mark.asyncio
+    async def test_prefers_sdk_bundled_cli_over_path_cli(self) -> None:
+        """Provider should prefer the SDK-bundled CLI over PATH."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        mock_response = MagicMock()
+        mock_response.data = MagicMock(content="Hello from bundled CLI!")
+
+        mock_session = AsyncMock()
+        mock_session.send_and_wait = AsyncMock(return_value=mock_response)
+        mock_session.destroy = AsyncMock()
+
+        mock_client = MagicMock()
+        mock_client.start = AsyncMock()
+        mock_client.create_session = AsyncMock(return_value=mock_session)
+        mock_client.stop = AsyncMock()
+
+        mock_copilot_client_class = MagicMock(return_value=mock_client)
+
+        with (
+            patch(
+                "markitai.providers.copilot._is_copilot_sdk_available",
+                return_value=True,
+            ),
+            patch(
+                "markitai.providers.copilot._find_copilot_cli",
+                return_value="/usr/local/bin/copilot",
+            ) as mock_find_cli,
+            patch.dict(
+                "sys.modules",
+                {
+                    "copilot": MagicMock(CopilotClient=mock_copilot_client_class),
+                },
+            ),
+        ):
+            response = await provider.acompletion(
+                model="copilot/gpt-4.1",
+                messages=[{"role": "user", "content": "Hello!"}],
+            )
+
+        assert response.choices[0]["message"]["content"] == "Hello from bundled CLI!"
+        mock_copilot_client_class.assert_called_once_with()
+        mock_find_cli.assert_not_called()
+
+        await provider.close()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_path_cli_when_bundled_cli_is_unavailable(
+        self,
+    ) -> None:
+        """Provider should fall back to PATH when the bundled CLI is missing."""
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        mock_response = MagicMock()
+        mock_response.data = MagicMock(content="Hello from PATH CLI!")
+
+        mock_session = AsyncMock()
+        mock_session.send_and_wait = AsyncMock(return_value=mock_response)
+        mock_session.destroy = AsyncMock()
+
+        mock_client = MagicMock()
+        mock_client.start = AsyncMock()
+        mock_client.create_session = AsyncMock(return_value=mock_session)
+        mock_client.stop = AsyncMock()
+
+        mock_copilot_client_class = MagicMock(
+            side_effect=[
+                RuntimeError("The bundled CLI binary is not available."),
+                mock_client,
+            ]
+        )
+
+        with (
+            patch(
+                "markitai.providers.copilot._is_copilot_sdk_available",
+                return_value=True,
+            ),
+            patch(
+                "markitai.providers.copilot._find_copilot_cli",
+                return_value="/usr/local/bin/copilot",
+            ) as mock_find_cli,
+            patch.dict(
+                "sys.modules",
+                {
+                    "copilot": MagicMock(CopilotClient=mock_copilot_client_class),
+                },
+            ),
+        ):
+            response = await provider.acompletion(
+                model="copilot/gpt-4.1",
+                messages=[{"role": "user", "content": "Hello!"}],
+            )
+
+        assert response.choices[0]["message"]["content"] == "Hello from PATH CLI!"
+        assert mock_copilot_client_class.call_args_list[0].args == ()
+        assert mock_copilot_client_class.call_args_list[1].args == (
+            {"cli_path": "/usr/local/bin/copilot"},
+        )
+        mock_find_cli.assert_called_once_with()
+
+        await provider.close()
 
     @pytest.mark.asyncio
     async def test_successful_completion_flow(self) -> None:

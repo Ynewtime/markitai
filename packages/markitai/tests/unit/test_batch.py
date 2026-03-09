@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from markitai.batch import (
     BatchProcessor,
     BatchState,
@@ -253,6 +255,126 @@ class TestBatchProcessor:
         assert any(f.name == "root.JPG" for f in files)
         assert any(f.name == "deep.PNG" for f in files)
         assert any(f.name == "normal.png" for f in files)
+
+    def test_discover_files_applies_positive_globs(self, tmp_path: Path) -> None:
+        """Test directory glob filters require a positive match when configured."""
+        reports_dir = tmp_path / "reports"
+        notes_dir = tmp_path / "notes"
+        reports_dir.mkdir()
+        notes_dir.mkdir()
+
+        report = reports_dir / "quarterly.pdf"
+        note = notes_dir / "meeting.pdf"
+        report.touch()
+        note.touch()
+
+        config = BatchConfig(scan_max_depth=3)
+        processor = BatchProcessor(config, tmp_path / "output", input_path=tmp_path)
+
+        files = processor.discover_files(
+            tmp_path,
+            extensions={".pdf"},
+            glob_patterns=["reports/**/*.pdf"],
+        )
+
+        assert files == [report]
+
+    def test_discover_files_applies_negative_globs_last(self, tmp_path: Path) -> None:
+        """Test exclusion globs win after inclusion globs match."""
+        public_dir = tmp_path / "reports" / "public"
+        private_dir = tmp_path / "reports" / "private"
+        public_dir.mkdir(parents=True)
+        private_dir.mkdir(parents=True)
+
+        public_report = public_dir / "summary.pdf"
+        private_report = private_dir / "summary.pdf"
+        public_report.touch()
+        private_report.touch()
+
+        config = BatchConfig(scan_max_depth=4)
+        processor = BatchProcessor(config, tmp_path / "output", input_path=tmp_path)
+
+        files = processor.discover_files(
+            tmp_path,
+            extensions={".pdf"},
+            glob_patterns=["reports/**/*.pdf", "!reports/private/**"],
+        )
+
+        assert files == [public_report]
+
+    def test_discover_files_with_relative_input_path_and_globs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test glob filtering works when the input directory is passed relatively."""
+        input_dir = tmp_path / "input"
+        nested_dir = input_dir / "legacy"
+        input_dir.mkdir()
+        nested_dir.mkdir()
+
+        sample_file = nested_dir / "sample.xls"
+        sample_file.touch()
+
+        monkeypatch.chdir(tmp_path)
+        relative_input = Path("input")
+
+        config = BatchConfig(scan_max_depth=3)
+        processor = BatchProcessor(
+            config, tmp_path / "output", input_path=relative_input
+        )
+
+        files = processor.discover_files(
+            relative_input,
+            extensions={".xls"},
+            glob_patterns=["!**/*.org"],
+        )
+
+        assert files == [relative_input / "legacy" / "sample.xls"]
+
+    def test_discover_files_globs_work_without_glob_translate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Glob filtering should not depend on glob.translate being available."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        report = reports_dir / "quarterly.pdf"
+        report.touch()
+
+        monkeypatch.delattr("markitai.batch.glob_module.translate", raising=False)
+
+        config = BatchConfig(scan_max_depth=3)
+        processor = BatchProcessor(config, tmp_path / "output", input_path=tmp_path)
+
+        files = processor.discover_files(
+            tmp_path,
+            extensions={".pdf"},
+            glob_patterns=["reports/**/*.pdf"],
+        )
+
+        assert files == [report]
+
+    def test_discover_files_globs_support_question_and_char_classes(
+        self, tmp_path: Path
+    ) -> None:
+        """Fallback glob matching should preserve basic glob semantics."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        alpha = reports_dir / "report-a.pdf"
+        beta = reports_dir / "report-b.pdf"
+        other = reports_dir / "report-aa.pdf"
+        alpha.touch()
+        beta.touch()
+        other.touch()
+
+        config = BatchConfig(scan_max_depth=3)
+        processor = BatchProcessor(config, tmp_path / "output", input_path=tmp_path)
+
+        files = processor.discover_files(
+            tmp_path,
+            extensions={".pdf"},
+            glob_patterns=["reports/report-[ab].pdf", "!reports/report-?.pdf"],
+        )
+
+        assert files == []
 
     def test_discover_single_file(self, tmp_path: Path) -> None:
         """Test discovery of single file."""

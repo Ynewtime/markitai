@@ -193,6 +193,44 @@ def _check_claude_auth() -> dict[str, str]:
         }
 
 
+def _check_gemini_cli_auth_status() -> dict[str, str]:
+    """Check Gemini CLI authentication status."""
+    auth_manager = AuthManager()
+    try:
+        status = asyncio.run(auth_manager.check_auth("gemini-cli"))
+        if status.authenticated:
+            details = status.details or {}
+            parts = [status.user or "gemini-cli"]
+            project_id = details.get("project_id")
+            source = details.get("source")
+            if project_id:
+                parts.append(f"project: {project_id}")
+            if source:
+                parts.append(f"source: {source}")
+            return {
+                "name": "Gemini CLI Auth",
+                "description": "Gemini Code Assist authentication status",
+                "status": "ok",
+                "message": ", ".join(parts),
+                "install_hint": "",
+            }
+        return {
+            "name": "Gemini CLI Auth",
+            "description": "Gemini Code Assist authentication status",
+            "status": "error",
+            "message": status.error or "Not authenticated",
+            "install_hint": get_auth_resolution_hint("gemini-cli"),
+        }
+    except Exception as e:
+        return {
+            "name": "Gemini CLI Auth",
+            "description": "Gemini Code Assist authentication status",
+            "status": "error",
+            "message": f"Failed to check auth: {e}",
+            "install_hint": get_auth_resolution_hint("gemini-cli"),
+        }
+
+
 def _check_playwright() -> dict[str, Any]:
     """Check Playwright installation status.
 
@@ -386,6 +424,13 @@ def _check_rapidocr(cfg: Any) -> dict[str, Any]:
         }
 
 
+def _is_active_model(model_config: Any) -> bool:
+    """Return whether a model config is active for routing-dependent checks."""
+    litellm_params = getattr(model_config, "litellm_params", None)
+    weight = getattr(litellm_params, "weight", 1)
+    return not isinstance(weight, int | float) or weight > 0
+
+
 def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     """Implementation of the doctor command.
 
@@ -452,10 +497,19 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     # 5a. Check local provider SDKs if configured
     uses_claude_agent = any(
-        m.litellm_params.model.startswith("claude-agent/") for m in configured_models
+        m.litellm_params.model.startswith("claude-agent/")
+        for m in configured_models
+        if _is_active_model(m)
     )
     uses_copilot = any(
-        m.litellm_params.model.startswith("copilot/") for m in configured_models
+        m.litellm_params.model.startswith("copilot/")
+        for m in configured_models
+        if _is_active_model(m)
+    )
+    uses_gemini_cli = any(
+        m.litellm_params.model.startswith("gemini-cli/")
+        for m in configured_models
+        if _is_active_model(m)
     )
 
     if uses_claude_agent:
@@ -546,6 +600,9 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         # 5c. Check Copilot authentication status
         results["copilot-auth"] = _check_copilot_auth()
 
+    if uses_gemini_cli:
+        results["gemini-cli-auth"] = _check_gemini_cli_auth_status()
+
     # 6. Check vision model configuration (auto-detect from litellm or config override)
     from markitai.llm import get_model_info_cached
 
@@ -605,7 +662,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     required_deps = ["playwright", "libreoffice", "rapidocr"]
     optional_deps = ["ffmpeg"]
     llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
-    auth_keys = ["claude-agent-auth", "copilot-auth"]
+    auth_keys = ["claude-agent-auth", "copilot-auth", "gemini-cli-auth"]
 
     # Required dependencies
     ui.section(t("doctor.required"))
@@ -728,6 +785,6 @@ def doctor(as_json: bool, fix: bool) -> None:
     - LibreOffice (for Office document conversion)
     - RapidOCR (for scanned document processing)
     - LLM API configuration (for content enhancement)
-    - Authentication status for local providers (Claude Agent, Copilot)
+    - Authentication status for local providers (Claude Agent, Copilot, Gemini CLI)
     """
     _doctor_impl(as_json, fix=fix)

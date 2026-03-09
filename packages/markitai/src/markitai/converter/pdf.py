@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pymupdf4llm
 from loguru import logger
 
-from markitai.constants import DEFAULT_RENDER_DPI
+from markitai.constants import ASSETS_REL_PATH, DEFAULT_RENDER_DPI, SCREENSHOTS_REL_PATH
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -96,8 +96,7 @@ class PdfConverter(BaseConverter):
         # Determine image output path
         temp_dir: Path | None = None
         if output_dir:
-            image_path = output_dir / "assets"
-            image_path.mkdir(parents=True, exist_ok=True)
+            image_path = ensure_assets_dir(output_dir)
             write_images = True
         else:
             # Use temp directory if no output dir specified
@@ -354,7 +353,7 @@ class PdfConverter(BaseConverter):
         # Match image references with the full path and replace with assets/filename
         # Preserve alt text if present
         pattern = rf"!\[([^\]]*)\]\({escaped_path}/([^)]+)\)"
-        replacement = r"![\1](assets/\2)"
+        replacement = rf"![\1]({ASSETS_REL_PATH}/\2)"
         return re.sub(pattern, replacement, markdown)
 
     def _collect_embedded_images(
@@ -500,7 +499,7 @@ class PdfConverter(BaseConverter):
                         logger.warning(f"OCR failed for page {page_num + 1}: {e}")
                         text_content = f"*(OCR failed: {e})*"
 
-                    page_content = f"{text_content}\n\n<!-- ![Page {page_num + 1}](screenshots/{image_name}) -->"
+                    page_content = f"{text_content}\n\n<!-- ![Page {page_num + 1}]({SCREENSHOTS_REL_PATH}/{image_name}) -->"
 
                     return {
                         "page_num": page_num,

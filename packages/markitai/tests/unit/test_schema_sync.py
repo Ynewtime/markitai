@@ -74,8 +74,8 @@ class TestSchemaSync:
         assert "image_analysis_user" in prompts_config
         assert "page_content_system" in prompts_config
         assert "page_content_user" in prompts_config
-        assert "document_enhance_system" in prompts_config
-        assert "document_enhance_user" in prompts_config
+        assert "document_vision_system" in prompts_config
+        assert "document_vision_user" in prompts_config
         assert "cleaner_system" in prompts_config
         assert "cleaner_user" in prompts_config
 

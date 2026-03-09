@@ -66,7 +66,7 @@ class AuthenticationError(ProviderError):
     """Error raised when authentication fails.
 
     This error is NOT retryable because it requires user action to resolve
-    (e.g., running `claude auth login` or `copilot auth login`).
+    (e.g., running `claude auth login` or `copilot login`).
 
     Attributes:
         provider: The provider name
@@ -79,7 +79,7 @@ class AuthenticationError(ProviderError):
     # Default resolution hints per provider
     _DEFAULT_HINTS: dict[str, str] = {
         "claude-agent": "Run 'claude auth login' to authenticate with Claude Code CLI",
-        "copilot": "Run 'copilot auth login' to authenticate with GitHub Copilot",
+        "copilot": "Run 'copilot login' to authenticate with GitHub Copilot",
     }
 
     def __init__(

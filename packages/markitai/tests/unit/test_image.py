@@ -243,39 +243,39 @@ class TestRemoveNonexistentImages:
     def test_removes_placeholder_patterns(self, tmp_path: Path) -> None:
         """Test that placeholder image references are removed."""
         # Create assets dir
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
-        markdown = "![](assets/...)\n![](assets/placeholder)\n![](assets/..)\nSome text"
+        markdown = "![](.markitai/assets/...)\n![](.markitai/assets/placeholder)\n![](.markitai/assets/..)\nSome text"
         result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
 
-        assert "assets/..." not in result
-        assert "assets/placeholder" not in result
-        assert "assets/.." not in result
+        assert ".markitai/assets/..." not in result
+        assert ".markitai/assets/placeholder" not in result
+        assert ".markitai/assets/.." not in result
         assert "Some text" in result
 
     def test_keeps_existing_images(self, tmp_path: Path) -> None:
         """Test that existing image references are kept."""
         # Create assets dir with actual image
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
         (assets_dir / "real.jpg").write_bytes(b"fake image data")
 
-        markdown = "![](assets/real.jpg)\n![](assets/fake.jpg)"
+        markdown = "![](.markitai/assets/real.jpg)\n![](.markitai/assets/fake.jpg)"
         result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
 
-        assert "assets/real.jpg" in result
-        assert "assets/fake.jpg" not in result
+        assert ".markitai/assets/real.jpg" in result
+        assert ".markitai/assets/fake.jpg" not in result
 
     def test_removes_nonexistent_images(self, tmp_path: Path) -> None:
         """Test that nonexistent image references are removed."""
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
-        markdown = "![alt](assets/nonexistent.png)"
+        markdown = "![alt](.markitai/assets/nonexistent.png)"
         result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
 
-        assert "assets/nonexistent.png" not in result
+        assert ".markitai/assets/nonexistent.png" not in result
 
 
 class TestIndexMappingReplacement:
@@ -330,8 +330,8 @@ class TestIndexMappingReplacement:
             markdown, saved_images, index_mapping=index_mapping
         )
 
-        assert "![img1](assets/test.0001.jpg)" in result
-        assert "![img2](assets/test.0002.jpg)" in result
+        assert "![img1](.markitai/assets/test.0001.jpg)" in result
+        assert "![img2](.markitai/assets/test.0002.jpg)" in result
         assert "data:image" not in result
 
     def test_replace_with_index_mapping_filtered_image(self, tmp_path: Path) -> None:
@@ -388,11 +388,11 @@ class TestIndexMappingReplacement:
         )
 
         # First image should map to test.0001.jpg
-        assert "![first](assets/test.0001.jpg)" in result
+        assert "![first](.markitai/assets/test.0001.jpg)" in result
         # Filtered image should be removed (empty string)
         assert "![filtered]" not in result
         # Third image should map to test.0003.jpg (NOT test.0002.jpg which would be misalignment)
-        assert "![third](assets/test.0003.jpg)" in result
+        assert "![third](.markitai/assets/test.0003.jpg)" in result
 
     def test_replace_with_index_mapping_deduplicated_image(
         self, tmp_path: Path
@@ -447,9 +447,9 @@ class TestIndexMappingReplacement:
             markdown, saved_images, index_mapping=index_mapping
         )
 
-        assert "![original](assets/test.0001.jpg)" in result
+        assert "![original](.markitai/assets/test.0001.jpg)" in result
         assert "![duplicate]" not in result  # Duplicate removed
-        assert "![unique](assets/test.0003.jpg)" in result
+        assert "![unique](.markitai/assets/test.0003.jpg)" in result
 
     def test_process_and_save_returns_index_mapping(self, tmp_path: Path) -> None:
         """Test that process_and_save returns correct index mapping."""
@@ -811,23 +811,23 @@ class TestRemoveHallucinatedImages:
         assert "https://example.com/b.png" in result
 
     def test_keeps_local_asset_references(self) -> None:
-        """Test that local assets/ references are kept (handled by other method)."""
+        """Test that local .markitai/assets/ references are kept (handled by other method)."""
         original = "Some content"
-        llm_output = "Some content with ![local](assets/image.jpg)"
+        llm_output = "Some content with ![local](.markitai/assets/image.jpg)"
 
         result = ImageProcessor.remove_hallucinated_images(llm_output, original)
 
         # Local asset references should be kept (validated by remove_nonexistent_images)
-        assert "assets/image.jpg" in result
+        assert ".markitai/assets/image.jpg" in result
 
     def test_keeps_local_asset_backslash_references(self) -> None:
-        """Test that local assets\\ references are kept (Windows paths)."""
+        """Test that local .markitai/assets\\ references are kept (Windows paths)."""
         original = "Some content"
-        llm_output = "Some content with ![local](assets\\image.jpg)"
+        llm_output = "Some content with ![local](.markitai/assets\\image.jpg)"
 
         result = ImageProcessor.remove_hallucinated_images(llm_output, original)
 
-        assert "assets\\image.jpg" in result
+        assert ".markitai/assets\\image.jpg" in result
 
     def test_keeps_relative_urls(self) -> None:
         """Test that relative URLs (non-http) are kept."""
@@ -1017,16 +1017,16 @@ class TestRemoveNonexistentImagesEdgeCases:
 
     def test_handles_empty_markdown(self, tmp_path: Path) -> None:
         """Test with empty markdown."""
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
         result = ImageProcessor.remove_nonexistent_images("", assets_dir)
         assert result == ""
 
     def test_handles_no_image_references(self, tmp_path: Path) -> None:
         """Test markdown without image references."""
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
         markdown = "# Heading\n\nSome paragraph text."
         result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
@@ -1034,42 +1034,47 @@ class TestRemoveNonexistentImagesEdgeCases:
 
     def test_handles_windows_backslash_paths(self, tmp_path: Path) -> None:
         """Test handling of Windows-style backslash paths."""
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
         (assets_dir / "image.jpg").write_bytes(b"fake")
 
-        markdown = "![](assets\\image.jpg)\n![](assets\\missing.jpg)"
+        markdown = (
+            "![](.markitai/assets\\image.jpg)\n![](.markitai/assets\\missing.jpg)"
+        )
         result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
 
-        assert "assets\\image.jpg" in result or "assets/image.jpg" in result
+        assert (
+            ".markitai/assets\\image.jpg" in result
+            or ".markitai/assets/image.jpg" in result
+        )
         assert "missing.jpg" not in result
 
     def test_removes_empty_filename(self, tmp_path: Path) -> None:
         """Test removal of empty filename references."""
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
-        markdown = "![](assets/)\nText"
+        markdown = "![](.markitai/assets/)\nText"
         result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
 
-        assert "assets/" not in result or "Text" in result
+        assert ".markitai/assets/" not in result or "Text" in result
 
     def test_removes_dot_references(self, tmp_path: Path) -> None:
         """Test removal of single dot references."""
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
-        markdown = "![](assets/.)"
+        markdown = "![](.markitai/assets/.)"
         result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
 
-        assert "assets/." not in result
+        assert ".markitai/assets/." not in result
 
     def test_cleans_multiple_spaces(self, tmp_path: Path) -> None:
         """Test that multiple spaces are cleaned to single space."""
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
-        markdown = "Text  ![](assets/fake.png)  more"
+        markdown = "Text  ![](.markitai/assets/fake.png)  more"
         result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
 
         assert "  " not in result  # No double spaces
@@ -1253,7 +1258,7 @@ class TestReplaceBase64WithPaths:
 
         result = processor.replace_base64_with_paths(markdown, images)
 
-        assert "![alt](assets/test.0001.jpg)" in result
+        assert "![alt](.markitai/assets/test.0001.jpg)" in result
         assert "data:image" not in result
 
     def test_custom_assets_path(self, tmp_path: Path) -> None:

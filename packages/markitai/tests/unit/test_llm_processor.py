@@ -602,6 +602,275 @@ class TestHybridRouter:
         selected = hybrid._select_model("default")
         assert selected in ("deepseek/deepseek-chat", "chatgpt/gpt-5.3")
 
+    def test_select_model_skips_cooldown_model(self):
+        """Models in cooldown should be skipped during selection."""
+        standard_router = MagicMock(spec=MagicMock)
+        standard_router.model_list = []
+
+        local_wrapper = LocalProviderWrapper(
+            [
+                {
+                    "model_name": "default",
+                    "litellm_params": {
+                        "model": "claude-agent/sonnet",
+                        "weight": 10,
+                    },
+                },
+                {
+                    "model_name": "default",
+                    "litellm_params": {
+                        "model": "gemini-cli/gemini-3-flash",
+                        "weight": 10,
+                    },
+                },
+            ]
+        )
+
+        hybrid = HybridRouter(standard_router, local_wrapper)
+        hybrid.record_cooldown("gemini-cli/gemini-3-flash", 60.0)
+
+        selections = {hybrid._select_model("default") for _ in range(50)}
+        assert selections == {"claude-agent/sonnet"}
+
+    def test_select_model_routes_after_cooldown_expires(self):
+        """Models should be routable again after cooldown expires."""
+        standard_router = MagicMock(spec=MagicMock)
+        standard_router.model_list = []
+
+        local_wrapper = LocalProviderWrapper(
+            [
+                {
+                    "model_name": "default",
+                    "litellm_params": {
+                        "model": "claude-agent/sonnet",
+                        "weight": 10,
+                    },
+                },
+                {
+                    "model_name": "default",
+                    "litellm_params": {
+                        "model": "gemini-cli/gemini-3-flash",
+                        "weight": 10,
+                    },
+                },
+            ]
+        )
+
+        hybrid = HybridRouter(standard_router, local_wrapper)
+        # Set cooldown in the past (already expired)
+        hybrid._model_cooldowns["gemini-cli/gemini-3-flash"] = time.monotonic() - 1.0
+
+        selections = {hybrid._select_model("default") for _ in range(100)}
+        assert len(selections) == 2
+
+    def test_select_model_picks_soonest_expiring_when_all_in_cooldown(self):
+        """When all models are in cooldown, pick the one expiring soonest."""
+        standard_router = MagicMock(spec=MagicMock)
+        standard_router.model_list = []
+
+        local_wrapper = LocalProviderWrapper(
+            [
+                {
+                    "model_name": "default",
+                    "litellm_params": {"model": "model-a", "weight": 10},
+                },
+                {
+                    "model_name": "default",
+                    "litellm_params": {"model": "model-b", "weight": 10},
+                },
+            ]
+        )
+
+        hybrid = HybridRouter(standard_router, local_wrapper)
+        now = time.monotonic()
+        hybrid._model_cooldowns["model-a"] = now + 120
+        hybrid._model_cooldowns["model-b"] = now + 10
+
+        assert hybrid._select_model("default") == "model-b"
+
+    @pytest.mark.asyncio
+    async def test_acompletion_routes_selected_standard_model(self):
+        """Standard router should receive the concrete model picked by cooldown logic."""
+        standard_router = MagicMock()
+        standard_router.model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "openai/gpt-4o", "weight": 1},
+            },
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "openai/gpt-4.1-mini", "weight": 1},
+            },
+        ]
+        standard_router.acompletion = AsyncMock(return_value="ok")
+
+        local_wrapper = LocalProviderWrapper([])
+        hybrid = HybridRouter(standard_router, local_wrapper)
+        messages = [{"role": "user", "content": "Hello"}]
+
+        with patch.object(hybrid, "_select_model", return_value="openai/gpt-4.1-mini"):
+            result = await hybrid.acompletion("default", messages, temperature=0.2)
+
+        assert result == "ok"
+        standard_router.acompletion.assert_awaited_once_with(
+            "openai/gpt-4.1-mini", messages, temperature=0.2
+        )
+
+    @pytest.mark.asyncio
+    async def test_acompletion_applies_cooldown_on_model_level_error(self):
+        """Model-level 400 errors (region restriction) should trigger cooldown."""
+        from litellm.exceptions import BadRequestError
+
+        standard_router = MagicMock()
+        standard_router.model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "gemini/gemini-flash", "weight": 1},
+            },
+        ]
+        standard_router.acompletion = AsyncMock(
+            side_effect=BadRequestError(
+                message="GeminiException BadRequestError - User location is not supported for the API use.",
+                model="gemini/gemini-flash",
+                llm_provider="gemini",
+            )
+        )
+
+        local_wrapper = LocalProviderWrapper(
+            [
+                {
+                    "model_name": "default",
+                    "litellm_params": {"model": "claude-agent/sonnet", "weight": 1},
+                }
+            ]
+        )
+
+        hybrid = HybridRouter(standard_router, local_wrapper)
+
+        with (
+            patch.object(hybrid, "_select_model", return_value="gemini/gemini-flash"),
+            pytest.raises(BadRequestError),
+        ):
+            await hybrid.acompletion("default", [{"role": "user", "content": "Hello"}])
+
+        # Model should be in cooldown
+        assert "gemini/gemini-flash" in hybrid._model_cooldowns
+        # Cooldown should be long (3600s)
+        remaining = hybrid._model_cooldowns["gemini/gemini-flash"] - time.monotonic()
+        assert remaining > 3500
+
+    @pytest.mark.asyncio
+    async def test_acompletion_no_cooldown_on_regular_bad_request(self):
+        """Regular 400 errors (bad content) should NOT trigger model cooldown."""
+        from litellm.exceptions import BadRequestError
+
+        standard_router = MagicMock()
+        standard_router.model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "gemini/gemini-flash", "weight": 1},
+            },
+        ]
+        standard_router.acompletion = AsyncMock(
+            side_effect=BadRequestError(
+                message="Invalid request: content too long",
+                model="gemini/gemini-flash",
+                llm_provider="gemini",
+            )
+        )
+
+        local_wrapper = LocalProviderWrapper([])
+        hybrid = HybridRouter(standard_router, local_wrapper)
+
+        with pytest.raises(BadRequestError):
+            await hybrid.acompletion("default", [{"role": "user", "content": "Hello"}])
+
+        # No cooldown for regular errors
+        assert "gemini/gemini-flash" not in hybrid._model_cooldowns
+
+
+# =============================================================================
+# Test LocalProviderWrapper Cooldown
+# =============================================================================
+
+
+class TestLocalProviderWrapperCooldown:
+    """Tests for cooldown tracking in LocalProviderWrapper."""
+
+    def test_select_model_skips_cooldown_model(self):
+        """Models in cooldown should be skipped during selection."""
+        wrapper = LocalProviderWrapper(
+            [
+                {
+                    "model_name": "default",
+                    "litellm_params": {
+                        "model": "claude-agent/sonnet",
+                        "weight": 10,
+                    },
+                },
+                {
+                    "model_name": "default",
+                    "litellm_params": {
+                        "model": "gemini-cli/gemini-3-flash",
+                        "weight": 10,
+                    },
+                },
+            ]
+        )
+
+        wrapper.record_cooldown("gemini-cli/gemini-3-flash", 60.0)
+
+        selections = {wrapper._select_model("default") for _ in range(50)}
+        assert selections == {"claude-agent/sonnet"}
+
+    def test_select_model_routes_after_cooldown_expires(self):
+        """Models should be routable again after cooldown expires."""
+        wrapper = LocalProviderWrapper(
+            [
+                {
+                    "model_name": "default",
+                    "litellm_params": {
+                        "model": "claude-agent/sonnet",
+                        "weight": 10,
+                    },
+                },
+                {
+                    "model_name": "default",
+                    "litellm_params": {
+                        "model": "gemini-cli/gemini-3-flash",
+                        "weight": 10,
+                    },
+                },
+            ]
+        )
+
+        # Set cooldown in the past (already expired)
+        wrapper._model_cooldowns["gemini-cli/gemini-3-flash"] = time.monotonic() - 1.0
+
+        selections = {wrapper._select_model("default") for _ in range(100)}
+        assert len(selections) == 2
+
+    def test_select_model_picks_soonest_expiring_when_all_in_cooldown(self):
+        """When all models are in cooldown, pick the one expiring soonest."""
+        wrapper = LocalProviderWrapper(
+            [
+                {
+                    "model_name": "default",
+                    "litellm_params": {"model": "model-a", "weight": 10},
+                },
+                {
+                    "model_name": "default",
+                    "litellm_params": {"model": "model-b", "weight": 10},
+                },
+            ]
+        )
+
+        now = time.monotonic()
+        wrapper._model_cooldowns["model-a"] = now + 120
+        wrapper._model_cooldowns["model-b"] = now + 10
+
+        assert wrapper._select_model("default") == "model-b"
+
 
 # =============================================================================
 # Test SQLiteCache
@@ -1206,6 +1475,45 @@ class TestLLMProcessorImageCache:
         assert str(tmp_path / "test_0.png") not in processor._image_cache
 
 
+class TestGetCachedImageSVG:
+    """Tests for SVG rasterization in _get_cached_image."""
+
+    def test_svg_rasterized_to_png_when_cairosvg_available(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig, tmp_path: Path
+    ):
+        """SVG bytes should be rasterized to PNG via cairosvg before caching."""
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        svg_content = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>'
+        svg_path = tmp_path / "test.svg"
+        svg_path.write_bytes(svg_content)
+
+        fake_png = b"\x89PNG\r\n\x1a\nfake_png_data"
+        with patch("markitai.llm.processor.cairosvg") as mock_cairo:
+            mock_cairo.svg2png.return_value = fake_png
+            raw_bytes, b64_str = processor._get_cached_image(svg_path)
+
+        mock_cairo.svg2png.assert_called_once()
+        assert raw_bytes == fake_png
+        assert b64_str == base64.b64encode(fake_png).decode()
+
+    def test_svg_skipped_when_cairosvg_missing(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig, tmp_path: Path
+    ):
+        """SVG should be returned as raw bytes when cairosvg is not installed."""
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        svg_content = b'<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
+        svg_path = tmp_path / "test.svg"
+        svg_path.write_bytes(svg_content)
+
+        with patch("markitai.llm.processor.cairosvg", None):
+            raw_bytes, b64_str = processor._get_cached_image(svg_path)
+
+        # Falls through without rasterization — returns raw SVG bytes
+        assert raw_bytes == svg_content
+
+
 class TestLLMProcessorDynamicMaxTokens:
     """Tests for _calculate_dynamic_max_tokens method."""
 
@@ -1561,6 +1869,56 @@ class TestLLMProcessorRouterCreation:
             assert "openai/gpt-4o-mini" not in model_ids
             assert "openai/gpt-4o" in model_ids
 
+    def test_create_router_logs_disabled_models_once_as_summary(
+        self, prompts_config: PromptsConfig
+    ) -> None:
+        """Disabled models should be logged once as a compact summary."""
+        config = LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o-mini",
+                        api_key="test-key",
+                        weight=0,
+                    ),
+                ),
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o",
+                        api_key="test-key",
+                        weight=0,
+                    ),
+                ),
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-5.2",
+                        api_key="test-key",
+                        weight=1,
+                    ),
+                ),
+            ],
+        )
+        processor = LLMProcessor(config, prompts_config)
+
+        with (
+            patch("markitai.providers.is_local_provider_available", return_value=True),
+            patch("markitai.llm.processor.logger.debug") as mock_debug,
+        ):
+            _ = processor.router
+
+        debug_messages = [
+            call.args[0] for call in mock_debug.call_args_list if call.args
+        ]
+        assert (
+            "[Router] Skipped 2 disabled models (weight=0): "
+            "openai/gpt-4o-mini, openai/gpt-4o" in debug_messages
+        )
+        assert all("Skipping disabled model" not in msg for msg in debug_messages)
+
     def test_create_router_all_weight_zero_raises(self, prompts_config: PromptsConfig):
         """Test that _create_router raises ValueError when all models are weight=0."""
         config = LLMConfig(
@@ -1580,6 +1938,66 @@ class TestLLMProcessorRouterCreation:
         with (
             patch("markitai.providers.is_local_provider_available", return_value=True),
             pytest.raises(ValueError, match="weight=0.*disabled"),
+        ):
+            LLMProcessor(config, prompts_config)
+
+    def test_create_router_skips_models_with_missing_env_api_key(
+        self, prompts_config: PromptsConfig
+    ):
+        """Test that _create_router skips models whose env:VAR API key is missing.
+
+        When a model has api_key="env:MISSING_VAR" and the env var is not set,
+        the router should skip that model with a warning instead of crashing.
+        """
+        config = LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="gemini/gemini-2.0-flash",
+                        api_key="env:NONEXISTENT_TEST_API_KEY_XYZ",
+                    ),
+                ),
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o-mini",
+                        api_key="test-key-present",
+                    ),
+                ),
+            ],
+        )
+        processor = LLMProcessor(config, prompts_config)
+
+        with patch("markitai.providers.is_local_provider_available", return_value=True):
+            router = processor.router
+            model_ids = [e["litellm_params"]["model"] for e in router.model_list]
+            # Model with missing env var should be skipped
+            assert "gemini/gemini-2.0-flash" not in model_ids
+            # Model with plain key should be included
+            assert "openai/gpt-4o-mini" in model_ids
+
+    def test_create_router_all_models_missing_env_api_key_raises(
+        self, prompts_config: PromptsConfig
+    ):
+        """Test clear error when all models have missing env var API keys."""
+        config = LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="gemini/gemini-2.0-flash",
+                        api_key="env:NONEXISTENT_TEST_KEY_AAA",
+                    ),
+                ),
+            ],
+        )
+
+        with (
+            patch("markitai.providers.is_local_provider_available", return_value=True),
+            pytest.raises(ValueError, match="NONEXISTENT_TEST_KEY_AAA"),
         ):
             LLMProcessor(config, prompts_config)
 
@@ -1665,3 +2083,84 @@ class TestLLMProcessorVisionModel:
         result = processor._is_vision_model(model_config)
         # GPT-4o should be detected as vision capable
         assert result is True
+
+
+# =============================================================================
+# Test _call_llm_with_retry Model-Level Error Retry
+# =============================================================================
+
+
+class TestCallLlmModelLevelRetry:
+    """Tests for _call_llm_with_retry retrying on model-level errors."""
+
+    @pytest.mark.asyncio
+    async def test_retries_on_model_level_error(self, llm_config, prompts_config):
+        """Model-level 400 should be retried, not immediately raised."""
+        from litellm.exceptions import BadRequestError
+
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        # First call: model-level error. Second call: success.
+        success_response = MagicMock()
+        success_response.choices = [MagicMock()]
+        success_response.choices[0].message.content = "OK"
+        success_response.model = "claude-agent/sonnet"
+        success_response.usage = MagicMock(prompt_tokens=10, completion_tokens=5)
+        success_response._hidden_params = {}
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(
+            side_effect=[
+                BadRequestError(
+                    message="User location is not supported for the API use.",
+                    model="gemini/gemini-flash",
+                    llm_provider="gemini",
+                ),
+                success_response,
+            ]
+        )
+        processor._router = mock_router
+
+        result = await processor._call_llm_with_retry(
+            "default",
+            [{"role": "user", "content": "test"}],
+            call_id="test:1",
+            context="test",
+            max_retries=2,
+        )
+
+        assert result.content == "OK"
+        assert mock_router.acompletion.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_regular_bad_request(self, llm_config, prompts_config):
+        """Regular 400 should raise immediately, not retry."""
+        from litellm.exceptions import BadRequestError
+
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(
+            side_effect=BadRequestError(
+                message="Invalid request body",
+                model="gemini/gemini-flash",
+                llm_provider="gemini",
+            )
+        )
+        processor._router = mock_router
+
+        with pytest.raises(BadRequestError):
+            await processor._call_llm_with_retry(
+                "default",
+                [{"role": "user", "content": "test"}],
+                call_id="test:1",
+                context="test",
+                max_retries=2,
+            )
+
+        # Should NOT retry
+        assert mock_router.acompletion.await_count == 1

@@ -41,6 +41,8 @@ import json
 import re
 import time
 import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -53,6 +55,12 @@ from markitai.providers.errors import (
     QuotaError,
     SDKNotAvailableError,
 )
+from markitai.providers.oauth_display import (
+    show_oauth_start,
+    show_oauth_success,
+    suppress_stdout,
+)
+from markitai.security import atomic_write_json
 
 if TYPE_CHECKING:
     from litellm.types.utils import ModelResponse
@@ -101,6 +109,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 GEMINI_CLI_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
+MARKITAI_GEMINI_ACTIVE_PROFILE = "gemini-current.json"
 
 # These are PUBLIC values hardcoded in Gemini CLI's open-source code.
 # This is standard practice for installed/native OAuth applications.
@@ -122,10 +131,20 @@ CODE_ASSIST_BASE = "https://cloudcode-pa.googleapis.com/v1internal"
 CODE_ASSIST_ENDPOINT = f"{CODE_ASSIST_BASE}:generateContent"
 CODE_ASSIST_STREAM_ENDPOINT = f"{CODE_ASSIST_BASE}:streamGenerateContent"
 CODE_ASSIST_LOAD_ENDPOINT = f"{CODE_ASSIST_BASE}:loadCodeAssist"
+CODE_ASSIST_ONBOARD_ENDPOINT = f"{CODE_ASSIST_BASE}:onboardUser"
+GOOGLE_USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v1/userinfo?alt=json"
+CODE_ASSIST_METADATA = {
+    "ideType": "IDE_UNSPECIFIED",
+    "platform": "PLATFORM_UNSPECIFIED",
+    "pluginType": "GEMINI",
+}
 
 # Code Assist rate limits are very low for some models (e.g., flash-lite ~1 RPM).
-# Retry 429s with the wait time from the response.
-MAX_429_RETRIES = 3
+# Do NOT retry 429s internally — let the Router see the QuotaError immediately
+# so it can set a cooldown and route subsequent requests to other models.
+MAX_429_RETRIES = 0
+TOKEN_CACHE_SAFETY_MARGIN_SECONDS = 60
+DEFAULT_TOKEN_CACHE_SECONDS = 3000
 
 
 class _RawToken:
@@ -153,6 +172,17 @@ class _RawToken:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class GeminiCredentialRecord:
+    """Resolved Gemini credential profile."""
+
+    path: Path
+    source: str
+    email: str | None
+    project_id: str | None
+    auth_mode: str | None
+
+
 class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
     """Custom LiteLLM provider using Gemini CLI OAuth credentials.
 
@@ -161,7 +191,17 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
     flow with the same client_id.
     """
 
-    _project_id: str | None = None
+    def __init__(self) -> None:
+        super().__init__()
+        # Token cache for concurrent safety (T4).
+        # asyncio.Lock cannot be created here because __init__ may run
+        # before an event loop exists; lazy-init in _get_access_token.
+        self._token_lock: asyncio.Lock | None = None
+        self._cached_token: str | None = None
+        self._token_expiry: float = 0.0
+        self._cached_token_source: str | None = None
+        self._project_id: str | None = None
+        self._project_source: str | None = None
 
     @property
     def _creds_path(self) -> Path:
@@ -171,42 +211,174 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
         """
         return GEMINI_CLI_CREDS_PATH
 
+    @property
+    def _managed_auth_dir(self) -> Path:
+        """Directory containing Markitai-managed Gemini profiles."""
+        return Path.home() / ".markitai" / "auth"
+
+    @property
+    def _active_profile_path(self) -> Path:
+        """Path to the active Markitai-managed Gemini profile pointer."""
+        return self._managed_auth_dir / MARKITAI_GEMINI_ACTIVE_PROFILE
+
     # ------------------------------------------------------------------
     # Authentication
     # ------------------------------------------------------------------
 
-    def _load_credentials(
+    @staticmethod
+    def _sanitize_profile_part(value: str) -> str:
+        """Normalize profile filename components."""
+        sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+        return sanitized.strip("._") or "default"
+
+    def _managed_profile_path(self, email: str, project_id: str) -> Path:
+        """Build the path for a managed Gemini profile."""
+        safe_email = self._sanitize_profile_part(email)
+        safe_project = self._sanitize_profile_part(project_id)
+        return self._managed_auth_dir / f"gemini-{safe_email}-{safe_project}.json"
+
+    @staticmethod
+    def _read_json(path: Path) -> dict[str, Any] | None:
+        """Read a JSON file into a dict."""
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _build_record(
         self,
-    ) -> Any:  # google.oauth2.credentials.Credentials | None
-        """Load credentials from Gemini CLI's credential file.
+        path: Path,
+        data: dict[str, Any],
+        *,
+        source: str,
+    ) -> GeminiCredentialRecord | None:
+        """Build a credential record from a JSON payload."""
+        if not data.get("access_token"):
+            return None
 
-        When google-auth is available, returns a Credentials object with
-        refresh support. When google-auth is NOT available, returns a
-        lightweight _RawToken wrapper that provides the raw access_token
-        (no refresh capability).
+        email = data.get("email")
+        project_id = data.get("project_id")
+        auth_mode = data.get("auth_mode")
+        return GeminiCredentialRecord(
+            path=path,
+            source=source,
+            email=str(email) if isinstance(email, str) and email else None,
+            project_id=(
+                str(project_id) if isinstance(project_id, str) and project_id else None
+            ),
+            auth_mode=(
+                str(auth_mode) if isinstance(auth_mode, str) and auth_mode else None
+            ),
+        )
 
-        Returns:
-            Credentials-like object if valid creds found, None otherwise.
-        """
+    def _load_managed_credential_payload(
+        self,
+    ) -> tuple[GeminiCredentialRecord, dict[str, Any]] | None:
+        """Load the active Markitai-managed credential profile if present."""
+        active_profile_path = self._active_profile_path
+        active_data = self._read_json(active_profile_path)
+        candidate_paths: list[Path] = []
+        auth_dir = self._managed_auth_dir
+
+        if active_data:
+            credential_path = active_data.get("credential_path")
+            if isinstance(credential_path, str) and credential_path:
+                cred_path = Path(credential_path)
+                try:
+                    cred_path.resolve().relative_to(auth_dir.resolve())
+                except ValueError:
+                    logger.warning(
+                        "[GeminiCLI] credential_path points outside managed "
+                        f"dir, ignoring: {cred_path}"
+                    )
+                else:
+                    candidate_paths.append(cred_path)
+        if auth_dir.exists():
+            for path in sorted(
+                auth_dir.glob("gemini-*.json"),
+                key=lambda item: item.stat().st_mtime,
+                reverse=True,
+            ):
+                if path.name == active_profile_path.name:
+                    continue
+                candidate_paths.append(path)
+
+        seen: set[Path] = set()
+        for path in candidate_paths:
+            if path in seen or not path.exists():
+                continue
+            seen.add(path)
+            data = self._read_json(path)
+            if not data:
+                continue
+            record = self._build_record(path, data, source="markitai")
+            if record is not None:
+                return record, data
+
+        return None
+
+    def _load_shared_credential_payload(
+        self,
+    ) -> tuple[GeminiCredentialRecord, dict[str, Any]] | None:
+        """Load shared Gemini CLI credentials from ~/.gemini."""
         creds_path = self._creds_path
         if not creds_path.exists():
-            logger.debug(f"[GeminiCLI] Credentials file not found: {creds_path}")
             return None
 
-        try:
-            data = json.loads(creds_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"[GeminiCLI] Failed to read credentials: {e}")
+        data = self._read_json(creds_path)
+        if not data:
             return None
 
+        record = self._build_record(creds_path, data, source="gemini-cli")
+        if record is None:
+            return None
+        return record, data
+
+    def _get_credential_payload_candidates(
+        self,
+    ) -> list[tuple[GeminiCredentialRecord, dict[str, Any]]]:
+        """Return ordered credential candidates for authentication attempts."""
+        candidates: list[tuple[GeminiCredentialRecord, dict[str, Any]]] = []
+        seen: set[Path] = set()
+
+        for candidate in (
+            self._load_managed_credential_payload(),
+            self._load_shared_credential_payload(),
+        ):
+            if candidate is None:
+                continue
+            record, _ = candidate
+            if record.path in seen:
+                continue
+            seen.add(record.path)
+            candidates.append(candidate)
+
+        return candidates
+
+    def _select_credential_payload(
+        self,
+    ) -> tuple[GeminiCredentialRecord, dict[str, Any]] | None:
+        """Resolve the credential payload to use for this request."""
+        candidates = self._get_credential_payload_candidates()
+        return candidates[0] if candidates else None
+
+    def get_active_profile(self) -> GeminiCredentialRecord | None:
+        """Return the currently active Gemini credential profile."""
+        selected = self._select_credential_payload()
+        if selected is None:
+            return None
+        return selected[0]
+
+    def _build_credentials_from_data(
+        self, data: dict[str, Any]
+    ) -> Any:  # google.oauth2.credentials.Credentials | _RawToken | None
+        """Build credential objects from raw JSON payload."""
         access_token = data.get("access_token")
         if not access_token:
-            logger.debug("[GeminiCLI] No access_token in credentials file")
             return None
 
         if not _GOOGLE_AUTH_AVAILABLE:
-            # Without google-auth we can't refresh tokens, but we can
-            # still use the raw access_token if it hasn't expired.
             logger.debug(
                 "[GeminiCLI] google-auth not installed, using raw token "
                 "(no refresh support)"
@@ -222,8 +394,6 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
             scopes=GEMINI_CLI_SCOPES,
         )
 
-        # Set expiry if available
-        # Gemini CLI stores expiry_date as milliseconds Unix timestamp
         expiry_date_ms = data.get("expiry_date")
         if expiry_date_ms:
             try:
@@ -235,22 +405,37 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
             except (ValueError, TypeError, OSError):
                 pass
 
-        logger.debug("[GeminiCLI] Loaded credentials from file")
         return creds
 
-    def _run_oauth_flow(self) -> Any:  # google.oauth2.credentials.Credentials
-        """Run OAuth flow using google_auth_oauthlib.
+    def _load_credentials(
+        self,
+    ) -> Any:  # google.oauth2.credentials.Credentials | None
+        """Load credentials from Gemini CLI's credential file.
 
-        Opens browser for Google OAuth login using the same client_id as
-        Gemini CLI. Saves credentials to ~/.gemini/oauth_creds.json for
-        future reuse.
+        When google-auth is available, returns a Credentials object with
+        refresh support. When google-auth is NOT available, returns a
+        lightweight _RawToken wrapper that provides the raw access_token
+        (no refresh capability).
 
         Returns:
-            google.oauth2.credentials.Credentials object.
-
-        Raises:
-            SDKNotAvailableError: If google-auth-oauthlib is not installed.
+            Credentials-like object if valid creds found, None otherwise.
         """
+        selected = self._select_credential_payload()
+        if selected is None:
+            logger.debug(
+                "[GeminiCLI] No managed or shared credentials found "
+                f"(shared path: {self._creds_path})"
+            )
+            return None
+
+        record, data = selected
+        logger.debug(
+            f"[GeminiCLI] Loaded credentials from {record.source}: {record.path}"
+        )
+        return self._build_credentials_from_data(data)
+
+    def _create_oauth_credentials(self) -> Any:  # google.oauth2.credentials.Credentials
+        """Run the interactive OAuth browser flow and return credentials."""
         if not _OAUTHLIB_AVAILABLE:
             raise SDKNotAvailableError(
                 "google-auth-oauthlib is required for OAuth login. "
@@ -275,21 +460,47 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
         )
 
         logger.info("[GeminiCLI] Opening browser for OAuth login...")
-        creds = flow.run_local_server(port=GEMINI_CLI_REDIRECT_PORT)
+
+        # Suppress raw stdout from google-auth-oauthlib's run_local_server
+        # (it prints "Please visit this URL...") and show Rich-styled output
+        with suppress_stdout():
+            return flow.run_local_server(port=GEMINI_CLI_REDIRECT_PORT)
+
+    def _run_oauth_flow(self) -> Any:  # google.oauth2.credentials.Credentials
+        """Run OAuth flow and persist the shared Gemini CLI credentials.
+
+        Returns:
+            google.oauth2.credentials.Credentials object.
+        """
+        show_oauth_start("gemini-cli")
+
+        creds = self._create_oauth_credentials()
 
         # Save credentials for future reuse
         self._save_credentials(creds)
 
+        show_oauth_success(
+            "gemini-cli",
+            detail=f"Saved to {self._creds_path}",
+        )
+
         return creds
 
-    def _save_credentials(self, creds: Any) -> None:
-        """Save credentials to the Gemini CLI credentials file.
+    def _save_credentials(
+        self,
+        creds: Any,
+        *,
+        path: Path | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Save credentials to disk.
 
         Args:
             creds: google.oauth2.credentials.Credentials object.
+            path: Target file path. Defaults to Gemini CLI shared path.
+            metadata: Additional metadata to persist alongside the token payload.
         """
-        creds_path = self._creds_path
-        creds_path.parent.mkdir(parents=True, exist_ok=True)
+        creds_path = path or self._creds_path
 
         data: dict[str, Any] = {
             "access_token": creds.token,
@@ -302,14 +513,17 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
             # Save as milliseconds Unix timestamp (Gemini CLI format)
             data["expiry_date"] = int(creds.expiry.timestamp() * 1000)
 
-        creds_path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        if metadata:
+            data.update(metadata)
+
+        atomic_write_json(creds_path, data, ensure_ascii=False)
         logger.debug(f"[GeminiCLI] Saved credentials to {creds_path}")
 
     async def _get_access_token(self) -> str:
         """Get a valid access token, refreshing or running OAuth if needed.
+
+        Uses an asyncio.Lock to prevent concurrent token refreshes and an
+        in-memory cache to avoid redundant disk reads / network refreshes.
 
         Returns:
             Valid access token string.
@@ -318,31 +532,183 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
             AuthenticationError: If authentication cannot be established.
             SDKNotAvailableError: If deps are missing AND no usable token exists.
         """
-        # 1. Try loading existing credentials
-        creds = self._load_credentials()
+        candidate_sources = {
+            str(record.path) for record, _ in self._get_credential_payload_candidates()
+        }
 
-        if creds is not None:
-            # 2. _RawToken (no google-auth) — use token directly
-            if isinstance(creds, _RawToken):
-                return creds.token
+        # Fast path: cached token still valid (lock-free)
+        now = time.monotonic()
+        if (
+            self._cached_token
+            and now < self._token_expiry
+            and (
+                (self._cached_token_source is None and not candidate_sources)
+                or self._cached_token_source in candidate_sources
+            )
+        ):
+            return self._cached_token
 
-            # 3. If valid, return immediately
-            if creds.valid and not creds.expired:
-                return creds.token
+        # Lazy-init lock (must be in async context where event loop exists)
+        if self._token_lock is None:
+            self._token_lock = asyncio.Lock()
 
-            # 4. If expired but has refresh token, try refreshing
-            if creds.expired and creds.refresh_token:
+        async with self._token_lock:
+            # Double-check after acquiring lock
+            candidate_sources = {
+                str(record.path)
+                for record, _ in self._get_credential_payload_candidates()
+            }
+            now = time.monotonic()
+            if (
+                self._cached_token
+                and now < self._token_expiry
+                and (
+                    (self._cached_token_source is None and not candidate_sources)
+                    or self._cached_token_source in candidate_sources
+                )
+            ):
+                return self._cached_token
+
+            token, cache_deadline, token_source = await self._acquire_token()
+
+            self._cached_token = token
+            self._token_expiry = cache_deadline
+            self._cached_token_source = token_source
+            return token
+
+    def _clear_cached_token(self) -> None:
+        """Invalidate the in-memory token cache."""
+        self._cached_token = None
+        self._token_expiry = 0.0
+        self._cached_token_source = None
+
+    def _clear_cached_project(self) -> None:
+        """Invalidate the cached project binding."""
+        self._project_id = None
+        self._project_source = None
+
+    @staticmethod
+    def _normalize_expiry_datetime(expiry: datetime) -> datetime:
+        """Normalize mixed naive/aware expiry timestamps to UTC-aware datetimes."""
+        if expiry.tzinfo is None:
+            return expiry.replace(tzinfo=UTC)
+        return expiry.astimezone(UTC)
+
+    def _compute_token_cache_deadline(
+        self,
+        creds: Any,
+        selected_data: dict[str, Any] | None,
+    ) -> float:
+        """Compute an in-memory cache deadline that never exceeds token expiry."""
+        expiry: datetime | None = None
+
+        raw_expiry = getattr(creds, "expiry", None)
+        if isinstance(raw_expiry, datetime):
+            expiry = self._normalize_expiry_datetime(raw_expiry)
+        elif isinstance(creds, _RawToken) and isinstance(selected_data, dict):
+            expiry_ms = selected_data.get("expiry_date")
+            if expiry_ms is not None:
+                try:
+                    expiry = datetime.fromtimestamp(float(expiry_ms) / 1000, tz=UTC)
+                except (ValueError, TypeError, OSError):
+                    expiry = None
+
+        if expiry is None:
+            return time.monotonic() + DEFAULT_TOKEN_CACHE_SECONDS
+
+        remaining_seconds = (expiry - datetime.now(UTC)).total_seconds()
+        safe_remaining = max(0.0, remaining_seconds - TOKEN_CACHE_SAFETY_MARGIN_SECONDS)
+        ttl_seconds = min(DEFAULT_TOKEN_CACHE_SECONDS, safe_remaining)
+        return time.monotonic() + ttl_seconds
+
+    async def _try_credentials_candidate(
+        self,
+        record: GeminiCredentialRecord,
+        selected_data: dict[str, Any],
+    ) -> tuple[str, float, str] | None:
+        """Try a single credential payload and return a token when it works."""
+        creds = self._build_credentials_from_data(selected_data)
+        if creds is None:
+            return None
+
+        if isinstance(creds, _RawToken):
+            return (
+                creds.token,
+                self._compute_token_cache_deadline(creds, selected_data),
+                str(record.path),
+            )
+
+        if creds.valid and not creds.expired:
+            return (
+                creds.token,
+                self._compute_token_cache_deadline(creds, selected_data),
+                str(record.path),
+            )
+
+        if creds.expired and creds.refresh_token:
+            max_retries = 2
+            for attempt in range(1 + max_retries):
                 try:
                     request = _google_auth_requests.Request()  # type: ignore[union-attr]
                     creds.refresh(request)
-                    self._save_credentials(creds)
-                    logger.debug("[GeminiCLI] Token refreshed successfully")
-                    return creds.token
-                except Exception as e:
-                    logger.warning(
-                        f"[GeminiCLI] Token refresh failed: {e}, "
-                        "falling back to OAuth flow"
+                    metadata: dict[str, Any] | None = None
+                    if record.source == "markitai":
+                        metadata = {
+                            key: selected_data.get(key)
+                            for key in (
+                                "email",
+                                "project_id",
+                                "auth_mode",
+                                "source",
+                            )
+                            if selected_data.get(key) is not None
+                        }
+                    self._save_credentials(
+                        creds,
+                        path=record.path,
+                        metadata=metadata,
                     )
+                    logger.debug(
+                        "[GeminiCLI] Token refreshed successfully from "
+                        f"{record.source}: {record.path}"
+                    )
+                    return (
+                        creds.token,
+                        self._compute_token_cache_deadline(creds, selected_data),
+                        str(record.path),
+                    )
+                except Exception as e:
+                    if attempt < max_retries:
+                        delay = 1.0 * (2**attempt)
+                        logger.debug(
+                            f"[GeminiCLI] Token refresh attempt {attempt + 1} "
+                            f"failed for {record.path}: {e}, "
+                            f"retrying in {delay:.0f}s"
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.warning(
+                            f"[GeminiCLI] Token refresh failed for {record.path} "
+                            f"after {1 + max_retries} attempts: {e}, "
+                            "trying next credential source"
+                        )
+
+        return None
+
+    async def _acquire_token(self) -> tuple[str, float, str | None]:
+        """Internal: acquire a fresh token (no caching/locking).
+
+        Returns:
+            Tuple of (valid access token string, monotonic cache deadline, source path).
+
+        Raises:
+            AuthenticationError: If authentication cannot be established.
+            SDKNotAvailableError: If deps are missing AND no usable token exists.
+        """
+        for record, selected_data in self._get_credential_payload_candidates():
+            token_result = await self._try_credentials_candidate(record, selected_data)
+            if token_result is not None:
+                return token_result
 
         # 5. No valid credentials — need google-auth-oauthlib for OAuth flow
         if not _GOOGLE_AUTH_AVAILABLE:
@@ -356,7 +722,7 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
 
         try:
             creds = self._run_oauth_flow()
-            return creds.token
+            return creds.token, self._compute_token_cache_deadline(creds, None), None
         except SDKNotAvailableError:
             raise
         except Exception as e:
@@ -364,47 +730,282 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
                 f"Failed to authenticate with Gemini CLI: {e}",
                 provider="gemini-cli",
                 resolution_hint=(
-                    "Run 'gemini login' to authenticate with Gemini CLI, "
-                    "or install google-auth-oauthlib: "
-                    "uv add 'markitai[gemini-cli]'"
+                    "Run 'markitai auth gemini login' to create a managed "
+                    "profile, or 'gemini login' to reuse Gemini CLI auth.\n"
+                    "Requires: uv add 'markitai[gemini-cli]'"
                 ),
             ) from e
 
-    async def _get_project_id(self, access_token: str) -> str | None:
-        """Discover GCP project ID via loadCodeAssist endpoint.
-
-        Results are cached after the first successful call.
-
-        Args:
-            access_token: Valid OAuth access token.
-
-        Returns:
-            Project ID string or None if discovery fails.
-        """
-        if self._project_id is not None:
-            return self._project_id
-
-        if httpx is None:
+    @staticmethod
+    def _extract_project_id(data: dict[str, Any] | None) -> str | None:
+        """Extract a project ID from Code Assist responses."""
+        if not isinstance(data, dict):
             return None
 
+        for key in ("cloudaicompanionProject", "cloudProject", "projectId"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if isinstance(value, dict):
+                nested_id = value.get("id")
+                if isinstance(nested_id, str) and nested_id.strip():
+                    return nested_id.strip()
+        return None
+
+    @staticmethod
+    def _extract_default_tier_id(data: dict[str, Any]) -> str:
+        """Extract the default tier from loadCodeAssist results."""
+        tiers = data.get("allowedTiers")
+        if isinstance(tiers, list):
+            for raw_tier in tiers:
+                if not isinstance(raw_tier, dict):
+                    continue
+                if raw_tier.get("isDefault") is True:
+                    tier_id = raw_tier.get("id")
+                    if isinstance(tier_id, str) and tier_id.strip():
+                        return tier_id.strip()
+        return "legacy-tier"
+
+    async def _call_code_assist_endpoint(
+        self,
+        endpoint: str,
+        access_token: str,
+        payload: dict[str, Any],
+        *,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        """Call a Code Assist endpoint and return the JSON body."""
+        if httpx is None:
+            raise SDKNotAvailableError(
+                "httpx is required for the gemini-cli provider.",
+                provider="gemini-cli",
+                install_command="uv add httpx",
+            )
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {access_token}"},
+                json=payload,
+            )
+
+        if resp.status_code == 401:
+            self._clear_cached_token()
+            self._clear_cached_project()
+            raise AuthenticationError(
+                f"Gemini CLI authentication failed (HTTP 401): {resp.text}",
+                provider="gemini-cli",
+                resolution_hint=(
+                    "Run 'markitai auth gemini login' to refresh your managed "
+                    "profile, or 'gemini login' to refresh shared CLI auth."
+                ),
+            )
+
+        if resp.status_code != 200:
+            raise ProviderError(
+                f"Code Assist API error (HTTP {resp.status_code}): {resp.text}",
+                provider="gemini-cli",
+            )
+
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
+    async def _fetch_user_email(self, access_token: str) -> str | None:
+        """Resolve the authenticated Google account email."""
+        if httpx is None:
+            raise SDKNotAvailableError(
+                "httpx is required for the gemini-cli provider.",
+                provider="gemini-cli",
+                install_command="uv add httpx",
+            )
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                GOOGLE_USERINFO_ENDPOINT,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+        if resp.status_code != 200:
+            return None
+
+        data = resp.json()
+        email = data.get("email") if isinstance(data, dict) else None
+        return email.strip() if isinstance(email, str) and email.strip() else None
+
+    async def _onboard_user(
+        self,
+        access_token: str,
+        tier_id: str,
+        *,
+        project_id: str | None,
+    ) -> str | None:
+        """Run Code Assist onboarding until a project binding is ready."""
+        payload: dict[str, Any] = {
+            "tierId": tier_id,
+            "metadata": dict(CODE_ASSIST_METADATA),
+        }
+        if project_id:
+            payload["cloudaicompanionProject"] = project_id
+
+        deadline = time.monotonic() + 30.0
+        while True:
+            data = await self._call_code_assist_endpoint(
+                CODE_ASSIST_ONBOARD_ENDPOINT,
+                access_token,
+                payload,
+                timeout=30.0,
+            )
+            if data.get("done") is True:
+                response = data.get("response")
+                if isinstance(response, dict):
+                    return self._extract_project_id(response) or project_id
+                return project_id
+
+            if time.monotonic() >= deadline:
+                return project_id
+            await asyncio.sleep(2)
+
+    async def _resolve_login_project(
+        self,
+        access_token: str,
+        *,
+        mode: str,
+        project_id: str | None = None,
+    ) -> str:
+        """Resolve a stable project binding during login."""
+        normalized_mode = mode.strip().lower()
+        if normalized_mode not in {"google-one", "code-assist"}:
+            raise AuthenticationError(
+                f"Unsupported Gemini auth mode: {mode}",
+                provider="gemini-cli",
+            )
+
+        requested_project = project_id.strip() if project_id else None
+        if normalized_mode == "code-assist" and not requested_project:
+            raise AuthenticationError(
+                "Code Assist mode requires --project-id.",
+                provider="gemini-cli",
+                resolution_hint="Run 'markitai auth gemini login --mode code-assist --project-id <PROJECT_ID>'.",
+            )
+
+        load_payload: dict[str, Any] = {"metadata": dict(CODE_ASSIST_METADATA)}
+        if requested_project:
+            load_payload["cloudaicompanionProject"] = requested_project
+
+        load_data = await self._call_code_assist_endpoint(
+            CODE_ASSIST_LOAD_ENDPOINT,
+            access_token,
+            load_payload,
+            timeout=15.0,
+        )
+        resolved_project = self._extract_project_id(load_data) or requested_project
+        tier_id = self._extract_default_tier_id(load_data)
+
+        if normalized_mode == "google-one":
+            if resolved_project:
+                return resolved_project
+            discovered = await self._onboard_user(
+                access_token,
+                tier_id,
+                project_id=None,
+            )
+            if discovered:
+                return discovered
+        else:
+            onboarded = await self._onboard_user(
+                access_token,
+                tier_id,
+                project_id=resolved_project,
+            )
+            if onboarded:
+                return onboarded
+
+        raise AuthenticationError(
+            "Failed to resolve a Gemini Code Assist project.",
+            provider="gemini-cli",
+            resolution_hint=(
+                "Try 'markitai auth gemini login --mode google-one', "
+                "or provide an explicit --project-id for Code Assist mode."
+            ),
+        )
+
+    async def alogin(
+        self,
+        *,
+        mode: str = "google-one",
+        project_id: str | None = None,
+    ) -> GeminiCredentialRecord:
+        """Run interactive Gemini OAuth and save a Markitai-managed profile."""
+        creds = self._create_oauth_credentials()
+        access_token = getattr(creds, "token", None)
+        if not isinstance(access_token, str) or not access_token:
+            raise AuthenticationError(
+                "OAuth login did not return a valid access token.",
+                provider="gemini-cli",
+            )
+
+        email = await self._fetch_user_email(access_token)
+        if not email:
+            raise AuthenticationError(
+                "Failed to resolve Google account email from Gemini login.",
+                provider="gemini-cli",
+            )
+
+        resolved_project = await self._resolve_login_project(
+            access_token,
+            mode=mode,
+            project_id=project_id,
+        )
+        profile_path = self._managed_profile_path(email, resolved_project)
+        metadata = {
+            "email": email,
+            "project_id": resolved_project,
+            "auth_mode": mode,
+            "source": "markitai",
+        }
+        self._save_credentials(creds, path=profile_path, metadata=metadata)
+        atomic_write_json(
+            self._active_profile_path,
+            {"credential_path": str(profile_path)},
+            ensure_ascii=False,
+        )
+        self._clear_cached_token()
+        self._clear_cached_project()
+        return GeminiCredentialRecord(
+            path=profile_path,
+            source="markitai",
+            email=email,
+            project_id=resolved_project,
+            auth_mode=mode,
+        )
+
+    async def _get_project_id(self, access_token: str) -> str | None:
+        """Resolve the project binding for the current credential profile."""
+        selected = self._select_credential_payload()
+        selected_source = str(selected[0].path) if selected is not None else None
+        if selected is not None:
+            record, _data = selected
+            if record.project_id:
+                return record.project_id
+
+        if self._project_id is not None and (
+            self._project_source == selected_source or self._project_source is None
+        ):
+            return self._project_id
+
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(
-                    CODE_ASSIST_LOAD_ENDPOINT,
-                    headers={"Authorization": f"Bearer {access_token}"},
-                    json={},
-                )
-            if resp.status_code == 200:
-                data = resp.json()
-                project = (
-                    data.get("cloudaicompanionProject")
-                    or data.get("cloudProject")
-                    or data.get("projectId")
-                )
-                if project:
-                    self._project_id = project
-                    logger.debug(f"[GeminiCLI] Discovered project: {project}")
-                    return project
+            data = await self._call_code_assist_endpoint(
+                CODE_ASSIST_LOAD_ENDPOINT,
+                access_token,
+                {},
+                timeout=15.0,
+            )
+            project = self._extract_project_id(data)
+            if project:
+                self._project_id = project
+                self._project_source = selected_source
+                logger.debug(f"[GeminiCLI] Discovered project: {project}")
+                return project
         except Exception as e:
             logger.debug(f"[GeminiCLI] Project discovery failed: {e}")
 
@@ -611,9 +1212,21 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
             ),
         )
 
-        # Store in hidden params for cost tracking
+        # Estimate cost using LiteLLM pricing for the underlying model
+        from markitai.providers import estimate_model_cost
+
+        # Map gemini-cli model name to standard gemini format for LiteLLM lookup
+        bare_model = model.replace("gemini-cli/", "")
+        cost_result = estimate_model_cost(bare_model, prompt_tokens, completion_tokens)
+        if cost_result.cost_usd == 0:
+            # Try with gemini/ prefix (LiteLLM registers Gemini models this way)
+            cost_result = estimate_model_cost(
+                f"gemini/{bare_model}", prompt_tokens, completion_tokens
+            )
         response._hidden_params = {
-            "total_cost_usd": 0.0,
+            "total_cost_usd": cost_result.cost_usd,
+            "cost_is_estimated": True,
+            "cost_source": cost_result.source,
         }
 
         return response
@@ -696,19 +1309,20 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
 
         # Handle error responses
         if resp.status_code == 401:
+            self._clear_cached_token()
+            self._clear_cached_project()
             raise AuthenticationError(
                 f"Gemini CLI authentication failed (HTTP 401): {resp.text}",
                 provider="gemini-cli",
                 resolution_hint=(
-                    "Run 'gemini login' to re-authenticate, or check "
-                    "that your Google account has access to Code Assist."
+                    "Run 'markitai auth gemini login' to refresh your managed "
+                    "profile, or 'gemini login' to refresh shared CLI auth."
                 ),
             )
 
         if resp.status_code == 429:
             raise QuotaError(
-                f"Code Assist rate limit exceeded after {MAX_429_RETRIES} "
-                f"retries: {resp.text}",
+                f"Code Assist rate limit exceeded: {resp.text}",
                 provider="gemini-cli",
             )
 
@@ -723,9 +1337,12 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
 
         result = self._parse_response(response_data, model)
 
-        logger.debug(
+        choice = result.choices[0]
+        content = getattr(choice, "message", None)
+        content_text = (content.content or "") if content else ""
+        logger.trace(
             f"[GeminiCLI] Completed in {elapsed:.2f}s, "
-            f"response_length={len(result.choices[0].message.content or '')}"
+            f"response_length={len(content_text)}"
         )
 
         return result

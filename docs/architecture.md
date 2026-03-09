@@ -2,7 +2,7 @@
 
 > 写给未来的自己，也写给每一个想深入理解这个项目的人。
 >
-> *版本：v0.8.0 | 最后更新：2026-03-06*
+> *版本：v0.8.1 | 最后更新：2026-03-06*
 
 ---
 
@@ -65,7 +65,8 @@ Markitai 由六个相互协作的子系统组成，每个都各司其职：
 #### 3. Converter 层 (`converter/` & `fetch.py`)
 这是"工人"。每种格式都有专门的转换器。
 - **PDF**：使用 `pymupdf4llm` 进行高质量提取。
-- **URL**：一个智能的策略链（Auto -> Static -> Playwright -> Cloudflare -> Jina），能自动应对反爬和动态渲染。
+- **URL**：一个智能的策略链（Defuddle -> Jina -> Static -> Playwright -> Cloudflare），能自动应对反爬和动态渲染。
+- **Defuddle**：免费内容提取 API（`defuddle.md/<url>`），返回带 YAML frontmatter 的干净 Markdown。作为首选策略，无需认证。
 - **Cloudflare**：`converter/cloudflare.py` 通过 Workers AI toMarkdown API 实现云端文档转换。
 
 #### 4. LLM 增强层 (`llm/`)
@@ -172,7 +173,7 @@ utils/
 - `LLMConfig`: LLM 相关设置
 - `OutputConfig`: 输出设置
 - `PromptsConfig`: Prompt 模板
-- `FetchConfig`: URL 抓取设置（含 `CloudflareConfig`, `FetchPolicyConfig`, `DomainProfileConfig`, `PlaywrightConfig`）
+- `FetchConfig`: URL 抓取设置（含 `DefuddleConfig`, `CloudflareConfig`, `FetchPolicyConfig`, `DomainProfileConfig`, `PlaywrightConfig`）
 - `BatchConfig`: 批量处理设置
 - `CacheConfig`: 缓存设置
 
@@ -283,7 +284,7 @@ def register_providers() -> None:
 
 **辅助函数**:
 - `count_tokens()`: Token 计数（tiktoken 或估算）
-- `calculate_copilot_cost()`: Copilot 成本估算
+- `estimate_model_cost()`: 通用模型成本估算
 - `validate_local_provider_deps()`: 依赖检查
 - `get_local_provider_model_info()`: 获取模型信息
 
@@ -461,14 +462,19 @@ Input File
 ```mermaid
 graph LR
     Start(开始) --> Auto[AUTO 模式]
-    Auto --> CheckCache{SPA 缓存?}
-    CheckCache -- 是 --> Browser[Playwright]
-    CheckCache -- 否 --> Static[静态抓取]
-    Static -- 失败/JS检测 --> Browser
+    Auto --> Defuddle[Defuddle API]
+    Defuddle -- 失败 --> Jina[Jina Reader]
+    Jina -- 失败 --> Static[静态抓取]
+    Static -- 失败/JS检测 --> Browser[Playwright]
     Browser -- 失败/反爬 --> CF[Cloudflare BR]
-    CF -- 失败 --> Jina[Jina Reader]
-    Jina -- 失败 --> Error(报错)
+    CF -- 失败 --> Error(报错)
 ```
+
+**策略排序逻辑**（v0.8.1+）：
+- **默认**：Defuddle → Jina → Static → Playwright → Cloudflare
+- **SPA 站点**：Defuddle → Jina → Playwright → Cloudflare → Static
+- Defuddle 和 Jina 作为免费 API 策略始终排在前两位，它们可能已有服务端渲染能力
+- **NOTE**：Defuddle 的速率限制未公开文档化，当前使用保守默认值（20 RPM）
 
 **有趣的细节**：
 -   **SPA 学习机制**：如果你抓取 `x.com` 失败并发现需要 JS，系统会记住这个域名。下次你再抓取 `x.com` 的任何链接，系统会直接跳过静态抓取，直接启动浏览器，节省时间。
@@ -483,24 +489,27 @@ URL Input
 | (AUTO)        |
 +-------+-------+
         |
-        +---> STATIC ---> requests ---> HTML
+        +---> DEFUDDLE ---> defuddle.md API ---> Markdown + Frontmatter
+        |
+        +---> JINA ---> Jina Reader API ---> Markdown
+        |
+        +---> STATIC ---> httpx/curl-cffi ---> HTML
         |
         +---> PLAYWRIGHT ---> Playwright ---> Rendered HTML
         |
         +---> CLOUDFLARE ---> CF BR API ---> Markdown
         |
-        +---> JINA ---> Jina API ---> Markdown
-        |
         v
 +---------------+
 | Content       |
-| Extraction    |
+| Validation    |
+| Gate          |
 +-------+-------+
         |
         v
 +---------------+
 | Markdown      |
-| Conversion    |
+| Output        |
 +---------------+
 ```
 
@@ -564,13 +573,17 @@ URL Input
 
 ### 5. 策略模式处理 URL 抓取
 
-**决策**: 实现 AUTO -> STATIC -> BROWSER -> JINA 策略链
+**决策**: 实现 DEFUDDLE -> JINA -> STATIC -> PLAYWRIGHT -> CLOUDFLARE 策略链
 
 **原因**:
 - 不同站点需要不同策略
-- 静态抓取速度快、成本低
-- 浏览器渲染处理 SPA
-- Jina API 作为后备方案
+- Defuddle 免费、无需认证、返回最干净的 Markdown（含结构化 frontmatter）
+- Jina 同样免费、高质量，作为二号选择
+- 静态抓取速度快、成本低、无外部依赖
+- 浏览器渲染处理 SPA 和需要 JS 的站点
+- Cloudflare Workers AI 作为最终后备
+
+**TODO**: 将 defuddle 开源核心（https://github.com/kepano/defuddle）迁移到 markitai native，消除外部 API 依赖
 
 ### 6. 模块重构的必要性
 

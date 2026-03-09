@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -300,6 +301,102 @@ class TestFetchWithPlaywright:
         assert result.final_url == "https://example.com/final"
         assert "content" in result.content.lower()
         assert result.metadata["renderer"] == "playwright"
+
+    @pytest.mark.asyncio
+    async def test_fetch_prefers_native_webextract_when_available(self) -> None:
+        """Uses native webextract output before falling back to full-page conversion."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        @dataclass
+        class _Metadata:
+            title: str | None = None
+            author: str | None = None
+
+        renderer = PlaywrightRenderer()
+        mock_context = AsyncMock()
+        mock_page = AsyncMock()
+
+        mock_page.title = AsyncMock(return_value="Fallback Title")
+        mock_page.url = "https://example.com/post"
+        mock_page.content = AsyncMock(
+            return_value="<html><body><article><p>Hello</p></article></body></html>"
+        )
+        mock_page.goto = AsyncMock()
+        mock_page.evaluate = AsyncMock()
+        mock_page.inner_text = AsyncMock(return_value="Hello")
+
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        renderer._browser = mock_browser
+        renderer._playwright = AsyncMock()
+
+        with patch(
+            "markitai.fetch_playwright.extract_web_content", create=True
+        ) as mock_extract:
+            mock_extract.return_value = MagicMock(
+                markdown="# Hello\n\nBody",
+                metadata=_Metadata(title="Hello", author="Jane"),
+                diagnostics={"extractor": "generic"},
+            )
+
+            result = await renderer.fetch(
+                "https://example.com/post",
+                extra_wait_ms=0,
+            )
+
+        assert result.content == "# Hello\n\nBody"
+        assert result.title == "Hello"
+        assert result.metadata["source_frontmatter"]["author"] == "Jane"
+        assert result.metadata["webextract_diagnostics"]["extractor"] == "generic"
+
+    @pytest.mark.asyncio
+    async def test_fetch_falls_back_when_native_webextract_errors(self) -> None:
+        """Native extraction errors should preserve the baseline markdown path."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        renderer = PlaywrightRenderer()
+        mock_context = AsyncMock()
+        mock_page = AsyncMock()
+
+        mock_page.title = AsyncMock(return_value="Fallback Title")
+        mock_page.url = "https://example.com/post"
+        mock_page.content = AsyncMock(
+            return_value="<html><body><article><p>Hello</p></article></body></html>"
+        )
+        mock_page.goto = AsyncMock()
+        mock_page.evaluate = AsyncMock()
+        mock_page.inner_text = AsyncMock(return_value="Hello")
+
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        renderer._browser = mock_browser
+        renderer._playwright = AsyncMock()
+
+        with (
+            patch(
+                "markitai.fetch_playwright._html_to_markdown",
+                return_value="# Fallback\n\nBody",
+            ),
+            patch(
+                "markitai.fetch_playwright.extract_web_content",
+                side_effect=RuntimeError("native failure"),
+                create=True,
+            ),
+        ):
+            result = await renderer.fetch(
+                "https://example.com/post",
+                extra_wait_ms=0,
+            )
+
+        assert result.content == "# Fallback\n\nBody"
+        assert result.title == "Fallback Title"
+        assert "source_frontmatter" not in result.metadata
 
 
 class TestPlaywrightRenderer:

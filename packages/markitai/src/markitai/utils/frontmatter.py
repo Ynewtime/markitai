@@ -7,9 +7,43 @@ from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 from loguru import logger
+
+LOW_CONFIDENCE_TITLE_SUFFIXES = {".csv", ".tsv", ".xml"}
+_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
+_TITLE_HTML_TAG_RE = re.compile(r"</?(?:strong|em|b|i|code)>", re.IGNORECASE)
+
+
+def _normalize_title_text(title: str) -> str:
+    """Normalize lightweight markdown formatting from a title candidate."""
+    cleaned = " ".join(title.split())
+    if not cleaned:
+        return ""
+
+    cleaned = re.sub(r"^#{1,6}\s+", "", cleaned)
+    cleaned = _MARKDOWN_IMAGE_RE.sub(r"\1", cleaned)
+    cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
+    cleaned = _TITLE_HTML_TAG_RE.sub("", cleaned)
+
+    wrappers = ("**", "__", "~~", "`", "*", "_")
+    changed = True
+    while changed and cleaned:
+        changed = False
+        for wrapper in wrappers:
+            if (
+                cleaned.startswith(wrapper)
+                and cleaned.endswith(wrapper)
+                and len(cleaned) > len(wrapper) * 2
+            ):
+                cleaned = cleaned[len(wrapper) : -len(wrapper)].strip()
+                changed = True
+                break
+
+    return " ".join(cleaned.split())
 
 
 def extract_title_from_content(content: str, fallback: str = "") -> str:
@@ -37,17 +71,17 @@ def extract_title_from_content(content: str, fallback: str = "") -> str:
     # Try to find H1 heading first (priority 1)
     h1_match = _find_heading(content_without_frontmatter, level=1)
     if h1_match:
-        return _truncate_title(h1_match)
+        return _truncate_title(_normalize_title_text(h1_match))
 
     # Try to find H2 heading (priority 2)
     h2_match = _find_heading(content_without_frontmatter, level=2)
     if h2_match:
-        return _truncate_title(h2_match)
+        return _truncate_title(_normalize_title_text(h2_match))
 
     # Fall back to first non-empty, non-comment line (priority 3)
     first_line = _find_first_content_line(content_without_frontmatter)
     if first_line:
-        return _truncate_title(first_line)
+        return _truncate_title(_normalize_title_text(first_line))
 
     return fallback
 
@@ -79,6 +113,41 @@ def extract_frontmatter_title(content: str) -> str | None:
         pass
 
     return None
+
+
+def source_supports_content_title(source: str) -> bool:
+    """Return whether content-derived titles are trusted for this source."""
+    return _source_suffix(source) not in LOW_CONFIDENCE_TITLE_SUFFIXES
+
+
+def fallback_title_from_source(source: str) -> str:
+    """Build a stable fallback title from the source identifier."""
+    source_name = _source_name(source)
+    if _source_suffix(source) in LOW_CONFIDENCE_TITLE_SUFFIXES:
+        return source_name or source
+
+    stem = Path(source_name).stem
+    return stem or source_name or source
+
+
+def resolve_document_title(
+    *,
+    source: str,
+    explicit_title: str | None = None,
+    content: str = "",
+    extractor: Any | None = None,
+) -> str:
+    """Resolve a stable document title from explicit, content, or source fallback."""
+    if explicit_title:
+        return _normalize_title_text(explicit_title)
+
+    if content and source_supports_content_title(source):
+        title_extractor = extractor or extract_title_from_content
+        extracted = title_extractor(content)
+        if extracted:
+            return extracted
+
+    return fallback_title_from_source(source)
 
 
 def _strip_frontmatter(content: str) -> str:
@@ -196,6 +265,33 @@ def _truncate_title(title: str, max_length: int = 100) -> str:
     return title[:max_length]
 
 
+def _source_name(source: str) -> str:
+    """Extract a display-friendly source name from path or URL."""
+    parsed = urlparse(source)
+    if parsed.scheme and parsed.netloc:
+        path_name = Path(parsed.path).name
+        return path_name or parsed.netloc
+
+    path_name = Path(source).name
+    return path_name or source
+
+
+def _source_suffix(source: str) -> str:
+    """Extract lowercase suffix from path or URL source."""
+    return Path(_source_name(source)).suffix.lower()
+
+
+def frontmatter_timestamp() -> str:
+    """Generate consistent ISO 8601 timestamp for frontmatter.
+
+    Format: 2026-03-06T14:20:21.123+08:00 (milliseconds precision, with timezone)
+
+    Returns:
+        ISO 8601 timestamp string
+    """
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+
 def build_frontmatter_dict(
     *,
     source: str,
@@ -203,6 +299,8 @@ def build_frontmatter_dict(
     tags: list[str] | None = None,
     title: str | None = None,
     content: str = "",
+    fetch_strategy: str | None = None,
+    extra_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build complete frontmatter dict with programmatic fields.
 
@@ -212,33 +310,23 @@ def build_frontmatter_dict(
         tags: LLM-generated tags
         title: Optional explicit title, or extracted from content
         content: Content for title extraction if title not provided
+        fetch_strategy: Optional fetch strategy used (e.g., "defuddle")
+        extra_meta: Optional extra metadata from external strategies
+            (will not override canonical fields)
 
     Returns:
-        Complete frontmatter dict with fields:
-        - title (extracted or provided)
-        - source
-        - description
-        - tags (if provided and non-empty)
-        - markitai_processed (ISO 8601 timestamp)
+        Complete frontmatter dict
     """
     # Determine title
-    if title:
-        final_title = title
-    elif content:
-        # Try to extract from content
-        extracted = extract_title_from_content(content)
-        if extracted:
-            final_title = extracted
-        else:
-            # Fallback to source filename without extension
-            final_title = _filename_to_title(source)
-    else:
-        # No content, use source filename
-        final_title = _filename_to_title(source)
+    final_title = resolve_document_title(
+        source=source,
+        explicit_title=title,
+        content=content,
+    )
 
     # Normalize title: replace newlines with spaces, collapse whitespace, limit length
     if final_title:
-        final_title = " ".join(final_title.split())
+        final_title = _normalize_title_text(final_title)
         # Truncate to avoid YAML line-wrapping issues in parsers like Obsidian
         if len(final_title) > 200:
             final_title = final_title[:197] + "..."
@@ -250,7 +338,7 @@ def build_frontmatter_dict(
         if len(normalized_desc) > 150:
             normalized_desc = normalized_desc[:147] + "..."
     else:
-        logger.warning(f"[{source}] Empty description in frontmatter")
+        logger.debug(f"[{source}] Empty description in frontmatter")
 
     # Normalize tags: replace spaces with hyphens, remove special chars
     normalized_tags: list[str] = []
@@ -266,8 +354,18 @@ def build_frontmatter_dict(
             if tag:  # Only add non-empty tags
                 normalized_tags.append(tag)
 
-    # Generate timestamp
-    timestamp = datetime.now().isoformat(timespec="seconds")
+    # Generate timestamp (consistent format across .md and .llm.md)
+    timestamp = frontmatter_timestamp()
+
+    # Canonical fields that extra_meta must not override
+    canonical_keys = {
+        "title",
+        "source",
+        "description",
+        "tags",
+        "markitai_processed",
+        "fetch_strategy",
+    }
 
     # Build ordered dict to preserve field order
     result: dict[str, Any] = OrderedDict()
@@ -279,9 +377,19 @@ def build_frontmatter_dict(
     if normalized_tags:
         result["tags"] = normalized_tags
     else:
-        logger.warning(f"[{source}] Empty tags in frontmatter")
+        logger.debug(f"[{source}] Empty tags in frontmatter")
 
     result["markitai_processed"] = timestamp
+
+    # Add fetch_strategy if provided
+    if fetch_strategy:
+        result["fetch_strategy"] = fetch_strategy
+
+    # Merge extra metadata from external strategies (after canonical fields)
+    if extra_meta:
+        for key, value in extra_meta.items():
+            if key not in canonical_keys and value is not None:
+                result[key] = value
 
     return result
 

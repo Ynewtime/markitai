@@ -7,9 +7,7 @@ from unittest.mock import MagicMock
 
 from markitai.workflow.helpers import (
     add_basic_frontmatter,
-    detect_language,
     format_standalone_image_markdown,
-    get_language_name,
     merge_llm_usage,
     normalize_frontmatter,
     write_images_json,
@@ -94,57 +92,6 @@ class TestNormalizeFrontmatter:
         assert result == "just a string"
 
 
-class TestDetectLanguage:
-    """Tests for detect_language function."""
-
-    def test_empty_content(self):
-        """Test with empty content returns English."""
-        assert detect_language("") == "en"
-
-    def test_english_content(self):
-        """Test English content."""
-        assert detect_language("This is a test document with English content.") == "en"
-
-    def test_chinese_content(self):
-        """Test Chinese content."""
-        assert detect_language("这是一个测试文档，包含中文内容。") == "zh"
-
-    def test_mixed_content_mostly_chinese(self):
-        """Test mixed content with majority Chinese."""
-        # More than 10% CJK should return zh
-        assert detect_language("Hello 你好世界测试 World") == "zh"
-
-    def test_mixed_content_mostly_english(self):
-        """Test mixed content with majority English."""
-        assert (
-            detect_language(
-                "This is a very long English sentence with just one 字 character."
-            )
-            == "en"
-        )
-
-    def test_only_symbols(self):
-        """Test content with only symbols returns English."""
-        assert detect_language("123 !@#$%^&*()") == "en"
-
-
-class TestGetLanguageName:
-    """Tests for get_language_name function."""
-
-    def test_chinese_code(self):
-        """Test Chinese language code."""
-        assert get_language_name("zh") == "Chinese"
-
-    def test_english_code(self):
-        """Test English language code."""
-        assert get_language_name("en") == "English"
-
-    def test_unknown_code(self):
-        """Test unknown language code defaults to English."""
-        assert get_language_name("fr") == "English"
-        assert get_language_name("unknown") == "English"
-
-
 class TestAddBasicFrontmatter:
     """Tests for add_basic_frontmatter function."""
 
@@ -167,12 +114,19 @@ class TestAddBasicFrontmatter:
         # Should extract "Bold Title" without # and **
         assert "title: Bold Title" in result
 
-    def test_uses_source_as_title_fallback(self):
-        """Test that source is used as title when no heading found."""
+    def test_uses_stem_as_title_fallback_for_document_sources(self):
+        """Document-like sources should fall back to a stable stem title."""
         content = "No heading here, just content."
         result = add_basic_frontmatter(content, "document.pdf")
 
-        assert "title: document.pdf" in result
+        assert "title: document" in result
+
+    def test_structured_sources_keep_filename_title(self):
+        """Structured sources should not derive title from markdown headings."""
+        content = "# Reminder\n\nStructured content."
+        result = add_basic_frontmatter(content, "sample.xml")
+
+        assert "title: sample.xml" in result
 
 
 class TestMergeLlmUsage:
@@ -243,8 +197,8 @@ class TestWriteImagesJson:
         """Test writing images JSON file."""
         from markitai.workflow.single import ImageAnalysisResult
 
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
         results = [
             ImageAnalysisResult(
@@ -272,8 +226,8 @@ class TestWriteImagesJson:
 
         from markitai.workflow.single import ImageAnalysisResult
 
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
         # Create existing images.json (using new field names)
         existing = {
@@ -322,23 +276,29 @@ class TestFormatStandaloneImageMarkdown:
         analysis.extracted_text = ""
 
         result = format_standalone_image_markdown(
-            Path("sunset.jpg"), analysis, "assets/sunset.jpg", include_frontmatter=False
+            Path("sunset.jpg"),
+            analysis,
+            ".markitai/assets/sunset.jpg",
+            include_frontmatter=False,
         )
 
         assert "# sunset" in result
-        assert "![A beautiful sunset](assets/sunset.jpg)" in result
+        assert "![A beautiful sunset](.markitai/assets/sunset.jpg)" in result
         assert "A sunset over the ocean" in result
         assert "---" not in result  # No frontmatter
 
     def test_with_frontmatter(self):
-        """Test formatting with frontmatter."""
+        """Frontmatter should carry metadata without expanding body content."""
         analysis = MagicMock()
         analysis.caption = "A beautiful sunset"
         analysis.description = "A sunset over the ocean"
         analysis.extracted_text = ""
 
         result = format_standalone_image_markdown(
-            Path("sunset.jpg"), analysis, "assets/sunset.jpg", include_frontmatter=True
+            Path("sunset.jpg"),
+            analysis,
+            ".markitai/assets/sunset.jpg",
+            include_frontmatter=True,
         )
 
         assert "---" in result
@@ -349,6 +309,24 @@ class TestFormatStandaloneImageMarkdown:
         assert "- image" in result
         assert "markitai_processed:" in result
 
+    def test_with_frontmatter_preserves_analysis_sections(self):
+        """Standalone .llm.md output should retain detailed analysis content."""
+        analysis = MagicMock()
+        analysis.caption = "Document scan"
+        analysis.description = "A scanned document"
+        analysis.extracted_text = "Some extracted text from OCR"
+
+        result = format_standalone_image_markdown(
+            Path("scan.png"),
+            analysis,
+            ".markitai/assets/scan.png",
+            include_frontmatter=True,
+        )
+
+        assert "## Image Description" in result
+        assert "## Extracted Text" in result
+        assert "Some extracted text from OCR" in result
+
     def test_with_extracted_text(self):
         """Test formatting with extracted text."""
         analysis = MagicMock()
@@ -357,7 +335,10 @@ class TestFormatStandaloneImageMarkdown:
         analysis.extracted_text = "Some extracted text from OCR"
 
         result = format_standalone_image_markdown(
-            Path("scan.png"), analysis, "assets/scan.png", include_frontmatter=False
+            Path("scan.png"),
+            analysis,
+            ".markitai/assets/scan.png",
+            include_frontmatter=False,
         )
 
         assert "## Extracted Text" in result
@@ -372,12 +353,44 @@ class TestFormatStandaloneImageMarkdown:
         analysis.extracted_text = ""
 
         result = format_standalone_image_markdown(
-            Path("test.jpg"), analysis, "assets/test.jpg", include_frontmatter=False
+            Path("test.jpg"),
+            analysis,
+            ".markitai/assets/test.jpg",
+            include_frontmatter=False,
         )
 
-        # Should not have "## Image Description" since description starts with #
         assert "## Custom Section" in result
         assert "## Image Description" not in result
+
+
+class TestFormatStandaloneImageYamlSafety:
+    """Test that format_standalone_image_markdown produces valid YAML."""
+
+    def test_special_chars_in_caption_produce_valid_yaml(self):
+        """Captions with colons/quotes should produce parseable YAML frontmatter."""
+        import yaml
+
+        analysis = MagicMock()
+        analysis.caption = "Photo: \"A sunset\" at O'Brien's pier"
+        analysis.description = "A sunset over the ocean"
+        analysis.extracted_text = ""
+
+        result = format_standalone_image_markdown(
+            Path("sunset.jpg"),
+            analysis,
+            ".markitai/assets/sunset.jpg",
+            include_frontmatter=True,
+        )
+
+        # Extract frontmatter
+        parts = result.split("---")
+        assert len(parts) >= 3, "Should have frontmatter delimiters"
+        fm_text = parts[1]
+        # Must be parseable YAML
+        parsed = yaml.safe_load(fm_text)
+        assert "sunset" in parsed.get(
+            "description", ""
+        ).lower() or "Photo" in parsed.get("description", "")
 
 
 class TestNormalizeFrontmatterPromptLeakage:
@@ -433,39 +446,6 @@ class TestNormalizeFrontmatterPromptLeakage:
         assert "title: Test" in result
         assert "author: John Doe" in result
         assert "version: '1.0'" in result or "version: 1.0" in result
-
-
-class TestDetectLanguageEdgeCases:
-    """Edge case tests for detect_language function."""
-
-    def test_japanese_kanji_detected_as_cjk(self):
-        """Test that Japanese kanji are detected as CJK."""
-        # Japanese uses some of the same CJK characters
-        assert detect_language("日本語のテストです") == "zh"
-
-    def test_korean_not_detected_as_chinese(self):
-        """Test that Korean Hangul is not detected as Chinese."""
-        # Korean Hangul is in a different Unicode range
-        assert detect_language("한글 테스트입니다") == "en"
-
-    def test_threshold_boundary_10_percent(self):
-        """Test the 10% CJK threshold boundary."""
-        # Exactly 10% should be English (not > 10%)
-        # 10 chars total, 1 Chinese = 10%
-        content = "abcdefghi中"  # 9 English letters + 1 Chinese
-        assert detect_language(content) == "en"
-
-        # Just over 10%: 9 chars, 1 Chinese = 11.1%
-        content = "abcdefgh中"  # 8 English letters + 1 Chinese
-        assert detect_language(content) == "zh"
-
-    def test_punctuation_and_numbers_ignored(self):
-        """Test that punctuation and numbers don't affect the ratio."""
-        # Only alphabetic characters should be counted
-        content = "Hello, 世界! 123"
-        # 5 English letters (Hello) + 2 Chinese (世界) = 7 alphabetic
-        # 2/7 = 28.5% CJK, should be detected as Chinese
-        assert detect_language(content) == "zh"
 
 
 class TestAddBasicFrontmatterAdvanced:
@@ -551,6 +531,102 @@ class TestAddBasicFrontmatterAdvanced:
         result = add_basic_frontmatter(content, "file.txt")
 
         assert "title: Section Title" in result
+
+
+class TestBasicFrontmatterConsistency:
+    """Tests for frontmatter consistency in add_basic_frontmatter."""
+
+    def test_timestamp_format_has_timezone(self):
+        """markitai_processed in .md should have timezone and milliseconds."""
+        import re
+
+        content = "# Test\n\nContent"
+        result = add_basic_frontmatter(content, "file.txt")
+        # Extract timestamp from frontmatter
+        for line in result.split("\n"):
+            if "markitai_processed:" in line:
+                ts = line.split("markitai_processed:")[1].strip().strip("'\"")
+                assert re.match(
+                    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$",
+                    ts,
+                ), f"Timestamp format wrong: {ts}"
+                break
+        else:
+            raise AssertionError("markitai_processed not found in frontmatter")
+
+    def test_base_and_llm_frontmatter_generate_independent_timestamps(self):
+        """Base and LLM frontmatter generation should not reuse the same timestamp."""
+        from unittest.mock import patch
+
+        from markitai.utils.frontmatter import build_frontmatter_dict
+
+        with patch(
+            "markitai.utils.frontmatter.frontmatter_timestamp",
+            side_effect=[
+                "2026-03-07T00:46:22.123+08:00",
+                "2026-03-07T00:46:22.456+08:00",
+            ],
+        ):
+            base = add_basic_frontmatter("# Test\n\nContent", "file.txt")
+            llm = build_frontmatter_dict(
+                source="file.txt",
+                description="Desc",
+                content="# Test\n\nContent",
+            )
+
+        assert "markitai_processed: '2026-03-07T00:46:22.123+08:00'" in base
+        assert llm["markitai_processed"] == "2026-03-07T00:46:22.456+08:00"
+
+    def test_extra_meta_merged_into_frontmatter(self):
+        """Extra metadata should appear in .md frontmatter."""
+        import yaml
+
+        content = "# Test\n\nContent"
+        extra = {"author": "John Doe", "published": "2024-01-15"}
+        result = add_basic_frontmatter(content, "https://example.com", extra_meta=extra)
+        # Parse frontmatter
+        fm_text = result.split("---")[1]
+        parsed = yaml.safe_load(fm_text)
+        assert parsed["author"] == "John Doe"
+        assert parsed["published"] == "2024-01-15"
+
+    def test_extra_meta_does_not_override_core_fields(self):
+        """Extra meta must not override title/source/markitai_processed."""
+        import yaml
+
+        content = "# Test\n\nContent"
+        extra = {"title": "WRONG", "source": "WRONG"}
+        result = add_basic_frontmatter(content, "https://example.com", extra_meta=extra)
+        fm_text = result.split("---")[1]
+        parsed = yaml.safe_load(fm_text)
+        assert parsed["source"] == "https://example.com"
+        assert parsed["title"] != "WRONG"
+
+    def test_native_source_metadata_uses_stable_field_order(self):
+        """Native source metadata should serialize in a stable, readable order."""
+        result = add_basic_frontmatter(
+            "# Test\n\nContent",
+            "https://example.com",
+            fetch_strategy="static",
+            extra_meta={
+                "author": "Jane Doe",
+                "site": "Example",
+                "published": "2026-02-01",
+                "canonical_url": "https://example.com/canonical",
+            },
+        )
+
+        title_pos = result.find("title:")
+        source_pos = result.find("source:")
+        author_pos = result.find("author:")
+        site_pos = result.find("site:")
+        published_pos = result.find("published:")
+        canonical_pos = result.find("canonical_url:")
+        processed_pos = result.find("markitai_processed:")
+        fetch_pos = result.find("fetch_strategy:")
+
+        assert title_pos < source_pos < author_pos < site_pos < published_pos
+        assert published_pos < canonical_pos < processed_pos < fetch_pos
 
 
 class TestMergeLlmUsageEdgeCases:

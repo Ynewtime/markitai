@@ -38,6 +38,12 @@ from loguru import logger
 if TYPE_CHECKING:
     from markitai.config import LLMConfig, PromptsConfig
 
+# Optional: cairosvg for SVG → PNG rasterization (LLM vision)
+try:
+    import cairosvg
+except ImportError:
+    cairosvg = None  # type: ignore[assignment]
+
 from markitai.constants import (
     DEFAULT_IO_CONCURRENCY,
     DEFAULT_MAX_RETRIES,
@@ -59,7 +65,7 @@ from markitai.llm.types import (
 from markitai.llm.vision import VisionMixin
 from markitai.prompts import PromptManager
 from markitai.providers.common import has_images
-from markitai.utils.text import format_error_message
+from markitai.utils.text import format_error_message, preview_items_for_log
 
 # =============================================================================
 # Local Provider Support
@@ -113,6 +119,9 @@ class LocalProviderWrapper:
                 self._model_groups[model_name] = []
             self._model_groups[model_name].append((model_id, weight))
 
+        # Per-model cooldown tracking (model_id → monotonic expiry time)
+        self._model_cooldowns: dict[str, float] = {}
+
         # Log model groups for debugging
         for name, models in self._model_groups.items():
             if len(models) > 1:
@@ -135,6 +144,18 @@ class LocalProviderWrapper:
             True if model has confirmed image support
         """
         return any(model_id.startswith(p) for p in self._IMAGE_CAPABLE_PATTERNS)
+
+    def record_cooldown(self, model_id: str, seconds: float) -> None:
+        """Record that a model should be avoided for the given duration.
+
+        Args:
+            model_id: The model identifier to put in cooldown
+            seconds: Duration in seconds to avoid routing to this model
+        """
+        self._model_cooldowns[model_id] = time.monotonic() + seconds
+        logger.info(
+            f"[LocalProviderWrapper] Model {model_id} in cooldown for {seconds:.0f}s"
+        )
 
     def _select_model(self, model_name: str, has_images: bool = False) -> str:
         """Select a model using weighted random selection (simple-shuffle).
@@ -177,6 +198,22 @@ class LocalProviderWrapper:
             # All weights are 0 — uniform random selection
             return random.choice(models)[0]
 
+        # Filter out models in cooldown
+        if self._model_cooldowns:
+            now = time.monotonic()
+            available = [
+                (m, w) for m, w in active if self._model_cooldowns.get(m, 0) <= now
+            ]
+            if not available:
+                # All active models in cooldown — pick soonest to expire
+                soonest = min(active, key=lambda x: self._model_cooldowns.get(x[0], 0))
+                logger.debug(
+                    f"[LocalProviderWrapper] All models in cooldown, "
+                    f"using soonest-expiring: {soonest[0]}"
+                )
+                return soonest[0]
+            active = available
+
         if len(active) == 1:
             return active[0][0]
 
@@ -217,30 +254,46 @@ class LocalProviderWrapper:
         # Remove metadata since litellm.acompletion doesn't support it
         kwargs.pop("metadata", None)
 
-        # Check if this model's provider has a directly registered handler.
-        # This is needed for providers like chatgpt/ where LiteLLM has a
-        # native handler that takes priority over custom_provider_map.
-        # We call ALL local provider handlers directly for consistency.
-        if "/" in model_id:
-            from markitai.providers import get_provider
+        try:
+            # Check if this model's provider has a directly registered handler.
+            # This is needed for providers like chatgpt/ where LiteLLM has a
+            # native handler that takes priority over custom_provider_map.
+            # We call ALL local provider handlers directly for consistency.
+            if "/" in model_id:
+                from markitai.providers import get_provider
 
-            provider_prefix = model_id.split("/", 1)[0]
-            handler = get_provider(provider_prefix)
-            if handler is not None:
-                response = await handler.acompletion(
-                    model=model_id,
-                    messages=messages,
-                    **kwargs,
-                )
-                return response
+                provider_prefix = model_id.split("/", 1)[0]
+                handler = get_provider(provider_prefix)
+                if handler is not None:
+                    response = await handler.acompletion(
+                        model=model_id,
+                        messages=messages,
+                        **kwargs,
+                    )
+                    return response
 
-        # Fallback to litellm.acompletion for models without a registered handler
-        response = await litellm.acompletion(
-            model=model_id,
-            messages=messages,
-            **kwargs,
-        )
-        return response
+            # Fallback to litellm.acompletion for models without a registered handler
+            response = await litellm.acompletion(
+                model=model_id,
+                messages=messages,
+                **kwargs,
+            )
+            return response
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_rate_limit = any(
+                p in error_msg
+                for p in ("429", "rate limit", "quota", "too many requests")
+            )
+            if is_rate_limit:
+                cooldown_seconds = 60.0
+                import re as _re
+
+                match = _re.search(r"(\d+)\s*s", error_msg)
+                if match:
+                    cooldown_seconds = float(match.group(1))
+                self.record_cooldown(model_id, cooldown_seconds)
+            raise
 
 
 def _is_all_local_providers(model_list: list[dict[str, Any]]) -> bool:
@@ -274,6 +327,18 @@ class HybridRouter:
     - Local provider models -> LocalProviderWrapper
     - Standard models -> LiteLLM Router
     """
+
+    # Model-level error patterns that indicate the model itself is unavailable
+    # (not a content/request issue). These warrant long cooldown.
+    MODEL_LEVEL_ERROR_PATTERNS = (
+        "user location is not supported",
+        "failed_precondition",
+        "model is not available",
+        "model not found",
+        "model_not_available",
+        "region is not supported",
+        "not available in your region",
+    )
 
     def __init__(
         self,
@@ -332,6 +397,9 @@ class HybridRouter:
                 if self._is_image_capable(m)
             ]
 
+        # Per-model cooldown tracking (model_id → monotonic expiry time)
+        self._model_cooldowns: dict[str, float] = {}
+
         # Log hybrid router configuration
         local_models = [m for m, _, is_local in self._all_models if is_local]
         standard_models = [m for m, _, is_local in self._all_models if not is_local]
@@ -359,6 +427,16 @@ class HybridRouter:
         # Standard models - check litellm model info
         info = get_model_info_cached(model_id)
         return info.get("supports_vision", False)
+
+    def record_cooldown(self, model_id: str, seconds: float) -> None:
+        """Record that a model should be avoided for the given duration.
+
+        Args:
+            model_id: The model identifier to put in cooldown
+            seconds: Duration in seconds to avoid routing to this model
+        """
+        self._model_cooldowns[model_id] = time.monotonic() + seconds
+        logger.info(f"[HybridRouter] Model {model_id} in cooldown for {seconds:.0f}s")
 
     def _select_model(self, model_name: str, has_images: bool = False) -> str:
         """Select a model using weighted random selection.
@@ -399,6 +477,24 @@ class HybridRouter:
             # All weights are 0 — uniform random selection
             return random.choice(models)[0]
 
+        # Filter out models in cooldown
+        if self._model_cooldowns:
+            now = time.monotonic()
+            available = [
+                (m, w, loc)
+                for m, w, loc in active
+                if self._model_cooldowns.get(m, 0) <= now
+            ]
+            if not available:
+                # All active models in cooldown — pick soonest to expire
+                soonest = min(active, key=lambda x: self._model_cooldowns.get(x[0], 0))
+                logger.debug(
+                    f"[HybridRouter] All models in cooldown, "
+                    f"using soonest-expiring: {soonest[0]}"
+                )
+                return soonest[0]
+            active = available
+
         if len(active) == 1:
             return active[0][0]
 
@@ -432,14 +528,49 @@ class HybridRouter:
         has_images = self._has_images(messages)
         selected_model = self._select_model(model, has_images)
 
-        if self._is_local_model(selected_model):
-            logger.debug(f"[HybridRouter] Routing to local provider: {selected_model}")
-            return await self.local_wrapper.acompletion(
-                selected_model, messages, **kwargs
+        try:
+            if self._is_local_model(selected_model):
+                logger.debug(
+                    f"[HybridRouter] Routing to local provider: {selected_model}"
+                )
+                return await self.local_wrapper.acompletion(
+                    selected_model, messages, **kwargs
+                )
+            else:
+                logger.debug(
+                    f"[HybridRouter] Routing to standard router: {selected_model}"
+                )
+                return await self.standard_router.acompletion(
+                    selected_model, messages, **kwargs
+                )
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_rate_limit = any(
+                p in error_msg
+                for p in ("429", "rate limit", "quota", "too many requests")
             )
-        else:
-            logger.debug(f"[HybridRouter] Routing to standard router: {selected_model}")
-            return await self.standard_router.acompletion(model, messages, **kwargs)
+            if is_rate_limit:
+                cooldown_seconds = 60.0
+                import re as _re
+
+                match = _re.search(r"(\d+)\s*s", error_msg)
+                if match:
+                    cooldown_seconds = float(match.group(1))
+                self.record_cooldown(selected_model, cooldown_seconds)
+
+            # Model-level errors: region restriction, model not available, etc.
+            # Apply long cooldown so retries pick a different model.
+            is_model_level = any(
+                p in error_msg for p in self.MODEL_LEVEL_ERROR_PATTERNS
+            )
+            if is_model_level:
+                self.record_cooldown(selected_model, 3600.0)
+                logger.warning(
+                    f"[HybridRouter] Model {selected_model} unavailable "
+                    f"(model-level error), cooldown 3600s: "
+                    f"{format_error_message(e)}"
+                )
+            raise
 
     @property
     def model_list(self) -> list[dict[str, Any]]:
@@ -647,13 +778,15 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         if not self.config.model_list:
             raise ValueError("No models configured in llm.model_list")
 
-        # Import availability check
-        from markitai.providers import is_local_provider_available
-
         # Build model list with resolved API keys and max_tokens
         # Skip models whose SDKs are not available
+        from markitai.config import EnvVarNotFoundError
+        from markitai.providers import is_local_provider_available
+
         model_list = []
         skipped_models = []
+        disabled_models = []
+        skipped_env_vars: list[str] = []
         for model_config in self.config.model_list:
             model_id = model_config.litellm_params.model
 
@@ -664,7 +797,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
 
             # weight <= 0 means model is disabled (e.g. no API quota)
             if model_config.litellm_params.weight <= 0:
-                logger.debug(f"[Router] Skipping disabled model (weight=0): {model_id}")
+                disabled_models.append(model_id)
                 continue
 
             model_entry = {
@@ -674,12 +807,30 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                 },
             }
 
-            # Add optional params
-            api_key = model_config.litellm_params.get_resolved_api_key()
+            # Add optional params — skip model if env var is missing
+            try:
+                api_key = model_config.litellm_params.get_resolved_api_key()
+            except EnvVarNotFoundError as e:
+                skipped_env_vars.append(e.var_name)
+                logger.warning(
+                    f"[Router] Skipping model {model_id}: "
+                    f"environment variable {e.var_name} not set"
+                )
+                continue
+
             if api_key:
                 model_entry["litellm_params"]["api_key"] = api_key
 
-            api_base = model_config.litellm_params.get_resolved_api_base()
+            try:
+                api_base = model_config.litellm_params.get_resolved_api_base()
+            except EnvVarNotFoundError as e:
+                skipped_env_vars.append(e.var_name)
+                logger.warning(
+                    f"[Router] Skipping model {model_id}: "
+                    f"environment variable {e.var_name} not set"
+                )
+                continue
+
             if api_base:
                 model_entry["litellm_params"]["api_base"] = api_base
 
@@ -700,7 +851,12 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         if skipped_models:
             logger.debug(
                 f"[Router] Skipped {len(skipped_models)} models (SDK unavailable): "
-                f"{', '.join(skipped_models)}"
+                f"{preview_items_for_log(skipped_models)}"
+            )
+        if disabled_models:
+            logger.debug(
+                f"[Router] Skipped {len(disabled_models)} disabled models (weight=0): "
+                f"{preview_items_for_log(disabled_models)}"
             )
 
         if not model_list:
@@ -711,6 +867,12 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                 raise ValueError(
                     f"All {disabled_count} configured models have weight=0 (disabled). "
                     "Set weight > 0 on at least one model to enable it."
+                )
+            if skipped_env_vars:
+                vars_str = ", ".join(skipped_env_vars)
+                raise ValueError(
+                    f"No available models: missing environment variable(s): {vars_str}. "
+                    "Set them via 'export VAR=value' or add to .env file."
                 )
             raise ValueError(
                 "No available models after filtering. "
@@ -728,9 +890,9 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         # LiteLLM Router doesn't support custom providers, so we use a wrapper
         if _is_all_local_providers(model_list):
             logger.info(
-                f"[Router] Creating LocalProviderWrapper for {len(model_list)} local models"
+                f"[Router] Local provider pool ({len(model_list)}): "
+                f"{preview_items_for_log(model_names)}"
             )
-            logger.debug(f"[Router] Local models: {', '.join(model_names)}")
             return LocalProviderWrapper(model_list=model_list)
 
         # Separate local providers from standard models
@@ -783,9 +945,8 @@ class LLMProcessor(VisionMixin, DocumentMixin):
 
         logger.info(
             f"[Router] Creating with strategy={router_settings.get('routing_strategy')}, "
-            f"models={len(standard_models)}"
+            f"models={len(standard_models)}: {preview_items_for_log(standard_names)}"
         )
-        logger.debug(f"[Router] Models: {', '.join(standard_names)}")
 
         return standard_router
 
@@ -804,12 +965,14 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         Returns:
             Router, LocalProviderWrapper, or HybridRouter instance
         """
-        # Import availability check
-        from markitai.providers import is_local_provider_available
-
         # Build model list with resolved API keys and max_tokens
         # Skip models whose SDKs are not available
+        from markitai.config import EnvVarNotFoundError
+        from markitai.providers import is_local_provider_available
+
         model_list = []
+        disabled_models = []
+        skipped_env_vars: list[str] = []
         for model_config in models:
             model_id = model_config.litellm_params.model
 
@@ -819,7 +982,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
 
             # weight <= 0 means model is disabled (e.g. no API quota)
             if model_config.litellm_params.weight <= 0:
-                logger.debug(f"[Router] Skipping disabled model (weight=0): {model_id}")
+                disabled_models.append(model_id)
                 continue
 
             model_entry = {
@@ -829,12 +992,30 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                 },
             }
 
-            # Add optional params
-            api_key = model_config.litellm_params.get_resolved_api_key()
+            # Add optional params — skip model if env var is missing
+            try:
+                api_key = model_config.litellm_params.get_resolved_api_key()
+            except EnvVarNotFoundError as e:
+                skipped_env_vars.append(e.var_name)
+                logger.warning(
+                    f"[Router] Skipping model {model_id}: "
+                    f"environment variable {e.var_name} not set"
+                )
+                continue
+
             if api_key:
                 model_entry["litellm_params"]["api_key"] = api_key
 
-            api_base = model_config.litellm_params.get_resolved_api_base()
+            try:
+                api_base = model_config.litellm_params.get_resolved_api_base()
+            except EnvVarNotFoundError as e:
+                skipped_env_vars.append(e.var_name)
+                logger.warning(
+                    f"[Router] Skipping model {model_id}: "
+                    f"environment variable {e.var_name} not set"
+                )
+                continue
+
             if api_base:
                 model_entry["litellm_params"]["api_base"] = api_base
 
@@ -852,6 +1033,12 @@ class LLMProcessor(VisionMixin, DocumentMixin):
 
         if not model_list:
             disabled_count = sum(1 for m in models if m.litellm_params.weight <= 0)
+            if skipped_env_vars:
+                vars_str = ", ".join(skipped_env_vars)
+                raise ValueError(
+                    f"No available models: missing environment variable(s): {vars_str}. "
+                    "Set them via 'export VAR=value' or add to .env file."
+                )
             if disabled_count == len(models):
                 raise ValueError(
                     f"All {disabled_count} configured models have weight=0 (disabled). "
@@ -862,14 +1049,14 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                 "Check that required SDKs are installed for configured models."
             )
 
+        if disabled_models:
+            logger.debug(
+                f"[Router] Skipped {len(disabled_models)} disabled models (weight=0): "
+                f"{preview_items_for_log(disabled_models)}"
+            )
+
         # Check if all models use local providers
         if _is_all_local_providers(model_list):
-            model_names = [
-                e["litellm_params"]["model"].split("/")[-1] for e in model_list
-            ]
-            logger.debug(
-                f"[Router] Using LocalProviderWrapper: {', '.join(model_names)}"
-            )
             return LocalProviderWrapper(model_list=model_list)
 
         # Separate local providers from standard models
@@ -980,9 +1167,9 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                     m.litellm_params.model.split("/")[-1] for m in enabled_vision
                 ]
                 logger.info(
-                    f"[Router] Creating vision router with {len(enabled_vision)} models"
+                    f"[Router] Vision router ({len(enabled_vision)}): "
+                    f"{preview_items_for_log(model_names)}"
                 )
-                logger.debug(f"[Router] Vision models: {', '.join(model_names)}")
                 self._vision_router = self._create_router_from_models(enabled_vision)
 
         return self._vision_router
@@ -1106,7 +1293,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
 
         # If target model info unavailable, return None to let LiteLLM handle it
         if not max_context or not max_output:
-            logger.debug(
+            logger.trace(
                 f"[DynamicTokens] Could not get limits for model={target_model_id}, "
                 "returning None to use LiteLLM defaults"
             )
@@ -1130,7 +1317,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         min_floor = 4000 if is_table_heavy else 1000
         max_tokens = max(max_tokens, min_floor)
 
-        logger.debug(
+        logger.trace(
             f"[DynamicTokens] input_est={input_tokens}, model={target_model_id}, "
             f"max_output_lim={max_output}, calculated={max_tokens}"
         )
@@ -1334,10 +1521,40 @@ class LLMProcessor(VisionMixin, DocumentMixin):
 
                 except Exception as e:
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
-                    status_code = getattr(e, "status_code", "N/A")
+                    error_msg_lower = str(e).lower()
+
+                    # Model-level errors are retryable (HybridRouter cooldown
+                    # ensures the next attempt picks a different model)
+                    if any(
+                        p in error_msg_lower
+                        for p in HybridRouter.MODEL_LEVEL_ERROR_PATTERNS
+                    ):
+                        last_exception = e
+                        status_code = getattr(e, "status_code", "N/A")
+                        if attempt < max_retries:
+                            logger.warning(
+                                f"[LLM:{call_id}] Model-level error "
+                                f"(status={status_code}), retrying: "
+                                f"{format_error_message(e)} "
+                                f"time={elapsed_ms:.0f}ms"
+                            )
+                            delay = min(
+                                DEFAULT_RETRY_BASE_DELAY * (2**attempt),
+                                DEFAULT_RETRY_MAX_DELAY,
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        else:
+                            logger.error(
+                                f"[LLM:{call_id}] Model-level error after "
+                                f"{max_retries + 1} attempts: "
+                                f"{format_error_message(e)} "
+                                f"time={elapsed_ms:.0f}ms"
+                            )
+                            raise
 
                     # Check for authentication errors and provide friendly hints
-                    error_msg_lower = str(e).lower()
+                    status_code = getattr(e, "status_code", "N/A")
                     auth_patterns = (
                         "authentication",
                         "api_key",
@@ -1551,6 +1768,22 @@ class LLMProcessor(VisionMixin, DocumentMixin):
             except Exception as e:
                 logger.warning(
                     "[LLM] Failed to convert {} to PNG: {}", image_path.name, e
+                )
+
+        # Rasterize SVG to PNG via cairosvg (optional dependency)
+        if image_path.suffix.lower() == ".svg" and cairosvg is not None:
+            try:
+                image_data = cairosvg.svg2png(
+                    bytestring=image_data,
+                    output_width=2048,
+                )
+                logger.debug(
+                    "[LLM] Rasterized {} to PNG for LLM compatibility",
+                    image_path.name,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[LLM] Failed to rasterize SVG {}: {}", image_path.name, e
                 )
 
         # Check size limit (5MB API limit after base64 encoding)

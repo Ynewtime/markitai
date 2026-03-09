@@ -3,6 +3,7 @@
 This package contains CLI command groups for Markitai.
 
 Available command groups:
+- auth: Authentication helpers
 - config: Configuration management commands
 - cache: Cache management commands
 - doctor: System health and dependency checking command
@@ -19,13 +20,14 @@ import importlib
 from typing import Any
 
 _LAZY_MAP: dict[str, tuple[str, str]] = {
+    "auth": ("markitai.cli.commands.auth", "auth"),
     "cache": ("markitai.cli.commands.cache", "cache"),
     "config": ("markitai.cli.commands.config", "config"),
     "doctor": ("markitai.cli.commands.doctor", "doctor"),
     "init": ("markitai.cli.commands.init", "init"),
 }
 
-__all__ = ["cache", "config", "doctor", "init"]  # pyright: ignore[reportUnsupportedDunderAll]
+__all__ = ["auth", "cache", "config", "doctor", "init"]  # pyright: ignore[reportUnsupportedDunderAll]
 
 
 def __getattr__(name: str) -> Any:

@@ -15,7 +15,12 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from markitai.constants import IMAGE_EXTENSIONS
+from markitai.constants import (
+    ASSETS_REL_PATH,
+    IMAGE_EXTENSIONS,
+    MARKITAI_META_DIR,
+    SCREENSHOTS_REL_PATH,
+)
 from markitai.converter.base import FileFormat, detect_format, get_converter
 from markitai.image import ImageProcessor
 from markitai.security import (
@@ -377,8 +382,11 @@ def write_base_markdown(ctx: ConversionContext) -> ConversionStepResult:
             success=False, error="Missing conversion result or output file"
         )
 
+    title = ctx.conversion_result.metadata.get("title")
     base_md_content = add_basic_frontmatter(
-        ctx.conversion_result.markdown, ctx.input_path.name
+        ctx.conversion_result.markdown,
+        ctx.input_path.name,
+        title=title if isinstance(title, str) else None,
     )
     atomic_write_text(ctx.output_file, base_md_content)
     logger.debug(f"Written output: {ctx.output_file}")
@@ -389,15 +397,25 @@ def write_base_markdown(ctx: ConversionContext) -> ConversionStepResult:
 def get_saved_images(ctx: ConversionContext) -> list[Path]:
     """Get list of saved images for this file from assets directory.
 
+    Handles transcoded formats (e.g. BMP/TIFF→PNG) by checking the
+    ``asset_path`` metadata from the converter before falling back
+    to a glob on the original file name.
+
     Args:
         ctx: Conversion context
 
     Returns:
         List of image file paths
     """
-    assets_dir = ctx.output_dir / "assets"
+    assets_dir = ctx.output_dir / MARKITAI_META_DIR / "assets"
     if not assets_dir.exists():
         return []
+
+    # Check converter metadata for explicit asset_path (handles transcoded files)
+    if ctx.conversion_result and "asset_path" in ctx.conversion_result.metadata:
+        asset_path = ctx.output_dir / ctx.conversion_result.metadata["asset_path"]
+        if asset_path.exists() and asset_path.suffix.lower() in IMAGE_EXTENSIONS:
+            return [asset_path]
 
     escaped_name = escape_glob_pattern(ctx.input_path.name)
     saved_images = list(assets_dir.glob(f"{escaped_name}*"))
@@ -436,7 +454,7 @@ def apply_alt_text_updates(
                 continue
 
             pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(asset_path.name)}\)"
-            new_ref = f"![{alt_text}](assets/{asset_path.name})"
+            new_ref = f"![{alt_text}]({ASSETS_REL_PATH}/{asset_path.name})"
             patterns.append(pattern)
             replacements[asset_path.name] = new_ref
 
@@ -460,6 +478,53 @@ def apply_alt_text_updates(
         logger.warning(f"Failed to apply alt text updates: {e}")
 
     return False
+
+
+def _split_frontmatter_and_body(content: str) -> tuple[str | None, str]:
+    """Split markdown content into a frontmatter block and body."""
+    if content.startswith("---\n"):
+        closing = content.find("\n---\n", 4)
+        if closing != -1:
+            return content[4:closing], content[closing + 5 :].lstrip("\n")
+    return None, content
+
+
+def stabilize_written_llm_output(
+    ctx: ConversionContext,
+    processor: Any,
+) -> bool:
+    """Re-stabilize a written .llm.md file against its base .md sibling."""
+    if ctx.output_file is None or ctx.conversion_result is None:
+        return False
+
+    llm_output = ctx.output_file.with_suffix(".llm.md")
+    if not llm_output.exists():
+        return False
+
+    from markitai.workflow.helpers import maybe_stabilize_markdown
+    from markitai.workflow.single import _read_markdown_body
+
+    baseline_markdown = _read_markdown_body(
+        ctx.output_file,
+        ctx.conversion_result.markdown,
+    )
+    llm_content = llm_output.read_text(encoding="utf-8")
+    frontmatter, llm_body = _split_frontmatter_and_body(llm_content)
+    stabilized = maybe_stabilize_markdown(
+        processor, baseline_markdown, llm_body, ctx.input_path.name
+    )
+    if stabilized == llm_body:
+        return False
+
+    rewritten_body = stabilized.rstrip()
+    if frontmatter is None:
+        rewritten = rewritten_body
+    else:
+        rewritten = f"---\n{frontmatter}\n---\n\n{rewritten_body}"
+
+    atomic_write_text(llm_output, rewritten)
+    logger.debug(f"[{ctx.input_path.name}] Rewrote stabilized LLM output file")
+    return True
 
 
 async def process_with_vision_llm(
@@ -494,6 +559,9 @@ async def process_with_vision_llm(
         ctx.config,
         processor=processor,
     )
+    document_title = ctx.conversion_result.metadata.get("title")
+    if not isinstance(document_title, str):
+        document_title = None
 
     # Check for screenshot-only mode
     use_screenshot_only = ctx.config.screenshot.screenshot_only
@@ -508,6 +576,7 @@ async def process_with_vision_llm(
         ) = await workflow.extract_from_screenshots(
             page_images,
             source=ctx.input_path.name,
+            original_title=document_title,
         )
     else:
         # Standard mode: use extracted text + screenshots for enhancement
@@ -524,6 +593,7 @@ async def process_with_vision_llm(
             extracted_text,
             page_images,
             source=ctx.input_path.name,
+            original_title=document_title,
         )
     ctx.llm_cost += enhance_cost
     merge_llm_usage(ctx.llm_usage, enhance_usage)
@@ -532,7 +602,7 @@ async def process_with_vision_llm(
     commented_images_str = ""
     if page_images:
         commented_images = [
-            f"<!-- ![Page {img['page']}](screenshots/{img['name']}) -->"
+            f"<!-- ![Page {img['page']}]({SCREENSHOTS_REL_PATH}/{img['name']}) -->"
             for img in sorted(page_images, key=lambda x: x.get("page", 0))
         ]
         commented_images_str = "\n\n<!-- Page images for reference -->\n" + "\n".join(
@@ -548,7 +618,7 @@ async def process_with_vision_llm(
     )
 
     # Validate image references
-    assets_dir = ctx.output_dir / "assets"
+    assets_dir = ctx.output_dir / MARKITAI_META_DIR / "assets"
     if assets_dir.exists():
         ctx.conversion_result.markdown = ImageProcessor.remove_nonexistent_images(
             ctx.conversion_result.markdown, assets_dir
@@ -617,8 +687,9 @@ async def process_with_standard_llm(
         # Standard LLM processing
         logger.info(f"[LLM] {ctx.input_path.name}: Starting standard LLM processing")
 
-        # Save original markdown for base .md file
-        original_markdown = ctx.conversion_result.markdown
+        document_title = ctx.conversion_result.metadata.get("title")
+        if not isinstance(document_title, str):
+            document_title = None
 
         # Check if image analysis should run
         should_analyze_images = (
@@ -632,6 +703,7 @@ async def process_with_standard_llm(
                 ctx.conversion_result.markdown,
                 ctx.input_path.name,
                 ctx.output_file,
+                title=document_title,
             )
             img_task = workflow.analyze_images(
                 saved_images,
@@ -667,13 +739,12 @@ async def process_with_standard_llm(
                 ctx.conversion_result.markdown,
                 ctx.input_path.name,
                 ctx.output_file,
+                title=document_title,
             )
             ctx.llm_cost += doc_cost
             merge_llm_usage(ctx.llm_usage, doc_usage)
 
-        # Re-write base .md with original markdown (without LLM alt text)
-        base_md_content = add_basic_frontmatter(original_markdown, ctx.input_path.name)
-        atomic_write_text(ctx.output_file, base_md_content)
+        stabilize_written_llm_output(ctx, processor)
 
     return ConversionStepResult(success=True)
 
@@ -854,6 +925,8 @@ async def convert_document_core(
             if ctx.config.image.alt_enabled and ctx.image_analysis and ctx.output_file:
                 llm_output = ctx.output_file.with_suffix(".llm.md")
                 apply_alt_text_updates(llm_output, ctx.image_analysis)
+
+            stabilize_written_llm_output(ctx, ctx.shared_processor)
         else:
             # Standard LLM mode
             result = await process_with_standard_llm(ctx)

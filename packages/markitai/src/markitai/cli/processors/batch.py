@@ -40,6 +40,9 @@ if TYPE_CHECKING:
 
 console = get_console()
 
+# Re-export from package for backwards compatibility
+from markitai.cli.processors import run_parallel_llm_tasks as _run_parallel_llm_tasks
+
 
 def create_process_file(
     cfg: MarkitaiConfig,
@@ -231,6 +234,7 @@ def create_url_processor(
                 filename = url_to_filename(url)
 
             logger.debug(f"[URL] Processing: {url} (strategy: {_fetch_strategy.value})")
+            source_extra_meta: dict[str, Any] | None = None
 
             # Fetch URL using the configured strategy
             try:
@@ -251,6 +255,7 @@ def create_url_processor(
                 extra_info["fetch_strategy"] = fetch_result.strategy_used
                 original_markdown = fetch_result.content
                 screenshot_path = fetch_result.screenshot_path
+                source_extra_meta = fetch_result.metadata.get("source_frontmatter")
                 cache_status = " [cache]" if fetch_result.cache_hit else ""
                 logger.debug(
                     f"[URL] Fetched via {fetch_result.strategy_used}{cache_status}: {url}"
@@ -329,6 +334,7 @@ def create_url_processor(
                 screenshot_path=screenshot_path,
                 output_dir=output_dir,
                 title=fetch_result.title if fetch_result else None,
+                extra_meta=source_extra_meta,
             )
             atomic_write_text(output_file, base_content)
 
@@ -368,15 +374,28 @@ def create_url_processor(
 
                     if should_analyze_images:
                         # Run vision enhancement and image analysis in parallel
-                        vision_task = process_url_with_vision(
-                            multi_source_content,
-                            screenshot_path,
-                            url,
-                            cfg,
-                            output_file,
-                            processor=shared_processor,
-                            original_title=fetch_result.title if fetch_result else None,
-                        )
+                        llm_ready_event = asyncio.Event()
+
+                        async def _vision_with_signal():
+                            try:
+                                return await process_url_with_vision(
+                                    multi_source_content,
+                                    screenshot_path,
+                                    url,
+                                    cfg,
+                                    output_file,
+                                    processor=shared_processor,
+                                    original_title=fetch_result.title
+                                    if fetch_result
+                                    else None,
+                                    fetch_strategy=fetch_result.strategy_used
+                                    if fetch_result
+                                    else None,
+                                    extra_meta=source_extra_meta,
+                                )
+                            finally:
+                                llm_ready_event.set()
+
                         img_task = analyze_images_with_llm(
                             downloaded_images,
                             multi_source_content,
@@ -385,11 +404,14 @@ def create_url_processor(
                             Path(url),
                             concurrency_limit=cfg.llm.concurrency,
                             processor=shared_processor,
+                            llm_ready_event=llm_ready_event,
                         )
 
                         # Execute in parallel
-                        vision_result, img_result = await asyncio.gather(
-                            vision_task, img_task
+                        vision_result, img_result = await _run_parallel_llm_tasks(
+                            _vision_with_signal(),
+                            img_task,
+                            llm_ready_event,
                         )
 
                         # Unpack results
@@ -407,17 +429,34 @@ def create_url_processor(
                             output_file,
                             processor=shared_processor,
                             original_title=fetch_result.title if fetch_result else None,
+                            fetch_strategy=fetch_result.strategy_used
+                            if fetch_result
+                            else None,
+                            extra_meta=source_extra_meta,
                         )
                         llm_cost = cost
                 elif should_analyze_images:
                     # Standard processing with image analysis
-                    doc_task = process_with_llm(
-                        markdown_for_llm,
-                        url,
-                        cfg,
-                        output_file,
-                        processor=shared_processor,
-                    )
+                    llm_ready_event = asyncio.Event()
+
+                    async def _doc_with_signal():
+                        try:
+                            return await process_with_llm(
+                                markdown_for_llm,
+                                url,
+                                cfg,
+                                output_file,
+                                screenshot_path=screenshot_path,
+                                processor=shared_processor,
+                                fetch_strategy=fetch_result.strategy_used
+                                if fetch_result
+                                else None,
+                                extra_meta=source_extra_meta,
+                                title=fetch_result.title if fetch_result else None,
+                            )
+                        finally:
+                            llm_ready_event.set()
+
                     img_task = analyze_images_with_llm(
                         downloaded_images,
                         markdown_for_llm,
@@ -426,10 +465,15 @@ def create_url_processor(
                         Path(url),  # Use URL as source path
                         concurrency_limit=cfg.llm.concurrency,
                         processor=shared_processor,
+                        llm_ready_event=llm_ready_event,
                     )
 
                     # Execute in parallel
-                    doc_result, img_result = await asyncio.gather(doc_task, img_task)
+                    doc_result, img_result = await _run_parallel_llm_tasks(
+                        _doc_with_signal(),
+                        img_task,
+                        llm_ready_event,
+                    )
 
                     # Unpack results
                     _, cost, url_llm_usage = doc_result
@@ -444,7 +488,13 @@ def create_url_processor(
                         url,
                         cfg,
                         output_file,
+                        screenshot_path=screenshot_path,
                         processor=shared_processor,
+                        fetch_strategy=fetch_result.strategy_used
+                        if fetch_result
+                        else None,
+                        extra_meta=source_extra_meta,
+                        title=fetch_result.title if fetch_result else None,
                     )
                     llm_cost = cost
 
@@ -492,6 +542,7 @@ async def process_batch(
     log_file_path: Path | None = None,
     fetch_strategy: FetchStrategy | None = None,
     explicit_fetch_strategy: bool = False,
+    glob_patterns: tuple[str, ...] = (),
 ) -> None:
     """Process directory in batch mode."""
     from datetime import datetime
@@ -502,10 +553,11 @@ async def process_batch(
         warn_case_sensitivity_mismatches,
     )
     from markitai.security import check_symlink_safety
-    from markitai.urls import find_url_list_files, parse_url_list
+    from markitai.urls import parse_url_list
 
     # Supported extensions
     extensions = set(EXTENSION_MAP.keys())
+    normalized_globs = [pattern.strip() for pattern in glob_patterns if pattern.strip()]
 
     # Build task options for report (before BatchProcessor init for hash calculation)
     # Note: input_dir and output_dir will be converted to absolute paths by init_state()
@@ -516,7 +568,10 @@ async def process_batch(
         "screenshot": cfg.screenshot.enabled,
         "alt": cfg.image.alt_enabled,
         "desc": cfg.image.desc_enabled,
+        "scan_max_depth": cfg.batch.scan_max_depth,
     }
+    if normalized_globs:
+        task_options["glob_patterns"] = normalized_globs
     if cfg.llm.enabled and cfg.llm.model_list:
         task_options["models"] = [m.litellm_params.model for m in cfg.llm.model_list]
 
@@ -528,10 +583,14 @@ async def process_batch(
         on_conflict=cfg.output.on_conflict,
         task_options=task_options,
     )
-    files = batch.discover_files(input_dir, extensions)
+    files = batch.discover_files(input_dir, extensions, glob_patterns=normalized_globs)
 
     # Discover .urls files for URL batch processing
-    url_list_files = find_url_list_files(input_dir)
+    url_list_files = batch.discover_files(
+        input_dir,
+        {".urls"},
+        glob_patterns=normalized_globs,
+    )
     url_entries_from_files: list = []  # List of (source_file, UrlEntry)
 
     for url_file in url_list_files:

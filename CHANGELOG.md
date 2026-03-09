@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-03-06
+
+### Added
+
+- **Defuddle Fetch Strategy**: New `defuddle` strategy (`GET https://defuddle.md/<url>`) as top-priority URL fetch method — free, no auth, returns clean Markdown with YAML frontmatter (title, author, published, description, word_count, domain)
+- **Aggressive Strategy Ordering**: Default ordering changed to `defuddle → jina → static → playwright → cloudflare` (both default and SPA scenarios)
+- **CLI `--defuddle` Flag**: Force defuddle-only URL fetching (mutually exclusive with `--playwright`, `--jina`, `--cloudflare`)
+- **DefuddleConfig**: Configurable timeout and RPM rate limiting (conservative defaults for undocumented API limits)
+
+### Changed
+
+- **FetchPolicyEngine**: Simplified ordering logic — removed `has_jina_key` branching; defuddle+jina always first
+- **max_strategy_hops**: Default increased from 4 to 5 to accommodate the new strategy
+
 ## [0.8.0] - 2026-03-06
 
 ### Added

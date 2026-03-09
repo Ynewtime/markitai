@@ -62,7 +62,13 @@ from markitai.providers.common import (
     messages_to_prompt,
     sync_completion,
 )
-from markitai.providers.errors import ProviderError, classify_and_raise_provider_error
+from markitai.providers.errors import (
+    AuthenticationError as MarkitaiAuthError,
+)
+from markitai.providers.errors import (
+    ProviderError,
+    classify_and_raise_provider_error,
+)
 from markitai.providers.json_mode import StructuredOutputHandler
 from markitai.providers.timeout import calculate_timeout_from_messages
 
@@ -204,6 +210,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
             raise RuntimeError("LiteLLM not available. Install with: uv add litellm")
         self.timeout = timeout
         self._client: Any = None
+        self._fatal_error: ProviderError | None = None
         self._temp_files: list[str] = []
         self._json_handler = StructuredOutputHandler()
 
@@ -421,31 +428,102 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         result = self._json_handler.extract_json(text)
         return result if result is not None else text
 
+    def _build_fatal_provider_error(self, error_msg: str) -> ProviderError | None:
+        """Classify non-retryable Copilot runtime failures.
+
+        These failures are deterministic for the current process and should not
+        trigger additional Copilot session attempts.
+
+        Args:
+            error_msg: Stringified underlying SDK error
+
+        Returns:
+            ProviderError when the failure should be cached, else None
+        """
+        error_msg_lower = error_msg.lower()
+
+        if "failed to list models" in error_msg_lower:
+            return ProviderError(error_msg, provider="copilot", retryable=False)
+
+        return None
+
+    async def _cache_fatal_error(self, error: ProviderError) -> None:
+        """Cache a fatal error and tear down the current client."""
+        self._fatal_error = error
+
+        if self._client is None:
+            return
+
+        try:
+            await self._client.stop()
+        except Exception as stop_error:
+            logger.debug(
+                f"[Copilot] Client stop warning after fatal error: {stop_error}"
+            )
+        finally:
+            self._client = None
+
     async def _get_client(self) -> Any:
         """Get or create Copilot client.
 
-        Automatically finds the Copilot CLI path on Windows where npm/pnpm
-        global installations may not be in the subprocess PATH.
+        Prefer the SDK-bundled CLI because it is guaranteed to match the
+        installed SDK protocol version. Fall back to a PATH-discovered CLI
+        only when the bundled binary is unavailable.
+
+        After starting the CLI, performs a fast auth check via
+        ``get_auth_status()`` and raises immediately if the user is not
+        authenticated (prevents silent 60s timeout hangs).
 
         Returns:
             CopilotClient instance
 
         Raises:
             FileNotFoundError: If Copilot CLI is not installed
+            AuthenticationError: If Copilot CLI is not authenticated
         """
+        if self._fatal_error is not None:
+            raise self._fatal_error
+
         if self._client is None:
             from copilot import CopilotClient  # type: ignore[import-not-found]
 
-            # Find CLI path (especially important on Windows)
-            cli_path = _find_copilot_cli()
-            if cli_path:
-                logger.debug(f"[Copilot] Using CLI at: {cli_path}")
-                self._client = CopilotClient({"cli_path": cli_path})
-            else:
-                # Let SDK try default 'copilot' command
-                self._client = CopilotClient()
+            try:
+                client = CopilotClient()
+                logger.debug("[Copilot] Using SDK-bundled CLI")
+            except RuntimeError as e:
+                cli_path = _find_copilot_cli()
+                if not cli_path:
+                    raise
 
-            await self._client.start()
+                logger.debug(
+                    "[Copilot] Bundled CLI unavailable, falling back to PATH CLI: "
+                    f"{cli_path} ({e})"
+                )
+                client = CopilotClient({"cli_path": cli_path})
+
+            await client.start()
+
+            # Fast auth check — fail immediately instead of hanging 60s
+            try:
+                auth_status = await client.get_auth_status()
+                if not auth_status.isAuthenticated:
+                    msg = getattr(auth_status, "statusMessage", "Not authenticated")
+                    await client.stop()
+                    from markitai.providers.auth import get_auth_resolution_hint
+
+                    auth_error = MarkitaiAuthError(
+                        f"Copilot CLI is not authenticated: {msg}",
+                        provider="copilot",
+                        resolution_hint=get_auth_resolution_hint("copilot"),
+                    )
+                    self._fatal_error = auth_error
+                    raise auth_error
+            except MarkitaiAuthError:
+                raise
+            except Exception as e:
+                logger.debug(f"[Copilot] Auth status check failed: {e}")
+
+            self._client = client
         return self._client
 
     # Parameters that are not supported by Copilot SDK
@@ -477,10 +555,10 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         Raises:
             RuntimeError: If SDK is not available or request fails
         """
-        # Log ignored parameters at DEBUG level
+        # Log ignored parameters at TRACE level to keep file logs compact
         ignored_params = [k for k in kwargs if k in self._UNSUPPORTED_PARAMS]
         if ignored_params:
-            logger.debug(f"[Copilot] Ignoring unsupported params: {ignored_params}")
+            logger.trace(f"[Copilot] Ignoring unsupported params: {ignored_params}")
 
         if not _is_copilot_sdk_available():
             raise RuntimeError(
@@ -498,6 +576,9 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                 "the Copilot SDK does not support. Consider using a different model.",
                 provider="copilot",
             )
+
+        if self._fatal_error is not None:
+            raise self._fatal_error
 
         # Check for JSON mode request
         response_format = kwargs.get("response_format")
@@ -542,11 +623,14 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         try:
             client = await self._get_client()
 
+            from copilot import PermissionHandler  # type: ignore[import-not-found]
+
             # Create session without tools for pure LLM completion
             session = await client.create_session(
                 {
                     "model": model_name,
                     "streaming": False,
+                    "on_permission_request": PermissionHandler.approve_all,
                 }
             )
 
@@ -582,8 +666,16 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
             raise RuntimeError(
                 f"Copilot request timed out ({timeout}s). Check network or increase timeout."
             )
+        except ProviderError:
+            raise
         except Exception as e:
             error_msg = str(e)
+            fatal_error = self._build_fatal_provider_error(error_msg)
+            if fatal_error is not None:
+                logger.debug(f"[Copilot] Caching fatal runtime error: {error_msg}")
+                await self._cache_fatal_error(fatal_error)
+                raise fatal_error
+
             logger.error(f"[Copilot] Error: {error_msg}")
 
             # Classify known error patterns and raise the appropriate
@@ -605,16 +697,16 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
             # Clean up session (release resources)
             if session is not None:
                 try:
-                    await session.destroy()
+                    await session.disconnect()
                 except Exception as e:
-                    logger.debug(f"[Copilot] Session destroy warning: {e}")
+                    logger.debug(f"[Copilot] Session disconnect warning: {e}")
 
             # Clean up temporary files
             self._cleanup_temp_files()
 
         elapsed = time.time() - start_time
 
-        logger.debug(
+        logger.trace(
             f"[Copilot] Completed in {elapsed:.2f}s, response_length={len(result_text)}"
         )
 
@@ -637,9 +729,9 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         output_tokens = count_tokens(result_text, model_name)
 
         # Calculate estimated cost
-        from markitai.providers import calculate_copilot_cost
+        from markitai.providers import estimate_model_cost
 
-        cost_result = calculate_copilot_cost(model_name, input_tokens, output_tokens)
+        cost_result = estimate_model_cost(model_name, input_tokens, output_tokens)
 
         response = litellm.ModelResponse(
             id=f"copilot-{uuid.uuid4().hex[:12]}",
@@ -714,3 +806,4 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                 logger.warning(f"[Copilot] Error closing client: {e}")
             finally:
                 self._client = None
+        self._fatal_error = None

@@ -150,7 +150,7 @@ DEFAULT_LOG_LEVEL = "INFO"
 # URL Fetch Settings
 # =============================================================================
 
-DEFAULT_FETCH_STRATEGY = "auto"  # auto | static | playwright | jina
+DEFAULT_FETCH_STRATEGY = "auto"  # auto | static | defuddle | playwright | jina
 DEFAULT_PLAYWRIGHT_TIMEOUT = 30000  # ms
 DEFAULT_PLAYWRIGHT_WAIT_FOR = (
     "domcontentloaded"  # load | domcontentloaded | networkidle
@@ -201,6 +201,16 @@ DOM_NOISE_ATTRIBUTES: tuple[str, ...] = (
 DEFAULT_JINA_TIMEOUT = 30  # seconds
 DEFAULT_JINA_RPM = 20  # Jina free tier: 20 requests per minute
 DEFAULT_JINA_BASE_URL = "https://r.jina.ai"
+
+# Defuddle: free content extraction API (https://defuddle.md)
+# Returns clean Markdown with YAML frontmatter (title, author, published, etc.)
+# NOTE: Rate limit is undocumented — using conservative default. Adjust if needed.
+# TODO: Migrate defuddle's core content extraction to markitai native (defuddle is
+# open-source: https://github.com/kepano/defuddle). This would eliminate the
+# external API dependency and allow offline/high-throughput use.
+DEFAULT_DEFUDDLE_TIMEOUT = 30  # seconds
+DEFAULT_DEFUDDLE_RPM = 20  # Conservative default (actual limit undocumented)
+DEFAULT_DEFUDDLE_BASE_URL = "https://defuddle.md"
 
 # Domains that typically require JavaScript rendering
 DEFAULT_FETCH_FALLBACK_PATTERNS: tuple[str, ...] = (
@@ -305,4 +315,12 @@ IMAGE_EXTENSIONS: tuple[str, ...] = (
     ".bmp",
     ".tiff",
     ".tif",
+    ".svg",
 )
+
+# Metadata directory namespace — isolates markitai metadata (assets, screenshots,
+# reports) from user content to prevent collisions with input directories.
+MARKITAI_META_DIR = ".markitai"
+ASSETS_REL_PATH = f"{MARKITAI_META_DIR}/assets"
+SCREENSHOTS_REL_PATH = f"{MARKITAI_META_DIR}/screenshots"
+REPORTS_REL_PATH = f"{MARKITAI_META_DIR}/reports"

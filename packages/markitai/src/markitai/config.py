@@ -13,6 +13,8 @@ from markitai.constants import (
     CONFIG_FILENAME,
     DEFAULT_BATCH_CONCURRENCY,
     DEFAULT_CACHE_SIZE_LIMIT,
+    DEFAULT_DEFUDDLE_RPM,
+    DEFAULT_DEFUDDLE_TIMEOUT,
     DEFAULT_FETCH_FALLBACK_PATTERNS,
     DEFAULT_FETCH_STRATEGY,
     DEFAULT_GLOBAL_CACHE_DIR,
@@ -292,13 +294,8 @@ class PromptsConfig(BaseModel):
     page_content_system: str | None = None
     page_content_user: str | None = None
     # Document prompts
-    document_enhance_system: str | None = None
-    document_enhance_user: str | None = None
-    document_enhance_complete_system: str | None = None
-    document_enhance_complete_user: str | None = None
     document_process_system: str | None = None
     document_process_user: str | None = None
-    # Unified document vision prompt
     document_vision_system: str | None = None
     document_vision_user: str | None = None
     # URL prompts
@@ -314,7 +311,7 @@ class BatchConfig(BaseModel):
         default=DEFAULT_URL_CONCURRENCY, ge=1
     )  # Separate concurrency for URL fetching
     state_flush_interval_seconds: int = DEFAULT_STATE_FLUSH_INTERVAL_SECONDS
-    scan_max_depth: int = Field(default=DEFAULT_SCAN_MAX_DEPTH, ge=1)
+    scan_max_depth: int = Field(default=DEFAULT_SCAN_MAX_DEPTH, ge=0)
     scan_max_files: int = Field(default=DEFAULT_SCAN_MAX_FILES, ge=1)
     heavy_task_limit: int = Field(default=DEFAULT_HEAVY_TASK_LIMIT, ge=0)
 
@@ -345,7 +342,7 @@ class FetchPolicyConfig(BaseModel):
     """Configuration for fetch strategy policy engine."""
 
     enabled: bool = True
-    max_strategy_hops: int = Field(default=4, ge=1, le=6)
+    max_strategy_hops: int = Field(default=5, ge=1, le=6)
 
 
 class DomainProfileConfig(BaseModel):
@@ -354,7 +351,9 @@ class DomainProfileConfig(BaseModel):
     wait_for_selector: str | None = None
     wait_for: Literal["load", "domcontentloaded", "networkidle"] | None = None
     extra_wait_ms: int | None = Field(default=None, ge=0, le=30000)
-    prefer_strategy: Literal["static", "playwright", "jina", "cloudflare"] | None = None
+    prefer_strategy: (
+        Literal["static", "defuddle", "playwright", "jina", "cloudflare"] | None
+    ) = None
 
 
 class PlaywrightConfig(BaseModel):
@@ -376,6 +375,22 @@ class PlaywrightConfig(BaseModel):
     extra_http_headers: dict[str, str] | None = None  # {"Accept-Language": "zh-CN"}
     user_agent: str | None = None  # Custom User-Agent string
     http_credentials: dict[str, str] | None = None  # {username, password}
+
+
+class DefuddleConfig(BaseModel):
+    """Defuddle content extraction API configuration.
+
+    Defuddle (https://defuddle.md) extracts clean article content from web pages,
+    removing clutter like ads, sidebars, and navigation. Returns Markdown with
+    rich YAML frontmatter (title, author, published, description, word_count).
+
+    NOTE: Rate limit is undocumented. The default RPM is conservative.
+    NOTE: JS rendering capability of the API is unconfirmed — SPA-heavy sites
+    may still need playwright as fallback.
+    """
+
+    timeout: int = DEFAULT_DEFUDDLE_TIMEOUT  # seconds
+    rpm: int = Field(default=DEFAULT_DEFUDDLE_RPM, ge=1)  # requests per minute limit
 
 
 class JinaConfig(BaseModel):
@@ -448,9 +463,10 @@ class CloudflareConfig(BaseModel):
 class FetchConfig(BaseModel):
     """URL fetch configuration for handling static and JS-rendered pages."""
 
-    strategy: Literal["auto", "static", "playwright", "jina", "cloudflare"] = (
-        DEFAULT_FETCH_STRATEGY
-    )
+    strategy: Literal[
+        "auto", "static", "defuddle", "playwright", "jina", "cloudflare"
+    ] = DEFAULT_FETCH_STRATEGY
+    defuddle: DefuddleConfig = Field(default_factory=DefuddleConfig)
     playwright: PlaywrightConfig = Field(default_factory=PlaywrightConfig)
     jina: JinaConfig = Field(default_factory=JinaConfig)
     cloudflare: CloudflareConfig = Field(default_factory=CloudflareConfig)

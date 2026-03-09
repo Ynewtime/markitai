@@ -170,8 +170,8 @@ class TestProcessWithLLM:
         llm_output = output_file.with_suffix(".llm.md")
         content = llm_output.read_text()
         assert "<!-- Page images for reference -->" in content
-        assert "<!-- ![Page 1](screenshots/page1.png) -->" in content
-        assert "<!-- ![Page 2](screenshots/page2.png) -->" in content
+        assert "<!-- ![Page 1](.markitai/screenshots/page1.png) -->" in content
+        assert "<!-- ![Page 2](.markitai/screenshots/page2.png) -->" in content
 
     async def test_process_with_llm_creates_processor_if_none(
         self, tmp_path: Path, markitai_config: MarkitaiConfig, mock_llm_processor
@@ -237,10 +237,10 @@ class TestProcessWithLLM:
         from markitai.cli.processors.llm import process_with_llm
 
         output_file = tmp_path / "output.md"
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir()
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
 
-        markdown = "# Test\n\n![Image](assets/missing.png)"
+        markdown = "# Test\n\n![Image](.markitai/assets/missing.png)"
 
         with (
             patch(
@@ -249,7 +249,7 @@ class TestProcessWithLLM:
             ),
             patch(
                 "markitai.cli.processors.llm.ImageProcessor.remove_hallucinated_images",
-                return_value="# Cleaned\n\n![Image](assets/missing.png)",
+                return_value="# Cleaned\n\n![Image](.markitai/assets/missing.png)",
             ),
             patch(
                 "markitai.cli.processors.llm.ImageProcessor.remove_nonexistent_images",
@@ -284,7 +284,7 @@ class TestProcessWithLLM:
             return_value=("# Cleaned\n\nContent", "title: Test\nsource: test.md")
         )
         processor.format_llm_output = MagicMock(
-            return_value="---\ntitle: Test\n---\n\n# Cleaned\n\nContent\n\n<!-- Page images for reference -->\n<!-- ![Page 1](screenshots/page1.png) -->"
+            return_value="---\ntitle: Test\n---\n\n# Cleaned\n\nContent\n\n<!-- Page images for reference -->\n<!-- ![Page 1](.markitai/screenshots/page1.png) -->"
         )
         processor.get_context_cost = MagicMock(return_value=0.05)
         processor.get_context_usage = MagicMock(return_value={})
@@ -307,6 +307,45 @@ class TestProcessWithLLM:
         content = llm_output.read_text()
         assert content.count("<!-- Page images for reference -->") == 1
 
+    async def test_process_with_llm_appends_screenshot_reference(
+        self, tmp_path: Path, markitai_config: MarkitaiConfig
+    ):
+        """Standard document processing should preserve screenshot references."""
+        from markitai.cli.processors.llm import process_with_llm
+
+        output_file = tmp_path / "output.md"
+        screenshot_path = tmp_path / ".markitai" / "screenshots" / "example.full.jpg"
+        screenshot_path.parent.mkdir(parents=True)
+        screenshot_path.write_bytes(b"fake screenshot")
+
+        processor = MagicMock()
+        processor.process_document = AsyncMock(
+            return_value=("# Cleaned\n\nContent", "title: Test\nsource: test.md")
+        )
+        processor.format_llm_output = MagicMock(
+            return_value="---\ntitle: Test\n---\n\n# Cleaned\n\nContent"
+        )
+        processor.get_context_cost = MagicMock(return_value=0.05)
+        processor.get_context_usage = MagicMock(return_value={})
+
+        with patch(
+            "markitai.cli.processors.llm.ImageProcessor.remove_hallucinated_images",
+            return_value="# Cleaned\n\nContent",
+        ):
+            await process_with_llm(
+                markdown="# Source\n\nContent",
+                source="https://example.com/article",
+                cfg=markitai_config,
+                output_file=output_file,
+                processor=processor,
+                screenshot_path=screenshot_path,
+            )
+
+        llm_output = output_file.with_suffix(".llm.md")
+        content = llm_output.read_text()
+        assert "<!-- Screenshot for reference -->" in content
+        assert ".markitai/screenshots/example.full.jpg" in content
+
 
 # =============================================================================
 # Tests for format_standalone_image_markdown
@@ -323,12 +362,12 @@ class TestFormatStandaloneImageMarkdown:
         result = format_standalone_image_markdown(
             input_path=Path("test.jpg"),
             analysis=sample_image_analysis,
-            image_ref_path="assets/test.jpg",
+            image_ref_path=".markitai/assets/test.jpg",
             include_frontmatter=False,
         )
 
         assert "# test" in result
-        assert "![A test image](assets/test.jpg)" in result
+        assert "![A test image](.markitai/assets/test.jpg)" in result
         assert "This is a detailed description" in result
 
     def test_with_frontmatter(self, sample_image_analysis):
@@ -338,7 +377,7 @@ class TestFormatStandaloneImageMarkdown:
         result = format_standalone_image_markdown(
             input_path=Path("photo.png"),
             analysis=sample_image_analysis,
-            image_ref_path="assets/photo.png",
+            image_ref_path=".markitai/assets/photo.png",
             include_frontmatter=True,
         )
 
@@ -355,7 +394,7 @@ class TestFormatStandaloneImageMarkdown:
         result = format_standalone_image_markdown(
             input_path=Path("document.jpg"),
             analysis=sample_image_analysis,
-            image_ref_path="assets/document.jpg",
+            image_ref_path=".markitai/assets/document.jpg",
             include_frontmatter=False,
         )
 
@@ -375,7 +414,7 @@ class TestFormatStandaloneImageMarkdown:
         result = format_standalone_image_markdown(
             input_path=Path("photo.jpg"),
             analysis=analysis,
-            image_ref_path="assets/photo.jpg",
+            image_ref_path=".markitai/assets/photo.jpg",
             include_frontmatter=False,
         )
 
@@ -396,14 +435,14 @@ class TestFormatStandaloneImageMarkdown:
             result = format_standalone_image_markdown(
                 input_path=Path("test.jpg"),
                 analysis=sample_image_analysis,
-                image_ref_path="assets/test.jpg",
+                image_ref_path=".markitai/assets/test.jpg",
                 include_frontmatter=True,
             )
 
             mock_func.assert_called_once_with(
                 Path("test.jpg"),
                 sample_image_analysis,
-                "assets/test.jpg",
+                ".markitai/assets/test.jpg",
                 True,
             )
             assert result == "mocked result"
@@ -428,15 +467,15 @@ class TestAnalyzeImagesWithLLM:
         from markitai.cli.processors.llm import analyze_images_with_llm
 
         # Create test image
-        image_path = tmp_path / "assets" / "test.jpg"
-        image_path.parent.mkdir()
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
         image_path.write_bytes(b"fake image data")
 
         # Create .llm.md file that the function expects
         output_file = tmp_path / "output.md"
         llm_output = output_file.with_suffix(".llm.md")
         llm_output.write_text(
-            "---\ntitle: Test\n---\n\n# Content\n\n![](assets/test.jpg)"
+            "---\ntitle: Test\n---\n\n# Content\n\n![](.markitai/assets/test.jpg)"
         )
 
         mock_llm_processor.analyze_images_batch = AsyncMock(
@@ -445,7 +484,7 @@ class TestAnalyzeImagesWithLLM:
 
         markdown, cost, usage, analysis_result = await analyze_images_with_llm(
             image_paths=[image_path],
-            markdown="# Test\n\n![](assets/test.jpg)",
+            markdown="# Test\n\n![](.markitai/assets/test.jpg)",
             output_file=output_file,
             cfg=markitai_config,
             input_path=tmp_path / "source.pdf",
@@ -471,8 +510,8 @@ class TestAnalyzeImagesWithLLM:
         from markitai.cli.processors.llm import analyze_images_with_llm
 
         # Create test image
-        image_path = tmp_path / "assets" / "photo.jpg"
-        image_path.parent.mkdir()
+        image_path = tmp_path / ".markitai" / "assets" / "photo.jpg"
+        image_path.parent.mkdir(parents=True)
         image_path.write_bytes(b"fake image data")
 
         output_file = tmp_path / "photo.md"
@@ -487,7 +526,7 @@ class TestAnalyzeImagesWithLLM:
         ):
             markdown, cost, usage, analysis_result = await analyze_images_with_llm(
                 image_paths=[image_path],
-                markdown="![](assets/photo.jpg)",
+                markdown="![](.markitai/assets/photo.jpg)",
                 output_file=output_file,
                 cfg=markitai_config,
                 input_path=tmp_path / "photo.jpg",  # Same as image - standalone
@@ -530,8 +569,8 @@ class TestAnalyzeImagesWithLLM:
         """Test error handling in image analysis."""
         from markitai.cli.processors.llm import analyze_images_with_llm
 
-        image_path = tmp_path / "assets" / "test.jpg"
-        image_path.parent.mkdir()
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
         image_path.write_bytes(b"fake image data")
 
         output_file = tmp_path / "output.md"
@@ -544,14 +583,14 @@ class TestAnalyzeImagesWithLLM:
 
         markdown, cost, usage, analysis_result = await analyze_images_with_llm(
             image_paths=[image_path],
-            markdown="# Test\n\n![](assets/test.jpg)",
+            markdown="# Test\n\n![](.markitai/assets/test.jpg)",
             output_file=output_file,
             cfg=markitai_config,
             processor=failing_processor,
         )
 
         # Should return original markdown on error
-        assert markdown == "# Test\n\n![](assets/test.jpg)"
+        assert markdown == "# Test\n\n![](.markitai/assets/test.jpg)"
         assert cost == 0.0
         assert analysis_result is None
 
@@ -581,8 +620,8 @@ class TestAnalyzeImagesWithLLM:
             image=ImageConfig(alt_enabled=False, desc_enabled=True),
         )
 
-        image_path = tmp_path / "assets" / "test.jpg"
-        image_path.parent.mkdir()
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
         image_path.write_bytes(b"fake image data")
 
         output_file = tmp_path / "output.md"
@@ -593,7 +632,7 @@ class TestAnalyzeImagesWithLLM:
 
         markdown, cost, usage, analysis_result = await analyze_images_with_llm(
             image_paths=[image_path],
-            markdown="# Test\n\n![](assets/test.jpg)",
+            markdown="# Test\n\n![](.markitai/assets/test.jpg)",
             output_file=output_file,
             cfg=config,
             processor=mock_llm_processor,
@@ -601,7 +640,7 @@ class TestAnalyzeImagesWithLLM:
 
         # Alt text should NOT be updated
         assert "![A test image]" not in markdown
-        assert "![](assets/test.jpg)" in markdown
+        assert "![](.markitai/assets/test.jpg)" in markdown
 
     async def test_analyze_images_desc_disabled(
         self,
@@ -629,13 +668,13 @@ class TestAnalyzeImagesWithLLM:
             image=ImageConfig(alt_enabled=True, desc_enabled=False),
         )
 
-        image_path = tmp_path / "assets" / "test.jpg"
-        image_path.parent.mkdir()
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
         image_path.write_bytes(b"fake image data")
 
         output_file = tmp_path / "output.md"
         llm_output = output_file.with_suffix(".llm.md")
-        llm_output.write_text("---\ntitle: Test\n---\n\n![](assets/test.jpg)")
+        llm_output.write_text("---\ntitle: Test\n---\n\n![](.markitai/assets/test.jpg)")
 
         mock_llm_processor.analyze_images_batch = AsyncMock(
             return_value=[sample_image_analysis]
@@ -643,7 +682,7 @@ class TestAnalyzeImagesWithLLM:
 
         markdown, cost, usage, analysis_result = await analyze_images_with_llm(
             image_paths=[image_path],
-            markdown="# Test\n\n![](assets/test.jpg)",
+            markdown="# Test\n\n![](.markitai/assets/test.jpg)",
             output_file=output_file,
             cfg=config,
             processor=mock_llm_processor,
@@ -662,14 +701,14 @@ class TestAnalyzeImagesWithLLM:
         """Test that processor is created if not provided."""
         from markitai.cli.processors.llm import analyze_images_with_llm
 
-        image_path = tmp_path / "assets" / "test.jpg"
-        image_path.parent.mkdir()
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
         image_path.write_bytes(b"fake image data")
 
         output_file = tmp_path / "output.md"
         # Create the .llm.md file that the function waits for
         llm_output = output_file.with_suffix(".llm.md")
-        llm_output.write_text("![](assets/test.jpg)")
+        llm_output.write_text("![](.markitai/assets/test.jpg)")
 
         mock_llm_processor.analyze_images_batch = AsyncMock(
             return_value=[sample_image_analysis]
@@ -681,7 +720,7 @@ class TestAnalyzeImagesWithLLM:
         ) as mock_create:
             await analyze_images_with_llm(
                 image_paths=[image_path],
-                markdown="# Test\n\n![](assets/test.jpg)",
+                markdown="# Test\n\n![](.markitai/assets/test.jpg)",
                 output_file=output_file,
                 cfg=markitai_config,
                 processor=None,
@@ -696,11 +735,11 @@ class TestAnalyzeImagesWithLLM:
         mock_llm_processor,
         sample_image_analysis,
     ):
-        """Test that analysis waits for .llm.md file to exist."""
+        """Test that analysis waits for .llm.md file to exist (legacy polling)."""
         from markitai.cli.processors.llm import analyze_images_with_llm
 
-        image_path = tmp_path / "assets" / "test.jpg"
-        image_path.parent.mkdir()
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
         image_path.write_bytes(b"fake image data")
 
         output_file = tmp_path / "output.md"
@@ -713,14 +752,16 @@ class TestAnalyzeImagesWithLLM:
         # Create .llm.md file after a short delay
         async def create_llm_file():
             await asyncio.sleep(0.1)
-            llm_output.write_text("---\ntitle: Test\n---\n\n![](assets/test.jpg)")
+            llm_output.write_text(
+                "---\ntitle: Test\n---\n\n![](.markitai/assets/test.jpg)"
+            )
 
-        # Run both concurrently
+        # Run both concurrently (no event = legacy polling path)
         task1 = asyncio.create_task(create_llm_file())
         task2 = asyncio.create_task(
             analyze_images_with_llm(
                 image_paths=[image_path],
-                markdown="# Test\n\n![](assets/test.jpg)",
+                markdown="# Test\n\n![](.markitai/assets/test.jpg)",
                 output_file=output_file,
                 cfg=markitai_config,
                 processor=mock_llm_processor,
@@ -729,6 +770,96 @@ class TestAnalyzeImagesWithLLM:
         await asyncio.gather(task1, task2)
 
         # Alt text should be updated in .llm.md
+        content = llm_output.read_text()
+        assert "![A test image]" in content
+
+    async def test_analyze_images_uses_event_instead_of_polling(
+        self,
+        tmp_path: Path,
+        markitai_config: MarkitaiConfig,
+        mock_llm_processor,
+        sample_image_analysis,
+    ):
+        """When llm_ready_event is provided, should await event instead of polling."""
+        from markitai.cli.processors.llm import analyze_images_with_llm
+
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(b"fake image data")
+
+        output_file = tmp_path / "output.md"
+        llm_output = output_file.with_suffix(".llm.md")
+
+        mock_llm_processor.analyze_images_batch = AsyncMock(
+            return_value=[sample_image_analysis]
+        )
+
+        # Create event and background task that writes file then sets event
+        event = asyncio.Event()
+
+        async def write_and_signal():
+            await asyncio.sleep(0.1)
+            llm_output.write_text(
+                "---\ntitle: Test\n---\n\n![](.markitai/assets/test.jpg)"
+            )
+            event.set()
+
+        writer_task = asyncio.create_task(write_and_signal())
+
+        markdown, cost, usage, analysis_result = await analyze_images_with_llm(
+            image_paths=[image_path],
+            markdown="# Test\n\n![](.markitai/assets/test.jpg)",
+            output_file=output_file,
+            cfg=markitai_config,
+            processor=mock_llm_processor,
+            llm_ready_event=event,
+        )
+
+        await writer_task
+
+        # The llm output file should exist and have updated alt text
+        assert llm_output.exists()
+        content = llm_output.read_text()
+        assert "![A test image]" in content
+
+    async def test_analyze_images_event_timeout_falls_back_to_file_check(
+        self,
+        tmp_path: Path,
+        markitai_config: MarkitaiConfig,
+        mock_llm_processor,
+        sample_image_analysis,
+    ):
+        """When event times out, should fall back to checking if file exists."""
+        from markitai.cli.processors.llm import analyze_images_with_llm
+
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(b"fake image data")
+
+        output_file = tmp_path / "output.md"
+        llm_output = output_file.with_suffix(".llm.md")
+
+        # Pre-create the .llm.md file (so fallback file check succeeds)
+        llm_output.write_text("---\ntitle: Test\n---\n\n![](.markitai/assets/test.jpg)")
+
+        mock_llm_processor.analyze_images_batch = AsyncMock(
+            return_value=[sample_image_analysis]
+        )
+
+        # Create event but never set it — will timeout
+        event = asyncio.Event()
+
+        markdown, cost, usage, analysis_result = await analyze_images_with_llm(
+            image_paths=[image_path],
+            markdown="# Test\n\n![](.markitai/assets/test.jpg)",
+            output_file=output_file,
+            cfg=markitai_config,
+            processor=mock_llm_processor,
+            llm_ready_event=event,
+            llm_ready_timeout=0.1,
+        )
+
+        # Should complete without error — found file via fallback
         content = llm_output.read_text()
         assert "![A test image]" in content
 
@@ -748,8 +879,8 @@ class TestEnhanceDocumentWithVision:
         from markitai.cli.processors.llm import enhance_document_with_vision
 
         # Create page images
-        screenshots_dir = tmp_path / "screenshots"
-        screenshots_dir.mkdir()
+        screenshots_dir = tmp_path / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
         page1 = screenshots_dir / "page1.png"
         page1.write_bytes(b"fake image")
 
@@ -773,8 +904,8 @@ class TestEnhanceDocumentWithVision:
         """Test enhancement with multiple page images."""
         from markitai.cli.processors.llm import enhance_document_with_vision
 
-        screenshots_dir = tmp_path / "screenshots"
-        screenshots_dir.mkdir()
+        screenshots_dir = tmp_path / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
 
         page_images = []
         for i in range(3):
@@ -795,14 +926,41 @@ class TestEnhanceDocumentWithVision:
         call_args = mock_llm_processor.enhance_document_complete.call_args
         assert len(call_args[0][1]) == 3  # 3 image paths
 
+    async def test_enhance_forwards_original_title(
+        self, tmp_path: Path, markitai_config: MarkitaiConfig, mock_llm_processor
+    ):
+        """Explicit titles should be forwarded to the vision enhancer."""
+        from markitai.cli.processors.llm import enhance_document_with_vision
+
+        screenshots_dir = tmp_path / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
+        page1 = screenshots_dir / "page1.png"
+        page1.write_bytes(b"fake image")
+
+        await enhance_document_with_vision(
+            extracted_text="# Chapter 1",
+            page_images=[{"page": 1, "path": str(page1)}],
+            cfg=markitai_config,
+            source="document.pdf",
+            processor=mock_llm_processor,
+            original_title="Canonical Document Title",
+        )
+
+        mock_llm_processor.enhance_document_complete.assert_called_once_with(
+            "# Chapter 1",
+            [page1],
+            source="document.pdf",
+            original_title="Canonical Document Title",
+        )
+
     async def test_enhance_creates_processor_if_none(
         self, tmp_path: Path, markitai_config: MarkitaiConfig, mock_llm_processor
     ):
         """Test that processor is created if not provided."""
         from markitai.cli.processors.llm import enhance_document_with_vision
 
-        screenshots_dir = tmp_path / "screenshots"
-        screenshots_dir.mkdir()
+        screenshots_dir = tmp_path / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
         page1 = screenshots_dir / "page1.png"
         page1.write_bytes(b"fake image")
 
@@ -828,8 +986,8 @@ class TestEnhanceDocumentWithVision:
         """Test error handling in document enhancement."""
         from markitai.cli.processors.llm import enhance_document_with_vision
 
-        screenshots_dir = tmp_path / "screenshots"
-        screenshots_dir.mkdir()
+        screenshots_dir = tmp_path / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
         page1 = screenshots_dir / "page1.png"
         page1.write_bytes(b"fake image")
 
@@ -862,8 +1020,8 @@ class TestEnhanceDocumentWithVision:
         """Test that pages are sorted by page number."""
         from markitai.cli.processors.llm import enhance_document_with_vision
 
-        screenshots_dir = tmp_path / "screenshots"
-        screenshots_dir.mkdir()
+        screenshots_dir = tmp_path / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
 
         # Create pages in non-sequential order
         page_images = []
@@ -934,13 +1092,15 @@ class TestEdgeCases:
         """Test that .llm.md file alt text is updated."""
         from markitai.cli.processors.llm import analyze_images_with_llm
 
-        image_path = tmp_path / "assets" / "test.jpg"
-        image_path.parent.mkdir()
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
         image_path.write_bytes(b"fake image data")
 
         output_file = tmp_path / "output.md"
         llm_output = output_file.with_suffix(".llm.md")
-        llm_output.write_text("---\ntitle: Test\n---\n\n![old alt](assets/test.jpg)")
+        llm_output.write_text(
+            "---\ntitle: Test\n---\n\n![old alt](.markitai/assets/test.jpg)"
+        )
 
         mock_llm_processor.analyze_images_batch = AsyncMock(
             return_value=[sample_image_analysis]
@@ -948,7 +1108,7 @@ class TestEdgeCases:
 
         await analyze_images_with_llm(
             image_paths=[image_path],
-            markdown="![old alt](assets/test.jpg)",
+            markdown="![old alt](.markitai/assets/test.jpg)",
             output_file=output_file,
             cfg=markitai_config,
             processor=mock_llm_processor,
@@ -956,7 +1116,7 @@ class TestEdgeCases:
 
         # .llm.md should have updated alt text
         content = llm_output.read_text()
-        assert "![A test image](assets/test.jpg)" in content
+        assert "![A test image](.markitai/assets/test.jpg)" in content
 
     def test_backward_compatibility_alias(self):
         """Test that backward compatibility alias exists."""
@@ -987,7 +1147,7 @@ class TestEdgeCases:
             return_value=("# Cleaned\n\nContent", "title: Test\nsource: test.md")
         )
         processor.format_llm_output = MagicMock(
-            return_value="---\ntitle: Test\n---\n\n# Cleaned\n\n<!-- Page images for reference -->\n<!-- ![Page 1](screenshots/page1.png) -->"
+            return_value="---\ntitle: Test\n---\n\n# Cleaned\n\n<!-- Page images for reference -->\n<!-- ![Page 1](.markitai/screenshots/page1.png) -->"
         )
         processor.get_context_cost = MagicMock(return_value=0.05)
         processor.get_context_usage = MagicMock(return_value={})
@@ -1029,6 +1189,7 @@ class TestFunctionSignatures:
         assert "cfg" in params
         assert "output_file" in params
         assert "page_images" in params
+        assert "screenshot_path" in params
         assert "processor" in params
         assert "original_markdown" in params
 
@@ -1062,6 +1223,8 @@ class TestFunctionSignatures:
         assert "input_path" in params
         assert "concurrency_limit" in params
         assert "processor" in params
+        assert "llm_ready_event" in params
+        assert "llm_ready_timeout" in params
 
     def test_enhance_document_with_vision_signature(self):
         """Test enhance_document_with_vision function signature."""
@@ -1118,13 +1281,13 @@ class TestReturnTypes:
         """Test that analyze_images_with_llm returns correct tuple."""
         from markitai.cli.processors.llm import analyze_images_with_llm
 
-        image_path = tmp_path / "assets" / "test.jpg"
-        image_path.parent.mkdir()
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
         image_path.write_bytes(b"fake")
 
         output_file = tmp_path / "output.md"
         llm_output = output_file.with_suffix(".llm.md")
-        llm_output.write_text("![](assets/test.jpg)")
+        llm_output.write_text("![](.markitai/assets/test.jpg)")
 
         mock_llm_processor.analyze_images_batch = AsyncMock(
             return_value=[sample_image_analysis]
@@ -1132,7 +1295,7 @@ class TestReturnTypes:
 
         result = await analyze_images_with_llm(
             image_paths=[image_path],
-            markdown="![](assets/test.jpg)",
+            markdown="![](.markitai/assets/test.jpg)",
             output_file=output_file,
             cfg=markitai_config,
             processor=mock_llm_processor,
@@ -1151,8 +1314,8 @@ class TestReturnTypes:
         """Test that enhance_document_with_vision returns correct tuple."""
         from markitai.cli.processors.llm import enhance_document_with_vision
 
-        screenshots_dir = tmp_path / "screenshots"
-        screenshots_dir.mkdir()
+        screenshots_dir = tmp_path / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
         page1 = screenshots_dir / "page1.png"
         page1.write_bytes(b"fake")
 

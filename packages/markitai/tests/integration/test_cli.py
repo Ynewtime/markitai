@@ -440,7 +440,7 @@ class TestWorkflowCoreV2:
         assert result.exit_code == 0
 
         # Check report was generated
-        reports_dir = output_dir / "reports"
+        reports_dir = output_dir / ".markitai" / "reports"
         assert reports_dir.exists()
 
         report_files = list(reports_dir.glob("*.json"))
@@ -534,7 +534,7 @@ class TestWorkflowCoreV2:
         assert result.exit_code == 0
 
         # Check report was generated
-        reports_dir = output_dir / "reports"
+        reports_dir = output_dir / ".markitai" / "reports"
         assert reports_dir.exists()
 
         report_files = list(reports_dir.glob("*.json"))

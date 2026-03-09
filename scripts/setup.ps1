@@ -827,7 +827,10 @@ function Sync-Dependencies {
 
     try {
         Clack-Info (i18n "info_syncing_deps")
+        $oldErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
         $syncResult = & uv sync --all-extras --python $script:PYTHON_CMD 2>&1
+        $ErrorActionPreference = $oldErrorAction
         if ($LASTEXITCODE -eq 0) {
             Clack-Success (i18n "info_deps_synced")
             Track-Install -Component "python_deps" -Status "installed"
@@ -851,7 +854,10 @@ function Install-PreCommit {
         if (Test-Path ".pre-commit-config.yaml") {
             $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
             if ($uvCmd) {
+                $oldErrorAction = $ErrorActionPreference
+                $ErrorActionPreference = "Continue"
                 $precommitResult = & uv run pre-commit install 2>&1
+                $ErrorActionPreference = $oldErrorAction
                 if ($LASTEXITCODE -eq 0) {
                     Clack-Success (i18n "info_precommit_installed")
                     Track-Install -Component "precommit" -Status "installed"

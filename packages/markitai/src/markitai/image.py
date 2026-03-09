@@ -17,9 +17,9 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from loguru import logger
-from PIL import Image
 
 from markitai.constants import (
+    ASSETS_REL_PATH,
     DEFAULT_IMAGE_FILTER_MIN_AREA,
     DEFAULT_IMAGE_FILTER_MIN_HEIGHT,
     DEFAULT_IMAGE_FILTER_MIN_WIDTH,
@@ -33,6 +33,8 @@ from markitai.utils.mime import get_extension_from_mime
 from markitai.utils.paths import ensure_assets_dir
 
 if TYPE_CHECKING:
+    from PIL import Image
+
     from markitai.config import ImageConfig
     from markitai.converter.base import ExtractedImage
 
@@ -155,6 +157,8 @@ def _compress_image_pillow(
     Returns:
         Tuple of (compressed_data, final_width, final_height) or None if filtered
     """
+    from PIL import Image
+
     try:
         with io.BytesIO(image_data) as buffer:
             img = Image.open(buffer)
@@ -292,6 +296,8 @@ class ImageProcessor:
         """
         import platform
 
+        from PIL import Image
+
         # Normalize format name
         fmt_lower = original_fmt.lower().replace("x-", "")  # x-emf -> emf
 
@@ -398,7 +404,7 @@ class ImageProcessor:
         self,
         markdown: str,
         images: list[ExtractedImage],
-        assets_path: str = "assets",
+        assets_path: str = ASSETS_REL_PATH,
         index_mapping: dict[int, ProcessedImage] | None = None,
     ) -> str:
         """
@@ -491,9 +497,10 @@ class ImageProcessor:
         Returns:
             Markdown with non-existent image references removed
         """
-        # Pattern to match image references: ![alt](assets/filename) or ![alt](assets\filename)
+        # Pattern to match image references: ![alt](.markitai/assets/filename)
+        # or ![alt](.markitai/assets\filename)
         # Support both forward slash and backslash for Windows compatibility
-        img_pattern = re.compile(r"!\[[^\]]*\]\(assets[/\\]([^)]+)\)")
+        img_pattern = re.compile(r"!\[[^\]]*\]\(\.markitai/assets[/\\]([^)]+)\)")
 
         # Invalid filename patterns that indicate placeholders or hallucinations
         invalid_patterns = {"...", "..", ".", "placeholder", "image", "filename"}
@@ -548,7 +555,9 @@ class ImageProcessor:
             url = match.group(1)
 
             # Keep local asset references (handled by remove_nonexistent_images)
-            if url.startswith("assets/") or url.startswith("assets\\"):
+            if url.startswith(f"{ASSETS_REL_PATH}/") or url.startswith(
+                f"{ASSETS_REL_PATH}\\"
+            ):
                 return full_match
 
             # Keep relative URLs (likely internal links)
@@ -589,6 +598,8 @@ class ImageProcessor:
         Returns:
             Tuple of (compressed image, compressed data)
         """
+        from PIL import Image
+
         # Resize if needed
         image.thumbnail(max_size, Image.Resampling.LANCZOS)
 
@@ -640,7 +651,7 @@ class ImageProcessor:
         Returns:
             Tuple of (final_width, final_height) after any resizing
         """
-        from loguru import logger
+        from PIL import Image
 
         # Convert raw samples to PIL Image
         image = Image.frombytes("RGB", (width, height), pix_samples)
@@ -829,6 +840,8 @@ class ImageProcessor:
             ImageProcessResult with saved images, statistics, and index mapping
         """
         # Delayed import to avoid circular import
+        from PIL import Image
+
         from markitai.converter.base import ExtractedImage
 
         assets_dir = ensure_assets_dir(output_dir)
@@ -946,6 +959,8 @@ class ImageProcessor:
         import asyncio
 
         # Delayed imports to avoid circular import
+        from PIL import Image
+
         from markitai.converter.base import ExtractedImage
         from markitai.security import write_bytes_async
 
@@ -1076,6 +1091,8 @@ class ImageProcessor:
             ImageProcessResult with saved images, statistics, and index mapping
         """
         import asyncio
+
+        from PIL import Image
 
         from markitai.converter.base import ExtractedImage
         from markitai.security import write_bytes_async
@@ -1436,7 +1453,7 @@ async def download_url_images(
                 downloaded_paths.append(output_path)
 
                 # Prepare replacement with local path
-                local_path = f"assets/{filename}"
+                local_path = f"{ASSETS_REL_PATH}/{filename}"
                 replacements[original_match] = f"![{alt_text}]({local_path})"
 
                 # Track URL to path mapping for post-processing

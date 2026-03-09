@@ -137,7 +137,7 @@ class TestReportGeneration:
 
         assert result.exit_code == 0, f"CLI failed: {result.output}"
         # Report file is now named markitai.<hash>.report.json
-        reports = find_report_files(output_dir / "reports")
+        reports = find_report_files(output_dir / ".markitai" / "reports")
         assert len(reports) == 1
 
     def test_report_structure(self, tmp_path: Path) -> None:
@@ -162,7 +162,7 @@ class TestReportGeneration:
             ],
         )
 
-        reports = find_report_files(output_dir / "reports")
+        reports = find_report_files(output_dir / ".markitai" / "reports")
         assert len(reports) == 1
         report = json.loads(reports[0].read_text())
 
@@ -205,7 +205,7 @@ class TestReportGeneration:
             ],
         )
 
-        reports = find_report_files(output_dir / "reports")
+        reports = find_report_files(output_dir / ".markitai" / "reports")
         assert len(reports) == 1
         report = json.loads(reports[0].read_text())
 
@@ -237,17 +237,17 @@ class TestReportGeneration:
 
         # First run
         runner.invoke(app, [str(test_file), "-o", str(output_dir)])
-        reports = find_report_files(output_dir / "reports")
+        reports = find_report_files(output_dir / ".markitai" / "reports")
         assert len(reports) == 1
 
         # Second run - should create a new report with .2. in name
         runner.invoke(app, [str(test_file), "-o", str(output_dir)])
-        reports = find_report_files(output_dir / "reports")
+        reports = find_report_files(output_dir / ".markitai" / "reports")
         assert len(reports) == 2
 
         # Third run - should create another report with .3. in name
         runner.invoke(app, [str(test_file), "-o", str(output_dir)])
-        reports = find_report_files(output_dir / "reports")
+        reports = find_report_files(output_dir / ".markitai" / "reports")
         assert len(reports) == 3
 
 
@@ -259,7 +259,7 @@ class TestImageDescriptions:
         from markitai.cli import ImageAnalysisResult, write_images_json
 
         output_dir = tmp_path / "output"
-        assets_dir = output_dir / "assets"
+        assets_dir = output_dir / ".markitai" / "assets"
         assets_dir.mkdir(parents=True)
 
         first = ImageAnalysisResult(

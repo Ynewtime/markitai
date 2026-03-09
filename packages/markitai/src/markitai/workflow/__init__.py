@@ -12,7 +12,6 @@ from markitai.workflow.core import (
 )
 from markitai.workflow.helpers import (
     add_basic_frontmatter,
-    detect_language,
     merge_llm_usage,
     write_images_json,
 )
@@ -28,7 +27,6 @@ __all__ = [
     "UnsupportedFormatError",
     "add_basic_frontmatter",
     "convert_document_core",
-    "detect_language",
     "merge_llm_usage",
     "write_images_json",
 ]

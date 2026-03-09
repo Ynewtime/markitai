@@ -531,3 +531,116 @@ class TestSyncCompletion:
                 [{"role": "user", "content": "Hello"}],
             )
             mock_sync.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# OAuth UX tests
+# ---------------------------------------------------------------------------
+
+
+class TestChatGPTOAuthUX:
+    """Tests for ChatGPT OAuth UX improvements."""
+
+    async def test_auth_intercepts_device_code_stdout(self) -> None:
+        """Device code output from LiteLLM is redirected to Rich stderr."""
+        import sys
+        from io import StringIO
+
+        from markitai.providers.chatgpt import ChatGPTProvider
+
+        provider = ChatGPTProvider()
+
+        def fake_get_access_token() -> str:
+            # Simulate LiteLLM authenticator printing device code
+            print("Sign in with ChatGPT using device code:")
+            print("1) Visit https://chatgpt.com/auth/device")
+            print("2) Enter code: FAKE-CODE")
+            print("Device codes are a common phishing target.")
+            return "test-access-token"
+
+        mock_auth = MagicMock()
+        mock_auth.get_access_token = fake_get_access_token
+        mock_auth.get_api_base.return_value = "https://chatgpt.com/backend-api/codex"
+        mock_auth.get_account_id.return_value = None
+        provider._authenticator = mock_auth
+
+        # Capture stdout to verify nothing leaks
+        captured_stdout = StringIO()
+        original_stdout = sys.stdout
+
+        with patch.object(
+            provider, "_stream_response", new_callable=AsyncMock
+        ) as mock_stream:
+            mock_stream.return_value = ("result", 10, 5)
+            sys.stdout = captured_stdout
+            try:
+                await provider.acompletion(
+                    "chatgpt/codex-mini",
+                    [{"role": "user", "content": "test"}],
+                )
+            finally:
+                sys.stdout = original_stdout
+
+        # Raw device code output should NOT appear in stdout
+        leaked = captured_stdout.getvalue()
+        assert "Sign in with ChatGPT" not in leaked
+
+    async def test_auth_shows_success_after_device_code(self) -> None:
+        """Success message is shown after ChatGPT device code auth."""
+        from markitai.providers.chatgpt import ChatGPTProvider
+
+        provider = ChatGPTProvider()
+
+        def fake_get_access_token() -> str:
+            print("1) Visit https://chatgpt.com/auth/device")
+            print("2) Enter code: TEST-1234")
+            return "test-access-token"
+
+        mock_auth = MagicMock()
+        mock_auth.get_access_token = fake_get_access_token
+        mock_auth.get_api_base.return_value = "https://chatgpt.com/backend-api/codex"
+        mock_auth.get_account_id.return_value = None
+        provider._authenticator = mock_auth
+
+        with (
+            patch.object(
+                provider, "_stream_response", new_callable=AsyncMock
+            ) as mock_stream,
+            patch("markitai.providers.chatgpt.show_oauth_success") as mock_success,
+        ):
+            mock_stream.return_value = ("result", 10, 5)
+            await provider.acompletion(
+                "chatgpt/codex-mini",
+                [{"role": "user", "content": "test"}],
+            )
+
+        mock_success.assert_called_once_with("chatgpt")
+
+    async def test_no_intercept_when_already_authenticated(self) -> None:
+        """No stdout interception when token is already cached."""
+
+        from markitai.providers.chatgpt import ChatGPTProvider
+
+        provider = ChatGPTProvider()
+
+        mock_auth = MagicMock()
+        # Simulates already-authenticated path (no print)
+        mock_auth.get_access_token.return_value = "cached-token"
+        mock_auth.get_api_base.return_value = "https://chatgpt.com/backend-api/codex"
+        mock_auth.get_account_id.return_value = None
+        provider._authenticator = mock_auth
+
+        with (
+            patch.object(
+                provider, "_stream_response", new_callable=AsyncMock
+            ) as mock_stream,
+            patch("markitai.providers.chatgpt.show_oauth_success") as mock_success,
+        ):
+            mock_stream.return_value = ("result", 10, 5)
+            await provider.acompletion(
+                "chatgpt/codex-mini",
+                [{"role": "user", "content": "test"}],
+            )
+
+        # No success message when already authenticated
+        mock_success.assert_not_called()

@@ -1,3 +1,3 @@
-请优化以下 Markdown 格式：
+Please optimize the following Markdown:
 
 {content}

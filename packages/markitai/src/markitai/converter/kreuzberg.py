@@ -28,8 +28,6 @@ KREUZBERG_FORMATS: list[FileFormat] = [
     # OpenDocument
     FileFormat.ODS,
     FileFormat.ODT,
-    # Vector images (raster GIF/BMP/TIFF handled by ImageConverter)
-    FileFormat.SVG,
     # Rich text / markup
     FileFormat.RTF,
     FileFormat.RST,
