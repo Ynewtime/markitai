@@ -61,6 +61,7 @@ i18n() {
             failed)                     echo "失败" ;;
             success)                    echo "成功" ;;
             already_installed)          echo "已经安装" ;;
+            not_found)                  echo "未找到" ;;
 
             # Components
             uv)                         echo "uv 包管理器" ;;
@@ -71,6 +72,7 @@ i18n() {
             ffmpeg)                     echo "FFmpeg" ;;
             claude_cli)                 echo "Claude Code CLI" ;;
             copilot_cli)                echo "Copilot CLI" ;;
+            gemini_cli)                 echo "Gemini CLI" ;;
             precommit)                  echo "pre-commit hooks" ;;
             python_deps)                echo "Python 依赖" ;;
 
@@ -165,6 +167,7 @@ i18n() {
             failed)                     echo "failed" ;;
             success)                    echo "success" ;;
             already_installed)          echo "already installed" ;;
+            not_found)                  echo "not found" ;;
 
             # Components
             uv)                         echo "uv package manager" ;;
@@ -175,6 +178,7 @@ i18n() {
             ffmpeg)                     echo "FFmpeg" ;;
             claude_cli)                 echo "Claude Code CLI" ;;
             copilot_cli)                echo "Copilot CLI" ;;
+            gemini_cli)                 echo "Gemini CLI" ;;
             precommit)                  echo "pre-commit hooks" ;;
             python_deps)                echo "Python dependencies" ;;
 
@@ -716,13 +720,20 @@ detect_python() {
 # Requires: PYTHON_CMD to be set
 # Returns: 0 on success, 1 on failure
 install_markitai() {
-    # Detect existing extras from uv receipt to preserve on upgrade
+    # Detect existing extras from uv receipt to preserve on upgrade.
+    # Generic parsing — automatically preserves any extras, future-proof.
     _uv_tools_dir=$(uv tool dir 2>/dev/null || echo "$HOME/.local/share/uv/tools")
     _receipt_file="$_uv_tools_dir/markitai/uv-receipt.toml"
     if [ -f "$_receipt_file" ]; then
-        _receipt=$(cat "$_receipt_file" 2>/dev/null || true)
-        case "$_receipt" in *claude-agent*) install_markitai_extra "claude-agent" ;; esac
-        case "$_receipt" in *copilot*) install_markitai_extra "copilot" ;; esac
+        # Extract extras array: extras = ["browser", "gemini-cli", ...]
+        # Use [^]]* (non-greedy) to stop at first ], avoiding TOML outer brackets
+        _extras_raw=$(grep -o 'extras = \[[^]]*\]' "$_receipt_file" 2>/dev/null \
+            | sed 's/extras = \[//;s/\]//;s/"//g;s/ //g')
+        _old_ifs="$IFS"; IFS=','
+        for _e in $_extras_raw; do
+            [ -n "$_e" ] && install_markitai_extra "$_e"
+        done
+        IFS="$_old_ifs"
     fi
 
     # Build package spec with all tracked extras
@@ -787,9 +798,20 @@ install_markitai_extra() {
     MARKITAI_EXTRAS="${MARKITAI_EXTRAS},$_extra_name"
 }
 
-# Finalize markitai extras after all optional components are resolved
-# Reinstalls markitai with all accumulated extras if needed
+# Finalize markitai extras after all optional components are resolved.
+# Merges `markitai doctor --suggest-extras` output with manually tracked
+# MARKITAI_EXTRAS (from CLI install functions), so nothing is lost.
 finalize_markitai_extras() {
+    # Merge suggested extras INTO manually tracked set (not replace)
+    _suggested=$(markitai doctor --suggest-extras 2>/dev/null || true)
+    if [ -n "$_suggested" ]; then
+        _old_ifs="$IFS"; IFS=','
+        for _e in $_suggested; do
+            install_markitai_extra "$_e"
+        done
+        IFS="$_old_ifs"
+    fi
+
     # Read current receipt to check if extras changed
     _uv_tools_dir=$(uv tool dir 2>/dev/null || echo "$HOME/.local/share/uv/tools")
     _receipt_file="$_uv_tools_dir/markitai/uv-receipt.toml"
@@ -798,7 +820,7 @@ finalize_markitai_extras() {
         _current=$(cat "$_receipt_file" 2>/dev/null || true)
     fi
 
-    # Check if new extras need to be added
+    # Check if any tracked extra is missing from current receipt
     _needs_update=false
     _old_ifs="$IFS"
     IFS=','
@@ -809,13 +831,41 @@ finalize_markitai_extras() {
 
     [ "$_needs_update" = "false" ] && return 0
 
-    # Reinstall with all extras
+    # Reinstall with all extras (progressive fallback on failure)
     if [ -n "$MARKITAI_VERSION" ]; then
         _mi_pkg="markitai[$MARKITAI_EXTRAS]==$MARKITAI_VERSION"
     else
         _mi_pkg="markitai[$MARKITAI_EXTRAS]"
     fi
-    uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force >/dev/null 2>&1 || true
+    _uv_err=""
+    if ! _uv_err=$(uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force 2>&1); then
+        # Full install failed — retry without SDK-dependent extras
+        _safe_extras=""
+        _skipped=""
+        _old_ifs="$IFS"; IFS=','
+        for _e in $MARKITAI_EXTRAS; do
+            case "$_e" in
+                claude-agent|copilot) _skipped="${_skipped:+$_skipped, }$_e" ;;
+                *) _safe_extras="${_safe_extras:+$_safe_extras,}$_e" ;;
+            esac
+        done
+        IFS="$_old_ifs"
+
+        if [ -n "$_safe_extras" ]; then
+            if [ -n "$MARKITAI_VERSION" ]; then
+                _mi_pkg="markitai[$_safe_extras]==$MARKITAI_VERSION"
+            else
+                _mi_pkg="markitai[$_safe_extras]"
+            fi
+            if uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force >/dev/null 2>&1; then
+                [ -n "$_skipped" ] && clack_warn "$(i18n skipped) extras: $_skipped (SDK $(i18n not_found))"
+            else
+                clack_warn "$(i18n markitai) extras update $(i18n failed): $_uv_err"
+            fi
+        else
+            clack_warn "$(i18n markitai) extras update $(i18n failed): $_uv_err"
+        fi
+    fi
 }
 
 # Sync project dependencies (Dev mode)
@@ -1193,6 +1243,29 @@ install_optional_copilot_cli() {
     return 1
 }
 
+# Detect Gemini CLI credentials and install google-auth extra (Optional)
+# Gemini CLI is installed separately; we only check for existing credentials
+# Returns: 0 if detected, 2 if not found
+detect_gemini_cli() {
+    # Check for Gemini CLI command or existing OAuth credentials
+    if command -v gemini >/dev/null 2>&1; then
+        clack_success "$(i18n gemini_cli): $(gemini --version 2>/dev/null | head -n1 || echo 'installed')"
+        install_markitai_extra "gemini-cli"
+        track_install "gemini_cli" "installed"
+        return 0
+    fi
+
+    if [ -f "$HOME/.gemini/oauth_creds.json" ]; then
+        clack_success "$(i18n gemini_cli): credentials detected"
+        install_markitai_extra "gemini-cli"
+        track_install "gemini_cli" "installed"
+        return 0
+    fi
+
+    # Not found — silent skip (Gemini CLI is not installable via script)
+    return 2
+}
+
 # Print installation summary
 # Usage: print_summary
 print_summary() {
@@ -1323,6 +1396,7 @@ run_user_setup() {
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli
     install_optional_copilot_cli
+    detect_gemini_cli
 
     finalize_markitai_extras
 
@@ -1356,6 +1430,7 @@ run_dev_setup() {
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli
     install_optional_copilot_cli
+    detect_gemini_cli
 
     print_summary
     print_dev_completion

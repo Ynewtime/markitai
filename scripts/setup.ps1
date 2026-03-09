@@ -57,6 +57,7 @@ function i18n {
             "failed"                    { return "失败" }
             "success"                   { return "成功" }
             "already_installed"         { return "已经安装" }
+            "not_found"                 { return "未找到" }
 
             # Components
             "uv"                        { return "uv 包管理器" }
@@ -67,6 +68,7 @@ function i18n {
             "ffmpeg"                    { return "FFmpeg" }
             "claude_cli"                { return "Claude Code CLI" }
             "copilot_cli"               { return "Copilot CLI" }
+            "gemini_cli"                { return "Gemini CLI" }
             "precommit"                 { return "pre-commit hooks" }
             "python_deps"               { return "Python 依赖" }
 
@@ -163,6 +165,7 @@ function i18n {
             "failed"                    { return "failed" }
             "success"                   { return "success" }
             "already_installed"         { return "already installed" }
+            "not_found"                 { return "not found" }
 
             # Components
             "uv"                        { return "uv package manager" }
@@ -173,6 +176,7 @@ function i18n {
             "ffmpeg"                    { return "FFmpeg" }
             "claude_cli"                { return "Claude Code CLI" }
             "copilot_cli"               { return "Copilot CLI" }
+            "gemini_cli"                { return "Gemini CLI" }
             "precommit"                 { return "pre-commit hooks" }
             "python_deps"               { return "Python dependencies" }
 
@@ -686,11 +690,17 @@ function Install-Markitai {
             $uvToolsDir = "$env:APPDATA\uv\tools"
         }
     }
+    # Detect existing extras from uv receipt to preserve on upgrade.
+    # Generic parsing — automatically preserves any extras, future-proof.
     $receiptFile = Join-Path $uvToolsDir "markitai\uv-receipt.toml"
     if (Test-Path $receiptFile) {
         $receipt = Get-Content $receiptFile -Raw -ErrorAction SilentlyContinue
-        if ($receipt -match "claude-agent") { Install-MarkitaiExtra -ExtraName "claude-agent" }
-        if ($receipt -match "copilot") { Install-MarkitaiExtra -ExtraName "copilot" }
+        if ($receipt -match 'extras\s*=\s*\[([^\]]*)\]') {
+            $extrasStr = $Matches[1] -replace '"', '' -replace '\s', ''
+            foreach ($extra in ($extrasStr -split ',')) {
+                if ($extra) { Install-MarkitaiExtra -ExtraName $extra }
+            }
+        }
     }
 
     # Build package spec with all tracked extras
@@ -773,9 +783,20 @@ function Install-MarkitaiExtra {
     $script:MARKITAI_EXTRAS = "$($script:MARKITAI_EXTRAS),$ExtraName"
 }
 
-# Finalize markitai extras after all optional components are resolved
-# Reinstalls markitai with all accumulated extras if needed
+# Finalize markitai extras after all optional components are resolved.
+# Merges `markitai doctor --suggest-extras` output with manually tracked
+# MARKITAI_EXTRAS (from CLI install functions), so nothing is lost.
 function Finalize-MarkitaiExtras {
+    # Merge suggested extras INTO manually tracked set (not replace)
+    try {
+        $suggested = & markitai doctor --suggest-extras 2>$null
+        if ($suggested) {
+            foreach ($extra in ($suggested.Trim() -split ',')) {
+                if ($extra) { Install-MarkitaiExtra -ExtraName $extra }
+            }
+        }
+    } catch {}
+
     # Read current receipt to check if extras changed
     $uvToolsDir = $null
     try { $uvToolsDir = & uv tool dir 2>$null } catch {}
@@ -803,7 +824,7 @@ function Finalize-MarkitaiExtras {
 
     if (-not $needsUpdate) { return }
 
-    # Reinstall with all extras
+    # Reinstall with all extras (progressive fallback on failure)
     if ($script:MarkitaiVersion) {
         $pkg = "markitai[$($script:MARKITAI_EXTRAS)]==$($script:MarkitaiVersion)"
     } else {
@@ -812,9 +833,43 @@ function Finalize-MarkitaiExtras {
 
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $installOk = $false
+    $uvErr = ""
     try {
-        $null = & uv tool install $pkg --python $script:PYTHON_CMD --force 2>&1
-    } catch {}
+        $uvErr = & uv tool install $pkg --python $script:PYTHON_CMD --force 2>&1
+        if ($LASTEXITCODE -eq 0) { $installOk = $true }
+    } catch { $uvErr = $_.Exception.Message }
+
+    if (-not $installOk) {
+        # Full install failed — retry without SDK-dependent extras
+        $sdkExtras = @("claude-agent", "copilot")
+        $safeExtras = @()
+        $skipped = @()
+        foreach ($e in ($script:MARKITAI_EXTRAS -split ",")) {
+            if ($sdkExtras -contains $e) { $skipped += $e }
+            else { $safeExtras += $e }
+        }
+        if ($safeExtras.Count -gt 0) {
+            $safeList = $safeExtras -join ","
+            if ($script:MarkitaiVersion) {
+                $pkg = "markitai[$safeList]==$($script:MarkitaiVersion)"
+            } else {
+                $pkg = "markitai[$safeList]"
+            }
+            try {
+                $null = & uv tool install $pkg --python $script:PYTHON_CMD --force 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    if ($skipped.Count -gt 0) {
+                        Clack-Warn "$(i18n 'skipped') extras: $($skipped -join ', ') (SDK $(i18n 'not_found'))"
+                    }
+                    $installOk = $true
+                }
+            } catch {}
+        }
+        if (-not $installOk) {
+            Clack-Warn "$(i18n 'markitai') extras update $(i18n 'failed'): $uvErr"
+        }
+    }
     $ErrorActionPreference = $oldErrorAction
 }
 
@@ -1217,6 +1272,32 @@ function Install-OptionalCopilotCLI {
     return $false
 }
 
+# Detect Gemini CLI credentials and install google-auth extra (Optional)
+# Gemini CLI is installed separately; we only check for existing credentials
+function Detect-GeminiCLI {
+    # Check for Gemini CLI command
+    $geminiCmd = Get-Command gemini -ErrorAction SilentlyContinue
+    if ($geminiCmd) {
+        $version = & gemini --version 2>&1 | Select-Object -First 1
+        Clack-Success "$(i18n 'gemini_cli'): $version"
+        Install-MarkitaiExtra -ExtraName "gemini-cli"
+        Track-Install -Component "gemini_cli" -Status "installed"
+        return $true
+    }
+
+    # Check for existing OAuth credentials
+    $credsPath = Join-Path (Join-Path $HOME ".gemini") "oauth_creds.json"
+    if (Test-Path $credsPath) {
+        Clack-Success "$(i18n 'gemini_cli'): credentials detected"
+        Install-MarkitaiExtra -ExtraName "gemini-cli"
+        Track-Install -Component "gemini_cli" -Status "installed"
+        return $true
+    }
+
+    # Not found — silent skip
+    return $false
+}
+
 # Print installation summary
 function Print-Summary {
     Clack-Section (i18n "section_summary")
@@ -1362,6 +1443,7 @@ function Run-UserSetup {
     Clack-Section (i18n "section_llm_cli")
     Install-OptionalClaudeCLI | Out-Null
     Install-OptionalCopilotCLI | Out-Null
+    Detect-GeminiCLI | Out-Null
 
     Finalize-MarkitaiExtras
 
@@ -1397,6 +1479,7 @@ function Run-DevSetup {
     Clack-Section (i18n "section_llm_cli")
     Install-OptionalClaudeCLI | Out-Null
     Install-OptionalCopilotCLI | Out-Null
+    Detect-GeminiCLI | Out-Null
 
     Print-Summary
     Print-DevCompletion

@@ -765,6 +765,42 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 _install_component(component)
 
 
+def suggest_extras() -> list[str]:
+    """Return recommended pip extras for installation.
+
+    Always includes all extras whose dependencies are standard PyPI
+    packages.  Only conditionally includes extras that depend on SDKs
+    which may not be publicly available on PyPI.
+
+    The result is a *stable* list (alphabetical) that the install
+    scripts can feed directly into
+    ``uv tool install markitai[browser,extra-fetch,...]``.
+
+    This is the **single source of truth** — install scripts should call
+    ``markitai doctor --suggest-extras`` instead of reimplementing
+    detection logic in shell.
+    """
+    extras: set[str] = set()
+
+    # --- Always-include extras (pure Python packages from PyPI) ---
+    extras.add("browser")  # playwright
+    extras.add("gemini-cli")  # google-auth + google-auth-oauthlib
+    extras.add("extra-fetch")  # curl-cffi
+    extras.add("kreuzberg")  # kreuzberg
+    extras.add("svg")  # cairosvg (pip install succeeds; runtime detects missing lib)
+
+    # --- Conditional extras (SDK may not be on PyPI) ---
+    # claude-agent — requires claude-agent-sdk
+    if shutil.which("claude"):
+        extras.add("claude-agent")
+
+    # copilot — requires github-copilot-sdk
+    if shutil.which("copilot"):
+        extras.add("copilot")
+
+    return sorted(extras)
+
+
 @click.command("doctor")
 @click.option(
     "--json",
@@ -777,7 +813,13 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     is_flag=True,
     help="Attempt to install missing components.",
 )
-def doctor(as_json: bool, fix: bool) -> None:
+@click.option(
+    "--suggest-extras",
+    "suggest",
+    is_flag=True,
+    help="Output recommended pip extras for the current environment (machine-readable).",
+)
+def doctor(as_json: bool, fix: bool, suggest: bool) -> None:
     """Check system health, dependencies, and authentication status.
 
     This command helps diagnose setup issues by verifying:
@@ -787,4 +829,7 @@ def doctor(as_json: bool, fix: bool) -> None:
     - LLM API configuration (for content enhancement)
     - Authentication status for local providers (Claude Agent, Copilot, Gemini CLI)
     """
+    if suggest:
+        click.echo(",".join(suggest_extras()))
+        return
     _doctor_impl(as_json, fix=fix)

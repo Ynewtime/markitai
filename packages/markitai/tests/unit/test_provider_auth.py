@@ -1312,3 +1312,65 @@ class TestAttemptLogin:
 
         assert result.authenticated is False
         assert "failed" in (result.error or "").lower()
+
+
+class TestCanAttemptLogin:
+    """Tests for can_attempt_login() guard function."""
+
+    def test_gemini_cli_with_oauthlib(self) -> None:
+        """Returns True when google_auth_oauthlib is importable."""
+        from markitai.providers.auth import can_attempt_login
+
+        with patch("importlib.util.find_spec", return_value=MagicMock()):
+            assert can_attempt_login("gemini-cli") is True
+
+    def test_gemini_cli_without_oauthlib(self) -> None:
+        """Returns False when google_auth_oauthlib is not installed."""
+        from markitai.providers.auth import can_attempt_login
+
+        with patch("importlib.util.find_spec", return_value=None):
+            assert can_attempt_login("gemini-cli") is False
+
+    def test_claude_agent_with_cli(self) -> None:
+        """Returns True when claude CLI is found."""
+        from markitai.providers.auth import can_attempt_login
+
+        with patch(
+            "markitai.providers.auth._resolve_cli_path", return_value="/usr/bin/claude"
+        ):
+            assert can_attempt_login("claude-agent") is True
+
+    def test_claude_agent_without_cli(self) -> None:
+        """Returns False when claude CLI is not found."""
+        from markitai.providers.auth import can_attempt_login
+
+        with patch("markitai.providers.auth._resolve_cli_path", return_value=None):
+            assert can_attempt_login("claude-agent") is False
+
+    def test_copilot_with_cli(self) -> None:
+        """Returns True when copilot CLI is found."""
+        from markitai.providers.auth import can_attempt_login
+
+        with patch(
+            "markitai.providers.auth._resolve_cli_path", return_value="/usr/bin/copilot"
+        ):
+            assert can_attempt_login("copilot") is True
+
+    def test_copilot_without_cli(self) -> None:
+        """Returns False when copilot CLI is not found."""
+        from markitai.providers.auth import can_attempt_login
+
+        with patch("markitai.providers.auth._resolve_cli_path", return_value=None):
+            assert can_attempt_login("copilot") is False
+
+    def test_chatgpt_always_true(self) -> None:
+        """ChatGPT auto-authenticates, always returns True."""
+        from markitai.providers.auth import can_attempt_login
+
+        assert can_attempt_login("chatgpt") is True
+
+    def test_unknown_provider(self) -> None:
+        """Unknown providers return False."""
+        from markitai.providers.auth import can_attempt_login
+
+        assert can_attempt_login("nonexistent") is False

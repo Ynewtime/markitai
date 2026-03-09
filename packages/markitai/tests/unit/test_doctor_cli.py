@@ -378,6 +378,71 @@ class TestAuthenticationChecks:
             MockAuthManager.return_value.check_auth.assert_not_called()
 
 
+class TestSuggestExtras:
+    """Tests for suggest_extras() function."""
+
+    def test_always_includes_standard_extras(self) -> None:
+        """Pure Python extras are always included."""
+        from markitai.cli.commands.doctor import suggest_extras
+
+        with patch("markitai.cli.commands.doctor.shutil.which", return_value=None):
+            result = suggest_extras()
+
+        assert "browser" in result
+        assert "gemini-cli" in result
+        assert "extra-fetch" in result
+        assert "kreuzberg" in result
+        assert "svg" in result
+
+    def test_claude_agent_included_when_cli_found(self) -> None:
+        """claude-agent extra included when claude CLI is in PATH."""
+        from markitai.cli.commands.doctor import suggest_extras
+
+        def which_side_effect(cmd: str) -> str | None:
+            return "/usr/bin/claude" if cmd == "claude" else None
+
+        with patch(
+            "markitai.cli.commands.doctor.shutil.which",
+            side_effect=which_side_effect,
+        ):
+            result = suggest_extras()
+
+        assert "claude-agent" in result
+
+    def test_claude_agent_excluded_when_cli_missing(self) -> None:
+        """claude-agent extra excluded when claude CLI is not found."""
+        from markitai.cli.commands.doctor import suggest_extras
+
+        with patch("markitai.cli.commands.doctor.shutil.which", return_value=None):
+            result = suggest_extras()
+
+        assert "claude-agent" not in result
+
+    def test_copilot_included_when_cli_found(self) -> None:
+        """copilot extra included when copilot CLI is in PATH."""
+        from markitai.cli.commands.doctor import suggest_extras
+
+        def which_side_effect(cmd: str) -> str | None:
+            return "/usr/bin/copilot" if cmd == "copilot" else None
+
+        with patch(
+            "markitai.cli.commands.doctor.shutil.which",
+            side_effect=which_side_effect,
+        ):
+            result = suggest_extras()
+
+        assert "copilot" in result
+
+    def test_result_is_sorted(self) -> None:
+        """Result should be alphabetically sorted."""
+        from markitai.cli.commands.doctor import suggest_extras
+
+        with patch("markitai.cli.commands.doctor.shutil.which", return_value=None):
+            result = suggest_extras()
+
+        assert result == sorted(result)
+
+
 class TestDoctorFromMainCLI:
     """Tests for doctor command access from main CLI."""
 
