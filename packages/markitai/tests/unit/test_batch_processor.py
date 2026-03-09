@@ -1051,7 +1051,7 @@ class TestErrorHandling:
         )
 
         # Create corrupt state file
-        states_dir = sample_output_dir / "states"
+        states_dir = sample_output_dir / ".markitai" / "states"
         states_dir.mkdir(parents=True)
         state_file = states_dir / f"markitai.{processor.task_hash}.state.json"
         state_file.write_text("invalid json {{{")
