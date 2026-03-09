@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-03-09
+
+### Added
+
+- **Fetch Strategy Priority**: Configurable global and per-domain strategy ordering via `strategy_priority` in `policy` and `domain_profiles`
+- **Domain/IP Exemption**: `local_only_patterns` config field restricts specified domains/IPs to local-only strategies (static, playwright) — supports exact domain, suffix (`.internal.com`), wildcard (`*.internal.com`), IP, and CIDR notation (`10.0.0.0/8`, `fd00::/8`)
+- **NO_PROXY Integration**: `inherit_no_proxy` (default: true) automatically merges `NO_PROXY` environment variable patterns into local-only exemptions
+- **Fetch Security Feature**: README documentation for the new information security compliance capabilities
+
+### Fixed
+
+- **LLM Language Consistency**: Strengthened 5 prompt templates to prevent language translation when fetching mixed-language content (e.g., English UI + Chinese body) — LLM now determines output language from body text, not UI elements
+
 ## [0.8.1] - 2026-03-06
 
 ### Added
@@ -659,6 +672,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.9.0]: https://github.com/Ynewtime/markitai/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/Ynewtime/markitai/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Ynewtime/markitai/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Ynewtime/markitai/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Ynewtime/markitai/compare/v0.6.0...v0.6.1

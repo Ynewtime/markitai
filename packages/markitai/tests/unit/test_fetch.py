@@ -15,6 +15,7 @@ from markitai.constants import JS_REQUIRED_PATTERNS
 from markitai.fetch import (
     FetchStrategy,
     SPADomainCache,
+    _build_local_only_patterns,
     _url_to_screenshot_filename,
     detect_js_required,
     should_use_browser_for_domain,
@@ -2029,7 +2030,15 @@ class TestFetchWithFallback:
                 "strategy": "auto",
                 "fallback_patterns": [],
                 "policy": type(
-                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                    "Policy",
+                    (),
+                    {
+                        "enabled": True,
+                        "max_strategy_hops": 4,
+                        "strategy_priority": None,
+                        "local_only_patterns": [],
+                        "inherit_no_proxy": False,
+                    },
                 )(),
                 "domain_profiles": {},
                 "jina": type(
@@ -2093,7 +2102,15 @@ class TestFetchWithFallback:
                 "strategy": "auto",
                 "fallback_patterns": [],
                 "policy": type(
-                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                    "Policy",
+                    (),
+                    {
+                        "enabled": True,
+                        "max_strategy_hops": 4,
+                        "strategy_priority": None,
+                        "local_only_patterns": [],
+                        "inherit_no_proxy": False,
+                    },
                 )(),
                 "domain_profiles": {},
                 "jina": type(
@@ -2157,7 +2174,15 @@ class TestFetchWithFallback:
                 "strategy": "auto",
                 "fallback_patterns": [],
                 "policy": type(
-                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                    "Policy",
+                    (),
+                    {
+                        "enabled": True,
+                        "max_strategy_hops": 4,
+                        "strategy_priority": None,
+                        "local_only_patterns": [],
+                        "inherit_no_proxy": False,
+                    },
                 )(),
                 "domain_profiles": {},
                 "jina": type(
@@ -2235,7 +2260,15 @@ class TestFetchWithFallback:
                 "strategy": "auto",
                 "fallback_patterns": [],
                 "policy": type(
-                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                    "Policy",
+                    (),
+                    {
+                        "enabled": True,
+                        "max_strategy_hops": 4,
+                        "strategy_priority": None,
+                        "local_only_patterns": [],
+                        "inherit_no_proxy": False,
+                    },
                 )(),
                 "domain_profiles": {},
                 "jina": type(
@@ -2580,7 +2613,15 @@ class TestScreenshotDecoupled:
                 "strategy": "auto",
                 "fallback_patterns": [],
                 "policy": type(
-                    "Policy", (), {"enabled": True, "max_strategy_hops": 5}
+                    "Policy",
+                    (),
+                    {
+                        "enabled": True,
+                        "max_strategy_hops": 5,
+                        "strategy_priority": None,
+                        "local_only_patterns": [],
+                        "inherit_no_proxy": False,
+                    },
                 )(),
                 "domain_profiles": {},
                 "jina": type(
@@ -3227,7 +3268,15 @@ class TestFetchWithFallbackJsDetection:
                 "strategy": "auto",
                 "fallback_patterns": [],
                 "policy": type(
-                    "Policy", (), {"enabled": True, "max_strategy_hops": 4}
+                    "Policy",
+                    (),
+                    {
+                        "enabled": True,
+                        "max_strategy_hops": 4,
+                        "strategy_priority": None,
+                        "local_only_patterns": [],
+                        "inherit_no_proxy": False,
+                    },
                 )(),
                 "domain_profiles": {},
                 "jina": type(
@@ -4460,3 +4509,106 @@ class TestDefuddleUrlEncoding:
         assert "?" not in path_after_base, (
             f"Raw '?' from target URL leaks as query separator: {actual_url}"
         )
+
+
+class TestBuildLocalOnlyPatterns:
+    """Tests for _build_local_only_patterns function."""
+
+    @staticmethod
+    def _make_policy(
+        local_only_patterns: list[str] | None = None,
+        inherit_no_proxy: bool = True,
+    ) -> object:
+        """Create a minimal policy-like object for testing."""
+        return type(
+            "FetchPolicyConfig",
+            (),
+            {
+                "local_only_patterns": local_only_patterns or [],
+                "inherit_no_proxy": inherit_no_proxy,
+            },
+        )()
+
+    def test_returns_config_patterns_only_when_inherit_disabled(self) -> None:
+        """When inherit_no_proxy=False, NO_PROXY env var is ignored."""
+        policy = self._make_policy(
+            local_only_patterns=["*.internal.corp", "10.0.0.0/8"],
+            inherit_no_proxy=False,
+        )
+        with patch.dict("os.environ", {"NO_PROXY": "localhost,127.0.0.1"}):
+            result = _build_local_only_patterns(policy)
+
+        assert result == ["*.internal.corp", "10.0.0.0/8"]
+
+    def test_merges_no_proxy_env_var(self) -> None:
+        """When inherit_no_proxy=True, NO_PROXY patterns are appended."""
+        policy = self._make_policy(
+            local_only_patterns=["*.internal.corp"],
+            inherit_no_proxy=True,
+        )
+        with patch.dict("os.environ", {"NO_PROXY": "localhost,127.0.0.1"}, clear=False):
+            result = _build_local_only_patterns(policy)
+
+        assert result == ["*.internal.corp", "localhost", "127.0.0.1"]
+
+    def test_merges_no_proxy_lowercase(self) -> None:
+        """Lowercase no_proxy env var is also respected."""
+        policy = self._make_policy(
+            local_only_patterns=["*.local"],
+            inherit_no_proxy=True,
+        )
+        # Clear NO_PROXY so only lowercase no_proxy is found
+        with patch.dict(
+            "os.environ",
+            {"no_proxy": "192.168.1.0/24,*.dev.local"},
+            clear=False,
+        ):
+            # Remove uppercase NO_PROXY if present to exercise lowercase path
+            env = {"no_proxy": "192.168.1.0/24,*.dev.local"}
+            with patch.dict("os.environ", env, clear=True):
+                result = _build_local_only_patterns(policy)
+
+        assert result == ["*.local", "192.168.1.0/24", "*.dev.local"]
+
+    def test_deduplication(self) -> None:
+        """Overlapping patterns between config and NO_PROXY are deduplicated."""
+        policy = self._make_policy(
+            local_only_patterns=["localhost", "*.internal.corp"],
+            inherit_no_proxy=True,
+        )
+        with patch.dict(
+            "os.environ",
+            {"NO_PROXY": "localhost,10.0.0.0/8,*.internal.corp"},
+            clear=False,
+        ):
+            result = _build_local_only_patterns(policy)
+
+        # Only 10.0.0.0/8 should be new; duplicates not repeated
+        assert result == ["localhost", "*.internal.corp", "10.0.0.0/8"]
+
+    def test_empty_no_proxy_env(self) -> None:
+        """When NO_PROXY is empty or unset, only config patterns are returned."""
+        policy = self._make_policy(
+            local_only_patterns=["*.internal.corp"],
+            inherit_no_proxy=True,
+        )
+        # Unset both NO_PROXY and no_proxy
+        with patch.dict("os.environ", {}, clear=True):
+            result = _build_local_only_patterns(policy)
+
+        assert result == ["*.internal.corp"]
+
+    def test_empty_config_patterns(self) -> None:
+        """When config has no patterns, NO_PROXY values are still returned."""
+        policy = self._make_policy(
+            local_only_patterns=[],
+            inherit_no_proxy=True,
+        )
+        with patch.dict(
+            "os.environ",
+            {"NO_PROXY": "localhost,127.0.0.1,::1"},
+            clear=False,
+        ):
+            result = _build_local_only_patterns(policy)
+
+        assert result == ["localhost", "127.0.0.1", "::1"]

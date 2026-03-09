@@ -14,6 +14,7 @@
 - **URL 转换** - 智能策略链（Defuddle → Jina → Static → Playwright → Cloudflare），自动检测 SPA
 - **Cloudflare 集成** - 云端 URL 渲染（Browser Rendering）和文件转换（Workers AI toMarkdown），通过 `--cloudflare` 启用
 - **智能缓存** - LLM 结果缓存、SPA 域名学习、自动代理检测
+- **抓取安全** - 可配置策略优先级、域名/IP 豁免，支持 NO_PROXY 环境变量，满足信息安全合规需求
 
 ## 安装
 

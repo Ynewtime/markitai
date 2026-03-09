@@ -59,7 +59,12 @@ except ImportError:  # pragma: no cover - optional during staged implementation
     is_native_markdown_acceptable = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
-    from markitai.config import FetchConfig, PlaywrightConfig, ScreenshotConfig
+    from markitai.config import (
+        FetchConfig,
+        FetchPolicyConfig,
+        PlaywrightConfig,
+        ScreenshotConfig,
+    )
 
 
 class FetchStrategy(Enum):
@@ -2660,6 +2665,30 @@ def _is_invalid_content(content: str) -> tuple[bool, str]:
     return False, ""
 
 
+def _build_local_only_patterns(policy: FetchPolicyConfig) -> list[str]:
+    """Build effective local-only patterns from config + NO_PROXY env var.
+
+    When ``inherit_no_proxy`` is True (default), patterns from the NO_PROXY
+    environment variable are merged into the configured ``local_only_patterns``
+    (deduplicated, config patterns take precedence).
+    """
+    import os
+
+    from markitai.fetch_policy import parse_no_proxy
+
+    patterns = list(policy.local_only_patterns)
+    if policy.inherit_no_proxy:
+        no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+        if no_proxy:
+            inherited = parse_no_proxy(no_proxy)
+            seen = set(patterns)
+            for p in inherited:
+                if p not in seen:
+                    patterns.append(p)
+                    seen.add(p)
+    return patterns
+
+
 async def _fetch_with_fallback(
     url: str,
     config: FetchConfig,
@@ -2693,6 +2722,11 @@ async def _fetch_with_fallback(
     jina_key = config.jina.get_resolved_api_key()
     profile = config.domain_profiles.get(domain)
     domain_prefer = profile.prefer_strategy if profile else None
+    domain_priority = profile.strategy_priority if profile else None
+
+    # Build effective local_only_patterns (config + optional NO_PROXY merge)
+    effective_local_only = _build_local_only_patterns(config.policy)
+
     decision = engine.decide(
         domain=domain,
         known_spa=start_with_browser,
@@ -2701,6 +2735,9 @@ async def _fetch_with_fallback(
         policy_enabled=config.policy.enabled,
         has_jina_key=bool(jina_key),
         domain_prefer_strategy=domain_prefer,
+        global_strategy_priority=config.policy.strategy_priority,
+        domain_strategy_priority=domain_priority,
+        local_only_patterns=effective_local_only,
     )
     strategies = decision.order[: config.policy.max_strategy_hops]
     if is_private_or_local_domain(domain):

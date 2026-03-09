@@ -7,9 +7,10 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from markitai.constants import (
+    ALL_FETCH_STRATEGIES,
     CONFIG_FILENAME,
     DEFAULT_BATCH_CONCURRENCY,
     DEFAULT_CACHE_SIZE_LIMIT,
@@ -127,6 +128,30 @@ def _resolve_api_key(api_key: str | None, strict: bool = True) -> str | None:
     if api_key:
         return resolve_env_value(api_key, strict=strict)
     return None
+
+
+def _validate_strategy_list(strategies: list[str]) -> None:
+    """Validate a list of strategy names."""
+    valid = set(ALL_FETCH_STRATEGIES)
+    for s in strategies:
+        if s not in valid:
+            raise ValueError(f"invalid_strategy: '{s}'. Must be one of {sorted(valid)}")
+    if len(strategies) != len(set(strategies)):
+        raise ValueError("duplicate strategies in strategy_priority")
+
+
+def _validate_local_only_pattern(pattern: str) -> None:
+    """Validate a single local-only pattern (NO_PROXY syntax)."""
+    import ipaddress as _ipaddress
+
+    if not pattern or not pattern.strip():
+        raise ValueError("empty pattern in local_only_patterns")
+    p = pattern.strip()
+    if "/" in p:
+        try:
+            _ipaddress.ip_network(p, strict=False)
+        except ValueError as e:
+            raise ValueError(f"invalid CIDR in local_only_patterns: '{p}' — {e}") from e
 
 
 class OutputConfig(BaseModel):
@@ -343,6 +368,38 @@ class FetchPolicyConfig(BaseModel):
 
     enabled: bool = True
     max_strategy_hops: int = Field(default=5, ge=1, le=6)
+    strategy_priority: list[str] | None = Field(
+        default=None,
+        description="Custom global strategy order. Overrides the default priority.",
+    )
+    local_only_patterns: list[str] = Field(
+        default_factory=list,
+        description="Domain/IP patterns that must use local-only strategies (NO_PROXY syntax).",
+    )
+    inherit_no_proxy: bool = Field(
+        default=True,
+        description="Merge NO_PROXY env var into local_only_patterns at runtime.",
+    )
+
+    @field_validator("strategy_priority")
+    @classmethod
+    def validate_strategy_priority(
+        cls,
+        v: list[str] | None,
+    ) -> list[str] | None:
+        if v is None:
+            return None
+        if len(v) == 0:
+            raise ValueError("strategy_priority must not be empty if set")
+        _validate_strategy_list(v)
+        return v
+
+    @field_validator("local_only_patterns")
+    @classmethod
+    def validate_local_only_patterns(cls, v: list[str]) -> list[str]:
+        for pattern in v:
+            _validate_local_only_pattern(pattern)
+        return v
 
 
 class DomainProfileConfig(BaseModel):
@@ -354,6 +411,23 @@ class DomainProfileConfig(BaseModel):
     prefer_strategy: (
         Literal["static", "defuddle", "playwright", "jina", "cloudflare"] | None
     ) = None
+    strategy_priority: list[str] | None = Field(
+        default=None,
+        description="Custom strategy order for this domain. Overrides global and prefer_strategy.",
+    )
+
+    @field_validator("strategy_priority")
+    @classmethod
+    def validate_strategy_priority(
+        cls,
+        v: list[str] | None,
+    ) -> list[str] | None:
+        if v is None:
+            return None
+        if len(v) == 0:
+            raise ValueError("strategy_priority must not be empty if set")
+        _validate_strategy_list(v)
+        return v
 
 
 class PlaywrightConfig(BaseModel):

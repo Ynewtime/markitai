@@ -32,6 +32,7 @@ If the scraped text **only contains the following** (missing the core body):
   - Preserve the original language exactly as-is
   - Never translate between languages (e.g., do not translate English to Chinese or vice versa)
   - Violating this rule will invalidate the output
+  - **Mixed-language pages**: Determine the content language from the **body text** (article body, post content, user-generated text), NOT from UI elements (navigation, buttons, login prompts). If the post body is in Chinese but the surrounding UI is in English, the content language is Chinese — preserve the Chinese text as-is
 - **Do not rewrite**: Preserve the original wording and expressions; only adjust formatting
 
 ## Task 1: Content Cleanup
@@ -109,4 +110,4 @@ Generate the following fields:
   - Each tag must be 30 characters or fewer
   - Examples: `AI`, `software-engineering`, `web-development`
 
-**Output language MUST match the source document** — English content → English metadata, Chinese content → Chinese metadata, etc.
+**Output language MUST match the body content** — determine language from the main post/article body, not from UI elements or navigation text. Chinese post → Chinese metadata, English article → English metadata, etc.
