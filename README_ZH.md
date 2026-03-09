@@ -6,11 +6,12 @@
 
 ## 功能特性
 
-- **多格式支持** - DOCX/DOC、PPTX/PPT、XLSX/XLS、PDF、TXT、MD、JPG/PNG/WebP、URLs
+- **多格式支持** - DOCX/DOC、PPTX/PPT、XLSX/XLS、PDF、HTML、EPUB、CSV、TXT、MD、JPG/PNG/WebP/GIF/BMP/TIFF、URLs 及 10+ 可选格式
 - **LLM 增强** - 格式清洗、元数据生成、图像分析
+- **本地 Provider** - 直接使用现有 Claude Code、GitHub Copilot、ChatGPT、Gemini CLI 订阅，无需 API 密钥
 - **批量处理** - 并发转换、断点续传、进度显示
 - **OCR 识别** - 扫描件 PDF 和图片的文字提取
-- **URL 转换** - 直接转换网页，支持 SPA 浏览器渲染
+- **URL 转换** - 智能策略链（Defuddle → Jina → Static → Playwright → Cloudflare），自动检测 SPA
 - **Cloudflare 集成** - 云端 URL 渲染（Browser Rendering）和文件转换（Workers AI toMarkdown），通过 `--cloudflare` 启用
 - **智能缓存** - LLM 结果缓存、SPA 域名学习、自动代理检测
 
@@ -95,13 +96,16 @@ markitai urls.urls -o ./output
 
 ```
 output/
-├── document.docx.md        # 基础 Markdown
-├── document.docx.llm.md    # LLM 增强版本
-├── assets/
-│   ├── document.docx.0001.jpg
-│   └── images.json         # 图片描述
-├── screenshots/            # 页面截图（使用 --screenshot）
-│   └── example_com.full.jpg
+├── document.docx.md            # 基础 Markdown
+├── document.docx.llm.md        # LLM 增强版本
+├── .markitai/                   # 元数据命名空间（与用户内容隔离）
+│   ├── assets/
+│   │   ├── document.docx.0001.jpg
+│   │   └── images.json         # 图片描述
+│   ├── screenshots/            # 页面截图（使用 --screenshot）
+│   │   └── example_com.full.jpg
+│   ├── reports/                # 转换报告（JSON）
+│   └── states/                 # 批处理状态文件（用于 --resume）
 ```
 
 ## 配置
@@ -129,7 +133,7 @@ markitai doctor
 
 ### 本地 Provider（基于订阅）
 
-使用您现有的 Claude Code 或 GitHub Copilot 订阅：
+使用您现有的订阅，无需 API 密钥：
 
 ```bash
 # Claude Agent（需要 Claude Code CLI）
@@ -137,15 +141,27 @@ markitai document.pdf --llm  # 在配置中设置 claude-agent/sonnet
 
 # GitHub Copilot（需要 Copilot CLI）
 markitai document.pdf --llm  # 在配置中设置 copilot/gpt-5.2
+
+# ChatGPT（OAuth Device Code — 无需额外 SDK）
+markitai auth login chatgpt  # 一次性浏览器登录
+markitai document.pdf --llm  # 在配置中设置 chatgpt/gpt-5.2
+
+# Gemini CLI（复用 ~/.gemini/oauth_creds.json）
+markitai document.pdf --llm  # 在配置中设置 gemini-cli/gemini-2.5-pro
 ```
 
-安装 CLI 工具：
+安装 CLI 工具（用于 claude-agent / copilot）：
 ```bash
 # Claude Code CLI
 curl -fsSL https://claude.ai/install.sh | bash
 
 # GitHub Copilot CLI
 curl -fsSL https://gh.io/copilot-install | bash
+```
+
+检查 Provider 认证状态：
+```bash
+markitai auth status
 ```
 
 ## 环境变量

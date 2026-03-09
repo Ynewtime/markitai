@@ -319,6 +319,7 @@
           "$ref": "#/$defs/FetchPolicyConfig"
         },
         "domain_profiles": {
+          "default": {},
           "additionalProperties": {
             "$ref": "#/$defs/DomainProfileConfig"
           },
@@ -326,6 +327,14 @@
           "type": "object"
         },
         "fallback_patterns": {
+          "default": [
+            "twitter.com",
+            "x.com",
+            "instagram.com",
+            "facebook.com",
+            "linkedin.com",
+            "threads.net"
+          ],
           "items": {
             "type": "string"
           },
@@ -502,6 +511,7 @@
           "type": "boolean"
         },
         "model_list": {
+          "default": [],
           "items": {
             "$ref": "#/$defs/ModelConfig"
           },
@@ -1135,6 +1145,7 @@
           "type": "integer"
         },
         "fallbacks": {
+          "default": [],
           "items": {
             "additionalProperties": true,
             "type": "object"

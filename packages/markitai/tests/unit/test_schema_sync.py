@@ -12,6 +12,7 @@ from markitai.config import (
     FetchConfig,
     ImageConfig,
     JinaConfig,
+    LLMConfig,
     LogConfig,
     OCRConfig,
     OutputConfig,
@@ -102,9 +103,26 @@ class TestSchemaSync:
     def test_router_settings_defaults(self, schema: dict) -> None:
         """Verify RouterSettings defaults match config.py."""
         router_settings = schema["$defs"]["RouterSettings"]["properties"]
-        # config.py has num_retries = 2, timeout = 120
-        assert router_settings["num_retries"]["default"] == 2
-        assert router_settings["timeout"]["default"] == 120
+        model = RouterSettings()
+        assert router_settings["num_retries"]["default"] == model.num_retries
+        assert router_settings["timeout"]["default"] == model.timeout
+        assert router_settings["fallbacks"]["default"] == model.fallbacks
+
+    def test_llm_config_defaults(self, schema: dict) -> None:
+        """Verify LLMConfig defaults (model_list, concurrency)."""
+        schema_props = schema["$defs"]["LLMConfig"]["properties"]
+        model = LLMConfig()
+        assert schema_props["enabled"]["default"] == model.enabled
+        assert schema_props["model_list"]["default"] == []
+        assert schema_props["concurrency"]["default"] == model.concurrency
+
+    def test_fetch_config_defaults(self, schema: dict) -> None:
+        """Verify FetchConfig defaults (domain_profiles, fallback_patterns)."""
+        schema_props = schema["$defs"]["FetchConfig"]["properties"]
+        model = FetchConfig()
+        assert schema_props["strategy"]["default"] == model.strategy
+        assert schema_props["domain_profiles"]["default"] == {}
+        assert schema_props["fallback_patterns"]["default"] == model.fallback_patterns
 
 
 class TestModelFieldSync:
@@ -192,6 +210,13 @@ class TestModelFieldSync:
         """Verify all FetchConfig fields are in schema."""
         model_fields = set(FetchConfig.model_fields.keys())
         schema_fields = set(schema["$defs"]["FetchConfig"]["properties"].keys())
+        missing = model_fields - schema_fields
+        assert not missing, f"Fields missing from schema: {missing}"
+
+    def test_llm_config_fields_match(self, schema: dict) -> None:
+        """Verify all LLMConfig fields are in schema."""
+        model_fields = set(LLMConfig.model_fields.keys())
+        schema_fields = set(schema["$defs"]["LLMConfig"]["properties"].keys())
         missing = model_fields - schema_fields
         assert not missing, f"Fields missing from schema: {missing}"
 

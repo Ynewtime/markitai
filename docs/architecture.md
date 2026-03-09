@@ -100,9 +100,11 @@ cli/
 │   ├── fetch_http.py          # 静态 HTTP 客户端 (httpx/curl-cffi)
 │   └── fetch_policy.py        # 策略引擎
 └── commands/                  # 子命令组
+    ├── auth.py                # auth 认证管理命令
     ├── config.py              # config 子命令
     ├── cache.py               # cache 子命令
-    └── doctor.py              # doctor 诊断命令
+    ├── doctor.py              # doctor 诊断命令
+    └── init.py                # init 初始化命令
 
 llm/
 ├── __init__.py                # 包导出
@@ -115,8 +117,11 @@ providers/
 ├── __init__.py                # 提供商注册
 ├── claude_agent.py            # Claude Code CLI 提供商
 ├── copilot.py                 # GitHub Copilot CLI 提供商
+├── chatgpt.py                 # ChatGPT OAuth 提供商
+├── gemini_cli.py              # Gemini CLI OAuth 提供商
 ├── errors.py                  # 结构化错误类
 ├── auth.py                    # 认证管理器
+├── oauth_display.py           # OAuth 认证 UI
 ├── timeout.py                 # 自适应超时计算
 └── json_mode.py               # 统一 JSON 提取处理
 
@@ -130,12 +135,35 @@ utils/
 ├── __init__.py                # 工具导出
 ├── cli_helpers.py             # CLI 工具函数
 ├── executor.py                # 线程池执行器
+├── frontmatter.py             # YAML frontmatter 生成
+├── markdown_quality.py        # Markdown 质量评分
 ├── mime.py                    # MIME 类型检测
 ├── office.py                  # Office 软件检测
 ├── output.py                  # 输出路径解析
 ├── paths.py                   # 路径工具
 ├── progress.py                # 进度报告器
 └── text.py                    # 文本处理工具
+
+webextract/                    # 原生 HTML→Markdown 提取
+├── __init__.py                # 公共 API (extract_web_content 等)
+├── pipeline.py                # 提取管线编排
+├── scoring.py                 # 内容质量评分
+├── sanitize.py                # HTML 清洗 (XSS 防护)
+├── metadata.py                # Schema.org / Open Graph 元数据
+├── schema.py                  # Schema.org JSON-LD 解析
+├── standardize.py             # Markdown 标准化
+├── dom.py                     # DOM 操作工具
+├── types.py                   # 类型定义
+├── constants.py               # 提取相关常量
+├── elements/                  # 元素处理器
+│   ├── code.py                # 代码块
+│   ├── images.py              # 图片
+│   └── footnotes.py           # 脚注
+└── extractors/                # 站点特化提取器
+    ├── base.py                # 基类
+    ├── registry.py            # 注册表
+    ├── github_issue.py        # GitHub Issue
+    └── x_article.py           # X/Twitter
 ```
 
 ---
@@ -148,8 +176,11 @@ utils/
 
 **核心组件**:
 - `main.py`: 使用 Click 框架的主入口
+- `commands/auth.py`: 认证管理（`markitai auth status/login/logout`）
 - `commands/config.py`: 配置管理命令
 - `commands/cache.py`: 缓存管理命令
+- `commands/doctor.py`: 系统健康诊断
+- `commands/init.py`: 初始化配置文件
 
 **设计决策**:
 - 使用 Click 框架实现命令分组
