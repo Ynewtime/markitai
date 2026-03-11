@@ -89,6 +89,31 @@ class TestShowDeviceCode:
         show_device_code("https://example.com", "CODE", console=console)
         assert "phishing" in buf.getvalue().lower()
 
+    def test_lines_use_4_space_indent(self) -> None:
+        """All output lines use 4-space indent to align with CLI prompts."""
+        console, buf = _make_test_console()
+        show_device_code(
+            "https://chatgpt.com/auth/device",
+            "ABCD-1234",
+            console=console,
+        )
+        lines = [line for line in buf.getvalue().splitlines() if line.strip()]
+        for line in lines:
+            assert line.startswith("    "), f"Expected 4-space indent: {line!r}"
+
+    def test_no_header_or_numbered_steps(self) -> None:
+        """Output has no 'Authentication' header or numbered steps."""
+        console, buf = _make_test_console()
+        show_device_code(
+            "https://chatgpt.com/auth/device",
+            "ABCD-1234",
+            console=console,
+        )
+        output = buf.getvalue()
+        assert "Authentication" not in output
+        assert "1." not in output
+        assert "2." not in output
+
 
 class TestShowOAuthSuccess:
     """Tests for show_oauth_success."""

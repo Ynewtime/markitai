@@ -533,6 +533,12 @@ def app(
         logger.debug(f"Output directory: {output.resolve()}")
 
     async def run_workflow() -> None:
+        # Create OutputManager for stderr line tracking
+        # Only enabled in stdout mode (when we need to erase before printing content)
+        from markitai.cli.output_manager import OutputManager
+
+        om = OutputManager(enabled=is_stdout_mode and not verbose and not quiet)
+
         # Pre-flight auth check for local providers (weight > 0)
         if cfg.llm.enabled and cfg.llm.model_list:
             from rich.markup import escape
@@ -547,11 +553,14 @@ def app(
             auth_results = await preflight_auth_check(cfg.llm.model_list)
             is_interactive = sys.stderr.isatty()
 
+            # Collect auth result summaries — these survive intermediate erasure
+            auth_summaries: list[str] = []
+
             for status in auth_results:
                 if status.authenticated:
                     continue
 
-                stderr_console.print(
+                om.print(
                     f"[yellow]  ! {status.provider}:"
                     f" {escape(status.error or '')}[/yellow]"
                 )
@@ -564,23 +573,39 @@ def app(
                             default="y",
                             err=True,
                         )
+                        om.track_external_lines(1)  # prompt + response on 1 line
                         if response.lower() == "y":
-                            login_result = await attempt_login(status.provider)
+                            login_result = await attempt_login(
+                                status.provider, output_manager=om
+                            )
+                            # copilot/claude-agent run with inherited stdio;
+                            # estimate their terminal output for erasure
+                            if status.provider in ("copilot", "claude-agent"):
+                                om.track_external_lines(2)
                             if login_result.authenticated:
-                                stderr_console.print(
-                                    f"    [green]✓[/green] {status.provider}"
+                                auth_summaries.append(
+                                    f"  [green]✓[/green] {status.provider}"
                                     f" authenticated as {login_result.user}"
                                 )
                             else:
-                                stderr_console.print(
-                                    f"    [red]✗[/red] Login failed:"
+                                auth_summaries.append(
+                                    f"  [red]✗[/red] {status.provider}:"
                                     f" {escape(login_result.error or '')}"
                                 )
                     except (EOFError, KeyboardInterrupt):
-                        stderr_console.print()
+                        om.print("")
                 else:
                     hint = get_auth_resolution_hint(status.provider)
-                    stderr_console.print(f"    [dim]{hint}[/dim]")
+                    om.print(f"    [dim]{hint}[/dim]")
+
+            # Erase intermediate auth output (warnings, prompts, subprocess
+            # output) then print condensed result lines directly to stderr
+            # so they persist through the progress-erase phase.
+            # Always erase — even when no login was attempted, intermediate
+            # warning/hint lines were tracked and should be cleaned up.
+            om.erase_all()
+            for summary in auth_summaries:
+                om.print_persistent(summary)
 
         # Helper to get effective output directory (CLI -o or config fallback)
         def get_effective_output() -> Path | None:
@@ -634,6 +659,7 @@ def app(
                 log_file_path,
                 fetch_strategy=fetch_strategy,
                 explicit_fetch_strategy=explicit_fetch_strategy,
+                output_manager=om,
             )
             return
 
@@ -678,6 +704,7 @@ def app(
             log_file_path,
             verbose=verbose,
             quiet=quiet,
+            output_manager=om,
         )
 
     async def run_workflow_with_cleanup() -> None:

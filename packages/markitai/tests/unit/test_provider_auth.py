@@ -1173,6 +1173,7 @@ class TestAttemptLogin:
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
+        mock_proc.wait.return_value = 0
 
         with (
             patch(
@@ -1219,6 +1220,7 @@ class TestAttemptLogin:
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
+        mock_proc.wait.return_value = 0
 
         with (
             patch(
@@ -1336,6 +1338,7 @@ class TestAttemptLogin:
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
+        mock_proc.wait.return_value = 1
 
         with (
             patch(
@@ -1347,11 +1350,94 @@ class TestAttemptLogin:
                 new_callable=AsyncMock,
                 return_value=mock_proc,
             ),
+            patch(
+                "markitai.providers.auth._check_copilot_config_auth",
+                return_value=AuthStatus(
+                    provider="copilot",
+                    authenticated=False,
+                    user=None,
+                    expires_at=None,
+                    error="No logged in users found",
+                ),
+            ),
         ):
             result = await attempt_login("copilot")
 
         assert result.authenticated is False
-        assert "failed" in (result.error or "").lower()
+        assert "exit code 1" in (result.error or "").lower()
+
+    async def test_copilot_login_succeeds_despite_nonzero_exit(self) -> None:
+        """Copilot login returns success when config written despite exit code 1.
+
+        The copilot CLI may exit non-zero (e.g., credential store issues on
+        WSL2) but still write credentials to config. Auth config is the source
+        of truth, not the exit code.
+        """
+        from markitai.providers.auth import attempt_login
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.wait.return_value = 1
+
+        with (
+            patch(
+                "markitai.providers.auth._resolve_cli_path",
+                return_value="/usr/bin/copilot",
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ),
+            patch(
+                "markitai.providers.auth._check_copilot_config_auth",
+                return_value=AuthStatus(
+                    provider="copilot",
+                    authenticated=True,
+                    user="octocat",
+                    expires_at=None,
+                    error=None,
+                ),
+            ),
+        ):
+            result = await attempt_login("copilot")
+
+        assert result.authenticated is True
+        assert result.user == "octocat"
+
+    async def test_claude_login_succeeds_despite_nonzero_exit(self) -> None:
+        """Claude login returns success when credentials written despite exit code 1."""
+        from markitai.providers.auth import attempt_login
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.wait.return_value = 1
+
+        with (
+            patch(
+                "markitai.providers.auth._resolve_cli_path",
+                return_value="/usr/bin/claude",
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ),
+            patch(
+                "markitai.providers.auth._check_claude_credentials_auth",
+                return_value=AuthStatus(
+                    provider="claude-agent",
+                    authenticated=True,
+                    user="user@example.com",
+                    expires_at=None,
+                    error=None,
+                ),
+            ),
+        ):
+            result = await attempt_login("claude-agent")
+
+        assert result.authenticated is True
+        assert result.user == "user@example.com"
 
 
 class TestCanAttemptLogin:

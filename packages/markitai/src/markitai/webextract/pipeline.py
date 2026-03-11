@@ -61,7 +61,7 @@ def extract_web_content(html: str, url: str) -> ExtractedWebContent:
 
 def _pick_root(soup: BeautifulSoup, extractor: object | None) -> Tag | BeautifulSoup:
     if extractor is not None and hasattr(extractor, "extract_root"):
-        root = extractor.extract_root(soup)
+        root: Tag | None = extractor.extract_root(soup)  # type: ignore[union-attr]
         if root is not None:
             return root
     return select_best_candidate(soup) or soup.find("article") or soup.body or soup

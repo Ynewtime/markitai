@@ -11,10 +11,10 @@ def normalize_code_blocks(root: Tag) -> None:
     """
 
     for code in list(root.find_all("code")):
-        classes = code.get("class", [])
+        classes: list[str] = code.get("class", [])  # type: ignore[assignment]
         style = str(code.get("style", ""))
         if "white-space: pre" in style and code.parent and code.parent.name != "pre":
             pre = BeautifulSoup("", "html.parser").new_tag("pre")
             code.wrap(pre)
         if classes:
-            code["class"] = classes
+            code["class"] = classes  # type: ignore[arg-type]

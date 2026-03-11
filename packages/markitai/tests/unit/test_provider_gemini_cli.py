@@ -133,6 +133,8 @@ class TestLoadCredentials:
 
         creds_file = tmp_path / "oauth_creds.json"
         creds_file.write_text(json.dumps(_make_creds_json()))
+        empty_auth_dir = tmp_path / "empty_auth"
+        empty_auth_dir.mkdir()
 
         provider = GeminiCLIProvider()
         mock_creds_cls = _make_mock_creds_class()
@@ -142,6 +144,11 @@ class TestLoadCredentials:
                 type(provider),
                 "_creds_path",
                 new_callable=lambda: property(lambda _self: creds_file),
+            ),
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: empty_auth_dir),
             ),
             patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
             patch(
@@ -160,6 +167,8 @@ class TestLoadCredentials:
         from markitai.providers.gemini_cli import GeminiCLIProvider
 
         creds_file = tmp_path / "nonexistent.json"
+        empty_auth_dir = tmp_path / "empty_auth"
+        empty_auth_dir.mkdir()
         provider = GeminiCLIProvider()
 
         with (
@@ -167,6 +176,11 @@ class TestLoadCredentials:
                 type(provider),
                 "_creds_path",
                 new_callable=lambda: property(lambda _self: creds_file),
+            ),
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: empty_auth_dir),
             ),
             patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
         ):
@@ -180,6 +194,8 @@ class TestLoadCredentials:
 
         creds_file = tmp_path / "oauth_creds.json"
         creds_file.write_text("not valid json {{{")
+        empty_auth_dir = tmp_path / "empty_auth"
+        empty_auth_dir.mkdir()
 
         provider = GeminiCLIProvider()
 
@@ -188,6 +204,11 @@ class TestLoadCredentials:
                 type(provider),
                 "_creds_path",
                 new_callable=lambda: property(lambda _self: creds_file),
+            ),
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: empty_auth_dir),
             ),
             patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
         ):
@@ -203,6 +224,8 @@ class TestLoadCredentials:
         expiry_ms = 1767225600000
         creds_file = tmp_path / "oauth_creds.json"
         creds_file.write_text(json.dumps(_make_creds_json(expiry_date=expiry_ms)))
+        empty_auth_dir = tmp_path / "empty_auth"
+        empty_auth_dir.mkdir()
 
         provider = GeminiCLIProvider()
         mock_creds_cls = _make_mock_creds_class()
@@ -212,6 +235,11 @@ class TestLoadCredentials:
                 type(provider),
                 "_creds_path",
                 new_callable=lambda: property(lambda _self: creds_file),
+            ),
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: empty_auth_dir),
             ),
             patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
             patch(
@@ -233,6 +261,8 @@ class TestLoadCredentials:
         del data["refresh_token"]
         creds_file = tmp_path / "oauth_creds.json"
         creds_file.write_text(json.dumps(data))
+        empty_auth_dir = tmp_path / "empty_auth"
+        empty_auth_dir.mkdir()
 
         provider = GeminiCLIProvider()
         mock_creds_cls = _make_mock_creds_class()
@@ -242,6 +272,11 @@ class TestLoadCredentials:
                 type(provider),
                 "_creds_path",
                 new_callable=lambda: property(lambda _self: creds_file),
+            ),
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: empty_auth_dir),
             ),
             patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
             patch(
@@ -545,17 +580,26 @@ class TestBuildRequest:
 class TestProjectDiscovery:
     """Tests for _get_project_id method."""
 
-    async def test_discovers_project_id(self) -> None:
+    async def test_discovers_project_id(self, tmp_path: Path) -> None:
         """Discovers project ID from loadCodeAssist endpoint."""
         from markitai.providers.gemini_cli import GeminiCLIProvider
 
         provider = GeminiCLIProvider()
+        empty_auth_dir = tmp_path / "empty_auth"
+        empty_auth_dir.mkdir()
 
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"cloudProject": "test-project-42"}
 
-        with patch("markitai.providers.gemini_cli.httpx") as mock_httpx:
+        with (
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: empty_auth_dir),
+            ),
+            patch("markitai.providers.gemini_cli.httpx") as mock_httpx,
+        ):
             mock_client = AsyncMock()
             mock_client.post.return_value = mock_response
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -566,28 +610,44 @@ class TestProjectDiscovery:
 
         assert result == "test-project-42"
 
-    async def test_caches_project_id(self) -> None:
+    async def test_caches_project_id(self, tmp_path: Path) -> None:
         """Project ID is cached after first discovery."""
         from markitai.providers.gemini_cli import GeminiCLIProvider
 
         provider = GeminiCLIProvider()
         provider._project_id = "cached-project"
+        empty_auth_dir = tmp_path / "empty_auth"
+        empty_auth_dir.mkdir()
 
-        # Should return cached value without making any HTTP calls
-        result = await provider._get_project_id("test-token")
+        with patch.object(
+            type(provider),
+            "_managed_auth_dir",
+            new_callable=lambda: property(lambda _self: empty_auth_dir),
+        ):
+            # Should return cached value without making any HTTP calls
+            result = await provider._get_project_id("test-token")
         assert result == "cached-project"
 
-    async def test_returns_none_on_failure(self) -> None:
+    async def test_returns_none_on_failure(self, tmp_path: Path) -> None:
         """Returns None when discovery fails."""
         from markitai.providers.gemini_cli import GeminiCLIProvider
 
         provider = GeminiCLIProvider()
+        empty_auth_dir = tmp_path / "empty_auth"
+        empty_auth_dir.mkdir()
 
         mock_response = MagicMock()
         mock_response.status_code = 500
         mock_response.json.return_value = {}
 
-        with patch("markitai.providers.gemini_cli.httpx") as mock_httpx:
+        with (
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: empty_auth_dir),
+            ),
+            patch("markitai.providers.gemini_cli.httpx") as mock_httpx,
+        ):
             mock_client = AsyncMock()
             mock_client.post.return_value = mock_response
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -1343,6 +1403,133 @@ class TestOAuthFlow:
         active = json.loads(active_file.read_text(encoding="utf-8"))
         assert active == {"credential_path": str(record.path)}
 
+    async def test_alogin_saves_credentials_when_project_resolution_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """alogin() should save credentials even if project resolution fails.
+
+        When _resolve_login_project() raises AuthenticationError, the OAuth
+        token and refresh_token should still be persisted to disk so subsequent
+        LLM calls can use them.
+        """
+        from datetime import UTC, datetime
+
+        from markitai.providers.errors import AuthenticationError
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+        managed_dir = tmp_path / ".markitai" / "auth"
+        active_file = managed_dir / "gemini-current.json"
+
+        mock_creds = MagicMock()
+        mock_creds.token = "ya29.oauth-token"
+        mock_creds.refresh_token = "1//new-refresh"
+        mock_creds.client_id = "test-client-id"
+        mock_creds.client_secret = "test-secret"
+        mock_creds.expiry = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+
+        with (
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: managed_dir),
+            ),
+            patch.object(
+                type(provider),
+                "_active_profile_path",
+                new_callable=lambda: property(lambda _self: active_file),
+            ),
+            patch.object(
+                provider, "_create_oauth_credentials", return_value=mock_creds
+            ),
+            patch.object(
+                provider,
+                "_fetch_user_email",
+                new=AsyncMock(return_value="me@example.com"),
+            ),
+            patch.object(
+                provider,
+                "_resolve_login_project",
+                new=AsyncMock(
+                    side_effect=AuthenticationError(
+                        "Failed to resolve a Gemini Code Assist project.",
+                        provider="gemini-cli",
+                    )
+                ),
+            ),
+        ):
+            record = await provider.alogin(mode="google-one")
+
+        # Credentials should be saved even without project resolution
+        assert record.email == "me@example.com"
+        assert record.project_id is None
+        assert record.source == "markitai"
+        assert record.path.exists()
+
+        # Active profile should point to saved credentials
+        active = json.loads(active_file.read_text(encoding="utf-8"))
+        assert active == {"credential_path": str(record.path)}
+
+        # Saved file should have the token data
+        saved = json.loads(record.path.read_text(encoding="utf-8"))
+        assert saved["access_token"] == "ya29.oauth-token"
+        assert saved["refresh_token"] == "1//new-refresh"
+        assert saved["email"] == "me@example.com"
+
+
+# ===================================================================
+# OAuth scope tests
+# ===================================================================
+
+
+class TestOAuthScopes:
+    """Verify OAuth scopes include openid to prevent scope-mismatch errors.
+
+    Google's OAuth server automatically injects 'openid' when userinfo.*
+    scopes are requested.  oauthlib strictly checks returned vs requested
+    scopes and raises "Scope has changed" if they differ.
+    """
+
+    def test_scopes_include_openid(self) -> None:
+        """GEMINI_CLI_SCOPES must include 'openid'."""
+        from markitai.providers.gemini_cli import GEMINI_CLI_SCOPES
+
+        assert "openid" in GEMINI_CLI_SCOPES
+
+    def test_create_oauth_sets_relax_env(self) -> None:
+        """_create_oauth_credentials sets OAUTHLIB_RELAX_TOKEN_SCOPE."""
+        import os
+
+        from markitai.providers.gemini_cli import GeminiCLIProvider
+
+        provider = GeminiCLIProvider()
+        mock_flow = MagicMock()
+        mock_flow.run_local_server.return_value = MagicMock(
+            token="ya29.test", refresh_token="1//test"
+        )
+
+        with (
+            patch("markitai.providers.gemini_cli._OAUTHLIB_AVAILABLE", True),
+            patch("markitai.providers.gemini_cli._InstalledAppFlow") as mock_cls,
+            patch("markitai.providers.gemini_cli.suppress_stdout"),
+        ):
+            mock_cls.from_client_config.return_value = mock_flow
+
+            # Capture env state during the call
+            captured_env: dict[str, str | None] = {}
+            original_run = mock_flow.run_local_server
+
+            def capture_env(*args: Any, **kwargs: Any) -> Any:
+                captured_env["OAUTHLIB_RELAX_TOKEN_SCOPE"] = os.environ.get(
+                    "OAUTHLIB_RELAX_TOKEN_SCOPE"
+                )
+                return original_run(*args, **kwargs)
+
+            mock_flow.run_local_server = capture_env
+            provider._create_oauth_credentials()
+
+        assert captured_env.get("OAUTHLIB_RELAX_TOKEN_SCOPE") == "1"
+
 
 # ===================================================================
 # Dependency check tests
@@ -1360,6 +1547,8 @@ class TestDependencyChecks:
 
         creds_file = tmp_path / "oauth_creds.json"
         creds_file.write_text(json.dumps(_make_creds_json()))
+        empty_auth_dir = tmp_path / "empty_auth"
+        empty_auth_dir.mkdir()
 
         provider = GeminiCLIProvider()
 
@@ -1368,6 +1557,11 @@ class TestDependencyChecks:
                 type(provider),
                 "_creds_path",
                 new_callable=lambda: property(lambda _self: creds_file),
+            ),
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: empty_auth_dir),
             ),
             patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", False),
         ):
@@ -1382,6 +1576,8 @@ class TestDependencyChecks:
         """Returns None when google-auth missing AND no credential file."""
         from markitai.providers.gemini_cli import GeminiCLIProvider
 
+        empty_auth_dir = tmp_path / "empty_auth"
+        empty_auth_dir.mkdir()
         provider = GeminiCLIProvider()
 
         with (
@@ -1391,6 +1587,11 @@ class TestDependencyChecks:
                 new_callable=lambda: property(
                     lambda _self: tmp_path / "nonexistent.json"
                 ),
+            ),
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: empty_auth_dir),
             ),
             patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", False),
         ):
@@ -1405,6 +1606,8 @@ class TestDependencyChecks:
         from markitai.providers.errors import SDKNotAvailableError
         from markitai.providers.gemini_cli import GeminiCLIProvider
 
+        empty_auth_dir = tmp_path / "empty_auth"
+        empty_auth_dir.mkdir()
         provider = GeminiCLIProvider()
 
         with (
@@ -1414,6 +1617,11 @@ class TestDependencyChecks:
                 new_callable=lambda: property(
                     lambda _self: tmp_path / "nonexistent.json"
                 ),
+            ),
+            patch.object(
+                type(provider),
+                "_managed_auth_dir",
+                new_callable=lambda: property(lambda _self: empty_auth_dir),
             ),
             patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", False),
         ):

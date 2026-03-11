@@ -264,7 +264,9 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
             )
         return ConversionStepResult(success=True)
     except Exception as e:
-        return ConversionStepResult(success=False, error=f"Conversion failed: {e}")
+        return ConversionStepResult(
+            success=False, error=f"Conversion failed: {format_error_message(e)}"
+        )
 
 
 def resolve_output_file(ctx: ConversionContext) -> ConversionStepResult:

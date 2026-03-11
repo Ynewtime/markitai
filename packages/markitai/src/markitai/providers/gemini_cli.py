@@ -38,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import base64 as _b64
 import json
+import os
 import re
 import time
 import uuid
@@ -122,6 +123,7 @@ GEMINI_CLI_CLIENT_SECRET = _b64.b64decode(
 ).decode()
 GEMINI_CLI_REDIRECT_PORT = 45289
 GEMINI_CLI_SCOPES = [
+    "openid",
     "https://www.googleapis.com/auth/cloud-platform",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
@@ -460,6 +462,12 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
         )
 
         logger.info("[GeminiCLI] Opening browser for OAuth login...")
+
+        # Defense-in-depth: accept scope additions from Google's server.
+        # Even though GEMINI_CLI_SCOPES includes 'openid', Google may add
+        # other scopes in the future.  Without this, oauthlib raises
+        # "Scope has changed" and the OAuth token is lost.
+        os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
         # Suppress raw stdout from google-auth-oauthlib's run_local_server
         # (it prints "Please visit this URL...") and show Rich-styled output
@@ -939,7 +947,13 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
         mode: str = "google-one",
         project_id: str | None = None,
     ) -> GeminiCredentialRecord:
-        """Run interactive Gemini OAuth and save a Markitai-managed profile."""
+        """Run interactive Gemini OAuth and save a Markitai-managed profile.
+
+        Saves credentials to disk as early as possible so the refresh_token
+        survives even if project resolution fails.  When project resolution
+        raises, the profile is saved without a project binding — the token
+        remains usable and ``_get_project_id()`` can retry at call time.
+        """
         creds = self._create_oauth_credentials()
         access_token = getattr(creds, "token", None)
         if not isinstance(access_token, str) or not access_token:
@@ -955,18 +969,28 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
                 provider="gemini-cli",
             )
 
-        resolved_project = await self._resolve_login_project(
-            access_token,
-            mode=mode,
-            project_id=project_id,
-        )
-        profile_path = self._managed_profile_path(email, resolved_project)
-        metadata = {
+        # Try project resolution, but don't lose OAuth credentials on failure.
+        resolved_project: str | None = None
+        try:
+            resolved_project = await self._resolve_login_project(
+                access_token,
+                mode=mode,
+                project_id=project_id,
+            )
+        except AuthenticationError:
+            logger.warning(
+                "[GeminiCLI] Project resolution failed; "
+                "saving credentials without project binding"
+            )
+
+        profile_path = self._managed_profile_path(email, resolved_project or "default")
+        metadata: dict[str, Any] = {
             "email": email,
-            "project_id": resolved_project,
             "auth_mode": mode,
             "source": "markitai",
         }
+        if resolved_project is not None:
+            metadata["project_id"] = resolved_project
         self._save_credentials(creds, path=profile_path, metadata=metadata)
         atomic_write_json(
             self._active_profile_path,

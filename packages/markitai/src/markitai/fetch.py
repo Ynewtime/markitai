@@ -1654,7 +1654,7 @@ def _make_json_safe(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, Path):
         return str(value)
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return _make_json_safe(asdict(value))
     if isinstance(value, dict):
         return {str(key): _make_json_safe(item) for key, item in value.items()}
@@ -1672,7 +1672,7 @@ def _get_header_value(
         for candidate in candidates:
             value = getter(candidate, None)
             if value is not None:
-                return value
+                return str(value)
 
     if isinstance(headers, dict):
         normalized = {str(key).lower(): value for key, value in headers.items()}

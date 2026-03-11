@@ -10,6 +10,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
@@ -23,6 +24,7 @@ from markitai.json_order import order_report
 from markitai.security import atomic_write_json, validate_file_size
 from markitai.utils.cli_helpers import compute_task_hash, get_report_file_path
 from markitai.utils.progress import ProgressReporter
+from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import write_images_json
 
 console = get_console()
@@ -36,6 +38,7 @@ async def process_single_file(
     log_file_path: Path | None = None,
     verbose: bool = False,
     quiet: bool = False,
+    output_manager: Any = None,
 ) -> None:
     """Process a single file with layered output.
 
@@ -127,7 +130,7 @@ async def process_single_file(
 
     # Progress spinner: only show when saving to file and not quiet/verbose
     show_spinner = not stdout_mode and not quiet and not verbose
-    progress = ProgressReporter(enabled=show_spinner)
+    progress = ProgressReporter(enabled=show_spinner, output_manager=output_manager)
 
     try:
         # Show verbose title
@@ -279,7 +282,7 @@ async def process_single_file(
                 ui.success(f"{final_output_file}{duration_str}")
 
     except Exception as e:
-        error_msg = str(e)
+        error_msg = format_error_message(e)
         progress.stop_spinner()
         if not quiet:
             ui.error(error_msg)
