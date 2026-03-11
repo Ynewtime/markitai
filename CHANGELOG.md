@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-03-11
+
+### Fixed
+
+- **Copilot/Claude Login**: Revert subprocess output interception for copilot/claude-agent login — always use inherited stdio so the CLI sees a real TTY, fixing credential storage failures
+- **Login Output Display**: Detect URL and device code on the same line (copilot outputs both together); track externally-printed lines for clean erasure after login
+- **Error Message Clarity**: Fix `format_error_message` following `__context__` (implicit exception chain) to wrapper exceptions like tenacity `RetryError`, replacing informative provider errors with opaque `<Future at 0x...>` messages in logs; now only follows `__cause__` (explicit `raise X from Y`)
+- **Error Message Consistency**: Use `format_error_message` in CLI catch-all handlers (`file.py`, `workflow/core.py`) to prevent opaque chained exception messages reaching users
+
+### Added
+
+- `SubprocessInterceptor` URL+code same-line formatting for copilot device code flow
+- `OutputManager.track_external_lines()` for tracking terminal output from inherited-stdio subprocesses
+
 ## [0.9.1] - 2026-03-09
 
 ### Fixed
@@ -687,6 +701,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.9.2]: https://github.com/Ynewtime/markitai/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/Ynewtime/markitai/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Ynewtime/markitai/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/Ynewtime/markitai/compare/v0.8.0...v0.8.1
