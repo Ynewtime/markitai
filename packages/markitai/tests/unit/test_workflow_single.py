@@ -889,6 +889,54 @@ class TestSingleFileWorkflowAnalyzeImagesAltTextUpdate:
         # Default caption should be used
         assert result.assets[0]["alt"] == "Image"
 
+    @pytest.mark.asyncio
+    async def test_empty_caption_falls_back_to_default(
+        self, mock_config, mock_processor, tmp_path: Path
+    ):
+        """Test that empty caption from successful analysis falls back to 'Image'.
+
+        When LLM returns a successful ImageAnalysis but with empty caption,
+        the alt text should not be empty — it should fall back to 'Image'.
+        This prevents empty ![]() references in the output markdown.
+        """
+
+        @dataclass
+        class EmptyCaptionAnalysis:
+            caption: str = ""
+            description: str = "A chart showing data"
+            extracted_text: str = ""
+            llm_usage: dict[str, Any] | None = None
+
+        mock_processor.analyze_image = AsyncMock(return_value=EmptyCaptionAnalysis())
+        mock_processor.get_context_cost = MagicMock(return_value=0.01)
+        mock_processor.get_context_usage = MagicMock(
+            return_value={"gpt-4": {"requests": 1}}
+        )
+
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        image_file = assets_dir / "chart.png"
+        image_file.write_bytes(b"fake image")
+
+        output_file = tmp_path / "output.md"
+        output_file.write_text("# Report\n\n![](.markitai/assets/chart.png)")
+
+        markdown, cost, usage, result = await workflow.analyze_images(
+            markdown="# Report\n\n![](.markitai/assets/chart.png)",
+            image_paths=[image_file],
+            output_file=output_file,
+        )
+
+        # Alt text should NOT be empty — should fall back to "Image"
+        assert "![](.markitai/assets/chart.png)" not in markdown
+        assert "![Image](.markitai/assets/chart.png)" in markdown
+
+        # Asset description should also have non-empty alt
+        assert result is not None
+        assert result.assets[0]["alt"] == "Image"
+
 
 class TestWorkflowResult:
     """Tests for WorkflowResult dataclass."""

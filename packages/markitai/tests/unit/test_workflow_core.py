@@ -808,6 +808,74 @@ class TestApplyAltTextUpdates:
         assert "![Second image](.markitai/assets/image2.jpg)" in updated_content
 
 
+class TestAltTextSurvivesStabilization:
+    """Test that alt text updates survive markdown stabilization.
+
+    Regression test for a bug where stabilize_written_llm_output() was called
+    BEFORE apply_alt_text_updates(), causing alt text to be lost when the
+    stabilizer rewrote the .llm.md file from a baseline without alt text.
+    """
+
+    def test_alt_text_survives_stabilization(self, tmp_path: Path) -> None:
+        """Alt text should be present after both stabilize and alt text update."""
+        from dataclasses import dataclass
+        from unittest.mock import MagicMock
+
+        from markitai.workflow.core import (
+            apply_alt_text_updates,
+            stabilize_written_llm_output,
+        )
+
+        # Set up baseline .md file (no alt text — simulates converter output)
+        base_md = tmp_path / "doc.md"
+        base_md.write_text(
+            "# Report\n\n![](.markitai/assets/chart.png)\n\nSome text.\n"
+        )
+
+        # Set up .llm.md file (LLM-generated, also without alt text initially)
+        llm_md = tmp_path / "doc.llm.md"
+        llm_md.write_text(
+            "---\ntitle: Report\n---\n\n# Report\n\n"
+            "![](.markitai/assets/chart.png)\n\nSome text.\n"
+        )
+
+        # Mock context for stabilize
+        ctx = MagicMock()
+        ctx.output_file = base_md
+        ctx.input_path.name = "doc.pdf"
+        ctx.conversion_result.markdown = base_md.read_text()
+
+        # Mock processor without _stabilize_paged_markdown (no-op stabilize)
+        processor = MagicMock(spec=[])  # empty spec prevents auto-attributes
+
+        # Run stabilize first (should be no-op since content matches baseline)
+        stabilize_written_llm_output(ctx, processor)
+
+        # Now apply alt text updates
+        @dataclass
+        class MockAnalysis:
+            assets: list[dict]
+
+        analysis = MockAnalysis(
+            assets=[
+                {
+                    "asset": str(tmp_path / ".markitai" / "assets" / "chart.png"),
+                    "alt": "Bar chart showing quarterly revenue",
+                }
+            ]
+        )
+        result = apply_alt_text_updates(llm_md, analysis)
+
+        assert result is True
+        final_content = llm_md.read_text()
+        assert (
+            "![Bar chart showing quarterly revenue](.markitai/assets/chart.png)"
+            in final_content
+        )
+        # Empty alt text should NOT remain
+        assert "![](.markitai/assets/chart.png)" not in final_content
+
+
 class TestRunInConverterThread:
     """Tests for run_in_converter_thread function."""
 
