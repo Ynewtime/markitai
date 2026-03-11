@@ -39,7 +39,7 @@ def score_candidate(node: Tag) -> float:
     words = len(text.split())
     paragraphs = len(node.find_all("p"))
     links = len(node.find_all("a"))
-    classes = " ".join(node.get("class", []))
+    classes: str = " ".join(node.get("class", []))  # type: ignore[arg-type]
 
     score = float(words)
     score += paragraphs * 20

@@ -1773,10 +1773,12 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         # Rasterize SVG to PNG via cairosvg (optional dependency)
         if image_path.suffix.lower() == ".svg" and cairosvg is not None:
             try:
-                image_data = cairosvg.svg2png(
+                svg_result = cairosvg.svg2png(
                     bytestring=image_data,
                     output_width=2048,
                 )
+                assert isinstance(svg_result, bytes)
+                image_data = svg_result
                 logger.debug(
                     "[LLM] Rasterized {} to PNG for LLM compatibility",
                     image_path.name,

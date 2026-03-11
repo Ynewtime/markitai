@@ -12,6 +12,7 @@ class BaseSiteExtractor(Protocol):
 
     def matches_url(self, url: str) -> bool:
         """Return whether this extractor handles the given URL."""
+        ...
 
     def extract_root(self, soup: BeautifulSoup) -> Tag | None:
         """Return the root content element for the document."""

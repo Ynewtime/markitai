@@ -20,7 +20,7 @@ def coerce_source_frontmatter(metadata: Any) -> dict[str, Any]:
     """Convert extracted metadata objects into a serializable frontmatter dict."""
     if metadata is None:
         return {}
-    if is_dataclass(metadata):
+    if is_dataclass(metadata) and not isinstance(metadata, type):
         data = asdict(metadata)
     elif isinstance(metadata, dict):
         data = metadata

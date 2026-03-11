@@ -825,13 +825,14 @@ class BatchProcessor:
             regex: re.Pattern[str] | None = None
             if callable(translate):
                 try:
-                    regex = re.compile(
+                    translated = str(
                         translate(
                             pattern,
                             recursive=True,
                             include_hidden=True,
                         )
                     )
+                    regex = re.compile(translated)
                 except TypeError:
                     regex = None
             compiled = _CompiledGlobPattern(pattern=pattern, regex=regex)

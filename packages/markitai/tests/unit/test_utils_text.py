@@ -217,6 +217,47 @@ class TestFormatErrorMessage:
             assert "  " not in result
             assert "\n" not in result
 
+    def test_provider_error_not_replaced_by_retry_error_context(self):
+        """Test that informative ProviderError message is NOT replaced by
+        opaque RetryError wrapper message via __context__ chain.
+
+        Simulates the real scenario where:
+        1. gemini_cli raises ProviderError("model X not found")
+        2. tenacity catches it and raises RetryError(<Future...>)
+        3. _find_non_retryable_provider_error extracts the ProviderError
+        4. format_error_message should use the ProviderError message, not RetryError
+        """
+        from concurrent.futures import Future
+
+        from markitai.providers.errors import ProviderError
+
+        # Simulate: ProviderError raised, then RetryError raised in except block
+        provider_error = ProviderError(
+            "Code Assist API error (HTTP 404): model gemini-3.1-flash-lite-preview not found",
+            provider="gemini-cli",
+        )
+        # Simulate tenacity RetryError with a Future as args[0]
+        future = Future()
+        future.set_exception(provider_error)
+
+        class RetryError(Exception):
+            pass
+
+        retry_error = RetryError(future)
+
+        # Simulate implicit exception chaining: ProviderError.__context__ = RetryError
+        # This happens when ProviderError is re-raised or found within a
+        # RetryError except handler
+        provider_error.__context__ = retry_error
+
+        result = format_error_message(provider_error)
+        # MUST contain the informative ProviderError message
+        assert "model gemini-3.1-flash-lite-preview not found" in result
+        assert "ProviderError" in result
+        # MUST NOT contain the opaque Future repr
+        assert "Future at" not in result
+        assert "RetryError" not in result
+
 
 class TestFormatErrorMessageIntegration:
     """Integration tests simulating real LLM errors."""

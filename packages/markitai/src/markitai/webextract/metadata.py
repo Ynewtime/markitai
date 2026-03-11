@@ -70,7 +70,7 @@ def _title_text(soup: BeautifulSoup) -> str | None:
 
 
 def _canonical_url(soup: BeautifulSoup) -> str | None:
-    link = soup.find("link", rel=lambda value: value and "canonical" in value)
+    link = soup.find("link", rel=lambda value: value and "canonical" in value)  # type: ignore[arg-type]
     if link and link.get("href"):
         return str(link["href"]).strip()
     return None

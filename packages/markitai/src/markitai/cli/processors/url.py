@@ -57,6 +57,7 @@ async def process_url(
     log_file_path: Path | None = None,
     fetch_strategy: FetchStrategy | None = None,
     explicit_fetch_strategy: bool = False,
+    output_manager: Any = None,
 ) -> None:
     """Process a URL and convert to Markdown.
 
@@ -151,7 +152,7 @@ async def process_url(
     llm_usage: dict[str, dict[str, Any]] = {}
 
     # Progress reporter for non-verbose mode feedback
-    progress = ProgressReporter(enabled=not verbose)
+    progress = ProgressReporter(enabled=not verbose, output_manager=output_manager)
 
     # Track cache hit for reporting
     fetch_cache_hit = False

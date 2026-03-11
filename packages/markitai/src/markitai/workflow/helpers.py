@@ -65,7 +65,7 @@ def maybe_stabilize_markdown(
     """
     stabilize = getattr(processor, "_stabilize_paged_markdown", None)
     if callable(stabilize):
-        stabilized = stabilize(baseline, content, source)
+        stabilized = str(stabilize(baseline, content, source))
         if stabilized != content:
             logger.warning(f"[{source}] Stabilized paged markdown output")
         return stabilized

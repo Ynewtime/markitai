@@ -137,17 +137,13 @@ def format_error_message(error: Any, max_length: int = 200) -> str:
         else:
             msg = str(error)
 
-        # For chained exceptions, find the root cause message
-        # Check __cause__ first (explicit chaining with 'raise ... from')
+        # For chained exceptions, find the root cause message.
+        # Only follow __cause__ (explicit 'raise X from Y') — never __context__
+        # (implicit chaining), which often leads to wrapper exceptions like
+        # RetryError whose messages are opaque (e.g., "<Future at 0x...>").
         root_error = error
         while hasattr(root_error, "__cause__") and root_error.__cause__ is not None:
             root_error = root_error.__cause__
-        while hasattr(root_error, "__context__") and root_error.__context__ is not None:
-            # Only follow __context__ if it's more specific
-            if root_error.__context__ is not error:
-                root_error = root_error.__context__
-            else:
-                break
 
         # If we found a root cause, use its message
         if root_error is not error:

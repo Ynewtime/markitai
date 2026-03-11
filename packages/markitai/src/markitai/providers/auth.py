@@ -730,8 +730,16 @@ class AuthManager:
             del self._cache[provider]
 
 
-async def _login_copilot() -> AuthStatus:
+async def _login_copilot(output_manager: Any = None) -> AuthStatus:
     """Run `copilot login` interactively.
+
+    Always runs with inherited stdio so the CLI sees a real TTY —
+    required for credential storage to work correctly.
+
+    Args:
+        output_manager: Accepted for interface consistency but not used.
+            Copilot CLI requires a real TTY on stdout; piping or PTY
+            redirection breaks its credential storage flow.
 
     Returns:
         AuthStatus after the login attempt.
@@ -749,23 +757,31 @@ async def _login_copilot() -> AuthStatus:
         )
 
     proc = await asyncio.create_subprocess_exec(cli_path, "login")
-    await proc.wait()
+    returncode = await proc.wait()
 
-    if proc.returncode != 0:
+    AuthManager().clear_cache("copilot")
+    config_status = _check_copilot_config_auth()
+    if config_status.authenticated:
+        return config_status
+
+    if returncode != 0:
         return AuthStatus(
             provider="copilot",
             authenticated=False,
             user=None,
             expires_at=None,
-            error=f"Login failed (exit code {proc.returncode})",
+            error=f"Login failed (exit code {returncode})",
         )
-
-    AuthManager().clear_cache("copilot")
-    return _check_copilot_config_auth()
+    return config_status
 
 
-async def _login_claude_agent() -> AuthStatus:
+async def _login_claude_agent(output_manager: Any = None) -> AuthStatus:
     """Run `claude auth login` interactively.
+
+    Always runs with inherited stdio so the CLI sees a real TTY.
+
+    Args:
+        output_manager: Accepted for interface consistency but not used.
 
     Returns:
         AuthStatus after the login attempt.
@@ -783,33 +799,47 @@ async def _login_claude_agent() -> AuthStatus:
         )
 
     proc = await asyncio.create_subprocess_exec(cli_path, "auth", "login")
-    await proc.wait()
+    returncode = await proc.wait()
 
-    if proc.returncode != 0:
+    AuthManager().clear_cache("claude-agent")
+    config_status = _check_claude_credentials_auth()
+    if config_status.authenticated:
+        return config_status
+
+    if returncode != 0:
         return AuthStatus(
             provider="claude-agent",
             authenticated=False,
             user=None,
             expires_at=None,
-            error=f"Login failed (exit code {proc.returncode})",
+            error=f"Login failed (exit code {returncode})",
         )
-
-    AuthManager().clear_cache("claude-agent")
-    return _check_claude_credentials_auth()
+    return config_status
 
 
-async def _login_gemini_cli() -> AuthStatus:
+async def _login_gemini_cli(output_manager: Any = None) -> AuthStatus:
     """Run Gemini OAuth login via GeminiCLIProvider.alogin().
+
+    Args:
+        output_manager: Optional OutputManager for formatted output.
+            Currently accepted for interface consistency; Gemini OAuth
+            already uses show_oauth_start/success which write to stderr.
 
     Returns:
         AuthStatus after the login attempt.
     """
     from markitai.providers.gemini_cli import GeminiCLIProvider
 
+    if output_manager is not None:
+        logger.debug(
+            "[Auth] Gemini login with output_manager (reserved for future use)"
+        )
+
     try:
         provider = GeminiCLIProvider()
         await provider.alogin()
     except Exception as e:
+        logger.warning("[Auth] Gemini login failed: {}", e)
         return AuthStatus(
             provider="gemini-cli",
             authenticated=False,
@@ -822,15 +852,21 @@ async def _login_gemini_cli() -> AuthStatus:
     return _check_gemini_cli_auth()
 
 
-async def _login_chatgpt() -> AuthStatus:
+async def _login_chatgpt(output_manager: Any = None) -> AuthStatus:
     """Trigger ChatGPT Device Code Flow authentication.
 
     Calls LiteLLM's Authenticator.get_access_token() which handles the
-    full device code flow: request code → display prompt → poll for
-    completion → exchange for tokens → save to disk.
+    full device code flow: request code -> display prompt -> poll for
+    completion -> exchange for tokens -> save to disk.
 
     The DeviceCodeInterceptor captures stdout from the authenticator and
-    re-displays the device code in Rich format on stderr.
+    re-displays the device code in Rich format on stderr (or via the
+    provided output_manager).
+
+    Args:
+        output_manager: Optional OutputManager for formatted output.
+            When provided, OAuth display functions use it instead of
+            creating a separate Rich console.
 
     Returns:
         AuthStatus after the login attempt.
@@ -854,7 +890,7 @@ async def _login_chatgpt() -> AuthStatus:
     )
 
     authenticator = Authenticator()
-    interceptor = DeviceCodeInterceptor()
+    interceptor = DeviceCodeInterceptor(output_manager=output_manager)
     original_stdout = sys.stdout
     sys.stdout = interceptor  # type: ignore[assignment]
     try:
@@ -871,7 +907,7 @@ async def _login_chatgpt() -> AuthStatus:
         sys.stdout = original_stdout
 
     if interceptor.displayed:
-        show_oauth_success("chatgpt")
+        show_oauth_success("chatgpt", output_manager=output_manager)
 
     AuthManager().clear_cache("chatgpt")
     return _check_chatgpt_auth()
@@ -908,29 +944,31 @@ def can_attempt_login(provider: str) -> bool:
     return False
 
 
-async def attempt_login(provider: str) -> AuthStatus:
+async def attempt_login(provider: str, output_manager: Any = None) -> AuthStatus:
     """Attempt interactive login for a provider.
 
     Dispatches to the appropriate login flow:
-    - copilot: subprocess `copilot login`
-    - claude-agent: subprocess `claude auth login`
+    - copilot: subprocess ``copilot login``
+    - claude-agent: subprocess ``claude auth login``
     - gemini-cli: programmatic OAuth via GeminiCLIProvider.alogin()
     - chatgpt: Device Code Flow via LiteLLM Authenticator
 
     Args:
-        provider: Provider name (e.g., "copilot", "claude-agent")
+        provider: Provider name (e.g., "copilot", "claude-agent").
+        output_manager: Optional OutputManager for formatted output.
+            Forwarded to individual login functions.
 
     Returns:
         AuthStatus after the login attempt.
     """
     if provider == "copilot":
-        return await _login_copilot()
+        return await _login_copilot(output_manager)
     elif provider == "claude-agent":
-        return await _login_claude_agent()
+        return await _login_claude_agent(output_manager)
     elif provider == "gemini-cli":
-        return await _login_gemini_cli()
+        return await _login_gemini_cli(output_manager)
     elif provider == "chatgpt":
-        return await _login_chatgpt()
+        return await _login_chatgpt(output_manager)
     else:
         return AuthStatus(
             provider=provider,

@@ -12,7 +12,7 @@ import re
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -65,6 +65,7 @@ def show_device_code(
     code: str,
     *,
     console: Console | None = None,
+    output_manager: Any = None,
 ) -> None:
     """Display device code auth instructions on stderr.
 
@@ -72,12 +73,21 @@ def show_device_code(
         url: Auth URL the user should visit.
         code: Device code the user should enter.
         console: Optional console override for testing.
+        output_manager: Optional OutputManager for centralized output.
+            When provided, output goes through it instead of a console.
     """
+    lines = [
+        f"    Visit: [link={url}]{url}[/link]",
+        f"    Code: [bold cyan]{code}[/]",
+        "    [dim]Device codes are a phishing target. Never share this code.[/]",
+    ]
+    if output_manager is not None:
+        for line in lines:
+            output_manager.print(line)
+        return
     c = console or _get_stderr_console()
-    c.print("\n  [bold]ChatGPT Authentication[/]")
-    c.print(f"  1. Visit: [link={url}]{url}[/link]")
-    c.print(f"  2. Enter code: [bold cyan]{code}[/]")
-    c.print("  [dim]Device codes are a phishing target. Never share this code.[/]")
+    for line in lines:
+        c.print(line)
 
 
 def show_oauth_success(
@@ -86,6 +96,7 @@ def show_oauth_success(
     user: str | None = None,
     detail: str | None = None,
     console: Console | None = None,
+    output_manager: Any = None,
 ) -> None:
     """Display OAuth success message on stderr.
 
@@ -94,12 +105,21 @@ def show_oauth_success(
         user: Username or email if available.
         detail: Additional detail (e.g., credential path).
         console: Optional console override for testing.
+        output_manager: Optional OutputManager for centralized output.
+            When provided, output goes through it instead of a console.
     """
-    c = console or _get_stderr_console()
     label = _PROVIDER_LABELS.get(provider, provider)
     msg = f"  [green]\u2713[/] {label} authenticated"
     if user:
         msg += f" as [bold]{user}[/]"
+
+    if output_manager is not None:
+        output_manager.print(msg)
+        if detail:
+            output_manager.print(f"    [dim]\u2502 {detail}[/]")
+        return
+
+    c = console or _get_stderr_console()
     c.print(msg)
     if detail:
         c.print(f"    [dim]\u2502 {detail}[/]")
@@ -129,10 +149,17 @@ class DeviceCodeInterceptor(io.TextIOBase):
 
     Args:
         console: Rich console for stderr output.
+        output_manager: Optional OutputManager for centralized output.
+            When provided, display functions use it instead of the console.
     """
 
-    def __init__(self, console: Console | None = None) -> None:
+    def __init__(
+        self,
+        console: Console | None = None,
+        output_manager: Any = None,
+    ) -> None:
         super().__init__()
+        self._output_manager = output_manager
         self._console = console or _get_stderr_console()
         self._buffer = ""
         self._displayed = False
@@ -145,7 +172,12 @@ class DeviceCodeInterceptor(io.TextIOBase):
         result = parse_chatgpt_device_code(self._buffer)
         if result:
             url, code = result
-            show_device_code(url, code, console=self._console)
+            show_device_code(
+                url,
+                code,
+                console=self._console,
+                output_manager=self._output_manager,
+            )
             self._displayed = True
         return len(s)
 
