@@ -122,18 +122,21 @@ class MockVisionProcessor(VisionMixin):
         ]
 
     def _get_mock_prompt(self, prompt_name: str, **kwargs: Any) -> str:
-        """Return mock prompts for testing."""
+        """Return mock prompts for testing with variable substitution."""
         prompts = {
             "image_analysis_system": f"Analyze image in {kwargs.get('language', 'English')}",
-            "image_analysis_user": "Describe this image",
+            "image_analysis_user": "Describe this image{document_context}",
             "image_caption_system": f"Generate caption in {kwargs.get('language', 'English')}",
-            "image_caption_user": "What is this image?",
+            "image_caption_user": "What is this image?{document_context}",
             "image_description_system": f"Describe in {kwargs.get('language', 'English')}",
-            "image_description_user": "Describe the image in detail",
+            "image_description_user": "Describe the image in detail{document_context}",
             "page_content_system": f"Extract content in {kwargs.get('language', 'English')}",
             "page_content_user": "Extract all text from this page",
         }
-        return prompts.get(prompt_name, f"Mock prompt: {prompt_name}")
+        template = prompts.get(prompt_name, f"Mock prompt: {prompt_name}")
+        for key, value in kwargs.items():
+            template = template.replace(f"{{{key}}}", str(value))
+        return template
 
     @property
     def semaphore(self) -> asyncio.Semaphore:
@@ -369,6 +372,37 @@ class TestAnalyzeImage:
             assert call_args[0][0] == "image_analysis"  # cache_key
             assert call_args[1]["model"] == "vision"
 
+    @pytest.mark.asyncio
+    async def test_document_context_included_in_user_message(
+        self, mock_processor: MockVisionProcessor, sample_png_file: Path
+    ):
+        """Document context is appended to user message for language hinting."""
+        chinese_context = "这是一篇关于人生哲学的文章，探讨人是什么单位。"
+
+        with patch.object(
+            mock_processor,
+            "_analyze_image_with_fallback",
+            new_callable=AsyncMock,
+        ) as mock_fallback:
+            mock_fallback.return_value = ImageAnalysis(
+                caption="测试标题",
+                description="测试描述",
+            )
+
+            await mock_processor.analyze_image(
+                sample_png_file,
+                context="test.md",
+                document_context=chinese_context,
+            )
+
+            # Verify the user message passed to _analyze_image_with_fallback
+            # contains the document context
+            call_args = mock_fallback.call_args
+            messages = call_args[0][0]  # first positional arg
+            user_content = messages[1]["content"]
+            user_text = user_content[0]["text"]
+            assert chinese_context in user_text
+
 
 # =============================================================================
 # Test analyze_images_batch
@@ -452,7 +486,9 @@ class TestAnalyzeImagesBatch:
         """Results maintain original order."""
         call_count = 0
 
-        async def mock_analyze(paths: list[Path], context: str = ""):
+        async def mock_analyze(
+            paths: list[Path], context: str = "", document_context: str = ""
+        ):
             nonlocal call_count
             call_count += 1
             return [
@@ -1194,7 +1230,7 @@ class TestEdgeCases:
         in_progress = 0
         max_concurrent = 0
 
-        async def mock_analyze(paths, context=""):
+        async def mock_analyze(paths, context="", document_context=""):
             nonlocal in_progress, max_concurrent
             in_progress += 1
             max_concurrent = max(max_concurrent, in_progress)

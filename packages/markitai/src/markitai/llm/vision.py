@@ -66,7 +66,12 @@ class VisionMixin:
         _persistent_cache: Any  # PersistentCache from processor.py
         _prompt_manager: PromptManager
 
-    async def analyze_image(self, image_path: Path, context: str = "") -> ImageAnalysis:
+    async def analyze_image(
+        self,
+        image_path: Path,
+        context: str = "",
+        document_context: str = "",
+    ) -> ImageAnalysis:
         """
         Analyze an image using vision model.
 
@@ -78,6 +83,8 @@ class VisionMixin:
         Args:
             image_path: Path to the image file
             context: Context identifier for usage tracking (e.g., source filename)
+            document_context: Short text snippet from the surrounding document,
+                used as language hint for images without visible text.
 
         Returns:
             ImageAnalysis with caption and description
@@ -119,7 +126,12 @@ class VisionMixin:
         system_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
             "image_analysis_system"
         )
-        user_prompt = self._prompt_manager.get_prompt("image_analysis_user")  # type: ignore[attr-defined]
+        doc_ctx = (
+            f"\n\nDocument context: {document_context}" if document_context else ""
+        )
+        user_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
+            "image_analysis_user", document_context=doc_ctx
+        )
 
         # Build message with system role and user role with image
         messages = [
@@ -142,7 +154,11 @@ class VisionMixin:
 
         # Try structured output methods with fallbacks
         result = await self._analyze_image_with_fallback(
-            messages, vision_model, image_path.name, context
+            messages,
+            vision_model,
+            image_path.name,
+            context,
+            document_context=document_context,
         )
 
         # Store in persistent cache
@@ -162,6 +178,7 @@ class VisionMixin:
         image_paths: list[Path],
         max_images_per_batch: int = DEFAULT_MAX_IMAGES_PER_BATCH,
         context: str = "",
+        document_context: str = "",
     ) -> list[ImageAnalysis]:
         """
         Analyze multiple images in batches with parallel execution.
@@ -176,6 +193,7 @@ class VisionMixin:
             image_paths: List of image paths to analyze
             max_images_per_batch: Max images per LLM call (default 10)
             context: Context identifier for usage tracking (e.g., source filename)
+            document_context: Short text snippet for language hinting.
 
         Returns:
             List of ImageAnalysis results in same order as input
@@ -214,7 +232,11 @@ class VisionMixin:
             """Process a single batch with backpressure control."""
             async with batch_semaphore:
                 try:
-                    results = await self.analyze_batch(batch_paths, context=context)
+                    results = await self.analyze_batch(
+                        batch_paths,
+                        context=context,
+                        document_context=document_context,
+                    )
                     return (batch_num, results)
                 except Exception as e:
                     logger.warning(
@@ -263,6 +285,7 @@ class VisionMixin:
         self,
         image_paths: list[Path],
         context: str = "",
+        document_context: str = "",
     ) -> list[ImageAnalysis]:
         """Batch image analysis using Instructor.
 
@@ -272,6 +295,7 @@ class VisionMixin:
         Args:
             image_paths: List of image paths to analyze
             context: Context identifier for usage tracking
+            document_context: Short text snippet for language hinting.
 
         Returns:
             List of ImageAnalysis results
@@ -345,8 +369,11 @@ class VisionMixin:
 
         # Build batch user prompt
         batch_header = f"Analyze the following {len(uncached_paths)} images in order."
+        doc_ctx = (
+            f"\n\nDocument context: {document_context}" if document_context else ""
+        )
         batch_footer = "\n\nReturn a JSON object with an 'images' array containing results for each image in order."
-        user_prompt = f"{batch_header}{batch_footer}"
+        user_prompt = f"{batch_header}{doc_ctx}{batch_footer}"
 
         # Build content parts with uncached images only
         content_parts: list[dict[str, Any]] = [{"type": "text", "text": user_prompt}]
@@ -505,7 +532,11 @@ class VisionMixin:
                 if i in cached_results:
                     return cached_results[i]
                 try:
-                    return await self.analyze_image(image_path, context=context)
+                    return await self.analyze_image(
+                        image_path,
+                        context=context,
+                        document_context=document_context,
+                    )
                 except Exception:
                     return ImageAnalysis(
                         caption="Image",
@@ -529,6 +560,7 @@ class VisionMixin:
         model: str,
         image_name: str,
         context: str = "",
+        document_context: str = "",
     ) -> ImageAnalysis:
         """
         Analyze image with multiple fallback strategies.
@@ -542,6 +574,7 @@ class VisionMixin:
             model: Model name to use
             image_name: Image filename for logging
             context: Context identifier for usage tracking
+            document_context: Short text snippet for language hinting.
         """
         # Strategy 1: Try Instructor
         try:
@@ -567,7 +600,9 @@ class VisionMixin:
 
         # Strategy 3: Original two-call method
         return await self._analyze_with_two_calls(
-            copy.deepcopy(messages), context=context or image_name
+            copy.deepcopy(messages),
+            context=context or image_name,
+            document_context=document_context,
         )
 
     async def _analyze_with_instructor(
@@ -728,6 +763,7 @@ class VisionMixin:
         self,
         messages: list[dict[str, Any]],
         context: str = "",
+        document_context: str = "",
     ) -> ImageAnalysis:
         """Original two-call method as final fallback."""
         # Extract image from messages (handle both old and new format)
@@ -744,7 +780,12 @@ class VisionMixin:
         caption_system = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
             "image_caption_system"
         )
-        caption_user = self._prompt_manager.get_prompt("image_caption_user")  # type: ignore[attr-defined]
+        doc_ctx = (
+            f"\n\nDocument context: {document_context}" if document_context else ""
+        )
+        caption_user = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
+            "image_caption_user", document_context=doc_ctx
+        )
         caption_response = await self._call_llm(  # type: ignore[attr-defined]
             model="default",
             messages=[
@@ -764,7 +805,9 @@ class VisionMixin:
         desc_system = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
             "image_description_system"
         )
-        desc_user = self._prompt_manager.get_prompt("image_description_user")  # type: ignore[attr-defined]
+        desc_user = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
+            "image_description_user", document_context=doc_ctx
+        )
         desc_response = await self._call_llm(  # type: ignore[attr-defined]
             model="default",
             messages=[

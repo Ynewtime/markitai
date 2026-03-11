@@ -218,6 +218,17 @@ class SingleFileWorkflow:
         )
         context = f"{source_path}:images"
 
+        # Extract a short text snippet from the document for language hinting.
+        # Strip image refs and take first 200 chars of body text.
+        import re as _re
+
+        _text_lines = [
+            line
+            for line in markdown.splitlines()
+            if line.strip() and not line.strip().startswith("![")
+        ]
+        doc_context = _re.sub(r"\s+", " ", " ".join(_text_lines))[:200].strip()
+
         try:
 
             async def analyze_single_image(
@@ -227,7 +238,9 @@ class SingleFileWorkflow:
                 timestamp = datetime.now().astimezone().isoformat()
                 try:
                     analysis = await self.processor.analyze_image(
-                        image_path, context=context
+                        image_path,
+                        context=context,
+                        document_context=doc_context,
                     )
                     return image_path, analysis, timestamp
                 except Exception as e:
@@ -255,7 +268,7 @@ class SingleFileWorkflow:
                     analysis_text = ""
                     analysis_usage: dict[str, Any] = {}
                 else:
-                    analysis_caption = analysis.caption
+                    analysis_caption = analysis.caption or "Image"
                     analysis_desc = analysis.description
                     analysis_text = analysis.extracted_text or ""
                     analysis_usage = analysis.llm_usage or {}

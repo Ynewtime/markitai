@@ -981,7 +981,7 @@ class TestParallelImageBatchAnalysis:
         # Track batch calls
         batch_calls = []
 
-        async def mock_analyze_batch(paths, context=""):
+        async def mock_analyze_batch(paths, context="", document_context=""):
             batch_calls.append(len(paths))
             return [
                 ImageAnalysis(caption=f"Image {i}", description=f"Description {i}")
