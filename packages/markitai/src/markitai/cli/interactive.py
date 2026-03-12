@@ -174,12 +174,6 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
             names = [p.provider for p in all_providers]
             detected_label = f"Detected: {format_model_list(names)}"
 
-    if not has_provider:
-        console.print(
-            "[yellow]![/yellow] No LLM provider detected "
-            "(no CLI tools or API keys found)"
-        )
-
     result = _ask_or_exit(
         questionary.confirm(
             "Enable LLM enhancement? (better formatting, metadata)",
@@ -188,9 +182,15 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
     )
 
     session.enable_llm = result
-    if result and active:
-        session.active_models = active
-        console.print(f"[green]\u2713[/green] {detected_label}")
+    if result:
+        if active:
+            session.active_models = active
+            console.print(f"[green]\u2713[/green] {detected_label}")
+        else:
+            console.print(
+                "[yellow]![/yellow] No LLM provider found. "
+                "Set MODEL env var or run [bold]markitai init[/bold] to configure."
+            )
     return session.enable_llm
 
 
