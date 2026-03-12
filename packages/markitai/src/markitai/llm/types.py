@@ -147,10 +147,6 @@ class Frontmatter(BaseModel):
         description="Brief summary of the document (100 chars max)"
     )
     tags: list[str] = Field(description="Related tags (3-5 items)")
-    language: str | None = Field(
-        default=None,
-        description="Content language detected from body text (e.g. 'en', 'zh', 'ja')",
-    )
 
     @field_validator("description", mode="before")
     @classmethod

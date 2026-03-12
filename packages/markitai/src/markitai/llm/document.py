@@ -1701,7 +1701,6 @@ Generate the following fields:
                 title=original_title,  # Preserve original title
                 content=cleaned,
                 fetch_strategy=fetch_strategy,
-                language=result.frontmatter.language,
                 extra_meta=extra_meta,
             )
             frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()

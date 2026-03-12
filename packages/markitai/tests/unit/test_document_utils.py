@@ -223,25 +223,6 @@ class TestSplitIntoBatches:
         assert batches[0][0] == Path("/tmp/page1.jpg")
 
 
-class TestFrontmatterModel:
-    """Tests for the Frontmatter Pydantic model."""
-
-    def test_language_optional_defaults_none(self) -> None:
-        """language field should be optional and default to None."""
-        fm = Frontmatter(description="A test doc", tags=["test"])
-        assert fm.language is None
-
-    def test_language_accepted_when_provided(self) -> None:
-        """language field should accept a string value from LLM."""
-        fm = Frontmatter(description="A test doc", tags=["test"], language="zh")
-        assert fm.language == "zh"
-
-    def test_language_none_explicit(self) -> None:
-        """Explicit None should be accepted for language."""
-        fm = Frontmatter(description="A test doc", tags=["test"], language=None)
-        assert fm.language is None
-
-
 class TestBuildFallbackFrontmatter:
     """Tests for DocumentMixin._build_fallback_frontmatter method."""
 

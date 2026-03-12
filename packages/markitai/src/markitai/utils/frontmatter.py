@@ -300,7 +300,6 @@ def build_frontmatter_dict(
     title: str | None = None,
     content: str = "",
     fetch_strategy: str | None = None,
-    language: str | None = None,
     extra_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build complete frontmatter dict with programmatic fields.
@@ -388,10 +387,6 @@ def build_frontmatter_dict(
     # Add fetch_strategy if provided
     if fetch_strategy:
         result["fetch_strategy"] = fetch_strategy
-
-    # Add LLM-detected language if provided
-    if language:
-        result["language"] = language
 
     # Merge extra metadata from external strategies (after canonical fields)
     if extra_meta:
