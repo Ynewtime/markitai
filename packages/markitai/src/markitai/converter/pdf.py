@@ -126,6 +126,7 @@ class PdfConverter(BaseConverter):
             dpi=dpi,
             force_text=True,
             page_chunks=True,  # Return list of page chunks instead of single string
+            use_ocr=False,  # Markitai handles OCR separately; suppress Tesseract probing
         )
 
         # Merge page chunks and add page markers for proper splitting
@@ -673,6 +674,7 @@ class PdfConverter(BaseConverter):
                 image_format=image_format,
                 dpi=DEFAULT_RENDER_DPI,
                 force_text=True,
+                use_ocr=False,  # Markitai handles OCR separately; suppress Tesseract probing
             ),
         )
         extracted_text = self._fix_image_paths(extracted_text, assets_dir)
