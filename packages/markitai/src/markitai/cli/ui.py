@@ -13,9 +13,14 @@ Usage:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from rich.console import Console
 
 from markitai.cli.console import get_console
+
+if TYPE_CHECKING:
+    from markitai.config import MarkitaiConfig
 
 # Symbol constants for visual markers
 MARK_SUCCESS = "\u2713"  # Checkmark
@@ -139,3 +144,40 @@ def summary(text: str, *, console: Console | None = None) -> None:
     c = console or get_console()
     c.print()
     c.print(f"[green]{MARK_SUCCESS}[/] {text}")
+
+
+def build_feature_str(cfg: MarkitaiConfig) -> str:
+    """Build a human-readable feature summary string from config.
+
+    Separates LLM-dependent features from local processing features.
+    LLM features: LLM, alt, desc.
+    Local features: OCR (RapidOCR), screenshot (Playwright).
+
+    Args:
+        cfg: The full Markitai configuration.
+
+    Returns:
+        A Rich-formatted string like "LLM alt desc | OCR screenshot".
+    """
+    llm_features: list[str] = []
+    local_features: list[str] = []
+
+    if cfg.llm.enabled:
+        llm_features.append("[green]LLM[/green]")
+    if cfg.image.alt_enabled:
+        llm_features.append("[green]alt[/green]")
+    if cfg.image.desc_enabled:
+        llm_features.append("[green]desc[/green]")
+
+    if cfg.ocr.enabled:
+        local_features.append("[green]OCR[/green]")
+    if cfg.screenshot.enabled:
+        local_features.append("[green]screenshot[/green]")
+
+    parts = []
+    if llm_features:
+        parts.append(" ".join(llm_features))
+    if local_features:
+        parts.append(" ".join(local_features))
+
+    return " | ".join(parts) if parts else "[dim]none[/dim]"
