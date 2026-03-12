@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 from markitai.workflow.helpers import (
     add_basic_frontmatter,
+    extract_document_context,
     format_standalone_image_markdown,
     merge_llm_usage,
     normalize_frontmatter,
@@ -733,3 +734,56 @@ class TestMergeLlmUsageEdgeCases:
 
         assert target["gpt-4"]["requests"] == 5
         assert target["gpt-4"]["input_tokens"] == 1000
+
+
+class TestExtractDocumentContext:
+    """Tests for extract_document_context function."""
+
+    def test_strips_frontmatter_before_extracting(self):
+        """Document context should come from body text, not YAML frontmatter."""
+        markdown = (
+            "---\n"
+            "title: 人是什么单位？ | Y\n"
+            "source: https://ynewtime.com/jekyll-ynewtime/人是什么单位\n"
+            "author: 熊培云\n"
+            "published: 2018-04-10\n"
+            "markitai_processed: '2026-03-12T14:38:01.760+08:00'\n"
+            "fetch_strategy: defuddle\n"
+            "domain: ynewtime.com\n"
+            "word_count: 1897\n"
+            "---\n\n"
+            "![](https://example.com/image.jpg)\n\n"
+            "我曾说，一人即一国，每个人都有属于自己的疆土。\n\n"
+            "同样，区别于\u201c你属于某个单位\u201d。\n"
+        )
+        result = extract_document_context(markdown)
+        # Body text should be present, not frontmatter metadata
+        assert "我曾说" in result
+        # YAML keys should NOT be in the context
+        assert "markitai_processed" not in result
+        assert "fetch_strategy" not in result
+
+    def test_skips_image_lines(self):
+        """Image reference lines should be excluded from context."""
+        markdown = "![alt text](image.png)\n\nThis is the body text.\n"
+        result = extract_document_context(markdown)
+        assert "body text" in result
+        assert "![alt text]" not in result
+
+    def test_truncates_to_200_chars(self):
+        """Context should be at most 200 characters."""
+        markdown = "A" * 500 + "\n"
+        result = extract_document_context(markdown)
+        assert len(result) <= 200
+
+    def test_no_frontmatter(self):
+        """Works correctly when no frontmatter is present."""
+        markdown = "# Title\n\nSome body text here.\n"
+        result = extract_document_context(markdown)
+        assert "Title" in result
+        assert "body text" in result
+
+    def test_empty_input(self):
+        """Returns empty string for empty input."""
+        assert extract_document_context("") == ""
+        assert extract_document_context("\n\n\n") == ""

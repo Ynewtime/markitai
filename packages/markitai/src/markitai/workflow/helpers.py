@@ -48,6 +48,30 @@ PROMPT_LEAKAGE_KEY_PATTERNS = [
 ]
 
 
+def extract_document_context(markdown: str, max_chars: int = 200) -> str:
+    """Extract a short body-text snippet from markdown for language hinting.
+
+    Strips YAML frontmatter and image references, then takes the first
+    *max_chars* characters of collapsed body text.
+
+    Args:
+        markdown: Full markdown content (may include frontmatter).
+        max_chars: Maximum characters to return.
+
+    Returns:
+        A short text snippet from the document body, or empty string.
+    """
+    # Strip YAML frontmatter (--- ... ---)
+    body = re.sub(r"^\s*---\s*\n.*?\n---\s*\n?", "", markdown, count=1, flags=re.DOTALL)
+
+    text_lines = [
+        line
+        for line in body.splitlines()
+        if line.strip() and not line.strip().startswith("![")
+    ]
+    return re.sub(r"\s+", " ", " ".join(text_lines))[:max_chars].strip()
+
+
 def maybe_stabilize_markdown(
     processor: Any, baseline: str, content: str, source: str
 ) -> str:
