@@ -10,7 +10,10 @@ import asyncio
 import os
 import shutil
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from markitai.config import ModelConfig
 
 
 @dataclass
@@ -88,6 +91,28 @@ def get_active_models_from_config(
         if model and weight > 0:
             active.append(model)
     return active
+
+
+def providers_to_model_configs(
+    providers: list[ProviderDetectionResult],
+) -> list[ModelConfig]:
+    """Convert detected providers to ModelConfig list for LLM router.
+
+    Args:
+        providers: Detected provider results from detect_all_providers().
+
+    Returns:
+        List of ModelConfig instances ready for cfg.llm.model_list.
+    """
+    from markitai.config import LiteLLMParams, ModelConfig
+
+    return [
+        ModelConfig(
+            model_name="default",
+            litellm_params=LiteLLMParams(model=p.model),
+        )
+        for p in providers
+    ]
 
 
 def detect_all_providers() -> list[ProviderDetectionResult]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from markitai.cli.providers_detect import (
+    ProviderDetectionResult,
     detect_all_providers,
     detect_first_provider,
     format_model_list,
@@ -310,6 +311,48 @@ class TestFormatModelList:
         """Should handle empty list."""
         result = format_model_list([])
         assert result == ""
+
+
+class TestProvidersToModelConfigs:
+    """Tests for providers_to_model_configs()."""
+
+    def test_converts_single_provider(self) -> None:
+        """Should convert a single provider to ModelConfig."""
+        from markitai.cli.providers_detect import providers_to_model_configs
+        from markitai.config import ModelConfig
+
+        providers = [
+            ProviderDetectionResult(
+                provider="anthropic",
+                model="anthropic/claude-sonnet-4-5-20250929",
+                authenticated=True,
+                source="env",
+            )
+        ]
+        configs = providers_to_model_configs(providers)
+        assert len(configs) == 1
+        assert isinstance(configs[0], ModelConfig)
+        assert configs[0].litellm_params.model == "anthropic/claude-sonnet-4-5-20250929"
+        assert configs[0].model_name == "default"
+
+    def test_converts_multiple_providers(self) -> None:
+        """Should convert multiple providers to ModelConfig list."""
+        from markitai.cli.providers_detect import providers_to_model_configs
+
+        providers = [
+            ProviderDetectionResult("claude-agent", "claude-agent/sonnet", True, "cli"),
+            ProviderDetectionResult("gemini", "gemini/gemini-2.5-flash", True, "env"),
+        ]
+        configs = providers_to_model_configs(providers)
+        assert len(configs) == 2
+        assert configs[0].litellm_params.model == "claude-agent/sonnet"
+        assert configs[1].litellm_params.model == "gemini/gemini-2.5-flash"
+
+    def test_empty_providers_returns_empty(self) -> None:
+        """Should return empty list for empty input."""
+        from markitai.cli.providers_detect import providers_to_model_configs
+
+        assert providers_to_model_configs([]) == []
 
 
 class TestBackwardCompatImports:
