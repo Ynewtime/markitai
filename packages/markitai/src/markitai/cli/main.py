@@ -78,10 +78,11 @@ def run_interactive_mode(ctx: click.Context) -> None:
             # sys.argv[0] can be a .py file on Windows, breaking re-invocation
             import subprocess
 
-            subprocess.run([sys.executable, "-m", "markitai"] + args)
+            result = subprocess.run([sys.executable, "-m", "markitai"] + args)
+            ctx.exit(result.returncode)
         else:
             click.echo("Cancelled.")
-        ctx.exit(0)
+            ctx.exit(0)
     except (KeyboardInterrupt, EOFError):
         click.echo("\nCancelled.")
         ctx.exit(0)
@@ -539,8 +540,49 @@ def app(
 
         om = OutputManager(enabled=is_stdout_mode and not verbose and not quiet)
 
-        # Pre-flight auth check for local providers (weight > 0)
-        if cfg.llm.enabled and cfg.llm.model_list:
+        # Helper to get effective output directory (CLI -o or config fallback)
+        def get_effective_output() -> Path | None:
+            if output is not None:
+                return output
+            if cfg.output.dir:
+                logger.debug(f"[Config] Using output.dir from config: {cfg.output.dir}")
+                return Path(cfg.output.dir).expanduser()
+            return None
+
+        # ── Phase 1: Input mode detection and parameter validation ──
+        # Validate output directory requirements BEFORE auth preflight so that
+        # simple parameter errors (missing -o) are caught immediately without
+        # triggering slow network/auth activity.
+
+        # Determine effective output for modes that require it
+        effective_output: Path | None = None
+
+        if is_url_list_mode:
+            effective_output = get_effective_output()
+            if effective_output is None:
+                console.print(
+                    "[red]Error: URL list mode requires -o/--output directory.[/red]"
+                )
+                ctx.exit(1)
+        elif is_url_input:
+            effective_output = get_effective_output()
+            if effective_output is None:
+                console.print(
+                    "[red]Error: URL mode requires -o/--output directory.[/red]"
+                )
+                ctx.exit(1)
+        elif input_path is not None and input_path.is_dir():
+            effective_output = get_effective_output()
+            if effective_output is None:
+                console.print(
+                    "[red]Error: Batch mode requires -o/--output directory.[/red]"
+                )
+                ctx.exit(1)
+
+        # ── Phase 2: Pre-flight auth check ──
+        # Now that parameter validation passed, check auth for local providers.
+        # Skip when dry-run: no network operations needed for preview.
+        if cfg.llm.enabled and cfg.llm.model_list and not dry_run:
             from rich.markup import escape
 
             from markitai.providers import preflight_auth_check
@@ -607,23 +649,11 @@ def app(
             for summary in auth_summaries:
                 om.print_persistent(summary)
 
-        # Helper to get effective output directory (CLI -o or config fallback)
-        def get_effective_output() -> Path | None:
-            if output is not None:
-                return output
-            if cfg.output.dir:
-                logger.debug(f"[Config] Using output.dir from config: {cfg.output.dir}")
-                return Path(cfg.output.dir).expanduser()
-            return None
+        # ── Phase 3: Dispatch to appropriate processor ──
 
-        # URL list batch mode - requires -o (or config output.dir)
+        # URL list batch mode
         if is_url_list_mode:
-            effective_output = get_effective_output()
-            if effective_output is None:
-                console.print(
-                    "[red]Error: URL list mode requires -o/--output directory.[/red]"
-                )
-                ctx.exit(1)
+            assert effective_output is not None  # Validated in Phase 1
             from markitai.cli.processors.url import process_url_batch
 
             await process_url_batch(
@@ -639,14 +669,9 @@ def app(
             )
             return
 
-        # Single URL mode - requires -o (or config output.dir)
+        # Single URL mode
         if is_url_input:
-            effective_output = get_effective_output()
-            if effective_output is None:
-                console.print(
-                    "[red]Error: URL mode requires -o/--output directory.[/red]"
-                )
-                ctx.exit(1)
+            assert effective_output is not None  # Validated in Phase 1
             assert input_path_str is not None  # Guaranteed when is_url_input is True
             from markitai.cli.processors.url import process_url
 
@@ -666,14 +691,9 @@ def app(
         # File/directory mode
         assert input_path is not None  # Already validated above
 
-        # Check if input is directory (batch mode) - requires -o (or config output.dir)
+        # Directory batch mode
         if input_path.is_dir():
-            effective_output = get_effective_output()
-            if effective_output is None:
-                console.print(
-                    "[red]Error: Batch mode requires -o/--output directory.[/red]"
-                )
-                ctx.exit(1)
+            assert effective_output is not None  # Validated in Phase 1
             from markitai.cli.processors.batch import process_batch
 
             await process_batch(

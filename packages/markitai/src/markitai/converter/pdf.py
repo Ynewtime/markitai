@@ -41,6 +41,12 @@ class PdfConverter(BaseConverter):
     def __init__(self, config: MarkitaiConfig | None = None) -> None:
         super().__init__(config)
 
+    # Absolute cap on internal thread pool workers. PyMuPDF is not thread-safe,
+    # so each worker opens its own document copy. These internal pools may run
+    # *inside* the shared converter executor from workflow/core.py, so keeping
+    # them bounded avoids excessive thread nesting and memory pressure.
+    _MAX_INTERNAL_WORKERS = 6
+
     def _get_worker_count(self, input_path: Path, task_count: int) -> int:
         """Calculate optimal worker count based on file size and system resources.
 
@@ -52,19 +58,19 @@ class PdfConverter(BaseConverter):
             task_count: Number of tasks (pages) to process.
 
         Returns:
-            Optimal number of workers (at least 1).
+            Optimal number of workers (at least 1, at most _MAX_INTERNAL_WORKERS).
         """
         file_size_mb = input_path.stat().st_size / (1024 * 1024)
         cpu_count = os.cpu_count() or 4
 
         if file_size_mb < 10:
-            workers = min(cpu_count // 2 or 2, task_count, 6)
+            workers = min(cpu_count // 2 or 2, task_count, self._MAX_INTERNAL_WORKERS)
         elif file_size_mb < 50:
             workers = min(4, task_count)
         else:
             workers = min(2, task_count)
 
-        return max(1, workers)
+        return max(1, min(workers, self._MAX_INTERNAL_WORKERS))
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
@@ -229,6 +235,9 @@ class PdfConverter(BaseConverter):
         # Clean up temporary directory if used
         if temp_dir and temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
+            # Clear images whose paths pointed into the now-deleted temp dir,
+            # so callers never receive dangling file references.
+            images = [img for img in images if img.path and img.path.exists()]
 
         return ConvertResult(
             markdown=markdown,
@@ -294,23 +303,30 @@ class PdfConverter(BaseConverter):
                 # Save page image with compression (ensures < 5MB for LLM)
                 image_name = f"{input_path.name}.page{page_num + 1:04d}.{image_format}"
                 image_path = screenshots_dir / image_name
-                final_size = img_processor.save_screenshot(
+                final_size, actual_path = img_processor.save_screenshot(
                     pix.samples, pix.width, pix.height, image_path
                 )
 
+                # Use the actual path returned by save_screenshot, which may
+                # differ from image_path when the fallback changes the extension
+                actual_name = actual_path.name
+                actual_mime = get_mime_type(
+                    actual_path.suffix, default=f"image/{image_format}"
+                )
+
                 extracted_img = ExtractedImage(
-                    path=image_path,
+                    path=actual_path,
                     index=page_num + 1,
-                    original_name=image_name,
-                    mime_type=f"image/{image_format}",
+                    original_name=actual_name,
+                    mime_type=actual_mime,
                     width=final_size[0],
                     height=final_size[1],
                 )
 
                 page_info = {
                     "page": page_num + 1,
-                    "path": str(image_path),
-                    "name": image_name,
+                    "path": str(actual_path),
+                    "name": actual_name,
                 }
 
                 return (extracted_img, page_info)
@@ -373,7 +389,9 @@ class PdfConverter(BaseConverter):
         """
         embedded_images: list[ExtractedImage] = []
         # Pattern: filename.pdf-{page}-{index}.{ext}
-        pattern = re.compile(rf"^{re.escape(input_name)}-(\d+)-(\d+)\.(png|jpg|jpeg)$")
+        pattern = re.compile(
+            rf"^{re.escape(input_name)}-(\d+)-(\d+)\.(png|jpg|jpeg|webp)$"
+        )
 
         for image_file in assets_dir.iterdir():
             match = pattern.match(image_file.name)
@@ -481,8 +499,15 @@ class PdfConverter(BaseConverter):
                         f"{input_path.name}.page{page_num + 1:04d}.{image_format}"
                     )
                     image_path = screenshots_dir / image_name
-                    final_size = img_processor.save_screenshot(
+                    final_size, actual_path = img_processor.save_screenshot(
                         pix.samples, pix.width, pix.height, image_path
+                    )
+
+                    # Use the actual path returned by save_screenshot, which may
+                    # differ from image_path when the fallback changes the extension
+                    actual_name = actual_path.name
+                    actual_mime = get_mime_type(
+                        actual_path.suffix, default=f"image/{image_format}"
                     )
 
                     # OCR - reuse already rendered pixmap to avoid re-rendering
@@ -499,22 +524,22 @@ class PdfConverter(BaseConverter):
                         logger.warning(f"OCR failed for page {page_num + 1}: {e}")
                         text_content = f"*(OCR failed: {e})*"
 
-                    page_content = f"{text_content}\n\n<!-- ![Page {page_num + 1}]({SCREENSHOTS_REL_PATH}/{image_name}) -->"
+                    page_content = f"{text_content}\n\n<!-- ![Page {page_num + 1}]({SCREENSHOTS_REL_PATH}/{actual_name}) -->"
 
                     return {
                         "page_num": page_num,
                         "image": ExtractedImage(
-                            path=image_path,
+                            path=actual_path,
                             index=page_num + 1,
-                            original_name=image_name,
-                            mime_type=f"image/{image_format}",
+                            original_name=actual_name,
+                            mime_type=actual_mime,
                             width=final_size[0],
                             height=final_size[1],
                         ),
                         "page_image": {
                             "page": page_num + 1,
-                            "path": str(image_path),
-                            "name": image_name,
+                            "path": str(actual_path),
+                            "name": actual_name,
                         },
                         "markdown": page_content,
                     }
@@ -621,12 +646,16 @@ class PdfConverter(BaseConverter):
         logger.info(f"Extracting text and rendering pages for LLM: {input_path.name}")
 
         # Determine output paths
+        temp_assets: Path | None = None
+        temp_screenshots: Path | None = None
         if output_dir:
             assets_dir = ensure_assets_dir(output_dir)
             screenshots_dir = ensure_screenshots_dir(output_dir)
         else:
-            assets_dir = Path(tempfile.mkdtemp())
-            screenshots_dir = Path(tempfile.mkdtemp())
+            temp_assets = Path(tempfile.mkdtemp())
+            temp_screenshots = Path(tempfile.mkdtemp())
+            assets_dir = temp_assets
+            screenshots_dir = temp_screenshots
 
         # Get image format from config
         image_format = "jpg"
@@ -651,13 +680,13 @@ class PdfConverter(BaseConverter):
         # Collect embedded images extracted by pymupdf4llm
         embedded_images = self._collect_embedded_images(assets_dir, input_path.name)
 
-        # Check if screenshot is enabled
-        enable_screenshot = self.config and self.config.screenshot.enabled
-
         images: list[ExtractedImage] = list(embedded_images)
         page_images: list[dict] = []
 
-        if enable_screenshot:
+        # OCR+LLM path always renders page images for Vision analysis.
+        # This is independent of screenshot.enabled, which controls the
+        # "extra screenshot" feature in the standard (non-OCR) convert path.
+        if output_dir:
             page_results = self._render_pages_parallel(
                 input_path, screenshots_dir, image_format, dpi=DEFAULT_RENDER_DPI
             )
@@ -667,6 +696,14 @@ class PdfConverter(BaseConverter):
 
             if page_images:
                 logger.debug(f"Rendered {len(page_images)} page screenshots")
+
+        # Clean up temporary directories if used (no output_dir)
+        for temp_dir in (temp_assets, temp_screenshots):
+            if temp_dir and temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        # Remove images pointing into deleted temp dirs
+        if temp_assets or temp_screenshots:
+            images = [img for img in images if img.path and img.path.exists()]
 
         return ConvertResult(
             markdown=extracted_text,

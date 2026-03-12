@@ -46,6 +46,7 @@ from markitai.constants import (
     JS_REQUIRED_PATTERNS,
 )
 from markitai.fetch_http import get_static_http_client
+from markitai.security import atomic_write_json
 
 try:
     from markitai.webextract import (
@@ -153,6 +154,16 @@ class FetchCache:
     methods (using asyncio.Lock, prefixed with 'a') to avoid blocking the
     event loop during concurrent URL fetching. Async callers should use
     aget/aset/aget_with_validators/aset_with_validators/aupdate_accessed_at.
+
+    **Important**: The sync lock (``threading.Lock``) and async lock
+    (``asyncio.Lock``) are independent and do NOT provide mutual exclusion
+    between sync and async callers.  Callers MUST NOT mix sync and async
+    methods on the same instance concurrently.  In practice this is safe
+    because the CLI either runs fully synchronous or fully asynchronous
+    within a single event loop.  If the library is ever used in a context
+    where both sync and async callers operate concurrently, a unified
+    locking strategy (e.g. ``anyio.Lock`` or separate connections per
+    access mode) will be required.
     """
 
     def __init__(self, db_path: Path, max_size_bytes: int = 100 * 1024 * 1024) -> None:
@@ -216,7 +227,10 @@ class FetchCache:
                     accessed_at INTEGER NOT NULL,
                     size_bytes INTEGER NOT NULL,
                     etag TEXT,
-                    last_modified TEXT
+                    last_modified TEXT,
+                    screenshot_path TEXT,
+                    static_content TEXT,
+                    browser_content TEXT
                 )
             """)
             conn.execute(
@@ -227,6 +241,8 @@ class FetchCache:
 
             # Migration: Add etag and last_modified columns if they don't exist
             self._migrate_add_http_validators(conn)
+            # Migration: Add multi-source content columns if they don't exist
+            self._migrate_add_multi_source_columns(conn)
 
     def _migrate_add_http_validators(self, conn: sqlite3.Connection) -> None:
         """Add etag and last_modified columns if they don't exist (migration)."""
@@ -243,17 +259,41 @@ class FetchCache:
 
         conn.commit()
 
-    def _compute_hash(self, url: str) -> str:
-        """Compute hash key from URL."""
-        return hashlib.sha256(url.encode()).hexdigest()[:32]
+    def _migrate_add_multi_source_columns(self, conn: sqlite3.Connection) -> None:
+        """Add screenshot_path, static_content, browser_content columns if missing."""
+        cursor = conn.execute("PRAGMA table_info(fetch_cache)")
+        columns = {row[1] for row in cursor.fetchall()}
+
+        for col in ("screenshot_path", "static_content", "browser_content"):
+            if col not in columns:
+                conn.execute(f"ALTER TABLE fetch_cache ADD COLUMN {col} TEXT")
+                logger.debug(f"[FetchCache] Migration: Added '{col}' column")
+
+        conn.commit()
+
+    def _compute_hash(self, url: str, strategy: str | None = None) -> str:
+        """Compute hash key from URL and optional strategy.
+
+        When strategy is provided, the cache key is scoped to that strategy,
+        preventing cache collisions when the same URL is fetched with different
+        strategies (e.g., --playwright vs --static).
+
+        Args:
+            url: URL to hash
+            strategy: Optional strategy name to include in key
+        """
+        key_input = url if strategy is None else f"{url}\x00{strategy}"
+        return hashlib.sha256(key_input.encode()).hexdigest()[:32]
 
     def _metadata_to_json(self, metadata: dict[str, Any]) -> str:
         """Serialize fetch metadata, coercing unsupported values to JSON-safe types."""
         return json.dumps(_make_json_safe(metadata))
 
-    def _get_unlocked(self, url: str) -> FetchResult | None:
+    def _get_unlocked(
+        self, url: str, strategy: str | None = None
+    ) -> FetchResult | None:
         """Get cached fetch result (no lock). Caller must hold a lock."""
-        key = self._compute_hash(url)
+        key = self._compute_hash(url, strategy)
         now = int(time.time())
 
         conn = self._get_connection()
@@ -268,6 +308,11 @@ class FetchCache:
 
             metadata = json.loads(row["metadata"]) if row["metadata"] else {}
             logger.debug(f"[FetchCache] Cache hit for URL: {url}")
+
+            # Restore screenshot_path as Path if stored
+            screenshot_path_str = row["screenshot_path"]
+            screenshot_path = Path(screenshot_path_str) if screenshot_path_str else None
+
             return FetchResult(
                 content=row["content"],
                 strategy_used=row["strategy_used"],
@@ -276,30 +321,36 @@ class FetchCache:
                 final_url=row["final_url"],
                 metadata=metadata,
                 cache_hit=True,
+                screenshot_path=screenshot_path,
+                static_content=row["static_content"],
+                browser_content=row["browser_content"],
             )
 
         return None
 
-    def get(self, url: str) -> FetchResult | None:
+    def get(self, url: str, strategy: str | None = None) -> FetchResult | None:
         """Get cached fetch result if exists.
 
         Args:
             url: URL to look up
+            strategy: Optional strategy to scope cache lookup
 
         Returns:
             Cached FetchResult or None if not found
         """
         with self._lock:
-            return self._get_unlocked(url)
+            return self._get_unlocked(url, strategy)
 
-    async def aget(self, url: str) -> FetchResult | None:
+    async def aget(self, url: str, strategy: str | None = None) -> FetchResult | None:
         """Async version of get() using asyncio.Lock."""
         async with self._async_lock:
-            return self._get_unlocked(url)
+            return self._get_unlocked(url, strategy)
 
-    def _set_unlocked(self, url: str, result: FetchResult) -> None:
+    def _set_unlocked(
+        self, url: str, result: FetchResult, strategy: str | None = None
+    ) -> None:
         """Cache a fetch result (no lock). Caller must hold a lock."""
-        key = self._compute_hash(url)
+        key = self._compute_hash(url, strategy)
         now = int(time.time())
         metadata_json = (
             self._metadata_to_json(result.metadata) if result.metadata else None
@@ -325,12 +376,19 @@ class FetchCache:
             total_size -= oldest["size_bytes"]
             logger.debug(f"[FetchCache] Evicted LRU entry: {oldest['key'][:8]}...")
 
+        # Serialize screenshot_path to string for storage
+        screenshot_path_str = (
+            str(result.screenshot_path) if result.screenshot_path else None
+        )
+
         # Insert or replace
         conn.execute(
             """
             INSERT OR REPLACE INTO fetch_cache
-            (key, url, content, strategy_used, title, final_url, metadata, created_at, accessed_at, size_bytes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (key, url, content, strategy_used, title, final_url, metadata,
+             created_at, accessed_at, size_bytes,
+             screenshot_path, static_content, browser_content)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 key,
@@ -343,25 +401,31 @@ class FetchCache:
                 now,
                 now,
                 size_bytes,
+                screenshot_path_str,
+                result.static_content,
+                result.browser_content,
             ),
         )
         conn.commit()
         logger.debug(f"[FetchCache] Cached URL: {url} ({size_bytes} bytes)")
 
-    def set(self, url: str, result: FetchResult) -> None:
+    def set(self, url: str, result: FetchResult, strategy: str | None = None) -> None:
         """Cache a fetch result.
 
         Args:
             url: URL that was fetched
             result: FetchResult to cache
+            strategy: Optional strategy to scope cache entry
         """
         with self._lock:
-            self._set_unlocked(url, result)
+            self._set_unlocked(url, result, strategy)
 
-    async def aset(self, url: str, result: FetchResult) -> None:
+    async def aset(
+        self, url: str, result: FetchResult, strategy: str | None = None
+    ) -> None:
         """Async version of set() using asyncio.Lock."""
         async with self._async_lock:
-            self._set_unlocked(url, result)
+            self._set_unlocked(url, result, strategy)
 
     def stats(self) -> dict[str, Any]:
         """Return cache statistics."""
@@ -398,16 +462,18 @@ class FetchCache:
         return count
 
     def _get_with_validators_unlocked(
-        self, url: str
+        self, url: str, strategy: str | None = None
     ) -> tuple[FetchResult | None, str | None, str | None]:
         """Get cached result with HTTP validators (no lock). Caller must hold a lock."""
-        key = self._compute_hash(url)
+        key = self._compute_hash(url, strategy)
 
         conn = self._get_connection()
         row = conn.execute("SELECT * FROM fetch_cache WHERE key = ?", (key,)).fetchone()
 
         if row:
             metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+            screenshot_path_str = row["screenshot_path"]
+            screenshot_path = Path(screenshot_path_str) if screenshot_path_str else None
             result = FetchResult(
                 content=row["content"],
                 strategy_used=row["strategy_used"],
@@ -416,18 +482,22 @@ class FetchCache:
                 final_url=row["final_url"],
                 metadata=metadata,
                 cache_hit=True,
+                screenshot_path=screenshot_path,
+                static_content=row["static_content"],
+                browser_content=row["browser_content"],
             )
             return result, row["etag"], row["last_modified"]
 
         return None, None, None
 
     def get_with_validators(
-        self, url: str
+        self, url: str, strategy: str | None = None
     ) -> tuple[FetchResult | None, str | None, str | None]:
         """Get cached result with HTTP validators for conditional requests.
 
         Args:
             url: URL to look up
+            strategy: Optional strategy to scope cache lookup
 
         Returns:
             Tuple of (cached_result, etag, last_modified)
@@ -436,14 +506,14 @@ class FetchCache:
             - last_modified: Last-Modified header from previous fetch (for If-Modified-Since)
         """
         with self._lock:
-            return self._get_with_validators_unlocked(url)
+            return self._get_with_validators_unlocked(url, strategy)
 
     async def aget_with_validators(
-        self, url: str
+        self, url: str, strategy: str | None = None
     ) -> tuple[FetchResult | None, str | None, str | None]:
         """Async version of get_with_validators() using asyncio.Lock."""
         async with self._async_lock:
-            return self._get_with_validators_unlocked(url)
+            return self._get_with_validators_unlocked(url, strategy)
 
     def _set_with_validators_unlocked(
         self,
@@ -451,9 +521,10 @@ class FetchCache:
         result: FetchResult,
         etag: str | None = None,
         last_modified: str | None = None,
+        strategy: str | None = None,
     ) -> None:
         """Cache a fetch result with HTTP validators (no lock). Caller must hold a lock."""
-        key = self._compute_hash(url)
+        key = self._compute_hash(url, strategy)
         now = int(time.time())
         metadata_json = (
             self._metadata_to_json(result.metadata) if result.metadata else None
@@ -479,12 +550,19 @@ class FetchCache:
             total_size -= oldest["size_bytes"]
             logger.debug(f"[FetchCache] Evicted LRU entry: {oldest['key'][:8]}...")
 
+        # Serialize screenshot_path to string for storage
+        screenshot_path_str = (
+            str(result.screenshot_path) if result.screenshot_path else None
+        )
+
         # Insert or replace
         conn.execute(
             """
             INSERT OR REPLACE INTO fetch_cache
-            (key, url, content, strategy_used, title, final_url, metadata, created_at, accessed_at, size_bytes, etag, last_modified)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (key, url, content, strategy_used, title, final_url, metadata,
+             created_at, accessed_at, size_bytes, etag, last_modified,
+             screenshot_path, static_content, browser_content)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 key,
@@ -499,6 +577,9 @@ class FetchCache:
                 size_bytes,
                 etag,
                 last_modified,
+                screenshot_path_str,
+                result.static_content,
+                result.browser_content,
             ),
         )
         conn.commit()
@@ -513,6 +594,7 @@ class FetchCache:
         result: FetchResult,
         etag: str | None = None,
         last_modified: str | None = None,
+        strategy: str | None = None,
     ) -> None:
         """Cache a fetch result with HTTP validators.
 
@@ -521,9 +603,12 @@ class FetchCache:
             result: FetchResult to cache
             etag: ETag response header (for future If-None-Match)
             last_modified: Last-Modified response header (for future If-Modified-Since)
+            strategy: Optional strategy to scope cache entry
         """
         with self._lock:
-            self._set_with_validators_unlocked(url, result, etag, last_modified)
+            self._set_with_validators_unlocked(
+                url, result, etag, last_modified, strategy
+            )
 
     async def aset_with_validators(
         self,
@@ -531,33 +616,39 @@ class FetchCache:
         result: FetchResult,
         etag: str | None = None,
         last_modified: str | None = None,
+        strategy: str | None = None,
     ) -> None:
         """Async version of set_with_validators() using asyncio.Lock."""
         async with self._async_lock:
-            self._set_with_validators_unlocked(url, result, etag, last_modified)
+            self._set_with_validators_unlocked(
+                url, result, etag, last_modified, strategy
+            )
 
-    def _update_accessed_at_unlocked(self, url: str) -> None:
+    def _update_accessed_at_unlocked(
+        self, url: str, strategy: str | None = None
+    ) -> None:
         """Update accessed_at timestamp (no lock). Caller must hold a lock."""
-        key = self._compute_hash(url)
+        key = self._compute_hash(url, strategy)
         now = int(time.time())
 
         conn = self._get_connection()
         conn.execute("UPDATE fetch_cache SET accessed_at = ? WHERE key = ?", (now, key))
         conn.commit()
 
-    def update_accessed_at(self, url: str) -> None:
+    def update_accessed_at(self, url: str, strategy: str | None = None) -> None:
         """Update accessed_at timestamp for cache hit (304 response).
 
         Args:
             url: URL to update
+            strategy: Optional strategy to scope update
         """
         with self._lock:
-            self._update_accessed_at_unlocked(url)
+            self._update_accessed_at_unlocked(url, strategy)
 
-    async def aupdate_accessed_at(self, url: str) -> None:
+    async def aupdate_accessed_at(self, url: str, strategy: str | None = None) -> None:
         """Async version of update_accessed_at() using asyncio.Lock."""
         async with self._async_lock:
-            self._update_accessed_at_unlocked(url)
+            self._update_accessed_at_unlocked(url, strategy)
 
 
 class SPADomainCache:
@@ -611,10 +702,9 @@ class SPADomainCache:
                 logger.debug(f"Failed to load SPA domain cache: {e}")
 
     def _save(self) -> None:
-        """Save cache to disk."""
+        """Save cache to disk atomically."""
         try:
-            with open(self._cache_path, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, indent=2, ensure_ascii=False)
+            atomic_write_json(self._cache_path, self._data)
         except OSError as e:
             logger.warning(f"Failed to save SPA domain cache: {e}")
 
@@ -826,12 +916,16 @@ def get_spa_domain_cache() -> SPADomainCache:
 
 # Global fetch cache instance (initialized lazily)
 _fetch_cache: FetchCache | None = None
+_fetch_cache_fingerprint: str = ""
 
 
 def get_fetch_cache(
     cache_dir: Path, max_size_bytes: int = 100 * 1024 * 1024
 ) -> FetchCache:
     """Get or create the global fetch cache instance.
+
+    Rebuilds the cache when configuration (cache_dir or max_size_bytes)
+    changes, using a fingerprint to detect config drift.
 
     Args:
         cache_dir: Directory to store cache database
@@ -840,10 +934,18 @@ def get_fetch_cache(
     Returns:
         FetchCache instance
     """
-    global _fetch_cache
-    if _fetch_cache is None:
+    global _fetch_cache, _fetch_cache_fingerprint
+    fingerprint = f"{cache_dir}:{max_size_bytes}"
+    if _fetch_cache is None or _fetch_cache_fingerprint != fingerprint:
+        if _fetch_cache is not None:
+            _fetch_cache.close()
+            logger.debug(
+                "[FetchCache] Rebuilding: config changed "
+                f"(was {_fetch_cache_fingerprint!r}, now {fingerprint!r})"
+            )
         db_path = cache_dir / "fetch_cache.db"
         _fetch_cache = FetchCache(db_path, max_size_bytes)
+        _fetch_cache_fingerprint = fingerprint
     return _fetch_cache
 
 
@@ -1077,6 +1179,41 @@ def _detect_proxy(force_recheck: bool = False) -> str:
     return ""
 
 
+def get_proxy_for_url(url: str, auto_proxy: bool = True) -> str:
+    """Get proxy URL for a given URL, respecting auto_proxy setting and NO_PROXY.
+
+    This is the unified entry point for proxy resolution. All fetch backends
+    should use this instead of calling _detect_proxy() directly.
+
+    Args:
+        url: URL being fetched (checked against NO_PROXY patterns)
+        auto_proxy: If False, always return empty string (proxy disabled)
+
+    Returns:
+        Proxy URL string or empty string if no proxy should be used
+    """
+    if not auto_proxy:
+        return ""
+
+    proxy = _detect_proxy()
+    if not proxy:
+        return ""
+
+    # Check NO_PROXY bypass patterns
+    bypass = _detected_proxy_bypass
+    if bypass:
+        from urllib.parse import urlparse
+
+        from markitai.fetch_policy import match_local_only, parse_no_proxy
+
+        domain = urlparse(url).netloc.lower()
+        patterns = parse_no_proxy(bypass)
+        if match_local_only(domain, patterns):
+            return ""
+
+    return proxy
+
+
 def _get_markitdown() -> Any:
     """Get or create the shared MarkItDown instance.
 
@@ -1291,22 +1428,39 @@ def _get_jina_rate_limiter(rpm: int) -> _SlidingWindowRateLimiter:
     return _jina_rate_limiter
 
 
+_jina_client_fingerprint: str = ""
+
+
 def _get_jina_client(timeout: int = 30, proxy: str = "") -> Any:
     """Get or create the shared httpx.AsyncClient for Jina fetching.
 
     Reusing a single client instance avoids repeated connection setup overhead.
-    The client uses connection pooling for better performance.
+    The client uses connection pooling for better performance.  Rebuilds when
+    ``timeout`` or ``proxy`` change (config-fingerprint check).
 
     Args:
-        timeout: Request timeout in seconds (used on first creation only)
-        proxy: Proxy URL (used on first creation only)
+        timeout: Request timeout in seconds
+        proxy: Proxy URL
 
     Returns:
         httpx.AsyncClient instance
     """
-    global _jina_client
-    if _jina_client is None:
+    global _jina_client, _jina_client_fingerprint
+    fingerprint = f"{timeout}:{proxy}"
+    if _jina_client is None or _jina_client_fingerprint != fingerprint:
         import httpx
+
+        if _jina_client is not None:
+            # Schedule close of old client (best-effort, non-blocking)
+            logger.debug(
+                "[Jina] Rebuilding client: config changed "
+                f"(was {_jina_client_fingerprint!r}, now {fingerprint!r})"
+            )
+            _old = _jina_client
+            try:
+                asyncio.get_running_loop().create_task(_old.aclose())
+            except RuntimeError:
+                pass  # no event loop; old client will be GC'd
 
         # Use detected proxy if not explicitly provided
         effective_proxy = proxy or _detect_proxy()
@@ -1319,6 +1473,7 @@ def _get_jina_client(timeout: int = 30, proxy: str = "") -> Any:
             logger.debug(f"[Jina] Using proxy: {effective_proxy}")
 
         _jina_client = httpx.AsyncClient(**client_kwargs)
+        _jina_client_fingerprint = fingerprint
     return _jina_client
 
 
@@ -1329,26 +1484,41 @@ async def close_shared_clients() -> None:
     """
     global _jina_client, _fetch_cache, _playwright_renderer, _jina_rate_limiter
     global _defuddle_client, _defuddle_rate_limiter
+    global _fetch_cache_fingerprint, _jina_client_fingerprint
+    global _playwright_renderer_fingerprint
     if _jina_client is not None:
         await _jina_client.aclose()
         _jina_client = None
+    _jina_client_fingerprint = ""
     if _defuddle_client is not None:
         await _defuddle_client.aclose()
         _defuddle_client = None
     if _fetch_cache is not None:
         _fetch_cache.close()
         _fetch_cache = None
+    _fetch_cache_fingerprint = ""
     if _playwright_renderer is not None:
         await _playwright_renderer.close()
         _playwright_renderer = None
+    _playwright_renderer_fingerprint = ""
     _jina_rate_limiter = None
     _defuddle_rate_limiter = None
+
+    # Close shared static HTTP clients
+    from markitai.fetch_http import close_static_http_clients
+
+    await close_static_http_clients()
+
+
+_playwright_renderer_fingerprint: str = ""
 
 
 async def _get_playwright_renderer(
     proxy: str | None = None, config: FetchConfig | None = None
 ) -> Any:
     """Get or create the shared PlaywrightRenderer.
+
+    Rebuilds when ``proxy`` or session-mode configuration changes.
 
     Args:
         proxy: Optional proxy URL
@@ -1357,8 +1527,17 @@ async def _get_playwright_renderer(
     Returns:
         PlaywrightRenderer instance
     """
-    global _playwright_renderer
-    if _playwright_renderer is None:
+    global _playwright_renderer, _playwright_renderer_fingerprint
+    session_mode = config.playwright.session_mode if config else None
+    fingerprint = f"{proxy}:{session_mode}"
+    if _playwright_renderer is None or _playwright_renderer_fingerprint != fingerprint:
+        if _playwright_renderer is not None:
+            logger.debug(
+                "[Playwright] Rebuilding renderer: config changed "
+                f"(was {_playwright_renderer_fingerprint!r}, now {fingerprint!r})"
+            )
+            await _playwright_renderer.close()
+
         from markitai.fetch_playwright import PlaywrightRenderer
 
         _playwright_renderer = PlaywrightRenderer(proxy=proxy)
@@ -1369,6 +1548,8 @@ async def _get_playwright_renderer(
                 ttl_seconds=config.playwright.session_ttl_seconds,
                 max_contexts=8,  # Default limit
             )
+
+        _playwright_renderer_fingerprint = fingerprint
 
     return _playwright_renderer
 
@@ -1945,37 +2126,45 @@ async def fetch_with_static_conditional(
             path = urlparse(url).path
             suffix = Path(path).suffix or ".html"
 
-        # Save response to temp file for markitdown processing
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False, mode="wb") as f:
-            f.write(response.content)
-            temp_path = Path(f.name)
+        # Save response to temp file and run sync markitdown in executor
+        # to avoid blocking the event loop
+        def _sync_convert(content_bytes: bytes, suffix: str) -> tuple[str, str | None]:
+            """Write temp file and convert with markitdown (CPU-bound)."""
+            with tempfile.NamedTemporaryFile(
+                suffix=suffix, delete=False, mode="wb"
+            ) as f:
+                f.write(content_bytes)
+                temp_path = Path(f.name)
+            try:
+                md = _get_markitdown()
+                md_result = md.convert(str(temp_path))
+                return md_result.text_content or "", md_result.title
+            finally:
+                temp_path.unlink(missing_ok=True)
 
-        try:
-            # Use markitdown to convert
-            md = _get_markitdown()
-            md_result = md.convert(str(temp_path))
+        loop = asyncio.get_running_loop()
+        text_content, title = await loop.run_in_executor(
+            None, _sync_convert, response.content, suffix
+        )
 
-            if not md_result.text_content:
-                raise FetchError(f"No content extracted from URL: {url}")
+        if not text_content:
+            raise FetchError(f"No content extracted from URL: {url}")
 
-            fetch_result = FetchResult(
-                content=md_result.text_content,
-                strategy_used="static",
-                title=md_result.title,
-                url=url,
-                final_url=str(response.url),
-                metadata={"converter": "markitdown", "conditional": True},
-            )
+        fetch_result = FetchResult(
+            content=text_content,
+            strategy_used="static",
+            title=title,
+            url=url,
+            final_url=str(response.url),
+            metadata={"converter": "markitdown", "conditional": True},
+        )
 
-            return ConditionalFetchResult(
-                result=fetch_result,
-                not_modified=False,
-                etag=response_etag,
-                last_modified=response_last_modified,
-            )
-        finally:
-            # Cleanup temp file
-            temp_path.unlink(missing_ok=True)
+        return ConditionalFetchResult(
+            result=fetch_result,
+            not_modified=False,
+            etag=response_etag,
+            last_modified=response_last_modified,
+        )
 
     except Exception as e:
         if isinstance(e, FetchError):
@@ -2339,6 +2528,12 @@ async def fetch_url(
     result: FetchResult | None = None
     cache_validators_to_write: tuple[str | None, str | None] | None = None
 
+    # Include strategy in cache key when an explicit strategy is requested,
+    # so that --playwright and --static don't return each other's cached results.
+    cache_strategy: str | None = (
+        strategy.value if explicit_strategy and strategy != FetchStrategy.AUTO else None
+    )
+
     # For static strategy with cache, try HTTP conditional request for efficiency
     # This uses ETag/Last-Modified headers to avoid re-downloading unchanged content
     use_conditional_cache = (
@@ -2355,7 +2550,7 @@ async def fetch_url(
             cached_result,
             cached_etag,
             cached_last_modified,
-        ) = await cache.aget_with_validators(url)
+        ) = await cache.aget_with_validators(url, strategy=cache_strategy)
 
         # If we have validators, try conditional fetch (static strategy only)
         if cached_result is not None and (cached_etag or cached_last_modified):
@@ -2372,7 +2567,7 @@ async def fetch_url(
                     )
                     if cond_result.not_modified:
                         # 304 Not Modified - use cached content
-                        await cache.aupdate_accessed_at(url)
+                        await cache.aupdate_accessed_at(url, strategy=cache_strategy)
                         result = cached_result
                     elif cond_result.result is not None:
                         result = cond_result.result
@@ -2392,7 +2587,7 @@ async def fetch_url(
 
     # Traditional cache check for non-conditional strategies
     elif cache is not None and not skip_read_cache:
-        cached_result = await cache.aget(url)
+        cached_result = await cache.aget(url, strategy=cache_strategy)
         if cached_result is not None and result is None:
             result = cached_result
 
@@ -2618,9 +2813,10 @@ async def fetch_url(
                 result,
                 cache_validators_to_write[0],
                 cache_validators_to_write[1],
+                strategy=cache_strategy,
             )
         else:
-            await cache.aset(url, result)
+            await cache.aset(url, result, strategy=cache_strategy)
 
     return result
 

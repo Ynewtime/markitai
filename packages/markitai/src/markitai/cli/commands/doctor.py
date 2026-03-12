@@ -69,11 +69,41 @@ def get_install_hint(component: str, platform: str | None = None) -> str:
     )
 
 
-def _install_component(component: str) -> bool:
+# Components that --fix can actually install.
+# Maps result key -> True (auto-installable) or False (manual hint only).
+# Keys not in this mapping (auth checks, vision-model, llm-api) are skipped.
+FIXABLE_COMPONENTS: dict[str, bool] = {
+    "playwright": True,  # auto-install via uv
+    "libreoffice": False,  # manual hint
+    "ffmpeg": False,  # manual hint
+    "rapidocr": False,  # manual hint
+    "claude-agent-sdk": False,  # manual hint
+    "copilot-sdk": False,  # manual hint
+}
+
+
+def _has_errors(results: dict[str, dict[str, Any]]) -> bool:
+    """Check whether any check result has error or missing status.
+
+    This covers all categories: required deps, optional deps, LLM, auth, vision.
+
+    Args:
+        results: The full results dict from doctor checks.
+
+    Returns:
+        True if any result has 'error' or 'missing' status.
+    """
+    return any(info.get("status") in ("error", "missing") for info in results.values())
+
+
+def _install_component(component: str, *, package_missing: bool = False) -> bool:
     """Attempt to install a missing component.
 
     Args:
         component: Component name to install.
+        package_missing: For playwright, True means the package itself is
+            missing (not just the browser). Triggers ``uv add playwright``
+            before browser install.
 
     Returns:
         True if installation succeeded.
@@ -93,7 +123,21 @@ def _install_component(component: str) -> bool:
 
     if component == "playwright":
         try:
-            # Use uv to run playwright install
+            # If the package itself is missing, install it first
+            if package_missing:
+                pkg_result = subprocess.run(
+                    ["uv", "add", "playwright"],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+                if pkg_result.returncode != 0:
+                    console.print(
+                        f"[red]\u2717[/red] Failed to install playwright package: {pkg_result.stderr}"
+                    )
+                    return False
+
+            # Install browser
             result = subprocess.run(
                 ["uv", "run", "playwright", "install", "chromium"],
                 capture_output=True,
@@ -101,13 +145,13 @@ def _install_component(component: str) -> bool:
                 timeout=300,
             )
             if result.returncode == 0:
-                console.print(f"[green]✓[/green] {component} installed")
+                console.print(f"[green]\u2713[/green] {component} installed")
                 return True
             else:
-                console.print(f"[red]✗[/red] Failed: {result.stderr}")
+                console.print(f"[red]\u2717[/red] Failed: {result.stderr}")
                 return False
         except Exception as e:
-            console.print(f"[red]✗[/red] Error: {e}")
+            console.print(f"[red]\u2717[/red] Error: {e}")
             return False
 
     return False
@@ -729,11 +773,9 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 ui.error(f"{info['name']}: {info['message']}")
         console.print()
 
-    # Summary
-    all_required_ok = all(
-        results.get(k, {}).get("status") == "ok" for k in required_deps if k in results
-    )
-    if optional_missing == 0 and all_required_ok:
+    # Summary — consider ALL check categories, not just required deps
+    has_any_error = _has_errors(results)
+    if not has_any_error and optional_missing == 0:
         ui.summary(t("doctor.all_good"))
     else:
         ui.summary(t("doctor.summary", passed=passed, optional=optional_missing))
@@ -752,17 +794,24 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             console.print(f"  [dim]\u2022[/dim] {name}: {hint}")
 
     # Attempt to fix missing components if --fix flag is set
+    # Only fixable components (defined in FIXABLE_COMPONENTS) are attempted.
+    # Non-fixable items (auth, vision-model, llm-api) are skipped.
     if fix and not as_json:
-        missing = [
+        fixable = [
             key
             for key, info in results.items()
-            if info["status"] in ("missing", "warning")
+            if info["status"] in ("missing", "warning") and key in FIXABLE_COMPONENTS
         ]
-        if missing:
+        if fixable:
             console.print()
             console.print("[bold]Attempting to fix missing components...[/bold]")
-            for component in missing:
-                _install_component(component)
+            for component in fixable:
+                # For playwright, detect whether the package itself is missing
+                pkg_missing = (
+                    component == "playwright"
+                    and results[component].get("status") == "missing"
+                )
+                _install_component(component, package_missing=pkg_missing)
 
 
 def suggest_extras() -> list[str]:

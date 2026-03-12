@@ -2281,3 +2281,242 @@ class TestConvertDocumentCore:
         content = ctx.output_file.read_text()
         assert "test.png" in content
         assert ".markitai/assets/test.png" in content  # Image copied to assets
+
+
+class TestHeavyTaskIdentification:
+    """Tests for heavy task identification in convert_document.
+
+    Medium-1: OCR+LLM paths for PDF and PPTX should be classified as heavy tasks.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pdf_with_ocr_and_llm_is_heavy(self, tmp_path: Path) -> None:
+        """PDF with --ocr --llm renders page images (CPU heavy) and should use heavy semaphore."""
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.core import ConversionContext, convert_document
+
+        config = MarkitaiConfig()
+        config.ocr.enabled = True
+        config.llm.enabled = True
+        # screenshot is NOT enabled — the point is OCR+LLM alone is heavy
+
+        pdf_file = tmp_path / "test.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 fake")
+
+        ctx = ConversionContext(
+            input_path=pdf_file,
+            output_dir=tmp_path / "output",
+            config=config,
+        )
+        mock_converter = MagicMock()
+        mock_converter.convert.return_value = ConvertResult(markdown="# Test")
+        ctx.converter = mock_converter
+
+        with patch(
+            "markitai.utils.executor.get_heavy_task_semaphore"
+        ) as mock_semaphore_fn:
+            mock_sem = AsyncMock()
+            mock_sem.__aenter__ = AsyncMock(return_value=None)
+            mock_sem.__aexit__ = AsyncMock(return_value=False)
+            mock_semaphore_fn.return_value = mock_sem
+
+            await convert_document(ctx)
+
+            # Should have acquired the heavy semaphore
+            mock_semaphore_fn.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_pptx_with_ocr_is_heavy(self, tmp_path: Path) -> None:
+        """PPTX with --ocr renders slide images (CPU heavy) and should use heavy semaphore."""
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.core import ConversionContext, convert_document
+
+        config = MarkitaiConfig()
+        config.ocr.enabled = True
+        # llm and screenshot are NOT enabled
+
+        pptx_file = tmp_path / "test.pptx"
+        pptx_file.write_bytes(b"PK fake")
+
+        ctx = ConversionContext(
+            input_path=pptx_file,
+            output_dir=tmp_path / "output",
+            config=config,
+        )
+        mock_converter = MagicMock()
+        mock_converter.convert.return_value = ConvertResult(markdown="# Slides")
+        ctx.converter = mock_converter
+
+        with patch(
+            "markitai.utils.executor.get_heavy_task_semaphore"
+        ) as mock_semaphore_fn:
+            mock_sem = AsyncMock()
+            mock_sem.__aenter__ = AsyncMock(return_value=None)
+            mock_sem.__aexit__ = AsyncMock(return_value=False)
+            mock_semaphore_fn.return_value = mock_sem
+
+            await convert_document(ctx)
+
+            mock_semaphore_fn.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_pdf_without_ocr_llm_or_screenshot_is_not_heavy(
+        self, tmp_path: Path
+    ) -> None:
+        """PDF without OCR, LLM, or screenshot should NOT be classified as heavy."""
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.core import ConversionContext, convert_document
+
+        config = MarkitaiConfig()
+        # All disabled by default
+
+        pdf_file = tmp_path / "test.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 fake")
+
+        ctx = ConversionContext(
+            input_path=pdf_file,
+            output_dir=tmp_path / "output",
+            config=config,
+        )
+        mock_converter = MagicMock()
+        mock_converter.convert.return_value = ConvertResult(markdown="# Test")
+        ctx.converter = mock_converter
+
+        with patch(
+            "markitai.utils.executor.get_heavy_task_semaphore"
+        ) as mock_semaphore_fn:
+            mock_sem = AsyncMock()
+            mock_sem.__aenter__ = AsyncMock(return_value=None)
+            mock_sem.__aexit__ = AsyncMock(return_value=False)
+            mock_semaphore_fn.return_value = mock_sem
+
+            await convert_document(ctx)
+
+            # Should NOT have acquired the heavy semaphore
+            mock_semaphore_fn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pptx_with_ocr_and_llm_is_heavy(self, tmp_path: Path) -> None:
+        """PPTX with --ocr --llm should also be heavy."""
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.core import ConversionContext, convert_document
+
+        config = MarkitaiConfig()
+        config.ocr.enabled = True
+        config.llm.enabled = True
+
+        pptx_file = tmp_path / "test.pptx"
+        pptx_file.write_bytes(b"PK fake")
+
+        ctx = ConversionContext(
+            input_path=pptx_file,
+            output_dir=tmp_path / "output",
+            config=config,
+        )
+        mock_converter = MagicMock()
+        mock_converter.convert.return_value = ConvertResult(markdown="# Slides")
+        ctx.converter = mock_converter
+
+        with patch(
+            "markitai.utils.executor.get_heavy_task_semaphore"
+        ) as mock_semaphore_fn:
+            mock_sem = AsyncMock()
+            mock_sem.__aenter__ = AsyncMock(return_value=None)
+            mock_sem.__aexit__ = AsyncMock(return_value=False)
+            mock_semaphore_fn.return_value = mock_sem
+
+            await convert_document(ctx)
+
+            mock_semaphore_fn.assert_called_once()
+
+
+class TestOnConflictSkipBeforeConversion:
+    """Tests for on_conflict=skip check happening BEFORE heavy conversion work.
+
+    Medium-3: When on_conflict=skip and output already exists, the pipeline
+    should skip before running the expensive conversion step.
+    """
+
+    @pytest.mark.asyncio
+    async def test_skip_avoids_conversion(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """When output exists and on_conflict=skip, conversion should NOT run."""
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.core import ConversionContext, convert_document_core
+
+        config = MarkitaiConfig()
+        config.output.on_conflict = "skip"
+
+        # Create input file
+        input_file = tmp_path / "test.txt"
+        input_file.write_text("hello world")
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True)
+
+        # Create existing output file (the one that should cause a skip)
+        existing_output = output_dir / "test.txt.md"
+        existing_output.write_text("already exists")
+
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=output_dir,
+            config=config,
+        )
+
+        # Patch convert_document to track if it gets called
+        with patch(
+            "markitai.workflow.core.convert_document", new_callable=AsyncMock
+        ) as mock_convert:
+            mock_convert.return_value = ConversionStepResult(success=True)
+
+            result = await convert_document_core(
+                ctx, max_document_size=100 * 1024 * 1024
+            )
+
+            # Should skip with "exists" reason
+            assert result.success is True
+            assert result.skip_reason == "exists"
+
+            # The expensive conversion step should NOT have been called
+            mock_convert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_overwrite_still_runs_conversion(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """When on_conflict=overwrite, conversion should still run even if output exists."""
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.core import ConversionContext, convert_document_core
+
+        config = MarkitaiConfig()
+        config.output.on_conflict = "overwrite"
+
+        input_file = tmp_path / "test.txt"
+        input_file.write_text("hello world")
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True)
+
+        # Existing output file
+        existing_output = output_dir / "test.txt.md"
+        existing_output.write_text("old content")
+
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=output_dir,
+            config=config,
+        )
+
+        result = await convert_document_core(ctx, max_document_size=100 * 1024 * 1024)
+
+        # Should succeed and actually convert (overwrite)
+        assert result.success is True
+        assert result.skip_reason is None
+        assert ctx.output_file is not None
+        # Content should be from actual conversion, not old
+        new_content = ctx.output_file.read_text()
+        assert "old content" not in new_content

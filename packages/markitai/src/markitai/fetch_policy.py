@@ -213,10 +213,13 @@ class FetchPolicyEngine:
                 reason="disabled",
             )
 
-        # 7. SPA/JS-heavy: playwright earlier
+        # 7. SPA/JS-heavy: browser-first order
+        # Known SPAs and fallback-pattern domains need JS rendering.
+        # Put playwright first to avoid wasted requests to strategies
+        # that can't render JavaScript.
         if known_spa or is_fallback_domain:
             return FetchDecision(
-                order=["defuddle", "jina", "playwright", "cloudflare", "static"],
+                order=["playwright", "defuddle", "jina", "cloudflare", "static"],
                 reason="spa_or_pattern",
             )
 

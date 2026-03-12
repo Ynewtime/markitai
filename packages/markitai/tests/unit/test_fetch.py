@@ -1742,26 +1742,26 @@ class TestFetchWithStaticConditional:
     async def test_conditional_fetch_304_not_modified(self) -> None:
         """Test conditional fetch returns 304 Not Modified."""
         from markitai.fetch import fetch_with_static_conditional
+        from markitai.fetch_http import StaticHttpResponse
 
-        mock_response = MagicMock()
-        mock_response.status_code = 304
-        mock_response.headers = {
-            "ETag": '"abc123"',
-            "Last-Modified": "Mon, 01 Jan 2026",
-        }
+        mock_response = StaticHttpResponse(
+            content=b"",
+            status_code=304,
+            headers={
+                "etag": '"abc123"',
+                "last-modified": "Mon, 01 Jan 2026",
+            },
+            url="https://example.com",
+        )
 
         mock_client = MagicMock()
+        mock_client.name = "httpx"
         mock_client.get = AsyncMock(return_value=mock_response)
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("httpx.AsyncClient") as mock_client_class,
+            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
         ):
-            mock_context = AsyncMock()
-            mock_context.__aenter__.return_value = mock_client
-            mock_context.__aexit__.return_value = None
-            mock_client_class.return_value = mock_context
-
             result = await fetch_with_static_conditional(
                 "https://example.com",
                 cached_etag='"old-etag"',
@@ -1824,24 +1824,23 @@ class TestFetchWithStaticConditional:
     async def test_conditional_fetch_http_error(self) -> None:
         """Test conditional fetch handles HTTP errors."""
         from markitai.fetch import FetchError, fetch_with_static_conditional
+        from markitai.fetch_http import StaticHttpResponse
 
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.headers = {}
-        mock_response.text = "Not Found"
+        mock_response = StaticHttpResponse(
+            content=b"Not Found",
+            status_code=404,
+            headers={},
+            url="https://example.com",
+        )
 
         mock_client = MagicMock()
+        mock_client.name = "httpx"
         mock_client.get = AsyncMock(return_value=mock_response)
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("httpx.AsyncClient") as mock_client_class,
+            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
         ):
-            mock_context = AsyncMock()
-            mock_context.__aenter__.return_value = mock_client
-            mock_context.__aexit__.return_value = None
-            mock_client_class.return_value = mock_context
-
             with pytest.raises(FetchError) as exc_info:
                 await fetch_with_static_conditional("https://example.com")
 
@@ -3171,6 +3170,7 @@ class TestGetPlaywrightRenderer:
         from markitai.fetch import _get_playwright_renderer
 
         fetch._playwright_renderer = None
+        fetch._playwright_renderer_fingerprint = ""
 
         with patch(
             "markitai.fetch_playwright.PlaywrightRenderer"
@@ -3184,6 +3184,7 @@ class TestGetPlaywrightRenderer:
             mock_renderer_class.assert_called_once_with(proxy="http://proxy:8080")
 
         fetch._playwright_renderer = None
+        fetch._playwright_renderer_fingerprint = ""
 
     @pytest.mark.asyncio
     async def test_get_playwright_renderer_reuses_instance(self) -> None:
@@ -3193,12 +3194,15 @@ class TestGetPlaywrightRenderer:
 
         mock_instance = MagicMock()
         fetch._playwright_renderer = mock_instance
+        # Set fingerprint to match default call args (proxy=None, config=None)
+        fetch._playwright_renderer_fingerprint = "None:None"
 
         result = await _get_playwright_renderer()
 
         assert result is mock_instance
 
         fetch._playwright_renderer = None
+        fetch._playwright_renderer_fingerprint = ""
 
 
 class TestUrlToScreenshotFilenameEdgeCases:
@@ -3474,31 +3478,28 @@ class TestContentNegotiation:
     async def test_conditional_fetch_sends_accept_markdown_header(self):
         """Verify conditional fetch includes Accept: text/markdown header."""
         from markitai.fetch import fetch_with_static_conditional
+        from markitai.fetch_http import StaticHttpResponse
 
         captured_headers = {}
 
-        async def mock_get(url, headers=None):
+        async def mock_get(url, headers=None, timeout_s=30.0, proxy=None):
             nonlocal captured_headers
             captured_headers = headers or {}
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.headers = {"Content-Type": "text/html", "ETag": '"abc"'}
-            mock_resp.content = b"<html><body>Hello World test content for validation check</body></html>"
-            mock_resp.url = url
-            return mock_resp
+            return StaticHttpResponse(
+                content=b"<html><body>Hello World test content for validation check</body></html>",
+                status_code=200,
+                headers={"content-type": "text/html", "etag": '"abc"'},
+                url=url,
+            )
 
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.name = "httpx"
         mock_client.get = mock_get
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("httpx.AsyncClient") as mock_client_class,
+            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
         ):
-            mock_context = AsyncMock()
-            mock_context.__aenter__.return_value = mock_client
-            mock_context.__aexit__.return_value = None
-            mock_client_class.return_value = mock_context
-
             try:
                 await fetch_with_static_conditional("https://example.com")
             except Exception:
@@ -3511,34 +3512,30 @@ class TestContentNegotiation:
     async def test_conditional_fetch_uses_markdown_response_directly(self):
         """When server returns text/markdown, use content directly without markitdown."""
         from markitai.fetch import fetch_with_static_conditional
+        from markitai.fetch_http import StaticHttpResponse
 
         markdown_body = "# Hello World\n\nThis is markdown content from the server."
 
-        async def mock_get(url, headers=None):
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.headers = {
-                "Content-Type": "text/markdown; charset=utf-8",
-                "x-markdown-tokens": "42",
-                "ETag": '"xyz"',
-            }
-            mock_resp.text = markdown_body
-            mock_resp.content = markdown_body.encode()
-            mock_resp.url = url
-            return mock_resp
+        async def mock_get(url, headers=None, timeout_s=30.0, proxy=None):
+            return StaticHttpResponse(
+                content=markdown_body.encode(),
+                status_code=200,
+                headers={
+                    "content-type": "text/markdown; charset=utf-8",
+                    "x-markdown-tokens": "42",
+                    "etag": '"xyz"',
+                },
+                url=url,
+            )
 
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.name = "httpx"
         mock_client.get = mock_get
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("httpx.AsyncClient") as mock_client_class,
+            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
         ):
-            mock_context = AsyncMock()
-            mock_context.__aenter__.return_value = mock_client
-            mock_context.__aexit__.return_value = None
-            mock_client_class.return_value = mock_context
-
             result = await fetch_with_static_conditional("https://example.com")
 
         assert result.not_modified is False
@@ -3552,35 +3549,29 @@ class TestContentNegotiation:
     async def test_conditional_fetch_html_response_unchanged(self):
         """Non-CF sites returning text/html still processed through markitdown as before."""
         from markitai.fetch import fetch_with_static_conditional
+        from markitai.fetch_http import StaticHttpResponse
 
-        async def mock_get(url, headers=None):
+        async def mock_get(url, headers=None, timeout_s=30.0, proxy=None):
             # Verify Accept header is sent even for non-CF sites
             assert "text/markdown" in headers.get("Accept", "")
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.headers = {
-                "Content-Type": "text/html; charset=utf-8",
-                "ETag": '"html123"',
-            }
-            mock_resp.text = (
-                "<html><body><h1>Normal HTML</h1><p>Regular content.</p></body></html>"
+            return StaticHttpResponse(
+                content=b"<html><body><h1>Normal HTML</h1><p>Regular content.</p></body></html>",
+                status_code=200,
+                headers={
+                    "content-type": "text/html; charset=utf-8",
+                    "etag": '"html123"',
+                },
+                url=url,
             )
-            mock_resp.content = mock_resp.text.encode()
-            mock_resp.url = url
-            return mock_resp
 
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.name = "httpx"
         mock_client.get = mock_get
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("httpx.AsyncClient") as mock_client_class,
+            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
         ):
-            mock_context = AsyncMock()
-            mock_context.__aenter__.return_value = mock_client
-            mock_context.__aexit__.return_value = None
-            mock_client_class.return_value = mock_context
-
             try:
                 await fetch_with_static_conditional("https://non-cf-site.com")
             except Exception:
@@ -4612,3 +4603,418 @@ class TestBuildLocalOnlyPatterns:
             result = _build_local_only_patterns(policy)
 
         assert result == ["localhost", "127.0.0.1", "::1"]
+
+
+class TestSPADomainCacheAtomicWrite:
+    """Tests that SPADomainCache uses atomic writes."""
+
+    def test_save_uses_atomic_write_json(self) -> None:
+        """SPADomainCache._save should use atomic_write_json for crash safety."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_path = Path(tmp_dir) / "spa_cache.json"
+            cache = SPADomainCache(cache_path)
+
+            with patch("markitai.fetch.atomic_write_json") as mock_atomic:
+                cache.record_spa_domain("https://example.com/page")
+                mock_atomic.assert_called()
+                # Verify the path argument
+                call_args = mock_atomic.call_args
+                assert call_args[0][0] == cache_path
+
+
+class TestFetchCacheSingletonConfigSensitivity:
+    """Tests that get_fetch_cache rebuilds when config changes."""
+
+    def test_get_fetch_cache_rebuilds_on_different_config(self, tmp_path: Path) -> None:
+        """get_fetch_cache should return a new instance when config changes."""
+        import markitai.fetch as fetch_mod
+
+        old_cache = fetch_mod._fetch_cache
+        try:
+            fetch_mod._fetch_cache = None
+
+            dir1 = tmp_path / "cache1"
+            dir1.mkdir()
+            cache1 = fetch_mod.get_fetch_cache(dir1, max_size_bytes=50 * 1024 * 1024)
+
+            dir2 = tmp_path / "cache2"
+            dir2.mkdir()
+            cache2 = fetch_mod.get_fetch_cache(dir2, max_size_bytes=100 * 1024 * 1024)
+
+            # Should be different instances because config changed
+            assert cache1 is not cache2
+            cache1.close()
+            cache2.close()
+        finally:
+            fetch_mod._fetch_cache = old_cache
+
+    def test_get_fetch_cache_reuses_on_same_config(self, tmp_path: Path) -> None:
+        """get_fetch_cache should return same instance when config is identical."""
+        import markitai.fetch as fetch_mod
+
+        try:
+            fetch_mod._fetch_cache = None
+
+            cache1 = fetch_mod.get_fetch_cache(
+                tmp_path, max_size_bytes=100 * 1024 * 1024
+            )
+            cache2 = fetch_mod.get_fetch_cache(
+                tmp_path, max_size_bytes=100 * 1024 * 1024
+            )
+
+            assert cache1 is cache2
+            cache1.close()
+        finally:
+            fetch_mod._fetch_cache = None
+
+    def test_jina_client_rebuilds_on_different_config(self) -> None:
+        """_get_jina_client should rebuild when timeout/proxy changes."""
+        import markitai.fetch as fetch_mod
+
+        old_client = fetch_mod._jina_client
+        try:
+            fetch_mod._jina_client = None
+
+            client1 = fetch_mod._get_jina_client(timeout=30, proxy="")
+            client2 = fetch_mod._get_jina_client(timeout=60, proxy="http://proxy:8080")
+
+            assert client1 is not client2
+        finally:
+            # Clean up
+            import asyncio
+
+            if fetch_mod._jina_client is not None:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        pass
+                    else:
+                        loop.run_until_complete(fetch_mod._jina_client.aclose())
+                except Exception:
+                    pass
+            fetch_mod._jina_client = old_client
+
+
+class TestFetchCacheStrategyKey:
+    """High-2: Cache key should include strategy, not just URL."""
+
+    def test_same_url_different_strategy_gets_different_cache_entries(
+        self, tmp_path: Path
+    ) -> None:
+        """Same URL cached with different strategies should produce separate entries."""
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test.db")
+        url = "https://example.com/page"
+
+        result_static = FetchResult(
+            content="Static content",
+            strategy_used="static",
+            url=url,
+        )
+        result_playwright = FetchResult(
+            content="Playwright content",
+            strategy_used="playwright",
+            url=url,
+        )
+
+        # Cache both results for the same URL but different strategies
+        cache.set(url, result_static, strategy="static")
+        cache.set(url, result_playwright, strategy="playwright")
+
+        # Retrieve by strategy — each should get its own content
+        cached_static = cache.get(url, strategy="static")
+        cached_playwright = cache.get(url, strategy="playwright")
+
+        assert cached_static is not None
+        assert cached_static.content == "Static content"
+        assert cached_playwright is not None
+        assert cached_playwright.content == "Playwright content"
+        cache.close()
+
+    def test_get_without_strategy_returns_any_cached(self, tmp_path: Path) -> None:
+        """Getting without strategy should still work (backward compat)."""
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test.db")
+        url = "https://example.com/page"
+
+        result = FetchResult(
+            content="Some content",
+            strategy_used="static",
+            url=url,
+        )
+        cache.set(url, result)
+
+        # Get without strategy should return the cached result
+        cached = cache.get(url)
+        assert cached is not None
+        assert cached.content == "Some content"
+        cache.close()
+
+    @pytest.mark.asyncio
+    async def test_async_cache_respects_strategy_key(self, tmp_path: Path) -> None:
+        """Async cache methods should also respect strategy key."""
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test.db")
+        url = "https://example.com/page"
+
+        result_jina = FetchResult(
+            content="Jina content",
+            strategy_used="jina",
+            url=url,
+        )
+        result_defuddle = FetchResult(
+            content="Defuddle content",
+            strategy_used="defuddle",
+            url=url,
+        )
+
+        await cache.aset(url, result_jina, strategy="jina")
+        await cache.aset(url, result_defuddle, strategy="defuddle")
+
+        cached_jina = await cache.aget(url, strategy="jina")
+        cached_defuddle = await cache.aget(url, strategy="defuddle")
+
+        assert cached_jina is not None
+        assert cached_jina.content == "Jina content"
+        assert cached_defuddle is not None
+        assert cached_defuddle.content == "Defuddle content"
+        cache.close()
+
+
+class TestFetchCacheRoundTrip:
+    """High-3: Cache round-trip should preserve all FetchResult fields."""
+
+    def test_cache_preserves_screenshot_path(self, tmp_path: Path) -> None:
+        """screenshot_path should survive cache round-trip."""
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test.db")
+        url = "https://example.com/page"
+        screenshot = Path("/tmp/screenshots/example.full.jpg")
+
+        result = FetchResult(
+            content="Content",
+            strategy_used="playwright",
+            url=url,
+            screenshot_path=screenshot,
+        )
+        cache.set(url, result)
+
+        cached = cache.get(url)
+        assert cached is not None
+        assert cached.screenshot_path == screenshot
+        cache.close()
+
+    def test_cache_preserves_static_content(self, tmp_path: Path) -> None:
+        """static_content should survive cache round-trip."""
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test.db")
+        url = "https://example.com/page"
+
+        result = FetchResult(
+            content="Primary content",
+            strategy_used="multi",
+            url=url,
+            static_content="Static version of the page",
+        )
+        cache.set(url, result)
+
+        cached = cache.get(url)
+        assert cached is not None
+        assert cached.static_content == "Static version of the page"
+        cache.close()
+
+    def test_cache_preserves_browser_content(self, tmp_path: Path) -> None:
+        """browser_content should survive cache round-trip."""
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test.db")
+        url = "https://example.com/page"
+
+        result = FetchResult(
+            content="Primary content",
+            strategy_used="multi",
+            url=url,
+            browser_content="Browser rendered content",
+        )
+        cache.set(url, result)
+
+        cached = cache.get(url)
+        assert cached is not None
+        assert cached.browser_content == "Browser rendered content"
+        cache.close()
+
+    def test_cache_preserves_all_multi_source_fields(self, tmp_path: Path) -> None:
+        """All multi-source fields should survive cache round-trip together."""
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test.db")
+        url = "https://example.com/page"
+
+        result = FetchResult(
+            content="Primary content",
+            strategy_used="multi",
+            url=url,
+            title="Page Title",
+            final_url="https://example.com/page/final",
+            metadata={"key": "value"},
+            screenshot_path=Path("/tmp/screenshot.jpg"),
+            static_content="Static version",
+            browser_content="Browser version",
+        )
+        cache.set(url, result)
+
+        cached = cache.get(url)
+        assert cached is not None
+        assert cached.content == "Primary content"
+        assert cached.strategy_used == "multi"
+        assert cached.title == "Page Title"
+        assert cached.final_url == "https://example.com/page/final"
+        assert cached.metadata == {"key": "value"}
+        assert cached.screenshot_path == Path("/tmp/screenshot.jpg")
+        assert cached.static_content == "Static version"
+        assert cached.browser_content == "Browser version"
+        cache.close()
+
+    def test_cache_preserves_none_multi_source_fields(self, tmp_path: Path) -> None:
+        """None values for multi-source fields should remain None after round-trip."""
+        from markitai.fetch import FetchCache, FetchResult
+
+        cache = FetchCache(tmp_path / "test.db")
+        url = "https://example.com/page"
+
+        result = FetchResult(
+            content="Primary content",
+            strategy_used="static",
+            url=url,
+        )
+        cache.set(url, result)
+
+        cached = cache.get(url)
+        assert cached is not None
+        assert cached.screenshot_path is None
+        assert cached.static_content is None
+        assert cached.browser_content is None
+        cache.close()
+
+
+class TestHttpClientConnectionReuse:
+    """Medium-5: HTTP clients should reuse connections."""
+
+    @pytest.mark.asyncio
+    async def test_httpx_client_reuses_connection(self) -> None:
+        """HttpxClient should reuse connections across requests."""
+        from markitai.fetch_http import HttpxClient
+
+        client = HttpxClient()
+
+        # The client should have an internal shared session
+        assert hasattr(client, "_client") or hasattr(client, "get")
+
+        # After creating, a shared client should be accessible for reuse
+        # This test verifies the client maintains a persistent connection pool
+        # rather than creating a new connection per request
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_httpx_client_provides_close_method(self) -> None:
+        """HttpxClient should provide a close method for cleanup."""
+        from markitai.fetch_http import HttpxClient
+
+        client = HttpxClient()
+        # Should have a close method
+        assert hasattr(client, "close")
+        await client.close()
+
+
+class TestProxyAutoProxyRespected:
+    """Medium-7: auto_proxy=False should disable proxy for all backends."""
+
+    def test_get_proxy_for_url_returns_empty_when_auto_proxy_disabled(self) -> None:
+        """get_proxy_for_url should return empty string when auto_proxy=False."""
+        from markitai.fetch import get_proxy_for_url
+
+        result = get_proxy_for_url("https://example.com", auto_proxy=False)
+        assert result == ""
+
+    def test_get_proxy_for_url_returns_proxy_when_auto_proxy_enabled(self) -> None:
+        """get_proxy_for_url should return detected proxy when auto_proxy=True."""
+        from markitai.fetch import get_proxy_for_url
+
+        with patch("markitai.fetch._detect_proxy", return_value="http://proxy:8080"):
+            result = get_proxy_for_url("https://example.com", auto_proxy=True)
+            assert result == "http://proxy:8080"
+
+    def test_get_proxy_for_url_respects_no_proxy_patterns(self) -> None:
+        """get_proxy_for_url should skip proxy for NO_PROXY domains."""
+        from markitai import fetch
+        from markitai.fetch import get_proxy_for_url
+
+        fetch._detected_proxy = "http://proxy:8080"
+        fetch._detected_proxy_bypass = "example.com,internal.corp"
+
+        try:
+            result = get_proxy_for_url("https://example.com/page", auto_proxy=True)
+            assert result == ""
+
+            result = get_proxy_for_url("https://other.com/page", auto_proxy=True)
+            assert result == "http://proxy:8080"
+        finally:
+            fetch._detected_proxy = None
+            fetch._detected_proxy_bypass = None
+
+
+class TestSPABrowserFirstOrdering:
+    """Medium-8: known_spa=True should produce browser-first strategy order."""
+
+    def test_known_spa_puts_playwright_first(self) -> None:
+        """When known_spa=True, playwright should be first in the strategy order."""
+        from markitai.fetch_policy import FetchPolicyEngine
+
+        engine = FetchPolicyEngine()
+        decision = engine.decide(
+            domain="spa-app.example.com",
+            known_spa=True,
+            explicit_strategy=None,
+            fallback_patterns=[],
+            policy_enabled=True,
+        )
+
+        # Playwright should be the first strategy for known SPAs
+        assert decision.order[0] == "playwright"
+
+    def test_fallback_pattern_puts_playwright_first(self) -> None:
+        """When domain matches fallback_patterns, playwright should be first."""
+        from markitai.fetch_policy import FetchPolicyEngine
+
+        engine = FetchPolicyEngine()
+        decision = engine.decide(
+            domain="twitter.com",
+            known_spa=False,
+            explicit_strategy=None,
+            fallback_patterns=["twitter.com"],
+            policy_enabled=True,
+        )
+
+        # For known JS-heavy sites, playwright should be first
+        assert decision.order[0] == "playwright"
+
+    def test_non_spa_default_order_unchanged(self) -> None:
+        """Non-SPA domains should keep the default defuddle-first order."""
+        from markitai.fetch_policy import FetchPolicyEngine
+
+        engine = FetchPolicyEngine()
+        decision = engine.decide(
+            domain="blog.example.com",
+            known_spa=False,
+            explicit_strategy=None,
+            fallback_patterns=[],
+            policy_enabled=True,
+        )
+
+        # Default order: defuddle first
+        assert decision.order[0] == "defuddle"

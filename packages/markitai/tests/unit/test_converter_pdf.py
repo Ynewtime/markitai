@@ -464,9 +464,11 @@ class TestConvertWithScreenshot:
         mock_pymupdf.open.return_value = mock_doc
         mock_pymupdf.Matrix.return_value = Mock()
 
-        # Setup ImageProcessor mock
+        # Setup ImageProcessor mock — return ((w,h), output_path)
         mock_img_processor = Mock()
-        mock_img_processor.save_screenshot.return_value = (800, 600)
+        mock_img_processor.save_screenshot.side_effect = (
+            lambda _samples, _w, _h, path, **_kw: ((800, 600), path)
+        )
 
         pdf_file = tmp_path / "test.pdf"
         pdf_file.touch()
@@ -537,9 +539,11 @@ class TestRenderPagesForLLM:
         mock_pymupdf.open.return_value = mock_doc
         mock_pymupdf.Matrix.return_value = Mock()
 
-        # Setup ImageProcessor mock
+        # Setup ImageProcessor mock — return ((w,h), output_path)
         mock_img_processor = Mock()
-        mock_img_processor.save_screenshot.return_value = (1000, 800)
+        mock_img_processor.save_screenshot.side_effect = (
+            lambda _samples, _w, _h, path, **_kw: ((1000, 800), path)
+        )
 
         pdf_file = tmp_path / "document.pdf"
         pdf_file.touch()
@@ -887,3 +891,235 @@ class TestMIMETypeHandling:
             images = converter._collect_embedded_images(assets_dir, "doc.pdf")
 
         assert images[0].mime_type == "image/jpeg"
+
+
+class TestRenderPagesForLLMWithoutScreenshot:
+    """Issue 1: OCR+LLM should render page images regardless of screenshot.enabled."""
+
+    def test_ocr_llm_renders_pages_even_when_screenshot_disabled(
+        self, tmp_path: Path
+    ) -> None:
+        """OCR+LLM path must produce page_images even if screenshot.enabled=False."""
+        mock_pymupdf = Mock()
+        mock_page = Mock()
+        mock_pix = Mock()
+        mock_pix.samples = b"pixel_data"
+        mock_pix.width = 1000
+        mock_pix.height = 800
+        mock_page.get_pixmap.return_value = mock_pix
+
+        mock_doc = MagicMock()
+        mock_doc.__len__ = Mock(return_value=2)
+        mock_doc.__getitem__ = Mock(return_value=mock_page)
+        mock_doc.close = Mock()
+        mock_pymupdf.open.return_value = mock_doc
+        mock_pymupdf.Matrix.return_value = Mock()
+
+        mock_img_processor = Mock()
+        mock_img_processor.save_screenshot.side_effect = (
+            lambda _samples, _w, _h, path, **_kw: ((1000, 800), path)
+        )
+
+        pdf_file = tmp_path / "document.pdf"
+        pdf_file.touch()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        # OCR + LLM enabled, but screenshot.enabled=False (default)
+        config = MarkitaiConfig(
+            ocr=OCRConfig(enabled=True),
+            llm=LLMConfig(enabled=True),
+            screenshot=ScreenshotConfig(enabled=False),
+        )
+        converter = PdfConverter(config)
+
+        with patch("markitai.converter.pdf.pymupdf4llm") as mock_pymupdf4llm:
+            mock_pymupdf4llm.to_markdown.return_value = "Extracted text"
+            with (
+                patch.dict(sys.modules, {"pymupdf": mock_pymupdf}),
+                patch(
+                    "markitai.converter.pdf.ImageProcessor",
+                    return_value=mock_img_processor,
+                ),
+            ):
+                result = converter.convert(pdf_file, output_dir)
+
+        # Even with screenshot.enabled=False, OCR+LLM must produce page images
+        assert "page_images" in result.metadata
+        assert len(result.metadata["page_images"]) == 2
+        assert result.metadata.get("pages") == 2
+
+
+class TestDanglingImagePaths:
+    """Issue 2: No output_dir should not return dangling image paths."""
+
+    def test_no_output_dir_images_not_dangling(self, tmp_path: Path) -> None:
+        """When output_dir is None, returned images must not reference deleted temp paths."""
+        pdf_file = tmp_path / "test.pdf"
+        pdf_file.touch()
+
+        captured_image_path: list[Path] = []
+
+        def fake_to_markdown(**kwargs):
+            """Simulate pymupdf4llm extracting an image into the image_path."""
+            image_path = Path(kwargs["image_path"])
+            captured_image_path.append(image_path)
+            # Simulate pymupdf4llm creating an embedded image
+            fake_img = image_path / f"{pdf_file.name}-0-0.png"
+            fake_img.touch()
+            return [{"text": f"![](/{image_path}/{pdf_file.name}-0-0.png)"}]
+
+        converter = PdfConverter()
+
+        with patch("markitai.converter.pdf.pymupdf4llm") as mock_pymupdf4llm:
+            mock_pymupdf4llm.to_markdown.side_effect = lambda _doc, **kw: (
+                fake_to_markdown(**kw)
+            )
+            result = converter.convert(pdf_file)  # no output_dir
+
+        # After convert returns, any images should not reference deleted dirs
+        for img in result.images:
+            if img.path is not None:
+                assert img.path.exists(), (
+                    f"Image path {img.path} is dangling (temp dir deleted)"
+                )
+
+
+class TestEmbeddedImagesWebp:
+    """Issue 4: _collect_embedded_images must handle webp format."""
+
+    def test_collect_webp_images(self, tmp_path: Path) -> None:
+        """webp images should be collected by _collect_embedded_images."""
+        converter = PdfConverter()
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+
+        (assets_dir / "doc.pdf-0-0.webp").touch()
+        (assets_dir / "doc.pdf-1-0.webp").touch()
+
+        mock_pymupdf = create_pymupdf_mock()
+        with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
+            images = converter._collect_embedded_images(assets_dir, "doc.pdf")
+
+        assert len(images) == 2
+        for img in images:
+            assert img.mime_type == "image/webp"
+
+    def test_collect_mixed_formats_including_webp(self, tmp_path: Path) -> None:
+        """All supported formats (png, jpg, jpeg, webp) should be collected."""
+        converter = PdfConverter()
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+
+        (assets_dir / "doc.pdf-0-0.png").touch()
+        (assets_dir / "doc.pdf-0-1.jpg").touch()
+        (assets_dir / "doc.pdf-0-2.jpeg").touch()
+        (assets_dir / "doc.pdf-0-3.webp").touch()
+
+        mock_pymupdf = create_pymupdf_mock()
+        with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
+            images = converter._collect_embedded_images(assets_dir, "doc.pdf")
+
+        assert len(images) == 4
+        extensions = {img.original_name.rsplit(".", 1)[-1] for img in images}
+        assert extensions == {"png", "jpg", "jpeg", "webp"}
+
+
+class TestThreadPoolLimits:
+    """Issue 3: Internal thread pools should have bounded worker counts."""
+
+    def test_worker_count_never_exceeds_cap(self, tmp_path: Path) -> None:
+        """_get_worker_count must always cap at a reasonable maximum."""
+        converter = PdfConverter()
+
+        # Create a small file to trigger the "small file" branch
+        pdf_file = tmp_path / "small.pdf"
+        pdf_file.write_bytes(b"x" * (1 * 1024 * 1024))  # 1 MB
+
+        workers = converter._get_worker_count(pdf_file, task_count=1000)
+        # Even with many pages and small file, should not exceed 6
+        assert workers <= 6
+
+    def test_worker_count_minimum_one(self, tmp_path: Path) -> None:
+        """Worker count should never be less than 1."""
+        converter = PdfConverter()
+
+        pdf_file = tmp_path / "tiny.pdf"
+        pdf_file.write_bytes(b"x" * 100)  # Very small
+
+        workers = converter._get_worker_count(pdf_file, task_count=0)
+        assert workers >= 1
+
+
+class TestScreenshotExtensionConsistency:
+    """save_screenshot may change .png to .jpg in the extreme fallback.
+
+    PDF converter must use the actual path returned by save_screenshot
+    so that ExtractedImage metadata points to the real file on disk.
+    """
+
+    def test_pdf_screenshot_uses_actual_path_from_save_screenshot(
+        self, tmp_path: Path
+    ) -> None:
+        """When save_screenshot returns a different path (e.g. .jpg instead of .png),
+        the PDF converter _render_pages_parallel must use that path in
+        ExtractedImage and page_images metadata.
+        """
+        mock_pymupdf = Mock()
+        mock_page = Mock()
+        mock_pix = Mock()
+        mock_pix.samples = b"fake_pixel_data"
+        mock_pix.width = 800
+        mock_pix.height = 600
+        mock_page.get_pixmap.return_value = mock_pix
+
+        mock_doc = MagicMock()
+        mock_doc.__len__ = Mock(return_value=1)
+        mock_doc.__getitem__ = Mock(return_value=mock_page)
+        mock_doc.close = Mock()
+        mock_pymupdf.open.return_value = mock_doc
+        mock_pymupdf.Matrix.return_value = Mock()
+
+        # Simulate save_screenshot returning a DIFFERENT path (.jpg instead of .png)
+        # This happens when the extreme compression fallback kicks in
+        screenshots_dir = tmp_path / "output" / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        actual_jpg_path = screenshots_dir / "test.pdf.page0001.jpg"
+        actual_jpg_path.write_bytes(b"\xff\xd8fake_jpeg")
+
+        mock_img_processor = Mock()
+        mock_img_processor.save_screenshot.return_value = (
+            (800, 600),
+            actual_jpg_path,
+        )
+
+        pdf_file = tmp_path / "test.pdf"
+        pdf_file.touch()
+
+        config = MarkitaiConfig(
+            screenshot=ScreenshotConfig(enabled=True),
+            image=ImageConfig(format="png"),
+        )
+        converter = PdfConverter(config)
+
+        with (
+            patch.dict(sys.modules, {"pymupdf": mock_pymupdf}),
+            patch(
+                "markitai.converter.pdf.ImageProcessor",
+                return_value=mock_img_processor,
+            ),
+        ):
+            results = converter._render_pages_parallel(
+                pdf_file, screenshots_dir, "png", max_workers=1
+            )
+
+        # The ExtractedImage path must match the actual file (jpg, not png)
+        assert len(results) == 1
+        extracted_img, page_info = results[0]
+        assert extracted_img.path == actual_jpg_path
+        assert extracted_img.original_name == "test.pdf.page0001.jpg"
+        assert extracted_img.mime_type == "image/jpeg"
+
+        # page_info metadata must also use the actual path
+        assert page_info["path"] == str(actual_jpg_path)
+        assert page_info["name"] == "test.pdf.page0001.jpg"

@@ -476,9 +476,12 @@ class PlaywrightRenderer:
             title = await page.title()
             final_url = page.url
             html_content = await page.content()
-            markdown_content = _html_to_markdown(html_content)
             metadata: dict[str, Any] = {"renderer": "playwright", "wait_for": wait_for}
 
+            # Try native webextract FIRST to avoid redundant HTML→Markdown
+            # conversion. Only fall back to _html_to_markdown if webextract
+            # is unavailable or produces insufficient quality.
+            markdown_content = ""
             if extract_web_content is not None:
                 # If extract_web_content is available, the other webextract functions are too
                 assert is_native_markdown_acceptable is not None
@@ -500,6 +503,11 @@ class PlaywrightRenderer:
                         metadata["webextract_diagnostics"] = dict(
                             getattr(extracted, "diagnostics", {}) or {}
                         )
+
+            # Fallback: use _html_to_markdown only if webextract didn't produce
+            # acceptable content
+            if not markdown_content:
+                markdown_content = _html_to_markdown(html_content)
 
             if _is_content_incomplete(markdown_content):
                 try:

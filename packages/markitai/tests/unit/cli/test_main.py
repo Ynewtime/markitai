@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from unittest.mock import patch
 
 from click.testing import CliRunner
@@ -35,3 +36,217 @@ class TestInteractiveFlag:
         result = runner.invoke(app, [])
         assert result.exit_code == 0
         assert "Usage:" in result.output or "usage:" in result.output.lower()
+
+
+class TestInteractiveModeExitCode:
+    """Tests for interactive mode exit code propagation."""
+
+    def test_propagates_nonzero_exit_code(self) -> None:
+        """Should propagate subprocess non-zero exit code instead of always exiting 0."""
+        from markitai.cli.interactive import InteractiveSession
+
+        session = InteractiveSession(input_path="test.pdf")
+
+        # subprocess.run returns a CompletedProcess with returncode=1
+        mock_result = subprocess.CompletedProcess(
+            args=["python", "-m", "markitai", "test.pdf"],
+            returncode=1,
+        )
+
+        with (
+            patch(
+                "markitai.cli.interactive.run_interactive",
+                return_value=session,
+            ),
+            patch(
+                "markitai.cli.interactive.session_to_cli_args",
+                return_value=["test.pdf", "-o", "./output", "--no-llm"],
+            ),
+            patch("questionary.confirm") as mock_confirm,
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            mock_confirm.return_value.ask.return_value = True
+            runner = CliRunner()
+            result = runner.invoke(app, ["-I"])
+            assert result.exit_code == 1
+
+    def test_propagates_zero_exit_code_on_success(self) -> None:
+        """Should exit 0 when subprocess succeeds."""
+        from markitai.cli.interactive import InteractiveSession
+
+        session = InteractiveSession(input_path="test.pdf")
+
+        mock_result = subprocess.CompletedProcess(
+            args=["python", "-m", "markitai", "test.pdf"],
+            returncode=0,
+        )
+
+        with (
+            patch(
+                "markitai.cli.interactive.run_interactive",
+                return_value=session,
+            ),
+            patch(
+                "markitai.cli.interactive.session_to_cli_args",
+                return_value=["test.pdf", "-o", "./output", "--no-llm"],
+            ),
+            patch("questionary.confirm") as mock_confirm,
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            mock_confirm.return_value.ask.return_value = True
+            runner = CliRunner()
+            result = runner.invoke(app, ["-I"])
+            assert result.exit_code == 0
+
+
+class TestDryRunSkipsAuthPreflight:
+    """Tests for dry-run skipping auth preflight check."""
+
+    def test_dry_run_does_not_trigger_auth_preflight(self, tmp_path: object) -> None:
+        """dry-run should return before auth preflight is reached."""
+        import tempfile
+        from pathlib import Path
+
+        # Create a real temporary file to satisfy existence checks
+        tmpdir = Path(tempfile.mkdtemp())
+        test_file = tmpdir / "test.txt"
+        test_file.write_text("hello")
+
+        runner = CliRunner()
+        with patch("markitai.providers.preflight_auth_check") as mock_preflight:
+            result = runner.invoke(
+                app,
+                [str(test_file), "-o", str(tmpdir), "--llm", "--dry-run"],
+            )
+            # Auth preflight should NOT have been called
+            mock_preflight.assert_not_called()
+            # dry-run should succeed
+            assert result.exit_code == 0
+
+
+class TestAuthPreflightAfterValidation:
+    """Tests for auth preflight happening AFTER parameter validation.
+
+    Medium-2: Auth preflight should not run before basic parameter errors
+    (like missing -o for URL mode) are caught. Users should see parameter
+    errors immediately, not after a slow auth/login attempt.
+    """
+
+    def test_url_without_output_errors_before_auth(self) -> None:
+        """URL mode without -o should fail with param error, NOT trigger auth preflight."""
+        from unittest.mock import AsyncMock
+
+        runner = CliRunner()
+        with (
+            patch(
+                "markitai.providers.preflight_auth_check",
+                new_callable=AsyncMock,
+            ) as mock_preflight,
+            # Override config output.dir so validation actually fires
+            patch("markitai.cli.main.ConfigManager") as mock_cm,
+        ):
+            from markitai.config import MarkitaiConfig
+
+            mock_cfg = MarkitaiConfig()
+            mock_cfg.output.dir = ""  # No default output dir
+            mock_cfg.llm.enabled = True
+            from markitai.config import LiteLLMParams, ModelConfig
+
+            mock_cfg.llm.model_list = [
+                ModelConfig(
+                    model_name="test",
+                    litellm_params=LiteLLMParams(model="gpt-4o-mini"),
+                )
+            ]
+            mock_cm.return_value.load.return_value = mock_cfg
+            mock_cm.return_value.config_path = None
+
+            result = runner.invoke(
+                app,
+                ["https://example.com", "--llm"],
+            )
+            # Auth preflight should NOT have been called — param error comes first
+            mock_preflight.assert_not_called()
+            # Should get an error about missing output
+            assert result.exit_code != 0
+
+    def test_url_batch_without_output_errors_before_auth(self) -> None:
+        """URL batch mode without -o should fail with param error, NOT trigger auth preflight."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import AsyncMock
+
+        tmpdir = Path(tempfile.mkdtemp())
+        urls_file = tmpdir / "urls.urls"
+        urls_file.write_text("https://example.com\nhttps://example.org\n")
+
+        runner = CliRunner()
+        with (
+            patch(
+                "markitai.providers.preflight_auth_check",
+                new_callable=AsyncMock,
+            ) as mock_preflight,
+            patch("markitai.cli.main.ConfigManager") as mock_cm,
+        ):
+            from markitai.config import MarkitaiConfig
+
+            mock_cfg = MarkitaiConfig()
+            mock_cfg.output.dir = ""
+            mock_cfg.llm.enabled = True
+            from markitai.config import LiteLLMParams, ModelConfig
+
+            mock_cfg.llm.model_list = [
+                ModelConfig(
+                    model_name="test",
+                    litellm_params=LiteLLMParams(model="gpt-4o-mini"),
+                )
+            ]
+            mock_cm.return_value.load.return_value = mock_cfg
+            mock_cm.return_value.config_path = None
+
+            result = runner.invoke(
+                app,
+                [str(urls_file), "--llm"],
+            )
+            mock_preflight.assert_not_called()
+            assert result.exit_code != 0
+
+    def test_batch_dir_without_output_errors_before_auth(self) -> None:
+        """Batch directory mode without -o should fail with param error, NOT trigger auth preflight."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import AsyncMock
+
+        tmpdir = Path(tempfile.mkdtemp())
+        (tmpdir / "file.txt").write_text("hello")
+
+        runner = CliRunner()
+        with (
+            patch(
+                "markitai.providers.preflight_auth_check",
+                new_callable=AsyncMock,
+            ) as mock_preflight,
+            patch("markitai.cli.main.ConfigManager") as mock_cm,
+        ):
+            from markitai.config import MarkitaiConfig
+
+            mock_cfg = MarkitaiConfig()
+            mock_cfg.output.dir = ""
+            mock_cfg.llm.enabled = True
+            from markitai.config import LiteLLMParams, ModelConfig
+
+            mock_cfg.llm.model_list = [
+                ModelConfig(
+                    model_name="test",
+                    litellm_params=LiteLLMParams(model="gpt-4o-mini"),
+                )
+            ]
+            mock_cm.return_value.load.return_value = mock_cfg
+            mock_cm.return_value.config_path = None
+
+            result = runner.invoke(
+                app,
+                [str(tmpdir), "--llm"],
+            )
+            mock_preflight.assert_not_called()
+            assert result.exit_code != 0

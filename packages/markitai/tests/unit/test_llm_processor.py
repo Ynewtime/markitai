@@ -915,7 +915,7 @@ class TestSQLiteCache:
         """Test basic set and get operations."""
         cache = SQLiteCache(tmp_path / "cache.db")
         cache.set("prompt", "content", '{"result": "test"}', "test-model")
-        result = cache.get("prompt", "content")
+        result = cache.get("prompt", "content", model="test-model")
         assert result == '{"result": "test"}'
 
     def test_get_miss(self, tmp_path: Path):
@@ -1031,7 +1031,7 @@ class TestPersistentCache:
         """Test basic set and get."""
         cache = PersistentCache(global_dir=tmp_path, enabled=True)
         cache.set("prompt", "content", {"key": "value"}, "model")
-        result = cache.get("prompt", "content")
+        result = cache.get("prompt", "content", model="model")
         assert result == {"key": "value"}
 
     def test_set_disabled(self):
