@@ -4969,10 +4969,10 @@ class TestProxyAutoProxyRespected:
 
 
 class TestSPABrowserFirstOrdering:
-    """Medium-8: known_spa=True should produce browser-first strategy order."""
+    """Medium-8: known_spa=True should prefer defuddle/jina before playwright."""
 
-    def test_known_spa_puts_playwright_first(self) -> None:
-        """When known_spa=True, playwright should be first in the strategy order."""
+    def test_known_spa_prefers_defuddle_over_playwright(self) -> None:
+        """When known_spa=True, defuddle should lead (server-side extraction may work)."""
         from markitai.fetch_policy import FetchPolicyEngine
 
         engine = FetchPolicyEngine()
@@ -4984,11 +4984,12 @@ class TestSPABrowserFirstOrdering:
             policy_enabled=True,
         )
 
-        # Playwright should be the first strategy for known SPAs
-        assert decision.order[0] == "playwright"
+        # Defuddle/jina lead; playwright is available as fallback
+        assert decision.order[0] == "defuddle"
+        assert "playwright" in decision.order
 
-    def test_fallback_pattern_puts_playwright_first(self) -> None:
-        """When domain matches fallback_patterns, playwright should be first."""
+    def test_fallback_pattern_prefers_defuddle_over_playwright(self) -> None:
+        """When domain matches fallback_patterns, defuddle should lead."""
         from markitai.fetch_policy import FetchPolicyEngine
 
         engine = FetchPolicyEngine()
@@ -5000,8 +5001,9 @@ class TestSPABrowserFirstOrdering:
             policy_enabled=True,
         )
 
-        # For known JS-heavy sites, playwright should be first
-        assert decision.order[0] == "playwright"
+        # Defuddle/jina lead for fallback-pattern domains too
+        assert decision.order[0] == "defuddle"
+        assert "playwright" in decision.order
 
     def test_non_spa_default_order_unchanged(self) -> None:
         """Non-SPA domains should keep the default defuddle-first order."""
