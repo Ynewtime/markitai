@@ -69,9 +69,12 @@ def run_interactive_mode(ctx: click.Context) -> None:
         # Ask for confirmation before executing
         import questionary
 
-        if questionary.confirm(
+        confirm_result = questionary.confirm(
             "Execute conversion with these settings?", default=True
-        ).ask():
+        ).ask()
+        if confirm_result is None:
+            raise KeyboardInterrupt
+        if confirm_result:
             # Re-invoke the CLI with the gathered arguments
             args = session_to_cli_args(session)
             # Use sys.executable -m for reliable cross-platform invocation

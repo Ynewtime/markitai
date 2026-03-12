@@ -62,7 +62,9 @@ def extract_document_context(markdown: str, max_chars: int = 200) -> str:
         A short text snippet from the document body, or empty string.
     """
     # Strip YAML frontmatter (--- ... ---)
-    body = re.sub(r"^\s*---\s*\n.*?\n---\s*\n?", "", markdown, count=1, flags=re.DOTALL)
+    from markitai.utils.frontmatter import FRONTMATTER_PATTERN
+
+    body = FRONTMATTER_PATTERN.sub("", markdown, count=1)
 
     text_lines = [
         line
@@ -192,7 +194,7 @@ def add_basic_frontmatter(
         fetch_strategy: Optional fetch strategy used (e.g., "static", "browser")
         screenshot_path: Optional path to page screenshot
         output_dir: Optional output directory (for relative screenshot path)
-        dedupe: Whether to deduplicate paragraphs (default True)
+        dedupe: Whether to deduplicate paragraphs (default False)
         title: Optional title from fetch result (takes precedence over extraction)
 
     Returns:

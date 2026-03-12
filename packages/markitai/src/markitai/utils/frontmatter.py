@@ -17,6 +17,13 @@ _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
 _TITLE_HTML_TAG_RE = re.compile(r"</?(?:strong|em|b|i|code)>", re.IGNORECASE)
 
+# Robust frontmatter pattern: anchors closing --- to line start via negative lookahead.
+# Each line inside the block must NOT start with --- (the closing delimiter).
+FRONTMATTER_PATTERN = re.compile(
+    r"^\s*---\s*\n(?:(?!---\s*\n).*\n)*---\s*\n?",
+    re.MULTILINE,
+)
+
 
 def _normalize_title_text(title: str) -> str:
     """Normalize lightweight markdown formatting from a title candidate."""
@@ -160,9 +167,8 @@ def _strip_frontmatter(content: str) -> str:
         Content without frontmatter block
     """
     # Match frontmatter at the start of the document
-    # Pattern: starts with ---, ends with ---, may have leading whitespace
-    frontmatter_pattern = r"^\s*---\s*\n.*?\n---\s*\n?"
-    return re.sub(frontmatter_pattern, "", content, count=1, flags=re.DOTALL)
+    # Uses shared FRONTMATTER_PATTERN with line-anchored closing ---
+    return FRONTMATTER_PATTERN.sub("", content, count=1)
 
 
 def _find_heading(content: str, level: int) -> str | None:

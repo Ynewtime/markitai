@@ -288,3 +288,86 @@ class TestDefaultConsole:
                 assert sig.parameters["console"].default is None
         except Exception as e:
             pytest.fail(f"Function signature check failed: {e}")
+
+
+class TestBuildFeatureStr:
+    """Tests for build_feature_str function."""
+
+    def test_all_features_enabled(self) -> None:
+        """All features enabled should show LLM alt desc | OCR screenshot."""
+        from markitai.config import MarkitaiConfig
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.image.alt_enabled = True
+        cfg.image.desc_enabled = True
+        cfg.ocr.enabled = True
+        cfg.screenshot.enabled = True
+
+        result = ui.build_feature_str(cfg)
+        assert "LLM" in result
+        assert "alt" in result
+        assert "desc" in result
+        assert "OCR" in result
+        assert "screenshot" in result
+        assert "|" in result
+
+    def test_llm_only(self) -> None:
+        """LLM only should show just LLM."""
+        from markitai.config import MarkitaiConfig
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.image.alt_enabled = False
+        cfg.image.desc_enabled = False
+        cfg.ocr.enabled = False
+        cfg.screenshot.enabled = False
+
+        result = ui.build_feature_str(cfg)
+        assert "LLM" in result
+        assert "|" not in result
+
+    def test_ocr_only(self) -> None:
+        """OCR only should show just OCR."""
+        from markitai.config import MarkitaiConfig
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.image.alt_enabled = False
+        cfg.image.desc_enabled = False
+        cfg.ocr.enabled = True
+        cfg.screenshot.enabled = False
+
+        result = ui.build_feature_str(cfg)
+        assert "OCR" in result
+        assert "|" not in result
+
+    def test_no_features(self) -> None:
+        """No features should return dim none."""
+        from markitai.config import MarkitaiConfig
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.image.alt_enabled = False
+        cfg.image.desc_enabled = False
+        cfg.ocr.enabled = False
+        cfg.screenshot.enabled = False
+
+        result = ui.build_feature_str(cfg)
+        assert "none" in result
+
+    def test_llm_plus_ocr(self) -> None:
+        """LLM + OCR should show both with separator."""
+        from markitai.config import MarkitaiConfig
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.image.alt_enabled = False
+        cfg.image.desc_enabled = False
+        cfg.ocr.enabled = True
+        cfg.screenshot.enabled = False
+
+        result = ui.build_feature_str(cfg)
+        assert "LLM" in result
+        assert "OCR" in result
+        assert "|" in result

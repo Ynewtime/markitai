@@ -361,6 +361,61 @@ class TestConfigureProviderAutoDetect:
         assert session.enable_llm is True
 
 
+class TestSessionToCliArgs:
+    """Tests for session_to_cli_args function."""
+
+    def test_llm_enabled_with_alt_and_desc(self) -> None:
+        """LLM enabled with alt+desc should produce correct args."""
+        from markitai.cli.interactive import session_to_cli_args
+
+        session = InteractiveSession()
+        session.input_path = Path("/tmp/doc.pdf")
+        session.output_dir = Path("/tmp/output")
+        session.enable_llm = True
+        session.enable_alt = True
+        session.enable_desc = True
+
+        args = session_to_cli_args(session)
+        assert str(session.input_path) in args
+        assert "-o" in args
+        assert str(session.output_dir) in args
+        assert "--llm" in args
+        assert "--alt" in args
+        assert "--desc" in args
+        assert "--no-llm" not in args
+
+    def test_llm_disabled_with_ocr_and_screenshot(self) -> None:
+        """LLM disabled with OCR+screenshot should produce correct args."""
+        from markitai.cli.interactive import session_to_cli_args
+
+        session = InteractiveSession()
+        session.input_path = Path("/tmp/doc.pdf")
+        session.output_dir = Path("/tmp/output")
+        session.enable_llm = False
+        session.enable_ocr = True
+        session.enable_screenshot = True
+
+        args = session_to_cli_args(session)
+        assert "--no-llm" in args
+        assert "--ocr" in args
+        assert "--screenshot" in args
+        assert "--llm" not in args
+
+    def test_ocr_independent_of_llm(self) -> None:
+        """OCR should be present even with --no-llm."""
+        from markitai.cli.interactive import session_to_cli_args
+
+        session = InteractiveSession()
+        session.input_path = Path("/tmp/doc.pdf")
+        session.output_dir = Path("/tmp/output")
+        session.enable_llm = False
+        session.enable_ocr = True
+
+        args = session_to_cli_args(session)
+        assert "--no-llm" in args
+        assert "--ocr" in args
+
+
 class TestAtomicEnvWrite:
     """Tests for atomic .env file writing."""
 
@@ -376,7 +431,7 @@ class TestAtomicEnvWrite:
             # Verify the content would be correct
             call_args = mock_atomic.call_args
             assert call_args[0][0] == env_path
-            assert "TEST_KEY=test_value" in call_args[0][1]
+            assert 'TEST_KEY="test_value"' in call_args[0][1]
 
     def test_append_env_var_updates_existing_key(self, tmp_path: Path) -> None:
         """_append_env_var should update existing key atomically."""
@@ -389,8 +444,32 @@ class TestAtomicEnvWrite:
         _append_env_var(env_path, "TEST_KEY", "new_value")
 
         content = env_path.read_text(encoding="utf-8")
-        assert "TEST_KEY=new_value" in content
+        assert 'TEST_KEY="new_value"' in content
         assert "TEST_KEY=original" not in content
+
+    def test_append_env_var_quotes_values(self, tmp_path: Path) -> None:
+        """_append_env_var should quote values in .env files."""
+        from markitai.cli.interactive import _append_env_var
+
+        env_path = tmp_path / ".env"
+
+        _append_env_var(env_path, "API_KEY", "sk-test-123")
+
+        content = env_path.read_text(encoding="utf-8")
+        assert 'API_KEY="sk-test-123"' in content
+
+    def test_append_env_var_updates_quoted_existing_key(self, tmp_path: Path) -> None:
+        """_append_env_var should detect and update existing quoted keys."""
+        from markitai.cli.interactive import _append_env_var
+
+        env_path = tmp_path / ".env"
+        env_path.write_text('API_KEY="old-value"\n', encoding="utf-8")
+
+        _append_env_var(env_path, "API_KEY", "new-value")
+
+        content = env_path.read_text(encoding="utf-8")
+        assert 'API_KEY="new-value"' in content
+        assert "old-value" not in content
 
 
 class TestRunInteractive:
