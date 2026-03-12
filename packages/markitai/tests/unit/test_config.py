@@ -366,6 +366,35 @@ class TestFetchPolicyConfigValidation:
         with pytest.raises(ValidationError, match="duplicate"):
             FetchPolicyConfig(strategy_priority=["static", "static"])
 
+
+class TestPureModeConfig:
+    """Test pure mode configuration."""
+
+    def test_llm_config_has_pure_field_default_false(self):
+        """LLMConfig.pure should default to False."""
+        from markitai.config import LLMConfig
+
+        config = LLMConfig()
+        assert config.pure is False
+
+    def test_llm_config_pure_can_be_set(self):
+        """LLMConfig.pure can be set to True."""
+        from markitai.config import LLMConfig
+
+        config = LLMConfig(pure=True)
+        assert config.pure is True
+
+    def test_markitai_config_json_roundtrip(self):
+        """Pure mode should survive JSON serialization."""
+        from markitai.config import MarkitaiConfig
+
+        config = MarkitaiConfig()
+        config.llm.pure = True
+        data = config.model_dump()
+        assert data["llm"]["pure"] is True
+        restored = MarkitaiConfig(**data)
+        assert restored.llm.pure is True
+
     def test_empty_strategy_priority_rejected(self) -> None:
         with pytest.raises(ValidationError, match="empty"):
             FetchPolicyConfig(strategy_priority=[])

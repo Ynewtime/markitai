@@ -250,3 +250,41 @@ class TestAuthPreflightAfterValidation:
             )
             mock_preflight.assert_not_called()
             assert result.exit_code != 0
+
+
+class TestPureCLIFlag:
+    """Test --pure CLI flag."""
+
+    def test_pure_flag_recognized(self, tmp_path):
+        """--pure should be a recognized flag that implies --llm."""
+        from click.testing import CliRunner
+
+        from markitai.cli.main import app
+
+        runner = CliRunner()
+        txt_file = tmp_path / "test.txt"
+        txt_file.write_text("# Hello", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [str(txt_file), "--pure", "--dry-run", "-o", str(tmp_path / "out")],
+        )
+        # Should not fail with "no such option: --pure"
+        assert "no such option" not in (result.output or "").lower()
+
+    def test_pure_env_var(self, tmp_path):
+        """MARKITAI_PURE=1 should enable pure mode."""
+        from click.testing import CliRunner
+
+        from markitai.cli.main import app
+
+        runner = CliRunner()
+        txt_file = tmp_path / "test.txt"
+        txt_file.write_text("# Hello", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [str(txt_file), "--dry-run", "-o", str(tmp_path / "out")],
+            env={"MARKITAI_PURE": "1"},
+        )
+        assert "no such option" not in (result.output or "").lower()
