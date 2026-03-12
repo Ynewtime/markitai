@@ -218,16 +218,11 @@ class SingleFileWorkflow:
         )
         context = f"{source_path}:images"
 
-        # Extract a short text snippet from the document for language hinting.
-        # Strip image refs and take first 200 chars of body text.
-        import re as _re
+        # Extract a short body-text snippet for language hinting.
+        # Strips frontmatter so the context reflects actual content language.
+        from markitai.workflow.helpers import extract_document_context
 
-        _text_lines = [
-            line
-            for line in markdown.splitlines()
-            if line.strip() and not line.strip().startswith("![")
-        ]
-        doc_context = _re.sub(r"\s+", " ", " ".join(_text_lines))[:200].strip()
+        doc_context = extract_document_context(markdown)
 
         try:
 
