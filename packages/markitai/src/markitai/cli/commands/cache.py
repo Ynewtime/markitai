@@ -87,6 +87,7 @@ def cache() -> None:
     help="Output as JSON.",
 )
 @click.option(
+    "-v",
     "--verbose",
     is_flag=True,
     help="Show detailed cache entries and model breakdown.",
