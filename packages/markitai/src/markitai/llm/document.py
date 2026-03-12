@@ -938,9 +938,13 @@ class DocumentMixin:
                 f"time={int(elapsed * 1000)}ms cost=${cost:.6f}"
             )
 
-        # Restore image positions
-        cleaned_markdown = self._restore_image_positions(
-            response.cleaned_markdown, img_mapping
+        # Restore image positions (with fallback to original if placeholders lost)
+        cleaned_markdown = self._restore_images_or_fallback(
+            response.cleaned_markdown,
+            content,
+            img_mapping,
+            context,
+            "url_vision_enhance",
         )
 
         # Remove any hallucinated or leaked markers that shouldn't be in URL output
