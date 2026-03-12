@@ -9,6 +9,7 @@ from markitai.cli.interactive import (
     InteractiveSession,
     detect_all_llm_providers,
     detect_llm_provider,
+    get_active_models_from_config,
 )
 
 
@@ -337,6 +338,65 @@ class TestAtomicEnvWrite:
         content = env_path.read_text(encoding="utf-8")
         assert "TEST_KEY=new_value" in content
         assert "TEST_KEY=original" not in content
+
+
+class TestGetActiveModelsFromConfig:
+    """Tests for get_active_models_from_config function."""
+
+    def test_returns_models_with_positive_weight(self) -> None:
+        """Should return only models with weight > 0."""
+        model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {
+                    "model": "gemini/gemini-3.1-flash-lite-preview",
+                    "weight": 10,
+                },
+            },
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "claude-agent/sonnet", "weight": 0},
+            },
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "copilot/claude-haiku-4.5", "weight": 5},
+            },
+        ]
+        result = get_active_models_from_config(model_list)
+        assert result == [
+            "gemini/gemini-3.1-flash-lite-preview",
+            "copilot/claude-haiku-4.5",
+        ]
+
+    def test_returns_empty_when_all_weight_zero(self) -> None:
+        """Should return empty list when all models are disabled."""
+        model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "claude-agent/sonnet", "weight": 0},
+            },
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "copilot/gpt-4", "weight": 0},
+            },
+        ]
+        result = get_active_models_from_config(model_list)
+        assert result == []
+
+    def test_returns_empty_for_empty_list(self) -> None:
+        """Should return empty list for empty model_list."""
+        assert get_active_models_from_config([]) == []
+
+    def test_handles_missing_weight(self) -> None:
+        """Models without explicit weight should be included (default weight > 0)."""
+        model_list = [
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "anthropic/claude-sonnet"},
+            },
+        ]
+        result = get_active_models_from_config(model_list)
+        assert result == ["anthropic/claude-sonnet"]
 
 
 class TestRunInteractive:

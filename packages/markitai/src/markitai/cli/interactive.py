@@ -101,6 +101,27 @@ def _check_gemini_cli_auth() -> bool:
         return False
 
 
+def get_active_models_from_config(
+    model_list: list[dict[str, Any]],
+) -> list[str]:
+    """Extract active model names (weight > 0) from config model_list.
+
+    Args:
+        model_list: Raw model_list dicts from config (each has litellm_params).
+
+    Returns:
+        List of model identifiers with positive weight.
+    """
+    active: list[str] = []
+    for entry in model_list:
+        params = entry.get("litellm_params", {})
+        model = params.get("model", "")
+        weight = params.get("weight", 1)  # default weight is 1 (enabled)
+        if model and weight > 0:
+            active.append(model)
+    return active
+
+
 def detect_all_llm_providers() -> list[ProviderDetectionResult]:
     """Auto-detect all available LLM providers.
 
@@ -212,6 +233,7 @@ class InteractiveSession:
     enable_ocr: bool = False
     enable_screenshot: bool = False
     provider_result: ProviderDetectionResult | None = None
+    active_models: list[str] = field(default_factory=list)
 
 
 def _ask_or_exit(question: questionary.Question) -> Any:
@@ -288,30 +310,60 @@ def prompt_output_dir(session: InteractiveSession) -> Path:
     return session.output_dir
 
 
+def _format_model_list(models: list[str], max_show: int = 3) -> str:
+    """Format a list of model names for display.
+
+    Shows up to *max_show* names, with a "+N more" suffix if there are extras.
+    """
+    shown = ", ".join(models[:max_show])
+    extra = len(models) - max_show
+    if extra > 0:
+        shown += f" (+{extra} more)"
+    return shown
+
+
 def prompt_enable_llm(session: InteractiveSession) -> bool:
     """Prompt user to enable LLM enhancement."""
-    # Detect all available providers, use first as default
-    all_providers = detect_all_llm_providers()
-    session.provider_result = all_providers[0] if all_providers else None
+    console = get_console()
+    has_provider = False
 
-    if all_providers:
-        max_show = 3
-        shown = ", ".join(
-            f"{p.provider} ({p.source})" for p in all_providers[:max_show]
-        )
-        extra = len(all_providers) - max_show
-        suffix = f" (+{extra} more)" if extra > 0 else ""
-        get_console().print(f"[green]\u2713[/green] Detected: {shown}{suffix}")
-    else:
-        get_console().print(
-            "[yellow]![/yellow] No LLM provider detected "
-            "(no CLI tools or API keys found)"
-        )
+    # 1. Check config file for active models (weight > 0)
+    from markitai.config import ConfigManager
+
+    try:
+        manager = ConfigManager()
+        cfg = manager.load()
+        raw_model_list = [m.model_dump() for m in cfg.llm.model_list]
+        active = get_active_models_from_config(raw_model_list)
+        if active:
+            session.active_models = active
+            has_provider = True
+            console.print(
+                f"[green]\u2713[/green] Configured: {_format_model_list(active)}"
+            )
+    except Exception:
+        pass
+
+    # 2. Fallback: auto-detect providers if no config models
+    if not has_provider:
+        all_providers = detect_all_llm_providers()
+        session.provider_result = all_providers[0] if all_providers else None
+        if all_providers:
+            has_provider = True
+            names = [p.provider for p in all_providers]
+            console.print(
+                f"[green]\u2713[/green] Detected: {_format_model_list(names)}"
+            )
+        else:
+            console.print(
+                "[yellow]![/yellow] No LLM provider detected "
+                "(no CLI tools or API keys found)"
+            )
 
     result = _ask_or_exit(
         questionary.confirm(
             "Enable LLM enhancement? (better formatting, metadata)",
-            default=session.provider_result is not None,
+            default=has_provider,
         )
     )
 
@@ -577,8 +629,8 @@ def run_interactive() -> InteractiveSession:
     # 4. LLM enablement
     prompt_enable_llm(session)
 
-    # 5. Configure provider if needed
-    if session.enable_llm and not session.provider_result:
+    # 5. Configure provider if needed (skip if config models or auto-detected)
+    if session.enable_llm and not session.active_models and not session.provider_result:
         if not prompt_configure_provider(session):
             session.enable_llm = False
 
@@ -602,7 +654,9 @@ def _print_summary(session: InteractiveSession) -> None:
     console.print(f"  LLM: {'enabled' if session.enable_llm else 'disabled'}")
 
     if session.enable_llm:
-        if session.provider_result:
+        if session.active_models:
+            console.print(f"  Models: {_format_model_list(session.active_models)}")
+        elif session.provider_result:
             console.print(f"  Provider: {session.provider_result.provider}")
         console.print(f"  Alt text: {'yes' if session.enable_alt else 'no'}")
         console.print(f"  Descriptions: {'yes' if session.enable_desc else 'no'}")

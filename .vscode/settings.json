@@ -1,6 +1,5 @@
 {
-    // Python interpreter (VS Code auto-detects .venv)
-    "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
+    // Python interpreter (VS Code auto-detects .venv in workspace root)
     "python.terminal.activateEnvironment": true,
     "python.terminal.activateEnvInCurrentTerminal": true,
 
