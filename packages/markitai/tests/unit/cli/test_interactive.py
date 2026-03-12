@@ -401,10 +401,12 @@ class TestRunInteractive:
     @patch("markitai.cli.interactive.prompt_output_dir")
     @patch("markitai.cli.interactive.prompt_enable_llm")
     @patch("markitai.cli.interactive.prompt_llm_options")
+    @patch("markitai.cli.interactive.prompt_extra_options")
     @patch("markitai.cli.interactive.prompt_configure_provider")
     def test_run_interactive_basic_flow(
         self,
         mock_configure: MagicMock,
+        mock_extra: MagicMock,
         mock_options: MagicMock,
         mock_llm: MagicMock,
         mock_output: MagicMock,
