@@ -147,6 +147,8 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
     """Prompt user to enable LLM enhancement."""
     console = get_console()
     has_provider = False
+    active: list[str] = []
+    detected_label = ""
 
     # 1. Check config file for active models (weight > 0)
     from markitai.config import ConfigManager
@@ -157,11 +159,8 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
         raw_model_list = [m.model_dump() for m in cfg.llm.model_list]
         active = get_active_models_from_config(raw_model_list)
         if active:
-            session.active_models = active
             has_provider = True
-            console.print(
-                f"[green]\u2713[/green] Configured: {format_model_list(active)}"
-            )
+            detected_label = f"Configured: {format_model_list(active)}"
     except Exception:
         pass
 
@@ -171,14 +170,15 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
         session.provider_result = all_providers[0] if all_providers else None
         if all_providers:
             has_provider = True
-            session.active_models = [p.model for p in all_providers]
+            active = [p.model for p in all_providers]
             names = [p.provider for p in all_providers]
-            console.print(f"[green]\u2713[/green] Detected: {format_model_list(names)}")
-        else:
-            console.print(
-                "[yellow]![/yellow] No LLM provider detected "
-                "(no CLI tools or API keys found)"
-            )
+            detected_label = f"Detected: {format_model_list(names)}"
+
+    if not has_provider:
+        console.print(
+            "[yellow]![/yellow] No LLM provider detected "
+            "(no CLI tools or API keys found)"
+        )
 
     result = _ask_or_exit(
         questionary.confirm(
@@ -188,6 +188,9 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
     )
 
     session.enable_llm = result
+    if result and active:
+        session.active_models = active
+        console.print(f"[green]\u2713[/green] {detected_label}")
     return session.enable_llm
 
 
