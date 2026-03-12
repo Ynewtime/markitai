@@ -180,6 +180,36 @@ class SingleFileWorkflow:
             )
             return markdown, 0.0, {}
 
+    async def process_document_pure(
+        self,
+        markdown: str,
+        source: str,
+        output_file: Path,
+    ) -> tuple[str, float, dict[str, dict[str, Any]]]:
+        """Pure mode: send raw markdown to LLM, write response as-is.
+
+        No ContentProtection, stabilization, frontmatter, or post-processing.
+
+        Args:
+            markdown: Raw markdown content
+            source: Source file name
+            output_file: Output file path (.md — .llm.md is derived from this)
+
+        Returns:
+            Tuple of (original_markdown, cost_usd, llm_usage)
+        """
+        try:
+            cleaned = await self.processor.clean_document_pure(markdown, source)
+            llm_output = output_file.with_suffix(".llm.md")
+            atomic_write_text(llm_output, cleaned)
+            logger.info(f"Written LLM version (pure): {llm_output}")
+            cost = self.processor.get_context_cost(source)
+            usage = self.processor.get_context_usage(source)
+            return markdown, cost, usage
+        except Exception as e:
+            logger.error(f"Pure LLM processing failed: {format_error_message(e)}")
+            return markdown, 0.0, {}
+
     async def analyze_images(
         self,
         image_paths: list[Path],

@@ -1773,6 +1773,31 @@ Generate the following fields:
 
         return cleaned, frontmatter
 
+    async def clean_document_pure(self, markdown: str, source: str) -> str:
+        """Pure cleaning: send raw markdown to LLM, return response as-is.
+
+        No content protection, no stabilization, no truncation, no frontmatter.
+        The LLM decides what to clean based on the cleaner prompt.
+
+        Args:
+            markdown: Raw markdown content
+            source: Source file name for logging context
+
+        Returns:
+            LLM response content as-is
+        """
+        system_prompt = self._prompt_manager.get_prompt("cleaner_system")
+        user_prompt = self._prompt_manager.get_prompt("cleaner_user", content=markdown)
+        response = await self._call_llm(  # type: ignore[attr-defined]
+            model="default",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            context=source,
+        )
+        return response.content
+
     async def _process_document_combined(
         self,
         markdown: str,

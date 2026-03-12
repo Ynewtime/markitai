@@ -544,6 +544,50 @@ def stabilize_written_llm_output(
     return True
 
 
+async def process_with_pure_llm(ctx: ConversionContext) -> ConversionStepResult:
+    """Pure mode: send raw markdown to LLM, write response as-is.
+
+    No ContentProtection, stabilization, frontmatter, vision, or image analysis.
+
+    Args:
+        ctx: Conversion context
+
+    Returns:
+        ConversionStepResult indicating success or failure
+    """
+    if ctx.conversion_result is None or ctx.output_file is None:
+        return ConversionStepResult(success=False, error="Missing conversion result")
+
+    from markitai.workflow.helpers import create_llm_processor
+    from markitai.workflow.single import SingleFileWorkflow
+
+    processor = ctx.shared_processor
+    if processor is None:
+        processor = create_llm_processor(ctx.config)
+
+    workflow = SingleFileWorkflow(ctx.config, processor=processor)
+
+    try:
+        (
+            ctx.conversion_result.markdown,
+            doc_cost,
+            doc_usage,
+        ) = await workflow.process_document_pure(
+            ctx.conversion_result.markdown,
+            ctx.input_path.name,
+            ctx.output_file,
+        )
+        ctx.llm_cost += doc_cost
+        merge_llm_usage(ctx.llm_usage, doc_usage)
+    except Exception as e:
+        return ConversionStepResult(
+            success=False,
+            error=f"Pure LLM processing failed: {format_error_message(e)}",
+        )
+
+    return ConversionStepResult(success=True)
+
+
 async def process_with_vision_llm(
     ctx: ConversionContext,
 ) -> ConversionStepResult:
@@ -912,48 +956,63 @@ async def convert_document_core(
 
             ctx.shared_processor = create_llm_processor(ctx.config)
 
-        page_images = ctx.conversion_result.metadata.get("page_images", [])
-        has_page_images = len(page_images) > 0
-
-        if has_page_images:
-            # Vision mode with screenshots — run sequentially to avoid race
-            # condition. process_with_vision_llm writes ctx.conversion_result.markdown,
-            # and analyze_embedded_images reads it, so embed must run after vision.
-            try:
-                vision_result: ConversionStepResult = await process_with_vision_llm(ctx)
-            except Exception as e:
-                return ConversionStepResult(
-                    success=False,
-                    error=f"Vision LLM failed: {format_error_message(e)}",
-                )
-            if not vision_result.success:
-                return vision_result
-
-            # Embedded image analysis (non-critical, log warning on failure)
-            try:
-                embed_result: ConversionStepResult = await analyze_embedded_images(ctx)
-                if not embed_result.success:
-                    logger.warning(
-                        f"Embedded image analysis failed: {embed_result.error}"
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"Embedded image analysis failed: {format_error_message(e)}"
-                )
-
-            ctx.paged_stabilized = True
-            stabilize_written_llm_output(ctx, ctx.shared_processor)
-
-            # Apply alt text updates AFTER stabilization — stabilize may rewrite
-            # .llm.md from the baseline .md (which has no alt text), so alt text
-            # updates must come last to avoid being overwritten
-            if ctx.config.image.alt_enabled and ctx.image_analysis and ctx.output_file:
-                llm_output = ctx.output_file.with_suffix(".llm.md")
-                apply_alt_text_updates(llm_output, ctx.image_analysis)
-        else:
-            # Standard LLM mode
-            result = await process_with_standard_llm(ctx)
+        if ctx.config.llm.pure and not ctx.config.screenshot.screenshot_only:
+            # Pure mode: raw MD → LLM → .llm.md, nothing else
+            # --screenshot-only takes precedence over --pure (mutually exclusive)
+            result = await process_with_pure_llm(ctx)
             if not result.success:
                 return result
+        else:
+            page_images = ctx.conversion_result.metadata.get("page_images", [])
+            has_page_images = len(page_images) > 0
+
+            if has_page_images:
+                # Vision mode with screenshots — run sequentially to avoid race
+                # condition. process_with_vision_llm writes ctx.conversion_result.markdown,
+                # and analyze_embedded_images reads it, so embed must run after vision.
+                try:
+                    vision_result: ConversionStepResult = await process_with_vision_llm(
+                        ctx
+                    )
+                except Exception as e:
+                    return ConversionStepResult(
+                        success=False,
+                        error=f"Vision LLM failed: {format_error_message(e)}",
+                    )
+                if not vision_result.success:
+                    return vision_result
+
+                # Embedded image analysis (non-critical, log warning on failure)
+                try:
+                    embed_result: ConversionStepResult = await analyze_embedded_images(
+                        ctx
+                    )
+                    if not embed_result.success:
+                        logger.warning(
+                            f"Embedded image analysis failed: {embed_result.error}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Embedded image analysis failed: {format_error_message(e)}"
+                    )
+
+                ctx.paged_stabilized = True
+                stabilize_written_llm_output(ctx, ctx.shared_processor)
+
+                # Apply alt text updates AFTER stabilization — stabilize may rewrite
+                # .llm.md from the baseline .md (which has no alt text), so alt text
+                # updates must come last to avoid being overwritten
+                if (
+                    ctx.config.image.alt_enabled
+                    and ctx.image_analysis
+                    and ctx.output_file
+                ):
+                    llm_output = ctx.output_file.with_suffix(".llm.md")
+                    apply_alt_text_updates(llm_output, ctx.image_analysis)
+            else:
+                # Standard LLM mode
+                result = await process_with_standard_llm(ctx)
+                if not result.success:
+                    return result
 
     return ConversionStepResult(success=True)

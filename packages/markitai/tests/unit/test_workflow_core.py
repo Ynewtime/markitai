@@ -2661,3 +2661,62 @@ class TestPagedStabilizedFlag:
         assert result is False
 
         assert llm_file.read_text(encoding="utf-8") == "---\ntitle: t\n---\n\n# changed"
+
+
+class TestProcessWithPureLLM:
+    """Test pure mode pipeline integration."""
+
+    async def test_pure_mode_calls_process_document_pure(self, tmp_path: Path):
+        """process_with_pure_llm should call process_document_pure."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from markitai.config import (
+            LiteLLMParams,
+            MarkitaiConfig,
+            ModelConfig,
+        )
+        from markitai.converter.base import ConvertResult
+        from markitai.workflow.core import ConversionContext, process_with_pure_llm
+
+        config = MarkitaiConfig()
+        config.llm.enabled = True
+        config.llm.pure = True
+        config.llm.model_list = [
+            ModelConfig(
+                model_name="default",
+                litellm_params=LiteLLMParams(model="openai/gpt-4o-mini", api_key="t"),
+            )
+        ]
+
+        txt_file = tmp_path / "test.txt"
+        txt_file.write_text("# Hello", encoding="utf-8")
+        output_file = tmp_path / "test.md"
+        output_file.write_text("# Hello", encoding="utf-8")
+
+        ctx = ConversionContext(
+            input_path=txt_file,
+            output_dir=tmp_path,
+            config=config,
+        )
+        ctx.output_file = output_file
+        ctx.conversion_result = ConvertResult(
+            markdown="# Hello", images=[], metadata={}
+        )
+
+        mock_workflow = MagicMock()
+        mock_workflow.process_document_pure = AsyncMock(
+            return_value=("# Hello", 0.001, {})
+        )
+
+        with (
+            patch(
+                "markitai.workflow.single.SingleFileWorkflow",
+                return_value=mock_workflow,
+            ),
+            patch("markitai.workflow.helpers.create_llm_processor"),
+        ):
+            result = await process_with_pure_llm(ctx)
+
+        assert result.success
+        mock_workflow.process_document_pure.assert_called_once()
+        assert ctx.llm_cost == 0.001

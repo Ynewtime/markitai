@@ -1164,3 +1164,47 @@ class TestVisionContentPartsReminder:
         last_text = text_parts[-1]["text"]
         assert "REMINDER" in last_text
         assert "__MARKITAI_" in last_text
+
+
+class TestCleanDocumentPure:
+    """Test clean_document_pure method."""
+
+    async def test_pure_sends_raw_markdown_to_llm(self):
+        """clean_document_pure should send raw markdown without any processing."""
+        from unittest.mock import MagicMock
+
+        from markitai.config import LiteLLMParams, LLMConfig, ModelConfig, PromptsConfig
+        from markitai.llm import LLMProcessor
+
+        config = LLMConfig(
+            enabled=True,
+            pure=True,
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o-mini", api_key="test"
+                    ),
+                )
+            ],
+        )
+        processor = LLMProcessor(config, PromptsConfig())
+
+        captured_messages = []
+
+        async def capture_call_llm(model, messages, context=""):
+            captured_messages.append(messages)
+            return MagicMock(content="LLM cleaned output")
+
+        processor._call_llm = capture_call_llm
+
+        raw_md = "# Title\n\nSome **raw** content with ![img](path.jpg)"
+        result = await processor.clean_document_pure(raw_md, "test.md")
+
+        assert result == "LLM cleaned output"
+        assert len(captured_messages) == 1
+        messages = captured_messages[0]
+        # System prompt should be cleaner_system
+        assert "Markdown" in messages[0]["content"]
+        # User prompt should contain the raw markdown as-is
+        assert raw_md in messages[1]["content"]
