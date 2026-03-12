@@ -104,20 +104,7 @@ async def process_single_file(
 
     # Handle dry-run
     if dry_run:
-        # Build feature status indicators
-        features = []
-        if cfg.llm.enabled:
-            features.append("[green]LLM[/green]")
-        if cfg.image.alt_enabled:
-            features.append("[green]alt[/green]")
-        if cfg.image.desc_enabled:
-            features.append("[green]desc[/green]")
-        if cfg.ocr.enabled:
-            features.append("[green]OCR[/green]")
-        if cfg.screenshot.enabled:
-            features.append("[green]screenshot[/green]")
-
-        feature_str = " ".join(features) if features else "[dim]none[/dim]"
+        feature_str = ui.build_feature_str(cfg)
         cache_status = "enabled" if cfg.cache.enabled else "disabled"
 
         # Determine output location for display
