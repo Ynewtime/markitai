@@ -35,21 +35,39 @@ def extract_web_content(html: str, url: str) -> ExtractedWebContent:
     extractor = find_extractor(url)
     root = _pick_root(soup, extractor)
     metadata = extract_metadata(soup, url)
-    diagnostics = {
+    diagnostics: dict[str, object] = {
         "extractor": extractor.name if extractor is not None else "generic",
         "schema_fallback_used": False,
         "adaptive_retry_used": False,
         "removed_partial_selectors": False,
-        "candidate_count": _candidate_count(soup),
     }
+
     root = _maybe_apply_schema_fallback(soup, root, diagnostics)
     if isinstance(root, Tag):
         standardize_content(root, title=metadata.title, base_url=url)
     sanitize_tag_tree(root)
     clean_html = str(root)
-    markdown = _html_fragment_to_markdown(clean_html)
-    if len(markdown.split()) <= ADAPTIVE_RETRY_MIN_WORDS:
-        diagnostics["adaptive_retry_used"] = True
+
+    # Create a shared MarkItDown instance to avoid repeated construction
+    md_instance = _create_markitdown()
+    markdown = _html_fragment_to_markdown(clean_html, md_instance)
+
+    if len(markdown.split()) <= ADAPTIVE_RETRY_MIN_WORDS and not diagnostics.get(
+        "schema_fallback_used"
+    ):
+        # Adaptive retry: broaden extraction by falling back to <body>
+        retry_root = _retry_with_broader_root(soup, root)
+        if retry_root is not None and retry_root is not root:
+            if isinstance(retry_root, Tag):
+                standardize_content(retry_root, title=metadata.title, base_url=url)
+            sanitize_tag_tree(retry_root)
+            retry_html = str(retry_root)
+            retry_markdown = _html_fragment_to_markdown(retry_html, md_instance)
+            if len(retry_markdown.split()) > len(markdown.split()):
+                clean_html = retry_html
+                markdown = retry_markdown
+                diagnostics["adaptive_retry_used"] = True
+
     return ExtractedWebContent(
         clean_html=clean_html,
         markdown=markdown,
@@ -90,15 +108,60 @@ def _maybe_apply_schema_fallback(
     return root
 
 
+def _retry_with_broader_root(
+    soup: BeautifulSoup,
+    original_root: Tag | BeautifulSoup,
+) -> Tag | BeautifulSoup | None:
+    """Attempt a broader extraction when initial root yielded too few words.
+
+    Strategy: fall back to ``<body>`` (or the full soup when ``<body>`` is
+    absent).  This captures content that sits outside the original scored
+    candidate—e.g. paragraphs placed directly under ``<body>``.
+
+    Returns:
+        A broader root element, or *None* if no better candidate exists.
+    """
+    body = soup.body
+    if body is None:
+        return None
+    # Avoid returning the same element the caller already tried.
+    if body is original_root:
+        return None
+    return body
+
+
 def _candidate_count(soup: BeautifulSoup) -> int:
     return len(soup.find_all(["article", "main", "section", "div"])) or 1
 
 
-def _html_fragment_to_markdown(html: str) -> str:
-    from markitdown import MarkItDown, StreamInfo
+def _create_markitdown() -> object:
+    """Create a MarkItDown instance for HTML-to-Markdown conversion.
+
+    Returns:
+        A MarkItDown instance that can be reused across multiple conversions.
+    """
+    from markitdown import MarkItDown
+
+    return MarkItDown()
+
+
+def _html_fragment_to_markdown(html: str, md: object | None = None) -> str:
+    """Convert an HTML fragment to Markdown.
+
+    Args:
+        html: HTML content to convert.
+        md: Optional pre-created MarkItDown instance. If None, creates a new one.
+
+    Returns:
+        Markdown text.
+    """
+    from markitdown import StreamInfo
+
+    if md is None:
+        md = _create_markitdown()
 
     stream = io.BytesIO(html.encode("utf-8"))
-    result = MarkItDown().convert_stream(
+    result = md.convert_stream(  # type: ignore[union-attr]
         stream,
         file_extension=".html",
         stream_info=StreamInfo(

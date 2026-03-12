@@ -46,6 +46,27 @@ if TYPE_CHECKING:
     from markitai.types import LLMUsageByModel, ModelUsageStats
 
 
+def _vision_cache_content_key(
+    image_fingerprint: str, document_context: str = ""
+) -> str:
+    """Build a cache content key for vision analysis.
+
+    Incorporates document_context hash when present so that the same
+    image analyzed in different documents produces separate cache entries.
+
+    Args:
+        image_fingerprint: SHA-256 hex digest of the image data.
+        document_context: Optional document context text.
+
+    Returns:
+        Content key string for use with PersistentCache.
+    """
+    if not document_context:
+        return image_fingerprint
+    ctx_hash = hashlib.sha256(document_context.encode()).hexdigest()[:16]
+    return f"{image_fingerprint}|ctx:{ctx_hash}"
+
+
 class VisionMixin:
     """Vision analysis methods for LLMProcessor.
 
@@ -107,8 +128,11 @@ class VisionMixin:
         # (JPEG files share the same header, so first N chars are identical)
         cache_key = "image_analysis"
         image_fingerprint = hashlib.sha256(base64_image.encode()).hexdigest()
+        cache_content_key = _vision_cache_content_key(
+            image_fingerprint, document_context
+        )
         cached = self._persistent_cache.get(  # type: ignore[attr-defined]
-            cache_key, image_fingerprint, context=context
+            cache_key, cache_content_key, context=context
         )
         if cached is not None:
             logger.debug(f"[{image_path.name}] Persistent cache hit for analyze_image")
@@ -168,7 +192,7 @@ class VisionMixin:
             "extracted_text": result.extracted_text,
         }
         self._persistent_cache.set(  # type: ignore[attr-defined]
-            cache_key, image_fingerprint, cache_value, model="vision"
+            cache_key, cache_content_key, cache_value, model="vision"
         )
 
         return result
@@ -325,14 +349,19 @@ class VisionMixin:
         cached_results: dict[int, ImageAnalysis] = {}
         uncached_indices: list[int] = []
         image_fingerprints: dict[int, str] = {}
+        image_cache_content_keys: dict[int, str] = {}
 
         for orig_idx, image_path in supported_paths:
             _, base64_image = self._get_cached_image(image_path)  # type: ignore[attr-defined]
             # Use SHA256 hash to avoid collisions (JPEG files share same header)
             fingerprint = hashlib.sha256(base64_image.encode()).hexdigest()
             image_fingerprints[orig_idx] = fingerprint
+            cache_content_key = _vision_cache_content_key(fingerprint, document_context)
+            image_cache_content_keys[orig_idx] = cache_content_key
 
-            cached = self._persistent_cache.get(cache_key, fingerprint, context=context)  # type: ignore[attr-defined]
+            cached = self._persistent_cache.get(
+                cache_key, cache_content_key, context=context
+            )  # type: ignore[attr-defined]
             if cached is not None:
                 logger.debug(f"[{image_path.name}] Cache hit in batch analysis")
                 cached_results[orig_idx] = ImageAnalysis(
@@ -485,14 +514,14 @@ class VisionMixin:
                     # Store in persistent cache using original index
                     if idx < len(uncached_indices):
                         original_idx = uncached_indices[idx]
-                        fingerprint = image_fingerprints[original_idx]
+                        content_key = image_cache_content_keys[original_idx]
                         cache_value = {
                             "caption": analysis.caption,
                             "description": analysis.description,
                             "extracted_text": analysis.extracted_text,
                         }
                         self._persistent_cache.set(  # type: ignore[attr-defined]
-                            cache_key, fingerprint, cache_value, model="vision"
+                            cache_key, content_key, cache_value, model="vision"
                         )
 
                 # Ensure we have results for all uncached images

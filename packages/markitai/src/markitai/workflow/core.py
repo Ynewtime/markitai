@@ -231,11 +231,23 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
 
     try:
         # Determine if this is a heavy conversion task
+        # Heavy tasks include:
+        # - Legacy formats (.ppt, .doc, .xls) that need LibreOffice conversion
+        # - PDF/PPTX/DOCX with screenshots enabled (page rendering)
+        # - PDF with OCR+LLM (renders page images for Vision analysis)
+        # - PPTX with OCR (renders slide images)
+        ext = ctx.input_path.suffix.lower()
+        legacy_formats = {".ppt", ".doc", ".xls"}
         heavy_extensions = {".ppt", ".pptx", ".pdf", ".doc", ".docx"}
+        use_ocr = ctx.config.ocr.enabled
+        use_llm = ctx.config.llm.enabled
+
         is_heavy = (
-            ctx.input_path.suffix.lower() in heavy_extensions
-            and ctx.config.screenshot.enabled
-        ) or (ctx.input_path.suffix.lower() in {".ppt", ".doc", ".xls"})
+            ext in legacy_formats
+            or (ext in heavy_extensions and ctx.config.screenshot.enabled)
+            or (ext == ".pdf" and use_ocr and use_llm)
+            or (ext == ".pptx" and use_ocr)
+        )
 
         logger.debug(
             f"Converting {ctx.input_path.name}..." + (" [HEAVY]" if is_heavy else "")
@@ -837,8 +849,9 @@ async def convert_document_core(
     The pipeline:
     1. Validate file size and detect format
     2. Prepare output directory
-    3. Execute document conversion
-    4. Resolve output file path (with conflict handling)
+    3. Resolve output file path (with conflict handling) — early skip avoids
+       expensive conversion when on_conflict=skip and output already exists
+    4. Execute document conversion
     5. Process embedded images
     6. Write base markdown file
     7. LLM processing (if enabled):
@@ -863,14 +876,14 @@ async def convert_document_core(
     if not result.success:
         return result
 
-    # Step 3: Execute conversion
-    result = await convert_document(ctx)
-    if not result.success:
-        return result
-
-    # Step 4: Resolve output file
+    # Step 3: Resolve output file (early — skip before expensive conversion)
     result = resolve_output_file(ctx)
     if not result.success or result.skip_reason:
+        return result
+
+    # Step 4: Execute conversion
+    result = await convert_document(ctx)
+    if not result.success:
         return result
 
     # Step 5: Process embedded images

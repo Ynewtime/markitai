@@ -666,6 +666,11 @@ async def process_url_batch(
         cache_dir = Path(cfg.cache.global_dir).expanduser()
         fetch_cache = get_fetch_cache(cache_dir, cfg.cache.max_size_bytes)
 
+    # Prepare screenshot options if enabled (shared across all batch workers)
+    screenshot_dir = (
+        ensure_screenshots_dir(output_dir) if cfg.screenshot.enabled else None
+    )
+
     started_at = datetime.now()
     total_llm_cost = 0.0
     total_llm_usage: dict[str, dict[str, Any]] = {}
@@ -707,9 +712,15 @@ async def process_url_batch(
                         explicit_strategy=explicit_fetch_strategy,
                         cache=fetch_cache,
                         skip_read_cache=cfg.cache.no_cache,
+                        screenshot=cfg.screenshot.enabled,
+                        screenshot_dir=screenshot_dir,
+                        screenshot_config=(
+                            cfg.screenshot if cfg.screenshot.enabled else None
+                        ),
                     )
                     url_fetch_strategy = fetch_result.strategy_used
                     markdown_content = fetch_result.content
+                    screenshot_path = fetch_result.screenshot_path
                     source_extra_meta = fetch_result.metadata.get("source_frontmatter")
                     cache_status = " [cache]" if fetch_result.cache_hit else ""
                     logger.info(
@@ -737,6 +748,31 @@ async def process_url_batch(
                         "error": "No content extracted",
                     }
                     failed += 1
+                    return
+
+                has_screenshot = (
+                    screenshot_path is not None and screenshot_path.exists()
+                )
+                screenshots_count = 1 if has_screenshot else 0
+
+                # Log screenshot capture if successful
+                if has_screenshot:
+                    logger.info(f"Screenshot saved: {screenshot_path}")
+
+                # Handle screenshot-only mode without LLM:
+                # just record the screenshot, no .md output
+                if cfg.screenshot.screenshot_only and not cfg.llm.enabled:
+                    if has_screenshot and screenshot_path is not None:
+                        logger.info(f"Screenshot-only (no LLM): {screenshot_path.name}")
+                    results[url] = {
+                        "status": "completed",
+                        "error": None,
+                        "output": (str(screenshot_path) if has_screenshot else None),
+                        "fetch_strategy": url_fetch_strategy,
+                        "images": 0,
+                        "screenshots": screenshots_count,
+                    }
+                    completed += 1
                     return
 
                 # Download images if --alt or --desc is enabled
@@ -770,6 +806,7 @@ async def process_url_batch(
                     markdown_content,
                     url,
                     fetch_strategy=url_fetch_strategy,
+                    screenshot_path=screenshot_path,
                     output_dir=output_dir,
                     title=fetch_result.title,
                     extra_meta=source_extra_meta,
@@ -779,14 +816,32 @@ async def process_url_batch(
                 llm_cost = 0.0
                 llm_usage: dict[str, dict[str, Any]] = {}
 
-                # LLM processing (if enabled)
-                if cfg.llm.enabled:
+                # Handle screenshot-only mode with LLM:
+                # extract content purely from screenshot
+                if (
+                    cfg.screenshot.screenshot_only
+                    and cfg.llm.enabled
+                    and has_screenshot
+                    and screenshot_path is not None
+                ):
+                    _, doc_cost, doc_usage = await process_url_screenshot_only(
+                        screenshot_path=screenshot_path,
+                        url=url,
+                        cfg=cfg,
+                        output_file=output_file,
+                        original_title=fetch_result.title,
+                    )
+                    llm_cost += doc_cost
+                    _merge_llm_usage(llm_usage, doc_usage)
+
+                # Standard LLM processing (if enabled and not screenshot-only)
+                elif cfg.llm.enabled:
                     _, doc_cost, doc_usage = await process_with_llm(
                         markdown_content,
                         url,
                         cfg,
                         output_file,
-                        screenshot_path=fetch_result.screenshot_path,
+                        screenshot_path=screenshot_path,
                         fetch_strategy=url_fetch_strategy,
                         extra_meta=source_extra_meta,
                         title=fetch_result.title,
@@ -807,6 +862,7 @@ async def process_url_batch(
                     ),
                     "fetch_strategy": url_fetch_strategy,
                     "images": images_count,
+                    "screenshots": screenshots_count,
                 }
                 completed += 1
                 logger.info(f"Completed via {url_fetch_strategy}: {url}")

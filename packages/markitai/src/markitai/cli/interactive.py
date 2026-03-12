@@ -381,6 +381,19 @@ def prompt_configure_provider(session: InteractiveSession) -> bool:
     if result == "env":
         return _prompt_env_file(session)
 
+    # result == "auto": run auto-detection
+    detected = detect_llm_provider()
+    if detected:
+        session.provider_result = detected
+        get_console().print(
+            f"[green]\u2713[/green] Detected: {detected.provider} ({detected.source})"
+        )
+        return True
+
+    get_console().print(
+        "[red]\u2717[/red] No provider found. "
+        "Install Claude CLI / Copilot CLI, or set an API key."
+    )
     return False
 
 
@@ -458,6 +471,8 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
 
 def _append_env_var(env_path: Path, var_name: str, value: str) -> None:
     """Append or update an environment variable in a .env file."""
+    from markitai.security import atomic_write_text
+
     lines: list[str] = []
     found = False
 
@@ -472,7 +487,7 @@ def _append_env_var(env_path: Path, var_name: str, value: str) -> None:
     if not found:
         lines.append(f"{var_name}={value}")
 
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write_text(env_path, "\n".join(lines) + "\n")
 
 
 def _prompt_env_file(session: InteractiveSession) -> bool:

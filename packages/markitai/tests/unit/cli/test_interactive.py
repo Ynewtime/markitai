@@ -246,6 +246,99 @@ class TestInteractivePrompts:
         assert result is True
 
 
+class TestConfigureProviderAutoDetect:
+    """Tests for Auto-detect branch in prompt_configure_provider."""
+
+    @patch("questionary.select")
+    def test_auto_detect_with_provider_found(self, mock_select: MagicMock) -> None:
+        """Auto-detect should call detect_llm_provider and enable LLM when found."""
+        mock_select.return_value.ask.return_value = "auto"
+
+        from markitai.cli.interactive import (
+            ProviderDetectionResult,
+            prompt_configure_provider,
+        )
+
+        session = InteractiveSession()
+        # Ensure no provider detected initially so we enter configure flow
+        session.provider_result = None
+
+        detected = ProviderDetectionResult(
+            provider="claude-agent",
+            model="claude-agent/sonnet",
+            authenticated=True,
+            source="cli",
+        )
+
+        with patch(
+            "markitai.cli.interactive.detect_llm_provider",
+            return_value=detected,
+        ):
+            result = prompt_configure_provider(session)
+
+        assert result is True
+        assert session.provider_result is detected
+
+    @patch("questionary.select")
+    def test_auto_detect_with_no_provider_found(self, mock_select: MagicMock) -> None:
+        """Auto-detect should NOT silently disable LLM when no provider found.
+
+        Instead it should return False so the caller knows configuration failed,
+        and the session.enable_llm should not be forcibly set to False here
+        (that's the caller's responsibility).
+        """
+        mock_select.return_value.ask.return_value = "auto"
+
+        from markitai.cli.interactive import prompt_configure_provider
+
+        session = InteractiveSession()
+        session.provider_result = None
+        session.enable_llm = True  # user wanted LLM
+
+        with patch(
+            "markitai.cli.interactive.detect_llm_provider",
+            return_value=None,
+        ):
+            result = prompt_configure_provider(session)
+
+        # Should return False (no provider found)
+        assert result is False
+        # Should NOT have forcibly disabled LLM (that's the caller's job)
+        assert session.enable_llm is True
+
+
+class TestAtomicEnvWrite:
+    """Tests for atomic .env file writing."""
+
+    def test_append_env_var_uses_atomic_write(self, tmp_path: Path) -> None:
+        """_append_env_var should use atomic_write_text for safe writes."""
+        from markitai.cli.interactive import _append_env_var
+
+        env_path = tmp_path / ".env"
+
+        with patch("markitai.security.atomic_write_text") as mock_atomic:
+            _append_env_var(env_path, "TEST_KEY", "test_value")
+            mock_atomic.assert_called_once()
+            # Verify the content would be correct
+            call_args = mock_atomic.call_args
+            assert call_args[0][0] == env_path
+            assert "TEST_KEY=test_value" in call_args[0][1]
+
+    def test_append_env_var_updates_existing_key(self, tmp_path: Path) -> None:
+        """_append_env_var should update existing key atomically."""
+        from markitai.cli.interactive import _append_env_var
+
+        env_path = tmp_path / ".env"
+        env_path.write_text("OLD_KEY=old\nTEST_KEY=original\n", encoding="utf-8")
+
+        # Call should update TEST_KEY
+        _append_env_var(env_path, "TEST_KEY", "new_value")
+
+        content = env_path.read_text(encoding="utf-8")
+        assert "TEST_KEY=new_value" in content
+        assert "TEST_KEY=original" not in content
+
+
 class TestRunInteractive:
     """Tests for the main run_interactive function."""
 

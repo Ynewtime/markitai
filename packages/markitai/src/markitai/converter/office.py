@@ -17,7 +17,7 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.image import ImageProcessor
-from markitai.utils.mime import normalize_image_extension
+from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.office import find_libreoffice, has_ms_office
 from markitai.utils.paths import ensure_screenshots_dir
 
@@ -155,6 +155,9 @@ class PptxConverter(OfficeConverter):
     ) -> ConvertResult:
         """Convert PPTX with text extraction + commented slide images.
 
+        OCR mode always renders slides — the ``screenshot`` flag only controls
+        extra screenshots in the default (non-OCR) path.
+
         Args:
             input_path: Path to the PPTX file
             output_dir: Output directory for slide images
@@ -166,32 +169,25 @@ class PptxConverter(OfficeConverter):
         text_result = self._convert_with_markitdown(input_path)
         extracted_text = text_result.markdown
 
-        # Check if screenshot is enabled
-        enable_screenshot = self.config and self.config.screenshot.enabled
+        # Setup screenshots directory for slide images
+        if output_dir:
+            screenshots_dir = ensure_screenshots_dir(output_dir)
+        else:
+            screenshots_dir = Path(tempfile.mkdtemp())
 
-        images: list[ExtractedImage] = []
-        slide_images: list[dict] = []
+        # Get image format from config
+        image_format = "jpg"
+        if self.config:
+            image_format = normalize_image_extension(self.config.image.format)
 
-        # Render slides as images (only if screenshot enabled)
-        if enable_screenshot:
-            # Setup screenshots directory for slide images
-            if output_dir:
-                screenshots_dir = ensure_screenshots_dir(output_dir)
-            else:
-                screenshots_dir = Path(tempfile.mkdtemp())
-
-            # Get image format from config
-            image_format = "jpg"
-            if self.config:
-                image_format = normalize_image_extension(self.config.image.format)
-
-            images, slide_images = self._render_slides_to_images(
-                input_path, screenshots_dir, image_format
-            )
+        # OCR path: always render slides (independent of screenshot flag)
+        images, slide_images = self._render_slides_to_images(
+            input_path, screenshots_dir, image_format
+        )
 
         # Build markdown with extracted text and commented slide images
         markdown_parts = [extracted_text]
-        if enable_screenshot and slide_images:
+        if slide_images:
             markdown_parts.append("\n\n<!-- Slide images for reference -->")
             for slide_info in slide_images:
                 markdown_parts.append(
@@ -437,16 +433,23 @@ class PptxConverter(OfficeConverter):
                     )
                     image_path = screenshots_dir / image_name
                     # Save with compression (ensures < 5MB for LLM)
-                    final_size = img_processor.save_screenshot(
+                    final_size, actual_path = img_processor.save_screenshot(
                         pix.samples, pix.width, pix.height, image_path
+                    )
+
+                    # Use the actual path returned by save_screenshot, which may
+                    # differ from image_path when the fallback changes the extension
+                    actual_name = actual_path.name
+                    actual_mime = get_mime_type(
+                        actual_path.suffix, default=f"image/{image_format}"
                     )
 
                     images.append(
                         ExtractedImage(
-                            path=image_path,
+                            path=actual_path,
                             index=page_num + 1,
-                            original_name=image_name,
-                            mime_type=f"image/{image_format}",
+                            original_name=actual_name,
+                            mime_type=actual_mime,
                             width=final_size[0],
                             height=final_size[1],
                         )
@@ -454,8 +457,8 @@ class PptxConverter(OfficeConverter):
                     slide_images.append(
                         {
                             "page": page_num + 1,
-                            "path": str(image_path),
-                            "name": image_name,
+                            "path": str(actual_path),
+                            "name": actual_name,
                         }
                     )
 
@@ -472,9 +475,10 @@ class PptxConverter(OfficeConverter):
 
         This method:
         1. Extracts text using MarkItDown (fast, preserves structure)
-        2. Renders each slide as an image (if enable_screenshot is True)
+        2. Always renders each slide as an image for LLM Vision
 
-        The CLI will send both text + images to LLM for enhanced analysis.
+        The ``screenshot`` flag only controls extra screenshots in the default
+        (non-OCR) path — OCR+LLM always needs slide images.
 
         Args:
             input_path: Path to the PPTX file
@@ -487,28 +491,21 @@ class PptxConverter(OfficeConverter):
         text_result = self._convert_with_markitdown(input_path)
         extracted_text = text_result.markdown
 
-        # Check if screenshot is enabled
-        enable_screenshot = self.config and self.config.screenshot.enabled
+        # Determine output path for slide images
+        if output_dir:
+            screenshots_dir = ensure_screenshots_dir(output_dir)
+        else:
+            screenshots_dir = Path(tempfile.mkdtemp())
 
-        images: list[ExtractedImage] = []
-        slide_images: list[dict] = []
+        # Get image format from config
+        image_format = "jpg"
+        if self.config:
+            image_format = normalize_image_extension(self.config.image.format)
 
-        # Step 2: Render slides to images (only if screenshot enabled)
-        if enable_screenshot:
-            # Determine output path for slide images
-            if output_dir:
-                screenshots_dir = ensure_screenshots_dir(output_dir)
-            else:
-                screenshots_dir = Path(tempfile.mkdtemp())
-
-            # Get image format from config
-            image_format = "jpg"
-            if self.config:
-                image_format = normalize_image_extension(self.config.image.format)
-
-            images, slide_images = self._render_slides_to_images(
-                input_path, screenshots_dir, image_format
-            )
+        # OCR+LLM path: always render slides (independent of screenshot flag)
+        images, slide_images = self._render_slides_to_images(
+            input_path, screenshots_dir, image_format
+        )
 
         return ConvertResult(
             markdown=extracted_text,

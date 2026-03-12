@@ -634,12 +634,16 @@ class ImageProcessor:
         height: int,
         output_path: Path,
         max_bytes: int = DEFAULT_SCREENSHOT_MAX_BYTES,
-    ) -> tuple[int, int]:
+    ) -> tuple[tuple[int, int], Path]:
         """
         Save a screenshot with compression to ensure it's under the size limit.
 
         Converts raw pixel data to PIL Image, compresses using config quality,
         and progressively reduces quality if needed to stay under max_bytes.
+
+        The extreme compression fallback may change the output format to JPEG
+        (and thus the file extension). Callers must use the returned path
+        instead of the original ``output_path`` to keep metadata consistent.
 
         Args:
             pix_samples: Raw RGB pixel data from pymupdf pixmap.samples
@@ -649,7 +653,9 @@ class ImageProcessor:
             max_bytes: Maximum file size in bytes (default 5MB for LLM providers)
 
         Returns:
-            Tuple of (final_width, final_height) after any resizing
+            Tuple of ((final_width, final_height), actual_output_path).
+            The actual_output_path may differ from output_path when the
+            fallback compression changes the extension to .jpg.
         """
         from PIL import Image
 
@@ -698,16 +704,30 @@ class ImageProcessor:
                         f"Screenshot compressed: quality {quality}->{q}, "
                         f"size {len(data) / 1024:.1f}KB"
                     )
-                return image.size
+                return image.size, output_path
 
-        # Last resort: aggressive resize
+        # Last resort: aggressive resize with JPEG for maximum compression.
+        # Update the output path extension to match the actual format written.
         image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+        # Ensure RGB mode for JPEG (no alpha)
+        if image.mode in ("RGBA", "P", "LA"):
+            background = Image.new("RGB", image.size, (255, 255, 255))
+            if image.mode == "P":
+                image = image.convert("RGBA")
+            if image.mode in ("RGBA", "LA"):
+                background.paste(image, mask=image.split()[-1])
+            else:
+                background.paste(image)
+            image = background
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG", quality=20, optimize=True)
         data = buffer.getvalue()
+        # Fix extension to match actual JPEG format
+        if output_path.suffix.lower() not in (".jpg", ".jpeg"):
+            output_path = output_path.with_suffix(".jpg")
         output_path.write_bytes(data)
         logger.warning(f"Screenshot aggressively compressed: {len(data) / 1024:.1f}KB")
-        return image.size
+        return image.size, output_path
 
     def should_filter(self, width: int, height: int) -> bool:
         """
@@ -996,6 +1016,7 @@ class ImageProcessor:
                             output_format=output_format,
                         )
                         final_width, final_height = compressed_img.size
+                        compressed_img.close()
                     else:
                         compressed_data = image_data
                         final_width, final_height = width, height

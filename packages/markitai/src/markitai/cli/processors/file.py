@@ -6,6 +6,7 @@ converting individual documents to Markdown.
 
 from __future__ import annotations
 
+import re
 import sys
 import time
 from datetime import datetime
@@ -28,6 +29,33 @@ from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import write_images_json
 
 console = get_console()
+
+# Pattern matches markdown image references to .markitai/assets/ or .markitai/screenshots/
+_ASSET_REF_PATTERN = re.compile(
+    r"!\[([^\]]*)\]\(\.markitai/(?:assets|screenshots)/([^)]+)\)"
+)
+
+
+def strip_asset_references(markdown: str) -> str:
+    """Replace .markitai/assets/ and .markitai/screenshots/ image references
+    with descriptive text placeholders.
+
+    In stdout mode the temp directory containing these files is deleted after
+    printing, so the references would be broken. This function replaces them
+    with ``[image: filename]`` placeholders.
+
+    Args:
+        markdown: Markdown content potentially containing asset references.
+
+    Returns:
+        Markdown with asset references replaced by text placeholders.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        filename = match.group(2)
+        return f"[image: {filename}]"
+
+    return _ASSET_REF_PATTERN.sub(_replace, markdown)
 
 
 async def process_single_file(
@@ -258,6 +286,9 @@ async def process_single_file(
             # stdout mode: output markdown content
             if final_output_file and final_output_file.exists():
                 final_content = final_output_file.read_text(encoding="utf-8")
+                # Strip .markitai/assets/ and .markitai/screenshots/ references
+                # since the temp directory will be deleted after printing
+                final_content = strip_asset_references(final_content)
                 console.print(final_content, markup=False, highlight=False)
         else:
             # File mode: show output path

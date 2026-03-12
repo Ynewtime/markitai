@@ -504,11 +504,11 @@ class TestSaveScreenshot:
         samples = img.tobytes()
 
         output_path = tmp_path / "screenshot.jpg"
-        final_size = processor.save_screenshot(
+        final_size, actual_path = processor.save_screenshot(
             samples, img.width, img.height, output_path
         )
 
-        assert output_path.exists()
+        assert actual_path.exists()
         assert final_size[0] <= 1920  # Max width
         assert final_size[1] <= 1080  # Max height
 
@@ -567,7 +567,7 @@ class TestSaveScreenshot:
         samples = img.tobytes()
 
         output_path = tmp_path / "resized.jpg"
-        final_size = processor.save_screenshot(
+        final_size, actual_path = processor.save_screenshot(
             samples, img.width, img.height, output_path
         )
 
@@ -2456,3 +2456,229 @@ class TestSaveScreenshotEdgeCases:
         processor.save_screenshot(samples, img.width, img.height, output_path)
 
         assert output_path.exists()
+
+
+class TestSaveScreenshotFallbackFormat:
+    """Tests that save_screenshot fallback uses consistent format."""
+
+    def test_fallback_compression_writes_correct_format(self, tmp_path: Path) -> None:
+        """When fallback compression kicks in, the written file format should
+        match the configured output_format, and the output_path extension
+        should reflect the actual content format.
+
+        Bug: save_screenshot's last-resort path hard-codes format='JPEG' but
+        keeps the original output_path extension (could be .png or .webp).
+        """
+        import random
+
+        config = ImageConfig(format="png", quality=95)
+        processor = ImageProcessor(config=config)
+
+        # Create a large noisy image that will exceed a very small max_bytes
+        # threshold, forcing the fallback path
+        random.seed(42)
+        img = Image.new("RGB", (2000, 2000))
+        pixels = img.load()
+        assert pixels is not None
+        for i in range(img.width):
+            for j in range(img.height):
+                pixels[i, j] = (
+                    random.randint(0, 255),
+                    random.randint(0, 255),
+                    random.randint(0, 255),
+                )
+        samples = img.tobytes()
+
+        output_path = tmp_path / "screenshot.png"
+        # Use extremely small max_bytes to force fallback
+        processor.save_screenshot(
+            samples, img.width, img.height, output_path, max_bytes=1024
+        )
+
+        # The output file should exist
+        actual_output = list(tmp_path.glob("screenshot.*"))
+        assert len(actual_output) >= 1
+        final_path = actual_output[0]
+        assert final_path.exists()
+
+        # The file extension should match the actual format written inside
+        with open(final_path, "rb") as f:
+            header = f.read(8)
+
+        if final_path.suffix == ".png":
+            # If extension is .png, content must be PNG
+            assert header[:4] == b"\x89PNG", (
+                f"File extension is .png but content is not PNG: {header[:4]!r}"
+            )
+        elif final_path.suffix in (".jpg", ".jpeg"):
+            # If extension is .jpg/.jpeg, content must be JPEG
+            assert header[:2] == b"\xff\xd8", (
+                f"File extension is .jpg but content is not JPEG: {header[:2]!r}"
+            )
+        else:
+            pytest.fail(f"Unexpected extension: {final_path.suffix}")
+
+    def test_fallback_keeps_configured_format_when_possible(
+        self, tmp_path: Path
+    ) -> None:
+        """When configured as JPEG, fallback should still produce JPEG."""
+        import random
+
+        config = ImageConfig(format="jpeg", quality=95)
+        processor = ImageProcessor(config=config)
+
+        random.seed(123)
+        img = Image.new("RGB", (2000, 2000))
+        pixels = img.load()
+        assert pixels is not None
+        for i in range(img.width):
+            for j in range(img.height):
+                pixels[i, j] = (
+                    random.randint(0, 255),
+                    random.randint(0, 255),
+                    random.randint(0, 255),
+                )
+        samples = img.tobytes()
+
+        output_path = tmp_path / "screenshot.jpg"
+        processor.save_screenshot(
+            samples, img.width, img.height, output_path, max_bytes=1024
+        )
+
+        assert output_path.exists()
+        with open(output_path, "rb") as f:
+            header = f.read(2)
+        # Should be valid JPEG
+        assert header == b"\xff\xd8"
+
+
+class TestSaveScreenshotReturnsActualPath:
+    """save_screenshot must return the actual file path written to disk.
+
+    When the extreme compression fallback changes the extension to .jpg,
+    callers need to know the real path so metadata stays consistent.
+    """
+
+    def test_returns_actual_path_when_no_fallback(self, tmp_path: Path) -> None:
+        """Normal case: returned path matches the requested output_path."""
+        config = ImageConfig(format="jpeg", quality=85)
+        processor = ImageProcessor(config=config)
+
+        img = Image.new("RGB", (200, 200), color="blue")
+        samples = img.tobytes()
+        output_path = tmp_path / "screenshot.jpg"
+
+        size, actual_path = processor.save_screenshot(
+            samples, img.width, img.height, output_path
+        )
+
+        assert actual_path == output_path
+        assert actual_path.exists()
+
+    def test_returns_jpg_path_when_fallback_changes_extension(
+        self, tmp_path: Path
+    ) -> None:
+        """When fallback compression changes .png to .jpg, the returned path
+        must reflect the .jpg extension so callers don't reference a non-existent
+        .png file.
+        """
+        import random
+
+        config = ImageConfig(format="png", quality=95)
+        processor = ImageProcessor(config=config)
+
+        # Create a large noisy image that will exceed a very small max_bytes
+        random.seed(42)
+        img = Image.new("RGB", (2000, 2000))
+        pixels = img.load()
+        assert pixels is not None
+        for i in range(img.width):
+            for j in range(img.height):
+                pixels[i, j] = (
+                    random.randint(0, 255),
+                    random.randint(0, 255),
+                    random.randint(0, 255),
+                )
+        samples = img.tobytes()
+
+        output_path = tmp_path / "screenshot.png"
+        size, actual_path = processor.save_screenshot(
+            samples, img.width, img.height, output_path, max_bytes=1024
+        )
+
+        # The returned path must point to the file that actually exists
+        assert actual_path.exists(), f"Returned path {actual_path} does not exist"
+        # The extension should be .jpg since fallback forces JPEG
+        assert actual_path.suffix == ".jpg"
+        # The original .png should NOT exist (only .jpg was written)
+        assert not output_path.exists() or output_path == actual_path
+
+    def test_callers_can_use_returned_path_for_metadata(self, tmp_path: Path) -> None:
+        """Simulate what pdf.py / office.py callers do: use the returned path
+        for ExtractedImage metadata. The path must be valid.
+        """
+        config = ImageConfig(format="jpeg", quality=85)
+        processor = ImageProcessor(config=config)
+
+        img = Image.new("RGB", (400, 300), color="green")
+        samples = img.tobytes()
+        output_path = tmp_path / "page001.jpg"
+
+        size, actual_path = processor.save_screenshot(
+            samples, img.width, img.height, output_path
+        )
+
+        # Simulate what callers do: build metadata from the returned path
+        image_name = actual_path.name
+        mime_type = (
+            "image/jpeg" if actual_path.suffix in (".jpg", ".jpeg") else "image/png"
+        )
+
+        assert actual_path.exists()
+        assert image_name == "page001.jpg"
+        assert mime_type == "image/jpeg"
+
+
+class TestProcessAndSaveAsyncClosesCompressedImage:
+    """Tests that process_and_save_async properly closes PIL Images."""
+
+    @pytest.mark.asyncio
+    async def test_compressed_image_is_closed(self, tmp_path: Path) -> None:
+        """The compressed PIL.Image returned by compress() must be closed
+        in the async path, just like the sync path does.
+
+        Bug: process_and_save_async reads compressed_img.size but never
+        calls compressed_img.close().
+        """
+        from unittest.mock import patch
+
+        config = ImageConfig(compress=True, quality=85, format="jpeg")
+        processor = ImageProcessor(config=config)
+
+        image_data = create_test_image(200, 200, "red")
+        images = [("test", "image/png", image_data)]
+
+        # Track whether close() is called on compressed images
+        original_compress = processor.compress
+        close_called = []
+
+        def tracking_compress(*args, **kwargs):
+            result_img, result_data = original_compress(*args, **kwargs)
+            original_close = result_img.close
+
+            def tracked_close():
+                close_called.append(True)
+                return original_close()
+
+            result_img.close = tracked_close
+            return result_img, result_data
+
+        with patch.object(processor, "compress", side_effect=tracking_compress):
+            result = await processor.process_and_save_async(
+                images, output_dir=tmp_path, base_name="test"
+            )
+
+        assert len(result.saved_images) == 1
+        assert len(close_called) > 0, (
+            "compressed_img.close() was never called in async path"
+        )

@@ -5,7 +5,6 @@ One-stop setup: checks dependencies, detects LLM providers, generates config.
 
 from __future__ import annotations
 
-import json
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -16,6 +15,7 @@ from markitai.cli import ui
 from markitai.cli.console import get_console
 from markitai.cli.hints import get_env_set_command
 from markitai.config import ConfigManager
+from markitai.security import atomic_write_json, atomic_write_text
 
 console = get_console()
 
@@ -363,14 +363,10 @@ def _ensure_env_template() -> Path | None:
     env_path = ConfigManager.DEFAULT_USER_CONFIG_DIR / ".env"
     if env_path.exists():
         return None
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text(_ENV_TEMPLATE, encoding="utf-8")
+    atomic_write_text(env_path, _ENV_TEMPLATE)
     return env_path
 
 
 def _write_config(target: Path, config_data: dict) -> None:
-    """Write config data to file."""
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with open(target, "w", encoding="utf-8") as f:
-        json.dump(config_data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+    """Write config data to file atomically."""
+    atomic_write_json(target, config_data)

@@ -49,12 +49,24 @@ class OCRProcessor:
         self._engine = None
 
     @classmethod
+    def _config_fingerprint(cls, config: OCRConfig | None) -> str:
+        """Return a hashable fingerprint for the given OCR config.
+
+        Used to detect when the config has changed so that the shared
+        engine can be rebuilt.
+        """
+        if config is None:
+            return ""
+        return config.model_dump_json()
+
+    @classmethod
     def get_shared_engine(cls, config: OCRConfig | None = None) -> Any:
         """Get or create global singleton engine (thread-safe).
 
         Uses double-checked locking for thread-safe lazy initialization.
         The engine is shared across all OCRProcessor instances to avoid
-        repeated ONNX Runtime cold starts.
+        repeated ONNX Runtime cold starts. When the config changes
+        (e.g., language switch), the engine is rebuilt automatically.
 
         Args:
             config: Optional OCR configuration for engine creation
@@ -62,9 +74,16 @@ class OCRProcessor:
         Returns:
             Shared RapidOCR engine instance
         """
-        if cls._global_engine is None:
+        new_fp = cls._config_fingerprint(config)
+        if (
+            cls._global_engine is None
+            or cls._config_fingerprint(cls._global_config) != new_fp
+        ):
             with cls._init_lock:
-                if cls._global_engine is None:
+                if (
+                    cls._global_engine is None
+                    or cls._config_fingerprint(cls._global_config) != new_fp
+                ):
                     logger.debug("Creating global shared OCR engine")
                     cls._global_config = config
                     cls._global_engine = cls._create_engine_impl(config)

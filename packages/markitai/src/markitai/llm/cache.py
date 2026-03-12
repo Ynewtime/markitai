@@ -102,29 +102,34 @@ class SQLiteCache:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_created ON cache(created_at)")
             conn.commit()
 
-    def _compute_hash(self, prompt: str, content: str) -> str:
-        """Compute hash key from prompt and content.
+    def _compute_hash(self, prompt: str, content: str, *, model: str = "") -> str:
+        """Compute hash key from prompt, content, and model.
 
-        Uses head + tail + length strategy to detect most changes.
-        Note: middle-only edits in content >50k chars may not be detected.
+        Uses SHA-256 over the full content to detect all changes,
+        including middle-only edits. The model identifier is included
+        so that results from different models are cached separately.
+
+        Args:
+            prompt: Prompt template or category name
+            content: Full content being processed
+            model: Model identifier (e.g., "gpt-4o", "claude-sonnet")
         """
-        length = len(content)
-        head = content[:25000]
-        tail = content[-25000:] if length > 25000 else ""
-        combined = f"{prompt}|{length}|{head}|{tail}"
+        content_hash = self._hashlib.sha256(content.encode()).hexdigest()
+        combined = f"{prompt}|{model}|{content_hash}"
         return self._hashlib.sha256(combined.encode()).hexdigest()[:32]
 
-    def get(self, prompt: str, content: str) -> str | None:
+    def get(self, prompt: str, content: str, *, model: str = "") -> str | None:
         """Get cached value if exists, update accessed_at for LRU.
 
         Args:
             prompt: Prompt template used
             content: Content being processed
+            model: Model identifier to scope cache lookup
 
         Returns:
             Cached JSON string or None if not found
         """
-        key = self._compute_hash(prompt, content)
+        key = self._compute_hash(prompt, content, model=model)
         now = int(time.time())
 
         with self._connect() as conn:
@@ -149,9 +154,9 @@ class SQLiteCache:
             prompt: Prompt template used
             content: Content being processed
             value: JSON string to cache
-            model: Model identifier (for potential invalidation)
+            model: Model identifier (included in cache key for isolation)
         """
-        key = self._compute_hash(prompt, content)
+        key = self._compute_hash(prompt, content, model=model)
         now = int(time.time())
         size_bytes = len(value.encode("utf-8"))
 
@@ -468,8 +473,21 @@ class PersistentCache:
 
         return False
 
-    def get(self, prompt: str, content: str, context: str = "") -> Any | None:
-        """Lookup in global cache."""
+    def get(
+        self,
+        prompt: str,
+        content: str,
+        context: str = "",
+        model: str = "",
+    ) -> Any | None:
+        """Lookup in global cache.
+
+        Args:
+            prompt: Prompt template or category name
+            content: Content being processed
+            context: File path context for no-cache pattern matching
+            model: Model identifier to scope cache lookup
+        """
         if not self._enabled or self._skip_read:
             return None
 
@@ -477,7 +495,7 @@ class PersistentCache:
             return None
 
         if self._global_cache:
-            result = self._global_cache.get(prompt, content)
+            result = self._global_cache.get(prompt, content, model=model)
             if result is not None:
                 self._hits += 1
                 logger.debug("[Cache] Cache hit")
@@ -487,7 +505,14 @@ class PersistentCache:
         return None
 
     def set(self, prompt: str, content: str, result: Any, model: str = "") -> None:
-        """Write to global cache."""
+        """Write to global cache.
+
+        Args:
+            prompt: Prompt template or category name
+            content: Content being processed
+            result: Data to cache (will be JSON-serialized)
+            model: Model identifier (included in cache key for isolation)
+        """
         if not self._enabled:
             return
 

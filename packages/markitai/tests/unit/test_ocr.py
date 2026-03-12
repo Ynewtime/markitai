@@ -214,8 +214,9 @@ class TestOCRProcessorMocked:
             boxes=[[0, 0, 100, 20], [0, 30, 100, 50]],
         )
 
-        # Set global engine directly
+        # Set global engine directly (config must match to avoid rebuild)
         OCRProcessor._global_engine = mock_engine
+        OCRProcessor._global_config = ocr_config
 
         processor = OCRProcessor(ocr_config)
         result = processor.recognize(test_image)
@@ -244,8 +245,9 @@ class TestOCRProcessorMocked:
             boxes=[],
         )
 
-        # Set global engine directly
+        # Set global engine directly (config must match to avoid rebuild)
         OCRProcessor._global_engine = mock_engine
+        OCRProcessor._global_config = ocr_config
 
         processor = OCRProcessor(ocr_config)
         result = processor.recognize(test_image)
@@ -324,8 +326,9 @@ class TestOCRRecognizeToMarkdown:
         mock_engine = MagicMock()
         mock_engine.return_value = mock_result
 
-        # Set global engine directly
+        # Set global engine directly (config must match to avoid rebuild)
         OCRProcessor._global_engine = mock_engine
+        OCRProcessor._global_config = ocr_config
 
         processor = OCRProcessor(ocr_config)
         result = processor.recognize_to_markdown(test_image)
@@ -346,10 +349,90 @@ class TestOCRRecognizeToMarkdown:
         mock_engine = MagicMock()
         mock_engine.return_value = mock_result
 
-        # Set global engine directly
+        # Set global engine directly (config must match to avoid rebuild)
         OCRProcessor._global_engine = mock_engine
+        OCRProcessor._global_config = ocr_config
 
         processor = OCRProcessor(ocr_config)
         result = processor.recognize_to_markdown(test_image)
 
         assert result == "Line 1\n\nLine 2"
+
+
+class TestOCRConfigChangedRebuildsEngine:
+    """Tests that shared engine is rebuilt when OCR config changes."""
+
+    def teardown_method(self):
+        """Reset global engine after each test."""
+        OCRProcessor._global_engine = None
+        OCRProcessor._global_config = None
+
+    def test_shared_engine_rebuilds_on_config_change(self):
+        """When config changes (e.g., lang zh -> en), engine must be rebuilt."""
+        engine_zh = MagicMock(name="engine_zh")
+        engine_en = MagicMock(name="engine_en")
+
+        call_count = 0
+
+        def fake_create(config=None):
+            nonlocal call_count
+            call_count += 1
+            if config and config.lang == "en":
+                return engine_en
+            return engine_zh
+
+        with patch.object(OCRProcessor, "_create_engine_impl", side_effect=fake_create):
+            config_zh = OCRConfig(enabled=True, lang="zh")
+            config_en = OCRConfig(enabled=True, lang="en")
+
+            # First call with zh config
+            result1 = OCRProcessor.get_shared_engine(config_zh)
+            assert result1 is engine_zh
+            assert call_count == 1
+
+            # Second call with different config (en) should rebuild
+            result2 = OCRProcessor.get_shared_engine(config_en)
+            assert result2 is engine_en
+            assert call_count == 2  # Engine was recreated
+
+    def test_shared_engine_reuses_on_same_config(self):
+        """When config is the same, engine should be reused."""
+        engine_zh = MagicMock(name="engine_zh")
+
+        with patch.object(
+            OCRProcessor, "_create_engine_impl", return_value=engine_zh
+        ) as mock_create:
+            config1 = OCRConfig(enabled=True, lang="zh")
+            config2 = OCRConfig(enabled=True, lang="zh")
+
+            result1 = OCRProcessor.get_shared_engine(config1)
+            result2 = OCRProcessor.get_shared_engine(config2)
+
+            assert result1 is result2
+            assert mock_create.call_count == 1
+
+    def test_shared_engine_none_config_to_real_config(self):
+        """Going from None config to a real config should rebuild."""
+        engine_default = MagicMock(name="engine_default")
+        engine_zh = MagicMock(name="engine_zh")
+
+        call_count = 0
+
+        def fake_create(config=None):
+            nonlocal call_count
+            call_count += 1
+            if config and config.lang == "zh":
+                return engine_zh
+            return engine_default
+
+        with patch.object(OCRProcessor, "_create_engine_impl", side_effect=fake_create):
+            # First call with no config
+            result1 = OCRProcessor.get_shared_engine(None)
+            assert result1 is engine_default
+            assert call_count == 1
+
+            # Second call with real config should rebuild
+            config_zh = OCRConfig(enabled=True, lang="zh")
+            result2 = OCRProcessor.get_shared_engine(config_zh)
+            assert result2 is engine_zh
+            assert call_count == 2
