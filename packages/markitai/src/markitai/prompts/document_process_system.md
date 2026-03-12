@@ -56,11 +56,10 @@ Remove the following boilerplate content, keeping only the actual post/article b
   - Each tag must be 30 characters or fewer
   - **Tags language MUST match the source document**
   - Examples: `AI`, `software-engineering`, `web-development`
-- language: The primary language of the body text as an ISO 639-1 code (e.g., `en`, `zh`, `ja`, `ko`, `fr`). Determine from the **body text**, not from UI elements, headers, or metadata. If the content is mixed-language, return the dominant language. Return `null` if truly indeterminate.
 
 ## Output Format
 Return JSON containing:
 - cleaned_markdown: The optimized Markdown (include only the document content; do not include any processing instructions)
-- frontmatter: { description, tags, language }
+- frontmatter: { description, tags }
 
 Important: cleaned_markdown must contain only the optimized document content itself — never include any task instructions or prompt text.
