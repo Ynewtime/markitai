@@ -141,3 +141,20 @@ class TestBuiltinPrompts:
         content = path.read_text(encoding="utf-8")
 
         assert "描述" in content or "describe" in content.lower()
+
+
+class TestVisionPromptReminder:
+    """Verify document_vision_user prompt contains tail REMINDER."""
+
+    def test_vision_user_prompt_has_reminder(self):
+        """document_vision_user.md should end with a REMINDER about placeholders."""
+        from markitai.prompts import PromptManager
+
+        pm = PromptManager()
+        prompt = pm.get_prompt("document_vision_user", content="test content")
+        assert "REMINDER:" in prompt
+        assert "__MARKITAI_" in prompt
+        # REMINDER should appear AFTER the content
+        content_pos = prompt.index("test content")
+        reminder_pos = prompt.index("REMINDER:")
+        assert reminder_pos > content_pos
