@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-03-12
+
+### Added
+
+- **Auto-detect LLM Providers**: When no `markitai.json` config exists, automatically detect available providers from environment variables and authenticated CLI tools (Claude CLI, Copilot CLI, Gemini CLI, ChatGPT OAuth)
+- **Shared Provider Detection**: Extract provider detection into `cli/providers_detect.py` shared module for reuse across interactive and non-interactive modes
+
+### Changed
+
+- **Interactive Mode UX**: Separate OCR and screenshots from LLM features into independent "Additional options" prompt, since they are local processing capabilities (RapidOCR, Playwright) that don't require LLM
+- **Feature Display**: Unified `build_feature_str()` in `ui.py` separates LLM features from local features with `|` delimiter (e.g., `LLM alt desc | OCR screenshot`)
+- **Interactive Mode Flow**: Show configured models after user confirms LLM enablement, not before; warn when no provider detected
+- **Dependencies**: Raise minimum constraints to match tested versions (pymupdf4llm >=1.27.2, litellm >=1.82.0, pydantic >=2.12.0, pytest >=9.0.0, ruff >=0.15.0)
+- **CLI Flags**: `-v` is now `--verbose` (was `--version`), `-V` is now `--version`
+
+### Fixed
+
+- **Image Alt Text Language**: Strip YAML frontmatter before extracting document context for image analysis, so alt text matches the document's actual language instead of defaulting to English
+- **Interactive Provider Display**: Show actual configured models from config file instead of auto-detected provider name
+- **URL Processor Feature Display**: Add missing OCR to URL processor dry-run features list
+- **Cold Startup Performance**: Lazy imports in `cli/`, `processors/`, and `workflow/` `__init__.py` reduce cold startup from ~5s to ~0.3s
+
+### Removed
+
+- **Language Field**: Remove LLM-generated `language` field from Frontmatter model — LLM should only generate `description` and `tags`, not infer extra metadata
+
 ## [0.9.2] - 2026-03-11
 
 ### Fixed
@@ -701,6 +727,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.10.0]: https://github.com/Ynewtime/markitai/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/Ynewtime/markitai/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/Ynewtime/markitai/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Ynewtime/markitai/compare/v0.8.1...v0.9.0
