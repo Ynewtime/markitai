@@ -147,13 +147,6 @@ class SingleFileWorkflow:
                 title=title,
             )
 
-            from markitai.workflow.helpers import maybe_stabilize_markdown
-
-            baseline_markdown = _read_markdown_body(output_file, markdown)
-            cleaned = maybe_stabilize_markdown(
-                self.processor, baseline_markdown, cleaned, source
-            )
-
             # Write LLM version
             llm_output = output_file.with_suffix(".llm.md")
             llm_content = self.processor.format_llm_output(
@@ -394,12 +387,6 @@ class SingleFileWorkflow:
                 image_paths,
                 source=source,
                 original_title=original_title,
-            )
-
-            from markitai.workflow.helpers import maybe_stabilize_markdown
-
-            cleaned_content = maybe_stabilize_markdown(
-                self.processor, extracted_text, cleaned_content, source
             )
 
             # Use context-based tracking for accurate per-file usage in concurrent scenarios
