@@ -62,13 +62,13 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Yne
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.9.2"
+export MARKITAI_VERSION="0.10.0"
 export UV_VERSION="0.9.27"
 curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.9.1"
+$env:MARKITAI_VERSION = "0.10.0"
 $env:UV_VERSION = "0.9.27"
 powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
 ```
