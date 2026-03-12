@@ -171,6 +171,7 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
         session.provider_result = all_providers[0] if all_providers else None
         if all_providers:
             has_provider = True
+            session.active_models = [p.model for p in all_providers]
             names = [p.provider for p in all_providers]
             console.print(f"[green]\u2713[/green] Detected: {format_model_list(names)}")
         else:

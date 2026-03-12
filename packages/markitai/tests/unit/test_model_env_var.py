@@ -99,7 +99,7 @@ class TestModelEnvVarDetection:
     def test_warning_when_no_model_env_and_no_model_list(
         self, tmp_path: Path, cli_runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Warning is shown when LLM enabled, no model_list, and no MODEL env var."""
+        """Warning is shown when LLM enabled, no model_list, no MODEL env var, and no auto-detect."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
         output_dir = tmp_path / "out"
@@ -107,12 +107,49 @@ class TestModelEnvVarDetection:
         # Ensure MODEL is not set
         monkeypatch.delenv("MODEL", raising=False)
 
-        result = cli_runner.invoke(
-            app,
-            [str(test_file), "-o", str(output_dir), "--llm", "--dry-run"],
-        )
+        # Mock auto-detect to return empty (otherwise real env vars may be found)
+        with patch(
+            "markitai.cli.providers_detect.detect_all_providers", return_value=[]
+        ):
+            result = cli_runner.invoke(
+                app,
+                [str(test_file), "-o", str(output_dir), "--llm", "--dry-run"],
+            )
         assert result.exit_code == 0
         # Should still work (dry run), but a warning would be logged
+
+    def test_auto_detect_populates_model_list_when_no_config(
+        self, tmp_path: Path, cli_runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Auto-detect populates model_list when MODEL env var is not set but providers found."""
+        from markitai.cli.providers_detect import ProviderDetectionResult
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+        output_dir = tmp_path / "out"
+
+        # Ensure MODEL is not set
+        monkeypatch.delenv("MODEL", raising=False)
+
+        detected = [
+            ProviderDetectionResult(
+                provider="gemini",
+                model="gemini/gemini-2.5-flash",
+                authenticated=True,
+                source="env",
+            )
+        ]
+        with patch(
+            "markitai.cli.providers_detect.detect_all_providers",
+            return_value=detected,
+        ):
+            result = cli_runner.invoke(
+                app,
+                [str(test_file), "-o", str(output_dir), "--llm", "--dry-run"],
+            )
+        assert result.exit_code == 0
+        # Should NOT show "no models configured" warning
+        assert "no models configured" not in result.output.lower()
 
     def test_model_env_creates_correct_model_config(
         self, monkeypatch: pytest.MonkeyPatch
@@ -362,18 +399,22 @@ class TestModelEnvVarLogging:
 
         monkeypatch.delenv("MODEL", raising=False)
 
-        # Use verbose mode to capture warning output
-        result = cli_runner.invoke(
-            app,
-            [
-                str(test_file),
-                "-o",
-                str(output_dir),
-                "--llm",
-                "--dry-run",
-                "--verbose",
-            ],
-        )
+        # Mock auto-detect to return empty so the warning path triggers
+        with patch(
+            "markitai.cli.providers_detect.detect_all_providers", return_value=[]
+        ):
+            # Use verbose mode to capture warning output
+            result = cli_runner.invoke(
+                app,
+                [
+                    str(test_file),
+                    "-o",
+                    str(output_dir),
+                    "--llm",
+                    "--dry-run",
+                    "--verbose",
+                ],
+            )
         assert result.exit_code == 0
         # The updated warning message should mention "MODEL env var"
         # (verbose mode outputs log messages to console)

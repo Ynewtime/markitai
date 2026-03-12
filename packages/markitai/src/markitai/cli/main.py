@@ -390,8 +390,9 @@ def app(
     else:
         logger.warning("[Config] No config file found, using defaults")
 
-    # Auto-detect MODEL env var when LLM enabled but no models configured
+    # Auto-populate model_list when LLM enabled but no models configured
     if cfg.llm.enabled and not cfg.llm.model_list:
+        # Priority 1: MODEL env var (explicit single-model override)
         model_env = os.environ.get("MODEL")
         if model_env:
             from markitai.config import LiteLLMParams, ModelConfig
@@ -404,10 +405,25 @@ def app(
             ]
             logger.info(f"[Config] Using MODEL env var: {model_env}")
         else:
-            logger.warning(
-                "[Config] LLM enabled but no models configured. "
-                "Set MODEL env var or add models to llm.model_list in config file."
+            # Priority 2: Auto-detect from env keys and authenticated CLI providers
+            from markitai.cli.providers_detect import (
+                detect_all_providers,
+                providers_to_model_configs,
             )
+
+            detected = detect_all_providers()
+            if detected:
+                cfg.llm.model_list = providers_to_model_configs(detected)
+                names = [d.model for d in detected]
+                logger.info(
+                    f"[Config] Auto-detected {len(detected)} provider(s): "
+                    + ", ".join(names)
+                )
+            else:
+                logger.warning(
+                    "[Config] LLM enabled but no models configured. "
+                    "Set MODEL env var or add models to llm.model_list in config file."
+                )
     elif cfg.llm.enabled and cfg.llm.model_list:
         model_names = [m.litellm_params.model for m in cfg.llm.model_list]
         unique_models = set(model_names)
