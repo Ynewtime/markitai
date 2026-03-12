@@ -209,6 +209,20 @@ def prompt_llm_options(session: InteractiveSession) -> None:
                 questionary.Choice(
                     "Generate image descriptions (JSON)", value="desc", checked=False
                 ),
+            ],
+        )
+    )
+
+    session.enable_alt = "alt" in choices
+    session.enable_desc = "desc" in choices
+
+
+def prompt_extra_options(session: InteractiveSession) -> None:
+    """Prompt user for non-LLM optional features (OCR, screenshots)."""
+    choices = _ask_or_exit(
+        questionary.checkbox(
+            "Additional options:",
+            choices=[
                 questionary.Choice(
                     "Enable OCR for scanned documents", value="ocr", checked=False
                 ),
@@ -219,8 +233,6 @@ def prompt_llm_options(session: InteractiveSession) -> None:
         )
     )
 
-    session.enable_alt = "alt" in choices
-    session.enable_desc = "desc" in choices
     session.enable_ocr = "ocr" in choices
     session.enable_screenshot = "screenshot" in choices
 
@@ -461,6 +473,9 @@ def run_interactive() -> InteractiveSession:
     if session.enable_llm:
         prompt_llm_options(session)
 
+    # 7. Extra options (OCR, screenshots — independent of LLM)
+    prompt_extra_options(session)
+
     # Print summary
     _print_summary(session)
 
@@ -483,8 +498,10 @@ def _print_summary(session: InteractiveSession) -> None:
             console.print(f"  Provider: {session.provider_result.provider}")
         console.print(f"  Alt text: {'yes' if session.enable_alt else 'no'}")
         console.print(f"  Descriptions: {'yes' if session.enable_desc else 'no'}")
-        console.print(f"  OCR: {'yes' if session.enable_ocr else 'no'}")
-        console.print(f"  Screenshots: {'yes' if session.enable_screenshot else 'no'}")
+    if session.enable_ocr:
+        console.print("  OCR: yes")
+    if session.enable_screenshot:
+        console.print("  Screenshots: yes")
     console.print()
 
 
@@ -506,11 +523,12 @@ def session_to_cli_args(session: InteractiveSession) -> list[str]:
             args.append("--alt")
         if session.enable_desc:
             args.append("--desc")
-        if session.enable_ocr:
-            args.append("--ocr")
-        if session.enable_screenshot:
-            args.append("--screenshot")
     else:
         args.append("--no-llm")
+
+    if session.enable_ocr:
+        args.append("--ocr")
+    if session.enable_screenshot:
+        args.append("--screenshot")
 
     return args
