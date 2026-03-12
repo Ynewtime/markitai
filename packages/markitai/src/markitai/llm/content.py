@@ -206,6 +206,8 @@ def unprotect_content(
     content: str,
     mapping: dict[str, str],
     protected: dict[str, list[str]] | None = None,
+    *,
+    restore_missing_images_at_end: bool = True,
 ) -> str:
     """Restore protected content from placeholders after LLM processing.
 
@@ -220,6 +222,9 @@ def unprotect_content(
         content: LLM output with placeholders
         mapping: Mapping of placeholder -> original content
         protected: Optional dict of protected content for fallback restoration
+        restore_missing_images_at_end: If True (default), missing images are
+            appended at the end as a fallback. Set to False when image positions
+            are managed by a separate protection mechanism.
 
     Returns:
         Content with placeholders replaced by original content
@@ -288,13 +293,15 @@ def unprotect_content(
 
         # Restore missing images at end (fallback)
         # Only restore if the image filename doesn't already exist
-        for img in protected.get("images", []):
-            if img not in result and not image_exists_in_result(img, result):
-                match = _IMG_PATH_RE.search(img)
-                if match:
-                    img_name = match.group(1).split("/")[-1]
-                    logger.debug(f"Restoring missing image at end: {img_name}")
-                result = result.rstrip() + "\n\n" + img
+        # Skip when image positions are managed by a separate mechanism
+        if restore_missing_images_at_end:
+            for img in protected.get("images", []):
+                if img not in result and not image_exists_in_result(img, result):
+                    match = _IMG_PATH_RE.search(img)
+                    if match:
+                        img_name = match.group(1).split("/")[-1]
+                        logger.debug(f"Restoring missing image at end: {img_name}")
+                    result = result.rstrip() + "\n\n" + img
 
         # Restore missing slide comments at heading boundaries
         # Key fix: Match slides to H1/H2 headings more intelligently

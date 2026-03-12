@@ -314,9 +314,12 @@ class DocumentMixin:
 
         self._cache_misses += 1
 
-        # 3. Extract and protect content before LLM processing
-        protected = self.extract_protected_content(content)
-        protected_content, mapping = self.protect_content(content)
+        # 3. Protect image positions before any LLM processing
+        image_protected, image_mapping = self._protect_image_positions(content)
+
+        # 4. Extract and protect content before LLM processing
+        protected = self.extract_protected_content(image_protected)
+        protected_content, mapping = self.protect_content(image_protected)
 
         # Use separated system/user prompts to prevent prompt leakage
         system_prompt = self._prompt_manager.get_prompt("cleaner_system")
@@ -344,8 +347,19 @@ class DocumentMixin:
             result = fallback
         else:
             # Restore protected content from placeholders, with fallback for removed items
-            result = self.unprotect_content(response.content, mapping, protected)
+            # Disable "append missing images at end" — image positions are
+            # managed by image_mapping, not by unprotect_content fallback
+            result = self.unprotect_content(
+                response.content,
+                mapping,
+                protected,
+                restore_missing_images_at_end=False,
+            )
         result = self._stabilize_paged_markdown(content, result, context)
+        # Restore image positions (or fall back to original if placeholders were lost)
+        result = self._restore_images_or_fallback(
+            result, content, image_mapping, context or "cleaner", "clean_markdown"
+        )
 
         # Cache the result in both layers
         self._cache.set(cache_key, content, result)
@@ -382,6 +396,43 @@ class DocumentMixin:
             Text with original image references restored
         """
         return _shared_restore_image_positions(text, mapping)
+
+    @staticmethod
+    def _restore_images_or_fallback(
+        llm_output: str,
+        original_markdown: str,
+        image_mapping: dict[str, str],
+        source: str,
+        stage: str,
+    ) -> str:
+        """Restore image placeholders, falling back to original if any are missing.
+
+        If any __MARKITAI_IMG_*__ placeholder was dropped by the LLM,
+        structural correctness is prioritized: the entire original markdown
+        is returned instead of attempting partial restoration.
+
+        Args:
+            llm_output: LLM output containing image placeholders
+            original_markdown: Original markdown before image protection
+            image_mapping: Mapping of placeholder -> original image reference
+            source: Source identifier for logging
+            stage: Processing stage for logging
+
+        Returns:
+            Text with images restored to their original positions
+        """
+        if not image_mapping:
+            return llm_output
+
+        missing = [p for p in image_mapping if p not in llm_output]
+        if missing:
+            logger.warning(
+                f"[{source}] {stage} dropped {len(missing)}/{len(image_mapping)} "
+                f"image placeholders; using original content to preserve structure"
+            )
+            return original_markdown
+
+        return _shared_restore_image_positions(llm_output, image_mapping)
 
     @staticmethod
     def _split_paged_sections(text: str) -> list[tuple[str, str]]:
@@ -1596,9 +1647,12 @@ Generate the following fields:
             content=markdown,
         )
 
+        # Protect image positions before any LLM processing to prevent drift
+        image_protected, image_mapping = self._protect_image_positions(markdown)
+
         # Extract and protect content before LLM processing
-        protected = self.extract_protected_content(markdown)
-        protected_content, mapping = self.protect_content(markdown)
+        protected = self.extract_protected_content(image_protected)
+        protected_content, mapping = self.protect_content(image_protected)
 
         # Try combined approach with Instructor first
         try:
@@ -1615,11 +1669,20 @@ Generate the following fields:
                 cleaned = fallback
             else:
                 # Restore protected content from placeholders, with fallback
+                # Disable "append missing images at end" — image positions are
+                # managed by image_mapping, not by unprotect_content fallback
                 cleaned = self.unprotect_content(
-                    result.cleaned_markdown, mapping, protected
+                    result.cleaned_markdown,
+                    mapping,
+                    protected,
+                    restore_missing_images_at_end=False,
                 )
             cleaned = self.fix_malformed_image_refs(cleaned)
             cleaned = self._stabilize_paged_markdown(markdown, cleaned, source)
+            # Restore image positions (or fall back to original if placeholders were lost)
+            cleaned = self._restore_images_or_fallback(
+                cleaned, markdown, image_mapping, source, "document_process"
+            )
 
             # Convert Frontmatter to YAML string using utility function
             from markitai.utils.frontmatter import (
