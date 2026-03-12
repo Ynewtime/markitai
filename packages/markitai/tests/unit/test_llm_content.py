@@ -274,6 +274,29 @@ More content"""
 
         assert result == content
 
+    def test_residual_cleanup_preserves_img_placeholders(self) -> None:
+        """Residual placeholder cleanup must not strip __MARKITAI_IMG_*__ placeholders.
+
+        Image position placeholders are managed by _restore_images_or_fallback(),
+        which runs AFTER unprotect_content(). If the residual cleanup removes them
+        first, the fallback logic incorrectly concludes the LLM dropped them and
+        discards the entire LLM output.
+        """
+        content = (
+            "Paragraph one.\n\n"
+            "__MARKITAI_IMG_0__\n\n"
+            "Paragraph two.\n\n"
+            "__MARKITAI_CODEBLOCK_99__\n"  # residual — should be cleaned
+        )
+        mapping: dict[str, str] = {}
+
+        result = unprotect_content(content, mapping)
+
+        # IMG placeholders must survive for downstream restoration
+        assert "__MARKITAI_IMG_0__" in result
+        # Other residual placeholders should be cleaned
+        assert "__MARKITAI_CODEBLOCK_99__" not in result
+
     def test_roundtrip(self) -> None:
         """Test protect -> unprotect roundtrip."""
         original = """<!-- Page number: 1 -->
