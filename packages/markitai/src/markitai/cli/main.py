@@ -226,6 +226,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
     "Requires CF API token and account ID in config. Available on CF Free plan.",
 )
 @click.option(
+    "-v",
     "--verbose",
     is_flag=True,
     help="Enable verbose output.",
@@ -252,7 +253,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
 )
 @click.option(
     "--version",
-    "-v",
+    "-V",
     is_flag=True,
     callback=print_version,
     expose_value=False,
