@@ -1040,3 +1040,65 @@ class TestWorkflowResult:
         assert result.llm_cost == 0.05
         assert result.llm_usage["gpt-4"]["requests"] == 1
         assert result.image_analysis.source_file == "test.pdf"
+
+
+class TestProcessDocumentPure:
+    """Test process_document_pure method."""
+
+    async def test_pure_writes_llm_output_directly(self, tmp_path: Path):
+        """process_document_pure should write LLM response directly to .llm.md."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.single import SingleFileWorkflow
+
+        config = MarkitaiConfig()
+        mock_processor = MagicMock()
+        mock_processor.clean_document_pure = AsyncMock(
+            return_value="LLM cleaned output"
+        )
+        mock_processor.get_context_cost = MagicMock(return_value=0.001)
+        mock_processor.get_context_usage = MagicMock(
+            return_value={"model": {"requests": 1}}
+        )
+
+        workflow = SingleFileWorkflow(config, processor=mock_processor)
+
+        output_file = tmp_path / "test.md"
+        output_file.write_text("# original", encoding="utf-8")
+
+        markdown, cost, usage = await workflow.process_document_pure(
+            "# original markdown", "test.txt", output_file
+        )
+
+        # Verify .llm.md written with raw LLM output (no frontmatter wrapping)
+        llm_file = tmp_path / "test.llm.md"
+        assert llm_file.exists()
+        content = llm_file.read_text(encoding="utf-8")
+        assert content == "LLM cleaned output"
+
+        # Verify return values
+        assert markdown == "# original markdown"  # Original returned unchanged
+        assert cost == 0.001
+        assert usage == {"model": {"requests": 1}}
+
+    async def test_pure_does_not_call_format_llm_output(self, tmp_path: Path):
+        """process_document_pure should NOT call format_llm_output."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.single import SingleFileWorkflow
+
+        config = MarkitaiConfig()
+        mock_processor = MagicMock()
+        mock_processor.clean_document_pure = AsyncMock(return_value="output")
+        mock_processor.get_context_cost = MagicMock(return_value=0.0)
+        mock_processor.get_context_usage = MagicMock(return_value={})
+
+        workflow = SingleFileWorkflow(config, processor=mock_processor)
+
+        output_file = tmp_path / "test.md"
+        output_file.write_text("# x", encoding="utf-8")
+
+        await workflow.process_document_pure("# x", "test.txt", output_file)
+        mock_processor.format_llm_output.assert_not_called()
