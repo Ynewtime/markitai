@@ -246,6 +246,11 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Preview conversion without writing files.",
 )
 @click.option(
+    "--pure",
+    is_flag=True,
+    help="Pure mode: raw MD → LLM → output, no markitai processing (implies --llm).",
+)
+@click.option(
     "--interactive",
     "-I",
     is_flag=True,
@@ -291,6 +296,7 @@ def app(
     verbose: bool,
     quiet: bool,
     dry_run: bool,
+    pure: bool,
 ) -> None:
     """Markitai - Opinionated Markdown converter with native LLM enhancement support.
 
@@ -492,6 +498,15 @@ def app(
         cfg.llm.concurrency = llm_concurrency
     if max_depth is not None:
         cfg.batch.scan_max_depth = max_depth
+
+    if pure:
+        cfg.llm.pure = True
+        cfg.llm.enabled = True  # --pure implies --llm
+
+    # Env var support for pure mode
+    if not pure and os.environ.get("MARKITAI_PURE", "").strip() in ("1", "true", "yes"):
+        cfg.llm.pure = True
+        cfg.llm.enabled = True
 
     # Validate vision model configuration if image analysis is enabled
     _check_vision_model_config(cfg, console, verbose)

@@ -287,7 +287,13 @@
           "anyOf": [
             {
               "items": {
-                "enum": ["static", "defuddle", "playwright", "jina", "cloudflare"],
+                "enum": [
+                  "static",
+                  "defuddle",
+                  "playwright",
+                  "jina",
+                  "cloudflare"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -381,7 +387,13 @@
           "anyOf": [
             {
               "items": {
-                "enum": ["static", "defuddle", "playwright", "jina", "cloudflare"],
+                "enum": [
+                  "static",
+                  "defuddle",
+                  "playwright",
+                  "jina",
+                  "cloudflare"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -557,6 +569,12 @@
         "enabled": {
           "default": false,
           "title": "Enabled",
+          "type": "boolean"
+        },
+        "pure": {
+          "default": false,
+          "description": "Pure mode: raw MD sent directly to LLM, no markitai processing",
+          "title": "Pure",
           "type": "boolean"
         },
         "model_list": {
