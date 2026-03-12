@@ -2520,3 +2520,98 @@ class TestOnConflictSkipBeforeConversion:
         # Content should be from actual conversion, not old
         new_content = ctx.output_file.read_text()
         assert "old content" not in new_content
+
+
+class TestVisionEmbedSequentialExecution:
+    """Verify vision and embed tasks run sequentially, not in parallel."""
+
+    async def test_embed_sees_vision_modified_markdown(self, tmp_path: Path) -> None:
+        """analyze_embedded_images must read the markdown that
+        process_with_vision_llm wrote, not a stale snapshot."""
+        import asyncio
+
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.core import convert_document_core
+
+        config = MarkitaiConfig()
+        config.llm.enabled = True
+
+        input_file = tmp_path / "test.txt"
+        input_file.write_text("# Test Content\n\nSome text here.")
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=output_dir,
+            config=config,
+        )
+
+        call_order: list[str] = []
+        markdown_seen_by_embed: list[str] = []
+        vision_md = "# Vision Enhanced\n\nCleaned by LLM"
+
+        async def mock_vision(
+            c: ConversionContext,
+        ) -> ConversionStepResult:
+            call_order.append("vision_start")
+            await asyncio.sleep(0.01)
+            c.conversion_result.markdown = vision_md  # type: ignore[union-attr]
+            call_order.append("vision_end")
+            return ConversionStepResult(success=True)
+
+        async def mock_embed(
+            c: ConversionContext,
+        ) -> ConversionStepResult:
+            call_order.append("embed_start")
+            markdown_seen_by_embed.append(
+                c.conversion_result.markdown  # type: ignore[union-attr]
+            )
+            call_order.append("embed_end")
+            return ConversionStepResult(success=True)
+
+        mock_processor = MagicMock()
+
+        # We need to patch the early pipeline steps to pass through,
+        # then set up ctx as if steps 1-6 completed, with page_images
+        # triggering the parallel vision+embed path.
+        def fake_write_base(c: ConversionContext) -> ConversionStepResult:
+            """After base markdown is written, inject page_images metadata."""
+            if c.conversion_result is not None:
+                c.conversion_result.metadata["page_images"] = [
+                    {"page": 1, "name": "p1.png", "path": "/tmp/p1.png"}
+                ]
+            return ConversionStepResult(success=True)
+
+        with (
+            patch(
+                "markitai.workflow.core.process_with_vision_llm",
+                side_effect=mock_vision,
+            ),
+            patch(
+                "markitai.workflow.core.analyze_embedded_images",
+                side_effect=mock_embed,
+            ),
+            patch(
+                "markitai.workflow.helpers.create_llm_processor",
+                return_value=mock_processor,
+            ),
+            patch(
+                "markitai.workflow.core.write_base_markdown",
+                side_effect=fake_write_base,
+            ),
+            patch("markitai.workflow.core.stabilize_written_llm_output"),
+        ):
+            await convert_document_core(ctx, max_document_size=500 * 1024 * 1024)
+
+        # embed must start AFTER vision ends (sequential, not parallel)
+        assert "vision_end" in call_order, f"vision never completed: {call_order}"
+        assert "embed_start" in call_order, f"embed never started: {call_order}"
+        assert call_order.index("vision_end") < call_order.index("embed_start"), (
+            f"embed started before vision finished: {call_order}"
+        )
+
+        # embed should see the markdown that vision wrote
+        assert len(markdown_seen_by_embed) == 1
+        assert markdown_seen_by_embed[0] == vision_md

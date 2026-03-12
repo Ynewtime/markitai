@@ -903,17 +903,17 @@ class TestAnalyzeWithJsonMode:
     async def test_successful_json_mode(self, mock_processor: MockVisionProcessor):
         """Successful JSON mode returns ImageAnalysis."""
         messages = [
+            {"role": "system", "content": "Analyze"},
             {
-                "role": "system",
+                "role": "user",
                 "content": [
-                    {"type": "text", "text": "Analyze"},
+                    {"type": "text", "text": "Describe"},
                     {
                         "type": "image_url",
                         "image_url": {"url": "data:image/png;base64,x"},
                     },
                 ],
             },
-            {"role": "user", "content": "Describe"},
         ]
 
         mock_response = MagicMock()
@@ -950,17 +950,17 @@ class TestAnalyzeWithJsonMode:
     ):
         """Control characters in JSON are cleaned."""
         messages = [
+            {"role": "system", "content": "Analyze"},
             {
-                "role": "system",
+                "role": "user",
                 "content": [
-                    {"type": "text", "text": "Analyze"},
+                    {"type": "text", "text": "Describe"},
                     {
                         "type": "image_url",
                         "image_url": {"url": "data:image/png;base64,x"},
                     },
                 ],
             },
-            {"role": "user", "content": "Describe"},
         ]
 
         # JSON with control characters
@@ -983,20 +983,84 @@ class TestAnalyzeWithJsonMode:
         assert "caption" in result.caption.lower() or result.caption == "Testcaption"
 
     @pytest.mark.asyncio
+    async def test_correct_message_index_with_real_format(
+        self, mock_processor: MockVisionProcessor
+    ):
+        """_analyze_with_json_mode modifies messages[1] (user), not messages[0] (system).
+
+        The real message format from analyze_image() is:
+          messages[0] = {"role": "system", "content": "string"}
+          messages[1] = {"role": "user", "content": [text_part, image_part]}
+
+        The bug was indexing messages[0]["content"][0]["text"] which fails
+        on a plain string with TypeError.
+        """
+        messages = [
+            {"role": "system", "content": "Analyze image in English"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,abc123"},
+                    },
+                ],
+            },
+        ]
+
+        mock_response = MagicMock()
+        mock_response.choices = [
+            MagicMock(
+                message=MagicMock(
+                    content=json.dumps(
+                        {
+                            "caption": "Test caption",
+                            "description": "Test description",
+                        }
+                    )
+                )
+            )
+        ]
+        mock_response.model = "test/model"
+        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+        mock_response._hidden_params = {"total_cost_usd": 0.001}
+
+        mock_processor.vision_router.acompletion.return_value = mock_response
+
+        result = await mock_processor._analyze_with_json_mode(
+            messages, "default", context="test"
+        )
+
+        assert result.caption == "Test caption"
+        assert result.description == "Test description"
+
+        # Verify the actual messages sent to the LLM have JSON instruction
+        # appended to the USER message (index 1), not the system message
+        call_args = mock_processor.vision_router.acompletion.call_args
+        sent_messages = call_args.kwargs["messages"]
+        # System message should remain a plain string
+        assert isinstance(sent_messages[0]["content"], str)
+        # User message text should have the JSON instruction appended
+        user_text = sent_messages[1]["content"][0]["text"]
+        assert "Return a JSON object" in user_text
+        assert "Describe this image" in user_text
+
+    @pytest.mark.asyncio
     async def test_invalid_json_raises(self, mock_processor: MockVisionProcessor):
         """Invalid JSON raises JSONDecodeError."""
         messages = [
+            {"role": "system", "content": "Analyze"},
             {
-                "role": "system",
+                "role": "user",
                 "content": [
-                    {"type": "text", "text": "Analyze"},
+                    {"type": "text", "text": "Describe"},
                     {
                         "type": "image_url",
                         "image_url": {"url": "data:image/png;base64,x"},
                     },
                 ],
             },
-            {"role": "user", "content": "Describe"},
         ]
 
         mock_response = MagicMock()
