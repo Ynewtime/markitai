@@ -378,6 +378,23 @@ class TestConvertBasic:
         assert call_args[1]["page_chunks"] is True
         assert call_args[1]["force_text"] is True
 
+    @patch("markitai.converter.pdf.pymupdf4llm")
+    def test_convert_disables_pymupdf4llm_ocr_when_markitai_ocr_disabled(
+        self, mock_pymupdf4llm: Mock, tmp_path: Path
+    ) -> None:
+        """Non-OCR mode must pass use_ocr=False to suppress Tesseract probing."""
+        mock_pymupdf4llm.to_markdown.return_value = [{"text": "Content"}]
+
+        pdf_file = tmp_path / "test.pdf"
+        pdf_file.touch()
+
+        config = MarkitaiConfig(ocr=OCRConfig(enabled=False))
+        converter = PdfConverter(config)
+        converter.convert(pdf_file, tmp_path)
+
+        call_args = mock_pymupdf4llm.to_markdown.call_args
+        assert call_args[1]["use_ocr"] is False
+
 
 class TestConvertWithOCR:
     """Tests for OCR conversion mode."""
@@ -573,6 +590,27 @@ class TestRenderPagesForLLM:
         assert "Extracted markdown text" in result.markdown
         # Verify screenshots were taken when screenshot is enabled
         assert "page_images" in result.metadata
+
+    def test_render_pages_for_llm_disables_pymupdf4llm_builtin_ocr(
+        self, tmp_path: Path
+    ) -> None:
+        """OCR+LLM text extraction must also pass use_ocr=False to pymupdf4llm."""
+        pdf_file = tmp_path / "test.pdf"
+        pdf_file.touch()
+
+        config = MarkitaiConfig(
+            ocr=OCRConfig(enabled=True),
+            llm=LLMConfig(enabled=True),
+        )
+        converter = PdfConverter(config)
+
+        with patch("markitai.converter.pdf.pymupdf4llm") as mock_pymupdf4llm:
+            mock_pymupdf4llm.to_markdown.return_value = "Extracted text"
+            with patch.object(converter, "_render_pages_parallel", return_value=[]):
+                converter._render_pages_for_llm(pdf_file, tmp_path)
+
+        call_args = mock_pymupdf4llm.to_markdown.call_args
+        assert call_args[1]["use_ocr"] is False
 
 
 class TestImageCompression:
