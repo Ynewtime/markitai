@@ -226,10 +226,14 @@ class TestSingleFileWorkflowProcessDocument:
         assert "title: Test EPUB Document" in llm_output.read_text(encoding="utf-8")
 
     @pytest.mark.asyncio
-    async def test_process_document_applies_final_paged_stabilization(
+    async def test_process_document_does_not_stabilize_internally(
         self, mock_config, tmp_path: Path
     ) -> None:
-        """The final writer should stabilize paged markdown before formatting."""
+        """process_document_with_llm should write LLM output as-is, without internal stabilization.
+
+        Stabilization is now done externally via stabilize_written_llm_output
+        in process_with_standard_llm, not inside process_document_with_llm.
+        """
         processor = MagicMock()
         original = """<!-- Page number: 1 -->
 
@@ -241,12 +245,12 @@ Alpha.
 
 Tail.
 """
+        drifted = (
+            "<!-- Page number: 1 -->\n\n# Page 1\n\nAlpha.\n\n"
+            "<!-- Page number: 2 -->\n\nBorrowed paragraph.\n\nTail."
+        )
         processor.process_document = AsyncMock(
-            return_value=(
-                "<!-- Page number: 1 -->\n\n# Page 1\n\nAlpha.\n\n"
-                "<!-- Page number: 2 -->\n\nBorrowed paragraph.\n\nTail.",
-                "title: Test\nsource: doc.pdf",
-            )
+            return_value=(drifted, "title: Test\nsource: doc.pdf")
         )
         processor._stabilize_paged_markdown = MagicMock(return_value=original)
 
@@ -269,14 +273,13 @@ Tail.
             output_file=output_file,
         )
 
-        processor._stabilize_paged_markdown.assert_called_once_with(
-            original,
-            processor.process_document.return_value[0],
-            "doc.pdf",
-        )
+        # _stabilize_paged_markdown should NOT be called within process_document_with_llm
+        processor._stabilize_paged_markdown.assert_not_called()
+
+        # .llm.md contains the LLM output as-is (drifted content is not fixed here)
         llm_output = output_file.with_suffix(".llm.md")
         assert llm_output.exists()
-        assert "Borrowed paragraph." not in llm_output.read_text(encoding="utf-8")
+        assert "Borrowed paragraph." in llm_output.read_text(encoding="utf-8")
 
 
 class TestSingleFileWorkflowAnalyzeImages:
@@ -523,17 +526,21 @@ class TestSingleFileWorkflowEnhanceWithVision:
         assert image_paths[2].name == "page3.png"
 
     @pytest.mark.asyncio
-    async def test_enhance_with_vision_applies_final_paged_stabilization(
+    async def test_enhance_with_vision_does_not_stabilize_internally(
         self, mock_config, tmp_path: Path
     ) -> None:
-        """Vision workflow should stabilize paged markdown before returning it."""
+        """enhance_with_vision should return LLM output as-is, without internal stabilization.
+
+        Stabilization is now done externally via stabilize_written_llm_output
+        in convert_document_core, not inside enhance_with_vision.
+        """
         processor = MagicMock()
+        drifted = (
+            "<!-- Page number: 1 -->\n\n# Page 1\n\nAlpha.\n\n"
+            "<!-- Page number: 2 -->\n\nBorrowed paragraph.\n\nTail."
+        )
         processor.enhance_document_complete = AsyncMock(
-            return_value=(
-                "<!-- Page number: 1 -->\n\n# Page 1\n\nAlpha.\n\n"
-                "<!-- Page number: 2 -->\n\nBorrowed paragraph.\n\nTail.",
-                "title: Enhanced\nmarkitai_processed: 2026-01-01",
-            )
+            return_value=(drifted, "title: Enhanced\nmarkitai_processed: 2026-01-01")
         )
         original = """<!-- Page number: 1 -->
 
@@ -565,12 +572,11 @@ Tail.
             source="doc.pdf",
         )
 
-        processor._stabilize_paged_markdown.assert_called_once_with(
-            original,
-            processor.enhance_document_complete.return_value[0],
-            "doc.pdf",
-        )
-        assert markdown == original
+        # _stabilize_paged_markdown should NOT be called within enhance_with_vision
+        processor._stabilize_paged_markdown.assert_not_called()
+
+        # The returned markdown is the raw LLM output (drifted content not fixed here)
+        assert markdown == drifted
 
     @pytest.mark.asyncio
     async def test_enhance_with_vision_handles_error(
@@ -936,6 +942,71 @@ class TestSingleFileWorkflowAnalyzeImagesAltTextUpdate:
         # Asset description should also have non-empty alt
         assert result is not None
         assert result.assets[0]["alt"] == "Image"
+
+
+class TestEnhanceWithVisionNoDoubleStabilize:
+    """Verify enhance_with_vision does not call maybe_stabilize_markdown."""
+
+    async def test_no_redundant_stabilize_call(self, tmp_path: Path):
+        """enhance_with_vision should not call maybe_stabilize_markdown."""
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.single import SingleFileWorkflow
+
+        config = MarkitaiConfig()
+        mock_processor = MagicMock()
+        mock_processor.enhance_document_complete = AsyncMock(
+            return_value=("cleaned md", "---\ntitle: test\n---")
+        )
+        mock_processor.get_context_cost = MagicMock(return_value=0.001)
+        mock_processor.get_context_usage = MagicMock(return_value={})
+
+        workflow = SingleFileWorkflow(config, processor=mock_processor)
+
+        page_images = [{"path": str(tmp_path / "page1.png"), "page": 1}]
+        (tmp_path / "page1.png").write_bytes(b"fake")
+
+        with patch(
+            "markitai.workflow.helpers.maybe_stabilize_markdown"
+        ) as mock_stabilize:
+            result = await workflow.enhance_with_vision(
+                "original md", page_images, source="test.pptx"
+            )
+            mock_stabilize.assert_not_called()
+
+        assert result[0] == "cleaned md"
+
+
+class TestProcessDocumentNoDoubleStabilize:
+    """Verify process_document_with_llm does not call maybe_stabilize_markdown."""
+
+    async def test_no_redundant_stabilize_call(self, tmp_path: Path):
+        """process_document_with_llm should not call maybe_stabilize_markdown."""
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.single import SingleFileWorkflow
+
+        config = MarkitaiConfig()
+        mock_processor = MagicMock()
+        mock_processor.process_document = AsyncMock(
+            return_value=("cleaned md", "---\ntitle: test\n---")
+        )
+        mock_processor.format_llm_output = MagicMock(
+            return_value="---\ntitle: test\n---\n\ncleaned md"
+        )
+        mock_processor.get_context_cost = MagicMock(return_value=0.001)
+        mock_processor.get_context_usage = MagicMock(return_value={})
+
+        workflow = SingleFileWorkflow(config, processor=mock_processor)
+
+        output_file = tmp_path / "test.md"
+        output_file.write_text("# original", encoding="utf-8")
+
+        with patch(
+            "markitai.workflow.helpers.maybe_stabilize_markdown"
+        ) as mock_stabilize:
+            await workflow.process_document_with_llm(
+                "original md", "test.txt", output_file
+            )
+            mock_stabilize.assert_not_called()
 
 
 class TestWorkflowResult:

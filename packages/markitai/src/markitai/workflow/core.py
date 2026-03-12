@@ -59,6 +59,7 @@ class ConversionContext:
 
     # Processing flags
     use_multiprocess_images: bool = False
+    paged_stabilized: bool = False
 
     # Intermediate state (set during processing)
     converter: Any = None
@@ -510,6 +511,8 @@ def stabilize_written_llm_output(
     """Re-stabilize a written .llm.md file against its base .md sibling."""
     if ctx.output_file is None or ctx.conversion_result is None:
         return False
+    if ctx.paged_stabilized:
+        return False
 
     llm_output = ctx.output_file.with_suffix(".llm.md")
     if not llm_output.exists():
@@ -759,6 +762,7 @@ async def process_with_standard_llm(
             merge_llm_usage(ctx.llm_usage, doc_usage)
 
         stabilize_written_llm_output(ctx, processor)
+        ctx.paged_stabilized = True
 
         # Re-apply alt text after stabilization — stabilize may rewrite .llm.md
         # from the baseline .md (which has no alt text), overwriting earlier updates
@@ -937,6 +941,7 @@ async def convert_document_core(
                     f"Embedded image analysis failed: {format_error_message(e)}"
                 )
 
+            ctx.paged_stabilized = True
             stabilize_written_llm_output(ctx, ctx.shared_processor)
 
             # Apply alt text updates AFTER stabilization — stabilize may rewrite

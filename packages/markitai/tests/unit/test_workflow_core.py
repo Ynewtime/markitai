@@ -2615,3 +2615,49 @@ class TestVisionEmbedSequentialExecution:
         # embed should see the markdown that vision wrote
         assert len(markdown_seen_by_embed) == 1
         assert markdown_seen_by_embed[0] == vision_md
+
+
+# =============================================================================
+# TestPagedStabilizedFlag Tests
+# =============================================================================
+
+
+class TestPagedStabilizedFlag:
+    """Test that paged_stabilized flag skips stabilize_written_llm_output."""
+
+    def test_context_has_paged_stabilized_field(self):
+        """ConversionContext should have paged_stabilized field, default False."""
+        ctx = ConversionContext(
+            input_path=Path("test.pptx"),
+            output_dir=Path("/tmp/out"),
+            config=MarkitaiConfig(),
+        )
+        assert ctx.paged_stabilized is False
+
+    def test_stabilize_skipped_when_flag_set(self, tmp_path: Path):
+        """stabilize_written_llm_output should be skipped when paged_stabilized=True."""
+        from markitai.workflow.core import (
+            ConversionContext,
+            stabilize_written_llm_output,
+        )
+
+        output_file = tmp_path / "test.md"
+        output_file.write_text("# baseline", encoding="utf-8")
+        llm_file = tmp_path / "test.llm.md"
+        llm_file.write_text("---\ntitle: t\n---\n\n# changed", encoding="utf-8")
+
+        ctx = ConversionContext(
+            input_path=Path("test.pptx"),
+            output_dir=tmp_path,
+            config=MarkitaiConfig(),
+        )
+        ctx.output_file = output_file
+        ctx.conversion_result = ConvertResult(
+            markdown="# baseline", images=[], metadata={}
+        )
+        ctx.paged_stabilized = True
+
+        result = stabilize_written_llm_output(ctx, MagicMock())
+        assert result is False
+
+        assert llm_file.read_text(encoding="utf-8") == "---\ntitle: t\n---\n\n# changed"
