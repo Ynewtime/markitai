@@ -912,38 +912,30 @@ async def convert_document_core(
         has_page_images = len(page_images) > 0
 
         if has_page_images:
-            # Vision mode with screenshots - run vision LLM and embedded image
-            # analysis in parallel for better performance
-            vision_task = asyncio.create_task(process_with_vision_llm(ctx))
-            embed_task = asyncio.create_task(analyze_embedded_images(ctx))
-
-            results = await asyncio.gather(
-                vision_task, embed_task, return_exceptions=True
-            )
-            vision_result_raw, embed_result_raw = results
-
-            # Check vision result (critical)
-            if isinstance(vision_result_raw, BaseException):
+            # Vision mode with screenshots — run sequentially to avoid race
+            # condition. process_with_vision_llm writes ctx.conversion_result.markdown,
+            # and analyze_embedded_images reads it, so embed must run after vision.
+            try:
+                vision_result: ConversionStepResult = await process_with_vision_llm(ctx)
+            except Exception as e:
                 return ConversionStepResult(
                     success=False,
-                    error=f"Vision LLM failed: {format_error_message(vision_result_raw)}",
+                    error=f"Vision LLM failed: {format_error_message(e)}",
                 )
-            vision_result: ConversionStepResult = vision_result_raw
             if not vision_result.success:
                 return vision_result
 
-            # Check embed result (non-critical, log warning)
-            if isinstance(embed_result_raw, BaseException):
-                logger.warning(
-                    f"Embedded image analysis failed: "
-                    f"{format_error_message(embed_result_raw)}"
-                )
-            else:
-                embed_result: ConversionStepResult = embed_result_raw
+            # Embedded image analysis (non-critical, log warning on failure)
+            try:
+                embed_result: ConversionStepResult = await analyze_embedded_images(ctx)
                 if not embed_result.success:
                     logger.warning(
                         f"Embedded image analysis failed: {embed_result.error}"
                     )
+            except Exception as e:
+                logger.warning(
+                    f"Embedded image analysis failed: {format_error_message(e)}"
+                )
 
             stabilize_written_llm_output(ctx, ctx.shared_processor)
 

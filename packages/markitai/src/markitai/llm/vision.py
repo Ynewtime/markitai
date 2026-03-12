@@ -724,15 +724,15 @@ class VisionMixin:
         """Analyze using JSON mode with manual parsing."""
         # Add JSON instruction to the prompt
         json_messages = messages.copy()
-        json_messages[0] = {
-            **messages[0],
+        json_messages[1] = {
+            **messages[1],
             "content": [
                 {
                     "type": "text",
-                    "text": messages[0]["content"][0]["text"]
+                    "text": messages[1]["content"][0]["text"]
                     + "\n\nReturn a JSON object with 'caption' and 'description' fields.",
                 },
-                messages[0]["content"][1],  # image
+                messages[1]["content"][1],  # image
             ],
         }
 
