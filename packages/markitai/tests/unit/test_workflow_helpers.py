@@ -129,6 +129,36 @@ class TestAddBasicFrontmatter:
         assert "title: sample.xml" in result
 
 
+class TestAddBasicFrontmatterDedupeDefault:
+    """Tests for dedupe default behavior — off by default."""
+
+    def test_duplicate_paragraphs_preserved_by_default(self):
+        """Pre-LLM .md files should faithfully preserve original content.
+
+        Deduplication is off by default — .md files keep everything as extracted.
+        LLM cleanup handles duplicates in the .llm.md output.
+        """
+        paragraph = (
+            "This is a long enough paragraph that appears twice in the "
+            "original extracted content and should be preserved as-is."
+        )
+        content = f"# Title\n\n{paragraph}\n\n{paragraph}"
+        result = add_basic_frontmatter(content, "page.html")
+
+        assert result.count(paragraph) == 2
+
+    def test_dedupe_opt_in_works(self):
+        """Callers can explicitly opt-in to deduplication."""
+        paragraph = (
+            "This is a long enough paragraph that appears twice and should be "
+            "deduplicated when the caller explicitly requests it."
+        )
+        content = f"# Title\n\n{paragraph}\n\n{paragraph}"
+        result = add_basic_frontmatter(content, "page.html", dedupe=True)
+
+        assert result.count(paragraph) == 1
+
+
 class TestMergeLlmUsage:
     """Tests for merge_llm_usage function."""
 

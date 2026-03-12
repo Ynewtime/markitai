@@ -154,7 +154,7 @@ def add_basic_frontmatter(
     fetch_strategy: str | None = None,
     screenshot_path: Path | None = None,
     output_dir: Path | None = None,
-    dedupe: bool = True,
+    dedupe: bool = False,
     title: str | None = None,
     extra_meta: dict[str, Any] | None = None,
 ) -> str:
@@ -176,11 +176,11 @@ def add_basic_frontmatter(
     """
     from markitai.utils.text import dedupe_long_text_blocks, dedupe_paragraphs
 
-    # Apply deduplication for browser-fetched content
+    # Deduplication is off by default — .md files should faithfully preserve
+    # the original extracted content.  LLM cleanup handles duplicates in
+    # the .llm.md output.  Callers may opt-in for specific scenarios.
     if dedupe:
-        # First pass: paragraph-level deduplication (for standard markdown)
         content = dedupe_paragraphs(content)
-        # Second pass: long text block deduplication (for social media content)
         content = dedupe_long_text_blocks(content)
 
     from markitai.utils.markdown_quality import normalize_markdown
