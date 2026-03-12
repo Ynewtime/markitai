@@ -43,21 +43,6 @@ async def run_parallel_llm_tasks(
         raise
 
 
-from markitai.cli.processors.batch import process_batch
-from markitai.cli.processors.file import process_single_file
-from markitai.cli.processors.llm import (
-    analyze_images_with_llm,
-    enhance_document_with_vision,
-    format_standalone_image_markdown,
-    process_with_llm,
-)
-from markitai.cli.processors.url import process_url, process_url_batch
-from markitai.cli.processors.validators import (
-    check_playwright_for_urls,
-    check_vision_model_config,
-    warn_case_sensitivity_mismatches,
-)
-
 __all__ = [
     # File processing
     "process_single_file",
@@ -76,3 +61,38 @@ __all__ = [
     # Batch processing
     "process_batch",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy import heavy submodules to avoid pulling in pymupdf/pandas at CLI startup."""
+    if name == "process_batch":
+        from markitai.cli.processors.batch import process_batch
+
+        return process_batch
+    if name == "process_single_file":
+        from markitai.cli.processors.file import process_single_file
+
+        return process_single_file
+    if name in {
+        "analyze_images_with_llm",
+        "enhance_document_with_vision",
+        "format_standalone_image_markdown",
+        "process_with_llm",
+    }:
+        from markitai.cli.processors import llm as _llm
+
+        return getattr(_llm, name)
+    if name in {"process_url", "process_url_batch"}:
+        from markitai.cli.processors import url as _url
+
+        return getattr(_url, name)
+    if name in {
+        "check_playwright_for_urls",
+        "check_vision_model_config",
+        "warn_case_sensitivity_mismatches",
+    }:
+        from markitai.cli.processors import validators as _validators
+
+        return getattr(_validators, name)
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
