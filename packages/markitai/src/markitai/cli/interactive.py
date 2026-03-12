@@ -366,13 +366,14 @@ def _append_env_var(env_path: Path, var_name: str, value: str) -> None:
     if env_path.exists():
         lines = env_path.read_text(encoding="utf-8").splitlines()
         for i, line in enumerate(lines):
+            # Match both unquoted (VAR=val) and quoted (VAR="val") forms
             if line.startswith(f"{var_name}="):
-                lines[i] = f"{var_name}={value}"
+                lines[i] = f'{var_name}="{value}"'
                 found = True
                 break
 
     if not found:
-        lines.append(f"{var_name}={value}")
+        lines.append(f'{var_name}="{value}"')
 
     atomic_write_text(env_path, "\n".join(lines) + "\n")
 

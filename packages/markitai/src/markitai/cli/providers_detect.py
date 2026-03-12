@@ -12,6 +12,8 @@ import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from markitai.constants import DEFAULT_MODEL_WEIGHT
+
 if TYPE_CHECKING:
     from markitai.config import ModelConfig
 
@@ -87,7 +89,7 @@ def get_active_models_from_config(
     for entry in model_list:
         params = entry.get("litellm_params", {})
         model = params.get("model", "")
-        weight = params.get("weight", 1)  # default weight is 1 (enabled)
+        weight = params.get("weight", DEFAULT_MODEL_WEIGHT)
         if model and weight > 0:
             active.append(model)
     return active

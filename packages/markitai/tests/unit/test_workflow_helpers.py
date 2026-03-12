@@ -787,3 +787,18 @@ class TestExtractDocumentContext:
         """Returns empty string for empty input."""
         assert extract_document_context("") == ""
         assert extract_document_context("\n\n\n") == ""
+
+    def test_yaml_value_containing_triple_dashes(self):
+        """Frontmatter with YAML values containing --- should be stripped correctly."""
+        markdown = (
+            "---\n"
+            "title: Some --- value\n"
+            "source: file.pdf\n"
+            "---\n\n"
+            "Body text after frontmatter.\n"
+        )
+        result = extract_document_context(markdown)
+        assert "Body text" in result
+        # Frontmatter keys should not leak into context
+        assert "title:" not in result
+        assert "source:" not in result

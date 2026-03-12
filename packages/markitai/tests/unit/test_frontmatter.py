@@ -130,6 +130,44 @@ This is the first content line without heading."""
         )
 
 
+class TestStripFrontmatter:
+    """Tests for _strip_frontmatter and FRONTMATTER_PATTERN."""
+
+    def test_basic_strip(self) -> None:
+        """Should strip basic frontmatter."""
+        from markitai.utils.frontmatter import _strip_frontmatter
+
+        content = "---\ntitle: Test\n---\n\nBody text."
+        result = _strip_frontmatter(content)
+        assert "Body text." in result
+        assert "title: Test" not in result
+
+    def test_yaml_value_with_triple_dashes(self) -> None:
+        """Closing --- inside YAML value should not end frontmatter early."""
+        from markitai.utils.frontmatter import _strip_frontmatter
+
+        content = "---\ntitle: Some --- value\nsource: file.pdf\n---\n\nBody text.\n"
+        result = _strip_frontmatter(content)
+        assert "Body text." in result
+        assert "title:" not in result
+        assert "source:" not in result
+
+    def test_no_frontmatter(self) -> None:
+        """Content without frontmatter should be returned as-is."""
+        from markitai.utils.frontmatter import _strip_frontmatter
+
+        content = "Just some text."
+        result = _strip_frontmatter(content)
+        assert result == content
+
+    def test_frontmatter_pattern_is_shared_constant(self) -> None:
+        """FRONTMATTER_PATTERN should be a compiled regex constant."""
+        from markitai.utils.frontmatter import FRONTMATTER_PATTERN
+
+        assert hasattr(FRONTMATTER_PATTERN, "sub")
+        assert hasattr(FRONTMATTER_PATTERN, "match")
+
+
 class TestBuildFrontmatterDict:
     """Tests for build_frontmatter_dict function."""
 
