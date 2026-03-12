@@ -508,6 +508,17 @@ class TestBuildFrontmatterConsistency:
         assert result["source"] == "https://example.com"
         assert result["markitai_processed"] != "WRONG"
 
+    def test_extra_meta_filters_unreliable_language(self) -> None:
+        """Language from HTML meta tags is unreliable and must be excluded."""
+        extra = {"author": "John", "language": "en-us", "domain": "example.com"}
+        result = build_frontmatter_dict(
+            source="https://example.com",
+            description="A page",
+            extra_meta=extra,
+        )
+        assert "language" not in result
+        assert result["author"] == "John"
+
     def test_extra_meta_appears_after_canonical_fields(self) -> None:
         """Extra metadata fields should come after canonical fields in order."""
         extra = {"author": "John"}
