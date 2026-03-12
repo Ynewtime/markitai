@@ -346,6 +346,52 @@ class TestProcessWithLLM:
         assert "<!-- Screenshot for reference -->" in content
         assert ".markitai/screenshots/example.full.jpg" in content
 
+    async def test_process_with_llm_preserves_original_image_order(
+        self, tmp_path: Path, markitai_config: MarkitaiConfig
+    ):
+        """Images must stay at their original positions in the final .llm.md."""
+        from markitai.cli.processors.llm import process_with_llm
+
+        output_file = tmp_path / "output.md"
+        markdown = "![cover](.markitai/assets/test.jpeg)\n\n第一段。\n\n第二段。"
+
+        # Simulate process_document returning correctly-positioned image
+        processor = MagicMock()
+        processor.process_document = AsyncMock(
+            return_value=(
+                "![cover](.markitai/assets/test.jpeg)\n\n第一段。\n\n第二段。",
+                "title: Test\nsource: test.md",
+            )
+        )
+        processor.format_llm_output = MagicMock(
+            side_effect=lambda md, fm, **_kw: f"---\n{fm}\n---\n\n{md}"
+        )
+        processor.get_context_cost = MagicMock(return_value=0.05)
+        processor.get_context_usage = MagicMock(return_value={})
+
+        # Create the asset file so remove_nonexistent_images keeps it
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        (assets_dir / "test.jpeg").write_bytes(b"fake")
+
+        with patch(
+            "markitai.cli.processors.llm.ImageProcessor.remove_hallucinated_images",
+            side_effect=lambda cleaned, _orig: cleaned,
+        ):
+            await process_with_llm(
+                markdown=markdown,
+                source="test.md",
+                cfg=markitai_config,
+                output_file=output_file,
+                processor=processor,
+            )
+
+        content = output_file.with_suffix(".llm.md").read_text(encoding="utf-8")
+        # Split on frontmatter delimiter
+        body = content.split("\n---\n", 1)[1].strip()
+        # First line of body must be the image, not text
+        assert body.startswith("![cover](.markitai/assets/test.jpeg)")
+
 
 # =============================================================================
 # Tests for format_standalone_image_markdown
