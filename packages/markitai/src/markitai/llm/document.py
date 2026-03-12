@@ -1075,6 +1075,16 @@ class DocumentMixin:
                 }
             )
 
+        # Append tail reminder to reinforce placeholder rules for last pages
+        content_parts.append(
+            {
+                "type": "text",
+                "text": "\nREMINDER: Preserve ALL __MARKITAI_*__ placeholders exactly as-is. "
+                "Do not remove or modify any placeholder. "
+                "Output every page/slide — do not skip the last pages.",
+            }
+        )
+
         response = await self._call_llm(  # type: ignore[attr-defined]
             model="default",
             messages=[
@@ -1364,6 +1374,16 @@ Generate the following fields:
                     "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
                 }
             )
+
+        # Append tail reminder to reinforce placeholder rules for last pages
+        content_parts.append(
+            {
+                "type": "text",
+                "text": "\nREMINDER: Preserve ALL __MARKITAI_*__ placeholders exactly as-is. "
+                "Do not remove or modify any placeholder. "
+                "Output every page/slide — do not skip the last pages.",
+            }
+        )
 
         async with self.semaphore:
             # Calculate dynamic max_tokens using minimum across all vision router models

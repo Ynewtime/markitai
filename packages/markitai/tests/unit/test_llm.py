@@ -1100,3 +1100,67 @@ class TestLLMSupportedImageFormat:
         with patch("markitai.utils.mime.importlib.util.find_spec", return_value=None):
             mime_mod._HAS_CAIROSVG = None  # reset cache
             assert is_llm_supported_image(".svg") is False
+
+
+class TestVisionContentPartsReminder:
+    """Verify REMINDER text is appended as the last content part in vision methods."""
+
+    async def test_enhance_document_with_vision_appends_reminder(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig, tmp_path
+    ):
+        """enhance_document_with_vision should append a REMINDER as last text part."""
+        from pathlib import Path
+
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        # Create a fake image file
+        fake_image = tmp_path / "page1.png"
+        fake_image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+
+        # Capture the messages passed to _call_llm
+        captured: dict = {}
+
+        async def fake_call_llm(model, messages, context=""):
+            captured["messages"] = messages
+            mock_response = MagicMock()
+            mock_response.content = "cleaned content"
+            return mock_response
+
+        # Patch _get_cached_image to return fake base64 data
+        def fake_get_cached_image(image_path):
+            return (b"fake", "ZmFrZQ==")
+
+        # Patch _stabilize_paged_markdown to pass through
+        def fake_stabilize(extracted, result, context):
+            return result
+
+        # Patch persistent cache to avoid disk I/O
+        processor._persistent_cache = MagicMock()
+        processor._persistent_cache.get.return_value = None
+        processor._persistent_cache.set = MagicMock()
+
+        with (
+            patch.object(processor, "_call_llm", side_effect=fake_call_llm),
+            patch.object(
+                processor, "_get_cached_image", side_effect=fake_get_cached_image
+            ),
+            patch.object(
+                processor,
+                "_stabilize_paged_markdown",
+                side_effect=fake_stabilize,
+            ),
+        ):
+            await processor.enhance_document_with_vision(
+                extracted_text="# Hello\n\nSome content.",
+                page_images=[Path(fake_image)],
+                context="test-doc",
+            )
+
+        assert "messages" in captured
+        user_content = captured["messages"][1]["content"]
+        # Find the last text part
+        text_parts = [p for p in user_content if p.get("type") == "text"]
+        assert len(text_parts) >= 2, "Expected at least 2 text parts"
+        last_text = text_parts[-1]["text"]
+        assert "REMINDER" in last_text
+        assert "__MARKITAI_" in last_text
