@@ -1166,6 +1166,77 @@ Slide body
         assert result.cleaned_markdown == "# Cached Cleaned"
         assert processor._cache_hits == 1
 
+    @pytest.mark.asyncio
+    async def test_process_document_preserves_image_position_when_llm_moves_image(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_instructor_result_factory,
+    ) -> None:
+        """Image at start must stay at start even if LLM moves it to end."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+        original = (
+            "![cover](.markitai/assets/article.0001.jpeg)\n\n第一段。\n\n第二段。"
+        )
+        # LLM moved the image to the end
+        result, raw = mock_instructor_result_factory(
+            cleaned_markdown="第一段。\n\n第二段。\n\n![cover](.markitai/assets/article.0001.jpeg)"
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, _ = await processor.process_document(original, "article.md")
+
+        # Image must remain at the beginning, not drift to the end
+        assert cleaned.splitlines()[0].startswith("![cover]")
+
+    @pytest.mark.asyncio
+    async def test_process_document_does_not_append_missing_image_to_end(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_instructor_result_factory,
+    ) -> None:
+        """When LLM drops an image, it must be restored at its original position, not appended."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+        original = (
+            "![cover](.markitai/assets/article.0001.jpeg)\n\n第一段。\n\n第二段。"
+        )
+        # LLM completely dropped the image
+        result, raw = mock_instructor_result_factory(
+            cleaned_markdown="第一段。\n\n第二段。"
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, _ = await processor.process_document(original, "article.md")
+
+        # Image must be at start, not end
+        assert cleaned.splitlines()[0].startswith("![cover]")
+        assert cleaned.rstrip().endswith("第二段。")
+
 
 class TestEnhanceDocumentWithVisionAsync:
     """Async tests for enhance_document_with_vision method."""
