@@ -590,6 +590,18 @@ class TestBasicFrontmatterConsistency:
         assert parsed["author"] == "John Doe"
         assert parsed["published"] == "2024-01-15"
 
+    def test_extra_meta_filters_unreliable_language(self):
+        """Language from HTML meta tags is unreliable and must be excluded."""
+        import yaml
+
+        content = "# 测试\n\n中文内容"
+        extra = {"author": "张三", "language": "en-us", "domain": "example.com"}
+        result = add_basic_frontmatter(content, "https://example.com", extra_meta=extra)
+        fm_text = result.split("---")[1]
+        parsed = yaml.safe_load(fm_text)
+        assert "language" not in parsed
+        assert parsed["author"] == "张三"
+
     def test_extra_meta_does_not_override_core_fields(self):
         """Extra meta must not override title/source/markitai_processed."""
         import yaml

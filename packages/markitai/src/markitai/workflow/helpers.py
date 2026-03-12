@@ -227,17 +227,20 @@ def add_basic_frontmatter(
         frontmatter_dict["fetch_strategy"] = fetch_strategy
 
     # Merge extra metadata from external strategies (after canonical fields)
+    # "language" is excluded because HTML <html lang="..."> often doesn't
+    # match the actual content language.
     if extra_meta:
-        canonical_keys = {
+        excluded_keys = {
             "title",
             "source",
             "description",
             "tags",
             "markitai_processed",
             "fetch_strategy",
+            "language",
         }
         for key, value in extra_meta.items():
-            if key not in canonical_keys and value is not None:
+            if key not in excluded_keys and value is not None:
                 frontmatter_dict[key] = value
 
     frontmatter_yaml = normalize_frontmatter(frontmatter_dict)

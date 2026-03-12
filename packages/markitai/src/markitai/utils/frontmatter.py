@@ -357,14 +357,17 @@ def build_frontmatter_dict(
     # Generate timestamp (consistent format across .md and .llm.md)
     timestamp = frontmatter_timestamp()
 
-    # Canonical fields that extra_meta must not override
-    canonical_keys = {
+    # Fields that extra_meta must not override or that are unreliable from
+    # external sources (e.g. HTML <html lang="..."> often doesn't match
+    # the actual content language).
+    excluded_keys = {
         "title",
         "source",
         "description",
         "tags",
         "markitai_processed",
         "fetch_strategy",
+        "language",
     }
 
     # Build ordered dict to preserve field order
@@ -388,7 +391,7 @@ def build_frontmatter_dict(
     # Merge extra metadata from external strategies (after canonical fields)
     if extra_meta:
         for key, value in extra_meta.items():
-            if key not in canonical_keys and value is not None:
+            if key not in excluded_keys and value is not None:
                 result[key] = value
 
     return result
