@@ -6,9 +6,6 @@ configuration over command-line flags.
 
 from __future__ import annotations
 
-import asyncio
-import os
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +14,17 @@ import questionary
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.providers_detect import (
+    ProviderDetectionResult,
+    detect_all_providers,
+    detect_first_provider,
+    format_model_list,
+    get_active_models_from_config,
+)
+
+# Re-export for backward compatibility
+detect_all_llm_providers = detect_all_providers
+detect_llm_provider = detect_first_provider
 
 
 def _is_dev_mode() -> bool:
@@ -43,181 +51,6 @@ def _get_default_env_path() -> Path:
     if _is_dev_mode():
         return Path.cwd() / ".env"
     return Path.home() / ".markitai" / ".env"
-
-
-@dataclass
-class ProviderDetectionResult:
-    """Result of LLM provider auto-detection."""
-
-    provider: str
-    model: str
-    authenticated: bool
-    source: str  # "cli", "env", "config"
-
-
-def _check_claude_auth() -> bool:
-    """Check if Claude CLI is authenticated."""
-    from markitai.providers.auth import AuthManager
-
-    auth_manager = AuthManager()
-    try:
-        status = asyncio.run(auth_manager.check_auth("claude-agent"))
-        return status.authenticated
-    except Exception:
-        return False
-
-
-def _check_copilot_auth() -> bool:
-    """Check if Copilot CLI is authenticated."""
-    from markitai.providers.auth import AuthManager
-
-    auth_manager = AuthManager()
-    try:
-        status = asyncio.run(auth_manager.check_auth("copilot"))
-        return status.authenticated
-    except Exception:
-        return False
-
-
-def _check_chatgpt_auth() -> bool:
-    """Check if ChatGPT provider is authenticated."""
-    from markitai.providers.auth import _check_chatgpt_auth as check_fn
-
-    try:
-        status = check_fn()
-        return status.authenticated
-    except Exception:
-        return False
-
-
-def _check_gemini_cli_auth() -> bool:
-    """Check if Gemini CLI is authenticated."""
-    from markitai.providers.auth import _check_gemini_cli_auth as check_fn
-
-    try:
-        status = check_fn()
-        return status.authenticated
-    except Exception:
-        return False
-
-
-def get_active_models_from_config(
-    model_list: list[dict[str, Any]],
-) -> list[str]:
-    """Extract active model names (weight > 0) from config model_list.
-
-    Args:
-        model_list: Raw model_list dicts from config (each has litellm_params).
-
-    Returns:
-        List of model identifiers with positive weight.
-    """
-    active: list[str] = []
-    for entry in model_list:
-        params = entry.get("litellm_params", {})
-        model = params.get("model", "")
-        weight = params.get("weight", 1)  # default weight is 1 (enabled)
-        if model and weight > 0:
-            active.append(model)
-    return active
-
-
-def detect_all_llm_providers() -> list[ProviderDetectionResult]:
-    """Auto-detect all available LLM providers.
-
-    Checks each provider independently and returns all that are available,
-    ordered by priority:
-    1. Claude CLI (if installed and authenticated)
-    2. Copilot CLI (if installed and authenticated)
-    3. ChatGPT (if authenticated via OAuth)
-    4. Gemini CLI (if authenticated via OAuth)
-    5. ANTHROPIC_API_KEY environment variable
-    6. OPENAI_API_KEY environment variable
-    7. GEMINI_API_KEY environment variable
-    8. DEEPSEEK_API_KEY environment variable
-    9. OPENROUTER_API_KEY environment variable
-
-    Returns:
-        List of all detected providers (may be empty).
-    """
-    results: list[ProviderDetectionResult] = []
-
-    # 1. Check Claude CLI
-    if shutil.which("claude"):
-        if _check_claude_auth():
-            results.append(
-                ProviderDetectionResult(
-                    provider="claude-agent",
-                    model="claude-agent/sonnet",
-                    authenticated=True,
-                    source="cli",
-                )
-            )
-
-    # 2. Check Copilot CLI
-    if shutil.which("copilot"):
-        if _check_copilot_auth():
-            results.append(
-                ProviderDetectionResult(
-                    provider="copilot",
-                    model="copilot/claude-sonnet-4.5",
-                    authenticated=True,
-                    source="cli",
-                )
-            )
-
-    # 3. Check ChatGPT (OAuth)
-    if _check_chatgpt_auth():
-        results.append(
-            ProviderDetectionResult(
-                provider="chatgpt",
-                model="chatgpt/gpt-5.2",
-                authenticated=True,
-                source="cli",
-            )
-        )
-
-    # 4. Check Gemini CLI (OAuth)
-    if _check_gemini_cli_auth():
-        results.append(
-            ProviderDetectionResult(
-                provider="gemini-cli",
-                model="gemini-cli/gemini-2.5-pro",
-                authenticated=True,
-                source="cli",
-            )
-        )
-
-    # 5-9. Check environment variables
-    env_providers = [
-        ("ANTHROPIC_API_KEY", "anthropic", "anthropic/claude-sonnet-4-5-20250929"),
-        ("OPENAI_API_KEY", "openai", "openai/gpt-5.2"),
-        ("GEMINI_API_KEY", "gemini", "gemini/gemini-2.5-flash"),
-        ("DEEPSEEK_API_KEY", "deepseek", "deepseek/deepseek-chat"),
-        ("OPENROUTER_API_KEY", "openrouter", "openrouter/google/gemini-2.5-flash"),
-    ]
-    for env_var, provider, model in env_providers:
-        if os.environ.get(env_var):
-            results.append(
-                ProviderDetectionResult(
-                    provider=provider,
-                    model=model,
-                    authenticated=True,
-                    source="env",
-                )
-            )
-
-    return results
-
-
-def detect_llm_provider() -> ProviderDetectionResult | None:
-    """Auto-detect the highest-priority available LLM provider.
-
-    Returns:
-        ProviderDetectionResult for the best provider, or None.
-    """
-    providers = detect_all_llm_providers()
-    return providers[0] if providers else None
 
 
 @dataclass
@@ -310,18 +143,6 @@ def prompt_output_dir(session: InteractiveSession) -> Path:
     return session.output_dir
 
 
-def _format_model_list(models: list[str], max_show: int = 3) -> str:
-    """Format a list of model names for display.
-
-    Shows up to *max_show* names, with a "+N more" suffix if there are extras.
-    """
-    shown = ", ".join(models[:max_show])
-    extra = len(models) - max_show
-    if extra > 0:
-        shown += f" (+{extra} more)"
-    return shown
-
-
 def prompt_enable_llm(session: InteractiveSession) -> bool:
     """Prompt user to enable LLM enhancement."""
     console = get_console()
@@ -339,21 +160,19 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
             session.active_models = active
             has_provider = True
             console.print(
-                f"[green]\u2713[/green] Configured: {_format_model_list(active)}"
+                f"[green]\u2713[/green] Configured: {format_model_list(active)}"
             )
     except Exception:
         pass
 
     # 2. Fallback: auto-detect providers if no config models
     if not has_provider:
-        all_providers = detect_all_llm_providers()
+        all_providers = detect_all_providers()
         session.provider_result = all_providers[0] if all_providers else None
         if all_providers:
             has_provider = True
             names = [p.provider for p in all_providers]
-            console.print(
-                f"[green]\u2713[/green] Detected: {_format_model_list(names)}"
-            )
+            console.print(f"[green]\u2713[/green] Detected: {format_model_list(names)}")
         else:
             console.print(
                 "[yellow]![/yellow] No LLM provider detected "
@@ -434,7 +253,7 @@ def prompt_configure_provider(session: InteractiveSession) -> bool:
         return _prompt_env_file(session)
 
     # result == "auto": run auto-detection
-    detected = detect_llm_provider()
+    detected = detect_first_provider()
     if detected:
         session.provider_result = detected
         get_console().print(
@@ -562,7 +381,7 @@ def _prompt_env_file(session: InteractiveSession) -> bool:
     load_dotenv(env_path)
 
     # Re-detect provider
-    session.provider_result = detect_llm_provider()
+    session.provider_result = detect_first_provider()
 
     if session.provider_result:
         get_console().print(
@@ -655,7 +474,7 @@ def _print_summary(session: InteractiveSession) -> None:
 
     if session.enable_llm:
         if session.active_models:
-            console.print(f"  Models: {_format_model_list(session.active_models)}")
+            console.print(f"  Models: {format_model_list(session.active_models)}")
         elif session.provider_result:
             console.print(f"  Provider: {session.provider_result.provider}")
         console.print(f"  Alt text: {'yes' if session.enable_alt else 'no'}")

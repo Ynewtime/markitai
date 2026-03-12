@@ -7,26 +7,35 @@ from unittest.mock import MagicMock, patch
 
 from markitai.cli.interactive import (
     InteractiveSession,
+    ProviderDetectionResult,
     detect_all_llm_providers,
     detect_llm_provider,
-    get_active_models_from_config,
 )
 
 
 class TestProviderDetection:
-    """Tests for LLM provider auto-detection."""
+    """Tests for LLM provider auto-detection (via interactive re-exports)."""
 
     def test_detect_claude_cli_authenticated(self) -> None:
         """Should detect authenticated Claude CLI."""
         with (
             patch(
-                "markitai.cli.interactive.shutil.which",
+                "markitai.cli.providers_detect.shutil.which",
                 side_effect=lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
             ),
             patch(
-                "markitai.cli.interactive._check_claude_auth",
+                "markitai.cli.providers_detect._check_claude_auth",
                 return_value=True,
             ),
+            patch(
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_gemini_cli_auth",
+                return_value=False,
+            ),
+            patch.dict("os.environ", {}, clear=True),
         ):
             result = detect_llm_provider()
             assert result is not None
@@ -38,13 +47,22 @@ class TestProviderDetection:
         """Should detect authenticated Copilot CLI when Claude not available."""
         with (
             patch(
-                "markitai.cli.interactive.shutil.which",
+                "markitai.cli.providers_detect.shutil.which",
                 side_effect=lambda x: "/usr/bin/copilot" if x == "copilot" else None,
             ),
             patch(
-                "markitai.cli.interactive._check_copilot_auth",
+                "markitai.cli.providers_detect._check_copilot_auth",
                 return_value=True,
             ),
+            patch(
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_gemini_cli_auth",
+                return_value=False,
+            ),
+            patch.dict("os.environ", {}, clear=True),
         ):
             result = detect_llm_provider()
             assert result is not None
@@ -54,10 +72,14 @@ class TestProviderDetection:
     def test_detect_anthropic_api_key(self) -> None:
         """Should detect ANTHROPIC_API_KEY environment variable."""
         with (
-            patch("markitai.cli.interactive.shutil.which", return_value=None),
-            patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
+            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
             patch(
-                "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_gemini_cli_auth",
+                return_value=False,
             ),
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True),
         ):
@@ -69,10 +91,14 @@ class TestProviderDetection:
     def test_detect_openai_api_key(self) -> None:
         """Should detect OPENAI_API_KEY when no other provider available."""
         with (
-            patch("markitai.cli.interactive.shutil.which", return_value=None),
-            patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
+            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
             patch(
-                "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_gemini_cli_auth",
+                return_value=False,
             ),
             patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=True),
         ):
@@ -84,10 +110,14 @@ class TestProviderDetection:
     def test_detect_gemini_api_key(self) -> None:
         """Should detect GEMINI_API_KEY when no other provider available."""
         with (
-            patch("markitai.cli.interactive.shutil.which", return_value=None),
-            patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
+            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
             patch(
-                "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_gemini_cli_auth",
+                return_value=False,
             ),
             patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=True),
         ):
@@ -99,10 +129,14 @@ class TestProviderDetection:
     def test_detect_deepseek_api_key(self) -> None:
         """Should detect DEEPSEEK_API_KEY when no higher-priority provider available."""
         with (
-            patch("markitai.cli.interactive.shutil.which", return_value=None),
-            patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
+            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
             patch(
-                "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_gemini_cli_auth",
+                return_value=False,
             ),
             patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-test"}, clear=True),
         ):
@@ -114,10 +148,14 @@ class TestProviderDetection:
     def test_detect_openrouter_api_key(self) -> None:
         """Should detect OPENROUTER_API_KEY when no higher-priority provider available."""
         with (
-            patch("markitai.cli.interactive.shutil.which", return_value=None),
-            patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
+            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
             patch(
-                "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_gemini_cli_auth",
+                return_value=False,
             ),
             patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-test"}, clear=True),
         ):
@@ -129,10 +167,14 @@ class TestProviderDetection:
     def test_detect_no_provider(self) -> None:
         """Should return None when no provider detected."""
         with (
-            patch("markitai.cli.interactive.shutil.which", return_value=None),
-            patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
+            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
             patch(
-                "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_gemini_cli_auth",
+                return_value=False,
             ),
             patch.dict("os.environ", {}, clear=True),
         ):
@@ -143,16 +185,20 @@ class TestProviderDetection:
         """Should return all available providers, not just the first."""
         with (
             patch(
-                "markitai.cli.interactive.shutil.which",
+                "markitai.cli.providers_detect.shutil.which",
                 side_effect=lambda x: "/usr/bin/claude" if x == "claude" else None,
             ),
             patch(
-                "markitai.cli.interactive._check_claude_auth",
+                "markitai.cli.providers_detect._check_claude_auth",
                 return_value=True,
             ),
-            patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
             patch(
-                "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_gemini_cli_auth",
+                return_value=False,
             ),
             patch.dict(
                 "os.environ",
@@ -168,10 +214,14 @@ class TestProviderDetection:
     def test_detect_chatgpt_provider(self) -> None:
         """Should detect ChatGPT when authenticated."""
         with (
-            patch("markitai.cli.interactive.shutil.which", return_value=None),
-            patch("markitai.cli.interactive._check_chatgpt_auth", return_value=True),
+            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
             patch(
-                "markitai.cli.interactive._check_gemini_cli_auth", return_value=False
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=True,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_gemini_cli_auth",
+                return_value=False,
             ),
             patch.dict("os.environ", {}, clear=True),
         ):
@@ -183,9 +233,15 @@ class TestProviderDetection:
     def test_detect_gemini_cli_provider(self) -> None:
         """Should detect Gemini CLI when authenticated."""
         with (
-            patch("markitai.cli.interactive.shutil.which", return_value=None),
-            patch("markitai.cli.interactive._check_chatgpt_auth", return_value=False),
-            patch("markitai.cli.interactive._check_gemini_cli_auth", return_value=True),
+            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
+            patch(
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_gemini_cli_auth",
+                return_value=True,
+            ),
             patch.dict("os.environ", {}, clear=True),
         ):
             result = detect_llm_provider()
@@ -252,13 +308,10 @@ class TestConfigureProviderAutoDetect:
 
     @patch("questionary.select")
     def test_auto_detect_with_provider_found(self, mock_select: MagicMock) -> None:
-        """Auto-detect should call detect_llm_provider and enable LLM when found."""
+        """Auto-detect should call detect_first_provider and enable LLM when found."""
         mock_select.return_value.ask.return_value = "auto"
 
-        from markitai.cli.interactive import (
-            ProviderDetectionResult,
-            prompt_configure_provider,
-        )
+        from markitai.cli.interactive import prompt_configure_provider
 
         session = InteractiveSession()
         # Ensure no provider detected initially so we enter configure flow
@@ -272,7 +325,7 @@ class TestConfigureProviderAutoDetect:
         )
 
         with patch(
-            "markitai.cli.interactive.detect_llm_provider",
+            "markitai.cli.interactive.detect_first_provider",
             return_value=detected,
         ):
             result = prompt_configure_provider(session)
@@ -297,7 +350,7 @@ class TestConfigureProviderAutoDetect:
         session.enable_llm = True  # user wanted LLM
 
         with patch(
-            "markitai.cli.interactive.detect_llm_provider",
+            "markitai.cli.interactive.detect_first_provider",
             return_value=None,
         ):
             result = prompt_configure_provider(session)
@@ -338,65 +391,6 @@ class TestAtomicEnvWrite:
         content = env_path.read_text(encoding="utf-8")
         assert "TEST_KEY=new_value" in content
         assert "TEST_KEY=original" not in content
-
-
-class TestGetActiveModelsFromConfig:
-    """Tests for get_active_models_from_config function."""
-
-    def test_returns_models_with_positive_weight(self) -> None:
-        """Should return only models with weight > 0."""
-        model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {
-                    "model": "gemini/gemini-3.1-flash-lite-preview",
-                    "weight": 10,
-                },
-            },
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "claude-agent/sonnet", "weight": 0},
-            },
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "copilot/claude-haiku-4.5", "weight": 5},
-            },
-        ]
-        result = get_active_models_from_config(model_list)
-        assert result == [
-            "gemini/gemini-3.1-flash-lite-preview",
-            "copilot/claude-haiku-4.5",
-        ]
-
-    def test_returns_empty_when_all_weight_zero(self) -> None:
-        """Should return empty list when all models are disabled."""
-        model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "claude-agent/sonnet", "weight": 0},
-            },
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "copilot/gpt-4", "weight": 0},
-            },
-        ]
-        result = get_active_models_from_config(model_list)
-        assert result == []
-
-    def test_returns_empty_for_empty_list(self) -> None:
-        """Should return empty list for empty model_list."""
-        assert get_active_models_from_config([]) == []
-
-    def test_handles_missing_weight(self) -> None:
-        """Models without explicit weight should be included (default weight > 0)."""
-        model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "anthropic/claude-sonnet"},
-            },
-        ]
-        result = get_active_models_from_config(model_list)
-        assert result == ["anthropic/claude-sonnet"]
 
 
 class TestRunInteractive:
