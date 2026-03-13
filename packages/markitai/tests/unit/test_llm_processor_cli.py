@@ -1379,3 +1379,54 @@ class TestReturnTypes:
         assert isinstance(result[1], str)  # frontmatter
         assert isinstance(result[2], float)  # cost
         assert isinstance(result[3], dict)  # usage
+
+
+class TestProcessWithLLMPureMode:
+    """Tests for process_with_llm in --pure mode."""
+
+    async def test_pure_mode_uses_clean_document_pure(
+        self, tmp_path: Path, markitai_config: MarkitaiConfig
+    ):
+        """In --pure mode, process_with_llm should use clean_document_pure
+        instead of process_document, so no LLM-generated frontmatter."""
+        from markitai.cli.processors.llm import process_with_llm
+
+        markitai_config.llm.pure = True
+
+        output_file = tmp_path / "output.md"
+        markdown = "# Test\n\nContent here."
+
+        processor = MagicMock()
+        processor.clean_document_pure = AsyncMock(
+            return_value="# Test\n\nCleaned content."
+        )
+        processor.process_document = AsyncMock(
+            side_effect=AssertionError(
+                "process_document should not be called in pure mode"
+            )
+        )
+        processor.get_context_cost = MagicMock(return_value=0.01)
+        processor.get_context_usage = MagicMock(return_value={})
+
+        with patch(
+            "markitai.cli.processors.llm.create_llm_processor",
+            return_value=processor,
+        ):
+            result_md, cost, usage = await process_with_llm(
+                markdown=markdown,
+                source="test.md",
+                cfg=markitai_config,
+                output_file=output_file,
+                processor=processor,
+            )
+
+        # Should have called clean_document_pure, not process_document
+        processor.clean_document_pure.assert_called_once()
+        processor.process_document.assert_not_called()
+
+        # Output .llm.md should NOT contain LLM-generated frontmatter fields
+        llm_output = output_file.with_suffix(".llm.md")
+        assert llm_output.exists()
+        content = llm_output.read_text()
+        assert "description:" not in content
+        assert "tags:" not in content
