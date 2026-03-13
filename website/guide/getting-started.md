@@ -181,14 +181,21 @@ markitai doctor --fix
 
 ```
 output/
-├── document.docx.md        # Basic Markdown output
+├── document.docx.md        # Basic Markdown (skipped in --llm mode unless --keep-base)
 ├── document.docx.llm.md    # LLM-enhanced version (when --llm is used)
-├── assets/
-│   ├── document.docx.0001.jpg
-│   └── images.json         # Image descriptions
-├── screenshots/             # Page screenshots (when --screenshot is used)
-│   └── document.docx.0001.png
+├── .markitai/               # Metadata namespace
+│   ├── assets/
+│   │   ├── document.docx.0001.jpg
+│   │   └── images.json     # Image descriptions
+│   ├── screenshots/         # Page screenshots (when --screenshot is used)
+│   │   └── document.docx.0001.png
+│   ├── reports/             # Conversion reports (JSON)
+│   └── states/              # Batch state files (for --resume)
 ```
+
+::: tip
+In `--llm` mode, only `.llm.md` is written by default. Use `--keep-base` to also write the base `.md` file.
+:::
 
 ## Supported Formats
 

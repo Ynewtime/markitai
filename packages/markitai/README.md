@@ -97,8 +97,8 @@ markitai urls.urls -o ./output
 
 ```
 output/
-├── document.docx.md            # Basic Markdown
-├── document.docx.llm.md        # LLM-enhanced version
+├── document.docx.md            # Basic Markdown (skipped in --llm mode unless --keep-base)
+├── document.docx.llm.md        # LLM-enhanced version (when --llm is used)
 ├── .markitai/                   # Metadata namespace (isolated from user content)
 │   ├── assets/
 │   │   ├── document.docx.0001.jpg
@@ -108,6 +108,8 @@ output/
 │   ├── reports/                # Conversion reports (JSON)
 │   └── states/                 # Batch state files (for --resume)
 ```
+
+> In `--llm` mode, only `.llm.md` is written by default. Use `--keep-base` to also write the base `.md`.
 
 ## Configuration
 

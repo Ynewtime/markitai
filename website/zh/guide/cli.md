@@ -15,7 +15,7 @@ markitai <input> [options]
 
 ### `--llm`
 
-启用 LLM 驱动的格式清洗和优化。
+启用 LLM 驱动的格式清洗和优化。默认只写入 `.llm.md`（跳过基础 `.md`）。使用 `--keep-base` 可以同时写入两个文件。
 
 ```bash
 markitai document.docx --llm
@@ -97,6 +97,41 @@ markitai https://example.com --llm --screenshot-only
 
 ```bash
 markitai scanned.pdf --ocr
+```
+
+### `--pure`
+
+透明直通模式：LLM 仅做文本清理，不生成 frontmatter 或后处理。
+
+```bash
+# 不带 --llm：输出原始 markdown，不含 frontmatter
+markitai document.docx --pure
+
+# 带 --llm：通过 LLM 仅做文本清理
+markitai document.docx --llm --pure
+
+# 带 --preset：preset 控制功能，--pure 控制输出格式
+markitai document.pdf --preset rich --pure
+```
+
+::: tip
+`--pure` 和 `--llm` 是独立的标志。`--pure` 单独使用时跳过 frontmatter 生成；`--pure --llm` 将内容发送给 LLM 做文本清理，但返回原始输出，不包含生成的元数据（description、tags 等）。
+:::
+
+::: warning
+`--pure` 会静默覆盖 `--alt`、`--desc` 和 `--screenshot`。同时使用这些标志时会显示警告。
+:::
+
+### `--keep-base`
+
+在 LLM 模式下仍写入基础 `.md` 文件。默认情况下 `--llm` 只输出 `.llm.md` 以避免冗余文件。
+
+```bash
+# 默认：只写入 .llm.md
+markitai document.docx --llm
+
+# 同时保留 .md 和 .llm.md
+markitai document.docx --llm --keep-base
 ```
 
 ### `--no-compress`
