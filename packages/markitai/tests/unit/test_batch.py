@@ -329,10 +329,57 @@ class TestPrintSummaryWithSkips:
         assert "1/3" in captured.out
         assert "2 skipped" in captured.out
 
-    def test_skip_warnings_grouped_by_reason_with_filenames(
+    def test_skip_warnings_show_two_example_filenames(
         self, tmp_path: Path, capsys
     ) -> None:
-        """Few skipped files should be grouped into one line with filenames."""
+        """Skip warnings should list up to 2 example filenames."""
+        config = BatchConfig()
+        processor = BatchProcessor(config, tmp_path)
+        processor.state = BatchState(
+            started_at="2026-01-15T10:00:00Z",
+            input_dir=str(tmp_path),
+            output_dir=str(tmp_path),
+        )
+        processor.state.files = {
+            "/path/a.bmp": FileState(
+                path="/path/a.bmp",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+            "/path/b.gif": FileState(
+                path="/path/b.gif",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+            "/path/c.jpg": FileState(
+                path="/path/c.jpg",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+            "/path/d.svg": FileState(
+                path="/path/d.svg",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+            "/path/e.tiff": FileState(
+                path="/path/e.tiff",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+        }
+
+        processor.print_summary()
+
+        captured = capsys.readouterr()
+        # Should be ONE grouped line with 2 example names + "..."
+        assert "5 files skipped (image_only)" in captured.out
+        # Only 2 example filenames shown, plus "..."
+        assert "..." in captured.out
+
+    def test_skip_warnings_show_hint_for_image_only(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """image_only skip warnings should suggest --llm or --ocr."""
         config = BatchConfig()
         processor = BatchProcessor(config, tmp_path)
         processor.state = BatchState(
@@ -346,25 +393,18 @@ class TestPrintSummaryWithSkips:
                 status=FileStatus.COMPLETED,
                 skip_reason="image_only",
             ),
-            "/path/b.jpg": FileState(
-                path="/path/b.jpg",
-                status=FileStatus.COMPLETED,
-                skip_reason="image_only",
-            ),
         }
 
         processor.print_summary()
 
         captured = capsys.readouterr()
-        # Should be ONE grouped line, not per-file lines
-        assert "2 files skipped (image_only)" in captured.out
-        assert "a.png" in captured.out
-        assert "b.jpg" in captured.out
+        assert "--llm" in captured.out
+        assert "--ocr" in captured.out
 
-    def test_skip_warnings_grouped_without_filenames_when_many(
+    def test_skip_warnings_many_files_no_individual_names(
         self, tmp_path: Path, capsys
     ) -> None:
-        """Many skipped files should show only count, no individual filenames."""
+        """Many skipped files should show count and 2 examples, not all names."""
         config = BatchConfig()
         processor = BatchProcessor(config, tmp_path)
         processor.state = BatchState(
@@ -372,10 +412,9 @@ class TestPrintSummaryWithSkips:
             input_dir=str(tmp_path),
             output_dir=str(tmp_path),
         )
-        # Create 10 skipped files
         processor.state.files = {
-            f"/path/img{i}.png": FileState(
-                path=f"/path/img{i}.png",
+            f"/path/img{i:02d}.png": FileState(
+                path=f"/path/img{i:02d}.png",
                 status=FileStatus.COMPLETED,
                 skip_reason="image_only",
             )
@@ -386,8 +425,7 @@ class TestPrintSummaryWithSkips:
 
         captured = capsys.readouterr()
         assert "10 files skipped (image_only)" in captured.out
-        # Should NOT list individual filenames
-        assert "img0.png" not in captured.out
+        assert "..." in captured.out
 
     def test_skip_warnings_multiple_reasons_separate_lines(
         self, tmp_path: Path, capsys

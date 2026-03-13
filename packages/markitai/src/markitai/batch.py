@@ -1416,19 +1416,24 @@ class BatchProcessor:
         # Skipped file warnings — group by reason for concise output
         from collections import defaultdict
 
+        skip_hints: dict[str, str] = {
+            "image_only": "Use --llm or --ocr for content extraction.",
+        }
         skips_by_reason: dict[str, list[str]] = defaultdict(list)
         for f in self.state.files.values():
             if f.skip_reason:
                 skips_by_reason[f.skip_reason].append(Path(f.path).name)
-        max_inline_names = 5
+        max_examples = 2
         for reason, names in sorted(skips_by_reason.items()):
             n = len(names)
             label = "file" if n == 1 else "files"
-            if n <= max_inline_names:
-                names_str = ", ".join(sorted(names))
-                warnings.append(f"{n} {label} skipped ({reason}): {names_str}")
-            else:
-                warnings.append(f"{n} {label} skipped ({reason})")
+            sorted_names = sorted(names)
+            examples = ", ".join(sorted_names[:max_examples])
+            if n > max_examples:
+                examples += ", ..."
+            hint = skip_hints.get(reason, "")
+            hint_str = f" {hint}" if hint else ""
+            warnings.append(f"{n} {label} skipped ({reason}): {examples}{hint_str}")
 
         # Warnings (failed and skipped items)
         if warnings:
