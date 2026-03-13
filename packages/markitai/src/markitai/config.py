@@ -246,6 +246,10 @@ class LLMConfig(BaseModel):
         default=False,
         description="Pure mode: raw MD sent directly to LLM, no markitai processing",
     )
+    keep_base: bool = Field(
+        default=False,
+        description="Keep base .md file alongside .llm.md in LLM mode",
+    )
     model_list: list[ModelConfig] = Field(default_factory=list)
     router_settings: RouterSettings = Field(default_factory=RouterSettings)
     concurrency: int = DEFAULT_LLM_CONCURRENCY
