@@ -63,6 +63,7 @@ class InteractiveSession:
     enable_llm: bool = False
     enable_alt: bool = False
     enable_desc: bool = False
+    enable_pure: bool = False
     enable_ocr: bool = False
     enable_screenshot: bool = False
     provider_result: ProviderDetectionResult | None = None
@@ -209,12 +210,18 @@ def prompt_llm_options(session: InteractiveSession) -> None:
                 questionary.Choice(
                     "Generate image descriptions (JSON)", value="desc", checked=False
                 ),
+                questionary.Choice(
+                    "Pure mode (text cleaning only, no metadata)",
+                    value="pure",
+                    checked=False,
+                ),
             ],
         )
     )
 
     session.enable_alt = "alt" in choices
     session.enable_desc = "desc" in choices
+    session.enable_pure = "pure" in choices
 
 
 def prompt_extra_options(session: InteractiveSession) -> None:
@@ -497,6 +504,8 @@ def _print_summary(session: InteractiveSession) -> None:
             console.print(f"  Models: {format_model_list(session.active_models)}")
         elif session.provider_result:
             console.print(f"  Provider: {session.provider_result.provider}")
+        if session.enable_pure:
+            console.print("  Pure mode: yes")
         console.print(f"  Alt text: {'yes' if session.enable_alt else 'no'}")
         console.print(f"  Descriptions: {'yes' if session.enable_desc else 'no'}")
     if session.enable_ocr:
@@ -520,6 +529,8 @@ def session_to_cli_args(session: InteractiveSession) -> list[str]:
 
     if session.enable_llm:
         args.append("--llm")
+        if session.enable_pure:
+            args.append("--pure")
         if session.enable_alt:
             args.append("--alt")
         if session.enable_desc:

@@ -953,14 +953,24 @@ class TestIsInvalidContent:
         assert reason == "login_required"
 
     def test_too_short_content(self) -> None:
-        """Very short content should be detected as too short."""
+        """Truly empty/near-empty content should be detected as too short."""
         from markitai.fetch import _is_invalid_content
 
-        # Content with markdown that becomes too short after cleaning
-        content = "# Title\n\n**Bold** text"
+        # Content with only markdown syntax, no real text
+        content = "# \n\n** **"
         is_invalid, reason = _is_invalid_content(content)
         assert is_invalid is True
         assert reason == "too_short"
+
+    def test_minimal_landing_page_is_valid(self) -> None:
+        """Minimal but legitimate pages should NOT be rejected as too_short."""
+        from markitai.fetch import _is_invalid_content
+
+        # A real personal landing page with ~40 chars of clean content
+        content = "# Ynewtime\n\n解構世界、優化未來 • Front-end developer"
+        is_invalid, reason = _is_invalid_content(content)
+        assert is_invalid is False
+        assert reason == ""
 
     def test_valid_content(self) -> None:
         """Valid content should not be marked as invalid."""
