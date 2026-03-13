@@ -37,11 +37,7 @@ Remove the following boilerplate content, keeping only the actual post/article b
 - All `![...](...)` image links
 - All `[...](...)` hyperlinks
 
-## Image Placeholder Preservation — CRITICAL
-- The document may contain `__MARKITAI_IMG_N__` placeholders (where N is a number). These represent actual images.
-- You MUST preserve **every** placeholder in its **exact original position**. Do not move, reorder, merge, or remove any placeholder.
-- If a placeholder appears between two paragraphs, it must remain between those same paragraphs in your output.
-- Failure to preserve all placeholders will cause your output to be rejected entirely.
+{mode_rules}
 
 ## Output Requirements
 - Output plain Markdown directly; do not wrap in a code block
