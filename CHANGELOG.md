@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **LLM Fallback**: Write `.md` as fallback when LLM processing fails
 - **Batch Skip Summary**: Group skipped files by reason with example filenames in batch summary
 - **Pure Mode Warning**: Warn when `--pure` silently overrides `--alt`/`--desc`/`--screenshot`
+- **Interactive Pure Mode**: Add pure mode option to interactive CLI wizard
 - **Mode-Specific Cleaner Prompt**: `{mode_rules}` template variable in cleaner prompt — standard mode gets image placeholder rules, pure mode gets YAML frontmatter preservation rules
 
 ### Fixed
@@ -24,9 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **URL Processors**: Respect `--pure`/`--llm`/`--keep-base` flags for base `.md` output in both single and batch URL processing
 - **Pure Mode Frontmatter**: `process_with_llm` uses `clean_document_pure()` instead of `process_document()` in pure mode, preventing LLM-generated frontmatter (description, tags, etc.)
 - **Source Frontmatter Reconstruction**: Reconstruct original YAML frontmatter from defuddle metadata before sending to LLM in pure mode
+- **Pure Mode Vision Bypass**: `--pure` now correctly skips screenshot-only and vision enhancement paths, falling through to text-only LLM processing
+- **Pure Mode Warning False Positive**: `--pure --screenshot-only` no longer warns about `--screenshot` being ignored
+- **URL Content Validation**: Lower `too_short` threshold from 100 to 30 characters — minimal landing pages were incorrectly rejected after stripping markdown syntax
 - **Vision Prompt Drift**: Add placeholder REMINDER to vision prompts to reduce LLM drift on `__MARKITAI_IMG_N__` placeholders
 - **Stabilization Dedup**: Deduplicate stabilization calls and add `paged_stabilized` guard
 - **Vision JSON Mode**: Fix wrong message index in vision `json_mode` and race condition in parallel gather
+- **Type Safety**: Fix `merge_llm_usage` parameter type to accept `LLMUsageByModel` (pyright warning)
 - **Misc Fixes**: Frontmatter regex, env variable quoting, Ctrl+C handling, hardcoded weight, docstring corrections
 - **SVG as Image-Only**: Treat SVG as image-only format in batch mode
 

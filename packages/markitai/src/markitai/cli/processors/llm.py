@@ -450,7 +450,3 @@ async def enhance_document_with_vision(
             )
         ).strip()
         return extracted_text, basic_frontmatter, 0.0, {}
-
-
-# Backward compatibility alias
-_format_standalone_image_markdown = format_standalone_image_markdown

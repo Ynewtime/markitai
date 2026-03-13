@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -295,7 +296,7 @@ def add_basic_frontmatter(
 
 def merge_llm_usage(
     target: dict[str, dict[str, Any]],
-    source: dict[str, dict[str, Any]],
+    source: Mapping[str, Mapping[str, Any]],
 ) -> None:
     """Merge LLM usage statistics from source into target.
 

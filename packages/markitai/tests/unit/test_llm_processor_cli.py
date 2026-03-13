@@ -1164,16 +1164,6 @@ class TestEdgeCases:
         content = llm_output.read_text()
         assert "![A test image](.markitai/assets/test.jpg)" in content
 
-    def test_backward_compatibility_alias(self):
-        """Test that backward compatibility alias exists."""
-        from markitai.cli.processors.llm import (
-            _format_standalone_image_markdown,
-            format_standalone_image_markdown,
-        )
-
-        # Both should reference the same function
-        assert _format_standalone_image_markdown is format_standalone_image_markdown
-
     async def test_process_with_llm_missing_page_appended(
         self, tmp_path: Path, markitai_config: MarkitaiConfig
     ):

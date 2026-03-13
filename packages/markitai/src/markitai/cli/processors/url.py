@@ -316,7 +316,9 @@ async def process_url(
 
             # Check for screenshot-only mode (extract purely from screenshot)
             # has_screenshot is already defined above
-            use_screenshot_only = cfg.screenshot.screenshot_only and has_screenshot
+            use_screenshot_only = (
+                cfg.screenshot.screenshot_only and has_screenshot and not cfg.llm.pure
+            )
 
             if use_screenshot_only and screenshot_path:
                 # Screenshot-only mode: extract content purely from screenshot
@@ -357,7 +359,7 @@ async def process_url(
                     fetch_result.static_content is not None
                     or fetch_result.browser_content is not None
                 )
-                use_vision_enhancement = has_multi_source
+                use_vision_enhancement = has_multi_source and not cfg.llm.pure
 
                 if use_vision_enhancement and screenshot_path:
                     # Multi-source URL with screenshot: use vision LLM
@@ -401,6 +403,23 @@ async def process_url(
                         llm_cost += image_cost
                         _merge_llm_usage(llm_usage, image_usage)
                     progress.log("LLM processing complete (vision enhanced)")
+                else:
+                    # Has screenshot but vision skipped (e.g. pure mode)
+                    # Fall through to standard text-only LLM processing
+                    progress.start_spinner("Processing with LLM...")
+                    _, doc_cost, doc_usage = await process_with_llm(
+                        markdown_for_llm,
+                        url,
+                        cfg,
+                        output_file,
+                        screenshot_path=screenshot_path,
+                        fetch_strategy=used_strategy,
+                        extra_meta=source_extra_meta,
+                        title=fetch_result.title,
+                    )
+                    llm_cost += doc_cost
+                    _merge_llm_usage(llm_usage, doc_usage)
+                    progress.log("LLM processing complete")
 
             elif should_analyze_images:
                 # Standard processing with image analysis (no screenshot/vision)
@@ -815,6 +834,7 @@ async def process_url_batch(
                     and cfg.llm.enabled
                     and has_screenshot
                     and screenshot_path is not None
+                    and not cfg.llm.pure
                 ):
                     _, doc_cost, doc_usage = await process_url_screenshot_only(
                         screenshot_path=screenshot_path,

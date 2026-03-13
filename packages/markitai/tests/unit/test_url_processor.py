@@ -1158,6 +1158,164 @@ class TestProcessUrlPureMode:
         assert "# Test Page" in content
 
 
+class TestProcessUrlPureModeBypassesVision:
+    """Tests that --pure mode skips screenshot-only and vision paths."""
+
+    def _make_mock_fetch_result(
+        self,
+        tmp_path: Path,
+        *,
+        with_screenshot: bool = False,
+        with_multi_source: bool = False,
+    ) -> MagicMock:
+        mock_result = MagicMock()
+        mock_result.content = "# Test Page\n\nSome content here."
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        if with_screenshot:
+            screenshot_file = tmp_path / ".markitai" / "screenshots" / "test.png"
+            screenshot_file.parent.mkdir(parents=True, exist_ok=True)
+            screenshot_file.write_bytes(b"fake png")
+            mock_result.screenshot_path = screenshot_file
+        else:
+            mock_result.screenshot_path = None
+        mock_result.title = "Test Page"
+        mock_result.static_content = "static html" if with_multi_source else None
+        mock_result.browser_content = "browser html" if with_multi_source else None
+        mock_result.metadata = {}
+        return mock_result
+
+    @pytest.mark.asyncio
+    async def test_pure_mode_skips_screenshot_only_path(self, tmp_path: Path) -> None:
+        """With --pure + --screenshot-only, should NOT call process_url_screenshot_only."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.pure = True
+        cfg.screenshot.enabled = True
+        cfg.screenshot.screenshot_only = True
+        cfg.cache.enabled = False
+
+        mock_result = self._make_mock_fetch_result(tmp_path, with_screenshot=True)
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "markitai.cli.processors.url.process_url_screenshot_only",
+                new_callable=AsyncMock,
+                return_value=("# Screenshot", 0.02, {}),
+            ) as mock_screenshot_only,
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new_callable=AsyncMock,
+                return_value=("# Cleaned", 0.01, {}),
+            ) as mock_process_llm,
+        ):
+            await process_url(
+                url="https://example.com/test",
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        mock_screenshot_only.assert_not_called()
+        mock_process_llm.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_pure_mode_skips_vision_enhancement_path(
+        self, tmp_path: Path
+    ) -> None:
+        """With --pure + screenshot + multi-source, should NOT call process_url_with_vision."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.pure = True
+        cfg.screenshot.enabled = True
+        cfg.screenshot.screenshot_only = False
+        cfg.cache.enabled = False
+
+        mock_result = self._make_mock_fetch_result(
+            tmp_path, with_screenshot=True, with_multi_source=True
+        )
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "markitai.cli.processors.url.process_url_with_vision",
+                new_callable=AsyncMock,
+                return_value=("# Vision", 0.03, {}),
+            ) as mock_vision,
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new_callable=AsyncMock,
+                return_value=("# Cleaned", 0.01, {}),
+            ) as mock_process_llm,
+        ):
+            await process_url(
+                url="https://example.com/test",
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        mock_vision.assert_not_called()
+        mock_process_llm.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_batch_pure_mode_skips_screenshot_only_path(
+        self, tmp_path: Path
+    ) -> None:
+        """Batch: --pure + --screenshot-only should NOT call process_url_screenshot_only."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.pure = True
+        cfg.screenshot.enabled = True
+        cfg.screenshot.screenshot_only = True
+        cfg.cache.enabled = False
+
+        mock_result = self._make_mock_fetch_result(tmp_path, with_screenshot=True)
+
+        class MockUrlEntry:
+            def __init__(self, url: str, output_name: str | None = None):
+                self.url = url
+                self.output_name = output_name
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "markitai.cli.processors.url.process_url_screenshot_only",
+                new_callable=AsyncMock,
+            ) as mock_screenshot_only,
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new_callable=AsyncMock,
+                return_value=("# Cleaned", 0.01, {}),
+            ) as mock_process_llm,
+        ):
+            await process_url_batch(
+                url_entries=[MockUrlEntry("https://example.com/test")],
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        mock_screenshot_only.assert_not_called()
+        mock_process_llm.assert_called_once()
+
+
 class TestProcessUrlBatchPureMode:
     """Tests for --pure/--llm/--keep-base flag handling in batch URL processing."""
 
