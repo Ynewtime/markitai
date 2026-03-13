@@ -1413,10 +1413,22 @@ class BatchProcessor:
                 f"[green]{ui.MARK_SUCCESS}[/]"
             )
 
-        # Skipped file warnings
+        # Skipped file warnings — group by reason for concise output
+        from collections import defaultdict
+
+        skips_by_reason: dict[str, list[str]] = defaultdict(list)
         for f in self.state.files.values():
             if f.skip_reason:
-                warnings.append(f"{Path(f.path).name}: skipped ({f.skip_reason})")
+                skips_by_reason[f.skip_reason].append(Path(f.path).name)
+        max_inline_names = 5
+        for reason, names in sorted(skips_by_reason.items()):
+            n = len(names)
+            label = "file" if n == 1 else "files"
+            if n <= max_inline_names:
+                names_str = ", ".join(sorted(names))
+                warnings.append(f"{n} {label} skipped ({reason}): {names_str}")
+            else:
+                warnings.append(f"{n} {label} skipped ({reason})")
 
         # Warnings (failed and skipped items)
         if warnings:
