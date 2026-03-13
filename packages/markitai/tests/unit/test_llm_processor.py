@@ -1143,43 +1143,47 @@ class TestContentCacheExtended:
         """Test LRU eviction removes oldest accessed item."""
         cache = ContentCache(maxsize=3, ttl_seconds=300)
 
-        cache.set("p1", "c1", "r1")
-        time.sleep(0.01)
-        cache.set("p2", "c2", "r2")
-        time.sleep(0.01)
-        cache.set("p3", "c3", "r3")
+        fake_time = [1000.0]
+        with patch("markitai.llm.cache.time.time", side_effect=lambda: fake_time[0]):
+            cache.set("p1", "c1", "r1")
+            fake_time[0] = 1000.01
+            cache.set("p2", "c2", "r2")
+            fake_time[0] = 1000.02
+            cache.set("p3", "c3", "r3")
 
-        # Access p1 to make it recently used
-        cache.get("p1", "c1")
-        time.sleep(0.01)
+            # Access p1 to make it recently used
+            cache.get("p1", "c1")
+            fake_time[0] = 1000.03
 
-        # Add new item - should evict p2 (oldest accessed)
-        cache.set("p4", "c4", "r4")
+            # Add new item - should evict p2 (oldest accessed)
+            cache.set("p4", "c4", "r4")
 
-        assert cache.get("p1", "c1") == "r1"  # Still there
-        assert cache.get("p2", "c2") is None  # Evicted
-        assert cache.get("p3", "c3") == "r3"  # Still there
-        assert cache.get("p4", "c4") == "r4"  # New item
+            assert cache.get("p1", "c1") == "r1"  # Still there
+            assert cache.get("p2", "c2") is None  # Evicted
+            assert cache.get("p3", "c3") == "r3"  # Still there
+            assert cache.get("p4", "c4") == "r4"  # New item
 
     def test_update_moves_to_end(self):
         """Test updating existing key moves it to end."""
         cache = ContentCache(maxsize=3, ttl_seconds=300)
 
-        cache.set("p1", "c1", "r1")
-        time.sleep(0.01)
-        cache.set("p2", "c2", "r2")
-        time.sleep(0.01)
-        cache.set("p3", "c3", "r3")
+        fake_time = [1000.0]
+        with patch("markitai.llm.cache.time.time", side_effect=lambda: fake_time[0]):
+            cache.set("p1", "c1", "r1")
+            fake_time[0] = 1000.01
+            cache.set("p2", "c2", "r2")
+            fake_time[0] = 1000.02
+            cache.set("p3", "c3", "r3")
 
-        # Update p1 - should move to end
-        cache.set("p1", "c1", "r1_updated")
-        time.sleep(0.01)
+            # Update p1 - should move to end
+            cache.set("p1", "c1", "r1_updated")
+            fake_time[0] = 1000.03
 
-        # Add new item - should evict p2 (now oldest)
-        cache.set("p4", "c4", "r4")
+            # Add new item - should evict p2 (now oldest)
+            cache.set("p4", "c4", "r4")
 
-        assert cache.get("p1", "c1") == "r1_updated"
-        assert cache.get("p2", "c2") is None
+            assert cache.get("p1", "c1") == "r1_updated"
+            assert cache.get("p2", "c2") is None
 
 
 # =============================================================================
@@ -2123,13 +2127,15 @@ class TestCallLlmModelLevelRetry:
         )
         processor._router = mock_router
 
-        result = await processor._call_llm_with_retry(
-            "default",
-            [{"role": "user", "content": "test"}],
-            call_id="test:1",
-            context="test",
-            max_retries=2,
-        )
+        # Mock asyncio.sleep to skip the 1s retry backoff delay
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await processor._call_llm_with_retry(
+                "default",
+                [{"role": "user", "content": "test"}],
+                call_id="test:1",
+                context="test",
+                max_retries=2,
+            )
 
         assert result.content == "OK"
         assert mock_router.acompletion.await_count == 2

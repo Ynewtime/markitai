@@ -1076,17 +1076,17 @@ class TestCompressScreenshot:
 
             pytest.skip("Pillow not installed")
 
-        # Create a very tall image (20000 pixels)
-        img = Image.new("RGB", (800, 20000), color="blue")
+        # Create a very tall image (5000 pixels — enough to test max_height limit)
+        img = Image.new("RGB", (400, 5000), color="blue")
         screenshot_path = tmp_path / "tall.jpg"
         img.save(screenshot_path, "JPEG")
 
         # Compress with max_height limit
-        _compress_screenshot(screenshot_path, quality=75, max_height=5000)
+        _compress_screenshot(screenshot_path, quality=75, max_height=2000)
 
         # Check that image was resized
         with Image.open(screenshot_path) as compressed:
-            assert compressed.height <= 5000
+            assert compressed.height <= 2000
 
     def test_compress_screenshot_missing_pillow(self, tmp_path: Path) -> None:
         """Test handling when Pillow is not installed."""

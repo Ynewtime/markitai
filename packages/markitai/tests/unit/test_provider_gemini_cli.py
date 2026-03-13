@@ -1079,6 +1079,9 @@ class TestGetAccessToken:
                 provider, "_build_credentials_from_data", return_value=mock_creds
             ),
             patch("markitai.providers.gemini_cli._google_auth_requests") as mock_req,
+            patch(
+                "markitai.providers.gemini_cli.asyncio.sleep", new_callable=AsyncMock
+            ),
         ):
             mock_req.Request.return_value = MagicMock()
             with pytest.raises(
@@ -1149,6 +1152,9 @@ class TestTokenCaching:
             patch(
                 "markitai.providers.gemini_cli._google_auth_requests"
             ) as mock_requests,
+            patch(
+                "markitai.providers.gemini_cli.asyncio.sleep", new_callable=AsyncMock
+            ),
         ):
             mock_requests.Request.return_value = object()
             token = await provider._get_access_token()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -848,35 +847,40 @@ class TestContentCache:
         """Test that entries expire after TTL."""
         cache = ContentCache(ttl_seconds=1)
 
-        cache.set("prompt", "content", "result")
-        assert cache.get("prompt", "content") == "result"
+        fake_time = 1000.0
+        with patch("markitai.llm.cache.time.time", side_effect=lambda: fake_time):
+            cache.set("prompt", "content", "result")
+            assert cache.get("prompt", "content") == "result"
 
-        # Wait for TTL to expire
-        time.sleep(1.1)
-        assert cache.get("prompt", "content") is None
-        assert cache.size == 0
+        # Advance time past TTL
+        fake_time = 1001.1
+        with patch("markitai.llm.cache.time.time", side_effect=lambda: fake_time):
+            assert cache.get("prompt", "content") is None
+            assert cache.size == 0
 
     def test_maxsize_eviction(self):
         """Test that oldest entries are evicted when full."""
         cache = ContentCache(maxsize=3)
 
-        cache.set("p1", "c1", "r1")
-        time.sleep(0.01)  # Ensure different timestamps
-        cache.set("p2", "c2", "r2")
-        time.sleep(0.01)
-        cache.set("p3", "c3", "r3")
+        fake_time = [1000.0]
+        with patch("markitai.llm.cache.time.time", side_effect=lambda: fake_time[0]):
+            cache.set("p1", "c1", "r1")
+            fake_time[0] = 1000.01
+            cache.set("p2", "c2", "r2")
+            fake_time[0] = 1000.02
+            cache.set("p3", "c3", "r3")
 
-        assert cache.size == 3
+            assert cache.size == 3
 
-        # Adding fourth entry should evict oldest (p1, c1)
-        time.sleep(0.01)
-        cache.set("p4", "c4", "r4")
+            # Adding fourth entry should evict oldest (p1, c1)
+            fake_time[0] = 1000.03
+            cache.set("p4", "c4", "r4")
 
-        assert cache.size == 3
-        assert cache.get("p1", "c1") is None  # Evicted
-        assert cache.get("p2", "c2") == "r2"
-        assert cache.get("p3", "c3") == "r3"
-        assert cache.get("p4", "c4") == "r4"
+            assert cache.size == 3
+            assert cache.get("p1", "c1") is None  # Evicted
+            assert cache.get("p2", "c2") == "r2"
+            assert cache.get("p3", "c3") == "r3"
+            assert cache.get("p4", "c4") == "r4"
 
     def test_clear(self):
         """Test clearing the cache."""

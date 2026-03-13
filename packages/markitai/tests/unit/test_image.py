@@ -3,7 +3,9 @@
 import base64
 import io
 from pathlib import Path
+from unittest.mock import patch
 
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -76,7 +78,9 @@ class TestImageProcessor:
         b64_data = base64.b64encode(b"fake-image-data").decode()
         markdown = f"![](data:image/x-emf;base64,{b64_data})"
 
-        images = processor.extract_base64_images(markdown)
+        # Mock LibreOffice to avoid 6s subprocess overhead with fake data
+        with patch("markitai.utils.office.find_libreoffice", return_value=None):
+            images = processor.extract_base64_images(markdown)
         # The image is extracted (even if conversion may fail later)
         # The regex should match x-emf MIME type
         assert len(images) == 1
@@ -539,12 +543,9 @@ class TestSaveScreenshot:
         processor = ImageProcessor()
 
         # Create large test image with gradient pattern
-        img = Image.new("RGB", (3000, 3000))
-        pixels = img.load()
-        assert pixels is not None
-        for i in range(img.width):
-            for j in range(img.height):
-                pixels[i, j] = (i % 256, j % 256, (i + j) % 256)
+        y, x = np.mgrid[:1500, :1500]
+        arr = np.stack([x % 256, y % 256, (x + y) % 256], axis=-1).astype(np.uint8)
+        img = Image.fromarray(arr)
         samples = img.tobytes()
 
         output_path = tmp_path / "large_screenshot.jpg"
@@ -2469,24 +2470,14 @@ class TestSaveScreenshotFallbackFormat:
         Bug: save_screenshot's last-resort path hard-codes format='JPEG' but
         keeps the original output_path extension (could be .png or .webp).
         """
-        import random
-
         config = ImageConfig(format="png", quality=95)
         processor = ImageProcessor(config=config)
 
-        # Create a large noisy image that will exceed a very small max_bytes
-        # threshold, forcing the fallback path
-        random.seed(42)
-        img = Image.new("RGB", (2000, 2000))
-        pixels = img.load()
-        assert pixels is not None
-        for i in range(img.width):
-            for j in range(img.height):
-                pixels[i, j] = (
-                    random.randint(0, 255),
-                    random.randint(0, 255),
-                    random.randint(0, 255),
-                )
+        # Create a noisy image that will exceed a very small max_bytes
+        # threshold, forcing the fallback path (500x500 noise → 5KB+ even at q=10)
+        rng = np.random.default_rng(42)
+        arr = rng.integers(0, 256, (500, 500, 3), dtype=np.uint8)
+        img = Image.fromarray(arr)
         samples = img.tobytes()
 
         output_path = tmp_path / "screenshot.png"
@@ -2522,22 +2513,12 @@ class TestSaveScreenshotFallbackFormat:
         self, tmp_path: Path
     ) -> None:
         """When configured as JPEG, fallback should still produce JPEG."""
-        import random
-
         config = ImageConfig(format="jpeg", quality=95)
         processor = ImageProcessor(config=config)
 
-        random.seed(123)
-        img = Image.new("RGB", (2000, 2000))
-        pixels = img.load()
-        assert pixels is not None
-        for i in range(img.width):
-            for j in range(img.height):
-                pixels[i, j] = (
-                    random.randint(0, 255),
-                    random.randint(0, 255),
-                    random.randint(0, 255),
-                )
+        rng = np.random.default_rng(123)
+        arr = rng.integers(0, 256, (500, 500, 3), dtype=np.uint8)
+        img = Image.fromarray(arr)
         samples = img.tobytes()
 
         output_path = tmp_path / "screenshot.jpg"
@@ -2582,23 +2563,13 @@ class TestSaveScreenshotReturnsActualPath:
         must reflect the .jpg extension so callers don't reference a non-existent
         .png file.
         """
-        import random
-
         config = ImageConfig(format="png", quality=95)
         processor = ImageProcessor(config=config)
 
-        # Create a large noisy image that will exceed a very small max_bytes
-        random.seed(42)
-        img = Image.new("RGB", (2000, 2000))
-        pixels = img.load()
-        assert pixels is not None
-        for i in range(img.width):
-            for j in range(img.height):
-                pixels[i, j] = (
-                    random.randint(0, 255),
-                    random.randint(0, 255),
-                    random.randint(0, 255),
-                )
+        # Create a noisy image that will exceed a very small max_bytes
+        rng = np.random.default_rng(42)
+        arr = rng.integers(0, 256, (500, 500, 3), dtype=np.uint8)
+        img = Image.fromarray(arr)
         samples = img.tobytes()
 
         output_path = tmp_path / "screenshot.png"
@@ -2650,8 +2621,6 @@ class TestProcessAndSaveAsyncClosesCompressedImage:
         Bug: process_and_save_async reads compressed_img.size but never
         calls compressed_img.close().
         """
-        from unittest.mock import patch
-
         config = ImageConfig(compress=True, quality=85, format="jpeg")
         processor = ImageProcessor(config=config)
 
