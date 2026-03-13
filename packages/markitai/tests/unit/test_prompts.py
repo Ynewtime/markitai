@@ -143,6 +143,41 @@ class TestBuiltinPrompts:
         assert "描述" in content or "describe" in content.lower()
 
 
+class TestCleanerModeRules:
+    """Tests for cleaner_system prompt mode_rules variable."""
+
+    def test_cleaner_system_has_mode_rules_placeholder(self) -> None:
+        """cleaner_system.md should contain {mode_rules} placeholder."""
+        path = BUILTIN_PROMPTS_DIR / "cleaner_system.md"
+        content = path.read_text(encoding="utf-8")
+        assert "{mode_rules}" in content
+
+    def test_standard_mode_rules_include_image_placeholders(self) -> None:
+        """Standard mode_rules should include __MARKITAI_IMG_N__ preservation."""
+        manager = PromptManager()
+        from markitai.llm.document import STANDARD_MODE_RULES
+
+        prompt = manager.get_prompt("cleaner_system", mode_rules=STANDARD_MODE_RULES)
+        assert "__MARKITAI_IMG_N__" in prompt
+
+    def test_pure_mode_rules_include_frontmatter_preservation(self) -> None:
+        """Pure mode_rules should include YAML frontmatter preservation."""
+        manager = PromptManager()
+        from markitai.llm.document import PURE_MODE_RULES
+
+        prompt = manager.get_prompt("cleaner_system", mode_rules=PURE_MODE_RULES)
+        assert "frontmatter" in prompt.lower()
+        assert "---" in prompt
+
+    def test_pure_mode_rules_exclude_image_placeholders(self) -> None:
+        """Pure mode_rules should NOT include __MARKITAI_IMG_N__ placeholder rules."""
+        manager = PromptManager()
+        from markitai.llm.document import PURE_MODE_RULES
+
+        prompt = manager.get_prompt("cleaner_system", mode_rules=PURE_MODE_RULES)
+        assert "__MARKITAI_IMG_N__" not in prompt
+
+
 class TestVisionPromptReminder:
     """Verify document_vision_user prompt contains tail REMINDER."""
 

@@ -24,6 +24,20 @@ from markitai.constants import (
     DEFAULT_MAX_PAGES_PER_BATCH,
     SCREENSHOTS_REL_PATH,
 )
+
+# Mode-specific rules injected into cleaner_system prompt via {mode_rules}
+STANDARD_MODE_RULES = """\
+## Image Placeholder Preservation — CRITICAL
+- The document may contain `__MARKITAI_IMG_N__` placeholders (where N is a number). These represent actual images.
+- You MUST preserve **every** placeholder in its **exact original position**. Do not move, reorder, merge, or remove any placeholder.
+- If a placeholder appears between two paragraphs, it must remain between those same paragraphs in your output.
+- Failure to preserve all placeholders will cause your output to be rejected entirely."""
+
+PURE_MODE_RULES = """\
+## YAML Frontmatter Preservation — CRITICAL
+- The document may start with a YAML frontmatter block delimited by `---` lines (e.g., `---\\ntitle: ...\\n---`).
+- You MUST preserve the frontmatter block exactly as-is. Do not modify, reorder, or remove any fields.
+- If no frontmatter is present, do not add one."""
 from markitai.llm.content import (
     protect_image_positions as _shared_protect_image_positions,
 )
@@ -322,7 +336,9 @@ class DocumentMixin:
         protected_content, mapping = self.protect_content(image_protected)
 
         # Use separated system/user prompts to prevent prompt leakage
-        system_prompt = self._prompt_manager.get_prompt("cleaner_system")
+        system_prompt = self._prompt_manager.get_prompt(
+            "cleaner_system", mode_rules=STANDARD_MODE_RULES
+        )
         user_prompt = self._prompt_manager.get_prompt(
             "cleaner_user", content=protected_content
         )
@@ -1786,7 +1802,9 @@ Generate the following fields:
         Returns:
             LLM response content as-is
         """
-        system_prompt = self._prompt_manager.get_prompt("cleaner_system")
+        system_prompt = self._prompt_manager.get_prompt(
+            "cleaner_system", mode_rules=PURE_MODE_RULES
+        )
         user_prompt = self._prompt_manager.get_prompt("cleaner_user", content=markdown)
         response = await self._call_llm(  # type: ignore[attr-defined]
             model="default",
