@@ -414,6 +414,24 @@ class TestPureModeConfig:
             FetchPolicyConfig(local_only_patterns=["999.0.0.0/8"])
 
 
+class TestLLMConfigKeepBase:
+    """Tests for LLMConfig.keep_base field."""
+
+    def test_defaults_to_false(self) -> None:
+        """LLMConfig.keep_base should default to False."""
+        from markitai.config import LLMConfig
+
+        config = LLMConfig()
+        assert config.keep_base is False
+
+    def test_can_be_set_to_true(self) -> None:
+        """LLMConfig.keep_base can be set to True."""
+        from markitai.config import LLMConfig
+
+        config = LLMConfig(keep_base=True)
+        assert config.keep_base is True
+
+
 class TestDomainProfileStrategyPriority:
     """Tests for DomainProfileConfig.strategy_priority."""
 
