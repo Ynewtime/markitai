@@ -79,3 +79,58 @@ class TestStripAssetReferences:
         result = strip_asset_references(markdown)
 
         assert "[image: arch.png]" in result
+
+
+from pathlib import Path
+
+import pytest
+
+from markitai.config import MarkitaiConfig
+
+
+class TestImageOnlySkip:
+    """Tests for image-only format skip behavior."""
+
+    @pytest.mark.asyncio
+    async def test_image_file_skipped_without_llm_ocr(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        """Image file should be skipped when neither LLM nor OCR is enabled."""
+        from markitai.cli.processors.file import process_single_file
+
+        input_path = fixtures_dir / "sample.bmp"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        cfg = MarkitaiConfig()
+        # Neither LLM nor OCR enabled (defaults)
+
+        # Should return normally (no error, no SystemExit)
+        await process_single_file(
+            input_path=input_path,
+            output_dir=output_dir,
+            cfg=cfg,
+            dry_run=False,
+        )
+
+        # No output file should be created
+        output_files = list(output_dir.glob("*.md"))
+        assert len(output_files) == 0
+
+    @pytest.mark.asyncio
+    async def test_image_file_skipped_stdout_mode(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        """Image file should be skipped in stdout mode too."""
+        from markitai.cli.processors.file import process_single_file
+
+        input_path = fixtures_dir / "sample.bmp"
+        cfg = MarkitaiConfig()
+
+        # stdout mode: output_dir=None. Should return normally.
+        await process_single_file(
+            input_path=input_path,
+            output_dir=None,
+            cfg=cfg,
+            dry_run=False,
+            quiet=True,  # quiet to suppress output
+        )

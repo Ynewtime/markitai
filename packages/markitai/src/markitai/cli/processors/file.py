@@ -178,6 +178,16 @@ async def process_single_file(
                 console.print(f"[yellow]Skipped (exists):[/yellow] {base_output_file}")
             return
 
+        # Handle skipped files (image-only format, no LLM/OCR)
+        if result.skip_reason == "image_only":
+            progress.stop_spinner()
+            if not quiet:
+                ui.warning(
+                    f"Skipped {input_path.name} (image file, no text to extract). "
+                    f"Use --llm or --ocr for content extraction."
+                )
+            return
+
         # Stop spinner before output
         progress.stop_spinner()
 
