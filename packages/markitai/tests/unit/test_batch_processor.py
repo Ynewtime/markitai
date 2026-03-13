@@ -290,6 +290,33 @@ class TestCreateProcessFile:
             _ = await process_file(txt_file)
             # Result depends on mock setup
 
+    @pytest.mark.asyncio
+    async def test_process_image_file_skipped_without_llm_ocr(
+        self,
+        default_config: MarkitaiConfig,
+        sample_input_dir: Path,
+        sample_output_dir: Path,
+        fixtures_dir: Path,
+    ) -> None:
+        """Image file should be skipped in batch mode when no LLM/OCR."""
+        from markitai.cli.processors.batch import create_process_file
+
+        process_file = create_process_file(
+            cfg=default_config,
+            input_dir=sample_input_dir,
+            output_dir=sample_output_dir,
+            preconverted_map={},
+            shared_processor=None,
+        )
+
+        # Use real BMP fixture
+        bmp_file = fixtures_dir / "sample.bmp"
+        result = await process_file(bmp_file)
+
+        assert result.success is True
+        assert result.error == "skipped (image_only)"
+        assert result.output_path is None
+
 
 # =============================================================================
 # create_url_processor Tests
