@@ -515,6 +515,22 @@ def app(
     if not pure and os.environ.get("MARKITAI_PURE", "").strip() in ("1", "true", "yes"):
         cfg.llm.pure = True
 
+    # Warn about features that --pure silently overrides
+    if cfg.llm.pure and cfg.llm.enabled:
+        ignored_flags = []
+        if cfg.image.alt_enabled:
+            ignored_flags.append("--alt")
+        if cfg.image.desc_enabled:
+            ignored_flags.append("--desc")
+        if cfg.screenshot.enabled:
+            ignored_flags.append("--screenshot")
+        if ignored_flags:
+            flags_str = ", ".join(ignored_flags)
+            console.print(
+                f"[yellow]Warning: --pure mode ignores {flags_str} "
+                f"(pure mode only does text cleaning)[/yellow]"
+            )
+
     # Validate vision model configuration if image analysis is enabled
     _check_vision_model_config(cfg, console, verbose)
 

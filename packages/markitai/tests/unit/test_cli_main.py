@@ -193,6 +193,74 @@ class TestPresets:
         assert result.exit_code == 0
 
 
+class TestPureModeWarnings:
+    """Tests for --pure mode warnings when combined with features it overrides."""
+
+    def test_pure_with_alt_warns(self, tmp_path: Path, cli_runner: CliRunner) -> None:
+        """--pure with --alt should warn that --alt is ignored."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+        output_dir = tmp_path / "out"
+
+        result = cli_runner.invoke(
+            app,
+            [
+                str(test_file),
+                "-o",
+                str(output_dir),
+                "--pure",
+                "--llm",
+                "--alt",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "--alt" in result.output
+        assert "--pure" in result.output
+
+    def test_pure_with_preset_rich_warns(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """--preset rich --pure should warn about ignored features."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+        output_dir = tmp_path / "out"
+
+        result = cli_runner.invoke(
+            app,
+            [
+                str(test_file),
+                "-o",
+                str(output_dir),
+                "--preset",
+                "rich",
+                "--pure",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "--pure" in result.output
+        # Should mention at least one of the ignored features
+        assert any(
+            flag in result.output for flag in ("--alt", "--desc", "--screenshot")
+        )
+
+    def test_pure_without_conflicting_flags_no_warning(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """--pure alone should not produce any warning."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+        output_dir = tmp_path / "out"
+
+        result = cli_runner.invoke(
+            app,
+            [str(test_file), "-o", str(output_dir), "--pure", "--dry-run"],
+        )
+        assert result.exit_code == 0
+        assert "ignored" not in result.output.lower()
+
+
 # =============================================================================
 # Configuration Merging Tests
 # =============================================================================
