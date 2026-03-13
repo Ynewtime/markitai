@@ -72,6 +72,16 @@ async def process_with_llm(
         if processor is None:
             processor = create_llm_processor(cfg)
 
+        # Pure mode: only text cleaning, no frontmatter generation
+        if cfg.llm.pure:
+            cleaned = await processor.clean_document_pure(markdown, source)
+            llm_output = output_file.with_suffix(".llm.md")
+            atomic_write_text(llm_output, cleaned)
+            logger.info(f"Written LLM version (pure): {llm_output}")
+            cost = processor.get_context_cost(source)
+            usage = processor.get_context_usage(source)
+            return markdown, cost, usage
+
         cleaned, frontmatter = await processor.process_document(
             markdown,
             source,
