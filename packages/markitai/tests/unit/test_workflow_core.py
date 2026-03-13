@@ -3263,3 +3263,117 @@ class TestProcessImageWithVisionPure:
         result = await process_image_with_vision_pure(ctx)
 
         assert not result.success
+
+
+class TestPureImageRouting:
+    """Tests for --pure Step 7 routing: image-only → Vision path, others → text path."""
+
+    @pytest.mark.asyncio
+    async def test_pure_image_routes_to_vision(self, tmp_path, fixtures_dir):
+        """--llm --pure with image input should route to process_image_with_vision_pure."""
+        from unittest.mock import AsyncMock, patch
+
+        from markitai.converter.base import ConvertResult, FileFormat
+        from markitai.workflow.core import ConversionContext, convert_document_core
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.pure = True
+
+        input_path = fixtures_dir / "sample.jpg"
+        ctx = ConversionContext(
+            input_path=input_path,
+            output_dir=tmp_path,
+            config=cfg,
+        )
+
+        mock_vision = AsyncMock(return_value=ConversionStepResult(success=True))
+        mock_pure_llm = AsyncMock(return_value=ConversionStepResult(success=True))
+
+        with (
+            patch("markitai.workflow.core.validate_and_detect_format") as mock_validate,
+            patch("markitai.workflow.core.prepare_output_directory") as mock_prep,
+            patch("markitai.workflow.core.resolve_output_file") as mock_resolve,
+            patch("markitai.workflow.core.convert_document") as mock_convert,
+            patch("markitai.workflow.core.process_embedded_images") as mock_embed,
+            patch("markitai.workflow.core.write_base_markdown") as mock_write,
+            patch("markitai.workflow.core.process_image_with_vision_pure", mock_vision),
+            patch("markitai.workflow.core.process_with_pure_llm", mock_pure_llm),
+        ):
+            mock_validate.return_value = ConversionStepResult(success=True)
+            mock_prep.return_value = ConversionStepResult(success=True)
+            mock_resolve.return_value = ConversionStepResult(success=True)
+            mock_convert.return_value = ConversionStepResult(success=True)
+            mock_embed.return_value = ConversionStepResult(success=True)
+            mock_write.return_value = ConversionStepResult(success=True)
+
+            # Simulate format detection setting detected_format
+            def set_format(c, max_size=None):
+                c.detected_format = FileFormat.JPEG
+                c.output_file = tmp_path / "sample.jpg.md"
+                c.conversion_result = ConvertResult(
+                    markdown="# sample", images=[], metadata={}
+                )
+                return ConversionStepResult(success=True)
+
+            mock_validate.side_effect = set_format
+
+            await convert_document_core(ctx, max_document_size=500_000_000)
+
+            mock_vision.assert_called_once()
+            mock_pure_llm.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pure_non_image_routes_to_text_llm(self, tmp_path, fixtures_dir):
+        """--llm --pure with non-image input should route to process_with_pure_llm."""
+        from unittest.mock import AsyncMock, patch
+
+        from markitai.converter.base import ConvertResult, FileFormat
+        from markitai.workflow.core import ConversionContext, convert_document_core
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.pure = True
+
+        input_file = tmp_path / "sample.txt"
+        input_file.write_text("# sample")
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=tmp_path,
+            config=cfg,
+        )
+
+        mock_vision = AsyncMock(return_value=ConversionStepResult(success=True))
+        mock_pure_llm = AsyncMock(return_value=ConversionStepResult(success=True))
+
+        with (
+            patch("markitai.workflow.core.validate_and_detect_format") as mock_validate,
+            patch("markitai.workflow.core.prepare_output_directory") as mock_prep,
+            patch("markitai.workflow.core.resolve_output_file") as mock_resolve,
+            patch("markitai.workflow.core.convert_document") as mock_convert,
+            patch("markitai.workflow.core.process_embedded_images") as mock_embed,
+            patch("markitai.workflow.core.write_base_markdown") as mock_write,
+            patch("markitai.workflow.core.process_image_with_vision_pure", mock_vision),
+            patch("markitai.workflow.core.process_with_pure_llm", mock_pure_llm),
+        ):
+            mock_validate.return_value = ConversionStepResult(success=True)
+            mock_prep.return_value = ConversionStepResult(success=True)
+            mock_resolve.return_value = ConversionStepResult(success=True)
+            mock_convert.return_value = ConversionStepResult(success=True)
+            mock_embed.return_value = ConversionStepResult(success=True)
+            mock_write.return_value = ConversionStepResult(success=True)
+
+            def set_format(c, max_size=None):
+                c.detected_format = FileFormat.TXT
+                c.output_file = tmp_path / "sample.txt.md"
+                c.conversion_result = ConvertResult(
+                    markdown="# sample", images=[], metadata={}
+                )
+                return ConversionStepResult(success=True)
+
+            mock_validate.side_effect = set_format
+
+            await convert_document_core(ctx, max_document_size=500_000_000)
+
+            mock_pure_llm.assert_called_once()
+            mock_vision.assert_not_called()
