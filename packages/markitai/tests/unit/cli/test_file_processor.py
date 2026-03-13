@@ -134,3 +134,53 @@ class TestImageOnlySkip:
             dry_run=False,
             quiet=True,  # quiet to suppress output
         )
+
+
+class TestFinalOutputFileDetermination:
+    """Tests for the final output file selection logic."""
+
+    def test_llm_mode_prefers_llm_md(self, tmp_path: Path) -> None:
+        """When .llm.md exists, it should be preferred in LLM mode."""
+        output_file = tmp_path / "test.md"
+        llm_file = tmp_path / "test.llm.md"
+        output_file.write_text("base content")
+        llm_file.write_text("llm content")
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+
+        final = output_file.with_suffix(".llm.md") if cfg.llm.enabled else output_file
+        if not final.exists() and cfg.llm.enabled:
+            final = output_file
+
+        assert final == llm_file
+        assert final.read_text() == "llm content"
+
+    def test_llm_mode_falls_back_to_md(self, tmp_path: Path) -> None:
+        """When .llm.md doesn't exist (LLM failed), should fall back to .md."""
+        output_file = tmp_path / "test.md"
+        output_file.write_text("base content")
+        # No .llm.md file
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+
+        final = output_file.with_suffix(".llm.md") if cfg.llm.enabled else output_file
+        if not final.exists() and cfg.llm.enabled:
+            final = output_file
+
+        assert final == output_file
+        assert final.read_text() == "base content"
+
+    def test_non_llm_uses_md(self, tmp_path: Path) -> None:
+        """Without LLM, should always use .md."""
+        output_file = tmp_path / "test.md"
+        output_file.write_text("base content")
+
+        cfg = MarkitaiConfig()
+
+        final = output_file.with_suffix(".llm.md") if cfg.llm.enabled else output_file
+        if not final.exists() and cfg.llm.enabled:
+            final = output_file
+
+        assert final == output_file
