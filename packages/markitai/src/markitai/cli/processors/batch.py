@@ -116,6 +116,13 @@ def create_process_file(
                     error="skipped (exists)",
                 )
 
+            if result.skip_reason == "image_only":
+                logger.info(f"[SKIP] Image file, no LLM/OCR: {file_path.name}")
+                return ProcessResult(
+                    success=True,
+                    error="skipped (image_only)",
+                )
+
             # Determine cache hit
             cache_hit = cfg.llm.enabled and not ctx.llm_usage
 
