@@ -2977,3 +2977,98 @@ class TestLLMFailureFallback:
         # Verify it has content (not empty)
         content = ctx.output_file.read_text(encoding="utf-8")
         assert len(content) > 0
+
+
+class TestPureWithoutLLMOutput:
+    """Tests for --pure without --llm: write raw markdown without frontmatter."""
+
+    def test_pure_without_llm_writes_raw_markdown(self, tmp_path, fixtures_dir):
+        """--pure without --llm should write .md without frontmatter."""
+        from markitai.workflow.core import ConversionContext, write_base_markdown
+
+        cfg = MarkitaiConfig()
+        cfg.llm.pure = True
+        cfg.llm.enabled = False
+
+        input_file = tmp_path / "sample.txt"
+        input_file.write_text("# Hello\n\nSome content here.")
+
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=tmp_path,
+            config=cfg,
+        )
+        ctx.output_file = tmp_path / "sample.txt.md"
+        ctx.conversion_result = ConvertResult(
+            markdown="# Hello\n\nSome content here.",
+            images=[],
+            metadata={},
+        )
+
+        result = write_base_markdown(ctx)
+
+        assert result.success
+        assert ctx.output_file.exists()
+        content = ctx.output_file.read_text()
+        # Should NOT have frontmatter
+        assert not content.startswith("---")
+        # Should have the raw markdown
+        assert "# Hello" in content
+        assert "Some content here." in content
+
+    def test_pure_without_llm_no_frontmatter(self, tmp_path):
+        """Raw markdown should not contain any YAML frontmatter markers."""
+        from markitai.workflow.core import ConversionContext, write_base_markdown
+
+        cfg = MarkitaiConfig()
+        cfg.llm.pure = True
+        cfg.llm.enabled = False
+
+        input_file = tmp_path / "sample.txt"
+        input_file.write_text("Just plain text.")
+
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=tmp_path,
+            config=cfg,
+        )
+        ctx.output_file = tmp_path / "sample.txt.md"
+        ctx.conversion_result = ConvertResult(
+            markdown="Just plain text.",
+            images=[],
+            metadata={},
+        )
+
+        result = write_base_markdown(ctx)
+
+        assert result.success
+        content = ctx.output_file.read_text()
+        assert content == "Just plain text."
+
+    def test_default_mode_still_adds_frontmatter(self, tmp_path):
+        """Default mode (no --pure, no --llm) should still add frontmatter."""
+        from markitai.workflow.core import ConversionContext, write_base_markdown
+
+        cfg = MarkitaiConfig()
+        # Neither pure nor llm
+
+        input_file = tmp_path / "sample.txt"
+        input_file.write_text("# Hello")
+
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=tmp_path,
+            config=cfg,
+        )
+        ctx.output_file = tmp_path / "sample.txt.md"
+        ctx.conversion_result = ConvertResult(
+            markdown="# Hello",
+            images=[],
+            metadata={},
+        )
+
+        result = write_base_markdown(ctx)
+
+        assert result.success
+        content = ctx.output_file.read_text()
+        assert content.startswith("---")
