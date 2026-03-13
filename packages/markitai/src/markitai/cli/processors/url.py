@@ -261,42 +261,50 @@ async def process_url(
                 )
             return
 
-        # Write base .md file
-        # For --llm --screenshot-only: .md contains just screenshot reference
-        # Otherwise: .md contains original markdown content
-        if (
-            cfg.screenshot.screenshot_only
-            and cfg.llm.enabled
-            and has_screenshot
-            and screenshot_path is not None
-        ):
-            # .md file just references the screenshot (not as HTML comment)
-            screenshot_ref = (
-                f"![Screenshot]({SCREENSHOTS_REL_PATH}/{screenshot_path.name})"
-            )
-            base_content = _add_basic_frontmatter(
-                screenshot_ref,
-                url,
-                fetch_strategy=used_strategy,
-                screenshot_path=None,  # Don't add screenshot again
-                output_dir=output_dir,
-                title=fetch_result.title,
-                extra_meta=source_extra_meta,
-            )
-        else:
-            base_content = _add_basic_frontmatter(
-                original_markdown,
-                url,
-                fetch_strategy=used_strategy,
-                screenshot_path=screenshot_path,
-                output_dir=output_dir,
-                title=fetch_result.title,
-                extra_meta=source_extra_meta,
-            )
-        atomic_write_text(output_file, base_content)
-        logger.info(f"Written output: {output_file}")
+        # Write base .md file (respect --llm, --pure, --keep-base)
+        should_write_base = not cfg.llm.enabled or cfg.llm.keep_base
+        if should_write_base:
+            # For --llm --screenshot-only: .md contains just screenshot reference
+            # Otherwise: .md contains original markdown content
+            if (
+                cfg.screenshot.screenshot_only
+                and cfg.llm.enabled
+                and has_screenshot
+                and screenshot_path is not None
+            ):
+                # .md file just references the screenshot (not as HTML comment)
+                screenshot_ref = (
+                    f"![Screenshot]({SCREENSHOTS_REL_PATH}/{screenshot_path.name})"
+                )
+                base_content = _add_basic_frontmatter(
+                    screenshot_ref,
+                    url,
+                    fetch_strategy=used_strategy,
+                    screenshot_path=None,  # Don't add screenshot again
+                    output_dir=output_dir,
+                    title=fetch_result.title,
+                    extra_meta=source_extra_meta,
+                )
+            elif cfg.llm.pure and not cfg.llm.enabled:
+                # Pure mode without LLM: write raw markdown, no frontmatter
+                base_content = original_markdown
+            else:
+                base_content = _add_basic_frontmatter(
+                    original_markdown,
+                    url,
+                    fetch_strategy=used_strategy,
+                    screenshot_path=screenshot_path,
+                    output_dir=output_dir,
+                    title=fetch_result.title,
+                    extra_meta=source_extra_meta,
+                )
+            atomic_write_text(output_file, base_content)
+            logger.info(f"Written output: {output_file}")
 
         # LLM processing (if enabled) uses markdown with local image paths
+        if not should_write_base:
+            # When base .md wasn't written, use original markdown as starting point
+            base_content = original_markdown
         final_content = base_content
         if cfg.llm.enabled:
             logger.info(f"[LLM] Processing URL content: {url}")
@@ -779,17 +787,23 @@ async def process_url_batch(
                     results[url] = {"status": "skipped", "error": "Output exists"}
                     return
 
-                # Write base .md file with frontmatter
-                base_content = _add_basic_frontmatter(
-                    markdown_content,
-                    url,
-                    fetch_strategy=url_fetch_strategy,
-                    screenshot_path=screenshot_path,
-                    output_dir=output_dir,
-                    title=fetch_result.title,
-                    extra_meta=source_extra_meta,
-                )
-                atomic_write_text(output_file, base_content)
+                # Write base .md file (respect --llm, --pure, --keep-base)
+                should_write_base = not cfg.llm.enabled or cfg.llm.keep_base
+                if should_write_base:
+                    if cfg.llm.pure and not cfg.llm.enabled:
+                        # Pure mode without LLM: write raw markdown, no frontmatter
+                        atomic_write_text(output_file, markdown_content)
+                    else:
+                        base_content = _add_basic_frontmatter(
+                            markdown_content,
+                            url,
+                            fetch_strategy=url_fetch_strategy,
+                            screenshot_path=screenshot_path,
+                            output_dir=output_dir,
+                            title=fetch_result.title,
+                            extra_meta=source_extra_meta,
+                        )
+                        atomic_write_text(output_file, base_content)
 
                 llm_cost = 0.0
                 llm_usage: dict[str, dict[str, Any]] = {}

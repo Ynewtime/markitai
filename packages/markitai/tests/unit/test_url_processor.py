@@ -1063,3 +1063,196 @@ class TestProcessUrlOutputConflict:
 
         # Original content should be preserved
         assert output_file.read_text() == "Existing content"
+
+
+class TestProcessUrlPureMode:
+    """Tests for --pure/--llm/--keep-base flag handling in single-file URL processing."""
+
+    def _make_mock_fetch_result(self) -> MagicMock:
+        mock_result = MagicMock()
+        mock_result.content = "# Test Page\n\nSome content here."
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Test Page"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+        return mock_result
+
+    @pytest.mark.asyncio
+    async def test_single_url_llm_without_keep_base_skips_base_md(
+        self, tmp_path: Path
+    ) -> None:
+        """With --llm (no --keep-base), base .md should NOT be written."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.keep_base = False
+        cfg.cache.enabled = False
+
+        mock_result = self._make_mock_fetch_result()
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new_callable=AsyncMock,
+                return_value=("# Cleaned", 0.01, {}),
+            ),
+        ):
+            await process_url(
+                url="https://example.com/test",
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        # Base .md should NOT exist (only .llm.md should be produced)
+        base_md = tmp_path / "test.md"
+        assert not base_md.exists(), (
+            f"Base .md should not be written when --llm is enabled without --keep-base, "
+            f"but found: {base_md}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_single_url_pure_without_llm_writes_raw_markdown(
+        self, tmp_path: Path
+    ) -> None:
+        """With --pure (no --llm), base .md should contain raw markdown without frontmatter."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.llm.pure = True
+        cfg.cache.enabled = False
+
+        mock_result = self._make_mock_fetch_result()
+
+        with patch(
+            "markitai.fetch.fetch_url",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            try:
+                await process_url(
+                    url="https://example.com/test",
+                    output_dir=tmp_path,
+                    cfg=cfg,
+                    dry_run=False,
+                    verbose=False,
+                )
+            except SystemExit:
+                pass
+
+        output_file = tmp_path / "test.md"
+        assert output_file.exists()
+        content = output_file.read_text()
+        # Should be raw markdown, no frontmatter
+        assert not content.startswith("---"), (
+            f"Expected raw markdown without frontmatter, but content starts with '---':\n"
+            f"{content[:200]}"
+        )
+        assert "# Test Page" in content
+
+
+class TestProcessUrlBatchPureMode:
+    """Tests for --pure/--llm/--keep-base flag handling in batch URL processing."""
+
+    @pytest.mark.asyncio
+    async def test_batch_url_llm_without_keep_base_skips_base_md(
+        self, tmp_path: Path
+    ) -> None:
+        """With --llm (no --keep-base), batch URL base .md should NOT be written."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.keep_base = False
+        cfg.cache.enabled = False
+
+        mock_result = MagicMock()
+        mock_result.content = "# Test Page\n\nSome content."
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Test Page"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+
+        class MockUrlEntry:
+            def __init__(self, url: str, output_name: str | None = None):
+                self.url = url
+                self.output_name = output_name
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new_callable=AsyncMock,
+                return_value=("# Cleaned", 0.01, {}),
+            ),
+        ):
+            await process_url_batch(
+                url_entries=[MockUrlEntry("https://example.com/test")],
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        base_md = tmp_path / "test.md"
+        assert not base_md.exists(), (
+            "Batch URL base .md should not be written when --llm is enabled without --keep-base"
+        )
+
+    @pytest.mark.asyncio
+    async def test_batch_url_pure_without_llm_writes_raw_markdown(
+        self, tmp_path: Path
+    ) -> None:
+        """With --pure (no --llm), batch URL .md should contain raw markdown without frontmatter."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.llm.pure = True
+        cfg.cache.enabled = False
+
+        mock_result = MagicMock()
+        mock_result.content = "# Test Page\n\nSome content."
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Test Page"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+
+        class MockUrlEntry:
+            def __init__(self, url: str, output_name: str | None = None):
+                self.url = url
+                self.output_name = output_name
+
+        with patch(
+            "markitai.fetch.fetch_url",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            await process_url_batch(
+                url_entries=[MockUrlEntry("https://example.com/test")],
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        output_file = tmp_path / "test.md"
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert not content.startswith("---"), (
+            "Expected raw markdown without frontmatter in batch URL mode with --pure"
+        )
+        assert "# Test Page" in content
