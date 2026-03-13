@@ -388,6 +388,10 @@ async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResul
 def write_base_markdown(ctx: ConversionContext) -> ConversionStepResult:
     """Write base markdown file with basic frontmatter.
 
+    In LLM mode without --keep-base, the base .md is NOT written to disk.
+    The conversion result remains available in memory (ctx.conversion_result.markdown)
+    for downstream consumers like stabilize_written_llm_output().
+
     Args:
         ctx: Conversion context
 
@@ -398,6 +402,14 @@ def write_base_markdown(ctx: ConversionContext) -> ConversionStepResult:
         return ConversionStepResult(
             success=False, error="Missing conversion result or output file"
         )
+
+    # In LLM mode, skip writing .md unless --keep-base is set
+    if ctx.config.llm.enabled and not ctx.config.llm.keep_base:
+        logger.debug(
+            f"[Core] Skipped writing base .md (LLM mode, no --keep-base): "
+            f"{ctx.output_file}"
+        )
+        return ConversionStepResult(success=True)
 
     title = ctx.conversion_result.metadata.get("title")
     base_md_content = add_basic_frontmatter(
