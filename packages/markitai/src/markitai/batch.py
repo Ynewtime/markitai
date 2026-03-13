@@ -76,6 +76,7 @@ class FileState:
     status: FileStatus = FileStatus.PENDING
     output: str | None = None
     error: str | None = None
+    skip_reason: str | None = None
     started_at: str | None = None
     completed_at: str | None = None
     duration: float | None = None
@@ -191,6 +192,15 @@ class BatchState:
     def completed_count(self) -> int:
         """Number of completed files."""
         return sum(1 for f in self.files.values() if f.status == FileStatus.COMPLETED)
+
+    @property
+    def skipped_count(self) -> int:
+        """Number of skipped files (completed with a skip_reason)."""
+        return sum(
+            1
+            for f in self.files.values()
+            if f.status == FileStatus.COMPLETED and f.skip_reason is not None
+        )
 
     @property
     def completed_urls_count(self) -> int:
@@ -1195,6 +1205,10 @@ class BatchProcessor:
                     file_state.cost_usd = result.cost_usd
                     file_state.llm_usage = result.llm_usage
                     file_state.cache_hit = result.cache_hit
+                    # Extract skip reason from ProcessResult error field
+                    if result.error and result.error.startswith("skipped ("):
+                        # e.g. "skipped (image_only)" → "image_only"
+                        file_state.skip_reason = result.error[9:-1]
                     # Collect image analysis result for JSON aggregation
                     if result.image_analysis_result is not None:
                         self.image_analysis_results.append(result.image_analysis_result)
@@ -1365,11 +1379,13 @@ class BatchProcessor:
         # Print completion display
         self.console.print()
         files_completed = self.state.completed_count
+        files_skipped = self.state.skipped_count
+        files_actually_converted = files_completed - files_skipped
 
         # Build summary parts
         parts: list[str] = []
-        if files_completed > 0:
-            parts.append(f"{files_completed} files")
+        if files_actually_converted > 0:
+            parts.append(f"{files_actually_converted} files")
         if url_completed > 0:
             parts.append(f"{url_completed} URLs")
 
@@ -1385,9 +1401,10 @@ class BatchProcessor:
                 if f.status == FileStatus.COMPLETED and f.cache_hit
             )
             cache_str = f"  Cache: {cache_hits}" if cache_hits > 0 else ""
+            skip_str = f"  {files_skipped} skipped" if files_skipped > 0 else ""
             self.console.print(
-                f"  {ui.MARK_INFO} Files: {files_completed}/{self.state.total} "
-                f"[green]{ui.MARK_SUCCESS}[/]{cache_str}"
+                f"  {ui.MARK_INFO} Files: {files_actually_converted}/{self.state.total} "
+                f"[green]{ui.MARK_SUCCESS}[/]{cache_str}{skip_str}"
             )
         if url_completed > 0 or url_failed > 0:
             total_urls = url_completed + url_failed
@@ -1396,7 +1413,12 @@ class BatchProcessor:
                 f"[green]{ui.MARK_SUCCESS}[/]"
             )
 
-        # Warnings (failed items)
+        # Skipped file warnings
+        for f in self.state.files.values():
+            if f.skip_reason:
+                warnings.append(f"{Path(f.path).name}: skipped ({f.skip_reason})")
+
+        # Warnings (failed and skipped items)
         if warnings:
             width = ui.term_width(self.console)
             warn_max = max(width - 4, 20)

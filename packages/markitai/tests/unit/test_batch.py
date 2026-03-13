@@ -165,6 +165,194 @@ class TestBatchState:
         assert state.files[expected_key].status == FileStatus.COMPLETED
 
 
+class TestFileStateSkipReason:
+    """Tests for FileState skip_reason field."""
+
+    def test_skip_reason_defaults_to_none(self) -> None:
+        """FileState should have skip_reason=None by default."""
+        state = FileState(path="/path/to/file.pdf")
+        assert state.skip_reason is None
+
+    def test_skip_reason_can_be_set(self) -> None:
+        """FileState skip_reason can be set for skipped files."""
+        state = FileState(path="/path/to/image.png")
+        state.skip_reason = "image_only"
+        assert state.skip_reason == "image_only"
+
+
+class TestBatchStateSkippedCount:
+    """Tests for BatchState skipped file counting."""
+
+    def test_skipped_count_zero_when_no_skips(self) -> None:
+        """skipped_count should be 0 when no files have skip_reason."""
+        state = BatchState()
+        state.files = {
+            "/path/file1.pdf": FileState(
+                path="/path/file1.pdf", status=FileStatus.COMPLETED
+            ),
+        }
+        assert state.skipped_count == 0
+
+    def test_skipped_count_counts_files_with_skip_reason(self) -> None:
+        """skipped_count should count COMPLETED files that have a skip_reason."""
+        state = BatchState()
+        state.files = {
+            "/path/file1.pdf": FileState(
+                path="/path/file1.pdf", status=FileStatus.COMPLETED
+            ),
+            "/path/image.png": FileState(
+                path="/path/image.png",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+            "/path/image2.jpg": FileState(
+                path="/path/image2.jpg",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+        }
+        assert state.skipped_count == 2
+
+    def test_completed_count_includes_skipped(self) -> None:
+        """completed_count should still include skipped files (backwards compat)."""
+        state = BatchState()
+        state.files = {
+            "/path/file1.pdf": FileState(
+                path="/path/file1.pdf", status=FileStatus.COMPLETED
+            ),
+            "/path/image.png": FileState(
+                path="/path/image.png",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+        }
+        assert state.completed_count == 2
+
+
+class TestBatchProcessorSkipInProcessing:
+    """Tests for skip_reason being stored during batch processing."""
+
+    async def test_process_batch_stores_skip_reason_for_image_only(
+        self, tmp_path: Path
+    ) -> None:
+        """process_batch should store skip_reason when ProcessResult has skipped error."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "image.png").write_text("fake")
+        (input_dir / "doc.pdf").write_text("fake")
+
+        output_dir = tmp_path / "output"
+        config = BatchConfig()
+        processor = BatchProcessor(config, output_dir)
+
+        files = [input_dir / "image.png", input_dir / "doc.pdf"]
+
+        async def mock_process(path: Path) -> ProcessResult:
+            if path.suffix == ".png":
+                return ProcessResult(success=True, error="skipped (image_only)")
+            return ProcessResult(
+                success=True,
+                output_path=str(output_dir / f"{path.name}.md"),
+            )
+
+        state = await processor.process_batch(files, mock_process)
+
+        # Find the image file state
+        image_key = str(input_dir / "image.png")
+        assert state.files[image_key].skip_reason == "image_only"
+        assert state.files[image_key].status == FileStatus.COMPLETED
+
+        # Doc should have no skip_reason
+        doc_key = str(input_dir / "doc.pdf")
+        assert state.files[doc_key].skip_reason is None
+
+    async def test_process_batch_stores_skip_reason_for_exists(
+        self, tmp_path: Path
+    ) -> None:
+        """process_batch should store skip_reason='exists' for already-existing output."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "doc.pdf").write_text("fake")
+
+        output_dir = tmp_path / "output"
+        config = BatchConfig()
+        processor = BatchProcessor(config, output_dir)
+
+        files = [input_dir / "doc.pdf"]
+
+        async def mock_process(path: Path) -> ProcessResult:
+            return ProcessResult(
+                success=True,
+                output_path=str(output_dir / f"{path.name}.md"),
+                error="skipped (exists)",
+            )
+
+        state = await processor.process_batch(files, mock_process)
+
+        doc_key = str(input_dir / "doc.pdf")
+        assert state.files[doc_key].skip_reason == "exists"
+
+
+class TestPrintSummaryWithSkips:
+    """Tests for print_summary displaying skipped file information."""
+
+    def test_summary_shows_skipped_count(self, tmp_path: Path, capsys) -> None:
+        """print_summary should show skipped count separately from completed."""
+        config = BatchConfig()
+        processor = BatchProcessor(config, tmp_path)
+        processor.state = BatchState(
+            started_at="2026-01-15T10:00:00Z",
+            input_dir=str(tmp_path),
+            output_dir=str(tmp_path),
+        )
+        # 3 files: 1 completed, 2 skipped
+        processor.state.files = {
+            "/path/doc.pdf": FileState(
+                path="/path/doc.pdf", status=FileStatus.COMPLETED
+            ),
+            "/path/image.png": FileState(
+                path="/path/image.png",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+            "/path/image2.jpg": FileState(
+                path="/path/image2.jpg",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+        }
+
+        processor.print_summary()
+
+        captured = capsys.readouterr()
+        # Should show "1/3 ✓" (only 1 truly completed) and mention 2 skipped
+        assert "1/3" in captured.out
+        assert "2 skipped" in captured.out
+
+    def test_summary_shows_skip_warnings(self, tmp_path: Path, capsys) -> None:
+        """print_summary should show warning lines for skipped files."""
+        config = BatchConfig()
+        processor = BatchProcessor(config, tmp_path)
+        processor.state = BatchState(
+            started_at="2026-01-15T10:00:00Z",
+            input_dir=str(tmp_path),
+            output_dir=str(tmp_path),
+        )
+        processor.state.files = {
+            "/path/image.png": FileState(
+                path="/path/image.png",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+        }
+
+        processor.print_summary()
+
+        captured = capsys.readouterr()
+        assert "image.png" in captured.out
+        assert "skipped" in captured.out.lower()
+
+
 class TestBatchProcessor:
     """Tests for BatchProcessor class."""
 
