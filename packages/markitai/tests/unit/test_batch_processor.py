@@ -744,6 +744,120 @@ class TestCreateUrlProcessor:
 
 
 # =============================================================================
+# URL Processor Pure/LLM Mode Tests
+# =============================================================================
+
+
+class TestUrlProcessorPureMode:
+    """Tests for URL processor respecting --pure and --llm flags."""
+
+    @pytest.mark.asyncio
+    async def test_url_llm_without_keep_base_skips_base_md(
+        self,
+        default_config: MarkitaiConfig,
+        sample_output_dir: Path,
+        sample_input_dir: Path,
+    ) -> None:
+        """URL processor should not write base .md when --llm without --keep-base."""
+        from markitai.cli.processors.batch import create_url_processor
+
+        default_config.llm.enabled = True
+        default_config.llm.keep_base = False
+        default_config.cache.enabled = False
+
+        mock_fetch_result = MagicMock()
+        mock_fetch_result.content = "# Test Content"
+        mock_fetch_result.strategy_used = "static"
+        mock_fetch_result.cache_hit = False
+        mock_fetch_result.static_content = None
+        mock_fetch_result.browser_content = None
+        mock_fetch_result.screenshot_path = None
+        mock_fetch_result.title = "Test"
+        mock_fetch_result.metadata = {}
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new=AsyncMock(return_value=mock_fetch_result),
+            ),
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new=AsyncMock(return_value=("# Enhanced", 0.0, {})),
+            ),
+        ):
+            process_url = create_url_processor(
+                cfg=default_config,
+                output_dir=sample_output_dir,
+                fetch_strategy=None,
+                explicit_fetch_strategy=False,
+                shared_processor=None,
+                renderer=None,
+            )
+
+            result, _ = await process_url(
+                "https://example.com",
+                sample_input_dir / "urls.txt",
+                "test_page",
+            )
+
+            assert result.success is True
+            # Base .md should NOT exist
+            base_md = sample_output_dir / "test_page.md"
+            assert not base_md.exists(), f"Base .md should not be written: {base_md}"
+
+    @pytest.mark.asyncio
+    async def test_url_pure_without_llm_writes_raw_markdown(
+        self,
+        default_config: MarkitaiConfig,
+        sample_output_dir: Path,
+        sample_input_dir: Path,
+    ) -> None:
+        """URL processor with --pure (no --llm) should write raw markdown without frontmatter."""
+        from markitai.cli.processors.batch import create_url_processor
+
+        default_config.llm.enabled = False
+        default_config.llm.pure = True
+        default_config.cache.enabled = False
+
+        mock_fetch_result = MagicMock()
+        mock_fetch_result.content = "# Raw Content\n\nNo frontmatter here."
+        mock_fetch_result.strategy_used = "static"
+        mock_fetch_result.cache_hit = False
+        mock_fetch_result.static_content = None
+        mock_fetch_result.browser_content = None
+        mock_fetch_result.screenshot_path = None
+        mock_fetch_result.title = "Test"
+        mock_fetch_result.metadata = {}
+
+        with patch(
+            "markitai.fetch.fetch_url",
+            new=AsyncMock(return_value=mock_fetch_result),
+        ):
+            process_url = create_url_processor(
+                cfg=default_config,
+                output_dir=sample_output_dir,
+                fetch_strategy=None,
+                explicit_fetch_strategy=False,
+                shared_processor=None,
+                renderer=None,
+            )
+
+            result, _ = await process_url(
+                "https://example.com",
+                sample_input_dir / "urls.txt",
+                "test_page",
+            )
+
+            assert result.success is True
+            base_md = sample_output_dir / "test_page.md"
+            assert base_md.exists()
+            content = base_md.read_text()
+            # Should NOT have frontmatter
+            assert not content.startswith("---")
+            assert "# Raw Content" in content
+
+
+# =============================================================================
 # process_batch Tests
 # =============================================================================
 

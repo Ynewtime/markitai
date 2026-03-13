@@ -333,17 +333,25 @@ def create_url_processor(
                     error="skipped (exists)",
                 ), extra_info
 
-            # Write base .md file with original content
-            base_content = _add_basic_frontmatter(
-                original_markdown,
-                url,
-                fetch_strategy=fetch_result.strategy_used if fetch_result else None,
-                screenshot_path=screenshot_path,
-                output_dir=output_dir,
-                title=fetch_result.title if fetch_result else None,
-                extra_meta=source_extra_meta,
-            )
-            atomic_write_text(output_file, base_content)
+            # Write base .md file (respect --llm, --pure, --keep-base)
+            should_write_base = not cfg.llm.enabled or cfg.llm.keep_base
+            if should_write_base:
+                if cfg.llm.pure and not cfg.llm.enabled:
+                    # Pure mode without LLM: write raw markdown, no frontmatter
+                    atomic_write_text(output_file, original_markdown)
+                else:
+                    base_content = _add_basic_frontmatter(
+                        original_markdown,
+                        url,
+                        fetch_strategy=fetch_result.strategy_used
+                        if fetch_result
+                        else None,
+                        screenshot_path=screenshot_path,
+                        output_dir=output_dir,
+                        title=fetch_result.title if fetch_result else None,
+                        extra_meta=source_extra_meta,
+                    )
+                    atomic_write_text(output_file, base_content)
 
             # LLM processing uses markdown with local image paths
             url_llm_usage: dict[str, dict[str, Any]] = {}
