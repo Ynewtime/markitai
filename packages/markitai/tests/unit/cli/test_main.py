@@ -256,7 +256,7 @@ class TestPureCLIFlag:
     """Test --pure CLI flag."""
 
     def test_pure_flag_recognized(self, tmp_path):
-        """--pure should be a recognized flag that implies --llm."""
+        """--pure should be a recognized CLI flag."""
         from click.testing import CliRunner
 
         from markitai.cli.main import app
@@ -288,6 +288,67 @@ class TestPureCLIFlag:
             env={"MARKITAI_PURE": "1"},
         )
         assert "no such option" not in (result.output or "").lower()
+
+    def test_pure_flag_does_not_enable_llm(self, tmp_path):
+        """--pure alone should NOT set llm.enabled = True."""
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+
+        from markitai.cli.main import app
+
+        runner = CliRunner()
+        txt_file = tmp_path / "test.txt"
+        txt_file.write_text("# Hello", encoding="utf-8")
+
+        captured_cfg = {}
+
+        async def capture_cfg(input_path, output_dir, cfg, *args, **kwargs):
+            captured_cfg["llm_enabled"] = cfg.llm.enabled
+            captured_cfg["llm_pure"] = cfg.llm.pure
+
+        with patch(
+            "markitai.cli.processors.file.process_single_file",
+            side_effect=capture_cfg,
+        ):
+            runner.invoke(
+                app,
+                [str(txt_file), "--pure", "-o", str(tmp_path / "out")],
+            )
+
+        assert captured_cfg.get("llm_pure") is True
+        assert captured_cfg.get("llm_enabled") is False
+
+    def test_pure_env_var_does_not_enable_llm(self, tmp_path):
+        """MARKITAI_PURE=1 should NOT set llm.enabled = True."""
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+
+        from markitai.cli.main import app
+
+        runner = CliRunner()
+        txt_file = tmp_path / "test.txt"
+        txt_file.write_text("# Hello", encoding="utf-8")
+
+        captured_cfg = {}
+
+        async def capture_cfg(input_path, output_dir, cfg, *args, **kwargs):
+            captured_cfg["llm_enabled"] = cfg.llm.enabled
+            captured_cfg["llm_pure"] = cfg.llm.pure
+
+        with patch(
+            "markitai.cli.processors.file.process_single_file",
+            side_effect=capture_cfg,
+        ):
+            runner.invoke(
+                app,
+                [str(txt_file), "-o", str(tmp_path / "out")],
+                env={"MARKITAI_PURE": "1"},
+            )
+
+        assert captured_cfg.get("llm_pure") is True
+        assert captured_cfg.get("llm_enabled") is False
 
 
 class TestKeepBaseCLIFlag:
