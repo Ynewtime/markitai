@@ -248,7 +248,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
 @click.option(
     "--pure",
     is_flag=True,
-    help="Pure mode: raw MD → LLM → output, no markitai processing (implies --llm).",
+    help="Pure mode: skip frontmatter and post-processing. With --llm: raw MD → LLM → output.",
 )
 @click.option(
     "--keep-base",
@@ -507,7 +507,6 @@ def app(
 
     if pure:
         cfg.llm.pure = True
-        cfg.llm.enabled = True  # --pure implies --llm
 
     if keep_base:
         cfg.llm.keep_base = True
@@ -515,7 +514,6 @@ def app(
     # Env var support for pure mode
     if not pure and os.environ.get("MARKITAI_PURE", "").strip() in ("1", "true", "yes"):
         cfg.llm.pure = True
-        cfg.llm.enabled = True
 
     # Validate vision model configuration if image analysis is enabled
     _check_vision_model_config(cfg, console, verbose)
