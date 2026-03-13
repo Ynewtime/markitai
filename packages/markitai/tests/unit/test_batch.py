@@ -329,8 +329,10 @@ class TestPrintSummaryWithSkips:
         assert "1/3" in captured.out
         assert "2 skipped" in captured.out
 
-    def test_summary_shows_skip_warnings(self, tmp_path: Path, capsys) -> None:
-        """print_summary should show warning lines for skipped files."""
+    def test_skip_warnings_grouped_by_reason_with_filenames(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """Few skipped files should be grouped into one line with filenames."""
         config = BatchConfig()
         processor = BatchProcessor(config, tmp_path)
         processor.state = BatchState(
@@ -339,8 +341,13 @@ class TestPrintSummaryWithSkips:
             output_dir=str(tmp_path),
         )
         processor.state.files = {
-            "/path/image.png": FileState(
-                path="/path/image.png",
+            "/path/a.png": FileState(
+                path="/path/a.png",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+            "/path/b.jpg": FileState(
+                path="/path/b.jpg",
                 status=FileStatus.COMPLETED,
                 skip_reason="image_only",
             ),
@@ -349,8 +356,68 @@ class TestPrintSummaryWithSkips:
         processor.print_summary()
 
         captured = capsys.readouterr()
-        assert "image.png" in captured.out
-        assert "skipped" in captured.out.lower()
+        # Should be ONE grouped line, not per-file lines
+        assert "2 files skipped (image_only)" in captured.out
+        assert "a.png" in captured.out
+        assert "b.jpg" in captured.out
+
+    def test_skip_warnings_grouped_without_filenames_when_many(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """Many skipped files should show only count, no individual filenames."""
+        config = BatchConfig()
+        processor = BatchProcessor(config, tmp_path)
+        processor.state = BatchState(
+            started_at="2026-01-15T10:00:00Z",
+            input_dir=str(tmp_path),
+            output_dir=str(tmp_path),
+        )
+        # Create 10 skipped files
+        processor.state.files = {
+            f"/path/img{i}.png": FileState(
+                path=f"/path/img{i}.png",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            )
+            for i in range(10)
+        }
+
+        processor.print_summary()
+
+        captured = capsys.readouterr()
+        assert "10 files skipped (image_only)" in captured.out
+        # Should NOT list individual filenames
+        assert "img0.png" not in captured.out
+
+    def test_skip_warnings_multiple_reasons_separate_lines(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """Different skip reasons should each get their own grouped line."""
+        config = BatchConfig()
+        processor = BatchProcessor(config, tmp_path)
+        processor.state = BatchState(
+            started_at="2026-01-15T10:00:00Z",
+            input_dir=str(tmp_path),
+            output_dir=str(tmp_path),
+        )
+        processor.state.files = {
+            "/path/a.png": FileState(
+                path="/path/a.png",
+                status=FileStatus.COMPLETED,
+                skip_reason="image_only",
+            ),
+            "/path/b.pdf": FileState(
+                path="/path/b.pdf",
+                status=FileStatus.COMPLETED,
+                skip_reason="exists",
+            ),
+        }
+
+        processor.print_summary()
+
+        captured = capsys.readouterr()
+        assert "1 file skipped (image_only)" in captured.out
+        assert "1 file skipped (exists)" in captured.out
 
 
 class TestBatchProcessor:
