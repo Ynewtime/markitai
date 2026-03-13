@@ -423,6 +423,31 @@ def write_base_markdown(ctx: ConversionContext) -> ConversionStepResult:
     return ConversionStepResult(success=True)
 
 
+def _write_base_md_fallback(ctx: ConversionContext) -> None:
+    """Write base .md as fallback when LLM processing fails.
+
+    Called when LLM mode is active but LLM processing fails. Ensures the user
+    gets at least the base conversion result instead of nothing.
+
+    Args:
+        ctx: Conversion context
+    """
+    if ctx.conversion_result is None or ctx.output_file is None:
+        return
+    if ctx.output_file.exists():
+        return  # Already written (e.g., --keep-base was set)
+    title = ctx.conversion_result.metadata.get("title")
+    base_md_content = add_basic_frontmatter(
+        ctx.conversion_result.markdown,
+        ctx.input_path.name,
+        title=title if isinstance(title, str) else None,
+    )
+    atomic_write_text(ctx.output_file, base_md_content)
+    logger.warning(
+        f"[Core] LLM processing failed, wrote base .md as fallback: {ctx.output_file}"
+    )
+
+
 def get_saved_images(ctx: ConversionContext) -> list[Path]:
     """Get list of saved images for this file from assets directory.
 
@@ -993,6 +1018,7 @@ async def convert_document_core(
             # --screenshot-only takes precedence over --pure (mutually exclusive)
             result = await process_with_pure_llm(ctx)
             if not result.success:
+                _write_base_md_fallback(ctx)
                 return result
         else:
             page_images = ctx.conversion_result.metadata.get("page_images", [])
@@ -1007,11 +1033,13 @@ async def convert_document_core(
                         ctx
                     )
                 except Exception as e:
+                    _write_base_md_fallback(ctx)
                     return ConversionStepResult(
                         success=False,
                         error=f"Vision LLM failed: {format_error_message(e)}",
                     )
                 if not vision_result.success:
+                    _write_base_md_fallback(ctx)
                     return vision_result
 
                 # Embedded image analysis (non-critical, log warning on failure)
@@ -1045,6 +1073,7 @@ async def convert_document_core(
                 # Standard LLM mode
                 result = await process_with_standard_llm(ctx)
                 if not result.success:
+                    _write_base_md_fallback(ctx)
                     return result
 
     return ConversionStepResult(success=True)
