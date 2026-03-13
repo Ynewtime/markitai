@@ -245,6 +245,29 @@ class TestPureModeWarnings:
             flag in result.output for flag in ("--alt", "--desc", "--screenshot")
         )
 
+    def test_pure_with_screenshot_only_does_not_warn_screenshot(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """--pure --screenshot-only should NOT warn about --screenshot being ignored."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+        output_dir = tmp_path / "out"
+
+        result = cli_runner.invoke(
+            app,
+            [
+                str(test_file),
+                "-o",
+                str(output_dir),
+                "--pure",
+                "--llm",
+                "--screenshot-only",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "--screenshot" not in result.output
+
     def test_pure_without_conflicting_flags_no_warning(
         self, tmp_path: Path, cli_runner: CliRunner
     ) -> None:

@@ -522,7 +522,7 @@ def app(
             ignored_flags.append("--alt")
         if cfg.image.desc_enabled:
             ignored_flags.append("--desc")
-        if cfg.screenshot.enabled:
+        if cfg.screenshot.enabled and not cfg.screenshot.screenshot_only:
             ignored_flags.append("--screenshot")
         if ignored_flags:
             flags_str = ", ".join(ignored_flags)
