@@ -416,6 +416,67 @@ class TestSessionToCliArgs:
         assert "--ocr" in args
 
 
+class TestPureModeInInteractive:
+    """Tests for pure mode support in interactive session."""
+
+    def test_session_has_enable_pure_field(self) -> None:
+        """InteractiveSession should have enable_pure field, default False."""
+        session = InteractiveSession()
+        assert session.enable_pure is False
+
+    def test_session_to_cli_args_includes_pure(self) -> None:
+        """When enable_pure is True, --pure should appear in CLI args."""
+        from markitai.cli.interactive import session_to_cli_args
+
+        session = InteractiveSession()
+        session.input_path = Path("/tmp/doc.pdf")
+        session.output_dir = Path("/tmp/output")
+        session.enable_llm = True
+        session.enable_pure = True
+
+        args = session_to_cli_args(session)
+        assert "--pure" in args
+        assert "--llm" in args
+
+    def test_session_to_cli_args_excludes_pure_when_disabled(self) -> None:
+        """When enable_pure is False, --pure should NOT appear."""
+        from markitai.cli.interactive import session_to_cli_args
+
+        session = InteractiveSession()
+        session.input_path = Path("/tmp/doc.pdf")
+        session.output_dir = Path("/tmp/output")
+        session.enable_llm = True
+        session.enable_pure = False
+
+        args = session_to_cli_args(session)
+        assert "--pure" not in args
+
+    @patch("questionary.checkbox")
+    def test_prompt_llm_options_offers_pure_mode(
+        self, mock_checkbox: MagicMock
+    ) -> None:
+        """LLM options should include pure mode as a choice."""
+        mock_checkbox.return_value.ask.return_value = ["pure"]
+
+        from markitai.cli.interactive import prompt_llm_options
+
+        session = InteractiveSession()
+        session.enable_llm = True
+
+        prompt_llm_options(session)
+
+        assert session.enable_pure is True
+        # Verify the checkbox was called with choices that include pure
+        call_args = mock_checkbox.call_args
+        choice_values = [
+            c.value
+            for c in call_args[1].get(
+                "choices", call_args[0][1] if len(call_args[0]) > 1 else []
+            )
+        ]
+        assert "pure" in choice_values
+
+
 class TestAtomicEnvWrite:
     """Tests for atomic .env file writing."""
 

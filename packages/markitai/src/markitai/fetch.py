@@ -2855,7 +2855,7 @@ def _is_invalid_content(content: str) -> tuple[bool, str]:
     )  # Remove markdown syntax
     clean_content = " ".join(clean_content.split())  # Normalize whitespace
 
-    if len(clean_content) < 100:
+    if len(clean_content) < 30:
         return True, "too_short"
 
     return False, ""
