@@ -2180,7 +2180,7 @@ class TestConvertDocumentCore:
 
     @pytest.mark.asyncio
     async def test_image_conversion(self, tmp_path: Path) -> None:
-        """Test converting an image file (PNG)."""
+        """Image files without LLM or OCR are skipped (Rule A: image_only)."""
         from markitai.config import MarkitaiConfig
         from markitai.workflow.core import ConversionContext, convert_document_core
 
@@ -2274,13 +2274,10 @@ class TestConvertDocumentCore:
         max_size = 100 * 1024 * 1024
         result = await convert_document_core(ctx, max_size)
 
+        # Rule A: image-only format without LLM or OCR → skip cleanly
         assert result.success is True
-        assert ctx.output_file is not None
-        assert ctx.output_file.exists()
-        # Output should contain image reference
-        content = ctx.output_file.read_text()
-        assert "test.png" in content
-        assert ".markitai/assets/test.png" in content  # Image copied to assets
+        assert result.skip_reason == "image_only"
+        assert ctx.output_file is None
 
 
 class TestHeavyTaskIdentification:
@@ -2757,3 +2754,71 @@ class TestDetectedFormat:
         result = validate_and_detect_format(ctx, MAX_DOCUMENT_SIZE)
         assert result.success
         assert ctx.detected_format == FileFormat.BMP
+
+
+# =============================================================================
+# Task 5: image-only skip logic in convert_document_core()
+# =============================================================================
+
+
+class TestImageOnlySkip:
+    async def test_image_skipped_without_llm_or_ocr(self, tmp_path, fixtures_dir):
+        from markitai.constants import MAX_DOCUMENT_SIZE
+        from markitai.workflow.core import convert_document_core
+
+        input_path = fixtures_dir / "sample.bmp"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        cfg = MarkitaiConfig()
+        ctx = ConversionContext(
+            input_path=input_path, output_dir=output_dir, config=cfg
+        )
+        result = await convert_document_core(ctx, MAX_DOCUMENT_SIZE)
+        assert result.success is True
+        assert result.skip_reason == "image_only"
+        output_files = list(output_dir.glob("*.md"))
+        assert len(output_files) == 0
+
+    async def test_image_not_skipped_with_llm(self, tmp_path, fixtures_dir):
+        from markitai.constants import MAX_DOCUMENT_SIZE
+        from markitai.workflow.core import convert_document_core
+
+        input_path = fixtures_dir / "sample.bmp"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        ctx = ConversionContext(
+            input_path=input_path, output_dir=output_dir, config=cfg
+        )
+        result = await convert_document_core(ctx, MAX_DOCUMENT_SIZE)
+        assert result.skip_reason != "image_only"
+
+    async def test_image_not_skipped_with_ocr(self, tmp_path, fixtures_dir):
+        from markitai.constants import MAX_DOCUMENT_SIZE
+        from markitai.workflow.core import convert_document_core
+
+        input_path = fixtures_dir / "sample.bmp"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        cfg = MarkitaiConfig()
+        cfg.ocr.enabled = True
+        ctx = ConversionContext(
+            input_path=input_path, output_dir=output_dir, config=cfg
+        )
+        result = await convert_document_core(ctx, MAX_DOCUMENT_SIZE)
+        assert result.skip_reason != "image_only"
+
+    async def test_document_not_skipped_without_llm(self, tmp_path, fixtures_dir):
+        from markitai.constants import MAX_DOCUMENT_SIZE
+        from markitai.workflow.core import convert_document_core
+
+        input_path = fixtures_dir / "sample.csv"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        cfg = MarkitaiConfig()
+        ctx = ConversionContext(
+            input_path=input_path, output_dir=output_dir, config=cfg
+        )
+        result = await convert_document_core(ctx, MAX_DOCUMENT_SIZE)
+        assert result.skip_reason != "image_only"

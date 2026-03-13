@@ -921,6 +921,24 @@ async def convert_document_core(
     if not result.success:
         return result
 
+    # Step 1.5: Skip image-only formats when neither LLM nor OCR is enabled
+    from markitai.converter.base import IMAGE_ONLY_FORMATS
+
+    if (
+        ctx.detected_format is not None
+        and ctx.detected_format in IMAGE_ONLY_FORMATS
+        and not ctx.config.llm.enabled
+        and not ctx.config.ocr.enabled
+    ):
+        logger.info(
+            f"[Core] Skipped {ctx.input_path.name} "
+            f"(image file, no text to extract without LLM or OCR)"
+        )
+        return ConversionStepResult(
+            success=True,
+            skip_reason="image_only",
+        )
+
     # Step 2: Prepare output directory
     result = prepare_output_directory(ctx)
     if not result.success:
