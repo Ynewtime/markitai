@@ -2937,3 +2937,43 @@ class TestReadMarkdownBodyFallback:
         result = _read_markdown_body(md_file, "fallback")
         assert "From File" in result
         assert "fallback" not in result
+
+
+class TestLLMFailureFallback:
+    """Tests for writing .md as fallback when LLM processing fails."""
+
+    async def test_md_written_on_llm_failure(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        """When LLM fails, .md should be written as fallback."""
+        import markitai.workflow.core as core_module
+        from markitai.constants import MAX_DOCUMENT_SIZE
+        from markitai.workflow.core import convert_document_core
+
+        input_path = fixtures_dir / "sample.csv"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.pure = True  # Use pure mode path (failure point 1)
+        ctx = ConversionContext(
+            input_path=input_path, output_dir=output_dir, config=cfg
+        )
+
+        # Mock process_with_pure_llm to simulate LLM failure
+        async def fake_pure_llm_failure(
+            ctx: ConversionContext,
+        ) -> ConversionStepResult:
+            return ConversionStepResult(success=False, error="LLM unavailable")
+
+        with patch.object(core_module, "process_with_pure_llm", fake_pure_llm_failure):
+            result = await convert_document_core(ctx, MAX_DOCUMENT_SIZE)
+
+        # LLM should fail
+        assert not result.success
+        # But .md should be written as fallback
+        assert ctx.output_file is not None
+        assert ctx.output_file.exists()
+        # Verify it has content (not empty)
+        content = ctx.output_file.read_text(encoding="utf-8")
+        assert len(content) > 0
