@@ -79,6 +79,22 @@ class FileFormat(Enum):
     UNKNOWN = "unknown"
 
 
+# Raster image formats that are processed directly as images.
+# SVG is intentionally excluded: it is a vector/document format handled
+# by a dedicated converter (kreuzberg) rather than direct image ingestion.
+IMAGE_ONLY_FORMATS: frozenset[FileFormat] = frozenset(
+    {
+        FileFormat.JPEG,
+        FileFormat.JPG,
+        FileFormat.PNG,
+        FileFormat.WEBP,
+        FileFormat.GIF,
+        FileFormat.BMP,
+        FileFormat.TIFF,
+    }
+)
+
+
 # Mapping of file extensions to formats
 EXTENSION_MAP: dict[str, FileFormat] = {
     ".docx": FileFormat.DOCX,
