@@ -635,6 +635,76 @@ async def process_with_pure_llm(ctx: ConversionContext) -> ConversionStepResult:
     return ConversionStepResult(success=True)
 
 
+async def process_image_with_vision_pure(
+    ctx: ConversionContext,
+) -> ConversionStepResult:
+    """Pure Vision mode: analyze standalone image with Vision model, write raw result.
+
+    For --llm --pure with image-only inputs. Uses analyze_image() to get
+    structured ImageAnalysis, then formats as markdown and writes to .llm.md.
+
+    No frontmatter or post-processing is applied — the output is constructed
+    directly from the ImageAnalysis structured fields.
+
+    Args:
+        ctx: Conversion context
+
+    Returns:
+        ConversionStepResult indicating success or failure
+    """
+    if ctx.conversion_result is None or ctx.output_file is None:
+        return ConversionStepResult(success=False, error="Missing conversion result")
+
+    # Get saved image from assets (handles transcoded formats via get_saved_images)
+    saved_images = get_saved_images(ctx)
+    if not saved_images:
+        return ConversionStepResult(
+            success=False,
+            error=f"No saved image found for {ctx.input_path.name}",
+        )
+
+    image_path = saved_images[0]
+
+    # Use shared processor or create new one
+    from markitai.workflow.helpers import create_llm_processor
+
+    processor = ctx.shared_processor
+    if processor is None:
+        processor = create_llm_processor(ctx.config)
+
+    try:
+        analysis = await processor.analyze_image(
+            image_path, context=ctx.input_path.name
+        )
+    except Exception as e:
+        return ConversionStepResult(
+            success=False,
+            error=f"Vision analysis failed: {format_error_message(e)}",
+        )
+
+    # Format output: # {filename}\n\n{description}\n\n{extracted_text}
+    sections = [f"# {ctx.input_path.stem}\n"]
+
+    if analysis.description:
+        sections.append(f"{analysis.description.strip()}\n")
+
+    if analysis.extracted_text and analysis.extracted_text.strip():
+        sections.append(f"{analysis.extracted_text.strip()}\n")
+
+    content = "\n".join(sections)
+
+    # Write to .llm.md
+    llm_output = ctx.output_file.with_suffix(".llm.md")
+    atomic_write_text(llm_output, content)
+    logger.info(f"[Core] Written pure Vision output: {llm_output}")
+
+    # Track cost if available
+    if analysis.llm_usage:
+        merge_llm_usage(ctx.llm_usage, analysis.llm_usage)
+
+    return ConversionStepResult(success=True)
+
+
 async def process_with_vision_llm(
     ctx: ConversionContext,
 ) -> ConversionStepResult:

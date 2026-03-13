@@ -3072,3 +3072,194 @@ class TestPureWithoutLLMOutput:
         assert result.success
         content = ctx.output_file.read_text()
         assert content.startswith("---")
+
+
+class TestProcessImageWithVisionPure:
+    """Tests for process_image_with_vision_pure() — Vision analysis for --llm --pure + image."""
+
+    @pytest.mark.asyncio
+    async def test_calls_analyze_image_and_writes_llm_md(self, tmp_path, fixtures_dir):
+        """Should call analyze_image() and write formatted result to .llm.md."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from markitai.converter.base import ConvertResult, FileFormat
+        from markitai.llm.types import ImageAnalysis
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_image_with_vision_pure,
+        )
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.pure = True
+
+        input_path = fixtures_dir / "sample.jpg"
+        ctx = ConversionContext(
+            input_path=input_path,
+            output_dir=tmp_path,
+            config=cfg,
+        )
+        ctx.output_file = tmp_path / "sample.jpg.md"
+        ctx.detected_format = FileFormat.JPEG
+        ctx.conversion_result = ConvertResult(
+            markdown="# sample\n\n![sample](.markitai/assets/sample.jpg)",
+            images=[],
+            metadata={"asset_path": ".markitai/assets/sample.jpg"},
+        )
+
+        # Create the asset file so get_saved_images() finds it
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        asset_file = assets_dir / "sample.jpg"
+        asset_file.write_bytes(b"\xff\xd8\xff\xe0")  # JPEG header stub
+
+        # Mock the processor
+        mock_analysis = ImageAnalysis(
+            caption="A sunset over mountains",
+            description="A beautiful sunset with orange and purple hues over a mountain range.",
+            extracted_text=None,
+        )
+        mock_processor = MagicMock()
+        mock_processor.analyze_image = AsyncMock(return_value=mock_analysis)
+        ctx.shared_processor = mock_processor
+
+        result = await process_image_with_vision_pure(ctx)
+
+        assert result.success
+        mock_processor.analyze_image.assert_called_once()
+
+        # Check .llm.md was written
+        llm_file = tmp_path / "sample.jpg.llm.md"
+        assert llm_file.exists()
+        content = llm_file.read_text()
+        assert "sample" in content
+        assert "sunset" in content.lower() or "description" in content.lower()
+
+    @pytest.mark.asyncio
+    async def test_extracted_text_included_when_present(self, tmp_path, fixtures_dir):
+        """When extracted_text is available, it should appear in the output."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from markitai.converter.base import ConvertResult, FileFormat
+        from markitai.llm.types import ImageAnalysis
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_image_with_vision_pure,
+        )
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.pure = True
+
+        input_path = fixtures_dir / "sample.jpg"
+        ctx = ConversionContext(
+            input_path=input_path,
+            output_dir=tmp_path,
+            config=cfg,
+        )
+        ctx.output_file = tmp_path / "sample.jpg.md"
+        ctx.detected_format = FileFormat.JPEG
+        ctx.conversion_result = ConvertResult(
+            markdown="# sample\n\n![sample](.markitai/assets/sample.jpg)",
+            images=[],
+            metadata={"asset_path": ".markitai/assets/sample.jpg"},
+        )
+
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        asset_file = assets_dir / "sample.jpg"
+        asset_file.write_bytes(b"\xff\xd8\xff\xe0")
+
+        mock_analysis = ImageAnalysis(
+            caption="Receipt",
+            description="A scanned receipt from a grocery store.",
+            extracted_text="Apples  $3.99\nBread   $2.49\nTotal   $6.48",
+        )
+        mock_processor = MagicMock()
+        mock_processor.analyze_image = AsyncMock(return_value=mock_analysis)
+        ctx.shared_processor = mock_processor
+
+        result = await process_image_with_vision_pure(ctx)
+
+        assert result.success
+        llm_file = tmp_path / "sample.jpg.llm.md"
+        content = llm_file.read_text()
+        assert "Apples" in content
+        assert "$6.48" in content
+
+    @pytest.mark.asyncio
+    async def test_failure_returns_error(self, tmp_path, fixtures_dir):
+        """When Vision analysis fails, should return error result."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from markitai.converter.base import ConvertResult, FileFormat
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_image_with_vision_pure,
+        )
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.pure = True
+
+        input_path = fixtures_dir / "sample.jpg"
+        ctx = ConversionContext(
+            input_path=input_path,
+            output_dir=tmp_path,
+            config=cfg,
+        )
+        ctx.output_file = tmp_path / "sample.jpg.md"
+        ctx.detected_format = FileFormat.JPEG
+        ctx.conversion_result = ConvertResult(
+            markdown="# sample\n\n![sample](.markitai/assets/sample.jpg)",
+            images=[],
+            metadata={"asset_path": ".markitai/assets/sample.jpg"},
+        )
+
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        asset_file = assets_dir / "sample.jpg"
+        asset_file.write_bytes(b"\xff\xd8\xff\xe0")
+
+        mock_processor = MagicMock()
+        mock_processor.analyze_image = AsyncMock(
+            side_effect=Exception("Vision model not configured")
+        )
+        ctx.shared_processor = mock_processor
+
+        result = await process_image_with_vision_pure(ctx)
+
+        assert not result.success
+        assert "Vision" in result.error or "failed" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_no_saved_images_returns_error(self, tmp_path, fixtures_dir):
+        """When no saved images found in assets, should return error."""
+        from markitai.converter.base import ConvertResult, FileFormat
+        from markitai.workflow.core import (
+            ConversionContext,
+            process_image_with_vision_pure,
+        )
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.pure = True
+
+        input_path = fixtures_dir / "sample.jpg"
+        ctx = ConversionContext(
+            input_path=input_path,
+            output_dir=tmp_path,
+            config=cfg,
+        )
+        ctx.output_file = tmp_path / "sample.jpg.md"
+        ctx.detected_format = FileFormat.JPEG
+        ctx.conversion_result = ConvertResult(
+            markdown="# sample\n\n![sample](.markitai/assets/sample.jpg)",
+            images=[],
+            metadata={},
+        )
+        # No assets directory — no saved images
+
+        result = await process_image_with_vision_pure(ctx)
+
+        assert not result.success
