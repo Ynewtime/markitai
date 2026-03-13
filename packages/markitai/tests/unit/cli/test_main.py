@@ -288,3 +288,13 @@ class TestPureCLIFlag:
             env={"MARKITAI_PURE": "1"},
         )
         assert "no such option" not in (result.output or "").lower()
+
+
+class TestKeepBaseCLIFlag:
+    """Test --keep-base CLI flag."""
+
+    def test_keep_base_option_exists(self) -> None:
+        """--keep-base should appear in --help output."""
+        runner = CliRunner()
+        result = runner.invoke(app, ["--help"])
+        assert "--keep-base" in result.output

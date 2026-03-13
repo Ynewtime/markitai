@@ -251,6 +251,11 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Pure mode: raw MD → LLM → output, no markitai processing (implies --llm).",
 )
 @click.option(
+    "--keep-base",
+    is_flag=True,
+    help="Keep base .md file alongside .llm.md in LLM mode.",
+)
+@click.option(
     "--interactive",
     "-I",
     is_flag=True,
@@ -297,6 +302,7 @@ def app(
     quiet: bool,
     dry_run: bool,
     pure: bool,
+    keep_base: bool,
 ) -> None:
     """Markitai - Opinionated Markdown converter with native LLM enhancement support.
 
@@ -502,6 +508,9 @@ def app(
     if pure:
         cfg.llm.pure = True
         cfg.llm.enabled = True  # --pure implies --llm
+
+    if keep_base:
+        cfg.llm.keep_base = True
 
     # Env var support for pure mode
     if not pure and os.environ.get("MARKITAI_PURE", "").strip() in ("1", "true", "yes"):
