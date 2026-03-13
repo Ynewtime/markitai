@@ -577,6 +577,12 @@
           "title": "Pure",
           "type": "boolean"
         },
+        "keep_base": {
+          "default": false,
+          "description": "Keep base .md file alongside .llm.md in LLM mode",
+          "title": "Keep Base",
+          "type": "boolean"
+        },
         "model_list": {
           "default": [],
           "items": {

@@ -169,10 +169,10 @@ class TestLanguagePreservation:
 class TestImageAltGeneration:
     """Tests for image alt text generation."""
 
-    def test_image_converts_without_llm(
+    def test_image_skipped_without_llm(
         self, runner: CliRunner, image_file: Path, tmp_path: Path
     ) -> None:
-        """Test that image conversion works without LLM."""
+        """Test that image-only format is skipped without LLM/OCR (Rule A)."""
         output_dir = tmp_path / "output"
 
         result = runner.invoke(
@@ -182,15 +182,12 @@ class TestImageAltGeneration:
 
         assert result.exit_code == 0
 
-        # Check output file exists
+        # No output file should be created (image-only skip)
         output_file = output_dir / "sample.jpg.md"
-        assert output_file.exists()
+        assert not output_file.exists()
 
-        content = output_file.read_text(encoding="utf-8")
-        # Should have frontmatter
-        assert "---" in content
-        # Should have image reference
-        assert "![" in content or "candy" in content.lower()
+        # Should show skip warning
+        assert "Skipped" in result.output or "image" in result.output.lower()
 
     def test_alt_flag_shows_llm_warning(
         self, runner: CliRunner, image_file: Path, tmp_path: Path

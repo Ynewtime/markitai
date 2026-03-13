@@ -116,11 +116,11 @@ class TestBatchConversionResults:
         pptx_output = output_dir / "sample.pptx.md"
         assert pptx_output.exists(), "PPTX should be converted"
 
-    def test_jpg_converted(self, converted_fixtures: dict):
-        """Test image file was converted."""
+    def test_jpg_skipped_without_llm(self, converted_fixtures: dict):
+        """Test image file is skipped without LLM/OCR (Rule A)."""
         output_dir = converted_fixtures["output_dir"]
         jpg_output = output_dir / "sample.jpg.md"
-        assert jpg_output.exists(), "JPG should be converted"
+        assert not jpg_output.exists(), "JPG should be skipped without LLM/OCR"
 
     @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_subdirectory_preserved(self, converted_fixtures: dict):
