@@ -2720,3 +2720,40 @@ class TestProcessWithPureLLM:
         assert result.success
         mock_workflow.process_document_pure.assert_called_once()
         assert ctx.llm_cost == 0.001
+
+
+# =============================================================================
+# Task 4: detected_format stored on ConversionContext
+# =============================================================================
+
+
+class TestDetectedFormat:
+    def test_detected_format_set_after_validation(self, tmp_path, fixtures_dir):
+        from markitai.constants import MAX_DOCUMENT_SIZE
+        from markitai.converter.base import FileFormat
+
+        input_path = fixtures_dir / "sample.csv"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        cfg = MarkitaiConfig()
+        ctx = ConversionContext(
+            input_path=input_path, output_dir=output_dir, config=cfg
+        )
+        result = validate_and_detect_format(ctx, MAX_DOCUMENT_SIZE)
+        assert result.success
+        assert ctx.detected_format == FileFormat.CSV
+
+    def test_detected_format_for_image(self, tmp_path, fixtures_dir):
+        from markitai.constants import MAX_DOCUMENT_SIZE
+        from markitai.converter.base import FileFormat
+
+        input_path = fixtures_dir / "sample.bmp"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        cfg = MarkitaiConfig()
+        ctx = ConversionContext(
+            input_path=input_path, output_dir=output_dir, config=cfg
+        )
+        result = validate_and_detect_format(ctx, MAX_DOCUMENT_SIZE)
+        assert result.success
+        assert ctx.detected_format == FileFormat.BMP

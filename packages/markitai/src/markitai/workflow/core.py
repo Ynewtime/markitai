@@ -62,6 +62,7 @@ class ConversionContext:
     paged_stabilized: bool = False
 
     # Intermediate state (set during processing)
+    detected_format: FileFormat | None = None
     converter: Any = None
     conversion_result: ConvertResult | None = None
     output_file: Path | None = None
@@ -148,6 +149,7 @@ def validate_and_detect_format(
         return ConversionStepResult(success=False, error=str(e))
 
     fmt = detect_format(ctx.effective_input)
+    ctx.detected_format = fmt
     if fmt == FileFormat.UNKNOWN:
         return ConversionStepResult(
             success=False, error=f"Unsupported file format: {ctx.input_path.suffix}"
