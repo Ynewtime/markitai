@@ -3377,3 +3377,77 @@ class TestPureImageRouting:
 
             mock_pure_llm.assert_called_once()
             mock_vision.assert_not_called()
+
+
+class TestPureDecouplingBehaviorMatrix:
+    """Verify the behavior matrix from the design spec."""
+
+    def test_pure_alone_image_triggers_rule_a_skip(self, tmp_path, fixtures_dir):
+        """--pure alone + image → Rule A skip (llm.enabled=False, ocr.enabled=False)."""
+        from markitai.converter.base import IMAGE_ONLY_FORMATS, FileFormat
+
+        cfg = MarkitaiConfig()
+        cfg.llm.pure = True
+        # llm.enabled and ocr.enabled are both False
+
+        ctx = ConversionContext(
+            input_path=fixtures_dir / "sample.jpg",
+            output_dir=tmp_path,
+            config=cfg,
+        )
+        ctx.detected_format = FileFormat.JPEG
+
+        # Rule A check
+        assert ctx.detected_format in IMAGE_ONLY_FORMATS
+        assert not ctx.config.llm.enabled
+        assert not ctx.config.ocr.enabled
+
+    def test_pure_alone_non_image_writes_raw_md(self, tmp_path):
+        """--pure alone + non-image → .md without frontmatter."""
+        from markitai.workflow.core import write_base_markdown
+
+        cfg = MarkitaiConfig()
+        cfg.llm.pure = True
+
+        input_file = tmp_path / "sample.txt"
+        input_file.write_text("# Test content")
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=tmp_path,
+            config=cfg,
+        )
+        ctx.output_file = tmp_path / "sample.txt.md"
+        ctx.conversion_result = ConvertResult(
+            markdown="# Test content",
+            images=[],
+            metadata={},
+        )
+
+        result = write_base_markdown(ctx)
+        assert result.success
+        content = ctx.output_file.read_text()
+        assert not content.startswith("---")
+        assert "# Test content" in content
+
+    def test_llm_pure_image_does_not_hit_rule_a(self, tmp_path, fixtures_dir):
+        """--llm --pure + image → llm.enabled=True, Rule A does NOT trigger."""
+        from markitai.converter.base import IMAGE_ONLY_FORMATS, FileFormat
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.pure = True
+
+        ctx = ConversionContext(
+            input_path=fixtures_dir / "sample.jpg",
+            output_dir=tmp_path,
+            config=cfg,
+        )
+        ctx.detected_format = FileFormat.JPEG
+
+        # Rule A should NOT trigger because llm.enabled=True
+        rule_a_triggers = (
+            ctx.detected_format in IMAGE_ONLY_FORMATS
+            and not ctx.config.llm.enabled
+            and not ctx.config.ocr.enabled
+        )
+        assert not rule_a_triggers
