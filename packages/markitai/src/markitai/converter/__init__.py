@@ -6,6 +6,7 @@ from markitai.converter._patches import apply_all_patches
 apply_all_patches()
 
 from markitai.converter.base import (
+    IMAGE_ONLY_FORMATS,
     BaseConverter,
     ConvertResult,
     ExtractedImage,
@@ -46,6 +47,7 @@ __all__ = [
     "ConvertResult",
     "ExtractedImage",
     "FileFormat",
+    "IMAGE_ONLY_FORMATS",
     "get_converter",
     "detect_format",
     "DocxConverter",
