@@ -858,6 +858,9 @@ async def process_batch(
                 file_state.cost_usd = result.cost_usd
                 file_state.llm_usage = result.llm_usage
                 file_state.cache_hit = result.cache_hit
+                # Extract skip reason from ProcessResult error field
+                if result.error and result.error.startswith("skipped ("):
+                    file_state.skip_reason = result.error[9:-1]
                 # Collect image analysis for JSON output
                 if result.image_analysis_result is not None:
                     batch.image_analysis_results.append(result.image_analysis_result)

@@ -79,9 +79,9 @@ class FileFormat(Enum):
     UNKNOWN = "unknown"
 
 
-# Raster image formats that are processed directly as images.
-# SVG is intentionally excluded: it is a vector/document format handled
-# by a dedicated converter (kreuzberg) rather than direct image ingestion.
+# Image formats that produce no useful text content without LLM/OCR.
+# These are skipped in non-LLM mode (Rule A) and routed to Vision
+# analysis in --llm --pure mode.
 IMAGE_ONLY_FORMATS: frozenset[FileFormat] = frozenset(
     {
         FileFormat.JPEG,
@@ -91,6 +91,7 @@ IMAGE_ONLY_FORMATS: frozenset[FileFormat] = frozenset(
         FileFormat.GIF,
         FileFormat.BMP,
         FileFormat.TIFF,
+        FileFormat.SVG,
     }
 )
 
