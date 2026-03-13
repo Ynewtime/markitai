@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-03-13
+
+### Added
+
+- **Pure Mode (`--pure`)**: Full implementation of transparent LLM pass-through mode — text cleaning only, no frontmatter generation or post-processing
+- **Pure Mode Decoupled from LLM**: `--pure` no longer implies `--llm`; `--pure` alone writes raw markdown without frontmatter, `--pure --llm` sends content through LLM cleaning only
+- **Image Vision in Pure Mode**: `--llm --pure` with image inputs routes to Vision analysis path (`process_image_with_vision_pure`)
+- **`--keep-base` CLI Option**: Explicitly write base `.md` even in LLM mode (default: skip base `.md` when LLM is enabled)
+- **Image-Only Format Handling**: Skip image-only formats (PNG, JPG, etc.) in non-LLM/non-OCR mode with clear warning
+- **LLM Fallback**: Write `.md` as fallback when LLM processing fails
+- **Batch Skip Summary**: Group skipped files by reason with example filenames in batch summary
+- **Pure Mode Warning**: Warn when `--pure` silently overrides `--alt`/`--desc`/`--screenshot`
+- **Mode-Specific Cleaner Prompt**: `{mode_rules}` template variable in cleaner prompt — standard mode gets image placeholder rules, pure mode gets YAML frontmatter preservation rules
+
+### Fixed
+
+- **URL Processors**: Respect `--pure`/`--llm`/`--keep-base` flags for base `.md` output in both single and batch URL processing
+- **Pure Mode Frontmatter**: `process_with_llm` uses `clean_document_pure()` instead of `process_document()` in pure mode, preventing LLM-generated frontmatter (description, tags, etc.)
+- **Source Frontmatter Reconstruction**: Reconstruct original YAML frontmatter from defuddle metadata before sending to LLM in pure mode
+- **Vision Prompt Drift**: Add placeholder REMINDER to vision prompts to reduce LLM drift on `__MARKITAI_IMG_N__` placeholders
+- **Stabilization Dedup**: Deduplicate stabilization calls and add `paged_stabilized` guard
+- **Vision JSON Mode**: Fix wrong message index in vision `json_mode` and race condition in parallel gather
+- **Misc Fixes**: Frontmatter regex, env variable quoting, Ctrl+C handling, hardcoded weight, docstring corrections
+- **SVG as Image-Only**: Treat SVG as image-only format in batch mode
+
+### Changed
+
+- **Output Strategy**: LLM mode skips writing base `.md` by default (use `--keep-base` to override)
+- **Test Performance**: Optimize test suite speed (~70s → ~30s)
+
 ## [0.10.0] - 2026-03-12
 
 ### Added
@@ -727,6 +757,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.11.0]: https://github.com/Ynewtime/markitai/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Ynewtime/markitai/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/Ynewtime/markitai/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/Ynewtime/markitai/compare/v0.9.0...v0.9.1
