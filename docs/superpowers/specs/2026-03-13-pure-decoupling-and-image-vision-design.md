@@ -34,6 +34,8 @@ Decision tree for `write_base_markdown()`:
 ```
 if llm.enabled and not llm.keep_base:
     skip writing (in-memory only for LLM consumption)
+    Note: --pure --llm hits this branch — base .md is skipped,
+    LLM path writes .llm.md directly
 elif llm.pure and not llm.enabled:
     write raw markdown without frontmatter
 else:
@@ -45,12 +47,34 @@ else:
 When `cfg.llm.pure` AND `cfg.llm.enabled` AND input is an image-only format:
 
 - Do NOT call `process_with_pure_llm()` (text cleaning path — useless for images)
-- Instead call new function `process_image_with_vision_pure(ctx)`:
-  1. Get the image file path from `.markitai/assets/` (already copied by ImageConverter)
-  2. Format adaptation if needed (BMP/TIFF → PNG, reusing existing ImageConverter transcoding)
-  3. Call `processor.analyze_image(image_path)` — sends image to Vision model
-  4. Write Vision model's raw output directly to `.llm.md` — no frontmatter wrapping, no post-processing
-  5. If Vision model returns structured data (caption, description, extracted_text), format as simple markdown
+- Instead call new function `process_image_with_vision_pure(ctx)`
+
+#### Routing logic change in `convert_document_core()` Step 7
+
+The current pure-mode branch:
+
+```python
+if ctx.config.llm.pure and not ctx.config.screenshot.screenshot_only:
+    result = await process_with_pure_llm(ctx)
+```
+
+Becomes:
+
+```python
+if ctx.config.llm.pure and not ctx.config.screenshot.screenshot_only:
+    if ctx.detected_format in IMAGE_ONLY_FORMATS:
+        result = await process_image_with_vision_pure(ctx)
+    else:
+        result = await process_with_pure_llm(ctx)
+```
+
+#### `process_image_with_vision_pure(ctx)` implementation
+
+1. Get the image file path from `.markitai/assets/` (already copied by ImageConverter, using `get_saved_images(ctx)`)
+2. Format adaptation if needed (BMP/TIFF → PNG, reusing existing ImageConverter transcoding)
+3. Call `processor.analyze_image(image_path)` — sends image to Vision model via Instructor
+4. `analyze_image()` returns an `ImageAnalysis` Pydantic model with `caption`, `description`, `extracted_text` fields (not raw text — uses Instructor structured output with fallbacks)
+5. Format the `ImageAnalysis` fields into markdown and write to `.llm.md`
 
 #### `process_image_with_vision_pure()` output format
 
@@ -62,7 +86,7 @@ When `cfg.llm.pure` AND `cfg.llm.enabled` AND input is an image-only format:
 {extracted_text if available}
 ```
 
-markitai does not add or modify the LLM's output. If the LLM returns frontmatter, it is preserved as-is.
+The output is constructed from `ImageAnalysis` structured fields. markitai does not add frontmatter or post-processing beyond this formatting.
 
 #### Failure handling
 
@@ -119,6 +143,8 @@ if (
 2. **`--llm --pure` + image + Vision model not configured**: LLM fails → `_write_base_md_fallback()` writes `.md` with raw image reference
 3. **`--keep-base` + `--pure --llm`**: `--keep-base` still controls base `.md` retention, behavior unchanged
 4. **Image format adaptation**: When Vision model doesn't support BMP/TIFF, ImageConverter already transcodes to PNG in `.markitai/assets/` — `process_image_with_vision_pure()` uses the transcoded file
+5. **`--pure` + image (no `--llm`, no `--ocr`)**: Rule A triggers, terminal shows skip warning suggesting `--llm` or `--ocr`. Same warning as without `--pure`
+6. **`--ocr --llm --pure` + image**: With `ocr=True` and `llm=True`, `ImageConverter` returns a placeholder (not OCR text) and defers to LLM. The pure Vision path (`process_image_with_vision_pure`) handles the image analysis. OCR text is not separately used — this matches existing `--ocr --llm` behavior for images
 
 ## Files to Modify
 
