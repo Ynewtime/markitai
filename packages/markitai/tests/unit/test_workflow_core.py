@@ -2822,3 +2822,26 @@ class TestImageOnlySkip:
         )
         result = await convert_document_core(ctx, MAX_DOCUMENT_SIZE)
         assert result.skip_reason != "image_only"
+
+
+class TestReadMarkdownBodyFallback:
+    """Tests that _read_markdown_body falls back to in-memory content."""
+
+    def test_fallback_when_file_missing(self, tmp_path: Path) -> None:
+        """When output .md file doesn't exist, should return fallback string."""
+        from markitai.workflow.single import _read_markdown_body
+
+        nonexistent = tmp_path / "nonexistent.md"
+        fallback = "# Hello\n\nSome content"
+        result = _read_markdown_body(nonexistent, fallback)
+        assert result == fallback
+
+    def test_reads_file_when_exists(self, tmp_path: Path) -> None:
+        """When output .md file exists, should read from it."""
+        from markitai.workflow.single import _read_markdown_body
+
+        md_file = tmp_path / "test.md"
+        md_file.write_text("---\ntitle: test\n---\n\n# From File\n\nContent")
+        result = _read_markdown_body(md_file, "fallback")
+        assert "From File" in result
+        assert "fallback" not in result
