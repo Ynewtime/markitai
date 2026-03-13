@@ -1092,9 +1092,15 @@ async def convert_document_core(
             ctx.shared_processor = create_llm_processor(ctx.config)
 
         if ctx.config.llm.pure and not ctx.config.screenshot.screenshot_only:
-            # Pure mode: raw MD → LLM → .llm.md, nothing else
-            # --screenshot-only takes precedence over --pure (mutually exclusive)
-            result = await process_with_pure_llm(ctx)
+            # Pure mode: --screenshot-only takes precedence (mutually exclusive)
+            from markitai.converter.base import IMAGE_ONLY_FORMATS
+
+            if ctx.detected_format in IMAGE_ONLY_FORMATS:
+                # Image input: use Vision model to analyze the actual image
+                result = await process_image_with_vision_pure(ctx)
+            else:
+                # Non-image: raw MD → LLM text cleaning → .llm.md
+                result = await process_with_pure_llm(ctx)
             if not result.success:
                 _write_base_md_fallback(ctx)
                 return result
