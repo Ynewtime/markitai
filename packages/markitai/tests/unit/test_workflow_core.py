@@ -2824,6 +2824,98 @@ class TestImageOnlySkip:
         assert result.skip_reason != "image_only"
 
 
+class TestLLMOnlyOutput:
+    """Tests for LLM mode outputting only .llm.md."""
+
+    async def test_llm_mode_skips_base_md_file(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        """In LLM mode, base .md file should not exist on disk after write_base_markdown."""
+        from markitai.constants import MAX_DOCUMENT_SIZE
+        from markitai.workflow.core import (
+            convert_document,
+            prepare_output_directory,
+            process_embedded_images,
+            resolve_output_file,
+            validate_and_detect_format,
+            write_base_markdown,
+        )
+
+        input_path = fixtures_dir / "sample.csv"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        ctx = ConversionContext(
+            input_path=input_path, output_dir=output_dir, config=cfg
+        )
+
+        validate_and_detect_format(ctx, MAX_DOCUMENT_SIZE)
+        prepare_output_directory(ctx)
+        resolve_output_file(ctx)
+        await convert_document(ctx)
+        await process_embedded_images(ctx)
+        result = write_base_markdown(ctx)
+        assert result.success is True
+        # Base .md should NOT exist on disk (LLM mode, no --keep-base)
+        assert not ctx.output_file.exists()
+        # But in-memory markdown is still available
+        assert ctx.conversion_result is not None
+        assert len(ctx.conversion_result.markdown) > 0
+
+    async def test_keep_base_writes_md_file(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        """With --keep-base, base .md SHOULD be written even in LLM mode."""
+        from markitai.constants import MAX_DOCUMENT_SIZE
+        from markitai.workflow.core import (
+            convert_document,
+            prepare_output_directory,
+            process_embedded_images,
+            resolve_output_file,
+            validate_and_detect_format,
+            write_base_markdown,
+        )
+
+        input_path = fixtures_dir / "sample.csv"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.llm.keep_base = True
+        ctx = ConversionContext(
+            input_path=input_path, output_dir=output_dir, config=cfg
+        )
+
+        validate_and_detect_format(ctx, MAX_DOCUMENT_SIZE)
+        prepare_output_directory(ctx)
+        resolve_output_file(ctx)
+        await convert_document(ctx)
+        await process_embedded_images(ctx)
+        result = write_base_markdown(ctx)
+        assert result.success is True
+        assert ctx.output_file.exists()
+
+    async def test_non_llm_always_writes_md_file(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        """Without LLM, base .md should always be written (unchanged behavior)."""
+        from markitai.constants import MAX_DOCUMENT_SIZE
+        from markitai.workflow.core import convert_document_core
+
+        input_path = fixtures_dir / "sample.csv"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        cfg = MarkitaiConfig()
+        ctx = ConversionContext(
+            input_path=input_path, output_dir=output_dir, config=cfg
+        )
+        result = await convert_document_core(ctx, MAX_DOCUMENT_SIZE)
+        assert result.success is True
+        assert ctx.output_file is not None
+        assert ctx.output_file.exists()
+
+
 class TestReadMarkdownBodyFallback:
     """Tests that _read_markdown_body falls back to in-memory content."""
 
