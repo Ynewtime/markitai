@@ -181,14 +181,21 @@ markitai doctor --fix
 
 ```
 output/
-├── document.docx.md        # 基础 Markdown 输出
+├── document.docx.md        # 基础 Markdown（--llm 模式下默认跳过，除非加 --keep-base）
 ├── document.docx.llm.md    # LLM 增强版本（使用 --llm 时）
-├── assets/
-│   ├── document.docx.0001.jpg
-│   └── images.json         # 图片描述
-├── screenshots/             # 页面截图（使用 --screenshot 时）
-│   └── document.docx.0001.png
+├── .markitai/               # 元数据命名空间
+│   ├── assets/
+│   │   ├── document.docx.0001.jpg
+│   │   └── images.json     # 图片描述
+│   ├── screenshots/         # 页面截图（使用 --screenshot 时）
+│   │   └── document.docx.0001.png
+│   ├── reports/             # 转换报告（JSON）
+│   └── states/              # 批处理状态文件（用于 --resume）
 ```
+
+::: tip
+在 `--llm` 模式下，默认只写入 `.llm.md`。使用 `--keep-base` 可以同时写入基础 `.md` 文件。
+:::
 
 ## 支持的格式
 

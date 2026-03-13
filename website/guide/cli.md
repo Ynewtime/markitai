@@ -15,7 +15,7 @@ The `<input>` can be:
 
 ### `--llm`
 
-Enable LLM-powered format cleaning and optimization.
+Enable LLM-powered format cleaning and optimization. By default, only `.llm.md` is written (base `.md` is skipped). Use `--keep-base` to write both.
 
 ```bash
 markitai document.docx --llm
@@ -97,6 +97,41 @@ Enable OCR for scanned documents.
 
 ```bash
 markitai scanned.pdf --ocr
+```
+
+### `--pure`
+
+Transparent pass-through mode: LLM only does text cleaning, no frontmatter generation or post-processing.
+
+```bash
+# Without --llm: writes raw markdown without frontmatter
+markitai document.docx --pure
+
+# With --llm: sends content through LLM for text cleaning only
+markitai document.docx --llm --pure
+
+# With --preset: preset controls features, --pure controls output format
+markitai document.pdf --preset rich --pure
+```
+
+::: tip
+`--pure` and `--llm` are independent flags. `--pure` alone skips frontmatter generation; `--pure --llm` sends content to LLM for cleaning but returns raw output without generated metadata (description, tags, etc.).
+:::
+
+::: warning
+`--pure` silently overrides `--alt`, `--desc`, and `--screenshot`. A warning is displayed when these flags are used together.
+:::
+
+### `--keep-base`
+
+Write base `.md` file even in LLM mode. By default, `--llm` only outputs `.llm.md` to avoid redundant files.
+
+```bash
+# Default: only .llm.md is written
+markitai document.docx --llm
+
+# Keep both .md and .llm.md
+markitai document.docx --llm --keep-base
 ```
 
 ### `--no-compress`
