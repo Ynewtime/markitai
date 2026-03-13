@@ -74,7 +74,19 @@ async def process_with_llm(
 
         # Pure mode: only text cleaning, no frontmatter generation
         if cfg.llm.pure:
-            cleaned = await processor.clean_document_pure(markdown, source)
+            content_for_llm = markdown
+            # Reconstruct original frontmatter (e.g. from defuddle) so LLM
+            # sees the full document as it was fetched
+            if extra_meta:
+                import yaml
+
+                fm_yaml = yaml.dump(
+                    extra_meta,
+                    default_flow_style=False,
+                    allow_unicode=True,
+                ).strip()
+                content_for_llm = f"---\n{fm_yaml}\n---\n\n{markdown}"
+            cleaned = await processor.clean_document_pure(content_for_llm, source)
             llm_output = output_file.with_suffix(".llm.md")
             atomic_write_text(llm_output, cleaned)
             logger.info(f"Written LLM version (pure): {llm_output}")

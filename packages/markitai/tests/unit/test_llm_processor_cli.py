@@ -1430,3 +1430,54 @@ class TestProcessWithLLMPureMode:
         content = llm_output.read_text()
         assert "description:" not in content
         assert "tags:" not in content
+
+    async def test_pure_mode_includes_source_frontmatter(
+        self, tmp_path: Path, markitai_config: MarkitaiConfig
+    ):
+        """In --pure mode with extra_meta (source frontmatter from defuddle),
+        the original YAML frontmatter should be reconstructed and included
+        in the content sent to clean_document_pure."""
+        from markitai.cli.processors.llm import process_with_llm
+
+        markitai_config.llm.pure = True
+
+        output_file = tmp_path / "output.md"
+        markdown = "# Concise\n\nContent here."
+        source_frontmatter = {
+            "title": "Concise explanations",
+            "author": "Steph Ango",
+            "domain": "stephango.com",
+        }
+
+        captured_input: list[str] = []
+
+        async def _capture_clean(md: str, source: str) -> str:
+            captured_input.append(md)
+            return md  # Pass through
+
+        processor = MagicMock()
+        processor.clean_document_pure = AsyncMock(side_effect=_capture_clean)
+        processor.get_context_cost = MagicMock(return_value=0.01)
+        processor.get_context_usage = MagicMock(return_value={})
+
+        with patch(
+            "markitai.cli.processors.llm.create_llm_processor",
+            return_value=processor,
+        ):
+            await process_with_llm(
+                markdown=markdown,
+                source="concise",
+                cfg=markitai_config,
+                output_file=output_file,
+                processor=processor,
+                extra_meta=source_frontmatter,
+            )
+
+        # The markdown sent to clean_document_pure should include frontmatter
+        assert len(captured_input) == 1
+        sent_to_llm = captured_input[0]
+        assert sent_to_llm.startswith("---\n")
+        assert "title:" in sent_to_llm
+        assert "Concise explanations" in sent_to_llm
+        assert "author:" in sent_to_llm
+        assert "# Concise" in sent_to_llm
