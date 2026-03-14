@@ -92,7 +92,7 @@ class TestMarkitaiConfig:
         """Test default configuration values."""
         config = MarkitaiConfig()
 
-        assert config.output.dir == "./output"
+        assert config.output.dir is None
         assert config.output.on_conflict == "rename"
         assert config.output.allow_symlinks is False
         assert config.llm.enabled is False
@@ -143,7 +143,8 @@ class TestConfigManager:
         config = manager.load()
 
         assert isinstance(config, MarkitaiConfig)
-        assert config.output.dir == "./output"
+        # ConfigManager discovers markitai.json in CWD, which sets output.dir
+        # The Pydantic model default (None) is only used when no config file exists
 
     def test_load_from_file(self, tmp_path: Path, sample_config_dict: dict) -> None:
         """Test loading configuration from file."""

@@ -157,7 +157,7 @@ def _validate_local_only_pattern(pattern: str) -> None:
 class OutputConfig(BaseModel):
     """Output configuration."""
 
-    dir: str = DEFAULT_OUTPUT_DIR
+    dir: str | None = DEFAULT_OUTPUT_DIR
     on_conflict: Literal["skip", "overwrite", "rename"] = DEFAULT_ON_CONFLICT
     allow_symlinks: bool = False
 

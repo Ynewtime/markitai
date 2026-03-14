@@ -50,11 +50,9 @@ class SQLiteCache:
         self._db_path = Path(db_path)
         self._max_size_bytes = max_size_bytes
         self._hashlib = hashlib
+        self._dir_ensured = False
 
-        # Ensure parent directory exists
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Initialize database
+        # Initialize database (will create directory if needed)
         self._init_db()
 
     def _get_connection(self) -> Any:
@@ -64,6 +62,11 @@ class SQLiteCache:
         connection is closed after use.
         """
         import sqlite3
+
+        # Ensure parent directory exists (once) before creating connection
+        if not self._dir_ensured:
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._dir_ensured = True
 
         conn = sqlite3.connect(str(self._db_path), timeout=30.0)
         conn.execute("PRAGMA journal_mode=WAL")
