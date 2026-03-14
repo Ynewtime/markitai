@@ -274,6 +274,7 @@ COPILOT_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-haiku-4.5": (0.80, 4.0),
     "claude-sonnet-4": (3.0, 15.0),
     "claude-sonnet-4.5": (3.0, 15.0),
+    "claude-sonnet-4.6": (3.0, 15.0),
     "claude-opus-4.5": (5.0, 25.0),
     "claude-opus-4.6": (5.0, 25.0),
     # Google models
@@ -282,6 +283,8 @@ COPILOT_MODEL_PRICING: dict[str, tuple[float, float]] = {
 
 # Default model info when LiteLLM lookup fails
 # Used for local providers (claude-agent/, copilot/) as fallback
+# Note: Conservative defaults. Latest models (Opus 4.6, Sonnet 4.6) support
+# 1M context (GA, 2026-03-13) and up to 128k output tokens.
 LOCAL_PROVIDER_DEFAULT_MODEL_INFO: dict[str, int | bool] = {
     "max_input_tokens": 200000,
     "max_output_tokens": 64000,
