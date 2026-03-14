@@ -425,15 +425,18 @@ class TestProxyDetection:
 class TestSPADomainCache:
     """Tests for SPADomainCache class."""
 
-    def test_initialization_creates_cache_file_directory(self) -> None:
-        """Test that initialization creates parent directories."""
+    def test_initialization_does_not_create_directory(self) -> None:
+        """Test that initialization does not create parent directories (lazy creation)."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             cache_path = Path(tmp_dir) / "subdir" / "spa_cache.json"
             cache = SPADomainCache(cache_path)
 
+            # Parent directory should not exist yet
+            assert not cache_path.parent.exists()
+
+            # But we can still record something, which should trigger directory creation
+            cache.record_spa_domain("https://example.com/page")
             assert cache_path.parent.exists()
-            # Cache instance should be created even if file doesn't exist yet
-            assert cache is not None
 
     def test_record_spa_domain_creates_entry(self) -> None:
         """Test recording a new SPA domain."""

@@ -685,7 +685,7 @@
               "type": "null"
             }
           ],
-          "default": "~/.markitai/logs",
+          "default": null,
           "title": "Dir"
         },
         "rotation": {
@@ -804,9 +804,12 @@
       "description": "Output configuration.",
       "properties": {
         "dir": {
-          "default": "./output",
-          "title": "Dir",
-          "type": "string"
+          "anyOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "default": null,
+          "title": "Dir"
         },
         "on_conflict": {
           "default": "rename",

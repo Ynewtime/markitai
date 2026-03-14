@@ -1,6 +1,6 @@
 [project]
 name = "markitai-workspace"
-version = "0.11.1"
+version = "0.11.2"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "markitai",
@@ -97,6 +97,9 @@ reportUnusedImport = true
 reportUnusedVariable = "warning"
 reportPrivateImportUsage = "warning"
 reportAttributeAccessIssue = "warning"
+# Lazy-loading modules use __all__ + __getattr__ (PEP 562); pyright can't
+# verify __getattr__ will return the declared names, so suppress globally.
+reportUnsupportedDunderAll = false
 reportArgumentType = "warning"
 reportCallIssue = "warning"
 reportReturnType = "warning"

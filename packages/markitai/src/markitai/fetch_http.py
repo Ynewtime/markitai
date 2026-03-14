@@ -169,7 +169,10 @@ class CurlCffiClient:
                 pass
 
         proxies = {"http": proxy, "https": proxy} if proxy else None
-        self._session = AsyncSession(impersonate="chrome", proxies=proxies)
+        self._session = AsyncSession(
+            impersonate="chrome",
+            proxies=proxies,  # type: ignore[arg-type]  # ProxySpec TypedDict accepts str values
+        )
         self._session_proxy = proxy
         return self._session
 

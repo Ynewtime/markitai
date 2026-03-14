@@ -115,9 +115,9 @@ DEFAULT_JSON_INDENT = 2  # JSON output indentation
 # Paths and Filenames
 # =============================================================================
 
-DEFAULT_OUTPUT_DIR = "./output"
+DEFAULT_OUTPUT_DIR = None
 DEFAULT_PROMPTS_DIR = "~/.markitai/prompts"
-DEFAULT_LOG_DIR = "~/.markitai/logs"
+DEFAULT_LOG_DIR = None
 CONFIG_FILENAME = "markitai.json"
 
 # =============================================================================

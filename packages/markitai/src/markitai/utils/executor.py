@@ -63,13 +63,40 @@ def _get_total_ram_bytes() -> int | None:
     """Get total system RAM in bytes.
 
     Tries multiple methods:
-    1. /proc/meminfo (Linux)
-    2. os.sysconf (POSIX cross-platform)
+    1. GlobalMemoryStatusEx (Windows)
+    2. /proc/meminfo (Linux)
+    3. os.sysconf (POSIX cross-platform)
 
     Returns:
         Total RAM in bytes, or None if detection fails.
     """
-    # Method 1: /proc/meminfo (Linux)
+    # Method 1: GlobalMemoryStatusEx (Windows)
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_uint64),
+                    ("ullAvailPhys", ctypes.c_uint64),
+                    ("ullTotalPageFile", ctypes.c_uint64),
+                    ("ullAvailPageFile", ctypes.c_uint64),
+                    ("ullTotalVirtual", ctypes.c_uint64),
+                    ("ullAvailVirtual", ctypes.c_uint64),
+                    ("sullAvailExtendedVirtual", ctypes.c_uint64),
+                ]
+
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(stat)
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            if kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return stat.ullTotalPhys
+        except (ImportError, AttributeError, OSError):
+            pass
+
+    # Method 2: /proc/meminfo (Linux)
     try:
         with open("/proc/meminfo") as f:
             for line in f:
@@ -80,7 +107,7 @@ def _get_total_ram_bytes() -> int | None:
     except (OSError, ValueError, IndexError):
         pass
 
-    # Method 2: os.sysconf (POSIX)
+    # Method 3: os.sysconf (POSIX)
     try:
         page_size = os.sysconf("SC_PAGE_SIZE")
         phys_pages = os.sysconf("SC_PHYS_PAGES")

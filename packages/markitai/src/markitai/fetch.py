@@ -684,7 +684,6 @@ class SPADomainCache:
         if cache_path is None:
             cache_path = Path.home() / ".markitai" / "learned_spa_domains.json"
         self._cache_path = cache_path
-        self._cache_path.parent.mkdir(parents=True, exist_ok=True)
         self._data: dict[str, Any] = {"domains": {}, "version": self.VERSION}
         self._load()
 
@@ -704,6 +703,8 @@ class SPADomainCache:
     def _save(self) -> None:
         """Save cache to disk atomically."""
         try:
+            # Ensure parent directory exists before saving
+            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_json(self._cache_path, self._data)
         except OSError as e:
             logger.warning(f"Failed to save SPA domain cache: {e}")
