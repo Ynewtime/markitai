@@ -623,12 +623,8 @@ def app(
                 )
                 ctx.exit(1)
         elif is_url_input:
+            # Single URL: output is optional (None means stdout, like single file mode)
             effective_output = get_effective_output()
-            if effective_output is None:
-                console.print(
-                    "[red]Error: URL mode requires -o/--output directory.[/red]"
-                )
-                ctx.exit(1)
         elif input_path is not None and input_path.is_dir():
             effective_output = get_effective_output()
             if effective_output is None:
@@ -727,9 +723,8 @@ def app(
             )
             return
 
-        # Single URL mode
+        # Single URL mode — effective_output may be None (stdout mode)
         if is_url_input:
-            assert effective_output is not None  # Validated in Phase 1
             assert input_path_str is not None  # Guaranteed when is_url_input is True
             from markitai.cli.processors.url import process_url
 

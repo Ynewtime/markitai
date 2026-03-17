@@ -132,8 +132,8 @@ class TestAuthPreflightAfterValidation:
     errors immediately, not after a slow auth/login attempt.
     """
 
-    def test_url_without_output_errors_before_auth(self) -> None:
-        """URL mode without -o should fail with param error, NOT trigger auth preflight."""
+    def test_url_without_output_uses_stdout_mode(self) -> None:
+        """URL mode without -o should proceed (stdout mode), not error."""
         from unittest.mock import AsyncMock
 
         runner = CliRunner()
@@ -142,8 +142,12 @@ class TestAuthPreflightAfterValidation:
                 "markitai.providers.preflight_auth_check",
                 new_callable=AsyncMock,
             ) as mock_preflight,
-            # Override config output.dir so validation actually fires
             patch("markitai.cli.main.ConfigManager") as mock_cm,
+            # Mock the actual URL processing so we don't hit the network
+            patch(
+                "markitai.cli.processors.url.process_url",
+                new_callable=AsyncMock,
+            ),
         ):
             from markitai.config import MarkitaiConfig
 
@@ -165,10 +169,10 @@ class TestAuthPreflightAfterValidation:
                 app,
                 ["https://example.com", "--llm"],
             )
-            # Auth preflight should NOT have been called — param error comes first
-            mock_preflight.assert_not_called()
-            # Should get an error about missing output
-            assert result.exit_code != 0
+            # Auth preflight SHOULD be called now (no param error to block it)
+            mock_preflight.assert_called_once()
+            # Should not get a "requires output" error
+            assert "requires -o/--output" not in (result.output or "")
 
     def test_url_batch_without_output_errors_before_auth(self) -> None:
         """URL batch mode without -o should fail with param error, NOT trigger auth preflight."""
