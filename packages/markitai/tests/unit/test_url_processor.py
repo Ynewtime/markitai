@@ -1414,3 +1414,91 @@ class TestProcessUrlBatchPureMode:
             "Expected raw markdown without frontmatter in batch URL mode with --pure"
         )
         assert "# Test Page" in content
+
+
+class TestProcessUrlStdoutMode:
+    """Tests for URL stdout mode (output_dir=None)."""
+
+    @pytest.mark.asyncio
+    async def test_url_stdout_mode_prints_content(self) -> None:
+        """URL with output_dir=None should print markdown to console, not write file."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        mock_result = MagicMock()
+        mock_result.content = "# Test Page\n\nSome content here."
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Test Page"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+
+        with patch(
+            "markitai.fetch.fetch_url",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            try:
+                await process_url(
+                    url="https://example.com/test",
+                    output_dir=None,
+                    cfg=cfg,
+                    dry_run=False,
+                    verbose=False,
+                )
+            except SystemExit:
+                pass
+
+    @pytest.mark.asyncio
+    async def test_url_stdout_mode_no_files_created(self, tmp_path: Path) -> None:
+        """URL stdout mode should not create any files in a temp dir that leaks."""
+        import tempfile
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        mock_result = MagicMock()
+        mock_result.content = "# Test Page\n\nSome content."
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Test Page"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+
+        # Track temp dirs created during the call
+        original_mkdtemp = tempfile.mkdtemp
+        created_temps: list[str] = []
+
+        def tracking_mkdtemp(**kwargs):
+            d = original_mkdtemp(**kwargs)
+            created_temps.append(d)
+            return d
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch("tempfile.mkdtemp", side_effect=tracking_mkdtemp),
+        ):
+            try:
+                await process_url(
+                    url="https://example.com/test",
+                    output_dir=None,
+                    cfg=cfg,
+                    dry_run=False,
+                    verbose=False,
+                )
+            except SystemExit:
+                pass
+
+        # Temp dirs should be cleaned up
+        for d in created_temps:
+            assert not Path(d).exists(), f"Temp dir was not cleaned up: {d}"
