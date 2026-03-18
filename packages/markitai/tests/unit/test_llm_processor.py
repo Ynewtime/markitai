@@ -871,6 +871,45 @@ class TestLocalProviderWrapperCooldown:
 
         assert wrapper._select_model("default") == "model-b"
 
+    def test_concurrent_cooldown_read_write(self):
+        """Test _model_cooldowns dict handles concurrent access safely.
+
+        Defensive against Python 3.13+ free-threaded mode (PEP 703).
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        wrapper = LocalProviderWrapper(
+            [
+                {
+                    "model_name": "default",
+                    "litellm_params": {"model": f"model-{i}", "weight": 10},
+                }
+                for i in range(5)
+            ]
+        )
+
+        errors: list[str] = []
+
+        def write_cooldowns() -> None:
+            for i in range(200):
+                wrapper.record_cooldown(f"model-{i % 5}", float(i % 10))
+
+        def read_cooldowns() -> None:
+            for _ in range(200):
+                try:
+                    wrapper._select_model("default")
+                except Exception as e:
+                    errors.append(str(e))
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futures = [pool.submit(write_cooldowns) for _ in range(3)] + [
+                pool.submit(read_cooldowns) for _ in range(3)
+            ]
+            for f in as_completed(futures):
+                f.result()
+
+        assert not errors, f"Concurrent cooldown errors: {errors}"
+
 
 # =============================================================================
 # Test SQLiteCache

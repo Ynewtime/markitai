@@ -121,6 +121,7 @@ class LocalProviderWrapper:
 
         # Per-model cooldown tracking (model_id → monotonic expiry time)
         self._model_cooldowns: dict[str, float] = {}
+        self._cooldown_lock = threading.Lock()
 
         # Log model groups for debugging
         for name, models in self._model_groups.items():
@@ -152,7 +153,8 @@ class LocalProviderWrapper:
             model_id: The model identifier to put in cooldown
             seconds: Duration in seconds to avoid routing to this model
         """
-        self._model_cooldowns[model_id] = time.monotonic() + seconds
+        with self._cooldown_lock:
+            self._model_cooldowns[model_id] = time.monotonic() + seconds
         logger.info(
             f"[LocalProviderWrapper] Model {model_id} in cooldown for {seconds:.0f}s"
         )
@@ -198,15 +200,15 @@ class LocalProviderWrapper:
             # All weights are 0 — uniform random selection
             return random.choice(models)[0]
 
-        # Filter out models in cooldown
-        if self._model_cooldowns:
+        # Filter out models in cooldown (snapshot for thread safety)
+        with self._cooldown_lock:
+            cooldowns = dict(self._model_cooldowns)
+        if cooldowns:
             now = time.monotonic()
-            available = [
-                (m, w) for m, w in active if self._model_cooldowns.get(m, 0) <= now
-            ]
+            available = [(m, w) for m, w in active if cooldowns.get(m, 0) <= now]
             if not available:
                 # All active models in cooldown — pick soonest to expire
-                soonest = min(active, key=lambda x: self._model_cooldowns.get(x[0], 0))
+                soonest = min(active, key=lambda x: cooldowns.get(x[0], 0))
                 logger.debug(
                     f"[LocalProviderWrapper] All models in cooldown, "
                     f"using soonest-expiring: {soonest[0]}"
@@ -399,6 +401,7 @@ class HybridRouter:
 
         # Per-model cooldown tracking (model_id → monotonic expiry time)
         self._model_cooldowns: dict[str, float] = {}
+        self._cooldown_lock = threading.Lock()
 
         # Log hybrid router configuration
         local_models = [m for m, _, is_local in self._all_models if is_local]
@@ -435,7 +438,8 @@ class HybridRouter:
             model_id: The model identifier to put in cooldown
             seconds: Duration in seconds to avoid routing to this model
         """
-        self._model_cooldowns[model_id] = time.monotonic() + seconds
+        with self._cooldown_lock:
+            self._model_cooldowns[model_id] = time.monotonic() + seconds
         logger.info(f"[HybridRouter] Model {model_id} in cooldown for {seconds:.0f}s")
 
     def _select_model(self, model_name: str, has_images: bool = False) -> str:
@@ -477,17 +481,17 @@ class HybridRouter:
             # All weights are 0 — uniform random selection
             return random.choice(models)[0]
 
-        # Filter out models in cooldown
-        if self._model_cooldowns:
+        # Filter out models in cooldown (snapshot for thread safety)
+        with self._cooldown_lock:
+            cooldowns = dict(self._model_cooldowns)
+        if cooldowns:
             now = time.monotonic()
             available = [
-                (m, w, loc)
-                for m, w, loc in active
-                if self._model_cooldowns.get(m, 0) <= now
+                (m, w, loc) for m, w, loc in active if cooldowns.get(m, 0) <= now
             ]
             if not available:
                 # All active models in cooldown — pick soonest to expire
-                soonest = min(active, key=lambda x: self._model_cooldowns.get(x[0], 0))
+                soonest = min(active, key=lambda x: cooldowns.get(x[0], 0))
                 logger.debug(
                     f"[HybridRouter] All models in cooldown, "
                     f"using soonest-expiring: {soonest[0]}"
