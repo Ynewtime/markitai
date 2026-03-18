@@ -2028,6 +2028,31 @@ class TestLLMProcessorRouterCreation:
         # Should use runtime's semaphore
         assert processor.semaphore is runtime.semaphore
 
+    def test_io_semaphore_returns_same_instance(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig
+    ):
+        """Test io_semaphore returns the same instance on repeated access.
+
+        Without caching, each access creates a new Semaphore, making
+        I/O concurrency control completely ineffective.
+        """
+        processor = LLMProcessor(llm_config, prompts_config)
+
+        sem1 = processor.io_semaphore
+        sem2 = processor.io_semaphore
+        assert sem1 is sem2
+
+    def test_io_semaphore_uses_runtime(
+        self, llm_config: LLMConfig, prompts_config: PromptsConfig
+    ):
+        """Test io_semaphore uses runtime's io_semaphore when provided."""
+        from markitai.llm.types import LLMRuntime
+
+        runtime = LLMRuntime(concurrency=5)
+        processor = LLMProcessor(llm_config, prompts_config, runtime=runtime)
+
+        assert processor.io_semaphore is runtime.io_semaphore
+
 
 class TestLLMProcessorVisionModel:
     """Tests for vision model detection."""
