@@ -103,9 +103,12 @@ class TestCheckVisionModelConfig:
         cfg = _make_cfg(alt_enabled=False, desc_enabled=False)
         console = MagicMock()
 
-        with patch("markitai.cli.processors.validators.ui"):
+        with patch("markitai.cli.processors.validators.ui") as mock_ui:
             check_vision_model_config(cfg, console)
-            # No vision-specific warnings (copilot check may run but not vision)
+            # No vision-specific warnings should be emitted
+            for call in mock_ui.warning.call_args_list:
+                assert "vision" not in call[0][0].lower()
+                assert "No vision" not in call[0][0]
 
     def test_warns_if_llm_disabled_but_alt_enabled(self):
         """Should warn that alt/desc requires LLM."""
@@ -217,11 +220,6 @@ class TestCheckPlaywrightForUrls:
 
         with (
             patch("markitai.cli.processors.validators.ui") as mock_ui,
-            patch(
-                "markitai.cli.processors.validators.is_playwright_available",
-                return_value=False,
-                create=True,
-            ),
             patch(
                 "markitai.fetch_playwright.is_playwright_available",
                 return_value=False,
