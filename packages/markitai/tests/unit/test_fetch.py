@@ -4661,7 +4661,7 @@ class TestSPADomainCacheAtomicWrite:
             cache_path = Path(tmp_dir) / "spa_cache.json"
             cache = SPADomainCache(cache_path)
 
-            with patch("markitai.fetch.atomic_write_json") as mock_atomic:
+            with patch("markitai.fetch_cache.atomic_write_json") as mock_atomic:
                 cache.record_spa_domain("https://example.com/page")
                 mock_atomic.assert_called()
                 # Verify the path argument
