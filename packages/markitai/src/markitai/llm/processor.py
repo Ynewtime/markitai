@@ -638,6 +638,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         self._router: Router | LocalProviderWrapper | HybridRouter | None = None
         self._vision_router: Router | LocalProviderWrapper | HybridRouter | None = None
         self._semaphore: asyncio.Semaphore | None = None
+        self._io_semaphore: asyncio.Semaphore | None = None
         self._prompt_manager = PromptManager(prompts_config)
 
         # Usage tracking (global across all contexts)
@@ -763,8 +764,9 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         """
         if self._runtime is not None:
             return self._runtime.io_semaphore
-        # Fallback: use higher limit for local I/O operations
-        return asyncio.Semaphore(DEFAULT_IO_CONCURRENCY)
+        if self._io_semaphore is None:
+            self._io_semaphore = asyncio.Semaphore(DEFAULT_IO_CONCURRENCY)
+        return self._io_semaphore
 
     def _create_router(self) -> Router | LocalProviderWrapper | HybridRouter:
         """Create LiteLLM Router from configuration.
