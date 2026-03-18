@@ -50,6 +50,9 @@ def _sanitize_tag(tag: Tag) -> None:
         tag.decompose()
         return
 
+    if not tag.attrs:
+        return
+
     for attr in list(tag.attrs):
         if attr.startswith("on"):
             del tag.attrs[attr]
