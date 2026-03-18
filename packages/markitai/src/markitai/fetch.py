@@ -1686,6 +1686,189 @@ async def fetch_with_jina(
         raise FetchError(f"Jina Reader fetch failed: {e}")
 
 
+async def _dispatch_strategy(
+    url: str,
+    strategy: FetchStrategy,
+    config: FetchConfig,
+    explicit_strategy: bool,
+    screenshot_kwargs: dict[str, Any],
+    screenshot_config: ScreenshotConfig | None,
+    screenshot_dir: Path | None,
+    renderer: Any | None,
+    _ensure_external_strategy_allowed: Any,
+) -> tuple[FetchResult, tuple[str | None, str | None] | None]:
+    """Dispatch URL fetch to the appropriate strategy implementation.
+
+    Returns:
+        (result, validators_to_write) — validators is non-None for static strategy
+    """
+    validators_to_write: tuple[str | None, str | None] | None = None
+
+    if strategy == FetchStrategy.PLAYWRIGHT:
+        from markitai.fetch_playwright import (
+            fetch_with_playwright,
+            is_playwright_available,
+        )
+
+        if not is_playwright_available():
+            raise FetchError(
+                "playwright is not installed. "
+                "Install with: uv add playwright && uv run playwright install chromium "
+                "(Linux: also run 'uv run playwright install-deps chromium')"
+            )
+
+        pw_result = await fetch_with_playwright(
+            url,
+            **_get_playwright_fetch_kwargs(
+                url,
+                config,
+                screenshot_config=screenshot_config,
+                output_dir=screenshot_dir,
+                renderer=renderer,
+            ),
+        )
+
+        result = FetchResult(
+            content=pw_result.content,
+            strategy_used="playwright",
+            title=pw_result.title,
+            url=url,
+            final_url=pw_result.final_url,
+            metadata=pw_result.metadata,
+            screenshot_path=pw_result.screenshot_path,
+        )
+    elif strategy == FetchStrategy.CLOUDFLARE:
+        _ensure_external_strategy_allowed(FetchStrategy.CLOUDFLARE.value)
+        cf = config.cloudflare
+        token = cf.get_resolved_api_token(strict=True)
+        acct = cf.get_resolved_account_id(strict=True)
+        result = await fetch_with_cloudflare(
+            url=url,
+            api_token=token,
+            account_id=acct,
+            timeout=cf.timeout,
+            wait_until=cf.wait_until,
+            cache_ttl=cf.cache_ttl,
+            reject_resource_patterns=cf.reject_resource_patterns,
+            user_agent=cf.user_agent,
+            cookies=cf.cookies,
+            wait_for_selector=cf.wait_for_selector,
+            http_credentials=cf.http_credentials,
+        )
+    elif strategy == FetchStrategy.JINA:
+        _ensure_external_strategy_allowed(FetchStrategy.JINA.value)
+        api_key = config.jina.get_resolved_api_key()
+        result = await fetch_with_jina(
+            url,
+            api_key,
+            config.jina.timeout,
+            config.jina.rpm,
+            no_cache=config.jina.no_cache,
+            target_selector=config.jina.target_selector,
+            wait_for_selector=config.jina.wait_for_selector,
+        )
+    elif strategy == FetchStrategy.DEFUDDLE:
+        _ensure_external_strategy_allowed(FetchStrategy.DEFUDDLE.value)
+        result = await fetch_with_defuddle(
+            url,
+            config.defuddle.timeout,
+            config.defuddle.rpm,
+        )
+    elif strategy == FetchStrategy.STATIC:
+        # For fresh fetch, use conditional to capture validators
+        cond_result = await fetch_with_static_conditional(url)
+        if cond_result.result is None:
+            raise FetchError(f"No content from conditional fetch: {url}")
+        result = cond_result.result
+        validators_to_write = (
+            cond_result.etag,
+            cond_result.last_modified,
+        )
+    elif strategy == FetchStrategy.AUTO:
+        # Determine if browser should be tried first
+        use_browser_first = False
+        if not explicit_strategy:
+            spa_cache = get_spa_domain_cache()
+            if should_use_browser_for_domain(url, config.fallback_patterns):
+                use_browser_first = True
+            elif spa_cache.is_known_spa(url):
+                spa_cache.record_hit(url)
+                use_browser_first = True
+
+        result = await _fetch_with_fallback(
+            url, config, start_with_browser=use_browser_first, **screenshot_kwargs
+        )
+    else:
+        raise ValueError(f"Unknown fetch strategy: {strategy}")
+
+    return result, validators_to_write
+
+
+async def _resolve_cache_and_check(
+    url: str,
+    strategy: FetchStrategy,
+    config: FetchConfig,
+    cache: FetchCache | None,
+    skip_read_cache: bool,
+    cache_strategy: str | None,
+) -> tuple[FetchResult | None, tuple[str | None, str | None] | None]:
+    """Check cache and optionally try conditional fetch (ETag/Last-Modified).
+
+    Returns:
+        (result, None) — cache hit, done
+        (None, (etag, last_modified)) — cache miss but got validators from conditional fetch
+        (None, None) — no cache or miss without validators
+    """
+    if cache is None or skip_read_cache:
+        return None, None
+
+    # For static/auto strategy, try HTTP conditional request for efficiency
+    use_conditional_cache = strategy in (FetchStrategy.STATIC, FetchStrategy.AUTO)
+
+    if use_conditional_cache:
+        (
+            cached_result,
+            cached_etag,
+            cached_last_modified,
+        ) = await cache.aget_with_validators(url, strategy=cache_strategy)
+
+        # If we have validators, try conditional fetch (static strategy only)
+        if cached_result is not None and (cached_etag or cached_last_modified):
+            if strategy == FetchStrategy.STATIC or (
+                strategy == FetchStrategy.AUTO
+                and not should_use_browser_for_domain(url, config.fallback_patterns)
+                and not get_spa_domain_cache().is_known_spa(url)
+            ):
+                try:
+                    cond_result = await fetch_with_static_conditional(
+                        url, cached_etag, cached_last_modified
+                    )
+                    if cond_result.not_modified:
+                        # 304 Not Modified - use cached content
+                        await cache.aupdate_accessed_at(url, strategy=cache_strategy)
+                        return cached_result, None
+                    elif cond_result.result is not None:
+                        return cond_result.result, (
+                            cond_result.etag,
+                            cond_result.last_modified,
+                        )
+                except FetchError:
+                    logger.debug(
+                        f"[ConditionalFetch] Failed, falling back to normal fetch: {url}"
+                    )
+
+        # No validators but have cached result - use it directly
+        elif cached_result is not None:
+            return cached_result, None
+    else:
+        # Traditional cache check for non-conditional strategies
+        cached_result = await cache.aget(url, strategy=cache_strategy)
+        if cached_result is not None:
+            return cached_result, None
+
+    return None, None
+
+
 async def fetch_url(
     url: str,
     strategy: FetchStrategy,
@@ -1757,259 +1940,31 @@ async def fetch_url(
         "screenshot_dir": screenshot_dir,
     }
 
-    result: FetchResult | None = None
-    cache_validators_to_write: tuple[str | None, str | None] | None = None
-
     # Include strategy in cache key when an explicit strategy is requested,
     # so that --playwright and --static don't return each other's cached results.
     cache_strategy: str | None = (
         strategy.value if explicit_strategy and strategy != FetchStrategy.AUTO else None
     )
 
-    # For static strategy with cache, try HTTP conditional request for efficiency
-    # This uses ETag/Last-Modified headers to avoid re-downloading unchanged content
-    use_conditional_cache = (
-        cache is not None
-        and not skip_read_cache
-        and strategy in (FetchStrategy.STATIC, FetchStrategy.AUTO)
+    result, cache_validators_to_write = await _resolve_cache_and_check(
+        url, strategy, config, cache, skip_read_cache, cache_strategy
     )
 
-    if use_conditional_cache:
-        # Type narrowing: cache is guaranteed non-None here due to condition above
-        assert cache is not None
-        # Get cached result with HTTP validators
-        (
-            cached_result,
-            cached_etag,
-            cached_last_modified,
-        ) = await cache.aget_with_validators(url, strategy=cache_strategy)
-
-        # If we have validators, try conditional fetch (static strategy only)
-        if cached_result is not None and (cached_etag or cached_last_modified):
-            # Only use conditional fetch for static strategy
-            # AUTO strategy might need browser fallback, so skip conditional optimization
-            if strategy == FetchStrategy.STATIC or (
-                strategy == FetchStrategy.AUTO
-                and not should_use_browser_for_domain(url, config.fallback_patterns)
-                and not get_spa_domain_cache().is_known_spa(url)
-            ):
-                try:
-                    cond_result = await fetch_with_static_conditional(
-                        url, cached_etag, cached_last_modified
-                    )
-                    if cond_result.not_modified:
-                        # 304 Not Modified - use cached content
-                        await cache.aupdate_accessed_at(url, strategy=cache_strategy)
-                        result = cached_result
-                    elif cond_result.result is not None:
-                        result = cond_result.result
-                        cache_validators_to_write = (
-                            cond_result.etag,
-                            cond_result.last_modified,
-                        )
-                except FetchError:
-                    # Conditional fetch failed, fall through to normal flow
-                    logger.debug(
-                        f"[ConditionalFetch] Failed, falling back to normal fetch: {url}"
-                    )
-
-        # No validators but have cached result - use it directly
-        elif cached_result is not None and result is None:
-            result = cached_result
-
-    # Traditional cache check for non-conditional strategies
-    elif cache is not None and not skip_read_cache:
-        cached_result = await cache.aget(url, strategy=cache_strategy)
-        if cached_result is not None and result is None:
-            result = cached_result
-
-    # Fetch the content
-    if result is None and explicit_strategy:
-        if strategy == FetchStrategy.PLAYWRIGHT:
-            from markitai.fetch_playwright import (
-                fetch_with_playwright,
-                is_playwright_available,
-            )
-
-            if not is_playwright_available():
-                raise FetchError(
-                    "playwright is not installed. "
-                    "Install with: uv add playwright && uv run playwright install chromium "
-                    "(Linux: also run 'uv run playwright install-deps chromium')"
-                )
-
-            pw_result = await fetch_with_playwright(
-                url,
-                **_get_playwright_fetch_kwargs(
-                    url,
-                    config,
-                    screenshot_config=screenshot_config,
-                    output_dir=screenshot_dir,
-                    renderer=_renderer,
-                ),
-            )
-
-            result = FetchResult(
-                content=pw_result.content,
-                strategy_used="playwright",
-                title=pw_result.title,
-                url=url,
-                final_url=pw_result.final_url,
-                metadata=pw_result.metadata,
-                screenshot_path=pw_result.screenshot_path,
-            )
-        elif strategy == FetchStrategy.CLOUDFLARE:
-            _ensure_external_strategy_allowed(FetchStrategy.CLOUDFLARE.value)
-            cf = config.cloudflare
-            token = cf.get_resolved_api_token(strict=True)
-            acct = cf.get_resolved_account_id(strict=True)
-            result = await fetch_with_cloudflare(
-                url=url,
-                api_token=token,
-                account_id=acct,
-                timeout=cf.timeout,
-                wait_until=cf.wait_until,
-                cache_ttl=cf.cache_ttl,
-                reject_resource_patterns=cf.reject_resource_patterns,
-                user_agent=cf.user_agent,
-                cookies=cf.cookies,
-                wait_for_selector=cf.wait_for_selector,
-                http_credentials=cf.http_credentials,
-            )
-        elif strategy == FetchStrategy.JINA:
-            _ensure_external_strategy_allowed(FetchStrategy.JINA.value)
-            api_key = config.jina.get_resolved_api_key()
-            result = await fetch_with_jina(
-                url,
-                api_key,
-                config.jina.timeout,
-                config.jina.rpm,
-                no_cache=config.jina.no_cache,
-                target_selector=config.jina.target_selector,
-                wait_for_selector=config.jina.wait_for_selector,
-            )
-        elif strategy == FetchStrategy.DEFUDDLE:
-            _ensure_external_strategy_allowed(FetchStrategy.DEFUDDLE.value)
-            result = await fetch_with_defuddle(
-                url,
-                config.defuddle.timeout,
-                config.defuddle.rpm,
-            )
-        elif strategy == FetchStrategy.STATIC:
-            # For fresh fetch, use conditional to capture validators
-            cond_result = await fetch_with_static_conditional(url)
-            if cond_result.result is None:
-                raise FetchError(f"No content from conditional fetch: {url}")
-            result = cond_result.result
-            cache_validators_to_write = (
-                cond_result.etag,
-                cond_result.last_modified,
-            )
-        else:
-            # AUTO with explicit=True shouldn't happen, but handle it
-            strategy = FetchStrategy.AUTO
-            result = await _fetch_with_fallback(
-                url, config, start_with_browser=False, **screenshot_kwargs
-            )
-    elif result is None and strategy == FetchStrategy.AUTO:
-        # Check if domain needs browser rendering
-        # Priority: 1. Configured fallback_patterns, 2. Learned SPA domains
-        spa_cache = get_spa_domain_cache()
-        use_browser_first = False
-
-        if should_use_browser_for_domain(url, config.fallback_patterns):
-            use_browser_first = True
-        elif spa_cache.is_known_spa(url):
-            spa_cache.record_hit(url)
-            use_browser_first = True
-
-        result = await _fetch_with_fallback(
-            url, config, start_with_browser=use_browser_first, **screenshot_kwargs
-        )
-    elif result is None and strategy == FetchStrategy.STATIC:
-        # For fresh fetch, use conditional to capture validators
-        cond_result = await fetch_with_static_conditional(url)
-        if cond_result.result is None:
-            raise FetchError(f"No content from conditional fetch: {url}")
-        result = cond_result.result
-        cache_validators_to_write = (
-            cond_result.etag,
-            cond_result.last_modified,
-        )
-    elif result is None and strategy == FetchStrategy.PLAYWRIGHT:
-        from markitai.fetch_playwright import (
-            fetch_with_playwright,
-            is_playwright_available,
-        )
-
-        if not is_playwright_available():
-            raise FetchError(
-                "playwright is not installed. "
-                "Install with: uv add playwright && uv run playwright install chromium "
-                "(Linux: also run 'uv run playwright install-deps chromium')"
-            )
-
-        pw_result = await fetch_with_playwright(
-            url,
-            **_get_playwright_fetch_kwargs(
-                url,
-                config,
-                screenshot_config=screenshot_config,
-                output_dir=screenshot_dir,
-                renderer=_renderer,
-            ),
-        )
-
-        result = FetchResult(
-            content=pw_result.content,
-            strategy_used="playwright",
-            title=pw_result.title,
+    # Fetch the content if not served from cache
+    if result is None:
+        result, new_validators = await _dispatch_strategy(
             url=url,
-            final_url=pw_result.final_url,
-            metadata=pw_result.metadata,
-            screenshot_path=pw_result.screenshot_path,
+            strategy=strategy,
+            config=config,
+            explicit_strategy=explicit_strategy,
+            screenshot_kwargs=screenshot_kwargs,
+            screenshot_config=screenshot_config,
+            screenshot_dir=screenshot_dir,
+            renderer=_renderer,
+            _ensure_external_strategy_allowed=_ensure_external_strategy_allowed,
         )
-    elif result is None and strategy == FetchStrategy.CLOUDFLARE:
-        _ensure_external_strategy_allowed(FetchStrategy.CLOUDFLARE.value)
-        cf = config.cloudflare
-        token = cf.get_resolved_api_token(strict=True)
-        acct = cf.get_resolved_account_id(strict=True)
-        result = await fetch_with_cloudflare(
-            url=url,
-            api_token=token,
-            account_id=acct,
-            timeout=cf.timeout,
-            wait_until=cf.wait_until,
-            cache_ttl=cf.cache_ttl,
-            reject_resource_patterns=cf.reject_resource_patterns,
-            user_agent=cf.user_agent,
-            cookies=cf.cookies,
-            wait_for_selector=cf.wait_for_selector,
-            http_credentials=cf.http_credentials,
-        )
-    elif result is None and strategy == FetchStrategy.JINA:
-        _ensure_external_strategy_allowed(FetchStrategy.JINA.value)
-        api_key = config.jina.get_resolved_api_key()
-        result = await fetch_with_jina(
-            url,
-            api_key,
-            config.jina.timeout,
-            config.jina.rpm,
-            no_cache=config.jina.no_cache,
-            target_selector=config.jina.target_selector,
-            wait_for_selector=config.jina.wait_for_selector,
-        )
-    elif result is None and strategy == FetchStrategy.DEFUDDLE:
-        _ensure_external_strategy_allowed(FetchStrategy.DEFUDDLE.value)
-        result = await fetch_with_defuddle(
-            url,
-            config.defuddle.timeout,
-            config.defuddle.rpm,
-        )
-    elif result is None:
-        raise ValueError(f"Unknown fetch strategy: {strategy}")
-
-    assert result is not None
+        if new_validators is not None:
+            cache_validators_to_write = new_validators
 
     # Capture screenshot separately if requested and not already captured
     if screenshot and result.screenshot_path is None:
