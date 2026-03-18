@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.constants import DEFAULT_ROUTER_TIMEOUT
 from markitai.providers.auth import _is_copilot_sdk_available
 from markitai.providers.common import (
     UNSUPPORTED_PARAMS,
@@ -200,7 +201,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         }
     )
 
-    def __init__(self, timeout: int = 120) -> None:
+    def __init__(self, timeout: int = DEFAULT_ROUTER_TIMEOUT) -> None:
         """Initialize the provider.
 
         Args:

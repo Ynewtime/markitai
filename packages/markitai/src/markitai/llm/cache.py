@@ -69,7 +69,9 @@ class SQLiteCache:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             self._dir_ensured = True
 
-        conn = sqlite3.connect(str(self._db_path), timeout=30.0)
+        from markitai.constants import DEFAULT_SQLITE_TIMEOUT
+
+        conn = sqlite3.connect(str(self._db_path), timeout=DEFAULT_SQLITE_TIMEOUT)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.row_factory = sqlite3.Row

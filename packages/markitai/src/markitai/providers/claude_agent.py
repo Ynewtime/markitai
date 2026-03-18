@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.constants import DEFAULT_ROUTER_TIMEOUT
 from markitai.providers.auth import _is_claude_agent_sdk_available
 from markitai.providers.common import (
     UNSUPPORTED_PARAMS,
@@ -89,7 +90,7 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
     # Threshold for enabling prompt caching (~1024 tokens ≈ 4096 chars)
     _CACHE_THRESHOLD_CHARS: int = 4096
 
-    def __init__(self, timeout: int = 120) -> None:
+    def __init__(self, timeout: int = DEFAULT_ROUTER_TIMEOUT) -> None:
         """Initialize the provider.
 
         Args:

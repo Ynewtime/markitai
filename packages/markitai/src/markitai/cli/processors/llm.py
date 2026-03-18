@@ -15,6 +15,7 @@ from loguru import logger
 from markitai.config import MarkitaiConfig
 from markitai.constants import (
     ASSETS_REL_PATH,
+    DEFAULT_LLM_READY_TIMEOUT,
     DEFAULT_MAX_IMAGES_PER_BATCH,
     IMAGE_EXTENSIONS,
     MARKITAI_META_DIR,
@@ -204,7 +205,7 @@ async def analyze_images_with_llm(
     concurrency_limit: int | None = None,  # noqa: ARG001 - kept for API compat
     processor: LLMProcessor | None = None,
     llm_ready_event: asyncio.Event | None = None,
-    llm_ready_timeout: float = 300.0,
+    llm_ready_timeout: float = DEFAULT_LLM_READY_TIMEOUT,
 ) -> tuple[str, float, dict[str, dict[str, Any]], ImageAnalysisResult | None]:
     """Analyze images with LLM Vision using batch processing.
 
@@ -326,7 +327,7 @@ async def analyze_images_with_llm(
                     )
             else:
                 # Legacy polling fallback (when no event is provided)
-                max_wait_seconds = 300
+                max_wait_seconds = DEFAULT_LLM_READY_TIMEOUT
                 poll_interval = 0.5
                 waited = 0.0
                 while not llm_output.exists() and waited < max_wait_seconds:

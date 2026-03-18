@@ -54,6 +54,11 @@ DEFAULT_MAX_PAGES_PER_BATCH = 10  # Pages per LLM call for document processing
 # Router settings
 DEFAULT_ROUTER_NUM_RETRIES = 2
 DEFAULT_ROUTER_TIMEOUT = 120  # seconds
+DEFAULT_SQLITE_TIMEOUT = 30.0  # seconds — SQLite connection timeout
+DEFAULT_MAX_OUTPUT_TOKENS_HARD_CAP = 128000  # Absolute ceiling for max_tokens
+DEFAULT_SUBPROCESS_TIMEOUT = 30  # seconds — LibreOffice/external tool timeout
+DEFAULT_LLM_READY_TIMEOUT = 300.0  # seconds — wait for LLM provider readiness
+DEFAULT_VISION_MAX_DIMENSION = 2048  # pixels — max dimension for vision input images
 
 # Note: RETRYABLE_ERRORS tuple is defined in llm.py as it contains
 # actual exception classes from litellm that cannot be imported here
