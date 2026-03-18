@@ -319,9 +319,11 @@ class ImageProcessor:
                     out_buffer = io.BytesIO()
                     img.save(out_buffer, format="PNG")
                     return out_buffer.getvalue()
-            except Exception:
+            except Exception as e:
                 # Fall through to LibreOffice fallback
-                pass
+                logger.debug(
+                    "[Image] Pillow PNG conversion failed, trying LibreOffice: {}", e
+                )
 
         # Fallback to LibreOffice (for non-Windows or if Pillow fails)
         import subprocess
@@ -366,8 +368,8 @@ class ImageProcessor:
                 temp_out = temp_path / f"{temp_in.stem}.png"
                 if temp_out.exists():
                     return temp_out.read_bytes()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[Image] LibreOffice PNG conversion failed: {}", e)
 
         return image_data
 
