@@ -28,6 +28,7 @@ from markitai.constants import (
     DEFAULT_IMAGE_MAX_WIDTH,
     DEFAULT_IMAGE_QUALITY,
     DEFAULT_SCREENSHOT_MAX_BYTES,
+    DEFAULT_SUBPROCESS_TIMEOUT,
 )
 from markitai.utils.mime import get_extension_from_mime
 from markitai.utils.paths import ensure_assets_dir
@@ -357,7 +358,9 @@ class ImageProcessor:
                     str(temp_in),
                 ]
 
-                subprocess.run(cmd, capture_output=True, timeout=30)
+                subprocess.run(
+                    cmd, capture_output=True, timeout=DEFAULT_SUBPROCESS_TIMEOUT
+                )
 
                 # LibreOffice output filename depends on input filename
                 temp_out = temp_path / f"{temp_in.stem}.png"

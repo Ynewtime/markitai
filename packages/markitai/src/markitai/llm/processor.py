@@ -46,9 +46,11 @@ except (ImportError, OSError):
 
 from markitai.constants import (
     DEFAULT_IO_CONCURRENCY,
+    DEFAULT_MAX_OUTPUT_TOKENS_HARD_CAP,
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_BASE_DELAY,
     DEFAULT_RETRY_MAX_DELAY,
+    DEFAULT_VISION_MAX_DIMENSION,
 )
 from markitai.llm import content
 from markitai.llm.cache import ContentCache, PersistentCache
@@ -1318,7 +1320,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         # Apply a reasonable cap for standard document conversion
         # 128k output is plenty for even the largest single page/chunk
         # This prevents requesting "too many" tokens which some providers dislike
-        max_tokens = min(max_tokens, 128000)
+        max_tokens = min(max_tokens, DEFAULT_MAX_OUTPUT_TOKENS_HARD_CAP)
 
         # Ensure reasonable minimum (higher for table-heavy content)
         min_floor = 4000 if is_table_heavy else 1000
@@ -1784,7 +1786,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
             try:
                 svg_result = cairosvg.svg2png(
                     bytestring=image_data,
-                    output_width=2048,
+                    output_width=DEFAULT_VISION_MAX_DIMENSION,
                 )
                 assert isinstance(svg_result, bytes)
                 image_data = svg_result
@@ -1811,7 +1813,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                     img = Image.open(buffer)
                     # Resize logic: iterative downscaling if needed
                     quality = 85
-                    max_dim = 2048
+                    max_dim = DEFAULT_VISION_MAX_DIMENSION
 
                     while True:
                         if max(img.size) > max_dim:
