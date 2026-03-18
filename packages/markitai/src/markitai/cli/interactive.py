@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import questionary
+from loguru import logger
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
@@ -162,8 +163,8 @@ def prompt_enable_llm(session: InteractiveSession) -> bool:
         if active:
             has_provider = True
             detected_label = f"Configured: {format_model_list(active)}"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("[Interactive] Failed to load config models: {}", e)
 
     # 2. Fallback: auto-detect providers if no config models
     if not has_provider:

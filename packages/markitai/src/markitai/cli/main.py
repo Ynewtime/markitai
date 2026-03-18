@@ -798,8 +798,8 @@ def app(
                 )
 
                 await close_litellm_async_clients()
-            except Exception:
-                pass  # Ignore cleanup errors
+            except Exception as e:
+                logger.debug("[Cleanup] LiteLLM client cleanup failed: {}", e)
 
     try:
         asyncio.run(run_workflow_with_cleanup())

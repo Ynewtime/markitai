@@ -181,8 +181,12 @@ class PdfConverter(BaseConverter):
                             )
                             img_file.write_bytes(compressed_data)
                             width, height = compressed_img.size
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(
+                            "[PDF] Image compression failed for {}: {}",
+                            img_file.name,
+                            e,
+                        )
 
                 if width == 0 or height == 0:
                     try:
@@ -190,7 +194,8 @@ class PdfConverter(BaseConverter):
 
                         with Image.open(img_file) as img:
                             width, height = img.size
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("[PDF] Image dimension extraction failed: {}", e)
                         width, height = 0, 0
 
                 # Determine MIME type

@@ -334,13 +334,13 @@ class PptxConverter(OfficeConverter):
             if presentation:
                 try:
                     presentation.Close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("[PPTX] COM presentation.Close() failed: {}", e)
             if ppt:
                 try:
                     ppt.Quit()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("[PPTX] COM ppt.Quit() failed: {}", e)
             pythoncom.CoUninitialize()
 
         return images, slide_images
