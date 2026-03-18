@@ -211,6 +211,41 @@ class TestConfigManager:
 
         assert saved_data["llm"]["enabled"] is True
 
+    def test_save_uses_atomic_write(self, tmp_path: Path) -> None:
+        """Test save() uses atomic write (temp file + rename).
+
+        Verifies by tracking calls to markitai.security.atomic_write_text.
+        Also checks POSIX trailing newline compliance.
+        """
+        from unittest.mock import patch
+
+        manager = ConfigManager()
+        manager.load()
+        manager.set("llm.enabled", True)
+
+        save_path = tmp_path / "config.json"
+
+        # Track whether atomic_write_text is called
+        calls: list[tuple] = []
+        original_atomic_write = __import__(
+            "markitai.security", fromlist=["atomic_write_text"]
+        ).atomic_write_text
+
+        def tracking_write(path, content, **kwargs):
+            calls.append((path, content))
+            return original_atomic_write(path, content, **kwargs)
+
+        with patch("markitai.security.atomic_write_text", side_effect=tracking_write):
+            manager.save(save_path)
+
+        assert len(calls) == 1, "save() should call atomic_write_text exactly once"
+
+        # Verify file content is valid JSON with trailing newline
+        raw = save_path.read_text()
+        assert raw.endswith("\n"), "Saved file should end with newline"
+        saved_data = json.loads(raw)
+        assert saved_data["llm"]["enabled"] is True
+
 
 class TestPresetConfig:
     """Tests for PresetConfig and preset system."""

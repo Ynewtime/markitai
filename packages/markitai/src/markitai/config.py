@@ -759,9 +759,10 @@ class ConfigManager:
             for key in self._modified_keys:
                 _set_nested_value(output_data, key, self.get(key))
 
-        with open(save_path, "w", encoding="utf-8") as f:
-            json.dump(output_data, f, indent=2, ensure_ascii=False)
-            f.write("\n")  # Trailing newline for POSIX compliance
+        from markitai.security import atomic_write_text
+
+        content = json.dumps(output_data, indent=2, ensure_ascii=False) + "\n"
+        atomic_write_text(save_path, content)
 
         return save_path
 
