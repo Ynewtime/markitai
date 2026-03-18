@@ -303,3 +303,33 @@ class TestExecutorIntegration:
         # Use again - should work with new executor
         result2 = await run_in_converter_thread(lambda: 2)
         assert result2 == 2
+
+
+class TestHeavyTaskSemaphore:
+    """Tests for heavy task semaphore lifecycle."""
+
+    def teardown_method(self):
+        """Reset semaphore after each test."""
+        from markitai.utils import executor
+
+        executor._HEAVY_TASK_SEMAPHORE = None
+
+    def test_get_returns_same_instance(self):
+        """Repeated calls should return the same semaphore."""
+        from markitai.utils.executor import get_heavy_task_semaphore
+
+        sem1 = get_heavy_task_semaphore()
+        sem2 = get_heavy_task_semaphore()
+        assert sem1 is sem2
+
+    def test_reset_allows_new_instance(self):
+        """After reset, a fresh semaphore should be created."""
+        from markitai.utils.executor import (
+            get_heavy_task_semaphore,
+            reset_heavy_task_semaphore,
+        )
+
+        sem1 = get_heavy_task_semaphore()
+        reset_heavy_task_semaphore()
+        sem2 = get_heavy_task_semaphore()
+        assert sem1 is not sem2

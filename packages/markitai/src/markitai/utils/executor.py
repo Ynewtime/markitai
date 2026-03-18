@@ -158,6 +158,17 @@ def get_heavy_task_semaphore(limit: int = 0) -> asyncio.Semaphore:
     return _HEAVY_TASK_SEMAPHORE
 
 
+def reset_heavy_task_semaphore() -> None:
+    """Reset the global heavy task semaphore.
+
+    Call during cleanup to release the semaphore bound to the current
+    event loop. The next call to get_heavy_task_semaphore() will create
+    a fresh instance bound to the active loop.
+    """
+    global _HEAVY_TASK_SEMAPHORE
+    _HEAVY_TASK_SEMAPHORE = None
+
+
 async def run_in_converter_thread(
     func: Callable[..., T], *args: Any, **kwargs: Any
 ) -> T:
