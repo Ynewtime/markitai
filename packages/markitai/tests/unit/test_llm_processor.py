@@ -1185,6 +1185,39 @@ class TestContentCacheExtended:
             assert cache.get("p1", "c1") == "r1_updated"
             assert cache.get("p2", "c2") is None
 
+    def test_thread_safety_concurrent_set_get(self):
+        """Test ContentCache handles concurrent thread access without corruption.
+
+        Defensive against Python 3.13+ free-threaded mode (PEP 703).
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        cache = ContentCache(maxsize=50, ttl_seconds=300)
+        errors: list[str] = []
+
+        def writer(thread_id: int) -> None:
+            for i in range(100):
+                cache.set(f"p{thread_id}", f"c{i}", f"result-{thread_id}-{i}")
+
+        def reader(thread_id: int) -> None:
+            for i in range(100):
+                result = cache.get(f"p{thread_id}", f"c{i}")
+                if result is not None and not result.startswith(f"result-{thread_id}-"):
+                    errors.append(f"Wrong result for thread {thread_id}: {result}")
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = []
+            for t in range(4):
+                futures.append(pool.submit(writer, t))
+                futures.append(pool.submit(reader, t))
+            for f in as_completed(futures):
+                f.result()  # Raises if thread had exception
+
+        assert not errors, f"Thread safety violations: {errors}"
+        # Cache should still be functional after concurrent access
+        cache.set("final", "test", "ok")
+        assert cache.get("final", "test") == "ok"
+
 
 # =============================================================================
 # Test LLMProcessor
