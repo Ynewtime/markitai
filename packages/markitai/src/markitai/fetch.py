@@ -65,7 +65,6 @@ if TYPE_CHECKING:
 
 from markitai.fetch_cache import FetchCache as FetchCache  # noqa: F401
 from markitai.fetch_cache import SPADomainCache as SPADomainCache  # noqa: F401
-from markitai.fetch_cache import _make_json_safe as _make_json_safe  # noqa: F401
 from markitai.fetch_types import (
     CRITICAL_INVALID_REASONS as CRITICAL_INVALID_REASONS,  # noqa: F401
 )
@@ -1686,6 +1685,27 @@ async def fetch_with_jina(
         raise FetchError(f"Jina Reader fetch failed: {e}")
 
 
+def _ensure_external_strategy_allowed(url: str, strategy_name: str) -> None:
+    """Raise FetchError if an external-only strategy targets a private/local URL."""
+    from urllib.parse import urlparse
+
+    from markitai.fetch_policy import is_private_or_local_domain
+
+    if strategy_name not in {
+        FetchStrategy.DEFUDDLE.value,
+        FetchStrategy.JINA.value,
+        FetchStrategy.CLOUDFLARE.value,
+    }:
+        return
+
+    domain = urlparse(url).netloc.lower()
+    if is_private_or_local_domain(domain):
+        raise FetchError(
+            f"{strategy_name} cannot fetch private/local URLs. "
+            "Use static or playwright instead."
+        )
+
+
 async def _dispatch_strategy(
     url: str,
     strategy: FetchStrategy,
@@ -1695,7 +1715,6 @@ async def _dispatch_strategy(
     screenshot_config: ScreenshotConfig | None,
     screenshot_dir: Path | None,
     renderer: Any | None,
-    _ensure_external_strategy_allowed: Any,
 ) -> tuple[FetchResult, tuple[str | None, str | None] | None]:
     """Dispatch URL fetch to the appropriate strategy implementation.
 
@@ -1738,7 +1757,7 @@ async def _dispatch_strategy(
             screenshot_path=pw_result.screenshot_path,
         )
     elif strategy == FetchStrategy.CLOUDFLARE:
-        _ensure_external_strategy_allowed(FetchStrategy.CLOUDFLARE.value)
+        _ensure_external_strategy_allowed(url, FetchStrategy.CLOUDFLARE.value)
         cf = config.cloudflare
         token = cf.get_resolved_api_token(strict=True)
         acct = cf.get_resolved_account_id(strict=True)
@@ -1756,7 +1775,7 @@ async def _dispatch_strategy(
             http_credentials=cf.http_credentials,
         )
     elif strategy == FetchStrategy.JINA:
-        _ensure_external_strategy_allowed(FetchStrategy.JINA.value)
+        _ensure_external_strategy_allowed(url, FetchStrategy.JINA.value)
         api_key = config.jina.get_resolved_api_key()
         result = await fetch_with_jina(
             url,
@@ -1768,7 +1787,7 @@ async def _dispatch_strategy(
             wait_for_selector=config.jina.wait_for_selector,
         )
     elif strategy == FetchStrategy.DEFUDDLE:
-        _ensure_external_strategy_allowed(FetchStrategy.DEFUDDLE.value)
+        _ensure_external_strategy_allowed(url, FetchStrategy.DEFUDDLE.value)
         result = await fetch_with_defuddle(
             url,
             config.defuddle.timeout,
@@ -1903,25 +1922,6 @@ async def fetch_url(
         FetchError: If fetch fails and no fallback available
         JinaRateLimitError: If --jina used and rate limit exceeded
     """
-    from urllib.parse import urlparse
-
-    from markitai.fetch_policy import is_private_or_local_domain
-
-    def _ensure_external_strategy_allowed(strategy_name: str) -> None:
-        if strategy_name not in {
-            FetchStrategy.DEFUDDLE.value,
-            FetchStrategy.JINA.value,
-            FetchStrategy.CLOUDFLARE.value,
-        }:
-            return
-
-        domain = urlparse(url).netloc.lower()
-        if is_private_or_local_domain(domain):
-            raise FetchError(
-                f"{strategy_name} cannot fetch private/local URLs. "
-                "Use static or playwright instead."
-            )
-
     # Use provided renderer or get global one if needed
     _renderer = renderer
     if _renderer is None and (
@@ -1961,7 +1961,6 @@ async def fetch_url(
             screenshot_config=screenshot_config,
             screenshot_dir=screenshot_dir,
             renderer=_renderer,
-            _ensure_external_strategy_allowed=_ensure_external_strategy_allowed,
         )
         if new_validators is not None:
             cache_validators_to_write = new_validators
