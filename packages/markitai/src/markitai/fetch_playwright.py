@@ -550,8 +550,8 @@ class PlaywrightRenderer:
             for cached in self._context_cache.values():
                 try:
                     await cached.context.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("[Playwright] Context close failed: {}", e)
             self._context_cache.clear()
 
             if self._browser:
@@ -756,8 +756,8 @@ def _strip_html_tags(html: str) -> str:
         import html as html_module
 
         text = html_module.unescape(text)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("[Playwright] HTML unescape failed: {}", e)
 
     # Normalize whitespace
     text = re.sub(r"\s+", " ", text)

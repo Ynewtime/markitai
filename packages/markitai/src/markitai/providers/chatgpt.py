@@ -171,8 +171,10 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
                             or error_data.get("detail", "")
                             or str(error_data)
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(
+                            "[ChatGPT] Error response JSON parsing failed: {}", e
+                        )
 
                     if response.status_code in (401, 403):
                         raise AuthenticationError(

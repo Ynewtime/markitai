@@ -127,8 +127,10 @@ def count_tokens(text: str, model: str) -> int:
 
             encoding = _tiktoken_encodings[encoding_name]
             return len(encoding.encode(text))  # type: ignore[union-attr]
-        except Exception:
-            pass  # Fall through to estimation
+        except Exception as e:
+            logger.debug(
+                "[Providers] tiktoken encoding failed, using estimation: {}", e
+            )
 
     # Fallback: character-based estimation
     # Rough estimate: 1 token ≈ 4 characters for English
@@ -259,8 +261,8 @@ def estimate_model_cost(
                 source="litellm",
                 matched_model=model,
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("[Providers] Cost lookup failed for {}: {}", model, e)
 
     # 2. Try fuzzy match in LiteLLM
     fuzzy_match = _find_litellm_model_fuzzy(model)
@@ -278,8 +280,8 @@ def estimate_model_cost(
                     source="litellm_fuzzy",
                     matched_model=fuzzy_match,
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[Providers] Fuzzy cost lookup failed for {}: {}", model, e)
 
     # 3. Fallback to hardcoded pricing table
     pricing = COPILOT_MODEL_PRICING.get(model)

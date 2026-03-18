@@ -50,8 +50,8 @@ def _email_from_google_userinfo(access_token: str) -> str | None:
             data = resp.json()
             email = data.get("email")
             return email if isinstance(email, str) and email else None
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("[Auth] Google userinfo email extraction failed: {}", e)
     return None
 
 

@@ -1171,8 +1171,8 @@ def _detect_proxy(force_recheck: bool = False) -> str:
                 _detected_proxy = proxy_url
                 _detected_proxy_bypass = ""
                 return proxy_url
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[Proxy] Auto-detection failed: {}", e)
 
     # Silent - no proxy is common, no need to log
     _detected_proxy = ""
@@ -1689,8 +1689,8 @@ def should_use_browser_for_domain(url: str, fallback_patterns: list[str]) -> boo
             if domain == pattern_lower or domain.endswith("." + pattern_lower):
                 logger.debug(f"Domain {domain} matches fallback pattern {pattern}")
                 return True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("[Fetch] Domain pattern matching failed: {}", e)
 
     return False
 
