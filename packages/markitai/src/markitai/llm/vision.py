@@ -566,7 +566,10 @@ class VisionMixin:
                         context=context,
                         document_context=document_context,
                     )
-                except Exception:
+                except Exception as e:
+                    logger.debug(
+                        "[Vision] Image analysis failed for {}: {}", image_path.name, e
+                    )
                     return ImageAnalysis(
                         caption="Image",
                         description="Image analysis failed",

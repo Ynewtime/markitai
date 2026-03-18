@@ -516,8 +516,10 @@ class PlaywrightRenderer:
                         markdown_content.strip()
                     ):
                         markdown_content = _format_inner_text(rendered_text)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(
+                        "[Playwright] Failed to extract inner_text fallback: {}", e
+                    )
 
             screenshot_path = None
             if screenshot_config and output_dir:

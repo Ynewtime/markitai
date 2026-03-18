@@ -1364,8 +1364,8 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                     best_model = model_id
 
             return best_model
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[LLM] Failed to select highest-weight model: {}", e)
         return None
 
     async def _call_llm_with_retry(
