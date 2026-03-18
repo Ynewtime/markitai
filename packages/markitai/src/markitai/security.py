@@ -238,7 +238,10 @@ async def write_bytes_async(path: Path, data: bytes) -> None:
         dir=parent,
     )
     try:
-        async with aiofiles.open(fd, "wb", closefd=True) as f:
+        # Close fd and reopen by path (consistent with atomic_write_text_async,
+        # avoids fd leak if aiofiles.open fails)
+        os.close(fd)
+        async with aiofiles.open(tmp_path, "wb") as f:
             await f.write(data)
         await _replace_with_retry_async(tmp_path, path)
     except Exception:
