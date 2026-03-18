@@ -25,6 +25,7 @@ from markitai.constants import (
     DEFAULT_CACHE_SIZE_LIMIT,
     DEFAULT_CACHE_TTL_SECONDS,
     DEFAULT_GLOBAL_CACHE_DIR,
+    DEFAULT_SQLITE_TIMEOUT,
 )
 
 
@@ -68,8 +69,6 @@ class SQLiteCache:
         if not self._dir_ensured:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             self._dir_ensured = True
-
-        from markitai.constants import DEFAULT_SQLITE_TIMEOUT
 
         conn = sqlite3.connect(str(self._db_path), timeout=DEFAULT_SQLITE_TIMEOUT)
         conn.execute("PRAGMA journal_mode=WAL")

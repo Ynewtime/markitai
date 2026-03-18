@@ -1488,7 +1488,7 @@ async def close_shared_clients() -> None:
     global _fetch_cache_fingerprint, _jina_client_fingerprint
     global _playwright_renderer_fingerprint
     global _cf_br_semaphore, _spa_domain_cache
-    global _markitdown_instance, _detected_proxy
+    global _markitdown_instance, _detected_proxy, _detected_proxy_bypass
     if _jina_client is not None:
         await _jina_client.aclose()
         _jina_client = None
@@ -1512,6 +1512,7 @@ async def close_shared_clients() -> None:
     _spa_domain_cache = None
     _markitdown_instance = None
     _detected_proxy = None
+    _detected_proxy_bypass = None
 
     # Reset heavy task semaphore (bound to event loop)
     from markitai.utils.executor import reset_heavy_task_semaphore
