@@ -692,6 +692,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         from collections import OrderedDict
 
         self._image_cache: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
+        self._image_cache_lock = threading.Lock()
         self._image_cache_max_size = 200  # Max number of images to cache
         self._image_cache_max_bytes = 500 * 1024 * 1024  # 500MB max total cache size
         self._image_cache_bytes = 0  # Current total bytes in cache
@@ -1721,8 +1722,9 @@ class LLMProcessor(VisionMixin, DocumentMixin):
 
     def clear_image_cache(self) -> None:
         """Clear the image cache to free memory after document processing."""
-        self._image_cache.clear()
-        self._image_cache_bytes = 0
+        with self._image_cache_lock:
+            self._image_cache.clear()
+            self._image_cache_bytes = 0
 
     def _get_cached_image(self, image_path: Path) -> tuple[bytes, str]:
         """Get image bytes and base64 encoding, using cache if available.
@@ -1738,10 +1740,11 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         """
         path_key = str(image_path)
 
-        if path_key in self._image_cache:
-            # Move to end for LRU (most recently used)
-            self._image_cache.move_to_end(path_key)
-            return self._image_cache[path_key]
+        with self._image_cache_lock:
+            if path_key in self._image_cache:
+                # Move to end for LRU (most recently used)
+                self._image_cache.move_to_end(path_key)
+                return self._image_cache[path_key]
 
         # Read and encode image
         image_data = image_path.read_bytes()
@@ -1860,18 +1863,19 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         entry_bytes = len(image_data) + len(base64_image)
 
         # Evict old entries if adding this would exceed limits
-        while self._image_cache and (
-            len(self._image_cache) >= self._image_cache_max_size
-            or self._image_cache_bytes + entry_bytes > self._image_cache_max_bytes
-        ):
-            # Remove oldest entry (first item in OrderedDict)
-            _, oldest_value = self._image_cache.popitem(last=False)
-            old_bytes = len(oldest_value[0]) + len(oldest_value[1])
-            self._image_cache_bytes -= old_bytes
+        with self._image_cache_lock:
+            while self._image_cache and (
+                len(self._image_cache) >= self._image_cache_max_size
+                or self._image_cache_bytes + entry_bytes > self._image_cache_max_bytes
+            ):
+                # Remove oldest entry (first item in OrderedDict)
+                _, oldest_value = self._image_cache.popitem(last=False)
+                old_bytes = len(oldest_value[0]) + len(oldest_value[1])
+                self._image_cache_bytes -= old_bytes
 
-        # Cache if entry size is reasonable (skip very large single images)
-        if entry_bytes < self._image_cache_max_bytes // 2:
-            self._image_cache[path_key] = (image_data, base64_image)
-            self._image_cache_bytes += entry_bytes
+            # Cache if entry size is reasonable (skip very large single images)
+            if entry_bytes < self._image_cache_max_bytes // 2:
+                self._image_cache[path_key] = (image_data, base64_image)
+                self._image_cache_bytes += entry_bytes
 
         return image_data, base64_image

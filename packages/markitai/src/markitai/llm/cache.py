@@ -9,6 +9,7 @@ This module provides caching for LLM responses:
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections import OrderedDict
 from collections.abc import Iterator
@@ -556,6 +557,8 @@ class ContentCache:
     """LRU cache with TTL for LLM responses based on content hash.
 
     Uses OrderedDict for O(1) LRU eviction instead of O(n) min() search.
+    Thread-safe: all cache mutations protected by threading.Lock for
+    forward-compatibility with Python 3.13+ free-threaded mode (PEP 703).
     """
 
     def __init__(
@@ -570,6 +573,7 @@ class ContentCache:
             ttl_seconds: Time-to-live in seconds
         """
         self._cache: OrderedDict[str, tuple[Any, float]] = OrderedDict()
+        self._lock = threading.Lock()
         self._maxsize = maxsize
         self._ttl = ttl_seconds
 
@@ -583,34 +587,36 @@ class ContentCache:
     def get(self, prompt: str, content: str) -> Any | None:
         """Get cached result if exists and not expired."""
         key = self._compute_hash(prompt, content)
-        if key not in self._cache:
-            return None
+        with self._lock:
+            if key not in self._cache:
+                return None
 
-        result, timestamp = self._cache[key]
-        if time.time() - timestamp > self._ttl:
-            del self._cache[key]
-            return None
+            result, timestamp = self._cache[key]
+            if time.time() - timestamp > self._ttl:
+                del self._cache[key]
+                return None
 
-        self._cache.move_to_end(key)
-        return result
+            self._cache.move_to_end(key)
+            return result
 
     def set(self, prompt: str, content: str, result: Any) -> None:
         """Cache a result."""
         key = self._compute_hash(prompt, content)
+        with self._lock:
+            if key in self._cache:
+                self._cache[key] = (result, time.time())
+                self._cache.move_to_end(key)
+                return
 
-        if key in self._cache:
+            if len(self._cache) >= self._maxsize:
+                self._cache.popitem(last=False)
+
             self._cache[key] = (result, time.time())
-            self._cache.move_to_end(key)
-            return
-
-        if len(self._cache) >= self._maxsize:
-            self._cache.popitem(last=False)
-
-        self._cache[key] = (result, time.time())
 
     def clear(self) -> None:
         """Clear all cached entries."""
-        self._cache.clear()
+        with self._lock:
+            self._cache.clear()
 
     @property
     def size(self) -> int:
