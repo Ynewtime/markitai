@@ -644,6 +644,41 @@ class TestWriteBytesAsync:
 
         assert test_file.read_bytes() == data
 
+    @pytest.mark.asyncio
+    async def test_async_write_bytes_preserves_existing_on_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Test that write_bytes_async uses atomic write pattern.
+
+        If the write is atomic (temp + rename), an error during write
+        should leave the original file intact. Non-atomic writes would
+        truncate/corrupt the original file.
+        """
+        from unittest.mock import patch
+
+        from markitai.security import write_bytes_async
+
+        test_file = tmp_path / "data.bin"
+        original_data = b"original content"
+        test_file.write_bytes(original_data)
+
+        # Simulate write failure by making _replace_with_retry_async raise
+        with (
+            patch(
+                "markitai.security._replace_with_retry_async",
+                side_effect=OSError("simulated rename failure"),
+            ),
+            pytest.raises(OSError, match="simulated rename failure"),
+        ):
+            await write_bytes_async(test_file, b"new content that should not persist")
+
+        # Original file should be intact (atomic write rolled back)
+        assert test_file.read_bytes() == original_data
+
+        # No temp files should remain
+        temps = list(tmp_path.glob(".data.bin.*.tmp"))
+        assert temps == [], f"Temp files leaked: {temps}"
+
 
 class TestPathTraversalAdvanced:
     """Advanced tests for path traversal prevention."""

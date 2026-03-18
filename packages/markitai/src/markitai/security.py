@@ -220,7 +220,7 @@ async def atomic_write_json_async(
 
 
 async def write_bytes_async(path: Path, data: bytes) -> None:
-    """Write bytes to file asynchronously.
+    """Write bytes to file atomically using temp file + rename.
 
     Args:
         path: Target file path
@@ -229,10 +229,24 @@ async def write_bytes_async(path: Path, data: bytes) -> None:
     import aiofiles
 
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
 
-    async with aiofiles.open(path, "wb") as f:
-        await f.write(data)
+    fd, tmp_path = tempfile.mkstemp(
+        suffix=".tmp",
+        prefix=f".{path.name}.",
+        dir=parent,
+    )
+    try:
+        async with aiofiles.open(fd, "wb", closefd=True) as f:
+            await f.write(data)
+        await _replace_with_retry_async(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def escape_glob_pattern(s: str) -> str:
