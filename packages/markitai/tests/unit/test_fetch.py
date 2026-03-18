@@ -1922,6 +1922,40 @@ class TestCloseSharedClients:
         # Should not raise any errors
         await close_shared_clients()
 
+    @pytest.mark.asyncio
+    async def test_close_shared_clients_resets_cf_semaphore(self) -> None:
+        """Test that close_shared_clients resets the CF browser semaphore.
+
+        Stale semaphores bound to a destroyed event loop would cause
+        RuntimeError on next use.
+        """
+        from markitai import fetch
+        from markitai.fetch import close_shared_clients, get_cf_semaphore
+
+        # Create semaphore
+        sem = get_cf_semaphore()
+        assert sem is not None
+
+        await close_shared_clients()
+
+        # Should be reset
+        assert fetch._cf_br_semaphore is None
+        # New call should create a fresh instance
+        new_sem = get_cf_semaphore()
+        assert new_sem is not sem
+
+    @pytest.mark.asyncio
+    async def test_close_shared_clients_resets_spa_cache(self) -> None:
+        """Test that close_shared_clients resets the SPA domain cache."""
+        from markitai import fetch
+        from markitai.fetch import close_shared_clients
+
+        fetch._spa_domain_cache = MagicMock()
+
+        await close_shared_clients()
+
+        assert fetch._spa_domain_cache is None
+
 
 class TestGetMarkitdown:
     """Tests for _get_markitdown function."""

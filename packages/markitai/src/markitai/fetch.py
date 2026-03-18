@@ -1487,6 +1487,8 @@ async def close_shared_clients() -> None:
     global _defuddle_client, _defuddle_rate_limiter
     global _fetch_cache_fingerprint, _jina_client_fingerprint
     global _playwright_renderer_fingerprint
+    global _cf_br_semaphore, _spa_domain_cache
+    global _markitdown_instance, _detected_proxy
     if _jina_client is not None:
         await _jina_client.aclose()
         _jina_client = None
@@ -1504,6 +1506,17 @@ async def close_shared_clients() -> None:
     _playwright_renderer_fingerprint = ""
     _jina_rate_limiter = None
     _defuddle_rate_limiter = None
+
+    # Reset global state that may be bound to the current event loop
+    _cf_br_semaphore = None
+    _spa_domain_cache = None
+    _markitdown_instance = None
+    _detected_proxy = None
+
+    # Reset heavy task semaphore (bound to event loop)
+    from markitai.utils.executor import reset_heavy_task_semaphore
+
+    reset_heavy_task_semaphore()
 
     # Close shared static HTTP clients
     from markitai.fetch_http import close_static_http_clients
