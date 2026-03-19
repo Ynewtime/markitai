@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup, Tag
 from markitai.webextract.dom import parse_html
 from markitai.webextract.extractors.registry import find_extractor
 from markitai.webextract.metadata import extract_metadata
+from markitai.webextract.quality import assess_native_markdown
 from markitai.webextract.removals import apply_removals
 from markitai.webextract.resolver import ResolvedPage, resolve_page
 from markitai.webextract.sanitize import sanitize_tag_tree
@@ -91,6 +92,8 @@ def _build_from_resolved(
         word_count=word_count,
     )
 
+    quality = assess_native_markdown(markdown, profile=content_profile.value)
+
     diagnostics: dict[str, object] = {
         "extractor": "resolver",
         "resolver_diagnostics": resolved.diagnostics,
@@ -105,6 +108,7 @@ def _build_from_resolved(
         metadata=metadata,
         word_count=word_count,
         info=info,
+        quality=quality,
         semantic=resolved.semantic,
         diagnostics=diagnostics,
     )
@@ -155,12 +159,17 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
         word_count=word_count,
     )
 
+    quality = assess_native_markdown(
+        markdown, profile=ContentProfile.GENERIC_ARTICLE.value
+    )
+
     return ExtractedWebContent(
         clean_html=clean_html,
         markdown=markdown,
         metadata=metadata,
         word_count=word_count,
         info=info,
+        quality=quality,
         semantic=None,
         diagnostics={**diagnostics, "metadata": asdict(metadata)},
     )
