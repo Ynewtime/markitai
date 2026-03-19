@@ -6,7 +6,7 @@ import re
 
 from bs4 import Tag
 
-_DIMENSION_STYLE_RE = re.compile(r"(\w+)\s*:\s*(\d+)")
+_DIMENSION_STYLE_RE = re.compile(r"(?:^|;\s*)([\w-]+)\s*:\s*(\d+)")
 _MIN_SIZE = 33
 
 

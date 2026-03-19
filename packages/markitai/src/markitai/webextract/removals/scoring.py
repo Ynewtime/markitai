@@ -112,9 +112,7 @@ def _is_likely_content(el: Tag) -> bool:
 
     # Short text with sentence structure and low link density
     if words >= 10 and _has_sentence_ending(text):
-        link_text = sum(len(a.get_text(strip=True)) for a in el.find_all("a"))
-        total_text = len(text)
-        if total_text > 0 and (link_text / total_text) < 0.1:
+        if total_text_len > 0 and (link_text_len / total_text_len) < 0.1:
             return True
 
     return False

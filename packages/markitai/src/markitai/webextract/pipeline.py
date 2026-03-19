@@ -169,10 +169,11 @@ def _extract_with_retry(
         diagnostics["adaptive_retry_used"] = True
         diagnostics["retry_level"] = 4
 
-    # Fallback: broaden to <body>
+    # Fallback: broaden to <body> (fresh parse to avoid mutated state)
     if word_count <= _RETRY_VERY_SPARSE_THRESHOLD:
-        body = soup.body
-        if body is not None and body is not root:
+        soup_body = parse_html(raw_html)
+        body = soup_body.body
+        if body is not None:
             if isinstance(body, Tag):
                 standardize_content(
                     body, title=getattr(metadata, "title", None), base_url=url

@@ -28,7 +28,7 @@ _BYLINE_DATE_RE = re.compile(
     re.IGNORECASE,
 )
 
-_BYLINE_BY_RE = re.compile(r"\bBy\s+[A-Z]", re.IGNORECASE)
+_BYLINE_BY_RE = re.compile(r"\bBy\s+[A-Z]")
 
 _MAX_BYLINE_WORDS = 15
 
