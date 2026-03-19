@@ -235,6 +235,13 @@ def run_interactive_mode(ctx: click.Context) -> None:
     "Requires CF API token and account ID in config. Available on CF Free plan.",
 )
 @click.option(
+    "--kreuzberg",
+    "use_kreuzberg",
+    is_flag=True,
+    help="Force kreuzberg converter for all file formats (overrides native converters). "
+    "Requires kreuzberg installed: uv pip install markitai[kreuzberg].",
+)
+@click.option(
     "-v",
     "--verbose",
     is_flag=True,
@@ -305,6 +312,7 @@ def app(
     use_static: bool,
     use_jina: bool,
     use_cloudflare: bool,
+    use_kreuzberg: bool,
     verbose: bool,
     quiet: bool,
     dry_run: bool,
@@ -591,6 +599,16 @@ def app(
         # Use config default or auto
         fetch_strategy = FetchStrategy(cfg.fetch.strategy)
         explicit_fetch_strategy = False
+
+    # --kreuzberg overrides file conversion (orthogonal to fetch strategy)
+    if use_kreuzberg:
+        if use_cloudflare:
+            console.print(
+                "[red]Error: --kreuzberg and --cloudflare are mutually exclusive "
+                "(both override file conversion).[/red]"
+            )
+            ctx.exit(1)
+        cfg.fetch.kreuzberg_convert_enabled = True
 
     # Log input info
     if is_url_list_mode:
