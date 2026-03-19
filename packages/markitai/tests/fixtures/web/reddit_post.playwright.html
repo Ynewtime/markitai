@@ -39,7 +39,8 @@
     <div class="commentarea">
       <div class="sitetable nestedlisting">
 
-        <!-- First top-level comment -->
+        <!-- First top-level comment — real old Reddit structure:
+             .child is a sibling of .entry, NOT inside .entry -->
         <div class="thing comment" data-fullname="t1_xyz001">
           <div class="entry">
             <p class="tagline">
@@ -51,18 +52,18 @@
                 for hands-on exercises. The borrow checker clicks once you internalize ownership.</p>
               </div>
             </div>
-            <div class="child">
-              <!-- Reply to first comment -->
-              <div class="sitetable nestedlisting">
-                <div class="thing comment" data-fullname="t1_xyz002">
-                  <div class="entry">
-                    <p class="tagline">
-                      <a class="author" href="/user/rustacean99">rustacean99</a>
-                    </p>
-                    <div class="usertext-body">
-                      <div class="md">
-                        <p>Thanks! I actually started Rustlings already. It's really helpful.</p>
-                      </div>
+          </div>
+          <div class="child">
+            <!-- Reply to first comment -->
+            <div class="sitetable nestedlisting">
+              <div class="thing comment" data-fullname="t1_xyz002">
+                <div class="entry">
+                  <p class="tagline">
+                    <a class="author" href="/user/rustacean99">rustacean99</a>
+                  </p>
+                  <div class="usertext-body">
+                    <div class="md">
+                      <p>Thanks! I actually started Rustlings already. It's really helpful.</p>
                     </div>
                   </div>
                 </div>

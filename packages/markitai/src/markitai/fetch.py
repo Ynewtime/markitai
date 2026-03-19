@@ -1169,7 +1169,16 @@ def _build_native_fetch_result(
         diagnostics.setdefault("fallback_reason", "native_output_too_short")
         return None
 
-    source_frontmatter = coerce_source_frontmatter(getattr(extracted, "metadata", None))
+    # Prefer build_source_frontmatter (typed result with content_profile/word_count)
+    # over coerce_source_frontmatter (metadata-only legacy fallback).
+    if hasattr(extracted, "info") and getattr(extracted, "info", None) is not None:
+        from markitai.webextract.frontmatter import build_source_frontmatter
+
+        source_frontmatter = build_source_frontmatter(extracted)
+    else:
+        source_frontmatter = coerce_source_frontmatter(
+            getattr(extracted, "metadata", None)
+        )
     merged_metadata = dict(base_metadata or {})
     merged_metadata.update(
         {

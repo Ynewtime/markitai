@@ -541,9 +541,20 @@ class PlaywrightRenderer:
                     native_markdown = getattr(extracted, "markdown", "")
                     if is_native_markdown_acceptable(native_markdown):
                         markdown_content = native_markdown
-                        source_frontmatter = coerce_source_frontmatter(
-                            getattr(extracted, "metadata", None)
-                        )
+                        # Prefer typed frontmatter builder when info is available
+                        if (
+                            hasattr(extracted, "info")
+                            and getattr(extracted, "info", None) is not None
+                        ):
+                            from markitai.webextract.frontmatter import (
+                                build_source_frontmatter,
+                            )
+
+                            source_frontmatter = build_source_frontmatter(extracted)
+                        else:
+                            source_frontmatter = coerce_source_frontmatter(
+                                getattr(extracted, "metadata", None)
+                            )
                         if source_frontmatter:
                             metadata["source_frontmatter"] = source_frontmatter
                             title = source_frontmatter.get("title") or title

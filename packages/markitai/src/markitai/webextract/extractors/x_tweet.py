@@ -11,7 +11,8 @@ from markitai.webextract.extractors.x_common import (
 )
 from markitai.webextract.render import render_semantic_content
 from markitai.webextract.resolver import ResolvedPage
-from markitai.webextract.semantics import ConversationThread
+from markitai.webextract.semantics import ConversationItem, ConversationThread
+from markitai.webextract.thread_policy import get_thread_policy
 from markitai.webextract.types import SemanticExtraction
 
 # data-testid values for tweet-internal noise (action buttons, metadata)
@@ -103,9 +104,34 @@ class XTweetExtractor:
         display_name = main_item.author_name or ""
         title = f"Post by {handle}" if handle else f"Post by {display_name}"
 
+        # Collect replies governed by thread policy
+        policy = get_thread_policy(url)
+        reply_items: list[ConversationItem] = []
+        if policy is not None:
+            reply_section = primary_col.find("section")  # type: ignore[union-attr]
+            if isinstance(reply_section, Tag):
+                reply_articles = reply_section.find_all(
+                    "article", attrs={"data-testid": "tweet"}
+                )
+                for reply_art in reply_articles:
+                    if not isinstance(reply_art, Tag):
+                        continue
+                    item = parse_tweet_article(reply_art)
+                    item_is_author = (
+                        item.author_handle == handle or item.author_name == display_name
+                    )
+                    if (
+                        item_is_author
+                        and policy.include_author_thread
+                        or not item_is_author
+                        and policy.include_third_party_replies
+                    ):
+                        reply_items.append(item)
+
         thread = ConversationThread(
             title=title,
             main_item=main_item,
+            items=reply_items,
         )
 
         semantic = SemanticExtraction(thread=thread)
