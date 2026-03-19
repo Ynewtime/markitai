@@ -5,7 +5,6 @@ from dataclasses import asdict
 
 from bs4 import BeautifulSoup, Tag
 
-from markitai.webextract.constants import ADAPTIVE_RETRY_MIN_WORDS
 from markitai.webextract.dom import parse_html
 from markitai.webextract.extractors.registry import find_extractor
 from markitai.webextract.metadata import extract_metadata
@@ -46,42 +45,148 @@ def extract_web_content(html: str, url: str) -> ExtractedWebContent:
 
     root = _maybe_apply_schema_fallback(soup, root, diagnostics)
 
-    # Apply noise removal (selectors, hidden elements, scoring)
-    if isinstance(root, Tag):
-        removal_stats = apply_removals(root)
-        diagnostics["removal_stats"] = removal_stats
-    if isinstance(root, Tag):
-        standardize_content(root, title=metadata.title, base_url=url)
-    sanitize_tag_tree(root)
-    clean_html = str(root)
-
-    # Create a shared MarkItDown instance to avoid repeated construction
+    # Multi-level extraction with adaptive retry
     md_instance = _create_markitdown()
-    markdown = _html_fragment_to_markdown(clean_html, md_instance)
-
-    if count_words(markdown) <= ADAPTIVE_RETRY_MIN_WORDS and not diagnostics.get(
-        "schema_fallback_used"
-    ):
-        # Adaptive retry: broaden extraction by falling back to <body>
-        retry_root = _retry_with_broader_root(soup, root)
-        if retry_root is not None and retry_root is not root:
-            if isinstance(retry_root, Tag):
-                standardize_content(retry_root, title=metadata.title, base_url=url)
-            sanitize_tag_tree(retry_root)
-            retry_html = str(retry_root)
-            retry_markdown = _html_fragment_to_markdown(retry_html, md_instance)
-            if count_words(retry_markdown) > count_words(markdown):
-                clean_html = retry_html
-                markdown = retry_markdown
-                diagnostics["adaptive_retry_used"] = True
+    result = _extract_with_retry(html, soup, root, metadata, md_instance, diagnostics)
 
     return ExtractedWebContent(
-        clean_html=clean_html,
-        markdown=markdown,
+        clean_html=result[0],
+        markdown=result[1],
         metadata=metadata,
-        word_count=count_words(markdown),
+        word_count=count_words(result[1]),
         diagnostics={**diagnostics, "metadata": asdict(metadata)},
     )
+
+
+_RETRY_SPARSE_THRESHOLD = 50
+_RETRY_VERY_SPARSE_THRESHOLD = 20
+
+
+def _extract_once(
+    root: Tag | BeautifulSoup,
+    metadata: object,
+    md_instance: object,
+    url: str,
+    *,
+    use_partial_selectors: bool = True,
+    use_hidden_removal: bool = True,
+    use_scoring: bool = True,
+) -> tuple[str, str, dict[str, int]]:
+    """Run extraction pipeline once and return (clean_html, markdown, removal_stats)."""
+    title = getattr(metadata, "title", None)
+    removal_stats: dict[str, int] = {}
+    if isinstance(root, Tag):
+        removal_stats = apply_removals(
+            root,
+            use_partial_selectors=use_partial_selectors,
+            use_hidden_removal=use_hidden_removal,
+            use_scoring=use_scoring,
+        )
+    if isinstance(root, Tag):
+        standardize_content(root, title=title, base_url=url)
+    sanitize_tag_tree(root)
+    clean_html = str(root)
+    markdown = _html_fragment_to_markdown(clean_html, md_instance)
+    return clean_html, markdown, removal_stats
+
+
+def _extract_with_retry(
+    raw_html: str,
+    soup: BeautifulSoup,
+    root: Tag | BeautifulSoup,
+    metadata: object,
+    md_instance: object,
+    diagnostics: dict[str, object],
+) -> tuple[str, str]:
+    """Multi-level adaptive retry extraction.
+
+    Level 1: Full removal pipeline
+    Level 2: Disable partial selectors (may be too aggressive)
+    Level 3: Disable hidden element removal
+    Level 4: Disable all removals (listing page)
+    Fallback: Broaden to <body>
+    """
+    url = getattr(metadata, "canonical_url", "") or ""
+
+    # Level 1: Full pipeline
+    clean_html, markdown, removal_stats = _extract_once(
+        root, metadata, md_instance, url
+    )
+    diagnostics["removal_stats"] = removal_stats
+    word_count = count_words(markdown)
+
+    # Skip retry if schema fallback already found a good match
+    schema_used = diagnostics.get("schema_fallback_used", False)
+    if word_count >= _RETRY_SPARSE_THRESHOLD or schema_used:
+        return clean_html, markdown
+
+    # Level 2: Retry without partial selectors
+    soup2 = parse_html(raw_html)
+    root2 = _pick_root(soup2, None)
+    root2 = _maybe_apply_schema_fallback(soup2, root2, diagnostics)
+    clean2, md2, _ = _extract_once(
+        root2, metadata, md_instance, url, use_partial_selectors=False
+    )
+    wc2 = count_words(md2)
+    if wc2 > word_count * 2:
+        clean_html, markdown, word_count = clean2, md2, wc2
+        diagnostics["adaptive_retry_used"] = True
+        diagnostics["retry_level"] = 2
+    if word_count >= _RETRY_SPARSE_THRESHOLD:
+        return clean_html, markdown
+
+    # Level 3: Retry without hidden element removal
+    soup3 = parse_html(raw_html)
+    root3 = _pick_root(soup3, None)
+    root3 = _maybe_apply_schema_fallback(soup3, root3, diagnostics)
+    clean3, md3, _ = _extract_once(
+        root3, metadata, md_instance, url, use_hidden_removal=False
+    )
+    wc3 = count_words(md3)
+    if wc3 > word_count:
+        clean_html, markdown, word_count = clean3, md3, wc3
+        diagnostics["adaptive_retry_used"] = True
+        diagnostics["retry_level"] = 3
+    if word_count >= _RETRY_SPARSE_THRESHOLD:
+        return clean_html, markdown
+
+    # Level 4: Retry with all removals disabled
+    soup4 = parse_html(raw_html)
+    root4 = _pick_root(soup4, None)
+    root4 = _maybe_apply_schema_fallback(soup4, root4, diagnostics)
+    clean4, md4, _ = _extract_once(
+        root4,
+        metadata,
+        md_instance,
+        url,
+        use_partial_selectors=False,
+        use_hidden_removal=False,
+        use_scoring=False,
+    )
+    wc4 = count_words(md4)
+    if wc4 > word_count:
+        clean_html, markdown, word_count = clean4, md4, wc4
+        diagnostics["adaptive_retry_used"] = True
+        diagnostics["retry_level"] = 4
+
+    # Fallback: broaden to <body>
+    if word_count <= _RETRY_VERY_SPARSE_THRESHOLD:
+        body = soup.body
+        if body is not None and body is not root:
+            if isinstance(body, Tag):
+                standardize_content(
+                    body, title=getattr(metadata, "title", None), base_url=url
+                )
+            sanitize_tag_tree(body)
+            body_html = str(body)
+            body_md = _html_fragment_to_markdown(body_html, md_instance)
+            if count_words(body_md) > word_count:
+                clean_html = body_html
+                markdown = body_md
+                diagnostics["adaptive_retry_used"] = True
+                diagnostics["retry_level"] = "body_fallback"
+
+    return clean_html, markdown
 
 
 def _pick_root(soup: BeautifulSoup, extractor: object | None) -> Tag | BeautifulSoup:
