@@ -177,6 +177,10 @@ class TestConfigManager:
         """Test getting nested configuration values."""
         # Change to tmp_path to avoid loading project's markitai.json
         monkeypatch.chdir(tmp_path)
+        # Isolate user-level fallback config from the developer machine.
+        monkeypatch.setattr(
+            ConfigManager, "DEFAULT_USER_CONFIG_DIR", tmp_path / ".markitai-home"
+        )
 
         manager = ConfigManager()
         manager.load()

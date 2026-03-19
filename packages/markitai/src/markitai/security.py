@@ -84,6 +84,8 @@ def atomic_write_text(
     path: Path,
     content: str,
     encoding: str = "utf-8",
+    *,
+    follow_symlinks: bool = False,
 ) -> None:
     """Write text to file atomically using temp file + rename.
 
@@ -94,8 +96,12 @@ def atomic_write_text(
         path: Target file path
         content: Text content to write
         encoding: Text encoding (default: utf-8)
+        follow_symlinks: If True, write to the resolved symlink target instead of
+            replacing the symlink entry itself.
     """
     path = Path(path)
+    if follow_symlinks and path.is_symlink():
+        path = path.resolve()
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True)
 
@@ -138,6 +144,8 @@ def atomic_write_json(
     indent: int = DEFAULT_JSON_INDENT,
     ensure_ascii: bool = False,
     order_func: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    *,
+    follow_symlinks: bool = False,
 ) -> None:
     """Write JSON to file atomically.
 
@@ -147,17 +155,26 @@ def atomic_write_json(
         indent: JSON indentation (default: 2)
         ensure_ascii: If True, escape non-ASCII characters (default: False)
         order_func: Optional function to order/transform dict before serialization
+        follow_symlinks: If True, write to the resolved symlink target instead of
+            replacing the symlink entry itself.
     """
     if order_func is not None and isinstance(obj, dict):
         obj = order_func(obj)
     content = json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii)
-    atomic_write_text(path, content, encoding="utf-8")
+    atomic_write_text(
+        path,
+        content,
+        encoding="utf-8",
+        follow_symlinks=follow_symlinks,
+    )
 
 
 async def atomic_write_text_async(
     path: Path,
     content: str,
     encoding: str = "utf-8",
+    *,
+    follow_symlinks: bool = False,
 ) -> None:
     """Write text to file atomically using temp file + rename (async version).
 
@@ -168,11 +185,15 @@ async def atomic_write_text_async(
         path: Target file path
         content: Text content to write
         encoding: Text encoding (default: utf-8)
+        follow_symlinks: If True, write to the resolved symlink target instead of
+            replacing the symlink entry itself.
     """
     import aiofiles
     import aiofiles.os
 
     path = Path(path)
+    if follow_symlinks and path.is_symlink():
+        path = path.resolve()
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True)
 
@@ -206,6 +227,8 @@ async def atomic_write_json_async(
     obj: Any,
     indent: int = DEFAULT_JSON_INDENT,
     ensure_ascii: bool = False,
+    *,
+    follow_symlinks: bool = False,
 ) -> None:
     """Write JSON to file atomically (async version).
 
@@ -214,21 +237,37 @@ async def atomic_write_json_async(
         obj: Object to serialize as JSON
         indent: JSON indentation (default: 2)
         ensure_ascii: If True, escape non-ASCII characters (default: False)
+        follow_symlinks: If True, write to the resolved symlink target instead of
+            replacing the symlink entry itself.
     """
     content = json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii)
-    await atomic_write_text_async(path, content, encoding="utf-8")
+    await atomic_write_text_async(
+        path,
+        content,
+        encoding="utf-8",
+        follow_symlinks=follow_symlinks,
+    )
 
 
-async def write_bytes_async(path: Path, data: bytes) -> None:
+async def write_bytes_async(
+    path: Path,
+    data: bytes,
+    *,
+    follow_symlinks: bool = False,
+) -> None:
     """Write bytes to file atomically using temp file + rename.
 
     Args:
         path: Target file path
         data: Bytes to write
+        follow_symlinks: If True, write to the resolved symlink target instead of
+            replacing the symlink entry itself.
     """
     import aiofiles
 
     path = Path(path)
+    if follow_symlinks and path.is_symlink():
+        path = path.resolve()
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True)
 

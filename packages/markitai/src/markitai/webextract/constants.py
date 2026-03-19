@@ -92,7 +92,7 @@ EXACT_SELECTORS: list[str] = [
     "dialog",
     "fieldset",
     "form",
-    "input",
+    "input:not([type='checkbox'])",
     "label",
     "option",
     "select",
