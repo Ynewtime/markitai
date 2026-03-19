@@ -17,6 +17,7 @@ class ContentProfile(Enum):
     GENERIC_ARTICLE = "generic_article"
     SOCIAL_POST = "social_post"
     DISCUSSION_ISSUE = "discussion_issue"
+    DISCUSSION_THREAD = "discussion_thread"
 
 
 @dataclass(slots=True)
