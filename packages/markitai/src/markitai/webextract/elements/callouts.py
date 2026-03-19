@@ -29,7 +29,7 @@ def _normalize_github_alerts(root: Tag) -> None:
     """Convert GitHub .markdown-alert to blockquote."""
     for alert in root.select(".markdown-alert"):
         # Extract type from class: markdown-alert-note → note
-        classes = alert.get("class", [])
+        classes = alert.get("class")
         callout_type = "note"
         for cls in classes if isinstance(classes, list) else []:
             match = re.match(r"markdown-alert-(\w+)", cls)
@@ -49,7 +49,7 @@ def _normalize_github_alerts(root: Tag) -> None:
 def _normalize_bootstrap_alerts(root: Tag) -> None:
     """Convert Bootstrap .alert.alert-* to blockquote."""
     for alert in root.select(".alert"):
-        classes = alert.get("class", [])
+        classes = alert.get("class")
         callout_type = "note"
         for cls in classes if isinstance(classes, list) else []:
             match = re.match(r"alert-(\w+)", cls)

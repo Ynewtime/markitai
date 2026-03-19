@@ -327,6 +327,84 @@ class TestConvertBasic:
         mock_pymupdf4llm.to_markdown.assert_called_once()
 
     @patch("markitai.converter.pdf.pymupdf4llm")
+    def test_convert_demotes_text_heavy_picture_blocks_to_references(
+        self, mock_pymupdf4llm: Mock, tmp_path: Path
+    ) -> None:
+        """Text-heavy PDF picture blocks should become reference-only assets."""
+        pdf_file = tmp_path / "test.pdf"
+        pdf_file.touch()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        assets_dir = output_dir / ".markitai" / "assets"
+
+        def build_chunk(
+            image_name: str,
+            picture_text: str,
+            page_number: int,
+        ) -> dict[str, object]:
+            image_ref = f"![]({(assets_dir / image_name).as_posix()})"
+            picture_block = (
+                f"{image_ref}\n\n"
+                "**----- Start of picture text -----**<br>\n"
+                f"{picture_text}"
+                "**----- End of picture text -----**<br>\n"
+            )
+            text = f"Lead paragraph.\n\n{picture_block}\nTail paragraph."
+            start = text.index(image_ref)
+            end = start + len(picture_block)
+            return {
+                "metadata": {"page_number": page_number},
+                "page_boxes": [
+                    {"class": "text", "pos": (0, start)},
+                    {"class": "picture", "pos": (start, end)},
+                    {"class": "text", "pos": (end, len(text))},
+                ],
+                "text": text,
+            }
+
+        def fake_to_markdown(*args, **kwargs):
+            del args
+            image_path = Path(kwargs["image_path"])
+            image_path.mkdir(parents=True, exist_ok=True)
+            (image_path / "test.pdf-0001-10.jpg").touch()
+            (image_path / "test.pdf-0002-04.jpg").touch()
+            return [
+                build_chunk(
+                    "test.pdf-0001-10.jpg",
+                    "12<br>\n10<br>\nColumn 1<br>\nRow 1 Row 2 Row 3 Row 4<br>\n",
+                    1,
+                ),
+                build_chunk(
+                    "test.pdf-0002-04.jpg",
+                    (
+                        "Header A Header B Header C<br>\n"
+                        "1 In eleifend velit vitae libero sollicitudin euismod. "
+                        "Lorem<br>\n"
+                        "2 Cras fringilla ipsum magna, in fringilla dui commodo a. "
+                        "Ipsum<br>\n"
+                        "3 Aliquam erat volutpat. Lorem<br>\n"
+                        "4 Fusce vitae vestibulum velit. Lorem<br>\n"
+                    ),
+                    2,
+                ),
+            ]
+
+        mock_pymupdf4llm.to_markdown.side_effect = fake_to_markdown
+
+        converter = PdfConverter()
+        result = converter.convert(pdf_file, output_dir)
+
+        assert ".markitai/assets/test.pdf-0001-10.jpg" in result.markdown
+        assert ".markitai/assets/test.pdf-0002-04.jpg" not in result.markdown
+        assert len(result.metadata["reference_images"]) == 1
+        assert result.metadata["reference_images"][0]["page"] == 2
+        assert (
+            result.metadata["reference_images"][0]["rel_path"]
+            == ".markitai/assets/test.pdf-0002-04.jpg"
+        )
+
+    @patch("markitai.converter.pdf.pymupdf4llm")
     def test_convert_with_image_format_config(
         self, mock_pymupdf4llm: Mock, tmp_path: Path
     ) -> None:

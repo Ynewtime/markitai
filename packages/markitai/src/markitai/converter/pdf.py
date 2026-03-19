@@ -47,6 +47,14 @@ class PdfConverter(BaseConverter):
     # them bounded avoids excessive thread nesting and memory pressure.
     _MAX_INTERNAL_WORKERS = 6
 
+    _IMAGE_REF_RE = re.compile(r"!\[[^\]]*\]\((?:[^)]+/)?([^)]+)\)")
+    _PICTURE_TEXT_RE = re.compile(
+        r"\*\*----- Start of picture text -----\*\*<br>\s*(.*?)\s*"
+        r"\*\*----- End of picture text -----\*\*<br>",
+        re.DOTALL,
+    )
+    _TEXT_TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)?|[\u4e00-\u9fff]+")
+
     def _get_worker_count(self, input_path: Path, task_count: int) -> int:
         """Calculate optimal worker count based on file size and system resources.
 
@@ -71,6 +79,79 @@ class PdfConverter(BaseConverter):
             workers = min(2, task_count)
 
         return max(1, min(workers, self._MAX_INTERNAL_WORKERS))
+
+    def _is_text_heavy_picture_text(self, picture_text: str) -> bool:
+        """Return True when picture text looks like extracted table/text content."""
+        plain_text = picture_text.replace("<br>", "\n")
+        lines = [line.strip() for line in plain_text.splitlines() if line.strip()]
+        if not lines:
+            return False
+
+        total_tokens = 0
+        long_lines = 0
+        for line in lines:
+            tokens = self._TEXT_TOKEN_RE.findall(line)
+            total_tokens += len(tokens)
+            cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", line))
+            if len(tokens) >= 4 or cjk_chars >= 8:
+                long_lines += 1
+
+        return total_tokens >= 20 and long_lines >= 3
+
+    def _demote_reference_picture_blocks(
+        self,
+        page_chunk: dict[str, Any],
+        page_num: int,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Remove inline refs for text-heavy picture blocks while keeping picture text."""
+        text = page_chunk.get("text", "")
+        page_boxes = page_chunk.get("page_boxes")
+        if not isinstance(text, str) or not isinstance(page_boxes, list):
+            return str(text), []
+
+        rebuilt_parts: list[str] = []
+        reference_images: list[dict[str, Any]] = []
+        cursor = 0
+
+        for box in page_boxes:
+            if not isinstance(box, dict) or box.get("class") != "picture":
+                continue
+            pos = box.get("pos")
+            if (
+                not isinstance(pos, (tuple, list))
+                or len(pos) != 2
+                or not all(isinstance(v, int) for v in pos)
+            ):
+                continue
+
+            start, end = pos
+            if start < cursor or start < 0 or end > len(text) or start >= end:
+                continue
+
+            rebuilt_parts.append(text[cursor:start])
+            segment = text[start:end]
+            match = self._PICTURE_TEXT_RE.search(segment)
+            image_match = self._IMAGE_REF_RE.search(segment)
+            if (
+                match is not None
+                and image_match is not None
+                and self._is_text_heavy_picture_text(match.group(1))
+            ):
+                image_name = image_match.group(1)
+                reference_images.append(
+                    {
+                        "page": page_num,
+                        "name": image_name,
+                        "rel_path": f"{ASSETS_REL_PATH}/{image_name}",
+                    }
+                )
+                rebuilt_parts.append(self._IMAGE_REF_RE.sub("", segment, count=1))
+            else:
+                rebuilt_parts.append(segment)
+            cursor = end
+
+        rebuilt_parts.append(text[cursor:])
+        return "".join(rebuilt_parts), reference_images
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
@@ -133,10 +214,19 @@ class PdfConverter(BaseConverter):
         # Format: <!-- Page number: N --> (consistent with Slide number format)
         # Ensure blank line after marker for proper markdown formatting
         markdown_parts = []
+        reference_images: list[dict[str, Any]] = []
         for i, chunk in enumerate(page_results):
             page_num = i + 1
-            page_marker = f"<!-- Page number: {page_num} -->"
             page_text = chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
+            if isinstance(chunk, dict):
+                chunk_page_num = chunk.get("metadata", {}).get("page_number")
+                if isinstance(chunk_page_num, int) and chunk_page_num > 0:
+                    page_num = chunk_page_num
+                page_text, page_references = self._demote_reference_picture_blocks(
+                    chunk, page_num
+                )
+                reference_images.extend(page_references)
+            page_marker = f"<!-- Page number: {page_num} -->"
             markdown_parts.append(f"{page_marker}\n\n{page_text}")
 
         markdown = "\n\n".join(markdown_parts)
@@ -217,6 +307,8 @@ class PdfConverter(BaseConverter):
             "format": "PDF",
             "images": len(images),
         }
+        if reference_images and output_dir:
+            metadata["reference_images"] = reference_images
 
         # Render page screenshots if enabled (independent of OCR)
         enable_screenshot = self.config and self.config.screenshot.enabled
@@ -244,6 +336,7 @@ class PdfConverter(BaseConverter):
             # Clear images whose paths pointed into the now-deleted temp dir,
             # so callers never receive dangling file references.
             images = [img for img in images if img.path and img.path.exists()]
+            metadata.pop("reference_images", None)
 
         return ConvertResult(
             markdown=markdown,

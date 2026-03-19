@@ -136,7 +136,7 @@ def _extract_with_retry(
         return clean_html, markdown
 
     # Level 2: Retry without partial selectors
-    soup2, root2 = _rebuild_retry_root(raw_html, extractor, diagnostics)
+    _soup2, root2 = _rebuild_retry_root(raw_html, extractor, diagnostics)
     clean2, md2, _ = _extract_once(
         root2,
         metadata,
@@ -154,7 +154,7 @@ def _extract_with_retry(
         return clean_html, markdown
 
     # Level 3: Retry without hidden element removal
-    soup3, root3 = _rebuild_retry_root(raw_html, extractor, diagnostics)
+    _soup3, root3 = _rebuild_retry_root(raw_html, extractor, diagnostics)
     clean3, md3, _ = _extract_once(
         root3,
         metadata,
@@ -172,7 +172,7 @@ def _extract_with_retry(
         return clean_html, markdown
 
     # Level 4: Retry with all removals disabled
-    soup4, root4 = _rebuild_retry_root(raw_html, extractor, diagnostics)
+    _soup4, root4 = _rebuild_retry_root(raw_html, extractor, diagnostics)
     clean4, md4, _ = _extract_once(
         root4,
         metadata,

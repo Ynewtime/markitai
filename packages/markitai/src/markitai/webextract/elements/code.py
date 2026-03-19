@@ -42,7 +42,7 @@ def normalize_code_blocks(root: Tag) -> None:
             ]
 
         if classes:
-            code["class"] = classes
+            code["class"] = classes  # type: ignore[assignment]
 
 
 def _detect_language(el: Tag) -> str | None:

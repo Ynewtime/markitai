@@ -9,6 +9,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import re
 from collections.abc import Awaitable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -65,6 +66,20 @@ def _vision_cache_content_key(
         return image_fingerprint
     ctx_hash = hashlib.sha256(document_context.encode()).hexdigest()[:16]
     return f"{image_fingerprint}|ctx:{ctx_hash}"
+
+
+def _detect_document_language(document_context: str) -> str:
+    """Infer a simple zh/en language hint from document context."""
+    if not document_context:
+        return "English"
+
+    cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", document_context))
+    latin_chars = len(re.findall(r"[A-Za-z]", document_context))
+    if cjk_chars >= 4 and cjk_chars >= latin_chars:
+        return "Chinese"
+    if latin_chars >= 12 and cjk_chars == 0:
+        return "English"
+    return "English"
 
 
 class VisionMixin:
@@ -147,14 +162,18 @@ class VisionMixin:
         mime_type = get_llm_effective_mime(image_path.suffix)
 
         # Use separated system/user prompts to improve instruction following
+        language = _detect_document_language(document_context)
         system_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "image_analysis_system"
+            "image_analysis_system",
+            language=language,
         )
         doc_ctx = (
             f"\n\nDocument context: {document_context}" if document_context else ""
         )
         user_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "image_analysis_user", document_context=doc_ctx
+            "image_analysis_user",
+            document_context=doc_ctx,
+            language=language,
         )
 
         # Build message with system role and user role with image
@@ -392,8 +411,10 @@ class VisionMixin:
         )
 
         # Use separated system/user prompts to improve instruction following
+        language = _detect_document_language(document_context)
         system_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "image_analysis_system"
+            "image_analysis_system",
+            language=language,
         )
 
         # Build batch user prompt
@@ -401,8 +422,14 @@ class VisionMixin:
         doc_ctx = (
             f"\n\nDocument context: {document_context}" if document_context else ""
         )
-        batch_footer = "\n\nReturn a JSON object with an 'images' array containing results for each image in order."
-        user_prompt = f"{batch_header}{doc_ctx}{batch_footer}"
+        language_hint = (
+            f"\n\nFallback language for images without visible text: {language}."
+        )
+        batch_footer = (
+            "\n\nReturn a JSON object with an 'images' array containing results "
+            "for each image in order."
+        )
+        user_prompt = f"{batch_header}{doc_ctx}{language_hint}{batch_footer}"
 
         # Build content parts with uncached images only
         content_parts: list[dict[str, Any]] = [{"type": "text", "text": user_prompt}]
@@ -807,16 +834,20 @@ class VisionMixin:
             user_content = messages[0]["content"]
 
         image_content = user_content[1]  # The image part
+        language = _detect_document_language(document_context)
 
         # Generate caption using system/user prompts
         caption_system = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "image_caption_system"
+            "image_caption_system",
+            language=language,
         )
         doc_ctx = (
             f"\n\nDocument context: {document_context}" if document_context else ""
         )
         caption_user = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "image_caption_user", document_context=doc_ctx
+            "image_caption_user",
+            document_context=doc_ctx,
+            language=language,
         )
         caption_response = await self._call_llm(  # type: ignore[attr-defined]
             model="default",
@@ -835,10 +866,13 @@ class VisionMixin:
 
         # Generate description using system/user prompts
         desc_system = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "image_description_system"
+            "image_description_system",
+            language=language,
         )
         desc_user = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "image_description_user", document_context=doc_ctx
+            "image_description_user",
+            document_context=doc_ctx,
+            language=language,
         )
         desc_response = await self._call_llm(  # type: ignore[attr-defined]
             model="default",
