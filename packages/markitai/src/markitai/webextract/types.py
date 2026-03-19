@@ -18,6 +18,7 @@ class ContentProfile(Enum):
     SOCIAL_POST = "social_post"
     DISCUSSION_ISSUE = "discussion_issue"
     DISCUSSION_THREAD = "discussion_thread"
+    RICH_MEDIA_PAGE = "rich_media_page"
 
 
 @dataclass(slots=True)
