@@ -85,13 +85,7 @@ def _normalize_callout_asides(root: Tag) -> None:
 
 def _convert_to_blockquote(el: Tag, callout_type: str) -> None:
     """Replace element with a blockquote carrying data-callout attribute."""
-    # Walk up to the root BeautifulSoup object
-    doc = el
-    while doc.parent is not None:
-        doc = doc.parent
-    if not isinstance(doc, BeautifulSoup):
-        doc = BeautifulSoup("", "html.parser")
-    bq = doc.new_tag("blockquote")
+    bq = BeautifulSoup("", "html.parser").new_tag("blockquote")
     bq["data-callout"] = callout_type
 
     # Move children to blockquote

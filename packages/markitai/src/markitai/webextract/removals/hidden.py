@@ -76,12 +76,9 @@ def _is_math_context(el: Tag) -> bool:
     # Check self
     if el.name == "math":
         return True
-    classes = " ".join(el.get("class", []))  # type: ignore[arg-type]
-    if any(
-        s.lstrip(".") in classes or s.lstrip(".") in (el.get("class") or [])
-        for s in _MATH_SELECTORS
-        if s.startswith(".")
-    ):
+    raw_classes = el.get("class")
+    classes_str = " ".join(raw_classes) if isinstance(raw_classes, list) else ""
+    if any(s.lstrip(".") in classes_str for s in _MATH_SELECTORS if s.startswith(".")):
         return True
     if el.get("data-mathml"):
         return True
@@ -92,7 +89,8 @@ def _is_math_context(el: Tag) -> bool:
             break
         if parent.name == "math":
             return True
-        parent_classes = " ".join(parent.get("class", []))  # type: ignore[arg-type]
+        parent_raw = parent.get("class")
+        parent_classes = " ".join(parent_raw) if isinstance(parent_raw, list) else ""
         if "katex" in parent_classes or "MathJax" in parent_classes:
             return True
     return False

@@ -28,14 +28,19 @@ def remove_by_selectors(
         Number of elements removed.
     """
     to_remove: list[Tag] = []
+    seen_ids: set[int] = set()
 
     # Phase 1: Exact CSS selectors
     for selector in EXACT_SELECTORS:
         try:
             for el in root.select(selector):
+                eid = id(el)
+                if eid in seen_ids:
+                    continue
                 if _should_protect(el, main_content):
                     continue
                 to_remove.append(el)
+                seen_ids.add(eid)
         except Exception:  # noqa: BLE001
             # Some selectors may not be supported by BeautifulSoup
             continue
@@ -43,12 +48,14 @@ def remove_by_selectors(
     # Phase 2: Partial attribute matching
     if use_partial:
         for el in root.find_all(True):
-            if el in to_remove:
+            eid = id(el)
+            if eid in seen_ids:
                 continue
             if _should_protect(el, main_content):
                 continue
             if _matches_partial(el):
                 to_remove.append(el)
+                seen_ids.add(eid)
 
     # Remove in reverse document order to avoid parent-before-child issues
     removed = 0

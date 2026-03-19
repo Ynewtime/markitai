@@ -23,7 +23,7 @@ EXACT_SELECTORS: list[str] = [
     ".promo",
     ".Promo",
     "#barrier-page",
-    ".alert",
+    # NOTE: .alert excluded — handled by callout normalization in standardize
     # comments
     "#comments",
     "#comment",
@@ -86,7 +86,7 @@ EXACT_SELECTORS: list[str] = [
     "footer",
     # inputs, forms
     ".aside",
-    "aside",
+    "aside:not([class*='callout'])",
     "button",
     "canvas",
     "dialog",
@@ -101,7 +101,7 @@ EXACT_SELECTORS: list[str] = [
     "textarea",
     # hidden
     "[hidden]",
-    "[aria-hidden='true']",
+    # NOTE: aria-hidden handled by hidden.py with math protection; not in selectors
     ".hidden",
     ".invisible",
     # iframes (except video embeds)
