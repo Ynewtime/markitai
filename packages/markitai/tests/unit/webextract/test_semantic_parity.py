@@ -1,16 +1,14 @@
-"""Semantic parity tests: freeze expected extraction behaviour before architecture change.
+"""Semantic parity tests: freeze expected extraction behaviour.
 
-These tests are intentionally written against types and fields that do NOT yet
-exist (``ContentProfile``, ``ExtractionInfo``, ``SemanticExtraction``).  They
-will fail until Tasks 2-5 introduce those types.  The intent is to lock down
-the desired behaviour so refactoring cannot silently regress it.
+These tests validate that the pipeline correctly classifies pages, populates
+semantic models, and excludes noise sections from markdown output.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-FIXTURES = Path(__file__).parents[3] / "fixtures" / "web"
+FIXTURES = Path(__file__).parents[2] / "fixtures" / "web"
 
 X_URL = "https://x.com/ixiaowenz/status/2030105637204676808"
 ARTICLE_URL = "https://example.com/blog/async-python"
@@ -42,23 +40,48 @@ def test_x_status_semantics_match_expected_fixture() -> None:
     - semantic.thread is not None and carries the correct author handle
     - Noise sections ("Discover more", quote cards) are absent from markdown
     """
-    # These imports will raise ImportError until the new types are implemented.
     from markitai.webextract.pipeline import extract_web_content
-    from markitai.webextract.types import ContentProfile  # type: ignore[attr-defined]
+    from markitai.webextract.types import ContentProfile
 
     html = _load_fixture("x_status_2030105637204676808.playwright.html")
     result = extract_web_content(html, X_URL)
 
     assert result.metadata.title == "Post by @ixiaowenz"
 
-    # info and semantic fields do not exist yet → AttributeError expected
-    assert result.info.content_profile == ContentProfile.SOCIAL_POST  # type: ignore[attr-defined]
-    assert result.semantic is not None  # type: ignore[attr-defined]
-    assert result.semantic.thread is not None  # type: ignore[attr-defined]
-    assert result.semantic.thread.main_item.author_handle == "@ixiaowenz"  # type: ignore[attr-defined]
+    assert result.info is not None
+    assert result.info.content_profile == ContentProfile.SOCIAL_POST
+    assert result.semantic is not None
+    assert result.semantic.thread is not None
+    assert result.semantic.thread.main_item.author_handle == "@ixiaowenz"
 
     assert "Discover more" not in result.markdown
     assert "Quote" not in result.markdown
+
+
+def test_x_resolver_returns_thread_semantic_model() -> None:
+    """X resolver must populate a ConversationThread with correct author info."""
+    from markitai.webextract.pipeline import extract_web_content
+
+    html = _load_fixture("x_status_2030105637204676808.playwright.html")
+    result = extract_web_content(html, X_URL)
+
+    assert result.semantic is not None
+    assert result.semantic.thread is not None
+    assert result.semantic.thread.main_item.author_name == "\u5c0f\u6587"
+    assert result.semantic.thread.main_item.author_handle == "@ixiaowenz"
+    assert "AI agents" in result.semantic.thread.main_item.text
+
+
+def test_x_output_excludes_recommendation_sections_and_quote_card_leakage() -> None:
+    """X output must not contain recommendation or quote card noise."""
+    from markitai.webextract.pipeline import extract_web_content
+
+    html = _load_fixture("x_status_2030105637204676808.playwright.html")
+    result = extract_web_content(html, X_URL)
+
+    assert "Discover more" not in result.markdown
+    assert "\nQuote\n" not in result.markdown
+    assert "Trends for you" not in result.markdown
 
 
 # ---------------------------------------------------------------------------
@@ -75,12 +98,13 @@ def test_generic_article_baseline_stays_non_threaded_and_clean() -> None:
     - Sidebar noise ("Related posts") is absent from markdown
     """
     from markitai.webextract.pipeline import extract_web_content
-    from markitai.webextract.types import ContentProfile  # type: ignore[attr-defined]
+    from markitai.webextract.types import ContentProfile
 
     html = _load_fixture("generic_article.playwright.html")
     result = extract_web_content(html, ARTICLE_URL)
 
-    assert result.info.content_profile == ContentProfile.GENERIC_ARTICLE  # type: ignore[attr-defined]
-    assert result.semantic is None  # type: ignore[attr-defined]
+    assert result.info is not None
+    assert result.info.content_profile == ContentProfile.GENERIC_ARTICLE
+    assert result.semantic is None
 
     assert "Related posts" not in result.markdown

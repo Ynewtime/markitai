@@ -9,6 +9,7 @@ from markitai.webextract.dom import parse_html
 from markitai.webextract.extractors.registry import find_extractor
 from markitai.webextract.metadata import extract_metadata
 from markitai.webextract.removals import apply_removals
+from markitai.webextract.resolver import ResolvedPage, resolve_page
 from markitai.webextract.sanitize import sanitize_tag_tree
 from markitai.webextract.schema import (
     extract_schema_text,
@@ -17,7 +18,11 @@ from markitai.webextract.schema import (
 )
 from markitai.webextract.scoring import select_best_candidate
 from markitai.webextract.standardize import standardize_content
-from markitai.webextract.types import ExtractedWebContent
+from markitai.webextract.types import (
+    ContentProfile,
+    ExtractedWebContent,
+    ExtractionInfo,
+)
 from markitai.webextract.utils import count_words
 
 
@@ -31,7 +36,84 @@ def extract_web_content(html: str, url: str) -> ExtractedWebContent:
     Returns:
         Extracted web content with cleaned HTML and derived Markdown.
     """
+    # Try resolver path first (structured extraction for known sites)
+    resolved = resolve_page(html, url)
+    if resolved is not None and resolved.content_html:
+        return _build_from_resolved(html, url, resolved)
 
+    # Generic pipeline path
+    return _extract_generic(html, url)
+
+
+def _build_from_resolved(
+    html: str,
+    url: str,
+    resolved: ResolvedPage,
+) -> ExtractedWebContent:
+    """Build ExtractedWebContent from a resolved page.
+
+    Args:
+        html: Raw HTML source (for metadata extraction).
+        url: Source URL.
+        resolved: The resolved page from a site-specific extractor.
+
+    Returns:
+        Fully populated ExtractedWebContent.
+    """
+    soup = parse_html(html)
+    metadata = extract_metadata(soup, url)
+
+    # Apply metadata overrides from the resolver
+    for key, value in resolved.metadata_overrides.items():
+        if hasattr(metadata, key):
+            setattr(metadata, key, value)
+
+    # Convert the resolved content_html to markdown
+    md_instance = _create_markitdown()
+    content_html = resolved.content_html or ""
+    markdown = _html_fragment_to_markdown(content_html, md_instance)
+
+    word_count = count_words(markdown)
+
+    # Determine content profile from semantic data
+    content_profile = ContentProfile.SOCIAL_POST
+    extractor_name = resolved.diagnostics.get("x_resolve", "resolved")
+
+    info = ExtractionInfo(
+        content_profile=content_profile,
+        extractor_name=str(extractor_name),
+        word_count=word_count,
+    )
+
+    diagnostics: dict[str, object] = {
+        "extractor": "resolver",
+        "resolver_diagnostics": resolved.diagnostics,
+        "schema_fallback_used": False,
+        "adaptive_retry_used": False,
+        "metadata": asdict(metadata),
+    }
+
+    return ExtractedWebContent(
+        clean_html=content_html,
+        markdown=markdown,
+        metadata=metadata,
+        word_count=word_count,
+        info=info,
+        semantic=resolved.semantic,
+        diagnostics=diagnostics,
+    )
+
+
+def _extract_generic(html: str, url: str) -> ExtractedWebContent:
+    """Run the generic extraction pipeline (no resolver match).
+
+    Args:
+        html: Raw HTML content.
+        url: Source URL.
+
+    Returns:
+        Extracted web content with cleaned HTML and derived Markdown.
+    """
     soup = parse_html(html)
     extractor = find_extractor(url)
     root = _pick_root(soup, extractor)
@@ -57,11 +139,23 @@ def extract_web_content(html: str, url: str) -> ExtractedWebContent:
         extractor=extractor,
     )
 
+    clean_html = result[0]
+    markdown = result[1]
+    word_count = count_words(markdown)
+
+    info = ExtractionInfo(
+        content_profile=ContentProfile.GENERIC_ARTICLE,
+        extractor_name=extractor.name if extractor is not None else "generic",
+        word_count=word_count,
+    )
+
     return ExtractedWebContent(
-        clean_html=result[0],
-        markdown=result[1],
+        clean_html=clean_html,
+        markdown=markdown,
         metadata=metadata,
-        word_count=count_words(result[1]),
+        word_count=word_count,
+        info=info,
+        semantic=None,
         diagnostics={**diagnostics, "metadata": asdict(metadata)},
     )
 
@@ -262,7 +356,7 @@ def _retry_with_broader_root(
 
     Strategy: fall back to ``<body>`` (or the full soup when ``<body>`` is
     absent).  This captures content that sits outside the original scored
-    candidate—e.g. paragraphs placed directly under ``<body>``.
+    candidate---e.g. paragraphs placed directly under ``<body>``.
 
     Returns:
         A broader root element, or *None* if no better candidate exists.
