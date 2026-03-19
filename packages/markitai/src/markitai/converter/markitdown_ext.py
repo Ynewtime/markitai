@@ -21,6 +21,58 @@ from markitai.converter.base import (
 _markitdown: MarkItDown | None = None
 
 
+def _convert_html(input_path: Path) -> ConvertResult:
+    """Convert an HTML file using the webextract pipeline.
+
+    Reads the HTML file and runs it through the full webextract noise
+    removal + standardization pipeline.  Falls back to plain markitdown
+    if webextract is unavailable or produces insufficient output.
+
+    Args:
+        input_path: Path to the HTML file.
+
+    Returns:
+        ConvertResult with markdown content and metadata.
+    """
+    input_path = Path(input_path)
+    logger.debug("[HtmlConverter] Converting with webextract: {}", input_path.name)
+
+    try:
+        from markitai.webextract import (
+            extract_web_content,
+            is_native_markdown_acceptable,
+        )
+
+        html = input_path.read_text(encoding="utf-8", errors="replace")
+        source_url = f"file://{input_path.resolve()}"
+        extracted = extract_web_content(html, source_url)
+        markdown = extracted.markdown
+
+        if is_native_markdown_acceptable(markdown):
+            metadata: dict = {
+                "source": str(input_path),
+                "format": input_path.suffix.lstrip(".").upper(),
+                "converter": "webextract",
+            }
+            if extracted.metadata and extracted.metadata.title:
+                metadata["title"] = extracted.metadata.title
+            return ConvertResult(
+                markdown=markdown,
+                images=[],
+                metadata=metadata,
+            )
+
+        logger.debug(
+            "[HtmlConverter] webextract output too short, falling back to markitdown"
+        )
+    except Exception as exc:
+        logger.debug(
+            "[HtmlConverter] webextract failed, falling back to markitdown: {}", exc
+        )
+
+    return _convert(input_path)
+
+
 def _convert(input_path: Path) -> ConvertResult:
     """Convert a file to Markdown using markitdown.
 
@@ -56,14 +108,14 @@ def _convert(input_path: Path) -> ConvertResult:
 
 @register_converter(FileFormat.HTML)
 class HtmlConverter(BaseConverter):
-    """Converter for HTML files using markitdown."""
+    """Converter for HTML files using webextract pipeline + markitdown fallback."""
 
     supported_formats = [FileFormat.HTML, FileFormat.HTM, FileFormat.XHTML]
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
-        return _convert(input_path)
+        return _convert_html(input_path)
 
 
 # Also register for .htm and .xhtml extensions
