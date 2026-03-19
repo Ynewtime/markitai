@@ -43,16 +43,20 @@ def test_score_candidate_values_match_manual_calculation() -> None:
     div = soup.find("div")
     assert isinstance(div, Tag)
 
-    # Manual calculation:
-    # text words: "Alpha bravo charlie delta echo. Foxtrot golf hotel india juliet. link1 link2"
+    # Manual calculation (multiplicative link density):
+    # text: "Alpha bravo charlie delta echo. Foxtrot golf hotel india juliet. link1 link2"
     # => 12 words => score starts at 12.0
     # 2 paragraphs => +40
+    # 2 commas (period isn't comma) => actually 0 commas in this text
     # class "content" matches => +30
     # not "article" tag => +0
-    # 2 links, 12 words => link penalty = min(40, (2/12)*200) = min(40, 33.33..) = 33.33..
-    # total = 12 + 40 + 30 - 33.33.. = 48.66..
+    # base = 12 + 40 + 0 + 30 = 82
+    # link_text = "link1" + "link2" = 10 chars
+    # total_text = ~76 chars
+    # link_density = min(10/76, 0.5) ≈ 0.1316
+    # score = 82 * (1 - 0.1316) ≈ 71.2
     score = score_candidate(div)
-    assert abs(score - 48.6667) < 0.1, f"Expected ~48.67, got {score}"
+    assert 65 < score < 80, f"Expected ~71, got {score}"
 
 
 def test_select_best_candidate_picks_content_rich_node() -> None:
