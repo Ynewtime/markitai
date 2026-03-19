@@ -126,6 +126,7 @@ class SingleFileWorkflow:
         source: str,
         output_file: Path,
         page_images: list[dict] | None = None,
+        reference_images: list[dict] | None = None,
         title: str | None = None,
     ) -> tuple[str, float, dict[str, dict[str, Any]]]:
         """Process markdown with LLM (clean + frontmatter).
@@ -135,6 +136,7 @@ class SingleFileWorkflow:
             source: Source file name
             output_file: Output file path for .llm.md
             page_images: Optional list of page image info dicts
+            reference_images: Optional list of reference-only image info dicts
             title: Optional explicit title from converter metadata
 
         Returns:
@@ -154,13 +156,25 @@ class SingleFileWorkflow:
             )
 
             # Append commented image links if provided
+            commented_images: list[str] = []
             if page_images:
-                commented_images = [
-                    f"<!-- ![Page {img['page']}]({SCREENSHOTS_REL_PATH}/{img['name']}) -->"
-                    for img in sorted(page_images, key=lambda x: x.get("page", 0))
-                ]
+                commented_images.extend(
+                    [
+                        f"<!-- ![Page {img['page']}]({SCREENSHOTS_REL_PATH}/{img['name']}) -->"
+                        for img in sorted(page_images, key=lambda x: x.get("page", 0))
+                    ]
+                )
+
+            if commented_images:
                 llm_content += "\n\n<!-- Page images for reference -->\n" + "\n".join(
                     commented_images
+                )
+
+            if reference_images:
+                from markitai.workflow.helpers import append_reference_image_comments
+
+                llm_content = append_reference_image_comments(
+                    llm_content, reference_images
                 )
 
             atomic_write_text(llm_output, llm_content)

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from urllib.parse import urljoin
 
-from bs4 import Comment, NavigableString, Tag
+from bs4 import Comment, Tag
+from bs4.element import NavigableString
 
 from markitai.webextract.constants import ALLOWED_EMPTY_ELEMENTS
 from markitai.webextract.elements.callouts import normalize_callouts

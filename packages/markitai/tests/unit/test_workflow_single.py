@@ -281,6 +281,44 @@ Tail.
         assert llm_output.exists()
         assert "Borrowed paragraph." in llm_output.read_text(encoding="utf-8")
 
+    @pytest.mark.asyncio
+    async def test_process_document_appends_reference_image_comments(
+        self, mock_config, tmp_path: Path
+    ) -> None:
+        """Reference-only extracted images should be appended as comments."""
+        processor = MagicMock()
+        processor.process_document = AsyncMock(
+            return_value=("# Processed Content", "title: Test\nsource: doc.pdf")
+        )
+        processor.format_llm_output = MagicMock(
+            return_value="---\ntitle: Test\nsource: doc.pdf\n---\n\n# Processed Content"
+        )
+        processor.get_context_cost = MagicMock(return_value=0.05)
+        processor.get_context_usage = MagicMock(return_value={})
+
+        workflow = SingleFileWorkflow(mock_config, processor=processor)
+
+        output_file = tmp_path / "doc.pdf.md"
+        output_file.write_text("# Original Content")
+
+        await workflow.process_document_with_llm(
+            markdown="# Original Content",
+            source="doc.pdf",
+            output_file=output_file,
+            reference_images=[
+                {
+                    "page": 2,
+                    "name": "doc.pdf-0002-04.jpg",
+                    "rel_path": ".markitai/assets/doc.pdf-0002-04.jpg",
+                }
+            ],
+        )
+
+        llm_output = output_file.with_suffix(".llm.md")
+        content = llm_output.read_text(encoding="utf-8")
+        assert "<!-- Page images for reference -->" in content
+        assert "<!-- ![Page 2](.markitai/assets/doc.pdf-0002-04.jpg) -->" in content
+
 
 class TestSingleFileWorkflowAnalyzeImages:
     """Tests for SingleFileWorkflow.analyze_images method."""

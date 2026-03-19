@@ -22,3 +22,4 @@ You are an image analysis expert. Your task is to analyze an image and generate 
 
 ## Language Requirements
 **Output language must match the content visible in the image** — English content in image → English output, Chinese content in image → Chinese output. **If the image contains no visible text** (photographs, illustrations, decorative images), determine the output language from the document context provided in the user message.
+When the image contains no visible text, use **{language}** as the fallback output language.

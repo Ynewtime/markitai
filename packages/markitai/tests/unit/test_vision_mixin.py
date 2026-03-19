@@ -403,6 +403,33 @@ class TestAnalyzeImage:
             user_text = user_content[0]["text"]
             assert chinese_context in user_text
 
+    @pytest.mark.asyncio
+    async def test_document_context_sets_system_language_hint(
+        self, mock_processor: MockVisionProcessor, sample_png_file: Path
+    ):
+        """Chinese document context should set a Chinese fallback language hint."""
+        chinese_context = "这是一篇关于人生哲学的文章，探讨人是什么单位。"
+
+        with patch.object(
+            mock_processor,
+            "_analyze_image_with_fallback",
+            new_callable=AsyncMock,
+        ) as mock_fallback:
+            mock_fallback.return_value = ImageAnalysis(
+                caption="测试标题",
+                description="测试描述",
+            )
+
+            await mock_processor.analyze_image(
+                sample_png_file,
+                context="test.md",
+                document_context=chinese_context,
+            )
+
+            call_args = mock_fallback.call_args
+            messages = call_args[0][0]
+            assert messages[0]["content"] == "Analyze image in Chinese"
+
 
 # =============================================================================
 # Test analyze_images_batch
@@ -1194,6 +1221,50 @@ class TestAnalyzeWithTwoCalls:
         result = await mock_processor._analyze_with_two_calls(messages)
 
         assert result.caption == "Result"
+
+    @pytest.mark.asyncio
+    async def test_two_calls_uses_document_language_hint(
+        self, mock_processor: MockVisionProcessor
+    ):
+        """Two-call fallback should pass document language into both prompts."""
+        messages = [
+            {"role": "system", "content": "Analyze in English"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,x"},
+                    },
+                ],
+            },
+        ]
+        seen_system_prompts: list[str] = []
+
+        async def mock_call_llm(model, messages, context=""):
+            del model, context
+            seen_system_prompts.append(messages[0]["content"])
+            return LLMResponse(
+                content="结果",
+                model="test/model",
+                input_tokens=50,
+                output_tokens=20,
+                cost_usd=0.0005,
+            )
+
+        mock_processor._call_llm = mock_call_llm
+
+        await mock_processor._analyze_with_two_calls(
+            messages,
+            context="test",
+            document_context="这是一篇中文文章。",
+        )
+
+        assert seen_system_prompts == [
+            "Generate caption in Chinese",
+            "Describe in Chinese",
+        ]
 
 
 # =============================================================================

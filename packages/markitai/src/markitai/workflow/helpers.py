@@ -75,6 +75,57 @@ def extract_document_context(markdown: str, max_chars: int = 200) -> str:
     return re.sub(r"\s+", " ", " ".join(text_lines))[:max_chars].strip()
 
 
+def append_reference_image_comments(
+    content: str,
+    reference_images: list[Mapping[str, Any]] | None,
+) -> str:
+    """Append commented reference image links to markdown content.
+
+    Reference images are non-inline auxiliary assets kept for later inspection
+    or image analysis. They are appended under the existing
+    ``<!-- Page images for reference -->`` header so downstream content
+    protection preserves them through stabilization.
+
+    Args:
+        content: Markdown body content.
+        reference_images: Optional reference image metadata. Each item may
+            include ``page`` and must include ``rel_path``.
+
+    Returns:
+        Content with a commented reference section appended when applicable.
+    """
+    if not reference_images:
+        return content
+
+    comments: list[str] = []
+    for image in sorted(
+        reference_images,
+        key=lambda item: (
+            int(item.get("page", 0)) if str(item.get("page", "")).isdigit() else 0,
+            str(item.get("name", "")),
+        ),
+    ):
+        rel_path = image.get("rel_path")
+        if not isinstance(rel_path, str) or not rel_path:
+            continue
+
+        page = image.get("page")
+        if isinstance(page, int) and page > 0:
+            label = f"Page {page}"
+        else:
+            label = "Page"
+        comments.append(f"<!-- ![{label}]({rel_path}) -->")
+
+    if not comments:
+        return content
+
+    header = "<!-- Page images for reference -->"
+    stripped = content.rstrip()
+    if header in stripped:
+        return stripped + "\n" + "\n".join(comments)
+    return stripped + "\n\n" + header + "\n" + "\n".join(comments)
+
+
 def maybe_stabilize_markdown(
     processor: Any, baseline: str, content: str, source: str
 ) -> str:

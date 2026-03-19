@@ -31,7 +31,11 @@ from markitai.security import (
 )
 from markitai.utils.paths import ensure_dir
 from markitai.utils.text import format_error_message
-from markitai.workflow.helpers import add_basic_frontmatter, merge_llm_usage
+from markitai.workflow.helpers import (
+    add_basic_frontmatter,
+    append_reference_image_comments,
+    merge_llm_usage,
+)
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -414,14 +418,22 @@ def write_base_markdown(ctx: ConversionContext) -> ConversionStepResult:
 
     # Pure mode without LLM: write raw markdown without frontmatter
     if ctx.config.llm.pure and not ctx.config.llm.enabled:
-        atomic_write_text(ctx.output_file, ctx.conversion_result.markdown)
+        raw_markdown = append_reference_image_comments(
+            ctx.conversion_result.markdown,
+            ctx.conversion_result.metadata.get("reference_images"),
+        )
+        atomic_write_text(ctx.output_file, raw_markdown)
         logger.debug(f"[Core] Written raw output (pure mode): {ctx.output_file}")
         return ConversionStepResult(success=True)
 
     # Default: write with frontmatter
     title = ctx.conversion_result.metadata.get("title")
-    base_md_content = add_basic_frontmatter(
+    base_markdown = append_reference_image_comments(
         ctx.conversion_result.markdown,
+        ctx.conversion_result.metadata.get("reference_images"),
+    )
+    base_md_content = add_basic_frontmatter(
+        base_markdown,
         ctx.input_path.name,
         title=title if isinstance(title, str) else None,
     )
@@ -445,8 +457,12 @@ def _write_base_md_fallback(ctx: ConversionContext) -> None:
     if ctx.output_file.exists():
         return  # Already written (e.g., --keep-base was set)
     title = ctx.conversion_result.metadata.get("title")
-    base_md_content = add_basic_frontmatter(
+    base_markdown = append_reference_image_comments(
         ctx.conversion_result.markdown,
+        ctx.conversion_result.metadata.get("reference_images"),
+    )
+    base_md_content = add_basic_frontmatter(
+        base_markdown,
         ctx.input_path.name,
         title=title if isinstance(title, str) else None,
     )
@@ -788,6 +804,10 @@ async def process_with_vision_llm(
         )
 
     ctx.conversion_result.markdown = cleaned_content + commented_images_str
+    ctx.conversion_result.markdown = append_reference_image_comments(
+        ctx.conversion_result.markdown,
+        ctx.conversion_result.metadata.get("reference_images"),
+    )
 
     # Strip any hallucinated base64 images
     image_processor = ImageProcessor(config=ctx.config.image)
@@ -873,6 +893,7 @@ async def process_with_standard_llm(
         should_analyze_images = (
             ctx.config.image.alt_enabled or ctx.config.image.desc_enabled
         ) and saved_images
+        reference_images = ctx.conversion_result.metadata.get("reference_images")
 
         # Run document processing and image analysis in parallel
         # These are independent: doc processing writes .llm.md, image analysis generates descriptions
@@ -881,6 +902,7 @@ async def process_with_standard_llm(
                 ctx.conversion_result.markdown,
                 ctx.input_path.name,
                 ctx.output_file,
+                reference_images=reference_images,
                 title=document_title,
             )
             img_task = workflow.analyze_images(
@@ -917,6 +939,7 @@ async def process_with_standard_llm(
                 ctx.conversion_result.markdown,
                 ctx.input_path.name,
                 ctx.output_file,
+                reference_images=reference_images,
                 title=document_title,
             )
             ctx.llm_cost += doc_cost
