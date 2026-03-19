@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from markitai.webextract.semantics import ConversationThread
 
 
 class ContentProfile(Enum):
@@ -72,15 +75,12 @@ class QualityAssessment:
 class SemanticExtraction:
     """Optional semantic models derived from the page content.
 
-    This is a placeholder that will be refined in a later task when
-    ConversationThread and related types are introduced.
-
     Attributes:
-        thread: An optional conversation thread object. Typed as Any until
-            the full thread model is defined in Task 4.
+        thread: An optional conversation thread. Set by site-specific
+            extractors that produce threaded conversation structures.
     """
 
-    thread: Any = None
+    thread: ConversationThread | None = None
 
 
 @dataclass(slots=True)
