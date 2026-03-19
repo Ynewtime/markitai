@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Shadow DOM Test Page</title>
+</head>
+<body>
+  <h1>Main Heading</h1>
+  <div id="host">
+    <template shadowrootmode="open">
+      <p>shadow text inside declarative shadow DOM</p>
+      <span>more shadow content</span>
+    </template>
+  </div>
+  <p>Regular body content outside shadow DOM.</p>
+</body>
+</html>
