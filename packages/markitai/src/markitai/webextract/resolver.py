@@ -118,6 +118,14 @@ async def resolve_page_async(
     If an enricher returns an improved result, that result is used instead.
     Enricher failures never propagate — the sync baseline is the fallback.
 
+    .. note::
+
+        **Not yet wired into the production extraction path.**  The main
+        ``extract_web_content()`` function currently calls the sync
+        ``resolve_page()`` only.  This async variant and its enricher
+        infrastructure are available for explicit use but are not
+        automatically invoked during URL conversion.
+
     Args:
         html: Raw HTML source of the page.
         url: Canonical URL of the page.

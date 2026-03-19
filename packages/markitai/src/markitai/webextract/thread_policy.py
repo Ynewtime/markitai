@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from markitai.webextract.extractors.registry import find_extractor
-
 
 @dataclass(slots=True)
 class ThreadPolicy:
@@ -50,6 +48,10 @@ def get_thread_policy(url: str) -> ThreadPolicy | None:
         A ``ThreadPolicy`` with sensible defaults for the matched site,
         or ``None`` if the URL does not belong to a threaded site.
     """
+    # Lazy import to avoid circular dependency:
+    # registry → x_tweet → thread_policy → registry
+    from markitai.webextract.extractors.registry import find_extractor
+
     extractor = find_extractor(url)
     if extractor is None:
         return None

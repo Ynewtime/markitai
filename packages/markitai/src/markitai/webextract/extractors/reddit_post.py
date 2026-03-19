@@ -276,8 +276,12 @@ def _collect_comment_nodes(
                 )
             )
 
-            # Recurse into .child divs to collect nested replies
-            if isinstance(entry, Tag):
-                child_div = entry.find("div", class_="child")
-                if isinstance(child_div, Tag):
-                    _collect_comment_nodes(child_div, comment_id, items)
+            # Recurse into .child divs to collect nested replies.
+            # In real old Reddit DOM, .child is a direct child of
+            # div.thing.comment (sibling of .entry), NOT inside .entry.
+            # We check both locations for robustness.
+            child_div = child.find("div", class_="child", recursive=False)
+            if not isinstance(child_div, Tag) and isinstance(entry, Tag):
+                child_div = entry.find("div", class_="child", recursive=False)
+            if isinstance(child_div, Tag):
+                _collect_comment_nodes(child_div, comment_id, items)
