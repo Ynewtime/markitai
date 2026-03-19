@@ -62,10 +62,11 @@ def _vision_cache_content_key(
     Returns:
         Content key string for use with PersistentCache.
     """
+    versioned_key = f"{image_fingerprint}|vision:v2"
     if not document_context:
-        return image_fingerprint
+        return versioned_key
     ctx_hash = hashlib.sha256(document_context.encode()).hexdigest()[:16]
-    return f"{image_fingerprint}|ctx:{ctx_hash}"
+    return f"{versioned_key}|ctx:{ctx_hash}"
 
 
 def _detect_document_language(document_context: str) -> str:
@@ -80,6 +81,62 @@ def _detect_document_language(document_context: str) -> str:
     if latin_chars >= 12 and cjk_chars == 0:
         return "English"
     return "English"
+
+
+def _text_matches_language(text: str, language: str) -> bool:
+    """Return True when text clearly matches the requested language hint."""
+    if not text.strip():
+        return False
+
+    cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
+    latin_chars = len(re.findall(r"[A-Za-z]", text))
+    if language == "Chinese":
+        return cjk_chars >= 2
+    if language == "English":
+        return cjk_chars == 0 and latin_chars >= 8
+    return True
+
+
+def _should_retry_for_language(result: ImageAnalysis, language: str) -> bool:
+    """Retry when a no-text image ignores the requested document language."""
+    if result.extracted_text and str(result.extracted_text).strip():
+        return False
+
+    combined = f"{result.caption} {result.description}".strip()
+    return not _text_matches_language(combined, language)
+
+
+def _merge_llm_usage(
+    base: dict[str, dict[str, Any]] | None,
+    extra: dict[str, dict[str, Any]] | None,
+) -> dict[str, dict[str, Any]]:
+    """Merge llm_usage dicts without importing workflow helpers."""
+    merged = copy.deepcopy(base) if base else {}
+    if not extra:
+        return merged
+
+    for model, usage in extra.items():
+        if model not in merged:
+            merged[model] = {
+                "requests": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cost_usd": 0.0,
+            }
+        merged[model]["requests"] = merged[model].get("requests", 0) + usage.get(
+            "requests", 0
+        )
+        merged[model]["input_tokens"] = merged[model].get(
+            "input_tokens", 0
+        ) + usage.get("input_tokens", 0)
+        merged[model]["output_tokens"] = merged[model].get(
+            "output_tokens", 0
+        ) + usage.get("output_tokens", 0)
+        merged[model]["cost_usd"] = merged[model].get("cost_usd", 0.0) + usage.get(
+            "cost_usd", 0.0
+        )
+
+    return merged
 
 
 class VisionMixin:
@@ -203,6 +260,39 @@ class VisionMixin:
             context,
             document_context=document_context,
         )
+
+        if _should_retry_for_language(result, language):
+            logger.debug(
+                f"[{image_path.name}] Retrying image analysis with stronger "
+                f"{language} language constraint"
+            )
+            retry_messages = copy.deepcopy(messages)
+            retry_instruction = (
+                "\n\nCRITICAL: This image appears to contain no readable text. "
+                f"Return the caption and description in {language}. "
+                "Do not answer in another language."
+            )
+            retry_messages[0]["content"] += retry_instruction
+            retry_messages[1]["content"][0]["text"] += retry_instruction
+            result = await self._analyze_image_with_fallback(
+                retry_messages,
+                vision_model,
+                image_path.name,
+                context,
+                document_context=document_context,
+            )
+
+        if _should_retry_for_language(result, language):
+            logger.debug(
+                f"[{image_path.name}] Rewriting image analysis into {language} "
+                "after multimodal retries"
+            )
+            result = await self._rewrite_analysis_language(
+                result,
+                language=language,
+                context=context or image_path.name,
+                document_context=document_context,
+            )
 
         # Store in persistent cache
         cache_value = {
@@ -536,6 +626,13 @@ class VisionMixin:
                         extracted_text=img_result.extracted_text,
                         llm_usage=per_image_llm_usage,
                     )
+                    if _should_retry_for_language(analysis, language):
+                        analysis = await self._rewrite_analysis_language(
+                            analysis,
+                            language=language,
+                            context=context or display_name,
+                            document_context=document_context,
+                        )
                     new_results.append(analysis)
 
                     # Store in persistent cache using original index
@@ -912,6 +1009,123 @@ class VisionMixin:
             description=desc_response.content,
             llm_usage=llm_usage,
         )
+
+    async def _rewrite_analysis_language(
+        self,
+        result: ImageAnalysis,
+        *,
+        language: str,
+        context: str = "",
+        document_context: str = "",
+    ) -> ImageAnalysis:
+        """Rewrite caption/description into the document language when needed."""
+        rewritten_caption = result.caption
+        rewritten_description = result.description
+        merged_usage = copy.deepcopy(result.llm_usage) if result.llm_usage else {}
+
+        if rewritten_caption.strip() and not _text_matches_language(
+            rewritten_caption, language
+        ):
+            try:
+                caption_response = await self._call_llm(  # type: ignore[attr-defined]
+                    model="default",
+                    messages=self._build_language_rewrite_messages(
+                        content=rewritten_caption,
+                        language=language,
+                        field_name="alt text",
+                        document_context=document_context,
+                    ),
+                    context=context,
+                )
+                if caption_response.content.strip():
+                    rewritten_caption = caption_response.content.strip()
+                merged_usage = _merge_llm_usage(
+                    merged_usage,
+                    {
+                        caption_response.model: {
+                            "requests": 1,
+                            "input_tokens": caption_response.input_tokens,
+                            "output_tokens": caption_response.output_tokens,
+                            "cost_usd": caption_response.cost_usd,
+                        }
+                    },
+                )
+            except Exception as e:
+                logger.debug(
+                    "[Vision] Caption language rewrite failed for {}: {}",
+                    context or "image",
+                    e,
+                )
+
+        if rewritten_description.strip() and not _text_matches_language(
+            rewritten_description, language
+        ):
+            try:
+                description_response = await self._call_llm(  # type: ignore[attr-defined]
+                    model="default",
+                    messages=self._build_language_rewrite_messages(
+                        content=rewritten_description,
+                        language=language,
+                        field_name="markdown description",
+                        document_context=document_context,
+                    ),
+                    context=context,
+                )
+                if description_response.content.strip():
+                    rewritten_description = description_response.content.strip()
+                merged_usage = _merge_llm_usage(
+                    merged_usage,
+                    {
+                        description_response.model: {
+                            "requests": 1,
+                            "input_tokens": description_response.input_tokens,
+                            "output_tokens": description_response.output_tokens,
+                            "cost_usd": description_response.cost_usd,
+                        }
+                    },
+                )
+            except Exception as e:
+                logger.debug(
+                    "[Vision] Description language rewrite failed for {}: {}",
+                    context or "image",
+                    e,
+                )
+
+        return ImageAnalysis(
+            caption=rewritten_caption,
+            description=rewritten_description,
+            extracted_text=result.extracted_text,
+            llm_usage=merged_usage or None,
+        )
+
+    def _build_language_rewrite_messages(
+        self,
+        *,
+        content: str,
+        language: str,
+        field_name: str,
+        document_context: str = "",
+    ) -> list[dict[str, str]]:
+        """Build a text-only rewrite prompt that preserves meaning and structure."""
+        doc_ctx = (
+            f"\n\nDocument context: {document_context}" if document_context else ""
+        )
+        preserve_structure = (
+            " Preserve markdown formatting, headings, and lists."
+            if field_name == "markdown description"
+            else ""
+        )
+        system_prompt = (
+            f"Rewrite the following {field_name} into {language}."
+            " Preserve the original meaning."
+            f"{preserve_structure}"
+            " Return only the rewritten text."
+        )
+        user_prompt = f"Original {field_name}:\n{content}{doc_ctx}"
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
 
     async def extract_page_content(self, image_path: Path, context: str = "") -> str:
         """

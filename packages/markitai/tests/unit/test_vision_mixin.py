@@ -31,7 +31,7 @@ from markitai.llm.types import (
     LLMResponse,
     SingleImageResult,
 )
-from markitai.llm.vision import VisionMixin
+from markitai.llm.vision import VisionMixin, _vision_cache_content_key
 
 # =============================================================================
 # Test Helper: context_display_name (formerly _context_display_name in vision.py)
@@ -430,6 +430,91 @@ class TestAnalyzeImage:
             messages = call_args[0][0]
             assert messages[0]["content"] == "Analyze image in Chinese"
 
+    @pytest.mark.asyncio
+    async def test_retries_when_non_text_image_ignores_chinese_context(
+        self, mock_processor: MockVisionProcessor, sample_png_file: Path
+    ):
+        """A no-text image should be retried when the model ignores Chinese context."""
+        with patch.object(
+            mock_processor,
+            "_analyze_image_with_fallback",
+            new_callable=AsyncMock,
+        ) as mock_fallback:
+            mock_fallback.side_effect = [
+                ImageAnalysis(
+                    caption="An English caption",
+                    description="An English description",
+                    extracted_text=None,
+                ),
+                ImageAnalysis(
+                    caption="一幅中文图片描述",
+                    description="一段中文详细描述",
+                    extracted_text=None,
+                ),
+            ]
+
+            result = await mock_processor.analyze_image(
+                sample_png_file,
+                context="test.md",
+                document_context="这是一篇中文文章。",
+            )
+
+            assert mock_fallback.await_count == 2
+            assert result.caption == "一幅中文图片描述"
+
+    @pytest.mark.asyncio
+    async def test_rewrites_to_document_language_after_failed_retry(
+        self, mock_processor: MockVisionProcessor, sample_png_file: Path
+    ):
+        """A second English result should be rewritten into Chinese."""
+        with patch.object(
+            mock_processor,
+            "_analyze_image_with_fallback",
+            new_callable=AsyncMock,
+        ) as mock_fallback:
+            mock_fallback.side_effect = [
+                ImageAnalysis(
+                    caption="An English caption",
+                    description="An English description",
+                    extracted_text=None,
+                ),
+                ImageAnalysis(
+                    caption="Still English",
+                    description="Still English description",
+                    extracted_text=None,
+                ),
+            ]
+
+            async def mock_call_llm(model, messages, context=""):
+                del model, context
+                system_prompt = messages[0]["content"]
+                if "alt text" in system_prompt:
+                    return LLMResponse(
+                        content="一幅中文图片描述",
+                        model="test/model",
+                        input_tokens=10,
+                        output_tokens=5,
+                        cost_usd=0.0001,
+                    )
+                return LLMResponse(
+                    content="## 中文详细描述",
+                    model="test/model",
+                    input_tokens=10,
+                    output_tokens=5,
+                    cost_usd=0.0001,
+                )
+
+            mock_processor._call_llm = mock_call_llm
+
+            result = await mock_processor.analyze_image(
+                sample_png_file,
+                context="test.md",
+                document_context="这是一篇中文文章。",
+            )
+
+            assert result.caption == "一幅中文图片描述"
+            assert result.description == "## 中文详细描述"
+
 
 # =============================================================================
 # Test analyze_images_batch
@@ -585,9 +670,10 @@ class TestAnalyzeBatch:
         first_fingerprint = hashlib.sha256(
             base64.b64encode(first_img_data).decode().encode()
         ).hexdigest()
+        first_cache_key = _vision_cache_content_key(first_fingerprint)
 
         def mock_get(key: str, fingerprint: str, context: str = ""):
-            if fingerprint == first_fingerprint:
+            if fingerprint == first_cache_key:
                 return {
                     "caption": "Cached",
                     "description": "Cached desc",

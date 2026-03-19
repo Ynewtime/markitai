@@ -545,6 +545,48 @@ class TestAnalyzeImagesWithLLM:
         assert len(analysis_result.assets) == 1
         assert analysis_result.assets[0]["alt"] == "A test image"
 
+    async def test_analyze_images_passes_document_context_to_batch_analysis(
+        self,
+        tmp_path: Path,
+        markitai_config: MarkitaiConfig,
+        mock_llm_processor,
+        sample_image_analysis,
+    ):
+        """Batch image analysis should receive surrounding document context."""
+        from markitai.cli.processors.llm import analyze_images_with_llm
+
+        image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(b"fake image data")
+
+        output_file = tmp_path / "output.md"
+        llm_output = output_file.with_suffix(".llm.md")
+        llm_output.write_text("![](.markitai/assets/test.jpg)")
+
+        mock_llm_processor.analyze_images_batch = AsyncMock(
+            return_value=[sample_image_analysis]
+        )
+
+        markdown = (
+            "---\n"
+            "title: English frontmatter title\n"
+            "---\n\n"
+            "# 标题\n\n"
+            "这是一篇中文文章，主要讨论时间与自由。"
+        )
+
+        await analyze_images_with_llm(
+            image_paths=[image_path],
+            markdown=markdown,
+            output_file=output_file,
+            cfg=markitai_config,
+            input_path=tmp_path / "source.md",
+            processor=mock_llm_processor,
+        )
+
+        call_kwargs = mock_llm_processor.analyze_images_batch.call_args.kwargs
+        assert "这是一篇中文文章" in call_kwargs["document_context"]
+
     async def test_analyze_images_standalone_image(
         self,
         tmp_path: Path,

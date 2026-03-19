@@ -1106,6 +1106,68 @@ class TestProcessWithVisionLLM:
         )
 
     @pytest.mark.asyncio
+    async def test_vision_path_appends_reference_image_comments(
+        self,
+        sample_txt_path: Path,
+        tmp_path: Path,
+        default_config: MarkitaiConfig,
+    ) -> None:
+        """Reference-only assets should be preserved in the written .llm.md."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from markitai.workflow.core import ConversionContext, process_with_vision_llm
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True)
+        screenshots_dir = output_dir / ".markitai" / "screenshots"
+        screenshots_dir.mkdir(parents=True)
+        assets_dir = output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        page1 = screenshots_dir / "page1.png"
+        page1.write_bytes(b"fake image")
+        (assets_dir / "test.pdf-0002-04.jpg").write_bytes(b"fake asset")
+
+        processor = MagicMock()
+        processor.format_llm_output = MagicMock(
+            side_effect=lambda markdown, _frontmatter=None, **_kwargs: markdown
+        )
+
+        ctx = ConversionContext(
+            input_path=sample_txt_path,
+            output_dir=output_dir,
+            config=default_config,
+            shared_processor=processor,
+        )
+        ctx.output_file = output_dir / "test.md"
+        ctx.output_file.touch()
+        ctx.conversion_result = ConvertResult(
+            markdown="# Test",
+            metadata={
+                "page_images": [{"page": 1, "name": "page1.png", "path": str(page1)}],
+                "reference_images": [
+                    {
+                        "page": 2,
+                        "name": "test.pdf-0002-04.jpg",
+                        "rel_path": ".markitai/assets/test.pdf-0002-04.jpg",
+                    }
+                ],
+            },
+        )
+
+        with patch("markitai.workflow.single.SingleFileWorkflow") as MockWorkflow:
+            mock_workflow_instance = MockWorkflow.return_value
+            mock_workflow_instance.enhance_with_vision = AsyncMock(
+                return_value=("# Enhanced", "title: Test", 0.05, {})
+            )
+
+            result = await process_with_vision_llm(ctx)
+
+        assert result.success is True
+        written = ctx.output_file.with_suffix(".llm.md").read_text(encoding="utf-8")
+        assert "<!-- ![Page 1](.markitai/screenshots/page1.png) -->" in written
+        assert "<!-- ![Page 2](.markitai/assets/test.pdf-0002-04.jpg) -->" in written
+
+    @pytest.mark.asyncio
     async def test_no_redundant_stabilization_in_core_vision_path(
         self,
         sample_txt_path: Path,
