@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -77,7 +77,7 @@ def extract_document_context(markdown: str, max_chars: int = 200) -> str:
 
 def append_reference_image_comments(
     content: str,
-    reference_images: list[Mapping[str, Any]] | None,
+    reference_images: Sequence[Mapping[str, Any]] | None,
 ) -> str:
     """Append commented reference image links to markdown content.
 

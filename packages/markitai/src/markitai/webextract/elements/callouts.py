@@ -68,7 +68,7 @@ def _normalize_bootstrap_alerts(root: Tag) -> None:
 def _normalize_callout_asides(root: Tag) -> None:
     """Convert aside[class*="callout"] to blockquote."""
     for aside in root.find_all("aside"):
-        classes = aside.get("class", [])
+        classes = aside.get("class") or []
         classes_str = " ".join(classes) if isinstance(classes, list) else ""
         if "callout" not in classes_str.lower():
             continue

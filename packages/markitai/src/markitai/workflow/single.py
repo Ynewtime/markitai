@@ -125,8 +125,8 @@ class SingleFileWorkflow:
         markdown: str,
         source: str,
         output_file: Path,
-        page_images: list[dict] | None = None,
-        reference_images: list[dict] | None = None,
+        page_images: list[dict[str, Any]] | None = None,
+        reference_images: list[dict[str, Any]] | None = None,
         title: str | None = None,
     ) -> tuple[str, float, dict[str, dict[str, Any]]]:
         """Process markdown with LLM (clean + frontmatter).

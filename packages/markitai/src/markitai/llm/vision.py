@@ -107,13 +107,13 @@ def _should_retry_for_language(result: ImageAnalysis, language: str) -> bool:
 
 
 def _merge_llm_usage(
-    base: dict[str, dict[str, Any]] | None,
-    extra: dict[str, dict[str, Any]] | None,
-) -> dict[str, dict[str, Any]]:
+    base: LLMUsageByModel | dict[str, Any] | None,
+    extra: LLMUsageByModel | dict[str, Any] | None,
+) -> LLMUsageByModel:
     """Merge llm_usage dicts without importing workflow helpers."""
-    merged = copy.deepcopy(base) if base else {}
+    merged: dict[str, Any] = copy.deepcopy(dict(base)) if base else {}
     if not extra:
-        return merged
+        return merged  # type: ignore[return-value]
 
     for model, usage in extra.items():
         if model not in merged:
@@ -136,7 +136,7 @@ def _merge_llm_usage(
             "cost_usd", 0.0
         )
 
-    return merged
+    return merged  # type: ignore[return-value]
 
 
 class VisionMixin:

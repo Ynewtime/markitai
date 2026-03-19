@@ -1584,6 +1584,7 @@ class TestProcessWithStandardLLM:
             ctx.conversion_result.markdown,
             "sample.epub",
             ctx.output_file,
+            reference_images=None,
             title="Test EPUB Document",
         )
 
