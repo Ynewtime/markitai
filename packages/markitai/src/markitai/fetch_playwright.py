@@ -195,6 +195,46 @@ def _build_auto_scroll_script(
     """
 
 
+def _build_shadow_dom_normalize_script() -> str:
+    """Build JavaScript for flattening live (open) shadow DOMs into light DOM.
+
+    Walks every element in the document and, for those with an open
+    ``shadowRoot``, moves all shadow children into the host element's light
+    DOM.  This makes shadow-DOM content visible in ``page.content()`` output
+    so that static HTML extraction can read it.
+
+    Returns:
+        JavaScript code string for ``page.evaluate()``.
+    """
+    return """
+    () => {
+        function flattenShadowRoots(root) {
+            const walker = document.createTreeWalker(
+                root,
+                NodeFilter.SHOW_ELEMENT,
+                null
+            );
+            const hosts = [];
+            let node = walker.nextNode();
+            while (node) {
+                if (node.shadowRoot) {
+                    hosts.push(node);
+                }
+                node = walker.nextNode();
+            }
+            for (const host of hosts) {
+                const shadow = host.shadowRoot;
+                // Move all shadow children into the host (light DOM)
+                while (shadow.firstChild) {
+                    host.appendChild(shadow.firstChild);
+                }
+            }
+        }
+        flattenShadowRoots(document.body || document);
+    }
+    """
+
+
 def _build_dom_cleanup_script() -> str:
     """Build JavaScript for removing DOM noise before content extraction.
 
@@ -465,6 +505,13 @@ class PlaywrightRenderer:
                 await asyncio.sleep(DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS / 1000)
             except Exception as e:
                 logger.debug(f"Auto-scroll failed (non-critical): {e}")
+
+            # Browser DOM normalize: flatten live shadow roots before extraction
+            try:
+                shadow_script = _build_shadow_dom_normalize_script()
+                await page.evaluate(shadow_script)
+            except Exception as e:
+                logger.debug(f"Shadow DOM normalize failed (non-critical): {e}")
 
             # DOM cleanup: remove noise elements before extraction
             try:
