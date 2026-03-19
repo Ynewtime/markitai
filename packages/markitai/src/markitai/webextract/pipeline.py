@@ -9,6 +9,7 @@ from markitai.webextract.constants import ADAPTIVE_RETRY_MIN_WORDS
 from markitai.webextract.dom import parse_html
 from markitai.webextract.extractors.registry import find_extractor
 from markitai.webextract.metadata import extract_metadata
+from markitai.webextract.removals import apply_removals
 from markitai.webextract.sanitize import sanitize_tag_tree
 from markitai.webextract.schema import (
     extract_schema_text,
@@ -18,6 +19,7 @@ from markitai.webextract.schema import (
 from markitai.webextract.scoring import select_best_candidate
 from markitai.webextract.standardize import standardize_content
 from markitai.webextract.types import ExtractedWebContent
+from markitai.webextract.utils import count_words
 
 
 def extract_web_content(html: str, url: str) -> ExtractedWebContent:
@@ -43,6 +45,11 @@ def extract_web_content(html: str, url: str) -> ExtractedWebContent:
     }
 
     root = _maybe_apply_schema_fallback(soup, root, diagnostics)
+
+    # Apply noise removal (selectors, hidden elements, scoring)
+    if isinstance(root, Tag):
+        removal_stats = apply_removals(root)
+        diagnostics["removal_stats"] = removal_stats
     if isinstance(root, Tag):
         standardize_content(root, title=metadata.title, base_url=url)
     sanitize_tag_tree(root)
@@ -52,7 +59,7 @@ def extract_web_content(html: str, url: str) -> ExtractedWebContent:
     md_instance = _create_markitdown()
     markdown = _html_fragment_to_markdown(clean_html, md_instance)
 
-    if len(markdown.split()) <= ADAPTIVE_RETRY_MIN_WORDS and not diagnostics.get(
+    if count_words(markdown) <= ADAPTIVE_RETRY_MIN_WORDS and not diagnostics.get(
         "schema_fallback_used"
     ):
         # Adaptive retry: broaden extraction by falling back to <body>
@@ -63,7 +70,7 @@ def extract_web_content(html: str, url: str) -> ExtractedWebContent:
             sanitize_tag_tree(retry_root)
             retry_html = str(retry_root)
             retry_markdown = _html_fragment_to_markdown(retry_html, md_instance)
-            if len(retry_markdown.split()) > len(markdown.split()):
+            if count_words(retry_markdown) > count_words(markdown):
                 clean_html = retry_html
                 markdown = retry_markdown
                 diagnostics["adaptive_retry_used"] = True
@@ -72,7 +79,7 @@ def extract_web_content(html: str, url: str) -> ExtractedWebContent:
         clean_html=clean_html,
         markdown=markdown,
         metadata=metadata,
-        word_count=len(markdown.split()),
+        word_count=count_words(markdown),
         diagnostics={**diagnostics, "metadata": asdict(metadata)},
     )
 
