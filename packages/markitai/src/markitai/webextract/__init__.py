@@ -4,12 +4,14 @@ import re
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
+from markitai.webextract.frontmatter import build_source_frontmatter
 from markitai.webextract.pipeline import extract_web_content
 from markitai.webextract.types import ExtractedWebContent, WebMetadata
 
 __all__ = [
     "ExtractedWebContent",
     "WebMetadata",
+    "build_source_frontmatter",
     "coerce_source_frontmatter",
     "extract_web_content",
     "is_native_markdown_acceptable",
