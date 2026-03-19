@@ -99,6 +99,7 @@ def standardize_content(root: Tag, title: str | None, base_url: str) -> None:
     normalize_images(root, base_url)
     normalize_headings(root)
     normalize_callouts(root)
+    _unwrap_layout_tables(root)
     _flatten_wrapper_divs(root)
     _unwrap_bare_spans(root)
     _remove_empty_elements(root)
@@ -240,3 +241,73 @@ def _flatten_wrapper_divs(root: Tag) -> None:
             ):
                 div.unwrap()
                 changed = True
+
+
+def _unwrap_layout_tables(root: Tag) -> None:
+    """Unwrap layout tables, preserving data tables.
+
+    Layout tables are detected by:
+    - Single-column tables (every row has ≤1 cell) without <th> headers
+    - Tables containing nested tables
+
+    Data tables (with <th> or multi-column structure) are preserved.
+    Ported from defuddle's standardize.ts table unwrapping logic.
+    """
+    for table in list(root.find_all("table")):
+        if table.parent is None:
+            continue  # already detached
+
+        # Get direct cells and rows (not from nested tables)
+        direct_cells = [
+            cell
+            for cell in table.find_all(["td", "th"])
+            if _is_direct_table_child(cell, table)
+        ]
+        direct_rows = [
+            row for row in table.find_all("tr") if _is_direct_table_child(row, table)
+        ]
+
+        # Has nested tables → layout table, unwrap
+        if table.find("table"):
+            _unwrap_table_cells(table, direct_cells)
+            continue
+
+        # Skip data tables with header cells
+        if any(cell.name == "th" for cell in direct_cells):
+            continue
+
+        # Skip if no rows
+        if not direct_rows:
+            continue
+
+        # Check single-column: every row has at most 1 direct cell
+        is_single_column = all(
+            sum(1 for cell in direct_cells if cell.parent is row) <= 1
+            for row in direct_rows
+        )
+        if is_single_column:
+            _unwrap_table_cells(table, direct_cells)
+
+
+def _is_direct_table_child(el: Tag, table: Tag) -> bool:
+    """Check if element belongs directly to this table (not a nested one)."""
+    parent = el.parent
+    while parent is not None and parent is not table:
+        if isinstance(parent, Tag) and parent.name == "table":
+            return False  # belongs to a nested table
+        parent = parent.parent
+    return parent is table
+
+
+def _unwrap_table_cells(table: Tag, cells: list[Tag]) -> None:
+    """Replace a layout table with its cell contents."""
+    # Collect all cell content
+    fragments: list[Tag | NavigableString] = []
+    for cell in cells:
+        for child in list(cell.children):
+            fragments.append(child.extract())
+
+    # Replace table with cell contents
+    for fragment in reversed(fragments):
+        table.insert_after(fragment)
+    table.decompose()

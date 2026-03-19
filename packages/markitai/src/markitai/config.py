@@ -762,7 +762,7 @@ class ConfigManager:
         from markitai.security import atomic_write_text
 
         content = json.dumps(output_data, indent=2, ensure_ascii=False) + "\n"
-        atomic_write_text(save_path, content)
+        atomic_write_text(save_path, content, follow_symlinks=True)
 
         return save_path
 

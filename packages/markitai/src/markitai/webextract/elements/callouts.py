@@ -84,9 +84,21 @@ def _normalize_callout_asides(root: Tag) -> None:
 
 
 def _convert_to_blockquote(el: Tag, callout_type: str) -> None:
-    """Replace element with a blockquote carrying data-callout attribute."""
-    bq = BeautifulSoup("", "html.parser").new_tag("blockquote")
+    """Replace element with a blockquote containing [!type] marker.
+
+    Injects a ``[!type]`` paragraph at the start of the blockquote so
+    that downstream HTML-to-Markdown converters produce Obsidian-style
+    callout syntax: ``> [!type]``.
+    """
+    doc = BeautifulSoup("", "html.parser")
+    bq = doc.new_tag("blockquote")
     bq["data-callout"] = callout_type
+
+    # Inject [!type] marker as first paragraph
+    title = callout_type.capitalize()
+    marker = doc.new_tag("p")
+    marker.string = f"[!{callout_type}] {title}"
+    bq.append(marker)
 
     # Move children to blockquote
     for child in list(el.children):

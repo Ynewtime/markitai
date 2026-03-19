@@ -47,6 +47,9 @@ def sanitize_tag_tree(root: Tag) -> None:
 
 def _sanitize_tag(tag: Tag) -> None:
     if tag.name in REMOVE_TAGS:
+        # Preserve checkbox inputs for task list support
+        if tag.name == "input" and tag.get("type") == "checkbox":
+            return
         tag.decompose()
         return
 

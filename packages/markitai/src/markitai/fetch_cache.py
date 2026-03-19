@@ -365,11 +365,19 @@ class FetchCache:
     ) -> tuple[FetchResult | None, str | None, str | None]:
         """Get cached result with HTTP validators (no lock). Caller must hold a lock."""
         key = self._compute_hash(url, strategy)
+        now = int(time.time())
 
         conn = self._get_connection()
         row = conn.execute("SELECT * FROM fetch_cache WHERE key = ?", (key,)).fetchone()
 
         if row:
+            # Update accessed_at for LRU tracking, same as regular cache hits.
+            conn.execute(
+                "UPDATE fetch_cache SET accessed_at = ? WHERE key = ?",
+                (now, key),
+            )
+            conn.commit()
+
             metadata = json.loads(row["metadata"]) if row["metadata"] else {}
             screenshot_path_str = row["screenshot_path"]
             screenshot_path = Path(screenshot_path_str) if screenshot_path_str else None
