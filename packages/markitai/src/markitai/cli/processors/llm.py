@@ -26,6 +26,7 @@ from markitai.security import atomic_write_text
 from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import (
     create_llm_processor,
+    extract_document_context,
 )
 from markitai.workflow.single import ImageAnalysisResult
 
@@ -249,6 +250,7 @@ async def analyze_images_with_llm(
             str(input_path.resolve()) if input_path else str(output_file.resolve())
         )
         context = f"{source_path}:images"
+        document_context = extract_document_context(markdown)
 
         # Use batch analysis
         logger.info(f"Analyzing {len(image_paths)} images in batches...")
@@ -256,6 +258,7 @@ async def analyze_images_with_llm(
             image_paths,
             max_images_per_batch=DEFAULT_MAX_IMAGES_PER_BATCH,
             context=context,
+            document_context=document_context,
         )
 
         timestamp = datetime.now().astimezone().isoformat()
