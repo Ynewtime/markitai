@@ -108,14 +108,16 @@ class TestSchemaSync:
         model = RouterSettings()
         assert router_settings["num_retries"]["default"] == model.num_retries
         assert router_settings["timeout"]["default"] == model.timeout
-        assert router_settings["fallbacks"]["default"] == model.fallbacks
+        # fallbacks uses default_factory=list, Pydantic v2 omits "default" in schema
+        assert "fallbacks" in router_settings
 
     def test_llm_config_defaults(self, schema: dict) -> None:
         """Verify LLMConfig defaults (model_list, concurrency)."""
         schema_props = schema["$defs"]["LLMConfig"]["properties"]
         model = LLMConfig()
         assert schema_props["enabled"]["default"] == model.enabled
-        assert schema_props["model_list"]["default"] == []
+        # model_list uses default_factory, Pydantic v2 omits "default" in schema
+        assert "model_list" in schema_props
         assert schema_props["concurrency"]["default"] == model.concurrency
 
     def test_fetch_config_defaults(self, schema: dict) -> None:
@@ -123,8 +125,9 @@ class TestSchemaSync:
         schema_props = schema["$defs"]["FetchConfig"]["properties"]
         model = FetchConfig()
         assert schema_props["strategy"]["default"] == model.strategy
-        assert schema_props["domain_profiles"]["default"] == {}
-        assert schema_props["fallback_patterns"]["default"] == model.fallback_patterns
+        # default_factory fields: Pydantic v2 omits "default" in schema
+        assert "domain_profiles" in schema_props
+        assert "fallback_patterns" in schema_props
 
     def test_fetch_policy_config_new_fields(self, schema: dict) -> None:
         """Verify FetchPolicyConfig new fields in schema."""
@@ -132,7 +135,7 @@ class TestSchemaSync:
         assert "strategy_priority" in props
         assert props["strategy_priority"]["default"] is None
         assert "local_only_patterns" in props
-        assert props["local_only_patterns"]["default"] == []
+        # default_factory=list: Pydantic v2 omits "default" in schema
         assert "inherit_no_proxy" in props
         assert props["inherit_no_proxy"]["default"] is True
 

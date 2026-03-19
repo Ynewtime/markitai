@@ -308,7 +308,9 @@ def _unwrap_table_cells(table: Tag, cells: list[Tag]) -> None:
     fragments: list[Tag | NavigableString] = []
     for cell in cells:
         for child in list(cell.children):
-            fragments.append(child.extract())
+            extracted = child.extract()
+            if isinstance(extracted, (Tag, NavigableString)):
+                fragments.append(extracted)
 
     # Replace table with cell contents
     for fragment in reversed(fragments):

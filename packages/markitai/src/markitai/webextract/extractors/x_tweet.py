@@ -38,9 +38,9 @@ class XTweetExtractor:
         # Strategy 1: Find the conversation timeline
         timeline = soup.find(  # type: ignore[call-overload]
             attrs={
-                "aria-label": lambda v: v
-                and "Timeline" in str(v)
-                and "Conversation" in str(v)
+                "aria-label": lambda v: (  # type: ignore[dict-item]
+                    v and "Timeline" in str(v) and "Conversation" in str(v)
+                )
             }
         )
         if isinstance(timeline, Tag):
