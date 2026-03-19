@@ -4,7 +4,7 @@
 
 **Goal:** Bring Markitai's native HTML/URL extraction quality close to Defuddle on high-value sites without copying Defuddle's architecture blindly or scattering site-specific logic across fetch strategies.
 
-**Architecture:** Split the problem into four layers: `fetch` acquires page sources, `resolve` turns those sources into a unified extraction model, `render` converts canonical content into Markdown, and `assess` decides whether the result is good enough or should fall back. Site extractors and async enrichers participate only in the `resolve` layer; they never emit final Markdown directly. Threaded/conversational sites share a common semantic model so X, GitHub, Reddit, and Hacker News do not each reinvent their own HTML assembly rules.
+**Architecture:** Split the problem into four layers: `fetch` acquires page sources, `resolve` turns those sources into a unified extraction model, `render` converts canonical content into Markdown, and `assess` decides whether the result is good enough or should fall back. Site extractors and async enrichers participate only in the `resolve` layer; they never emit final Markdown directly. The render layer has two explicit substeps: semantic models first render to canonical HTML, then canonical HTML renders to Markdown. That intermediate HTML is intentional because it gives Markitai one shared representation for HTML snapshots, HTML-level quality checks, and reuse of the existing MarkItDown-based renderer.
 
 **Tech Stack:** Python 3.13, BeautifulSoup4, MarkItDown, Playwright, dataclasses/Pydantic, pytest, fixtures derived from `~/dev/defuddle`
 
@@ -39,6 +39,9 @@ The plan below fixes those seams first, then ports site-specific capabilities in
 5. **Conversation pages share a model**
    X, GitHub issues/PRs, Reddit posts, Hacker News threads, and future chat transcripts should reuse one thread/message abstraction.
 
+6. **Compatibility shims get an explicit exit path**
+   Helpers such as `coerce_source_frontmatter()` may remain as compatibility wrappers temporarily, but the plan must say when internal callers migrate and when the wrapper becomes deprecated.
+
 ---
 
 ### Task 1: Freeze Semantic Parity Expectations Before Changing Architecture
@@ -46,6 +49,8 @@ The plan below fixes those seams first, then ports site-specific capabilities in
 **Files:**
 - Create: `packages/markitai/tests/fixtures/web/x_status_2030105637204676808.playwright.html`
 - Create: `packages/markitai/tests/fixtures/web/x_status_2030105637204676808.expected.json`
+- Create: `packages/markitai/tests/fixtures/web/generic_article.playwright.html`
+- Create: `packages/markitai/tests/fixtures/web/generic_article.expected.json`
 - Create: `packages/markitai/tests/fixtures/web/github_issue_thread.expected.json`
 - Create: `packages/markitai/tests/unit/webextract/test_semantic_parity.py`
 - Create: `packages/markitai/tests/unit/webextract/test_thread_policy.py`
@@ -56,11 +61,18 @@ The plan below fixes those seams first, then ports site-specific capabilities in
 def test_x_status_semantics_match_expected_fixture() -> None:
     result = extract_web_content(html, x_url)
     assert result.metadata.title == "Post by @ixiaowenz"
-    assert result.info.profile == "social_post"
+    assert result.info.content_profile == ContentProfile.SOCIAL_POST
     assert result.semantic.thread is not None
     assert result.semantic.thread.main_item.author_handle == "@ixiaowenz"
     assert "Discover more" not in result.markdown
     assert "Quote" not in result.markdown
+
+
+def test_generic_article_baseline_stays_non_threaded_and_clean() -> None:
+    result = extract_web_content(article_html, article_url)
+    assert result.info.content_profile == ContentProfile.GENERIC_ARTICLE
+    assert result.semantic is None
+    assert "Related posts" not in result.markdown
 
 
 def test_thread_policy_defaults_do_not_include_unrelated_replies() -> None:
@@ -74,7 +86,7 @@ def test_thread_policy_defaults_do_not_include_unrelated_replies() -> None:
 
 Run: `uv run pytest packages/markitai/tests/unit/webextract/test_semantic_parity.py packages/markitai/tests/unit/webextract/test_thread_policy.py -q`
 
-Expected: failure because the current extraction result has no semantic model, no policy object, and no strong X semantics.
+Expected: failure because the current extraction result has no semantic model, no content profile enum, no policy object, and no protected generic-article baseline.
 
 **Step 3: Write minimal implementation**
 
@@ -101,7 +113,6 @@ git commit -m "test: freeze semantic parity expectations for threaded pages"
 - Modify: `packages/markitai/src/markitai/webextract/types.py`
 - Create: `packages/markitai/src/markitai/webextract/frontmatter.py`
 - Modify: `packages/markitai/src/markitai/webextract/__init__.py`
-- Modify: `packages/markitai/src/markitai/fetch_types.py`
 - Create: `packages/markitai/tests/unit/webextract/test_extraction_types.py`
 - Create: `packages/markitai/tests/unit/webextract/test_frontmatter_builder.py`
 
@@ -111,27 +122,27 @@ git commit -m "test: freeze semantic parity expectations for threaded pages"
 def test_frontmatter_builder_exports_metadata_but_not_internal_diagnostics() -> None:
     result = ExtractedWebContent(
         metadata=WebMetadata(title="Post by @ixiaowenz", author="@ixiaowenz", site="X (Twitter)"),
-        info=ExtractionInfo(word_count=241, extractor_name="x_tweet"),
-        quality=QualityAssessment(profile="social_post", accepted=True, score=0.95),
+        info=ExtractionInfo(
+            content_profile=ContentProfile.SOCIAL_POST,
+            word_count=241,
+            extractor_name="x_tweet",
+        ),
+        quality=QualityAssessment(accepted=True, score=0.95),
         ...
     )
     fm = build_source_frontmatter(result)
     assert fm["title"] == "Post by @ixiaowenz"
     assert fm["word_count"] == 241
+    assert fm["content_profile"] == "social_post"
     assert "score" not in fm
     assert "accepted" not in fm
-
-
-def test_fetch_result_can_carry_resolved_page_without_losing_metadata() -> None:
-    fetch_result = FetchResult(...)
-    assert fetch_result.resolved_page is not None
 ```
 
 **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest packages/markitai/tests/unit/webextract/test_extraction_types.py packages/markitai/tests/unit/webextract/test_frontmatter_builder.py -q`
 
-Expected: failure because `ExtractedWebContent` has only `metadata` plus a flat diagnostics dict, and `FetchResult` has no first-class resolved extraction field.
+Expected: failure because `ExtractedWebContent` has only `metadata` plus a flat diagnostics dict, and there is no typed content profile or dedicated frontmatter builder.
 
 **Step 3: Write minimal implementation**
 
@@ -140,16 +151,15 @@ Introduce typed models:
 ```python
 @dataclass(slots=True)
 class ExtractionInfo:
+    content_profile: ContentProfile
     extractor_name: str
-    profile: str
     word_count: int
-    async_enricher: str | None = None
+    enricher_name: str | None = None
     source_kind: str = "html"
 
 
 @dataclass(slots=True)
 class QualityAssessment:
-    profile: str
     accepted: bool
     score: float
     reasons: list[str] = field(default_factory=list)
@@ -168,6 +178,11 @@ class ExtractedWebContent:
 
 Add `build_source_frontmatter(result: ExtractedWebContent) -> dict[str, Any]` in `frontmatter.py`. Keep `coerce_source_frontmatter()` as a compatibility wrapper that delegates to the new builder when given an extraction result.
 
+Migration rule:
+- do not remove `coerce_source_frontmatter()` in this task
+- migrate internal callers to `build_source_frontmatter()` in later tasks
+- only add a deprecation warning after all internal callers are moved
+
 **Step 4: Run tests to verify they pass**
 
 Run the same pytest command as Step 2.
@@ -177,7 +192,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add packages/markitai/src/markitai/webextract/types.py packages/markitai/src/markitai/webextract/frontmatter.py packages/markitai/src/markitai/webextract/__init__.py packages/markitai/src/markitai/fetch_types.py packages/markitai/tests/unit/webextract/test_extraction_types.py packages/markitai/tests/unit/webextract/test_frontmatter_builder.py
+git add packages/markitai/src/markitai/webextract/types.py packages/markitai/src/markitai/webextract/frontmatter.py packages/markitai/src/markitai/webextract/__init__.py packages/markitai/tests/unit/webextract/test_extraction_types.py packages/markitai/tests/unit/webextract/test_frontmatter_builder.py
 git commit -m "refactor: add typed extraction result and frontmatter builder"
 ```
 
@@ -190,6 +205,7 @@ git commit -m "refactor: add typed extraction result and frontmatter builder"
 - Modify: `packages/markitai/src/markitai/webextract/extractors/registry.py`
 - Create: `packages/markitai/src/markitai/webextract/resolver.py`
 - Modify: `packages/markitai/src/markitai/webextract/pipeline.py`
+- Create: `packages/markitai/src/markitai/webextract/policy.py`
 - Create: `packages/markitai/tests/unit/webextract/test_resolver.py`
 
 **Step 1: Write the failing tests**
@@ -197,12 +213,17 @@ git commit -m "refactor: add typed extraction result and frontmatter builder"
 ```python
 def test_resolver_prefers_structured_content_html_over_generic_root_selection() -> None:
     result = resolve_page(html, url, resolver=fake_structured_resolver)
-    assert result.clean_html == "<article><p>Structured</p></article>"
+    assert result.content_html == "<article><p>Structured</p></article>"
 
 
 def test_resolver_does_not_allow_extractors_to_return_final_markdown() -> None:
     with pytest.raises(TypeError):
         resolve_page(html, url, resolver=fake_markdown_returning_resolver)
+
+
+def test_resolved_page_lives_in_resolver_layer_not_fetch_types() -> None:
+    result = resolve_page(html, url)
+    assert isinstance(result, ResolvedPage)
 ```
 
 **Step 2: Run tests to verify they fail**
@@ -217,7 +238,7 @@ Define a structured resolver contract:
 
 ```python
 @dataclass(slots=True)
-class ResolverOutput:
+class ResolvedPage:
     content_root: Tag | None = None
     content_html: str | None = None
     metadata_overrides: dict[str, Any] = field(default_factory=dict)
@@ -226,6 +247,7 @@ class ResolverOutput:
 ```
 
 Rules:
+- `ResolvedPage` belongs to the resolver layer and must not be added to `FetchResult`.
 - Resolver output may contain `content_root` or `content_html`, not final Markdown.
 - Generic pipeline remains the fallback when resolver returns `None`.
 - Metadata overrides merge over generic metadata.
@@ -240,7 +262,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add packages/markitai/src/markitai/webextract/extractors/base.py packages/markitai/src/markitai/webextract/extractors/registry.py packages/markitai/src/markitai/webextract/resolver.py packages/markitai/src/markitai/webextract/pipeline.py packages/markitai/tests/unit/webextract/test_resolver.py
+git add packages/markitai/src/markitai/webextract/extractors/base.py packages/markitai/src/markitai/webextract/extractors/registry.py packages/markitai/src/markitai/webextract/resolver.py packages/markitai/src/markitai/webextract/policy.py packages/markitai/src/markitai/webextract/pipeline.py packages/markitai/tests/unit/webextract/test_resolver.py
 git commit -m "refactor: add resolver layer for structured site extraction"
 ```
 
@@ -262,7 +284,7 @@ def test_render_thread_emits_clean_main_item_then_followups() -> None:
     thread = ConversationThread(
         title="Post by @ixiaowenz",
         main_item=ConversationItem(...),
-        followups=[ConversationItem(...)],
+        items=[ConversationItem(..., parent_id=None)],
     )
     html = render_semantic_content(SemanticExtraction(thread=thread))
     assert "<article" in html
@@ -273,6 +295,15 @@ def test_render_thread_preserves_quote_and_media_as_structured_children() -> Non
     html = render_semantic_content(semantic_with_quote_and_image)
     assert "quoted-item" in html
     assert "<img" in html
+
+
+def test_thread_items_can_encode_nested_reply_relationships() -> None:
+    thread = ConversationThread(
+        title="Nested",
+        main_item=ConversationItem(id="root", parent_id=None, ...),
+        items=[ConversationItem(id="reply-1", parent_id="root", ...)],
+    )
+    assert thread.items[0].parent_id == "root"
 ```
 
 **Step 2: Run tests to verify they fail**
@@ -290,7 +321,12 @@ Add:
 - `MediaAttachment`
 - `SemanticExtraction`
 
-Implement `render_semantic_content()` that turns these types into canonical HTML fragments. This is the only place where threaded extractors get to define presentation structure.
+Model rules:
+- `ConversationItem` must have stable `id`
+- nested reply relationships are represented via `parent_id`
+- renderers may flatten for Markdown readability later, but the semantic model must retain tree structure
+
+Implement `render_semantic_content()` that turns these types into canonical HTML fragments. This intermediate HTML exists so Markitai can snapshot-test structure, run HTML-level quality checks, and reuse one Markdown renderer for both semantic and non-semantic pages. This is the only place where threaded extractors get to define presentation structure.
 
 **Step 4: Run tests to verify they pass**
 
@@ -348,6 +384,7 @@ Port the useful ideas from Defuddle's X extractor, but through Markitai's shared
 - set metadata overrides for `title`, `author`, `site`, and `description`
 
 Do not implement async fallback here.
+If any code is copied verbatim from Defuddle rather than reimplemented, preserve MIT attribution in the source comments and commit message context.
 
 **Step 4: Run tests to verify they pass**
 
@@ -475,8 +512,8 @@ git commit -m "feat: add typed native extraction quality profiles"
 ### Task 8: Add Policy-Aware Async Enrichers at the Resolver Layer
 
 **Files:**
-- Create: `packages/markitai/src/markitai/webextract/async_extractors/base.py`
-- Create: `packages/markitai/src/markitai/webextract/async_extractors/x_oembed.py`
+- Create: `packages/markitai/src/markitai/webextract/enrichers/base.py`
+- Create: `packages/markitai/src/markitai/webextract/enrichers/x_oembed.py`
 - Modify: `packages/markitai/src/markitai/webextract/resolver.py`
 - Modify: `packages/markitai/src/markitai/webextract/extractors/registry.py`
 - Modify: `packages/markitai/src/markitai/config.py`
@@ -487,13 +524,13 @@ git commit -m "feat: add typed native extraction quality profiles"
 ```python
 async def test_resolver_prefers_async_for_x_when_policy_allows_and_sync_quality_is_low() -> None:
     result = await resolve_page_async(x_html, x_url, policy=policy)
-    assert result.info.async_enricher == "x_oembed"
+    assert result.info.enricher_name == "x_oembed"
     assert result.metadata.title == "Post by @ixiaowenz"
 
 
 async def test_async_enricher_is_skipped_when_policy_disallows_network() -> None:
     result = await resolve_page_async(x_html, x_url, policy=local_only_policy)
-    assert result.info.async_enricher is None
+    assert result.info.enricher_name is None
 ```
 
 **Step 2: Run tests to verify they fail**
@@ -521,7 +558,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add packages/markitai/src/markitai/webextract/async_extractors packages/markitai/src/markitai/webextract/resolver.py packages/markitai/src/markitai/webextract/extractors/registry.py packages/markitai/src/markitai/config.py packages/markitai/tests/unit/webextract/test_async_resolver.py
+git add packages/markitai/src/markitai/webextract/enrichers packages/markitai/src/markitai/webextract/resolver.py packages/markitai/src/markitai/webextract/extractors/registry.py packages/markitai/src/markitai/config.py packages/markitai/tests/unit/webextract/test_async_resolver.py
 git commit -m "feat: add policy-aware async enrichers to resolver pipeline"
 ```
 
@@ -530,6 +567,7 @@ git commit -m "feat: add policy-aware async enrichers to resolver pipeline"
 ### Task 9: Add Raw HTML Preprocess and Browser DOM Normalize as Separate Phases
 
 **Files:**
+- Create: `packages/markitai/tests/fixtures/web/shadow_dom_page.html`
 - Create: `packages/markitai/src/markitai/webextract/preprocess.py`
 - Modify: `packages/markitai/src/markitai/webextract/dom.py`
 - Modify: `packages/markitai/src/markitai/fetch_playwright.py`
@@ -563,6 +601,9 @@ Keep the phases separate:
 - browser DOM normalize: live DOM flattening and cleanup before `page.content()`
 
 Do not implement CSS/mobile emulation heuristics.
+Test rule:
+- use a local fixture plus `page.set_content()` or an in-process static test server
+- do not mark this as `network`
 
 **Step 4: Run tests to verify they pass**
 
@@ -573,7 +614,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add packages/markitai/src/markitai/webextract/preprocess.py packages/markitai/src/markitai/webextract/dom.py packages/markitai/src/markitai/fetch_playwright.py packages/markitai/src/markitai/webextract/pipeline.py packages/markitai/tests/unit/webextract/test_preprocess.py packages/markitai/tests/unit/test_fetch_playwright_dom_normalize.py
+git add packages/markitai/tests/fixtures/web/shadow_dom_page.html packages/markitai/src/markitai/webextract/preprocess.py packages/markitai/src/markitai/webextract/dom.py packages/markitai/src/markitai/fetch_playwright.py packages/markitai/src/markitai/webextract/pipeline.py packages/markitai/tests/unit/webextract/test_preprocess.py packages/markitai/tests/unit/test_fetch_playwright_dom_normalize.py
 git commit -m "feat: split raw html preprocess from browser dom normalization"
 ```
 
@@ -632,16 +673,14 @@ git commit -m "feat: add narrow markdown fidelity layer for canonical content"
 
 ---
 
-### Task 11: Expand Site Coverage Only After the Shared Abstractions Hold
+### Task 11: Expand Threaded Site Coverage Only After the Shared Abstractions Hold
 
 **Files:**
 - Create: `packages/markitai/src/markitai/webextract/extractors/reddit_post.py`
 - Create: `packages/markitai/src/markitai/webextract/extractors/hackernews_thread.py`
-- Create: `packages/markitai/src/markitai/webextract/extractors/youtube_page.py`
 - Modify: `packages/markitai/src/markitai/webextract/extractors/registry.py`
 - Create: `packages/markitai/tests/unit/webextract/test_reddit_post.py`
 - Create: `packages/markitai/tests/unit/webextract/test_hackernews_thread.py`
-- Create: `packages/markitai/tests/unit/webextract/test_youtube_page.py`
 
 **Step 1: Write the failing tests**
 
@@ -651,23 +690,22 @@ def test_reddit_post_reuses_thread_semantics_for_post_and_comments() -> None:
     assert result.semantic.thread is not None
 
 
-def test_youtube_page_sets_video_metadata_even_without_transcript() -> None:
-    result = extract_web_content(html, youtube_url)
-    assert result.metadata.site == "YouTube"
+def test_hackernews_thread_reuses_thread_semantics_for_comments() -> None:
+    result = extract_web_content(html, hn_url)
+    assert result.semantic.thread is not None
 ```
 
 **Step 2: Run tests to verify they fail**
 
-Run: `uv run pytest packages/markitai/tests/unit/webextract/test_reddit_post.py packages/markitai/tests/unit/webextract/test_hackernews_thread.py packages/markitai/tests/unit/webextract/test_youtube_page.py -q`
+Run: `uv run pytest packages/markitai/tests/unit/webextract/test_reddit_post.py packages/markitai/tests/unit/webextract/test_hackernews_thread.py -q`
 
-Expected: failure because these extractors do not yet exist on the new contract.
+Expected: failure because these threaded extractors do not yet exist on the new contract.
 
 **Step 3: Write minimal implementation**
 
 Add sites in this order:
 1. Reddit
 2. Hacker News
-3. YouTube page metadata, then optional transcript variable hook later
 
 If a site does not fit the shared thread model, stop and add a new semantic type before continuing.
 
@@ -681,12 +719,58 @@ Expected: PASS
 
 ```bash
 git add packages/markitai/src/markitai/webextract/extractors packages/markitai/tests/unit/webextract
-git commit -m "feat: expand native extraction coverage on shared abstractions"
+git commit -m "feat: expand threaded extraction coverage on shared abstractions"
 ```
 
 ---
 
-### Task 12: Add Parity CI, Diagnostics, and Benchmark Guardrails
+### Task 12: Add Non-Thread Rich Media Coverage for YouTube
+
+**Files:**
+- Create: `packages/markitai/src/markitai/webextract/extractors/youtube_page.py`
+- Modify: `packages/markitai/src/markitai/webextract/extractors/registry.py`
+- Create: `packages/markitai/tests/unit/webextract/test_youtube_page.py`
+
+**Step 1: Write the failing tests**
+
+```python
+def test_youtube_page_sets_video_metadata_even_without_transcript() -> None:
+    result = extract_web_content(html, youtube_url)
+    assert result.metadata.site == "YouTube"
+    assert result.info.content_profile == ContentProfile.RICH_MEDIA_PAGE
+
+
+def test_youtube_page_uses_non_thread_semantic_path() -> None:
+    result = extract_web_content(html, youtube_url)
+    assert result.semantic is None or result.semantic.thread is None
+```
+
+**Step 2: Run tests to verify they fail**
+
+Run: `uv run pytest packages/markitai/tests/unit/webextract/test_youtube_page.py -q`
+
+Expected: failure because YouTube extraction does not yet exist on the new contract.
+
+**Step 3: Write minimal implementation**
+
+Add a YouTube page extractor focused on page metadata and clean body extraction only. Do not add transcript async enrichment in this task.
+
+**Step 4: Run tests to verify they pass**
+
+Run: `uv run pytest packages/markitai/tests/unit/webextract/test_youtube_page.py -q`
+
+Expected: PASS
+
+**Step 5: Commit**
+
+```bash
+git add packages/markitai/src/markitai/webextract/extractors/youtube_page.py packages/markitai/src/markitai/webextract/extractors/registry.py packages/markitai/tests/unit/webextract/test_youtube_page.py
+git commit -m "feat: add youtube page extraction on native resolver contract"
+```
+
+---
+
+### Task 13: Add Parity CI, Diagnostics, and Benchmark Guardrails
 
 **Files:**
 - Create: `packages/markitai/tests/integration/test_defuddle_parity.py`
@@ -695,8 +779,6 @@ git commit -m "feat: expand native extraction coverage on shared abstractions"
 - Modify: `packages/markitai/src/markitai/batch.py`
 - Modify: `packages/markitai/src/markitai/fetch.py`
 - Modify: `pyproject.toml`
-- Modify: `docs/guide/fetch-policy.md`
-- Modify: `docs/architecture.md`
 
 **Step 1: Write the failing tests**
 
@@ -724,10 +806,10 @@ Add:
 - semantic parity runner
 - canonical HTML snapshot helper
 - a very small Markdown golden suite for stable cases only
-- benchmark helper and budget docs
+- benchmark helper and budget thresholds
 - extraction diagnostics aggregation in reports:
   - resolver chosen
-  - async enricher used
+  - enricher used
   - quality rejection reasons
   - fallback path
 
@@ -740,8 +822,55 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add packages/markitai/tests/integration/test_defuddle_parity.py packages/markitai/tests/integration/test_webextract_benchmarks.py packages/markitai/tests/fixtures/web/README.md packages/markitai/src/markitai/batch.py packages/markitai/src/markitai/fetch.py pyproject.toml docs/guide/fetch-policy.md docs/architecture.md
+git add packages/markitai/tests/integration/test_defuddle_parity.py packages/markitai/tests/integration/test_webextract_benchmarks.py packages/markitai/tests/fixtures/web/README.md packages/markitai/src/markitai/batch.py packages/markitai/src/markitai/fetch.py pyproject.toml
 git commit -m "test: add parity, diagnostics, and benchmark guardrails for native extraction"
+```
+
+---
+
+### Task 14: Document the New Extraction Architecture and Migration Policy
+
+**Files:**
+- Modify: `docs/guide/fetch-policy.md`
+- Modify: `docs/architecture.md`
+- Modify: `packages/markitai/tests/fixtures/web/README.md`
+
+**Step 1: Write the failing docs checklist**
+
+```text
+- architecture doc explains fetch -> resolve -> render -> assess
+- fetch policy doc explains when enrichers are allowed
+- fixture README documents source provenance/minimization expectations
+- frontmatter migration note explains build_source_frontmatter vs coerce_source_frontmatter
+```
+
+**Step 2: Review docs to verify the checklist is currently unmet**
+
+Run: `rg -n "resolve|render|assess|build_source_frontmatter|coerce_source_frontmatter|provenance|enricher" docs packages/markitai/tests/fixtures/web/README.md -S`
+
+Expected: missing or incomplete coverage for the new architecture and migration policy.
+
+**Step 3: Write minimal documentation updates**
+
+Document:
+- resolver-layer ownership of site extraction and enrichers
+- `coerce_source_frontmatter()` migration path:
+  - compatibility wrapper in place during rollout
+  - internal callers migrate to `build_source_frontmatter()`
+  - deprecation warning only after internal migration completes
+- fixture provenance and minimization guidance for stored HTML snapshots
+
+**Step 4: Review docs to verify the checklist is met**
+
+Run the same `rg` command as Step 2.
+
+Expected: documentation covers the new architecture, policy, and migration notes.
+
+**Step 5: Commit**
+
+```bash
+git add docs/guide/fetch-policy.md docs/architecture.md packages/markitai/tests/fixtures/web/README.md
+git commit -m "docs: explain native extraction architecture and migration policy"
 ```
 
 ---
@@ -753,7 +882,9 @@ git commit -m "test: add parity, diagnostics, and benchmark guardrails for nativ
 - Task 7 should land before Task 8 so async enrichers are only used behind an explicit quality decision.
 - Task 8 must remain optional, observable, and policy-aware.
 - Tasks 9-10 strengthen the generic pipeline after the main seams are correct.
-- Task 12 is mandatory before claiming parity.
+- Task 13 is mandatory before claiming parity.
+- Keep `coerce_source_frontmatter()` as a compatibility wrapper throughout this rollout; do not deprecate it until internal callers have moved to `build_source_frontmatter()`.
+- If using subagents, Tasks 7 and 9 are parallel-safe after Task 6 because they touch different concerns.
 
 ## Success Criteria
 
@@ -762,6 +893,7 @@ git commit -m "test: add parity, diagnostics, and benchmark guardrails for nativ
 - Fetch strategies no longer own site-specific extraction logic.
 - Async enrichers are resolver-level, optional, and transparent in diagnostics.
 - At least two threaded sites share the same semantic model successfully before extractor coverage expands.
+- Generic article extraction remains stable under the new typed pipeline.
 - Parity is measured first semantically, then structurally, then textually.
 
 ## Risks
@@ -770,6 +902,7 @@ git commit -m "test: add parity, diagnostics, and benchmark guardrails for nativ
 - If extractors are allowed to emit final Markdown, renderer drift will explode across sites.
 - If async enrichers are added before quality profiles, they will mask sync extraction bugs instead of surfacing them.
 - If parity is defined only as exact Markdown equality, the suite will become too brittle to guide refactors.
+- If the semantic thread model does not preserve `parent_id`, GitHub and Reddit nesting will be flattened too early and become hard to recover later.
 
 ## Recommended Execution Order
 
@@ -785,6 +918,8 @@ git commit -m "test: add parity, diagnostics, and benchmark guardrails for nativ
 10. Task 10
 11. Task 11
 12. Task 12
+13. Task 13
+14. Task 14
 
 Plan complete and saved to `docs/plans/2026-03-19-html-url-extraction-parity.md`. Two execution options:
 
