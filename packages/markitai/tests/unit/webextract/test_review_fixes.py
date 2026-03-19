@@ -190,13 +190,37 @@ class TestContentRootContract:
         assert "Root content here" in result.markdown
         assert result.metadata.title == "Override Title"
 
-    def test_content_root_triggers_resolver_path_in_extract_web_content(self) -> None:
-        """extract_web_content must detect content_root and use resolver path."""
+    def test_content_root_triggers_resolver_path_in_extract_web_content(
+        self,
+    ) -> None:
+        """extract_web_content gate condition must accept content_root."""
+        from unittest.mock import patch
 
-        # We verify the condition check by ensuring it doesn't just check content_html
-        # This is implicitly tested by test_content_root_resolver_produces_markdown
-        # since _build_from_resolved is only called when the condition passes.
-        pass
+        from markitai.webextract.pipeline import extract_web_content
+        from markitai.webextract.resolver import ResolvedPage
+
+        root_soup = BeautifulSoup(
+            "<article><p>Resolver root content</p></article>", "html.parser"
+        )
+        root_tag = root_soup.find("article")
+        fake_resolved = ResolvedPage(
+            content_root=root_tag,
+            metadata_overrides={"title": "Root Override"},
+        )
+
+        with patch(
+            "markitai.webextract.pipeline.resolve_page",
+            return_value=fake_resolved,
+        ):
+            result = extract_web_content(
+                "<html><body><p>Generic fallback</p></body></html>",
+                "https://example.com",
+            )
+
+        # Must come from the resolver path, not the generic path
+        assert "Resolver root content" in result.markdown
+        assert "Generic fallback" not in result.markdown
+        assert result.metadata.title == "Root Override"
 
 
 class TestRedditNestedReplies:
@@ -251,3 +275,95 @@ class TestRedditNestedReplies:
         _collect_comment_nodes(root, parent_id=None, items=items)  # type: ignore[arg-type]
         assert len(items) == 2
         assert items[1].parent_id == "t1_parent"
+
+
+# ---------------------------------------------------------------------------
+# Low-2: Thread policy filters third-party replies in X extraction
+# ---------------------------------------------------------------------------
+
+
+class TestXThreadPolicyFiltering:
+    """X extractor must use thread policy to exclude third-party replies."""
+
+    def test_x_fixture_excludes_third_party_replies_by_default(self) -> None:
+        """Default policy (include_third_party_replies=False) filters replies."""
+        from markitai.webextract.pipeline import extract_web_content
+
+        html = (FIXTURES / "x_status_2030105637204676808.playwright.html").read_text(
+            encoding="utf-8"
+        )
+        result = extract_web_content(
+            html, "https://x.com/ixiaowenz/status/2030105637204676808"
+        )
+        assert result.semantic is not None
+        assert result.semantic.thread is not None
+        # Default policy: include_third_party_replies=False, so reply_user_1
+        # and random_person from the <section> should NOT appear in items.
+        assert result.semantic.thread.items == []
+
+    def test_x_author_self_reply_would_be_included(self) -> None:
+        """If the replies section had an author self-reply, policy would keep it."""
+        from markitai.webextract.thread_policy import get_thread_policy
+
+        policy = get_thread_policy("https://x.com/ixiaowenz/status/2030105637204676808")
+        assert policy is not None
+        assert policy.include_author_thread is True
+        assert policy.include_third_party_replies is False
+
+
+# ---------------------------------------------------------------------------
+# Low-3: build_source_frontmatter integration in fetch paths
+# ---------------------------------------------------------------------------
+
+
+class TestFrontmatterIntegration:
+    """Fetch paths must produce enriched frontmatter with content_profile."""
+
+    def test_native_extraction_returns_content_profile_in_frontmatter(self) -> None:
+        """When info is populated, frontmatter must include content_profile."""
+        from markitai.webextract.frontmatter import build_source_frontmatter
+        from markitai.webextract.pipeline import extract_web_content
+
+        html = (FIXTURES / "x_status_2030105637204676808.playwright.html").read_text(
+            encoding="utf-8"
+        )
+        result = extract_web_content(
+            html, "https://x.com/ixiaowenz/status/2030105637204676808"
+        )
+        assert result.info is not None
+
+        fm = build_source_frontmatter(result)
+        assert "content_profile" in fm
+        assert fm["content_profile"] == "social_post"
+        assert "word_count" in fm
+        assert isinstance(fm["word_count"], int)
+
+    def test_fetch_prefers_build_over_coerce_when_info_present(self) -> None:
+        """fetch.py integration: info-bearing result triggers build path."""
+
+        from markitai.webextract.frontmatter import build_source_frontmatter
+        from markitai.webextract.types import (
+            ContentProfile,
+            ExtractedWebContent,
+            ExtractionInfo,
+            QualityAssessment,
+            WebMetadata,
+        )
+
+        result = ExtractedWebContent(
+            clean_html="<p>Hello</p>",
+            markdown="Hello",
+            metadata=WebMetadata(title="Test"),
+            word_count=1,
+            info=ExtractionInfo(
+                content_profile=ContentProfile.SOCIAL_POST,
+                extractor_name="test",
+                word_count=1,
+            ),
+            quality=QualityAssessment(accepted=True, score=1.0),
+        )
+        fm = build_source_frontmatter(result)
+        # Verify the enriched fields that coerce_source_frontmatter would miss
+        assert fm["content_profile"] == "social_post"
+        assert fm["word_count"] == 1
+        assert fm["title"] == "Test"
