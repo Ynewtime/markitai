@@ -3,10 +3,12 @@ from __future__ import annotations
 from markitai.webextract.extractors.base import BaseSiteExtractor
 from markitai.webextract.extractors.github_issue import GitHubIssueExtractor
 from markitai.webextract.extractors.x_article import XArticleExtractor
+from markitai.webextract.extractors.x_tweet import XTweetExtractor
 
 _EXTRACTORS: tuple[BaseSiteExtractor, ...] = (
     GitHubIssueExtractor(),
-    XArticleExtractor(),
+    XArticleExtractor(),  # x.com/i/articles/ (long-form articles)
+    XTweetExtractor(),  # x.com/user/status/ (regular tweets)
 )
 
 

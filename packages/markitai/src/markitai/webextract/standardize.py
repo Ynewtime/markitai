@@ -208,6 +208,8 @@ def _flatten_wrapper_divs(root: Tag) -> None:
                 continue
 
             # Skip divs with semantic roles or classes
+            if not div.attrs:
+                continue
             if div.get("role"):
                 continue
             classes = div.get("class")
