@@ -104,3 +104,63 @@ A minimized fixture should:
 - Retain `<meta og:url>` so the extractor registry can route to the correct
   site-specific extractor.
 - Use consistent indentation for readability in diffs.
+
+---
+
+## Provenance and Attribution
+
+Every `.playwright.html` fixture must have a clear provenance record so
+reviewers can verify the minimization was performed correctly and no personal
+data was introduced accidentally.
+
+When adding a new fixture, record its provenance in a comment at the top of
+the HTML file:
+
+```html
+<!-- Fixture: <slug>.playwright.html
+     Source:  <canonical URL>
+     Captured: <YYYY-MM-DD>
+     Minimized: removed <N> KB of sidebar / ad / script content
+     PII check: no personal data retained
+-->
+```
+
+For synthetic fixtures (e.g. `generic_article`, `shadow_dom_page`), note
+`Source: synthetic` and the specific extraction behaviour being exercised.
+
+---
+
+## Resolver and Enricher Coverage
+
+Fixture files are grouped by the extraction path they exercise:
+
+| Fixture prefix | Resolver extractor | Enricher | Content profile |
+|---------------|-------------------|----------|-----------------|
+| `x_status_*` | `x_tweet` | `x_oembed` (optional) | `social_post` |
+| `github_issue_thread` | `github_thread` | — | `discussion_issue` |
+| `hackernews_thread` | `hackernews_thread` | — | `discussion_thread` |
+| `reddit_post` | `reddit_post` | — | `discussion_thread` |
+| `youtube_page` | `youtube_page` | — | `rich_media_page` |
+| `generic_article` | — (generic pipeline) | — | `generic_article` |
+| `shadow_dom_page` | — (generic pipeline) | — | `generic_article` |
+
+Fixtures that cover **resolver extractors** (those implementing `resolve()`)
+verify that the resolver path produces a `ResolvedPage` with the expected
+`content_html` or `semantic.thread` before Markdown rendering.
+
+Fixtures that cover **enrichers** should be tested both with and without the
+enricher active (`EnrichmentPolicy(allow_network=False)`) to confirm the sync
+resolver baseline remains acceptable on its own.
+
+---
+
+## Quality Profile Assertions
+
+The `info.content_profile` field in `*.expected.json` must match the profile
+used by the quality gate. If the profile is wrong, `assess_native_markdown()`
+may apply the incorrect rejection heuristics and produce misleading test
+failures.
+
+Use the table above to determine which profile to set. For new site types not
+yet in the table, default to `generic_article` until a dedicated profile is
+added to `webextract/quality.py`.

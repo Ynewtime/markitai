@@ -145,25 +145,42 @@ utils/
 └── text.py                    # 文本处理工具
 
 webextract/                    # 原生 HTML→Markdown 提取
-├── __init__.py                # 公共 API (extract_web_content 等)
-├── pipeline.py                # 提取管线编排
+├── __init__.py                # 公共 API (extract_web_content, build_source_frontmatter 等)
+├── pipeline.py                # 提取管线编排 (fetch → resolve → render → assess)
+├── resolver.py                # Resolver 层 (ResolvedPage, resolve_page, resolve_page_async)
+├── render.py                  # 语义内容渲染 (render_semantic_content)
+├── quality.py                 # 类型化质量 Profile (assess_native_markdown)
+├── semantics.py               # 共享语义模型 (ConversationThread, ConversationItem 等)
+├── frontmatter.py             # build_source_frontmatter() — 用户侧 frontmatter 生成
+├── preprocess.py              # HTML 预处理 (preprocess_html)
+├── markdown.py                # Fidelity 层 Markdown 渲染 (render_markdown)
+├── policy.py                  # ExtractionPolicy 占位符
 ├── scoring.py                 # 内容质量评分
 ├── sanitize.py                # HTML 清洗 (XSS 防护)
 ├── metadata.py                # Schema.org / Open Graph 元数据
 ├── schema.py                  # Schema.org JSON-LD 解析
 ├── standardize.py             # Markdown 标准化
 ├── dom.py                     # DOM 操作工具
-├── types.py                   # 类型定义
+├── types.py                   # 类型定义 (ContentProfile, ExtractionInfo, QualityAssessment 等)
 ├── constants.py               # 提取相关常量
 ├── elements/                  # 元素处理器
 │   ├── code.py                # 代码块
 │   ├── images.py              # 图片
 │   └── footnotes.py           # 脚注
+├── enrichers/                 # 异步补全器 (policy-aware, 网络请求后处理)
+│   ├── base.py                # BaseEnricher Protocol, EnrichmentPolicy
+│   └── x_oembed.py            # X/Twitter oEmbed 补全器
 └── extractors/                # 站点特化提取器
     ├── base.py                # 基类
     ├── registry.py            # 注册表
-    ├── github_issue.py        # GitHub Issue
-    └── x_article.py           # X/Twitter
+    ├── github_issue.py        # GitHub Issue (遗留兼容)
+    ├── github_thread.py       # GitHub Issue 线程 (新版，实现 resolve())
+    ├── reddit_post.py         # Reddit 帖子
+    ├── hackernews_thread.py   # Hacker News 线程
+    ├── youtube_page.py        # YouTube 视频页
+    ├── x_common.py            # X/Twitter 共享解析工具
+    ├── x_tweet.py             # X/Twitter 推文 (实现 resolve())
+    └── x_article.py          # X/Twitter 文章
 ```
 
 ---
@@ -355,7 +372,71 @@ AUTO（默认）
 - `playwright`: 浏览器配置，包括会话模式
 - `jina`: Jina API 配置
 
-### 7. 批量处理 (`batch.py`)
+### 7. 原生 HTML 提取 (`webextract/`)
+
+**职责**: 将抓取到的 HTML 转换为干净、结构化的 Markdown，无需外部 API
+
+**四层架构** (fetch → resolve → render → assess):
+
+```
+fetch.py       # 获取原始 HTML
+    ↓
+resolve_page() # 站点特化结构提取（resolver 层）
+    ↓
+render.py      # 语义内容渲染（HTML fragment）
+    ↓
+quality.py     # 质量 Profile 评估（assess 层）
+```
+
+**Resolver 层** (`webextract/resolver.py`):
+
+Resolver 层是站点特化提取器的编排中心，职责范围严格限定为：
+
+- 查找匹配当前 URL 的站点特化提取器（通过注册表）
+- 调用提取器的 `resolve()` 方法，得到 `ResolvedPage`
+- 运行 policy-aware 的异步 enricher（通过 `resolve_page_async()`）
+
+`ResolvedPage` 是 resolver 层的输出契约：它持有结构化 HTML（`content_html` 或 `content_root`），但**绝不**持有最终 Markdown。Markdown 渲染始终由 pipeline 负责。
+
+站点特化提取器实现了可选的 `resolve()` 方法。实现了该方法的提取器称为"resolver 提取器"，返回 `ResolvedPage`；不实现的提取器退回通用 pipeline。
+
+**Enricher 层** (`webextract/enrichers/`):
+
+Enricher 是在 resolver 之后运行的可选异步补全器，通过网络 API 提升提取质量（如 oEmbed）。Enricher 设计原则：
+
+- 失败不传播——内部必须捕获所有异常，返回 `None` 表示未改善
+- 受 `EnrichmentPolicy` 控制（可禁用网络请求或异步执行）
+- `enricher_name` 记录在 `ResolvedPage.diagnostics` 供诊断
+
+**语义模型** (`webextract/semantics.py`):
+
+所有站点特化提取器共享同一套语义数据结构，确保渲染层与提取层解耦：
+
+- `ConversationThread`：线程根节点（`main_item` + `items` 列表）
+- `ConversationItem`：单条消息/回复（作者、时间、文本、`parent_id` 表达父子关系）
+- `EmbeddedQuote`：引用帖子
+- `MediaAttachment`：媒体附件
+
+**质量 Profile** (`webextract/quality.py`):
+
+`assess_native_markdown(markdown, profile=...)` 根据内容类型采用不同的质量启发式规则：
+
+| Profile | 场景 | 关键拒绝条件 |
+|---------|------|------------|
+| `generic_article` | 普通文章（默认） | 纯文本少于 10 字符或少于 3 词 |
+| `social_post` | X/Twitter 等社交帖 | 推荐区域/趋势侧栏泄漏 |
+| `conversation_thread` | X 线程、论坛线程 | 推荐噪声或少于 10 词 |
+| `discussion_issue` | GitHub Issue、讨论 | 侧栏（Assignees/Labels）泄漏 |
+
+返回 `QualityAssessment(accepted, score, reasons)`，`accepted` 决定 pipeline 是否将原生 Markdown 视为可用输出。`quality` 字段仅用于内部诊断，不写入用户 frontmatter。
+
+**Frontmatter 生成**:
+
+`build_source_frontmatter(result: ExtractedWebContent) -> dict` 是当前首选 API，输出 title、author、site、published、description、canonical_url、word_count、content_profile，有意排除 quality 内部字段。
+
+`coerce_source_frontmatter(metadata)` 是过渡期兼容包装器，接受任意 metadata 对象。内部代码新增调用应使用 `build_source_frontmatter()`。
+
+### 8. 批量处理 (`batch.py`)
 
 **职责**: 并发多文件处理
 
@@ -377,7 +458,7 @@ PENDING -> IN_PROGRESS -> COMPLETED
                        -> FAILED
 ```
 
-### 8. 工作流层 (`workflow/`)
+### 9. 工作流层 (`workflow/`)
 
 **职责**: 统一的文档转换流程
 
