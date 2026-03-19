@@ -159,6 +159,29 @@ def validate_and_detect_format(
             success=False, error=f"Unsupported file format: {ctx.input_path.suffix}"
         )
 
+    # Check if Kreuzberg converter is explicitly enabled (--kreuzberg flag)
+    kreuzberg_forced = getattr(ctx.config.fetch, "kreuzberg_convert_enabled", False)
+    if kreuzberg_forced:
+        import importlib.util
+
+        if importlib.util.find_spec("kreuzberg") is None:
+            return ConversionStepResult(
+                success=False,
+                error="--kreuzberg requires kreuzberg to be installed. "
+                "Install with: uv pip install markitai[kreuzberg]",
+            )
+        from markitai.converter.kreuzberg import KreuzbergConverter
+
+        # Warn if overriding a native converter
+        local_converter = get_converter(ctx.effective_input, config=ctx.config)
+        if local_converter is not None:
+            logger.warning(
+                f"Using kreuzberg for {fmt.value} "
+                f"(native converter available — output quality may differ)"
+            )
+        ctx.converter = KreuzbergConverter(config=ctx.config)
+        logger.debug(f"Using kreuzberg for {fmt.value} (explicit --kreuzberg)")
+
     # Check if Cloudflare toMarkdown is explicitly enabled (--cloudflare flag)
     cf_config = (
         ctx.config.fetch.cloudflare if hasattr(ctx.config.fetch, "cloudflare") else None

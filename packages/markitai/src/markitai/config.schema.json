@@ -287,13 +287,6 @@
           "anyOf": [
             {
               "items": {
-                "enum": [
-                  "static",
-                  "defuddle",
-                  "playwright",
-                  "jina",
-                  "cloudflare"
-                ],
                 "type": "string"
               },
               "type": "array"
@@ -338,11 +331,16 @@
         "cloudflare": {
           "$ref": "#/$defs/CloudflareConfig"
         },
+        "kreuzberg_convert_enabled": {
+          "default": false,
+          "description": "Force kreuzberg converter for all supported file formats.",
+          "title": "Kreuzberg Convert Enabled",
+          "type": "boolean"
+        },
         "policy": {
           "$ref": "#/$defs/FetchPolicyConfig"
         },
         "domain_profiles": {
-          "default": {},
           "additionalProperties": {
             "$ref": "#/$defs/DomainProfileConfig"
           },
@@ -350,14 +348,6 @@
           "type": "object"
         },
         "fallback_patterns": {
-          "default": [
-            "twitter.com",
-            "x.com",
-            "instagram.com",
-            "facebook.com",
-            "linkedin.com",
-            "threads.net"
-          ],
           "items": {
             "type": "string"
           },
@@ -387,13 +377,6 @@
           "anyOf": [
             {
               "items": {
-                "enum": [
-                  "static",
-                  "defuddle",
-                  "playwright",
-                  "jina",
-                  "cloudflare"
-                ],
                 "type": "string"
               },
               "type": "array"
@@ -407,7 +390,6 @@
           "title": "Strategy Priority"
         },
         "local_only_patterns": {
-          "default": [],
           "description": "Domain/IP patterns that must use local-only strategies (NO_PROXY syntax).",
           "items": {
             "type": "string"
@@ -584,7 +566,6 @@
           "type": "boolean"
         },
         "model_list": {
-          "default": [],
           "items": {
             "$ref": "#/$defs/ModelConfig"
           },
@@ -805,8 +786,12 @@
       "properties": {
         "dir": {
           "anyOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
           "default": null,
           "title": "Dir"
@@ -1221,7 +1206,6 @@
           "type": "integer"
         },
         "fallbacks": {
-          "default": [],
           "items": {
             "additionalProperties": true,
             "type": "object"
