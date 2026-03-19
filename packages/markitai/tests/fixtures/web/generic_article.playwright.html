@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta property="og:title" content="Understanding Async Python" />
+  <meta property="og:description" content="A deep dive into asyncio patterns and best practices." />
+  <meta property="og:url" content="https://example.com/blog/async-python" />
+  <meta name="author" content="Jane Smith" />
+  <title>Understanding Async Python - Example Blog</title>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/blog">Blog</a>
+      <a href="/about">About</a>
+    </nav>
+  </header>
+
+  <main>
+    <article>
+      <header>
+        <h1>Understanding Async Python</h1>
+        <div class="byline">
+          <span>By Jane Smith</span>
+          <time datetime="2025-02-20">February 20, 2025</time>
+        </div>
+      </header>
+
+      <p>
+        Asynchronous programming in Python has evolved significantly since the introduction
+        of asyncio in Python 3.4. Today, async/await syntax makes it far more readable.
+      </p>
+
+      <h2>The Event Loop</h2>
+      <p>
+        At the core of Python's async model is the event loop. It schedules and runs
+        coroutines, handles I/O events, and manages callbacks. Understanding this is
+        fundamental to writing effective async code.
+      </p>
+
+      <h2>Common Patterns</h2>
+      <p>
+        Several patterns have emerged as best practices: gather for concurrent tasks,
+        TaskGroup for structured concurrency, and Semaphore for rate limiting.
+      </p>
+
+      <pre><code class="language-python">import asyncio
+
+async def fetch_all(urls):
+    async with asyncio.TaskGroup() as tg:
+        tasks = [tg.create_task(fetch(url)) for url in urls]
+    return [t.result() for t in tasks]
+</code></pre>
+
+      <p>
+        This pattern ensures all tasks complete or all are cancelled on failure,
+        providing clean error semantics.
+      </p>
+    </article>
+
+    <!-- Sidebar with related posts - should be excluded -->
+    <aside class="sidebar">
+      <section class="related-posts">
+        <h3>Related posts</h3>
+        <ul>
+          <li><a href="/blog/generators">Python Generators Explained</a></li>
+          <li><a href="/blog/decorators">Mastering Decorators</a></li>
+          <li><a href="/blog/typing">Type Hints in Practice</a></li>
+        </ul>
+      </section>
+
+      <section class="newsletter">
+        <h3>Subscribe to Newsletter</h3>
+        <form>
+          <input type="email" placeholder="your@email.com" />
+          <button type="submit">Subscribe</button>
+        </form>
+      </section>
+    </aside>
+  </main>
+
+  <footer>
+    <p>© 2025 Example Blog. All rights reserved.</p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "title": "Understanding Async Python"
+  },
+  "info": {
+    "content_profile": "generic_article"
+  },
+  "semantic": null,
+  "markdown_must_not_contain": [
+    "Related posts",
+    "Subscribe to Newsletter"
+  ],
+  "markdown_must_contain": [
+    "Understanding Async Python",
+    "asyncio"
+  ]
+}
