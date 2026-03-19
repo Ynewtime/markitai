@@ -216,6 +216,12 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Force Defuddle API for URL fetching (free, no auth, best content cleaning).",
 )
 @click.option(
+    "--static",
+    "use_static",
+    is_flag=True,
+    help="Force static HTTP fetch with native webextract (no external API).",
+)
+@click.option(
     "--jina",
     "use_jina",
     is_flag=True,
@@ -296,6 +302,7 @@ def app(
     max_depth: int | None,
     use_defuddle: bool,
     use_playwright: bool,
+    use_static: bool,
     use_jina: bool,
     use_cloudflare: bool,
     verbose: bool,
@@ -551,10 +558,12 @@ def app(
             console.print()
 
     # Validate fetch strategy flags (mutually exclusive)
-    strategy_flags = sum([use_defuddle, use_playwright, use_jina, use_cloudflare])
+    strategy_flags = sum(
+        [use_defuddle, use_playwright, use_static, use_jina, use_cloudflare]
+    )
     if strategy_flags > 1:
         console.print(
-            "[red]Error: --defuddle, --playwright, --jina, and --cloudflare are mutually exclusive.[/red]"
+            "[red]Error: --defuddle, --playwright, --static, --jina, and --cloudflare are mutually exclusive.[/red]"
         )
         ctx.exit(1)
 
@@ -563,6 +572,9 @@ def app(
 
     if use_defuddle:
         fetch_strategy = FetchStrategy.DEFUDDLE
+        explicit_fetch_strategy = True
+    elif use_static:
+        fetch_strategy = FetchStrategy.STATIC
         explicit_fetch_strategy = True
     elif use_playwright:
         fetch_strategy = FetchStrategy.PLAYWRIGHT
