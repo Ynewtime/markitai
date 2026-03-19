@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "title": "Bug: extraction fails on empty HTML"
+  },
+  "info": {
+    "content_profile": "threaded_discussion"
+  },
+  "semantic": {
+    "thread": {
+      "main_item": {
+        "author_handle": "@octocat",
+        "text_contains": "extraction fails on empty HTML"
+      },
+      "author_replies": [],
+      "third_party_replies": []
+    }
+  },
+  "markdown_must_not_contain": [
+    "Subscribe",
+    "Sign up for free"
+  ],
+  "markdown_must_contain": [
+    "Bug"
+  ]
+}
