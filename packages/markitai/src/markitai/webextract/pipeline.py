@@ -75,9 +75,15 @@ def _build_from_resolved(
 
     word_count = count_words(markdown)
 
-    # Determine content profile from semantic data
-    content_profile = ContentProfile.SOCIAL_POST
-    extractor_name = resolved.diagnostics.get("x_resolve", "resolved")
+    # Determine content profile and extractor name from resolver diagnostics
+    content_profile_str = resolved.diagnostics.get(
+        "content_profile", ContentProfile.SOCIAL_POST.value
+    )
+    try:
+        content_profile = ContentProfile(content_profile_str)
+    except ValueError:
+        content_profile = ContentProfile.SOCIAL_POST
+    extractor_name = resolved.diagnostics.get("extractor_name", "resolved")
 
     info = ExtractionInfo(
         content_profile=content_profile,

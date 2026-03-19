@@ -59,8 +59,10 @@ def _render_thread(thread: ConversationThread) -> str:
     parts.append("<article>")
     parts.append(f"<h1>{escape(thread.title)}</h1>")
     parts.append(_render_item(thread.main_item))
-    for item in thread.items:
-        parts.append(_render_item(item))
+    if thread.items:
+        parts.append("<h2>Comments</h2>")
+        for item in thread.items:
+            parts.append(_render_item(item))
     parts.append("</article>")
     return "\n".join(parts)
 

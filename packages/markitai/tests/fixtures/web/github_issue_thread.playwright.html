@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta property="og:title" content="Bug: extraction fails on empty HTML · Issue #42 · example/repo" />
+  <meta property="og:url" content="https://github.com/example/repo/issues/42" />
+  <meta name="author" content="octocat" />
+  <title>Bug: extraction fails on empty HTML · Issue #42 · example/repo</title>
+</head>
+<body>
+  <div class="gh-header-show">
+    <h1 class="gh-header-title">
+      <bdi class="js-issue-title">Bug: extraction fails on empty HTML</bdi>
+      <span class="gh-header-number">#42</span>
+    </h1>
+  </div>
+
+  <div class="Layout">
+    <div class="Layout-main">
+      <!-- Issue body (first comment-body is the OP) -->
+      <div class="js-timeline-item">
+        <div class="timeline-comment">
+          <div class="timeline-comment-header">
+            <a class="author" href="/octocat">octocat</a>
+            <relative-time datetime="2026-03-10T12:00:00Z">Mar 10, 2026</relative-time>
+          </div>
+          <div class="comment-body" id="issue-body">
+            <p>When the input HTML is completely empty, the extraction pipeline raises an
+            <code>AttributeError</code> instead of returning an empty result.</p>
+            <h2>Steps to reproduce</h2>
+            <ol>
+              <li>Call <code>extract_web_content("", url)</code></li>
+              <li>Observe the traceback</li>
+            </ol>
+            <h2>Expected behavior</h2>
+            <p>Should return an <code>ExtractedWebContent</code> with empty markdown.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- First comment -->
+      <div class="js-timeline-item">
+        <div class="timeline-comment">
+          <div class="timeline-comment-header">
+            <a class="author" href="/defunkt">defunkt</a>
+            <relative-time datetime="2026-03-11T09:30:00Z">Mar 11, 2026</relative-time>
+          </div>
+          <div class="comment-body">
+            <p>I can reproduce this. The issue is in <code>pipeline.py</code> line 42 where
+            <code>soup.body</code> is accessed without a None check.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Second comment -->
+      <div class="js-timeline-item">
+        <div class="timeline-comment">
+          <div class="timeline-comment-header">
+            <a class="author" href="/octocat">octocat</a>
+            <relative-time datetime="2026-03-12T14:00:00Z">Mar 12, 2026</relative-time>
+          </div>
+          <div class="comment-body">
+            <p>Thanks for the confirmation! PR incoming.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="Layout-sidebar">
+      <div class="sidebar-section">
+        <h2 class="discussion-sidebar-heading">Assignees</h2>
+        <div class="assignee">octocat</div>
+      </div>
+      <div class="sidebar-section">
+        <h2 class="discussion-sidebar-heading">Labels</h2>
+        <a class="IssueLabel" href="/example/repo/labels/bug">bug</a>
+      </div>
+      <div class="sidebar-section">
+        <h2 class="discussion-sidebar-heading">Milestone</h2>
+        <span>v2.0</span>
+      </div>
+      <div class="sidebar-section">
+        <p>Subscribe</p>
+        <p>Sign up for free to join this conversation on GitHub.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
