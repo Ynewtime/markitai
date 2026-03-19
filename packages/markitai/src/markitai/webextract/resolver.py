@@ -21,8 +21,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bs4 import BeautifulSoup, Tag
+from loguru import logger
 
 if TYPE_CHECKING:
+    from markitai.webextract.enrichers.base import EnrichmentPolicy
     from markitai.webextract.types import SemanticExtraction
 
 
@@ -100,6 +102,70 @@ def resolve_page(
     _validate_resolver_result(raw_result, extractor)
 
     return raw_result  # type: ignore[return-value]
+
+
+async def resolve_page_async(
+    html: str,
+    url: str,
+    *,
+    resolver: object | None = None,
+    policy: EnrichmentPolicy | None = None,
+) -> ResolvedPage | None:
+    """Async variant of ``resolve_page`` that may run policy-aware enrichers.
+
+    First runs the sync resolver to obtain a baseline ``ResolvedPage``.
+    Then, if the policy permits, discovers and runs any applicable enrichers.
+    If an enricher returns an improved result, that result is used instead.
+    Enricher failures never propagate — the sync baseline is the fallback.
+
+    Args:
+        html: Raw HTML source of the page.
+        url: Canonical URL of the page.
+        resolver: Optional extractor override (forwarded to ``resolve_page``).
+        policy: Enrichment policy controlling whether enrichers may run.
+            Defaults to a permissive policy when ``None``.
+
+    Returns:
+        The best available ``ResolvedPage``, or ``None`` if neither the sync
+        resolver nor any enricher produced a result.
+    """
+    from markitai.webextract.enrichers import get_enrichers_for_url
+    from markitai.webextract.enrichers.base import EnrichmentPolicy as _Policy
+
+    if policy is None:
+        policy = _Policy()
+
+    # Step 1: run the sync resolver as the baseline
+    sync_result = resolve_page(html, url, resolver=resolver)
+
+    # Step 2: skip enrichers if the policy forbids async or network
+    if not policy.allow_async or not policy.allow_network:
+        return sync_result
+
+    # Step 3: find enrichers applicable to this URL
+    candidates = get_enrichers_for_url(url)
+    if not candidates:
+        return sync_result
+
+    # Step 4: run each enricher; use the first one that returns a result
+    for enricher in candidates:
+        if not enricher.should_run(url, policy):
+            continue
+        try:
+            enriched = await enricher.enrich(url, sync_result)
+        except Exception as exc:
+            logger.debug(
+                "[Resolver] enricher '{}' raised unexpectedly: {}",
+                enricher.name,
+                exc,
+            )
+            enriched = None
+
+        if enriched is not None:
+            logger.debug("[Resolver] enricher '{}' improved result", enricher.name)
+            return enriched
+
+    return sync_result
 
 
 def _validate_resolver_result(result: object, extractor: object) -> None:
