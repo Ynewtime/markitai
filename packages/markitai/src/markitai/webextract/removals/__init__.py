@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from bs4 import Tag
 
+from markitai.webextract.removals.content_patterns import remove_content_patterns
 from markitai.webextract.removals.hidden import remove_hidden_elements
 from markitai.webextract.removals.scoring import score_and_remove
 from markitai.webextract.removals.selectors import remove_by_selectors
@@ -37,4 +38,5 @@ def apply_removals(
     )
     if use_scoring:
         stats["scoring"] = score_and_remove(root)
+    stats["content_patterns"] = remove_content_patterns(root)
     return stats

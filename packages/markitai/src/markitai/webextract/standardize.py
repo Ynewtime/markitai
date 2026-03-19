@@ -5,8 +5,10 @@ from urllib.parse import urljoin
 from bs4 import Comment, NavigableString, Tag
 
 from markitai.webextract.constants import ALLOWED_EMPTY_ELEMENTS
+from markitai.webextract.elements.callouts import normalize_callouts
 from markitai.webextract.elements.code import normalize_code_blocks
 from markitai.webextract.elements.footnotes import normalize_footnotes
+from markitai.webextract.elements.headings import normalize_headings
 from markitai.webextract.elements.images import normalize_images
 
 _PRESERVE_ELEMENTS = frozenset(
@@ -95,6 +97,8 @@ def standardize_content(root: Tag, title: str | None, base_url: str) -> None:
     normalize_code_blocks(root)
     normalize_footnotes(root)
     normalize_images(root, base_url)
+    normalize_headings(root)
+    normalize_callouts(root)
     _flatten_wrapper_divs(root)
     _unwrap_bare_spans(root)
     _remove_empty_elements(root)
