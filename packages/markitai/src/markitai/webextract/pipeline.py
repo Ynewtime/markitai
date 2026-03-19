@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.dom import parse_html
 from markitai.webextract.extractors.registry import find_extractor
+from markitai.webextract.markdown import render_markdown
 from markitai.webextract.metadata import extract_metadata
 from markitai.webextract.quality import assess_native_markdown
 from markitai.webextract.removals import apply_removals
@@ -72,7 +73,7 @@ def _build_from_resolved(
     # Convert the resolved content_html to markdown
     md_instance = _create_markitdown()
     content_html = resolved.content_html or ""
-    markdown = _html_fragment_to_markdown(content_html, md_instance)
+    markdown = render_markdown(content_html, md_instance=md_instance)
 
     word_count = count_words(markdown)
 
@@ -203,7 +204,7 @@ def _extract_once(
         standardize_content(root, title=title, base_url=url)
     sanitize_tag_tree(root)
     clean_html = str(root)
-    markdown = _html_fragment_to_markdown(clean_html, md_instance)
+    markdown = render_markdown(clean_html, md_instance=md_instance)
     return clean_html, markdown, removal_stats
 
 
