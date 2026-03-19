@@ -42,6 +42,7 @@ addopts = "-v --tb=short -n auto -m 'not slow and not network'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "network: marks tests that require network access (deselect with '-m \"not network\"')",
+    "parity: marks extraction parity tests against fixture contracts",
 ]
 
 [tool.coverage.run]

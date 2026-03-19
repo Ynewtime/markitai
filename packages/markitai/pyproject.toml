@@ -92,6 +92,7 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "network: marks tests that require network access (deselect with '-m \"not network\"')",
+    "parity: marks extraction parity tests against fixture contracts",
 ]
 
 [tool.ruff]
