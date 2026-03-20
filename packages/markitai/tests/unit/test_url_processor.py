@@ -1700,4 +1700,9 @@ class TestProcessUrlFileMode:
         combined_output = f"{captured.out}\n{captured.err}"
         assert "# Test Page" not in combined_output
         assert "Some content here." not in combined_output
-        assert str(tmp_path / "test.md") in combined_output
+        # Strip ANSI escape codes and newlines to handle terminal line wrapping
+        import re
+
+        cleaned = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", combined_output)
+        cleaned = cleaned.replace("\n", "")
+        assert str(tmp_path / "test.md") in cleaned
