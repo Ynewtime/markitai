@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Tests for render_semantic_content() in render.py."""
 
+from markitai.webextract.markdown import render_markdown
 from markitai.webextract.render import render_semantic_content
 from markitai.webextract.semantics import (
     ConversationItem,
@@ -156,3 +157,25 @@ class TestRenderSemanticContent:
         html = render_semantic_content(SemanticExtraction(thread=thread))
         assert "https://example.com/a.jpg" in html
         assert "https://example.com/b.jpg" in html
+
+    def test_nested_reply_becomes_nested_markdown_quote(self) -> None:
+        """Replies to replies must retain visible hierarchy in markdown."""
+        parent = ConversationItem(
+            id="reply-1",
+            parent_id="root",
+            author_handle="@parent",
+            text="Parent reply",
+        )
+        child = ConversationItem(
+            id="reply-2",
+            parent_id="reply-1",
+            author_handle="@child",
+            text="Nested reply",
+        )
+        thread = _make_thread(replies=[parent, child])
+
+        html = render_semantic_content(SemanticExtraction(thread=thread))
+        markdown = render_markdown(html)
+
+        assert "> @child" in markdown
+        assert "> Nested reply" in markdown

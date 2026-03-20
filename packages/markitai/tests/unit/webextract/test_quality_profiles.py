@@ -33,6 +33,14 @@ Alice @alice
 Short but valid social post content.
 """
 
+_METADATA_ONLY_SOCIAL_POST = """\
+# Post by @alice
+
+@alice
+
+2026-03-18T10:15:00Z
+"""
+
 _MINIMAL_SOCIAL = "yes"  # very short social posts are OK
 
 
@@ -60,6 +68,16 @@ def test_social_post_with_discover_more_fails_quality() -> None:
 def test_clean_social_post_passes_quality() -> None:
     assessment = assess_native_markdown(_CLEAN_SOCIAL_POST, profile="social_post")
     assert assessment.accepted is True
+
+
+def test_metadata_only_social_post_fails_quality() -> None:
+    """A synthesized title/handle/timestamp without body text must fail."""
+    assessment = assess_native_markdown(
+        _METADATA_ONLY_SOCIAL_POST,
+        profile="social_post",
+    )
+    assert assessment.accepted is False
+    assert "missing_body" in assessment.reasons
 
 
 def test_minimal_social_post_passes_quality() -> None:
@@ -201,6 +219,11 @@ emphasises code readability. Python is dynamically typed and garbage-collected.
 _TOO_SHORT_ARTICLE = "hi"
 
 _BARE_MARKDOWN = "# Title"
+_CJK_ARTICLE = """\
+# 中文标题
+
+这是一个内容完整的中文页面，用来验证没有空格分词时也不会被误判成过短内容。
+"""
 
 
 def test_clean_article_passes_quality() -> None:
@@ -217,6 +240,12 @@ def test_article_bare_markdown_fails_quality() -> None:
     """Markdown that is only punctuation/symbols with no real words fails."""
     assessment = assess_native_markdown(_BARE_MARKDOWN, profile="generic_article")
     assert assessment.accepted is False
+
+
+def test_cjk_article_with_sufficient_text_passes_quality() -> None:
+    """CJK articles should not fail solely because they do not use spaces."""
+    assessment = assess_native_markdown(_CJK_ARTICLE, profile="generic_article")
+    assert assessment.accepted is True
 
 
 def test_empty_string_fails_all_profiles() -> None:

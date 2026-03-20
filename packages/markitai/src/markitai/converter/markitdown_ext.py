@@ -40,7 +40,7 @@ def _convert_html(input_path: Path) -> ConvertResult:
     try:
         from markitai.webextract import (
             extract_web_content,
-            is_native_markdown_acceptable,
+            is_native_extraction_acceptable,
         )
 
         html = input_path.read_text(encoding="utf-8", errors="replace")
@@ -48,7 +48,7 @@ def _convert_html(input_path: Path) -> ConvertResult:
         extracted = extract_web_content(html, source_url)
         markdown = extracted.markdown
 
-        if is_native_markdown_acceptable(markdown):
+        if is_native_extraction_acceptable(extracted):
             metadata: dict = {
                 "source": str(input_path),
                 "format": input_path.suffix.lstrip(".").upper(),

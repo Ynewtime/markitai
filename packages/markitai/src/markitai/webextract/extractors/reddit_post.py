@@ -7,6 +7,8 @@ render_semantic_content abstraction applies to Reddit-style threaded
 discussions, not just X/Twitter and GitHub.
 """
 
+from urllib.parse import urlparse
+
 from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.render import render_semantic_content
@@ -42,9 +44,10 @@ class RedditPostExtractor:
             url: Source URL to test.
 
         Returns:
-            True when the URL is a reddit.com post or comments page.
+            True when the URL is an old.reddit.com comments page.
         """
-        return "reddit.com" in url and ("/comments/" in url or "/r/" in url)
+        parsed = urlparse(url)
+        return parsed.netloc.lower() == "old.reddit.com" and "/comments/" in parsed.path
 
     def extract_root(self, soup: BeautifulSoup) -> Tag | None:
         """Return the main content area (legacy path).

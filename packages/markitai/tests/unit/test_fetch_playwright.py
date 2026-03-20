@@ -338,6 +338,7 @@ class TestFetchWithPlaywright:
         ) as mock_extract:
             mock_extract.return_value = MagicMock(
                 markdown="# Hello\n\nBody",
+                quality=MagicMock(accepted=True),
                 metadata=_Metadata(title="Hello", author="Jane"),
                 diagnostics={"extractor": "generic"},
             )

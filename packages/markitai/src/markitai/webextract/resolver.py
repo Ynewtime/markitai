@@ -20,8 +20,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import Tag
 from loguru import logger
+
+from markitai.webextract.dom import parse_html
 
 if TYPE_CHECKING:
     from markitai.webextract.enrichers.base import EnrichmentPolicy
@@ -95,7 +97,7 @@ def resolve_page(
     if resolve_fn is None or not callable(resolve_fn):
         return None
 
-    soup = BeautifulSoup(html, "html.parser")
+    soup = parse_html(html)
     raw_result = resolve_fn(soup, url)
 
     # Validate: resolver must not return final Markdown

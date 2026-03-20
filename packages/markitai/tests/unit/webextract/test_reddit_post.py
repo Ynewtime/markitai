@@ -132,10 +132,59 @@ def test_registry_resolves_reddit_extractor_for_post_urls() -> None:
 
 
 def test_registry_resolves_reddit_extractor_for_comments_urls() -> None:
-    """find_extractor must match reddit.com URLs containing /comments/."""
+    """find_extractor must match old Reddit comment URLs."""
+    from markitai.webextract.extractors.registry import find_extractor
+
+    extractor = find_extractor("https://old.reddit.com/r/Python/comments/xyz/topic/")
+
+    assert extractor is not None
+    assert hasattr(extractor, "resolve")
+
+
+def test_registry_does_not_match_modern_reddit_comments_urls() -> None:
+    """Modern Reddit comment URLs must fall back to the generic pipeline."""
     from markitai.webextract.extractors.registry import find_extractor
 
     extractor = find_extractor("https://www.reddit.com/r/Python/comments/xyz/topic/")
 
-    assert extractor is not None
-    assert hasattr(extractor, "resolve")
+    assert extractor is None
+
+
+def test_registry_does_not_match_subreddit_listing_urls() -> None:
+    """Subreddit listing pages must not be treated as threaded post pages."""
+    from markitai.webextract.extractors.registry import find_extractor
+
+    extractor = find_extractor("https://www.reddit.com/r/Python/")
+
+    assert extractor is None
+
+
+def test_modern_reddit_comments_url_falls_back_to_generic_extraction() -> None:
+    """Modern Reddit HTML should not be forced through the old Reddit resolver."""
+    from markitai.webextract.pipeline import extract_web_content
+
+    html = """
+    <html>
+      <body>
+        <main>
+          <h1>This is a long modern Reddit title that can pass sparse quality checks</h1>
+          <div>
+            <p>
+              Modern Reddit body text should survive generic extraction when the
+              old Reddit resolver does not apply.
+            </p>
+          </div>
+        </main>
+      </body>
+    </html>
+    """
+
+    result = extract_web_content(
+        html,
+        "https://www.reddit.com/r/Python/comments/xyz/topic/",
+    )
+
+    assert result.semantic is None
+    assert (
+        "Modern Reddit body text should survive generic extraction" in result.markdown
+    )
