@@ -6,6 +6,7 @@ This module contains functions for fetching and processing URLs.
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -518,18 +519,43 @@ async def process_url(
         progress.clear_and_finish()
 
         if stdout_mode:
-            # stdout mode: print final content to console, strip asset refs
             from markitai.cli.processors.file import resolve_asset_references
 
             assert temp_dir is not None  # guaranteed when stdout_mode is True
             stdout_content = final_content
-            # If LLM produced a .llm.md file, prefer that
             if cfg.llm.enabled:
                 llm_file = output_file.with_suffix(".llm.md")
                 if llm_file.exists():
                     stdout_content = llm_file.read_text(encoding="utf-8")
-            stdout_content = resolve_asset_references(stdout_content, temp_dir=temp_dir)
-            console.print(stdout_content, markup=False, highlight=False)
+
+            # Detect terminal image protocol (only if stdout is a TTY)
+            from markitai.utils.terminal_image import detect_protocol
+
+            protocol = detect_protocol()
+
+            # Set up asset store if persistence is configured
+            store = None
+            if cfg.image.stdout_persist:
+                from markitai.utils.asset_store import AssetStore
+
+                try:
+                    store = AssetStore(Path(cfg.image.stdout_persist_dir))
+                except Exception as e:
+                    logger.warning(f"Asset store init failed: {e}")
+
+            stdout_content = resolve_asset_references(
+                stdout_content,
+                temp_dir=temp_dir,
+                protocol=protocol,
+                asset_store=store,
+                source_name=url,
+            )
+
+            if protocol is not None:
+                sys.stdout.write(stdout_content)
+                sys.stdout.flush()
+            else:
+                console.print(stdout_content, markup=False, highlight=False)
         else:
             # File mode: generate report and show concise result
             finished_at = datetime.now()
