@@ -804,6 +804,7 @@ async def process_batch(
 
         try:
             async with url_semaphore:
+                batch.update_url_status(url)
                 result, extra_info = await url_processor(url, source_file, custom_name)
 
             if result.success:
@@ -856,6 +857,15 @@ async def process_batch(
 
         try:
             async with file_semaphore:
+                display_name = file_path.name
+                if batch.input_path is not None:
+                    try:
+                        display_name = file_path.relative_to(
+                            batch.input_path
+                        ).as_posix()
+                    except ValueError:
+                        display_name = file_path.name
+                batch.set_current_file(file_key, display_name)
                 result = await process_file(file_path)
 
             if result.success:
@@ -888,7 +898,7 @@ async def process_batch(
             file_state.duration = end_time - start_time
 
             # Update progress
-            batch.advance_progress()
+            batch.advance_progress(current_item=file_key)
 
         # Save state (non-blocking, throttled)
         await asyncio.to_thread(batch.save_state)

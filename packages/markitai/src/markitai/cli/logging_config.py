@@ -362,6 +362,52 @@ def _is_third_party_log(name: str, module: str) -> bool:
     return False
 
 
+def _get_record_field(record: Any, key: str) -> str:
+    """Read a field from a loguru record, falling back to bound extras."""
+    value = record.get(key)
+    if isinstance(value, str) and value:
+        return value
+    extra_value = record.get("extra", {}).get(key, "")
+    return extra_value if isinstance(extra_value, str) else ""
+
+
+def _is_internal_info_noise(record: Any) -> bool:
+    """Return whether an INFO log is diagnostic noise for terminal output."""
+    message = record.get("message", "")
+    name = _get_record_field(record, "name").lower()
+    module = _get_record_field(record, "module").lower()
+
+    noisy_prefixes = (
+        "[Router]",
+        "[HybridRouter]",
+        "[LLM] ",
+        "Fetching URL:",
+        "Fetched via ",
+        "Processing URL:",
+        "Completed via ",
+        "Screenshot saved:",
+        "Written output:",
+        "Written LLM version",
+        "[Core] Written pure Vision output:",
+        "Created fallback LLM file with screenshot:",
+        "Analyzing ",
+    )
+    if any(message.startswith(prefix) for prefix in noisy_prefixes):
+        return True
+
+    noisy_modules = {"core", "document", "vision"}
+    if module in noisy_modules:
+        return True
+
+    noisy_names = (
+        "markitai.llm.processor",
+        "markitai.llm.document",
+        "markitai.llm.vision",
+        "markitai.workflow.core",
+    )
+    return any(name.endswith(candidate) for candidate in noisy_names)
+
+
 def _should_show_log(record: Any, verbose: bool) -> bool:
     """Filter function for console logging.
 
@@ -385,9 +431,10 @@ def _should_show_log(record: Any, verbose: bool) -> bool:
     if level in ("WARNING", "ERROR", "CRITICAL"):
         return True
 
-    # Get the module/name from the record (bound by InterceptHandler)
-    name = record.get("extra", {}).get("name", "")
-    module = record.get("extra", {}).get("module", "")
+    # Get the module/name from the record (bound by InterceptHandler for stdlib logs,
+    # or from native loguru record fields for first-party logs).
+    name = _get_record_field(record, "name")
+    module = _get_record_field(record, "module")
 
     # Filter out third-party INFO
     if level == "INFO" and _is_third_party_log(name, module):
@@ -397,6 +444,9 @@ def _should_show_log(record: Any, verbose: bool) -> bool:
     # User-facing output uses ui.* functions (ui.success, ui.summary, etc.)
     # which write directly to console, not through logger
     if not verbose and level == "INFO":
+        return False
+
+    if level == "INFO" and _is_internal_info_noise(record):
         return False
 
     return True

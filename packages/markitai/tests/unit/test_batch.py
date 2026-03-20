@@ -775,6 +775,68 @@ class TestBatchProcessor:
         assert state.completed_count == 2
         assert state.failed_count == 0
 
+    def test_progress_tracks_multiple_active_files(self, tmp_path: Path) -> None:
+        """File progress should show multiple active items instead of last-writer-wins."""
+
+        class FakeProgress:
+            def __init__(self) -> None:
+                self.updates: list[dict[str, str]] = []
+                self.advanced: list[int] = []
+
+            def update(self, task_id: int, **kwargs) -> None:
+                self.updates.append(kwargs)
+
+            def advance(self, task_id: int) -> None:
+                self.advanced.append(task_id)
+
+        processor = BatchProcessor(BatchConfig(), tmp_path / "output")
+        processor._progress = FakeProgress()
+        processor._overall_task_id = 1
+
+        processor.set_current_file("alpha.txt")
+        processor.set_current_file("beta.txt")
+
+        current = processor._progress.updates[-1]["current"]
+        assert "alpha.txt" in current
+        assert "beta.txt" in current
+
+        processor.advance_progress(current_item="alpha.txt")
+
+        current = processor._progress.updates[-1]["current"]
+        assert "beta.txt" in current
+        assert "alpha.txt" not in current
+
+    def test_progress_tracks_multiple_active_urls(self, tmp_path: Path) -> None:
+        """URL progress should show all active domains, not just the last one."""
+
+        class FakeProgress:
+            def __init__(self) -> None:
+                self.updates: list[dict[str, str]] = []
+                self.advanced: list[int] = []
+
+            def update(self, task_id: int, **kwargs) -> None:
+                self.updates.append(kwargs)
+
+            def advance(self, task_id: int) -> None:
+                self.advanced.append(task_id)
+
+        processor = BatchProcessor(BatchConfig(), tmp_path / "output")
+        processor._progress = FakeProgress()
+        processor._url_task_id = 2
+
+        processor.update_url_status("https://a.example.com/path")
+        processor.update_url_status("https://b.example.com/path")
+
+        current = processor._progress.updates[-1]["current"]
+        assert "a.example.com" in current
+        assert "b.example.com" in current
+
+        processor.update_url_status("https://a.example.com/path", completed=True)
+
+        current = processor._progress.updates[-1]["current"]
+        assert "b.example.com" in current
+        assert "a.example.com" not in current
+
     async def test_process_batch_with_failures(self, tmp_path: Path) -> None:
         """Test batch processing with some failures."""
         input_dir = tmp_path / "input"
