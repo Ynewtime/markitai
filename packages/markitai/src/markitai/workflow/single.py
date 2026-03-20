@@ -151,9 +151,7 @@ class SingleFileWorkflow:
 
             # Write LLM version
             llm_output = output_file.with_suffix(".llm.md")
-            llm_content = self.processor.format_llm_output(
-                cleaned, frontmatter, source=source
-            )
+            llm_content = self.processor.format_llm_output(cleaned, frontmatter)
 
             # Append commented image links if provided
             commented_images: list[str] = []
@@ -230,7 +228,6 @@ class SingleFileWorkflow:
         markdown: str,
         output_file: Path,
         input_path: Path | None = None,
-        concurrency_limit: int | None = None,  # noqa: ARG002 - kept for API compat
     ) -> tuple[str, float, dict[str, dict[str, Any]], ImageAnalysisResult | None]:
         """Analyze images with LLM Vision.
 
@@ -239,7 +236,6 @@ class SingleFileWorkflow:
             markdown: Original markdown content
             output_file: Output markdown file path
             input_path: Source input file path
-            concurrency_limit: Deprecated - concurrency is controlled by processor.semaphore
 
         Returns:
             Tuple of (updated markdown, cost_usd, llm_usage, image_analysis_result)

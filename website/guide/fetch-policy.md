@@ -6,16 +6,16 @@ Markitai uses a policy-driven Fetch Policy Engine to determine the best strategy
 
 The engine follows a policy-driven approach to select the order of fetching strategies:
 
-1. **Explicit Strategy**: If you provide an explicit strategy (e.g., `--playwright` or `--jina`), the engine will use only that strategy.
+1. **Explicit Strategy**: If you provide an explicit strategy (e.g., `--playwright`, `--defuddle`, or `--jina`), the engine will use only that strategy.
 2. **Domain Profiles**: You can configure specific settings for individual domains, such as custom selectors to wait for or extra wait times.
 3. **Adaptive Fallback**: In `auto` mode (default), the engine intelligently orders strategies based on the domain and previous success history.
 
 ### Default Order (Standard Domains)
 
-For most websites, Markitai prioritizes speed:
+For most websites, Markitai prioritizes free, fast strategies first:
 
 ```
-Static (HTTP) → Playwright (Browser) → Cloudflare → Jina
+Defuddle → Jina → Static (HTTP) → Playwright (Browser) → Cloudflare
 ```
 
 ### SPA/Heavy-JS Order
@@ -23,7 +23,7 @@ Static (HTTP) → Playwright (Browser) → Cloudflare → Jina
 For domains known to require JavaScript (like `x.com`, `instagram.com`, or domains that have failed static fetching before):
 
 ```
-Playwright (Browser) → Cloudflare → Jina → Static
+Defuddle → Jina → Playwright (Browser) → Cloudflare → Static
 ```
 
 ## Configuration
@@ -68,7 +68,7 @@ Domain profiles allow per-domain overrides for fetch behavior:
 | `wait_for_selector` | string | `null` | CSS selector to wait for before extracting content |
 | `wait_for` | string | `"domcontentloaded"` | Page load event to wait for (`load`, `domcontentloaded`, `networkidle`) |
 | `extra_wait_ms` | integer | `3000` | Extra milliseconds to wait after page load event |
-| `prefer_strategy` | string | `null` | Preferred strategy for this domain (`playwright`, `cloudflare`, `jina`, `static`) |
+| `prefer_strategy` | string | `null` | Preferred strategy for this domain (`static`, `defuddle`, `playwright`, `cloudflare`, `jina`) |
 
 Example with multiple domains:
 
@@ -133,7 +133,7 @@ If the environment variable is set but curl-cffi is not installed, Markitai sile
 ```
 URL Request
     │
-    ├─ Explicit strategy (--playwright/--jina/--cloudflare)?
+    ├─ Explicit strategy (--static/--defuddle/--playwright/--jina/--cloudflare)?
     │       └─ Yes → Use only that strategy
     │
     ├─ Domain in SPA cache or known JS-heavy?

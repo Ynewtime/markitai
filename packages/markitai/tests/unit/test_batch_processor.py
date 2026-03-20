@@ -6,6 +6,9 @@ Tests for packages/markitai/src/markitai/cli/processors/batch.py
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -252,6 +255,57 @@ class TestCreateProcessFile:
 
         assert result.success is True
         assert result.error == "skipped (exists)"
+
+    def test_process_file_subprocess_exits_cleanly(
+        self,
+        sample_input_dir: Path,
+        sample_output_dir: Path,
+    ) -> None:
+        """Running process_file under asyncio.run should not hang on shutdown."""
+        script = textwrap.dedent(
+            f"""
+            import asyncio
+            from pathlib import Path
+
+            from markitai.cli.processors.batch import create_process_file
+            from markitai.config import MarkitaiConfig
+
+            async def main():
+                process_file = create_process_file(
+                    cfg=MarkitaiConfig(),
+                    input_dir=Path({str(sample_input_dir)!r}),
+                    output_dir=Path({str(sample_output_dir)!r}),
+                    preconverted_map={{}},
+                    shared_processor=None,
+                )
+                result = await process_file(Path({str(sample_input_dir / "doc3.txt")!r}))
+                print("after_process", result.success, result.error, flush=True)
+
+            asyncio.run(main())
+            print("script_exit", flush=True)
+            """
+        )
+
+        try:
+            result = subprocess.run(
+                [sys.executable, "-u", "-c", script],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout or ""
+            stderr = exc.stderr or ""
+            pytest.fail(
+                "subprocess hung during asyncio shutdown\n"
+                f"stdout:\n{stdout}\n"
+                f"stderr:\n{stderr}"
+            )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "after_process True None" in result.stdout
+        assert "script_exit" in result.stdout
 
     @pytest.mark.asyncio
     async def test_process_file_with_shared_processor(

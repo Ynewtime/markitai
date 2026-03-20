@@ -417,7 +417,6 @@ def create_url_processor(
                             output_file,
                             cfg,
                             Path(url),
-                            concurrency_limit=cfg.llm.concurrency,
                             processor=shared_processor,
                             llm_ready_event=llm_ready_event,
                         )
@@ -478,7 +477,6 @@ def create_url_processor(
                         output_file,
                         cfg,
                         Path(url),  # Use URL as source path
-                        concurrency_limit=cfg.llm.concurrency,
                         processor=shared_processor,
                         llm_ready_event=llm_ready_event,
                     )

@@ -62,13 +62,13 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Yne
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.11.2"
+export MARKITAI_VERSION="0.12.0"
 export UV_VERSION="0.9.27"
 curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.10.0"
+$env:MARKITAI_VERSION = "0.12.0"
 $env:UV_VERSION = "0.9.27"
 powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
 ```
@@ -201,12 +201,11 @@ output/
 
 | 格式 | 扩展名 |
 |------|--------|
-| Word | `.docx`, `.doc` |
-| PowerPoint | `.pptx`, `.ppt` |
-| Excel | `.xlsx`, `.xls` |
+| Office 文档 | `.docx`, `.doc`, `.pptx`, `.ppt`, `.xlsx`, `.xls`, `.odt`, `.ods`, `.numbers` |
 | PDF | `.pdf` |
-| 文本 | `.txt`, `.md`, `.markdown` |
-| 图片 | `.jpg`, `.jpeg`, `.png`, `.webp` |
+| 文本 / 标记 / 结构化数据 | `.txt`, `.md`, `.markdown`, `.html`, `.htm`, `.xhtml`, `.xml`, `.csv`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex` |
+| 图片 | `.jpg`, `.jpeg`, `.png`, `.webp`, `.svg`, `.gif`, `.bmp`, `.tiff`, `.tif` |
+| 其他文档 | `.epub`, `.eml`, `.msg`, `.ipynb` |
 | URL | `http://`, `https://` |
 
 ## 平台特定功能

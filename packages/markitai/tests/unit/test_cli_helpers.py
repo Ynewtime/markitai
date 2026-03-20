@@ -412,25 +412,25 @@ class TestUrlHelpers:
         assert filename.endswith(".md")
 
     def test_sanitize_filename(self) -> None:
-        """Test _sanitize_filename function."""
-        from markitai.cli import _sanitize_filename
+        """Test sanitize_filename function."""
+        from markitai.cli import sanitize_filename
 
         # Remove invalid characters
-        assert _sanitize_filename("file<name>") == "file_name_"
-        assert _sanitize_filename("file:name") == "file_name"
-        assert _sanitize_filename('file"name') == "file_name"
+        assert sanitize_filename("file<name>") == "file_name_"
+        assert sanitize_filename("file:name") == "file_name"
+        assert sanitize_filename('file"name') == "file_name"
 
         # Strip leading/trailing spaces and dots
-        assert _sanitize_filename("  file  ") == "file"
-        assert _sanitize_filename("...file...") == "file"
+        assert sanitize_filename("  file  ") == "file"
+        assert sanitize_filename("...file...") == "file"
 
         # Empty string fallback
-        assert _sanitize_filename("") == "unnamed"
-        assert _sanitize_filename("...") == "unnamed"
+        assert sanitize_filename("") == "unnamed"
+        assert sanitize_filename("...") == "unnamed"
 
         # Length limit
         long_name = "a" * 300
-        result = _sanitize_filename(long_name)
+        result = sanitize_filename(long_name)
         assert len(result) <= 200
 
 

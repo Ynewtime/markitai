@@ -117,7 +117,7 @@ async def process_with_llm(
 
         # Write LLM version
         llm_output = output_file.with_suffix(".llm.md")
-        llm_content = processor.format_llm_output(cleaned, frontmatter, source=source)
+        llm_content = processor.format_llm_output(cleaned, frontmatter)
 
         # Check if page_images comments already exist in content
         # process_document's placeholder protection should preserve them
@@ -203,7 +203,6 @@ async def analyze_images_with_llm(
     output_file: Path,
     cfg: MarkitaiConfig,
     input_path: Path | None = None,
-    concurrency_limit: int | None = None,  # noqa: ARG001 - kept for API compat
     processor: LLMProcessor | None = None,
     llm_ready_event: asyncio.Event | None = None,
     llm_ready_timeout: float = DEFAULT_LLM_READY_TIMEOUT,
@@ -222,7 +221,6 @@ async def analyze_images_with_llm(
         output_file: Output markdown file path
         cfg: Configuration
         input_path: Source input file path (for absolute path in JSON)
-        concurrency_limit: Deprecated - concurrency controlled by processor.semaphore
         processor: Optional shared LLMProcessor (created if not provided)
         llm_ready_event: Optional event set by the parallel LLM task after writing .llm.md
         llm_ready_timeout: Timeout in seconds for awaiting the event (default 300s)

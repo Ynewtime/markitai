@@ -67,7 +67,7 @@ markitai https://example.com --screenshot
 ```
 
 ::: tip
-For URLs, `--screenshot` automatically upgrades the fetch strategy to `playwright` if needed. The screenshot is saved as `{domain}_path.full.jpg` in the `screenshots/` subdirectory.
+For URLs, `--screenshot` automatically upgrades the fetch strategy to `playwright` if needed. The screenshot is saved as `{domain}_path.full.jpg` in the `.markitai/screenshots/` subdirectory.
 :::
 
 ### `--screenshot-only`
@@ -224,12 +224,55 @@ https://example.com/page1
 https://example.com/page2
 ```
 
+### `--glob, -g <pattern>`
+
+Restrict directory batch discovery to matching relative paths. Can be repeated to add multiple patterns. Prefix with `!` to exclude.
+
+```bash
+# Only process PDF files
+markitai ./docs -o ./output -g "*.pdf"
+
+# Process PDFs and DOCX files
+markitai ./docs -o ./output -g "*.pdf" -g "*.docx"
+
+# Exclude a subdirectory
+markitai ./docs -o ./output -g '!drafts/**'
+```
+
+::: tip
+Only applies to directory input. Use single quotes in shells with history expansion (e.g., zsh) when using `!` prefix.
+:::
+
+### `--max-depth <n>`
+
+Override recursive directory scan depth for batch discovery. `0` means only scan the input directory itself (no recursion).
+
+```bash
+markitai ./docs -o ./output --max-depth 2
+```
+
 ### `--url-concurrency <n>`
 
 Number of concurrent URL fetch operations (default: 5). This is separate from `--batch-concurrency` to prevent slow URLs from blocking file processing.
 
 ```bash
 markitai ./docs -o ./output --url-concurrency 5
+```
+
+### `--defuddle`
+
+Force Defuddle API for URL fetching. Free, no authentication required, with excellent content cleaning.
+
+```bash
+markitai https://example.com --defuddle
+```
+
+### `--static`
+
+Force static HTTP fetch with native webextract. No external API needed.
+
+```bash
+markitai https://example.com --static
 ```
 
 ### `--playwright`
@@ -278,8 +321,23 @@ Cloudflare Browser Rendering is available on the Free plan. Workers AI toMarkdow
 :::
 
 ::: warning
-`--playwright`, `--jina`, and `--cloudflare` are mutually exclusive. You can only use one at a time.
+`--playwright`, `--defuddle`, `--static`, `--jina`, and `--cloudflare` are mutually exclusive URL strategies. You can only use one at a time.
 :::
+
+### `--kreuzberg`
+
+Force kreuzberg converter for all file formats, overriding native converters. This is a **file conversion** option (orthogonal to URL fetch strategies), and can be combined with `--playwright`, `--defuddle`, `--static`, or `--jina`. However, `--kreuzberg` and `--cloudflare` are mutually exclusive since both override file conversion.
+
+```bash
+# Install kreuzberg
+uv pip install markitai[kreuzberg]
+
+# Use kreuzberg converter
+markitai document.pdf --kreuzberg
+
+# Combine with a URL strategy
+markitai https://example.com --kreuzberg --playwright
+```
 
 ## Setup Commands
 
@@ -430,6 +488,85 @@ Example output:
 
 ::: tip
 When using local providers (`claude-agent/` or `copilot/`), the doctor command also checks authentication status and provides resolution hints if authentication fails.
+:::
+
+## Authentication Commands
+
+### `markitai auth`
+
+Authentication helpers for local providers (Gemini, Copilot, Claude, ChatGPT).
+
+### `markitai auth gemini status`
+
+Show current Gemini authentication profile.
+
+```bash
+markitai auth gemini status
+markitai auth gemini status --json    # JSON output
+```
+
+### `markitai auth gemini login`
+
+Run Gemini OAuth login and save a Markitai-managed profile.
+
+```bash
+# Default: Google One mode
+markitai auth gemini login
+
+# Code Assist mode with project ID
+markitai auth gemini login --mode code-assist --project-id my-project
+```
+
+### `markitai auth copilot status`
+
+Show GitHub Copilot CLI authentication status.
+
+```bash
+markitai auth copilot status
+```
+
+### `markitai auth copilot login`
+
+Run GitHub Copilot CLI authentication.
+
+```bash
+markitai auth copilot login
+```
+
+### `markitai auth claude status`
+
+Show Claude Code CLI authentication status.
+
+```bash
+markitai auth claude status
+```
+
+### `markitai auth claude login`
+
+Run Claude Code CLI authentication.
+
+```bash
+markitai auth claude login
+```
+
+### `markitai auth chatgpt status`
+
+Show ChatGPT OAuth authentication status.
+
+```bash
+markitai auth chatgpt status
+```
+
+### `markitai auth chatgpt login`
+
+Run ChatGPT OAuth Device Code Flow authentication.
+
+```bash
+markitai auth chatgpt login
+```
+
+::: tip
+You can also use `markitai doctor` to check authentication status for all configured providers at once.
 :::
 
 ## Other Options

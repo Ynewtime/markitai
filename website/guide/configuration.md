@@ -109,6 +109,10 @@ markitai config set llm.enabled true
   },
   "fetch": {
     "strategy": "auto",
+    "defuddle": {
+      "timeout": 30,
+      "rpm": 20
+    },
     "playwright": {
       "timeout": 30000,
       "wait_for": "domcontentloaded",
@@ -152,7 +156,7 @@ markitai config set llm.enabled true
   "log": {
     "level": "INFO",
     "format": "text",
-    "dir": "~/.markitai/logs",
+    "dir": null,
     "rotation": "10 MB",
     "retention": "7 days"
   },
@@ -244,7 +248,7 @@ Gemini CLI provider can reuse existing Gemini CLI credentials. Install the CLI a
 
 ```bash
 # Install Gemini CLI (optional — provider has built-in OAuth)
-npm install -g @anthropic-ai/gemini-cli
+npm install -g @google/gemini-cli
 gemini  # Triggers OAuth login on first run
 
 # Install google-auth for automatic token refresh
@@ -260,7 +264,7 @@ provider/model-name
 ```
 
 Examples:
-- `openai/gpt-4o`
+- `openai/gpt-5.2`
 - `anthropic/claude-sonnet-4-20250514`
 - `gemini/gemini-2.5-flash`
 - `deepseek/deepseek-chat`
@@ -275,10 +279,9 @@ Claude Agent SDK supported models:
 - Full model strings: `claude-sonnet-4-5-20250929`, `claude-opus-4-6`, `claude-opus-4-5-20251101`
 
 GitHub Copilot SDK supported models:
-- OpenAI: `gpt-5.2`, `gpt-5.1`, `gpt-5-mini`, `gpt-5.1-codex`
-- Anthropic: `claude-sonnet-4.5`, `claude-opus-4.6`, `claude-haiku-4.5`
-- Google: `gemini-2.5-pro`, `gemini-3-flash`
-- Availability depends on your Copilot subscription
+- Supports all models available to your Copilot subscription (except o1/o3 reasoning models)
+- Examples: `gpt-5.2`, `claude-sonnet-4.5`, `gemini-2.5-pro`, etc.
+- Availability depends on your Copilot subscription plan
 
 ChatGPT supported models:
 - `gpt-5.2`, `gpt-5.2-codex`, `codex-mini`, etc.
@@ -286,11 +289,11 @@ ChatGPT supported models:
 Gemini CLI supported models:
 - `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3-flash-preview`, etc.
 
-::: warning Model Deprecation Notice
-The following models will be **retired on February 13, 2025**:
+::: warning Deprecated Models
+The following models were **retired on February 13, 2025** and are no longer available:
 - `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini`, `gpt-5`
 
-Please migrate to `gpt-5.2` or other supported models before the deadline.
+Please use `gpt-5.2` or other currently supported models.
 :::
 
 ::: tip Local Providers Support Vision
@@ -343,7 +346,7 @@ Examples:
 
 // Azure OpenAI
 {
-  "model": "azure/gpt-4o",
+  "model": "azure/gpt-5.2",
   "api_key": "env:AZURE_API_KEY",
   "api_base": "https://your-resource.openai.azure.com"
 }
@@ -461,8 +464,12 @@ Set `weight: 0` to temporarily disable a model without removing its configuratio
 Local providers (`claude-agent/`, `copilot/`, `chatgpt/`, `gemini-cli/`) use **adaptive timeout calculation** based on request complexity:
 
 - Base timeout: 60 seconds minimum, 600 seconds maximum
-- Factors considered: prompt length, number of images, expected output length
-- Formula: `base_timeout + (prompt_chars / 500) + (images * 30) + (expected_output / 200)`
+- Factors: prompt length, image presence/count, expected output tokens
+- Formula:
+  1. `timeout = 60 + (prompt_chars / 500)`
+  2. If images: `timeout *= 1.5`, then add `(extra_images - 1) * 10s` for multiple images
+  3. If expected output tokens provided: add `tokens / 4`
+  4. Clamp to [60, 600] seconds
 
 This prevents timeouts on large documents while keeping short requests responsive.
 
@@ -543,7 +550,7 @@ When enabled (`--screenshot` or `--preset rich`):
 | `quality` | `75` | JPEG compression quality (1-100) |
 | `max_height` | `10000` | Maximum screenshot height in pixels |
 
-Screenshots are saved to `output/screenshots/` directory.
+Screenshots are saved to the `.markitai/screenshots/` subdirectory within the output directory.
 
 ::: tip
 For URLs, enabling `--screenshot` automatically upgrades the fetch strategy to `playwright` if needed. This ensures the page is fully rendered before capturing.
@@ -676,8 +683,9 @@ Configure how URLs are fetched:
 
 | Strategy | Description |
 |----------|-------------|
-| `auto` | Auto-detect: use playwright for patterns in `fallback_patterns`, static otherwise |
-| `static` | Use MarkItDown's built-in URL converter (fast, no JS) |
+| `auto` | Auto-detect: tries strategies in priority order (defuddle → jina → static → playwright → cloudflare); SPA domains promote playwright |
+| `static` | Use static HTTP fetch with native webextract (fast, no JS) |
+| `defuddle` | Use Defuddle API for clean content extraction (free, no auth) |
 | `playwright` | Use Playwright for JS-rendered pages (SPA support) |
 | `jina` | Use Jina Reader API |
 | `cloudflare` | Use Cloudflare Browser Rendering `/markdown` API |
@@ -708,6 +716,30 @@ Configure how URLs are fetched:
 | `no_cache` | `false` | Disable Jina's server-side cache |
 | `target_selector` | `null` | CSS selector to target specific page content |
 | `wait_for_selector` | `null` | CSS selector to wait for before extraction |
+
+### Defuddle Settings
+
+[Defuddle](https://defuddle.md) extracts clean article content from web pages, removing clutter like ads, sidebars, and navigation. Returns Markdown with rich YAML frontmatter (title, author, published, description, word_count).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `timeout` | `30` | Request timeout in seconds |
+| `rpm` | `20` | Rate limit in requests per minute |
+
+```json
+{
+  "fetch": {
+    "defuddle": {
+      "timeout": 30,
+      "rpm": 20
+    }
+  }
+}
+```
+
+::: tip
+Defuddle is free and requires no API key or authentication. It's a good default for article-heavy websites.
+:::
 
 ### Cloudflare Settings
 
@@ -824,11 +856,11 @@ Configure per-domain fetch overrides for sites with specific requirements:
 | `wait_for_selector` | `null` | CSS selector to wait for before content extraction |
 | `wait_for` | `null` | Wait condition override: `load`, `domcontentloaded`, `networkidle` |
 | `extra_wait_ms` | `null` | Extra wait time override (ms) |
-| `prefer_strategy` | `null` | Preferred strategy: `static`, `playwright`, `cloudflare`, `jina` |
+| `prefer_strategy` | `null` | Preferred strategy: `static`, `defuddle`, `playwright`, `cloudflare`, `jina` |
 
 ### Fallback Patterns
 
-Sites matching these patterns automatically use browser strategy:
+Sites matching these patterns are treated as SPA/JS-heavy, promoting browser rendering in the strategy order:
 
 ```json
 {
@@ -916,7 +948,7 @@ Configure logging behavior:
   "log": {
     "level": "INFO",
     "format": "text",
-    "dir": "~/.markitai/logs",
+    "dir": null,
     "rotation": "10 MB",
     "retention": "7 days"
   }
@@ -927,7 +959,7 @@ Configure logging behavior:
 |---------|---------|-------------|
 | `level` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `format` | `text` | Log format: `text` (human-readable) or `json` (structured) |
-| `dir` | `~/.markitai/logs` | Log file directory |
+| `dir` | `null` | Log file directory (auto-detected if not set) |
 | `rotation` | `10 MB` | Rotate when file exceeds this size |
 | `retention` | `7 days` | Delete logs older than this |
 
@@ -949,10 +981,6 @@ Customize LLM prompts for different tasks. Each prompt is split into **system** 
     "image_analysis_user": null,
     "page_content_system": null,
     "page_content_user": null,
-    "document_enhance_system": null,
-    "document_enhance_user": null,
-    "document_enhance_complete_system": null,
-    "document_enhance_complete_user": null,
     "document_process_system": null,
     "document_process_user": null,
     "document_vision_system": null,
@@ -967,12 +995,12 @@ Create custom prompt files in the prompts directory:
 
 ```
 ~/.markitai/prompts/
-├── cleaner_system.md          # Document cleaning role & rules
-├── cleaner_user.md            # Document cleaning content template
-├── image_caption_system.md    # Alt text generation role
-├── image_caption_user.md      # Alt text content template
-├── document_enhance_system.md # Document enhancement role
-└── document_process_system.md # Document processing role
+├── cleaner_system.md            # Document cleaning role & rules
+├── cleaner_user.md              # Document cleaning content template
+├── image_caption_system.md      # Alt text generation role
+├── image_caption_user.md        # Alt text content template
+├── document_process_system.md   # Document processing role
+└── url_enhance_system.md        # URL enhancement role
 ```
 
 Set a specific prompt file path:
