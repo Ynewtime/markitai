@@ -32,8 +32,9 @@ console = get_console()
 
 # Pattern matches markdown image references to .markitai/assets/ or .markitai/screenshots/
 # Supports both forward slash and backslash for Windows compatibility
+# Groups: 1=alt text, 2=subdir (assets|screenshots), 3=filename
 _ASSET_REF_PATTERN = re.compile(
-    r"!\[([^\]]*)\]\(\.markitai[/\\](?:assets|screenshots)[/\\]([^)]+)\)"
+    r"!\[([^\]]*)\]\(\.markitai[/\\](assets|screenshots)[/\\]([^)]+)\)"
 )
 
 
@@ -62,19 +63,18 @@ def resolve_asset_references(
         Markdown with asset references resolved.
     """
 
-    def _resolve_image_path(match: re.Match[str], filename: str) -> Path:
-        """Resolve the actual image file path from a regex match."""
+    def _resolve_image_path(subdir: str, filename: str) -> Path:
+        """Resolve the actual image file path from captured regex groups."""
         filename_normalized = filename.replace("\\", "/")
-        full_match = match.group(0)
-        subdir = "assets" if "assets" in full_match else "screenshots"
         return temp_dir / ".markitai" / subdir / filename_normalized
 
     def _replace(match: re.Match[str]) -> str:
-        filename = match.group(2)
+        subdir = match.group(2)  # "assets" or "screenshots" — captured group
+        filename = match.group(3)
 
         if protocol is not None:
             # Tier 1: terminal inline image
-            image_path = _resolve_image_path(match, filename)
+            image_path = _resolve_image_path(subdir, filename)
             if image_path.exists():
                 from markitai.utils.terminal_image import render_inline_image
 
@@ -85,7 +85,7 @@ def resolve_asset_references(
 
         if asset_store is not None:
             # Tier 2: persistent asset store
-            image_path = _resolve_image_path(match, filename)
+            image_path = _resolve_image_path(subdir, filename)
             if image_path.exists():
                 try:
                     ref_path = asset_store.save(image_path, source_name)

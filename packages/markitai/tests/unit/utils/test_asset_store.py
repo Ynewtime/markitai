@@ -134,6 +134,44 @@ class TestAssetStoreHashCollision:
         assert ref1.resolve() != ref2.resolve()
 
 
+class TestAssetStoreSourceNameSanitization:
+    """source_name is sanitized to a single-level safe directory name."""
+
+    def _make_image(self, tmp_path: Path, name: str, content: bytes) -> Path:
+        img = tmp_path / name
+        img.write_bytes(content)
+        return img
+
+    def test_url_source_name_creates_flat_dir(self, tmp_path: Path) -> None:
+        """A URL source_name must not create nested directories."""
+        store = AssetStore(tmp_path / "store")
+        img = self._make_image(tmp_path, "img.jpg", b"data")
+
+        ref_path = store.save(img, "https://example.com/path?q=1")
+
+        # Symlink must be valid and readable
+        assert ref_path.read_bytes() == b"data"
+        # refs dir must be flat (no nested https:/example.com/...)
+        refs_dir = tmp_path / "store" / "refs"
+        subdirs = [p.name for p in refs_dir.iterdir()]
+        assert len(subdirs) == 1
+        assert "/" not in subdirs[0]
+
+    def test_windows_path_source_name(self, tmp_path: Path) -> None:
+        store = AssetStore(tmp_path / "store")
+        img = self._make_image(tmp_path, "img.jpg", b"data")
+
+        ref_path = store.save(img, "C:\\Users\\docs\\report.pdf")
+        assert ref_path.read_bytes() == b"data"
+
+    def test_simple_filename_unchanged(self, tmp_path: Path) -> None:
+        store = AssetStore(tmp_path / "store")
+        img = self._make_image(tmp_path, "img.jpg", b"data")
+
+        ref_path = store.save(img, "sample.pdf")
+        assert "sample.pdf" in str(ref_path)
+
+
 class TestAssetStoreErrorHandling:
     """AssetStore errors should not propagate — fall through to placeholder."""
 

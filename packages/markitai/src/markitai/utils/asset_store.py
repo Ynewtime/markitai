@@ -7,7 +7,27 @@ Provides human-navigable symlink refs grouped by source file name.
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
+
+_UNSAFE_CHARS = re.compile(r"[/\\:*?\"<>|]+")
+
+
+def _sanitize_source_name(name: str) -> str:
+    """Sanitize a source name (filename or URL) into a safe single-level directory name.
+
+    Strips URL scheme, collapses unsafe characters to underscores, trims.
+    """
+    # Strip URL scheme (https://, http://, etc.)
+    cleaned = re.sub(r"^[a-zA-Z]+://", "", name)
+    # Replace path separators and other unsafe chars with underscore
+    cleaned = _UNSAFE_CHARS.sub("_", cleaned)
+    # Collapse multiple underscores, strip leading/trailing
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    # Truncate to reasonable length
+    if len(cleaned) > 200:
+        cleaned = cleaned[:200]
+    return cleaned or "unknown"
 
 
 def _content_hash(data: bytes) -> str:
@@ -45,6 +65,10 @@ class AssetStore:
         Raises:
             FileNotFoundError: If image_path does not exist.
         """
+        # Sanitize source_name to a single safe directory name.
+        # URLs, paths with slashes, etc. are collapsed to a flat name.
+        safe_source = _sanitize_source_name(source_name)
+
         data = image_path.read_bytes()
         ext = image_path.suffix  # e.g., ".jpg"
 
@@ -67,7 +91,7 @@ class AssetStore:
             blob_path.write_bytes(data)
 
         # Create ref symlink
-        ref_dir = self._refs_dir / source_name
+        ref_dir = self._refs_dir / safe_source
         ref_dir.mkdir(parents=True, exist_ok=True)
         ref_path = ref_dir / image_path.name
 

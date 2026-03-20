@@ -70,6 +70,70 @@ class TestResolveAssetReferences:
         result = resolve_asset_references(markdown, temp_dir=Path("/tmp/fake"))
         assert "![image: image.png]()" in result
 
+    def test_alt_text_containing_assets_does_not_misroute_screenshots(
+        self, tmp_path: Path
+    ) -> None:
+        """Alt text 'assets diagram' must not cause a screenshot to be looked up
+        under .markitai/assets/ instead of .markitai/screenshots/."""
+        # Set up a temp dir with only a screenshot file
+        ss_dir = tmp_path / ".markitai" / "screenshots"
+        ss_dir.mkdir(parents=True)
+        (ss_dir / "page.png").write_bytes(b"screenshot-data")
+
+        markdown = "![assets diagram](.markitai/screenshots/page.png)"
+        from markitai.utils.asset_store import AssetStore
+
+        store = AssetStore(tmp_path / "store")
+        result = resolve_asset_references(
+            markdown,
+            temp_dir=tmp_path,
+            asset_store=store,
+            source_name="test.pdf",
+        )
+
+        # Should persist via asset store, NOT fall back to placeholder
+        assert "![image:" not in result
+        assert "file://" in result
+
+    def test_asset_store_tier_persists_image(self, tmp_path: Path) -> None:
+        """When asset_store is provided and image exists, should produce file:// URI."""
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        (assets_dir / "chart.jpg").write_bytes(b"chart-data")
+
+        from markitai.utils.asset_store import AssetStore
+
+        store = AssetStore(tmp_path / "store")
+        markdown = "![chart](.markitai/assets/chart.jpg)"
+        result = resolve_asset_references(
+            markdown,
+            temp_dir=tmp_path,
+            asset_store=store,
+            source_name="doc.pdf",
+        )
+
+        assert "file://" in result
+        assert "chart.jpg" in result
+        assert "![image:" not in result  # not placeholder
+
+    def test_protocol_tier_renders_escape_sequence(self, tmp_path: Path) -> None:
+        """When protocol is provided and image exists, should produce escape sequence."""
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        (assets_dir / "img.png").write_bytes(b"\x89PNG" + b"\x00" * 50)
+
+        from markitai.utils.terminal_image import Protocol
+
+        markdown = "![diagram](.markitai/assets/img.png)"
+        result = resolve_asset_references(
+            markdown,
+            temp_dir=tmp_path,
+            protocol=Protocol.KITTY,
+        )
+
+        assert "\033_G" in result  # Kitty escape sequence
+        assert "![image:" not in result  # not placeholder
+
 
 import pytest
 
