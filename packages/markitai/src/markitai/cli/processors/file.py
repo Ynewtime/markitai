@@ -332,12 +332,37 @@ async def process_single_file(
             # stdout mode: output markdown content
             if final_output_file and final_output_file.exists():
                 final_content = final_output_file.read_text(encoding="utf-8")
-                # Strip .markitai/assets/ and .markitai/screenshots/ references
-                # since the temp directory will be deleted after printing
+
+                # Detect terminal image protocol (only if stdout is a TTY)
+                from markitai.utils.terminal_image import detect_protocol
+
+                protocol = detect_protocol()
+
+                # Set up asset store if persistence is configured
+                store = None
+                if cfg.image.stdout_persist:
+                    from markitai.utils.asset_store import AssetStore
+
+                    try:
+                        store = AssetStore(Path(cfg.image.stdout_persist_dir))
+                    except Exception as e:
+                        logger.warning(f"Asset store init failed: {e}")
+
+                # Resolve image references (protocol > persist > placeholder)
                 final_content = resolve_asset_references(
-                    final_content, temp_dir=temp_dir
+                    final_content,
+                    temp_dir=temp_dir,
+                    protocol=protocol,
+                    asset_store=store,
+                    source_name=input_path.name,
                 )
-                console.print(final_content, markup=False, highlight=False)
+
+                # Bypass Rich when escape sequences are present (terminal protocol)
+                if protocol is not None:
+                    sys.stdout.write(final_content)
+                    sys.stdout.flush()
+                else:
+                    console.print(final_content, markup=False, highlight=False)
         else:
             # File mode: show output path
             if verbose:
