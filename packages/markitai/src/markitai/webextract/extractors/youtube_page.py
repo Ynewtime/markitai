@@ -7,6 +7,8 @@ Comments are explicitly excluded from the thread model.
 
 from __future__ import annotations
 
+from html import escape
+
 from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.resolver import ResolvedPage
@@ -228,12 +230,12 @@ def _build_content_html(
     parts: list[str] = []
 
     if title:
-        parts.append(f"<h1>{title}</h1>")
+        parts.append(f"<h1>{escape(title)}</h1>")
 
     if channel:
-        parts.append(f"<p><strong>Channel:</strong> {channel}</p>")
+        parts.append(f"<p><strong>Channel:</strong> {escape(channel)}</p>")
 
-    parts.append(f'<p><a href="{url}">Watch on YouTube</a></p>')
+    parts.append(f'<p><a href="{escape(url)}">Watch on YouTube</a></p>')
 
     if description:
         # Preserve line breaks in description as paragraphs
@@ -242,7 +244,7 @@ def _build_content_html(
             parts.append("<div>")
             for para in paras:
                 # Replace single newlines with <br>
-                para_html = para.replace("\n", "<br>")
+                para_html = escape(para).replace("\n", "<br>")
                 parts.append(f"<p>{para_html}</p>")
             parts.append("</div>")
 

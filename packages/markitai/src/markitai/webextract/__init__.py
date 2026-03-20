@@ -15,6 +15,7 @@ __all__ = [
     "build_source_frontmatter",
     "coerce_source_frontmatter",
     "extract_web_content",
+    "is_native_extraction_acceptable",
     "is_native_markdown_acceptable",
 ]
 
@@ -56,3 +57,33 @@ def is_native_markdown_acceptable(markdown: str) -> bool:
         ``True`` if the markdown is considered acceptable.
     """
     return assess_native_markdown(markdown, profile="generic_article").accepted
+
+
+def is_native_extraction_acceptable(extracted: Any) -> bool:
+    """Check whether a typed native extraction result is acceptable.
+
+    Prefers the profile-aware quality gate when the extraction result carries
+    ``quality`` or ``info.content_profile``. Falls back to the historical
+    generic markdown gate for legacy callers and mocks.
+
+    Args:
+        extracted: Native extraction result object.
+
+    Returns:
+        ``True`` if the extraction should be preferred over legacy fallback
+        conversion.
+    """
+    markdown = getattr(extracted, "markdown", "")
+
+    quality = getattr(extracted, "quality", None)
+    accepted = getattr(quality, "accepted", None)
+    if isinstance(accepted, bool):
+        return accepted
+
+    info = getattr(extracted, "info", None)
+    content_profile = getattr(info, "content_profile", None)
+    if content_profile is not None:
+        profile = getattr(content_profile, "value", content_profile)
+        return assess_native_markdown(markdown, profile=str(profile)).accepted
+
+    return is_native_markdown_acceptable(markdown)

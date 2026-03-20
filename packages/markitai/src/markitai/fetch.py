@@ -47,12 +47,12 @@ try:
     from markitai.webextract import (
         coerce_source_frontmatter,
         extract_web_content,
-        is_native_markdown_acceptable,
+        is_native_extraction_acceptable,
     )
 except ImportError:  # pragma: no cover - optional during staged implementation
     extract_web_content = None  # type: ignore[assignment]
     coerce_source_frontmatter = None  # type: ignore[assignment]
-    is_native_markdown_acceptable = None  # type: ignore[assignment]
+    is_native_extraction_acceptable = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from markitai.config import (
@@ -1153,7 +1153,7 @@ def _build_native_fetch_result(
     if extract_web_content is None:
         return None
     # If extract_web_content is available, the other webextract functions are too
-    assert is_native_markdown_acceptable is not None
+    assert is_native_extraction_acceptable is not None
     assert coerce_source_frontmatter is not None
 
     try:
@@ -1165,7 +1165,7 @@ def _build_native_fetch_result(
     markdown = getattr(extracted, "markdown", "")
     diagnostics = dict(getattr(extracted, "diagnostics", {}) or {})
 
-    if not is_native_markdown_acceptable(markdown):
+    if not is_native_extraction_acceptable(extracted):
         diagnostics.setdefault("fallback_reason", "native_output_too_short")
         return None
 

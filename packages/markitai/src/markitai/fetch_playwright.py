@@ -40,12 +40,12 @@ try:
     from markitai.webextract import (
         coerce_source_frontmatter,
         extract_web_content,
-        is_native_markdown_acceptable,
+        is_native_extraction_acceptable,
     )
 except ImportError:  # pragma: no cover - optional during staged implementation
     extract_web_content = None  # type: ignore[assignment]
     coerce_source_frontmatter = None  # type: ignore[assignment]
-    is_native_markdown_acceptable = None  # type: ignore[assignment]
+    is_native_extraction_acceptable = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from markitai.config import ScreenshotConfig
@@ -529,9 +529,10 @@ class PlaywrightRenderer:
             # conversion. Only fall back to _html_to_markdown if webextract
             # is unavailable or produces insufficient quality.
             markdown_content = ""
+            used_native_webextract = False
             if extract_web_content is not None:
                 # If extract_web_content is available, the other webextract functions are too
-                assert is_native_markdown_acceptable is not None
+                assert is_native_extraction_acceptable is not None
                 assert coerce_source_frontmatter is not None
                 try:
                     extracted = extract_web_content(html_content, final_url or url)
@@ -539,8 +540,9 @@ class PlaywrightRenderer:
                     logger.debug(f"Native webextract failed, using fallback: {e}")
                 else:
                     native_markdown = getattr(extracted, "markdown", "")
-                    if is_native_markdown_acceptable(native_markdown):
+                    if is_native_extraction_acceptable(extracted):
                         markdown_content = native_markdown
+                        used_native_webextract = True
                         # Prefer typed frontmatter builder when info is available
                         if (
                             hasattr(extracted, "info")
@@ -567,7 +569,7 @@ class PlaywrightRenderer:
             if not markdown_content:
                 markdown_content = _html_to_markdown(html_content)
 
-            if _is_content_incomplete(markdown_content):
+            if not used_native_webextract and _is_content_incomplete(markdown_content):
                 try:
                     rendered_text = await page.inner_text("body")
                     if rendered_text and len(rendered_text.strip()) > len(

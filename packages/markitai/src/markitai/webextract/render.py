@@ -61,8 +61,8 @@ def _render_thread(thread: ConversationThread) -> str:
     parts.append(_render_item(thread.main_item))
     if thread.items:
         parts.append("<h2>Comments</h2>")
-        for item in thread.items:
-            parts.append(_render_item(item))
+        for item in _iter_top_level_items(thread):
+            parts.append(_render_item_tree(item, thread.items))
     parts.append("</article>")
     return "\n".join(parts)
 
@@ -111,4 +111,38 @@ def _render_item(item: ConversationItem) -> str:
         parts.append("  </blockquote>")
 
     parts.append("</div>")
+    return "\n".join(parts)
+
+
+def _iter_top_level_items(thread: ConversationThread) -> list[ConversationItem]:
+    """Return replies that should render directly under the comments heading."""
+    item_ids = {item.id for item in thread.items}
+    root_id = thread.main_item.id
+    top_level: list[ConversationItem] = []
+    for item in thread.items:
+        if item.parent_id in (None, "", root_id) or item.parent_id not in item_ids:
+            top_level.append(item)
+    return top_level
+
+
+def _iter_child_items(
+    parent_id: str,
+    items: list[ConversationItem],
+) -> list[ConversationItem]:
+    """Return direct child items in their original source order."""
+    return [item for item in items if item.parent_id == parent_id]
+
+
+def _render_item_tree(
+    item: ConversationItem,
+    items: list[ConversationItem],
+) -> str:
+    """Render a conversation item along with any nested replies."""
+    parts = [_render_item(item)]
+    children = _iter_child_items(item.id, items)
+    if children:
+        parts.append('<blockquote class="reply-thread">')
+        for child in children:
+            parts.append(_render_item_tree(child, items))
+        parts.append("</blockquote>")
     return "\n".join(parts)

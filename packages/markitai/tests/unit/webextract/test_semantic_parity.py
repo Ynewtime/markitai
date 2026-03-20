@@ -84,6 +84,32 @@ def test_x_output_excludes_recommendation_sections_and_quote_card_leakage() -> N
     assert "Trends for you" not in result.markdown
 
 
+def test_x_status_preserves_spaces_between_inline_text_fragments() -> None:
+    """Inline spans and links in tweet text must preserve readable spacing."""
+    from markitai.webextract.pipeline import extract_web_content
+
+    html = """
+    <html><body>
+    <div data-testid="primaryColumn">
+      <article data-testid="tweet">
+        <div data-testid="User-Name">
+          <a href="/alice"><span>Alice</span><span>@alice</span></a>
+        </div>
+        <div data-testid="tweetText">
+          <span>Hello </span><span>world</span><span> and </span>
+          <a href="https://example.com"><span>friends</span></a>
+        </div>
+        <time datetime="2026-03-19T00:00:00Z"></time>
+      </article>
+    </div>
+    </body></html>
+    """
+
+    result = extract_web_content(html, "https://x.com/alice/status/123")
+
+    assert "Hello world and friends" in result.markdown
+
+
 # ---------------------------------------------------------------------------
 # Generic article page
 # ---------------------------------------------------------------------------

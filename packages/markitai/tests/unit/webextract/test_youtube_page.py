@@ -99,6 +99,36 @@ def test_youtube_page_markdown_contains_video_link() -> None:
     assert "youtube.com" in result.markdown or "KVKufdTphKs" in result.markdown
 
 
+def test_youtube_page_extracts_shadow_dom_metadata() -> None:
+    """Resolver-backed YouTube extraction must see preprocessed shadow DOM content."""
+    from markitai.webextract.pipeline import extract_web_content
+
+    html = """
+    <html>
+      <head><title>Watch on YouTube</title></head>
+      <body>
+        <template shadowrootmode="open">
+          <ytd-watch-metadata>
+            <h1>Deep Python Internals</h1>
+          </ytd-watch-metadata>
+          <div id="channel-name"><a>ArjanCodes</a></div>
+          <div id="description-inner">
+            <yt-attributed-string>
+              A detailed walkthrough of interpreter internals and the GIL.
+            </yt-attributed-string>
+          </div>
+        </template>
+      </body>
+    </html>
+    """
+
+    result = extract_web_content(html, YOUTUBE_URL)
+
+    assert "Deep Python Internals" in result.markdown
+    assert "ArjanCodes" in result.markdown
+    assert "interpreter internals and the GIL" in result.markdown
+
+
 # ---------------------------------------------------------------------------
 # Registry tests
 # ---------------------------------------------------------------------------
@@ -134,3 +164,28 @@ def test_registry_matches_youtube_short_url() -> None:
 
     assert extractor is not None
     assert getattr(extractor, "name", "") == "youtube_page"
+
+
+def test_youtube_resolved_fields_escape_special_characters() -> None:
+    """Resolver-built HTML must preserve literal angle brackets in text fields."""
+    from markitai.webextract.extractors.youtube_page import _build_content_html
+    from markitai.webextract.pipeline import _build_from_resolved
+    from markitai.webextract.resolver import ResolvedPage
+
+    content_html = _build_content_html(
+        "C++ <3 Rust",
+        "Chan <X>",
+        "Use x < y and a <b>tag</b>.",
+        "https://www.youtube.com/watch?v=1",
+    )
+    result = _build_from_resolved(
+        "<html></html>",
+        "https://www.youtube.com/watch?v=1",
+        ResolvedPage(
+            content_html=content_html,
+            metadata_overrides={"title": "C++ <3 Rust"},
+        ),
+    )
+
+    assert "C++ <3 Rust" in result.markdown
+    assert "Chan <X>" in result.markdown

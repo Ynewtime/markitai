@@ -133,7 +133,7 @@ def _parse_text(article: Tag) -> str:
     text_el = article.find(attrs={"data-testid": "tweetText"})
     if not isinstance(text_el, Tag):
         return ""
-    return text_el.get_text(strip=True)
+    return text_el.get_text(" ", strip=True)
 
 
 def _parse_timestamp(article: Tag) -> str | None:

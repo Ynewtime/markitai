@@ -18,10 +18,20 @@ from markitai.webextract.types import QualityAssessment
 _QUOTE_CARD_PATTERN = re.compile(r"(?m)^Quote\s*$")
 _DISCOVER_MORE_PATTERN = re.compile(r"Discover more")
 _TRENDS_PATTERN = re.compile(r"Trends for you")
+_SOCIAL_TITLE_LINE_PATTERN = re.compile(r"(?i)^post by\s+(.+)$")
+_SOCIAL_HANDLE_LINE_PATTERN = re.compile(r"^@[\w.]+$")
+_SOCIAL_TIMESTAMP_LINE_PATTERN = re.compile(
+    r"^(?:\d{4}-\d{2}-\d{2}[tT ][0-9:.\-+Z]+|"
+    r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b.+|"
+    r"\d{1,2}:\d{2}\s*(?:AM|PM|am|pm).*)$"
+)
 
 # GitHub Issues / discussion sidebar patterns
 _ASSIGNEES_PATTERN = re.compile(r"(?m)^Assignees\s*$")
 _LABELS_PATTERN = re.compile(r"(?m)^Labels\s*$")
+_CJK_CHAR_PATTERN = re.compile(
+    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]"
+)
 
 
 def _strip_markdown_punctuation(text: str) -> str:
@@ -40,6 +50,48 @@ def _strip_markdown_punctuation(text: str) -> str:
 def _word_count(text: str) -> int:
     """Count whitespace-delimited words in *text*."""
     return len(text.split()) if text.strip() else 0
+
+
+def _contains_cjk(text: str) -> bool:
+    """Return whether text contains CJK characters."""
+    return bool(_CJK_CHAR_PATTERN.search(text))
+
+
+def _normalized_markdown_lines(text: str) -> list[str]:
+    """Return non-empty markdown lines with punctuation stripped."""
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        normalized = re.sub(r"[#*_\[\]()>`!]", "", raw_line)
+        normalized = " ".join(normalized.split())
+        if normalized:
+            lines.append(normalized)
+    return lines
+
+
+def _extract_social_body_text(markdown: str) -> str:
+    """Return social-post text after stripping synthesized metadata lines."""
+    lines = _normalized_markdown_lines(markdown)
+    body_lines: list[str] = []
+    title_author: str | None = None
+
+    for line in lines:
+        title_match = _SOCIAL_TITLE_LINE_PATTERN.match(line)
+        if title_match is not None:
+            title_author = title_match.group(1).strip() or None
+            continue
+
+        if title_author is not None and line == title_author:
+            continue
+
+        if _SOCIAL_HANDLE_LINE_PATTERN.match(line):
+            continue
+
+        if _SOCIAL_TIMESTAMP_LINE_PATTERN.match(line):
+            continue
+
+        body_lines.append(line)
+
+    return " ".join(body_lines)
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +134,9 @@ def _assess_social_post(markdown: str) -> QualityAssessment:
         # No readable text at all (only markdown punctuation)
         reasons.append("too_short")
         score -= 0.5
+    elif not _extract_social_body_text(markdown):
+        reasons.append("missing_body")
+        score -= 0.6
 
     score = max(0.0, min(1.0, score))
     accepted = len(reasons) == 0
@@ -173,12 +228,15 @@ def _assess_generic_article(markdown: str) -> QualityAssessment:
         return QualityAssessment(accepted=False, score=0.0, reasons=["empty_content"])
 
     plain = _strip_markdown_punctuation(markdown)
+    dense_plain = re.sub(r"\s+", "", plain)
 
     if len(plain) < 10:
         reasons.append("too_short")
         score -= 0.6
 
-    if _word_count(plain) < 3:
+    has_dense_cjk_text = _contains_cjk(plain) and len(dense_plain) >= 10
+
+    if _word_count(plain) < 3 and not has_dense_cjk_text:
         if "too_short" not in reasons:
             reasons.append("too_short")
         score -= 0.4
