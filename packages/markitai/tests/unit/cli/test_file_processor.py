@@ -118,9 +118,17 @@ class TestResolveAssetReferences:
 
     def test_protocol_tier_renders_escape_sequence(self, tmp_path: Path) -> None:
         """When protocol is provided and image exists, should produce escape sequence."""
+        import io
+
+        from PIL import Image
+
         assets_dir = tmp_path / ".markitai" / "assets"
         assets_dir.mkdir(parents=True)
-        (assets_dir / "img.png").write_bytes(b"\x89PNG" + b"\x00" * 50)
+        # Create a real PNG file (Pillow needs valid image data)
+        img = Image.new("RGB", (10, 10), color="red")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        (assets_dir / "img.png").write_bytes(buf.getvalue())
 
         from markitai.utils.terminal_image import Protocol
 
