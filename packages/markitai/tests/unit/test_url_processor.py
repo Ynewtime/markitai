@@ -8,7 +8,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from loguru import logger
 
+from markitai.cli.logging_config import setup_logging
 from markitai.cli.processors.url import (
     build_multi_source_content,
     process_url,
@@ -882,6 +884,161 @@ class TestProcessUrlBatchSuccessPath:
         assert len(report_files) == 1
 
     @pytest.mark.asyncio
+    async def test_batch_keeps_verbose_details_out_of_console_during_progress(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """Verbose URL batch output should stay concise while detailed logs go to file."""
+
+        class MockUrlEntry:
+            def __init__(self, url: str, output_name: str | None = None):
+                self.url = url
+                self.output_name = output_name
+
+        entries = [MockUrlEntry("https://example.com/test")]
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.cache.enabled = False
+
+        mock_result = MagicMock()
+        mock_result.content = "# Test"
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Test"
+        mock_result.metadata = {}
+
+        async def mock_process_with_llm(*args, **kwargs):
+            logger.info("[Router] Vision router (1): test-model")
+            logger.info("Written LLM version: /tmp/test.llm.md")
+            return "# Cleaned", 0.01, {}
+
+        console_handler_id, log_file_path = setup_logging(
+            verbose=True,
+            log_dir=str(tmp_path / "logs"),
+        )
+
+        try:
+            with (
+                patch(
+                    "markitai.fetch.fetch_url",
+                    new_callable=AsyncMock,
+                    return_value=mock_result,
+                ),
+                patch(
+                    "markitai.cli.processors.llm.process_with_llm",
+                    side_effect=mock_process_with_llm,
+                ),
+            ):
+                await process_url_batch(
+                    url_entries=entries,
+                    output_dir=tmp_path,
+                    cfg=cfg,
+                    dry_run=False,
+                    verbose=True,
+                    log_file_path=log_file_path,
+                    console_handler_id=console_handler_id,
+                )
+        finally:
+            logger.remove()
+
+        captured = capfd.readouterr()
+        combined_output = f"{captured.out}\n{captured.err}"
+        assert "Processing URL:" not in combined_output
+        assert "Fetched via static" not in combined_output
+        assert "[Router] Vision router" not in combined_output
+        assert "Written LLM version:" not in combined_output
+
+        assert log_file_path is not None
+        log_content = log_file_path.read_text(encoding="utf-8")
+        assert "Processing URL: https://example.com/test" in log_content
+        assert "Fetched via static: https://example.com/test" in log_content
+        assert "[Router] Vision router (1): test-model" in log_content
+        assert "Written LLM version: /tmp/test.llm.md" in log_content
+
+    @pytest.mark.asyncio
+    async def test_batch_progress_shows_multiple_active_urls(
+        self, tmp_path: Path
+    ) -> None:
+        """Concurrent URL batch progress should expose multiple active URLs."""
+
+        class MockUrlEntry:
+            def __init__(self, url: str, output_name: str | None = None):
+                self.url = url
+                self.output_name = output_name
+
+        class FakeProgress:
+            instances: list[FakeProgress] = []
+
+            def __init__(self, *args, **kwargs) -> None:
+                self.updates: list[str] = []
+                FakeProgress.instances.append(self)
+
+            def __enter__(self) -> FakeProgress:
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+                return None
+
+            def add_task(self, description: str, total: int) -> int:
+                self.updates.append(description)
+                return 1
+
+            def update(
+                self, task_id: int, description: str | None = None, **kwargs
+            ) -> None:
+                if description is not None:
+                    self.updates.append(description)
+
+            def advance(self, task_id: int) -> None:
+                return None
+
+        entries = [
+            MockUrlEntry("https://example.com/page1"),
+            MockUrlEntry("https://example.com/page2"),
+        ]
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        started = 0
+        both_started = asyncio.Event()
+
+        async def mock_fetch(url, *args, **kwargs):
+            nonlocal started
+            started += 1
+            if started == 2:
+                both_started.set()
+            await both_started.wait()
+
+            result = MagicMock()
+            result.content = f"# Content for {url}"
+            result.cache_hit = False
+            result.strategy_used = "static"
+            result.screenshot_path = None
+            result.title = f"Page {url}"
+            result.metadata = {}
+            return result
+
+        with (
+            patch("markitai.fetch.fetch_url", side_effect=mock_fetch),
+            patch("rich.progress.Progress", FakeProgress),
+        ):
+            await process_url_batch(
+                url_entries=entries,
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=True,
+                concurrency=2,
+            )
+
+        assert FakeProgress.instances
+        descriptions = FakeProgress.instances[-1].updates
+        assert any("page1" in desc and "page2" in desc for desc in descriptions)
+
+    @pytest.mark.asyncio
     async def test_batch_handles_mixed_success_failure(self, tmp_path: Path) -> None:
         """Test batch handles mix of successful and failed URLs."""
         from markitai.fetch import FetchError
@@ -1502,3 +1659,45 @@ class TestProcessUrlStdoutMode:
         # Temp dirs should be cleaned up
         for d in created_temps:
             assert not Path(d).exists(), f"Temp dir was not cleaned up: {d}"
+
+
+class TestProcessUrlFileMode:
+    """Tests for URL file output mode."""
+
+    @pytest.mark.asyncio
+    async def test_url_file_mode_shows_output_path_not_markdown(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """Saving a URL to file should print a concise result, not the full markdown."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        mock_result = MagicMock()
+        mock_result.content = "# Test Page\n\nSome content here."
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Test Page"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+
+        with patch(
+            "markitai.fetch.fetch_url",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            await process_url(
+                url="https://example.com/test",
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        captured = capfd.readouterr()
+        combined_output = f"{captured.out}\n{captured.err}"
+        assert "# Test Page" not in combined_output
+        assert "Some content here." not in combined_output
+        assert str(tmp_path / "test.md") in combined_output

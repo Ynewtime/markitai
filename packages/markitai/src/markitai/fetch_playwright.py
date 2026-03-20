@@ -40,12 +40,12 @@ try:
     from markitai.webextract import (
         coerce_source_frontmatter,
         extract_web_content,
-        is_native_markdown_acceptable,
+        is_native_extraction_acceptable,
     )
 except ImportError:  # pragma: no cover - optional during staged implementation
     extract_web_content = None  # type: ignore[assignment]
     coerce_source_frontmatter = None  # type: ignore[assignment]
-    is_native_markdown_acceptable = None  # type: ignore[assignment]
+    is_native_extraction_acceptable = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from markitai.config import ScreenshotConfig
@@ -192,6 +192,46 @@ def _build_auto_scroll_script(
         }}
         window.scrollTo(0, 0);
     }}
+    """
+
+
+def _build_shadow_dom_normalize_script() -> str:
+    """Build JavaScript for flattening live (open) shadow DOMs into light DOM.
+
+    Walks every element in the document and, for those with an open
+    ``shadowRoot``, moves all shadow children into the host element's light
+    DOM.  This makes shadow-DOM content visible in ``page.content()`` output
+    so that static HTML extraction can read it.
+
+    Returns:
+        JavaScript code string for ``page.evaluate()``.
+    """
+    return """
+    () => {
+        function flattenShadowRoots(root) {
+            const walker = document.createTreeWalker(
+                root,
+                NodeFilter.SHOW_ELEMENT,
+                null
+            );
+            const hosts = [];
+            let node = walker.nextNode();
+            while (node) {
+                if (node.shadowRoot) {
+                    hosts.push(node);
+                }
+                node = walker.nextNode();
+            }
+            for (const host of hosts) {
+                const shadow = host.shadowRoot;
+                // Move all shadow children into the host (light DOM)
+                while (shadow.firstChild) {
+                    host.appendChild(shadow.firstChild);
+                }
+            }
+        }
+        flattenShadowRoots(document.body || document);
+    }
     """
 
 
@@ -466,6 +506,13 @@ class PlaywrightRenderer:
             except Exception as e:
                 logger.debug(f"Auto-scroll failed (non-critical): {e}")
 
+            # Browser DOM normalize: flatten live shadow roots before extraction
+            try:
+                shadow_script = _build_shadow_dom_normalize_script()
+                await page.evaluate(shadow_script)
+            except Exception as e:
+                logger.debug(f"Shadow DOM normalize failed (non-critical): {e}")
+
             # DOM cleanup: remove noise elements before extraction
             try:
                 cleanup_script = _build_dom_cleanup_script()
@@ -482,9 +529,10 @@ class PlaywrightRenderer:
             # conversion. Only fall back to _html_to_markdown if webextract
             # is unavailable or produces insufficient quality.
             markdown_content = ""
+            used_native_webextract = False
             if extract_web_content is not None:
                 # If extract_web_content is available, the other webextract functions are too
-                assert is_native_markdown_acceptable is not None
+                assert is_native_extraction_acceptable is not None
                 assert coerce_source_frontmatter is not None
                 try:
                     extracted = extract_web_content(html_content, final_url or url)
@@ -492,11 +540,23 @@ class PlaywrightRenderer:
                     logger.debug(f"Native webextract failed, using fallback: {e}")
                 else:
                     native_markdown = getattr(extracted, "markdown", "")
-                    if is_native_markdown_acceptable(native_markdown):
+                    if is_native_extraction_acceptable(extracted):
                         markdown_content = native_markdown
-                        source_frontmatter = coerce_source_frontmatter(
-                            getattr(extracted, "metadata", None)
-                        )
+                        used_native_webextract = True
+                        # Prefer typed frontmatter builder when info is available
+                        if (
+                            hasattr(extracted, "info")
+                            and getattr(extracted, "info", None) is not None
+                        ):
+                            from markitai.webextract.frontmatter import (
+                                build_source_frontmatter,
+                            )
+
+                            source_frontmatter = build_source_frontmatter(extracted)
+                        else:
+                            source_frontmatter = coerce_source_frontmatter(
+                                getattr(extracted, "metadata", None)
+                            )
                         if source_frontmatter:
                             metadata["source_frontmatter"] = source_frontmatter
                             title = source_frontmatter.get("title") or title
@@ -509,7 +569,7 @@ class PlaywrightRenderer:
             if not markdown_content:
                 markdown_content = _html_to_markdown(html_content)
 
-            if _is_content_incomplete(markdown_content):
+            if not used_native_webextract and _is_content_incomplete(markdown_content):
                 try:
                     rendered_text = await page.inner_text("body")
                     if rendered_text and len(rendered_text.strip()) > len(

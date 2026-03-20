@@ -1,0 +1,29 @@
+{
+  "metadata": {
+    "title": "Post by @ixiaowenz"
+  },
+  "info": {
+    "content_profile": "social_post"
+  },
+  "semantic": {
+    "thread": {
+      "main_item": {
+        "author_handle": "@ixiaowenz",
+        "author_name": "小文",
+        "text": "This is a great insight about AI agents. The way they handle tool calls is fundamentally different from how we think about programming.",
+        "published_at": "2025-03-15T08:30:00.000Z"
+      },
+      "author_replies": [],
+      "third_party_replies": []
+    }
+  },
+  "markdown_must_not_contain": [
+    "Discover more",
+    "Quote",
+    "Trends for you"
+  ],
+  "markdown_must_contain": [
+    "ixiaowenz",
+    "AI agents"
+  ]
+}

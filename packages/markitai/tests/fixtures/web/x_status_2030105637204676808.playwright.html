@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta property="og:title" content="Post by @ixiaowenz" />
+  <meta property="og:description" content="This is a great insight about AI agents." />
+  <meta property="og:url" content="https://x.com/ixiaowenz/status/2030105637204676808" />
+  <meta name="twitter:site" content="@X" />
+  <title>@ixiaowenz on X: "This is a great insight about AI agents." / X</title>
+</head>
+<body>
+  <div id="react-root">
+    <div data-testid="primaryColumn">
+      <article data-testid="tweet" role="article" tabindex="-1">
+        <div data-testid="User-Name">
+          <a href="/ixiaowenz" role="link">
+            <span>小文</span>
+          </a>
+          <a href="/ixiaowenz" role="link" tabindex="-1">
+            <span>@ixiaowenz</span>
+          </a>
+        </div>
+        <div data-testid="tweetText" lang="en">
+          <span>This is a great insight about AI agents. The way they handle tool calls is fundamentally different from how we think about programming.</span>
+        </div>
+        <div data-testid="tweet-stats">
+          <span>1.2K replies</span>
+          <span>4.5K reposts</span>
+          <span>12.3K likes</span>
+        </div>
+        <time datetime="2025-03-15T08:30:00.000Z">8:30 AM · Mar 15, 2025</time>
+      </article>
+
+      <!-- Quote tweet card - should be excluded from clean output -->
+      <div data-testid="card.wrapper">
+        <div>
+          <span>Quote</span>
+          <article data-testid="tweet" role="article">
+            <div data-testid="User-Name">
+              <span>@someone</span>
+            </div>
+            <div data-testid="tweetText">
+              <span>Original post being quoted here.</span>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <!-- Discover more section - should be excluded -->
+      <div aria-label="Discover more" role="region">
+        <h2>Discover more</h2>
+        <div>
+          <a href="/trending">Trending topics</a>
+          <a href="/who-to-follow">Who to follow</a>
+        </div>
+      </div>
+
+      <!-- Replies section - should not be included in main item -->
+      <section aria-labelledby="accessible-list-1">
+        <h2 id="accessible-list-1">Replies</h2>
+        <article data-testid="tweet" role="article">
+          <div data-testid="User-Name">
+            <span>@reply_user_1</span>
+          </div>
+          <div data-testid="tweetText">
+            <span>This is a reply to the main tweet.</span>
+          </div>
+        </article>
+        <article data-testid="tweet" role="article">
+          <div data-testid="User-Name">
+            <span>@random_person</span>
+          </div>
+          <div data-testid="tweetText">
+            <span>Another reply from a different user.</span>
+          </div>
+        </article>
+      </section>
+    </div>
+
+    <!-- Sidebar -->
+    <div data-testid="sidebarColumn">
+      <div>
+        <input placeholder="Search X" type="text" />
+      </div>
+      <div data-testid="trendingTitle">
+        <span>Trends for you</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

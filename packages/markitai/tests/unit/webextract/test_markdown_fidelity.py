@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+"""Tests for the narrow Markdown fidelity layer (webextract/markdown.py)."""
+
+
+from markitai.webextract.markdown import render_markdown
+
+# ---------------------------------------------------------------------------
+# Test fixtures: HTML inputs
+# ---------------------------------------------------------------------------
+
+_FIGURE_HTML = """
+<article>
+  <p>Some intro text.</p>
+  <figure>
+    <img src="https://example.com/image.jpg" alt="Alt">
+    <figcaption>Figure caption</figcaption>
+  </figure>
+  <p>Trailing paragraph.</p>
+</article>
+"""
+
+_FIGURE_SRCSET_HTML = """
+<article>
+  <figure>
+    <img src="https://example.com/image-400.jpg"
+         srcset="https://example.com/image-400.jpg 400w, https://example.com/image-1200.jpg 1200w, https://example.com/image-800.jpg 800w"
+         alt="Responsive image">
+    <figcaption>Responsive caption</figcaption>
+  </figure>
+</article>
+"""
+
+_EMBED_IFRAME_HTML = """
+<article>
+  <p>Check this tweet.</p>
+  <iframe src="https://x.com/i/status/123" width="550" height="300"></iframe>
+  <p>More text.</p>
+</article>
+"""
+
+_YOUTUBE_IFRAME_HTML = """
+<article>
+  <p>Watch the video.</p>
+  <iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ" width="640" height="480"></iframe>
+</article>
+"""
+
+_VIMEO_IFRAME_HTML = """
+<article>
+  <p>Watch on Vimeo.</p>
+  <iframe src="https://player.vimeo.com/video/76979871" width="640" height="360"></iframe>
+</article>
+"""
+
+_BLANK_LINES_HTML = """
+<article>
+  <p>First paragraph.</p>
+  <p>Second paragraph.</p>
+  <p>Third paragraph.</p>
+</article>
+"""
+
+
+# ---------------------------------------------------------------------------
+# Figure / caption tests
+# ---------------------------------------------------------------------------
+
+
+def test_figure_caption_is_preserved_under_image() -> None:
+    """Figcaption text must appear in output alongside the image."""
+    markdown = render_markdown(_FIGURE_HTML)
+    assert "![Alt](https://example.com/image.jpg)" in markdown
+    assert "Figure caption" in markdown
+
+
+def test_figure_caption_appears_near_image() -> None:
+    """Caption should follow the image, not appear elsewhere."""
+    markdown = render_markdown(_FIGURE_HTML)
+    img_pos = markdown.index("![Alt](https://example.com/image.jpg)")
+    caption_pos = markdown.index("Figure caption")
+    # Caption must appear after the image
+    assert caption_pos > img_pos
+
+
+def test_figure_surrounding_text_preserved() -> None:
+    """Non-figure content in the same article is not dropped."""
+    markdown = render_markdown(_FIGURE_HTML)
+    assert "Some intro text" in markdown
+    assert "Trailing paragraph" in markdown
+
+
+# ---------------------------------------------------------------------------
+# srcset best-URL selection
+# ---------------------------------------------------------------------------
+
+
+def test_srcset_best_url_is_selected() -> None:
+    """The highest-resolution URL from srcset is used as the image src."""
+    markdown = render_markdown(_FIGURE_SRCSET_HTML)
+    # 1200w is the highest resolution, so it should be selected
+    assert "image-1200.jpg" in markdown
+
+
+def test_srcset_caption_preserved() -> None:
+    """Caption is still rendered even when srcset processing occurs."""
+    markdown = render_markdown(_FIGURE_SRCSET_HTML)
+    assert "Responsive caption" in markdown
+
+
+# ---------------------------------------------------------------------------
+# Embed canonicalization
+# ---------------------------------------------------------------------------
+
+
+def test_embed_iframe_is_reduced_to_canonical_link() -> None:
+    """Social embed iframes must be reduced to a plain link."""
+    markdown = render_markdown(_EMBED_IFRAME_HTML)
+    assert "https://x.com/i/status/123" in markdown
+
+
+def test_youtube_iframe_is_reduced_to_canonical_link() -> None:
+    """YouTube embed iframes must become a canonical watch link."""
+    markdown = render_markdown(_YOUTUBE_IFRAME_HTML)
+    assert "https://www.youtube.com/watch?v=dQw4w9WgXcQ" in markdown
+
+
+def test_vimeo_iframe_is_reduced_to_canonical_link() -> None:
+    """Vimeo embed iframes must become a canonical link."""
+    markdown = render_markdown(_VIMEO_IFRAME_HTML)
+    assert "https://vimeo.com/76979871" in markdown
+
+
+def test_embed_surrounding_text_preserved() -> None:
+    """Text around embed iframes is not dropped."""
+    markdown = render_markdown(_EMBED_IFRAME_HTML)
+    assert "Check this tweet" in markdown
+    assert "More text" in markdown
+
+
+# ---------------------------------------------------------------------------
+# Post-processing: blank line collapsing
+# ---------------------------------------------------------------------------
+
+
+def test_no_more_than_two_consecutive_blank_lines() -> None:
+    """Output must never have more than 2 consecutive blank lines."""
+    markdown = render_markdown(_BLANK_LINES_HTML)
+    assert "\n\n\n\n" not in markdown
+
+
+def test_trailing_whitespace_stripped() -> None:
+    """No line in the output should have trailing whitespace."""
+    markdown = render_markdown(_FIGURE_HTML)
+    for line in markdown.splitlines():
+        assert line == line.rstrip(), f"Trailing whitespace in line: {line!r}"
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_empty_html_returns_empty_string() -> None:
+    """Empty HTML should produce an empty or near-empty string."""
+    markdown = render_markdown("")
+    assert markdown.strip() == ""
+
+
+def test_plain_text_html_passthrough() -> None:
+    """Simple paragraph HTML works without errors."""
+    markdown = render_markdown("<p>Hello world</p>")
+    assert "Hello world" in markdown
