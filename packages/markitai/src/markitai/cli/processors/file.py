@@ -31,31 +31,80 @@ from markitai.workflow.helpers import write_images_json
 console = get_console()
 
 # Pattern matches markdown image references to .markitai/assets/ or .markitai/screenshots/
+# Supports both forward slash and backslash for Windows compatibility
 _ASSET_REF_PATTERN = re.compile(
-    r"!\[([^\]]*)\]\(\.markitai/(?:assets|screenshots)/([^)]+)\)"
+    r"!\[([^\]]*)\]\(\.markitai[/\\](?:assets|screenshots)[/\\]([^)]+)\)"
 )
 
 
-def strip_asset_references(markdown: str) -> str:
-    """Replace .markitai/assets/ and .markitai/screenshots/ image references
-    with descriptive text placeholders.
+def resolve_asset_references(
+    markdown: str,
+    temp_dir: Path,
+    protocol: Any = None,
+    asset_store: Any = None,
+    source_name: str = "unknown",
+) -> str:
+    """Resolve .markitai/assets/ and .markitai/screenshots/ image references.
 
-    In stdout mode the temp directory containing these files is deleted after
-    printing, so the references would be broken. This function replaces them
-    with ``[image: filename]`` placeholders.
+    Priority cascade:
+    1. If protocol is set: replace with terminal inline image escape sequence.
+    2. If asset_store is set: persist image, replace with absolute-path URI.
+    3. Fallback: replace with ``![image: filename]()`` placeholder.
 
     Args:
-        markdown: Markdown content potentially containing asset references.
+        markdown: Markdown content with asset references.
+        temp_dir: Path to the temp directory containing .markitai/ assets.
+        protocol: Detected terminal image protocol, or None.
+        asset_store: Configured asset store, or None.
+        source_name: Source document name for asset store grouping.
 
     Returns:
-        Markdown with asset references replaced by text placeholders.
+        Markdown with asset references resolved.
     """
+
+    def _resolve_image_path(match: re.Match[str], filename: str) -> Path:
+        """Resolve the actual image file path from a regex match."""
+        filename_normalized = filename.replace("\\", "/")
+        full_match = match.group(0)
+        subdir = "assets" if "assets" in full_match else "screenshots"
+        return temp_dir / ".markitai" / subdir / filename_normalized
 
     def _replace(match: re.Match[str]) -> str:
         filename = match.group(2)
-        return f"[image: {filename}]"
+
+        if protocol is not None:
+            # Tier 1: terminal inline image
+            image_path = _resolve_image_path(match, filename)
+            if image_path.exists():
+                from markitai.utils.terminal_image import render_inline_image
+
+                try:
+                    return render_inline_image(image_path, protocol)
+                except Exception:
+                    pass  # fall through
+
+        if asset_store is not None:
+            # Tier 2: persistent asset store
+            image_path = _resolve_image_path(match, filename)
+            if image_path.exists():
+                try:
+                    ref_path = asset_store.save(image_path, source_name)
+                    uri = asset_store.ref_path_to_markdown_uri(ref_path)
+                    return f"![{filename}]({uri})"
+                except Exception as e:
+                    logger.warning(f"Asset store save failed for {filename}: {e}")
+                    # fall through to placeholder
+
+        # Tier 3: placeholder fallback
+        return f"![image: {filename}]()"
 
     return _ASSET_REF_PATTERN.sub(_replace, markdown)
+
+
+# Backward compatibility alias
+def strip_asset_references(markdown: str) -> str:
+    """Backward compatibility wrapper for resolve_asset_references."""
+    return resolve_asset_references(markdown, temp_dir=Path("/dev/null"))
 
 
 async def process_single_file(
@@ -285,7 +334,9 @@ async def process_single_file(
                 final_content = final_output_file.read_text(encoding="utf-8")
                 # Strip .markitai/assets/ and .markitai/screenshots/ references
                 # since the temp directory will be deleted after printing
-                final_content = strip_asset_references(final_content)
+                final_content = resolve_asset_references(
+                    final_content, temp_dir=temp_dir
+                )
                 console.print(final_content, markup=False, highlight=False)
         else:
             # File mode: show output path

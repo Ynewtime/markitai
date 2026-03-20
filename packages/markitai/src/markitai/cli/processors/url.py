@@ -519,15 +519,16 @@ async def process_url(
 
         if stdout_mode:
             # stdout mode: print final content to console, strip asset refs
-            from markitai.cli.processors.file import strip_asset_references
+            from markitai.cli.processors.file import resolve_asset_references
 
+            assert temp_dir is not None  # guaranteed when stdout_mode is True
             stdout_content = final_content
             # If LLM produced a .llm.md file, prefer that
             if cfg.llm.enabled:
                 llm_file = output_file.with_suffix(".llm.md")
                 if llm_file.exists():
                     stdout_content = llm_file.read_text(encoding="utf-8")
-            stdout_content = strip_asset_references(stdout_content)
+            stdout_content = resolve_asset_references(stdout_content, temp_dir=temp_dir)
             console.print(stdout_content, markup=False, highlight=False)
         else:
             # File mode: generate report and show concise result
