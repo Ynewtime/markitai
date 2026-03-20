@@ -11,8 +11,25 @@ import pathlib
 
 import pytest
 
-FIXTURES_DIR = pathlib.Path(__file__).parent.parent.parent / "fixtures" / "web"
+FIXTURES_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "web"
 SHADOW_DOM_FIXTURE = FIXTURES_DIR / "shadow_dom_page.html"
+
+
+def _skip_if_no_playwright_browser() -> None:
+    """Skip test if Playwright is not installed or browsers are missing."""
+    from markitai.fetch_playwright import is_playwright_available
+
+    if not is_playwright_available():
+        pytest.skip("playwright not installed")
+
+    try:
+        from playwright.sync_api import sync_playwright  # type: ignore[import]
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+    except Exception:  # noqa: BLE001
+        pytest.skip("playwright browsers not installed")
 
 
 @pytest.mark.slow
@@ -21,15 +38,11 @@ async def test_playwright_normalizes_open_shadow_dom_before_extraction() -> None
 
     Uses page.set_content() with a local fixture — no network required.
     """
-    from markitai.fetch_playwright import (
-        _build_shadow_dom_normalize_script,
-        is_playwright_available,
-    )
-
-    if not is_playwright_available():
-        pytest.skip("playwright not installed")
+    _skip_if_no_playwright_browser()
 
     from playwright.async_api import async_playwright  # type: ignore[import]
+
+    from markitai.fetch_playwright import _build_shadow_dom_normalize_script
 
     fixture_html = SHADOW_DOM_FIXTURE.read_text(encoding="utf-8")
 
@@ -55,15 +68,11 @@ async def test_playwright_normalizes_open_shadow_dom_before_extraction() -> None
 @pytest.mark.slow
 async def test_playwright_normalizes_inline_shadow_dom() -> None:
     """Inline shadow DOM created via JS should also be flattened."""
-    from markitai.fetch_playwright import (
-        _build_shadow_dom_normalize_script,
-        is_playwright_available,
-    )
-
-    if not is_playwright_available():
-        pytest.skip("playwright not installed")
+    _skip_if_no_playwright_browser()
 
     from playwright.async_api import async_playwright  # type: ignore[import]
+
+    from markitai.fetch_playwright import _build_shadow_dom_normalize_script
 
     # Build a page with a live shadow root attached via JS
     html_with_js_shadow = """

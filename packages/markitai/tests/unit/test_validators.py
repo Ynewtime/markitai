@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from markitai.cli.processors.validators import (
     _check_copilot_unsupported_models,
@@ -251,6 +254,9 @@ class TestCheckPlaywrightForUrls:
 class TestWarnCaseSensitivityMismatches:
     """Tests for warn_case_sensitivity_mismatches."""
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="fnmatch is case-insensitive on Windows"
+    )
     def test_detects_case_mismatch(self, tmp_path: Path):
         """Should detect files that would match pattern if case-insensitive."""
         files = [tmp_path / "IMAGE.JPG"]
@@ -292,6 +298,9 @@ class TestWarnCaseSensitivityMismatches:
             warn_case_sensitivity_mismatches(files, tmp_path, [])
             mock_ui.warning.assert_not_called()
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="fnmatch is case-insensitive on Windows"
+    )
     def test_file_outside_input_dir(self, tmp_path: Path):
         """Files outside input_dir should use filename as fallback."""
         other_dir = tmp_path / "other"
@@ -306,6 +315,9 @@ class TestWarnCaseSensitivityMismatches:
             # Should still detect mismatch via filename fallback
             mock_ui.warning.assert_called_once()
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="fnmatch is case-insensitive on Windows"
+    )
     def test_max_3_examples_per_pattern(self, tmp_path: Path):
         """Should show at most 3 examples per pattern."""
         files = [tmp_path / f"IMAGE{i}.JPG" for i in range(5)]
@@ -316,6 +328,9 @@ class TestWarnCaseSensitivityMismatches:
             step_texts = [c[0][0] for c in mock_ui.step.call_args_list]
             assert any("2 more" in t for t in step_texts)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="fnmatch is case-insensitive on Windows"
+    )
     def test_backslash_pattern_normalized(self, tmp_path: Path):
         """Backslash in pattern should be normalized to forward slash."""
         subdir = tmp_path / "sub"

@@ -90,13 +90,13 @@ class TestMakeJsonSafe:
     def test_path_converted_to_string(self):
         from markitai.fetch_cache import _make_json_safe
 
-        assert _make_json_safe(Path("/foo/bar")) == "/foo/bar"
+        assert _make_json_safe(Path("/foo/bar")) == str(Path("/foo/bar"))
 
     def test_nested_dict(self):
         from markitai.fetch_cache import _make_json_safe
 
         result = _make_json_safe({"path": Path("/a"), "count": 1})
-        assert result == {"path": "/a", "count": 1}
+        assert result == {"path": str(Path("/a")), "count": 1}
 
 
 class TestBackwardCompatFetchCache:
