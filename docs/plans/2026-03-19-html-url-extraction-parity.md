@@ -846,7 +846,11 @@ git commit -m "test: add parity, diagnostics, and benchmark guardrails for nativ
 
 **Step 2: Review docs to verify the checklist is currently unmet**
 
-Run: `rg -n "resolve|render|assess|build_source_frontmatter|coerce_source_frontmatter|provenance|enricher" docs packages/markitai/tests/fixtures/web/README.md -S`
+Run:
+
+- `rg -n "resolve|render|assess" docs/architecture.md -S`
+- `rg -n "enricher|build_source_frontmatter|coerce_source_frontmatter" docs/guide/fetch-policy.md -S`
+- `rg -n "provenance|minimization" packages/markitai/tests/fixtures/web/README.md -S`
 
 Expected: missing or incomplete coverage for the new architecture and migration policy.
 
@@ -862,7 +866,11 @@ Document:
 
 **Step 4: Review docs to verify the checklist is met**
 
-Run the same `rg` command as Step 2.
+Run:
+
+- `rg -n "resolve|render|assess" docs/architecture.md -S`
+- `rg -n "enricher|build_source_frontmatter|coerce_source_frontmatter" docs/guide/fetch-policy.md -S`
+- `rg -n "provenance|minimization" packages/markitai/tests/fixtures/web/README.md -S`
 
 Expected: documentation covers the new architecture, policy, and migration notes.
 
@@ -884,7 +892,7 @@ git commit -m "docs: explain native extraction architecture and migration policy
 - Tasks 9-10 strengthen the generic pipeline after the main seams are correct.
 - Task 13 is mandatory before claiming parity.
 - Keep `coerce_source_frontmatter()` as a compatibility wrapper throughout this rollout; do not deprecate it until internal callers have moved to `build_source_frontmatter()`.
-- If using subagents, Tasks 7 and 9 are parallel-safe after Task 6 because they touch different concerns.
+- Tasks 7 and 9 are not parallel-safe after Task 6; both modify `webextract/pipeline.py` and `fetch_playwright.py`, so keep them sequential.
 
 ## Success Criteria
 
