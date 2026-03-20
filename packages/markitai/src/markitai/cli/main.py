@@ -756,14 +756,16 @@ def app(
             )
             return
 
-        # Single URL mode — effective_output may be None (stdout mode)
+        # Single URL mode — output is optional (None means stdout, like single file mode)
+        # Note: We pass `output` (CLI arg) not `effective_output` (which includes
+        # config fallback). This matches single file mode behavior (line ~805).
         if is_url_input:
             assert input_path_str is not None  # Guaranteed when is_url_input is True
             from markitai.cli.processors.url import process_url
 
             await process_url(
                 input_path_str,
-                effective_output,
+                output,
                 cfg,
                 dry_run,
                 verbose,

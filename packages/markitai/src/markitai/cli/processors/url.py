@@ -533,6 +533,21 @@ async def process_url(
 
             protocol = detect_protocol()
 
+            # Download external images for terminal inline display
+            if protocol is not None and cfg.image.stdout_fetch_external:
+                from markitai.image import download_url_images
+
+                try:
+                    dl_result = await download_url_images(
+                        stdout_content,
+                        temp_dir,
+                        base_url=url,
+                        config=cfg.image,
+                    )
+                    stdout_content = dl_result.updated_markdown
+                except Exception as e:
+                    logger.warning(f"External image download failed: {e}")
+
             # Set up asset store if persistence is configured
             store = None
             if cfg.image.stdout_persist:
