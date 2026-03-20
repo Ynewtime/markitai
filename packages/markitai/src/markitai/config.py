@@ -275,6 +275,8 @@ class ImageConfig(BaseModel):
     max_width: int = DEFAULT_IMAGE_MAX_WIDTH
     max_height: int = DEFAULT_IMAGE_MAX_HEIGHT
     filter: ImageFilterConfig = Field(default_factory=ImageFilterConfig)
+    stdout_persist: bool = False
+    stdout_persist_dir: str = "~/.markitai/assets"
 
 
 class OCRConfig(BaseModel):

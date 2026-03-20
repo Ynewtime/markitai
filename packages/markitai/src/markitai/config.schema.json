@@ -454,6 +454,16 @@
         },
         "filter": {
           "$ref": "#/$defs/ImageFilterConfig"
+        },
+        "stdout_persist": {
+          "default": false,
+          "title": "Stdout Persist",
+          "type": "boolean"
+        },
+        "stdout_persist_dir": {
+          "default": "~/.markitai/assets",
+          "title": "Stdout Persist Dir",
+          "type": "string"
         }
       },
       "title": "ImageConfig",
