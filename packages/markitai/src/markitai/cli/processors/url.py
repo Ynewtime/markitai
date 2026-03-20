@@ -370,7 +370,6 @@ async def process_url(
                         output_file,
                         cfg,
                         Path(url),
-                        concurrency_limit=cfg.llm.concurrency,
                     )
                     llm_cost += image_cost
                     _merge_llm_usage(llm_usage, image_usage)
@@ -421,7 +420,6 @@ async def process_url(
                             output_file,
                             cfg,
                             Path(url),
-                            concurrency_limit=cfg.llm.concurrency,
                         )
                         llm_cost += image_cost
                         _merge_llm_usage(llm_usage, image_usage)
@@ -472,7 +470,6 @@ async def process_url(
                     output_file,
                     cfg,
                     Path(url),  # Use URL as source path
-                    concurrency_limit=cfg.llm.concurrency,
                     llm_ready_event=llm_ready_event,
                 )
 
@@ -1111,9 +1108,7 @@ async def process_url_with_vision(
 
         # Format and write LLM output
         llm_output = output_file.with_suffix(".llm.md")
-        llm_content = processor.format_llm_output(
-            cleaned_content, frontmatter, source=url
-        )
+        llm_content = processor.format_llm_output(cleaned_content, frontmatter)
 
         # Add screenshot reference as comment
         screenshot_comment = (
@@ -1219,9 +1214,7 @@ async def process_url_screenshot_only(
 
         # Format and write LLM output
         llm_output = output_file.with_suffix(".llm.md")
-        llm_content = processor.format_llm_output(
-            cleaned_content, frontmatter, source=url
-        )
+        llm_content = processor.format_llm_output(cleaned_content, frontmatter)
 
         # Add screenshot reference as comment
         screenshot_comment = (

@@ -2012,7 +2012,6 @@ Generate the following fields:
         self,
         markdown: str,
         frontmatter: str,
-        source: str | None = None,  # noqa: ARG002
     ) -> str:
         """Format final output with frontmatter.
 
@@ -2023,7 +2022,6 @@ Generate the following fields:
         Args:
             markdown: Cleaned markdown content
             frontmatter: YAML frontmatter (without --- markers)
-            source: Optional source filename (unused, kept for API compatibility)
 
         Returns:
             Complete markdown with frontmatter

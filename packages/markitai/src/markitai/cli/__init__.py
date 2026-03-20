@@ -29,13 +29,9 @@ from markitai.utils.cli_helpers import (
 from markitai.utils.output import resolve_output_path
 from markitai.utils.progress import ProgressReporter
 
-# Backward compatibility alias (deprecated, use sanitize_filename instead)
-_sanitize_filename = sanitize_filename
-
 __all__ = [
     "ImageAnalysisResult",
     "ProgressReporter",
-    "_sanitize_filename",  # Deprecated alias
     "_warn_case_sensitivity_mismatches",
     "app",
     "compute_task_hash",

@@ -283,11 +283,20 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
             f"Converting {ctx.input_path.name}..." + (" [HEAVY]" if is_heavy else "")
         )
 
+        # Lightweight text formats do not benefit from thread offloading and
+        # have shown unstable behavior under the shared executor in tests.
+        lightweight_text_extensions = {".txt", ".md", ".markdown"}
+
         # CloudflareConverter has a native async API — dispatch directly
         from markitai.converter.cloudflare import CloudflareConverter
 
         if isinstance(ctx.converter, CloudflareConverter):
             ctx.conversion_result = await ctx.converter.convert_async(
+                ctx.effective_input,
+                output_dir=ctx.output_dir,
+            )
+        elif ext in lightweight_text_extensions:
+            ctx.conversion_result = ctx.converter.convert(
                 ctx.effective_input,
                 output_dir=ctx.output_dir,
             )
@@ -348,10 +357,12 @@ async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResul
 
     conversion_result = ctx.conversion_result
     image_processor = ImageProcessor(config=ctx.config.image)
-    base64_images = await asyncio.to_thread(
-        image_processor.extract_base64_images,
-        conversion_result.markdown,
-    )
+    if "data:image" in conversion_result.markdown:
+        base64_images = image_processor.extract_base64_images(
+            conversion_result.markdown
+        )
+    else:
+        base64_images = []
 
     # Count screenshots from page images
     page_images = conversion_result.metadata.get("page_images", [])
@@ -848,7 +859,7 @@ async def process_with_vision_llm(
     # Write LLM version
     llm_output = ctx.output_file.with_suffix(".llm.md")
     llm_content = processor.format_llm_output(
-        ctx.conversion_result.markdown, frontmatter, source=ctx.input_path.name
+        ctx.conversion_result.markdown, frontmatter
     )
     atomic_write_text(llm_output, llm_content)
     logger.info(f"Written LLM version: {llm_output}")
@@ -900,7 +911,6 @@ async def process_with_standard_llm(
             ctx.conversion_result.markdown,
             ctx.output_file,
             ctx.input_path,
-            concurrency_limit=ctx.config.llm.concurrency,
         )
         ctx.llm_cost += image_cost
         merge_llm_usage(ctx.llm_usage, image_usage)
@@ -933,7 +943,6 @@ async def process_with_standard_llm(
                 ctx.conversion_result.markdown,
                 ctx.output_file,
                 ctx.input_path,
-                concurrency_limit=ctx.config.llm.concurrency,
             )
 
             # Execute in parallel
@@ -1040,7 +1049,6 @@ async def analyze_embedded_images(ctx: ConversionContext) -> ConversionStepResul
         ctx.conversion_result.markdown,
         ctx.output_file,
         ctx.input_path,
-        concurrency_limit=ctx.config.llm.concurrency,
     )
     ctx.llm_cost += image_cost
     merge_llm_usage(ctx.llm_usage, image_usage)

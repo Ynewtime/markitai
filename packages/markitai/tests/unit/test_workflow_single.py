@@ -254,8 +254,7 @@ Tail.
         )
         processor._stabilize_paged_markdown = MagicMock(return_value=original)
 
-        def _format(markdown: str, frontmatter: str, source: str | None = None) -> str:
-            del source
+        def _format(markdown: str, frontmatter: str) -> str:
             return f"---\n{frontmatter}\n---\n\n{markdown}"
 
         processor.format_llm_output = MagicMock(side_effect=_format)

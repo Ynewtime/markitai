@@ -5,6 +5,10 @@ on:
     types: [published]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,16 +17,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v7.6.0
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
-
-      - name: Set up Python
-        run: uv python install 3.13
+          python-version: "3.13"
 
       - name: Install LibreOffice
         run: |
@@ -36,14 +38,10 @@ jobs:
         run: uv run ruff check packages/markitai/src
 
       - name: Run unit tests
-        run: uv run pytest packages/markitai/tests/unit -v --tb=short
-        env:
-          SKIP_LLM_TESTS: "1"
+        run: uv run pytest packages/markitai/tests/unit
 
-      - name: Run integration tests (no API keys)
-        run: uv run pytest packages/markitai/tests/integration -v --tb=short -k "not test_url"
-        env:
-          SKIP_LLM_TESTS: "1"
+      - name: Run integration tests
+        run: uv run pytest packages/markitai/tests/integration
 
   publish:
     needs: [test]
@@ -54,21 +52,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.2
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v7.6.0
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
+          python-version: "3.13"
 
       - name: Build package
-        run: uv build --package markitai
+        run: uv build --package markitai --out-dir dist --clear
 
       - name: Verify build artifacts
         run: ls -la dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@v1.13.0
         with:
           packages-dir: dist/

@@ -62,13 +62,13 @@ Pin specific versions using environment variables:
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.11.2"
+export MARKITAI_VERSION="0.12.0"
 export UV_VERSION="0.9.27"
 curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.10.0"
+$env:MARKITAI_VERSION = "0.12.0"
 $env:UV_VERSION = "0.9.27"
 powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
 ```
@@ -201,12 +201,11 @@ In `--llm` mode, only `.llm.md` is written by default. Use `--keep-base` to also
 
 | Format | Extensions |
 |--------|------------|
-| Word | `.docx`, `.doc` |
-| PowerPoint | `.pptx`, `.ppt` |
-| Excel | `.xlsx`, `.xls` |
+| Office | `.docx`, `.doc`, `.pptx`, `.ppt`, `.xlsx`, `.xls`, `.odt`, `.ods`, `.numbers` |
 | PDF | `.pdf` |
-| Text | `.txt`, `.md`, `.markdown` |
-| Images | `.jpg`, `.jpeg`, `.png`, `.webp` |
+| Text / Markup / Structured Data | `.txt`, `.md`, `.markdown`, `.html`, `.htm`, `.xhtml`, `.xml`, `.csv`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex` |
+| Images | `.jpg`, `.jpeg`, `.png`, `.webp`, `.svg`, `.gif`, `.bmp`, `.tiff`, `.tif` |
+| Other Documents | `.epub`, `.eml`, `.msg`, `.ipynb` |
 | URLs | `http://`, `https://` |
 
 ## Platform-Specific Features

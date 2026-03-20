@@ -1299,7 +1299,6 @@ class TestFunctionSignatures:
         assert "output_file" in params
         assert "cfg" in params
         assert "input_path" in params
-        assert "concurrency_limit" in params
         assert "processor" in params
         assert "llm_ready_event" in params
         assert "llm_ready_timeout" in params

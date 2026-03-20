@@ -3,14 +3,13 @@
 #
 # Note: This project uses uv for Python package management and pnpm for website.
 # Dependabot uses pip/npm ecosystems but works correctly with pyproject.toml and package.json.
-#
-# IMPORTANT: Dependabot does NOT update uv.lock. After merging PRs, run:
-#   uv lock
-# to sync the lockfile.
 
 version: 2
 updates:
   # Python dependencies - root pyproject.toml
+  # Note: This project uses uv with uv.lock. Dependabot's pip ecosystem cannot
+  # update uv.lock, so PRs that modify pyproject.toml will fail `uv sync --frozen`
+  # in CI. Manually run `uv lock` on those PRs before merging.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
@@ -84,9 +83,7 @@ updates:
         patterns:
           - "*"
 
-  # Website dependencies (project uses pnpm, Dependabot uses npm ecosystem)
-  # Note: Dependabot does NOT update pnpm-lock.yaml. After merging PRs, run:
-  #   cd website && pnpm install
+  # Website dependencies (pnpm)
   - package-ecosystem: "npm"
     directory: "/website"
     schedule:

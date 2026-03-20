@@ -441,7 +441,6 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
 
             # Use ClaudeSDKClient for all requests (more reliable than query())
             # For images, use streaming input; for text, pass string directly
-            # See: docs/reference/claude_streaming_vs_single_mode.md
             async with claude_agent_sdk.ClaudeSDKClient(options) as client:
                 await client.query(prompt)
                 async for message in client.receive_response():

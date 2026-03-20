@@ -49,7 +49,6 @@ export default defineConfig({
           next: '下一页',
         },
         footer: {
-          message: '基于 MIT 许可证发布。',
           copyright: 'Copyright © 2026-present',
         },
         editLink: {
@@ -112,7 +111,6 @@ export default defineConfig({
     ],
 
     footer: {
-      message: 'Released under the MIT License.',
       copyright: 'Copyright © 2026-present',
     },
 
