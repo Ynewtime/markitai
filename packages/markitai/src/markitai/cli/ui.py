@@ -46,6 +46,37 @@ def truncate(text: str, max_len: int) -> str:
     return text[: max_len - 3] + "..."
 
 
+def summarize_active_items(
+    items: list[str],
+    *,
+    max_items: int = 3,
+    max_len: int | None = None,
+) -> str:
+    """Summarize active concurrent items for compact progress displays.
+
+    Args:
+        items: Active item labels in display order.
+        max_items: Maximum number of labels to show before collapsing the rest.
+        max_len: Optional maximum display length.
+
+    Returns:
+        Compact summary string such as ``"a.txt, b.txt +2"``.
+    """
+    unique_items = [item.strip() for item in items if item and item.strip()]
+    unique_items = list(dict.fromkeys(unique_items))
+    if not unique_items:
+        return ""
+
+    shown = unique_items[:max_items]
+    remaining = len(unique_items) - len(shown)
+    summary = ", ".join(shown)
+    if remaining > 0:
+        summary = f"{summary} +{remaining}"
+    if max_len is not None:
+        summary = truncate(summary, max_len)
+    return summary
+
+
 def title(text: str, *, console: Console | None = None) -> None:
     """Display a title with diamond symbol.
 
