@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from loguru import logger
 
@@ -532,7 +533,7 @@ async def process_url(
             stdout_content = strip_asset_references(stdout_content)
             console.print(stdout_content, markup=False, highlight=False)
         else:
-            # File mode: generate report and output to console
+            # File mode: generate report and show concise result
             finished_at = datetime.now()
             duration = (finished_at - started_at).total_seconds()
 
@@ -606,8 +607,26 @@ async def process_url(
             atomic_write_json(report_path, report, order_func=order_report)
             logger.debug(f"Report saved: {report_path}")
 
-            # Output to console
-            console.print(final_content, markup=False, highlight=False)
+            final_output_file = (
+                output_file.with_suffix(".llm.md") if cfg.llm.enabled else output_file
+            )
+            if not final_output_file.exists() and cfg.llm.enabled:
+                final_output_file = output_file
+
+            if verbose:
+                console.print(f"  {ui.MARK_SUCCESS} Fetched via {used_strategy}")
+                if images_count > 0:
+                    console.print(
+                        f"  {ui.MARK_SUCCESS} Images: {images_count} downloaded"
+                    )
+                if screenshots_count > 0:
+                    console.print(
+                        f"  {ui.MARK_SUCCESS} Screenshots: {screenshots_count} captured"
+                    )
+                console.print()
+
+            duration_str = f" ({duration:.1f}s)" if verbose else ""
+            ui.success(f"{final_output_file}{duration_str}")
 
     except SystemExit:
         raise
@@ -629,6 +648,7 @@ async def process_url_batch(
     dry_run: bool,
     verbose: bool,
     log_file_path: Path | None = None,
+    console_handler_id: int | None = None,
     concurrency: int = 3,
     fetch_strategy: FetchStrategy | None = None,
     explicit_fetch_strategy: bool = False,
@@ -645,6 +665,7 @@ async def process_url_batch(
         dry_run: If True, only show what would be done
         verbose: If True, enable verbose logging
         log_file_path: Path to log file (for report)
+        console_handler_id: Loguru console handler ID to suspend during progress
         concurrency: Max concurrent URL processing (default 3)
         fetch_strategy: Strategy to use for fetching URL content
         explicit_fetch_strategy: If True, strategy was explicitly set via CLI flag
@@ -660,6 +681,7 @@ async def process_url_batch(
         TimeElapsedColumn,
     )
 
+    from markitai.cli.logging_config import LoggingContext
     from markitai.cli.processors.llm import process_with_llm
     from markitai.fetch import (
         FetchError,
@@ -724,8 +746,29 @@ async def process_url_batch(
     completed = 0
     failed = 0
     results: dict[str, dict] = {}
+    active_urls: dict[str, str] = {}
 
     semaphore = asyncio.Semaphore(concurrency)
+
+    def format_url_label(url: str) -> str:
+        """Build a compact URL label for progress display."""
+        parsed = urlparse(url)
+        path_parts = [part for part in parsed.path.split("/") if part]
+        tail = "/".join(path_parts[-2:]) if path_parts else ""
+        label = parsed.netloc if not tail else f"{parsed.netloc}/{tail}"
+        return ui.truncate(label, max(ui.term_width(console) // 3, 24))
+
+    def update_progress_label(progress_obj, progress_task) -> None:
+        """Refresh the aggregate progress label from active URLs."""
+        summary = ui.summarize_active_items(
+            list(active_urls.values()),
+            max_items=max(2, min(concurrency, 3)),
+            max_len=max(ui.term_width(console) // 2, 40),
+        )
+        description = "[cyan]URLs"
+        if summary:
+            description = f"[cyan]URLs: {summary}"
+        progress_obj.update(progress_task, description=description)
 
     async def process_single_url(entry, progress_task, progress_obj) -> None:
         """Process a single URL."""
@@ -744,11 +787,8 @@ async def process_url_batch(
                     filename = url_to_filename(url)
 
                 logger.info(f"Processing URL: {url} (strategy: {fetch_strategy.value})")
-                desc_max = max(ui.term_width(console) // 3, 15)
-                progress_obj.update(
-                    progress_task,
-                    description=f"[cyan]{ui.truncate(url, desc_max)}",
-                )
+                active_urls[url] = format_url_label(url)
+                update_progress_label(progress_obj, progress_task)
 
                 # Fetch URL using the configured strategy
                 try:
@@ -928,18 +968,24 @@ async def process_url_batch(
                 failed += 1
 
             finally:
+                active_urls.pop(url, None)
                 progress_obj.advance(progress_task)
+                update_progress_label(progress_obj, progress_task)
 
     # Process all URLs with progress bar
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("[cyan]Processing URLs...", total=len(url_entries))
+    logging_ctx = LoggingContext(console_handler_id, verbose)
+    with (
+        logging_ctx.suspend_console(),
+        Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress,
+    ):
+        task = progress.add_task("[cyan]URLs", total=len(url_entries))
 
         tasks = [process_single_url(entry, task, progress) for entry in url_entries]
         await asyncio.gather(*tasks)

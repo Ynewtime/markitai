@@ -20,6 +20,8 @@ if sys.platform == "win32":
 # Suppress noisy messages before imports
 # Note: Most warning filters are now centralized in logging_config.setup_logging()
 os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
+# Avoid LiteLLM startup network fetches and fallback warnings in normal CLI use.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 import click
 from dotenv import load_dotenv
@@ -747,6 +749,7 @@ def app(
                 dry_run,
                 verbose,
                 log_file_path,
+                console_handler_id=console_handler_id,
                 concurrency=cfg.batch.url_concurrency,
                 fetch_strategy=fetch_strategy,
                 explicit_fetch_strategy=explicit_fetch_strategy,

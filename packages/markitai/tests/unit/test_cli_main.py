@@ -7,7 +7,9 @@ dry run mode, and error handling paths.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from click.testing import CliRunner
 
@@ -20,6 +22,10 @@ from markitai.cli import app
 
 class TestCLIOptions:
     """Tests for CLI option parsing."""
+
+    def test_cli_sets_local_litellm_cost_map_by_default(self) -> None:
+        """CLI startup should avoid LiteLLM remote pricing fetch noise."""
+        assert os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP") == "True"
 
     def test_help_displays_without_error(self, cli_runner: CliRunner) -> None:
         """Test that --help works correctly."""
@@ -859,6 +865,29 @@ https://example.org
         )
         # Should process without error
         assert result.exit_code == 0
+
+    def test_urls_batch_receives_console_handler_id(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """URL list batch mode should suspend console logs during progress."""
+        urls_file = tmp_path / "urls.urls"
+        urls_file.write_text("https://example.com\n")
+        output_dir = tmp_path / "out"
+
+        with patch(
+            "markitai.cli.processors.url.process_url_batch",
+            new_callable=AsyncMock,
+        ) as mock_process_url_batch:
+            result = cli_runner.invoke(
+                app,
+                [str(urls_file), "-o", str(output_dir), "--verbose"],
+            )
+
+        assert result.exit_code == 0
+        assert mock_process_url_batch.await_count == 1
+        assert (
+            mock_process_url_batch.await_args.kwargs["console_handler_id"] is not None
+        )
 
 
 # =============================================================================

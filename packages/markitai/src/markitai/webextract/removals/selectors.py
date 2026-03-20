@@ -88,6 +88,14 @@ def _should_protect(el: Tag, main_content: Tag | None) -> bool:
         if isinstance(parent, Tag) and parent.name in ("pre", "code"):
             return True
 
+    # Protect <header> elements that are direct children of article/main/section.
+    # The bare "header" selector is intended to remove site-level page headers,
+    # not article-level headers that contain the h1 and byline.
+    if el.name == "header":
+        parent = el.parent
+        if isinstance(parent, Tag) and parent.name in ("article", "main", "section"):
+            return True
+
     return False
 
 

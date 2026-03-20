@@ -13,6 +13,7 @@ from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from loguru import logger
 from rich.live import Live
@@ -509,6 +510,8 @@ class BatchProcessor:
         self._total_files: int = 0
         self._completed_urls: int = 0
         self._completed_files: int = 0
+        self._active_file_items: dict[str, str] = {}
+        self._active_url_items: dict[str, str] = {}
 
     def _compute_task_hash(self) -> str:
         """Compute hash from task input parameters.
@@ -684,26 +687,52 @@ class BatchProcessor:
         if self._progress is not None and self._overall_task_id is not None:
             self._progress.update(self._overall_task_id, total=total)
 
-    def advance_progress(self, clear_current: bool = True) -> None:
+    def _render_active_items(self, items: dict[str, str]) -> str:
+        """Render active item labels for a compact progress suffix."""
+        summary = ui.summarize_active_items(
+            list(items.values()),
+            max_items=3,
+            max_len=max(self.console.width // 2, 40),
+        )
+        return f"({summary})" if summary else ""
+
+    def advance_progress(
+        self, clear_current: bool = True, current_item: str | None = None
+    ) -> None:
         """Advance progress bar by one.
 
         Args:
             clear_current: Whether to clear the current file field after advancing
+            current_item: Optional active file key to remove from the current display
         """
         if self._progress is not None and self._overall_task_id is not None:
+            if current_item is not None:
+                self._active_file_items.pop(current_item, None)
+            elif clear_current:
+                self._active_file_items.clear()
+
             self._completed_files += 1
             self._progress.advance(self._overall_task_id)
             if clear_current:
-                self._progress.update(self._overall_task_id, current="")
+                self._progress.update(
+                    self._overall_task_id,
+                    current=self._render_active_items(self._active_file_items),
+                )
 
-    def set_current_file(self, filename: str) -> None:
+    def set_current_file(self, file_key: str, display_name: str | None = None) -> None:
         """Set the current file being processed in progress display.
 
         Args:
-            filename: Name of the file being processed (displayed in progress bar)
+            file_key: Stable identifier for the active file
+            display_name: Optional label shown in the progress bar
         """
         if self._progress is not None and self._overall_task_id is not None:
-            self._progress.update(self._overall_task_id, current=f"({filename})")
+            label = display_name or Path(file_key).name
+            self._active_file_items[file_key] = label
+            self._progress.update(
+                self._overall_task_id,
+                current=self._render_active_items(self._active_file_items),
+            )
 
     def update_url_status(self, url: str, completed: bool = False) -> None:
         """Update URL processing status in progress display.
@@ -712,18 +741,25 @@ class BatchProcessor:
             url: The URL being processed (displayed in progress bar)
             completed: If True, advance the URL progress counter and clear current
         """
-        from urllib.parse import urlparse
-
         if self._progress is not None and self._url_task_id is not None:
             if completed:
+                self._active_url_items.pop(url, None)
                 self._completed_urls += 1
                 self._progress.advance(self._url_task_id)
-                # Clear current URL after completion
-                self._progress.update(self._url_task_id, current="")
+                self._progress.update(
+                    self._url_task_id,
+                    current=self._render_active_items(self._active_url_items),
+                )
             else:
-                # Show domain of current URL being processed
-                domain = urlparse(url).netloc
-                self._progress.update(self._url_task_id, current=f"({domain})")
+                parsed = urlparse(url)
+                path_parts = [part for part in parsed.path.split("/") if part]
+                tail = "/".join(path_parts[-2:]) if path_parts else ""
+                label = parsed.netloc if not tail else f"{parsed.netloc}/{tail}"
+                self._active_url_items[url] = label
+                self._progress.update(
+                    self._url_task_id,
+                    current=self._render_active_items(self._active_url_items),
+                )
 
     def discover_files(
         self,
