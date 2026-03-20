@@ -464,6 +464,11 @@
           "default": "~/.markitai/assets",
           "title": "Stdout Persist Dir",
           "type": "string"
+        },
+        "stdout_fetch_external": {
+          "default": false,
+          "title": "Stdout Fetch External",
+          "type": "boolean"
         }
       },
       "title": "ImageConfig",

@@ -277,6 +277,7 @@ class ImageConfig(BaseModel):
     filter: ImageFilterConfig = Field(default_factory=ImageFilterConfig)
     stdout_persist: bool = False
     stdout_persist_dir: str = "~/.markitai/assets"
+    stdout_fetch_external: bool = False
 
 
 class OCRConfig(BaseModel):
