@@ -1,0 +1,13 @@
+{
+  "info": {
+    "content_profile": "rich_media_page"
+  },
+  "markdown_must_contain": [
+    "Global Interpreter Lock",
+    "ArjanCodes"
+  ],
+  "markdown_must_not_contain": [
+    "YouTube Navigation",
+    "masthead-portal"
+  ]
+}

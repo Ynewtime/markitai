@@ -326,6 +326,9 @@ def test_parity_report_diagnostics_are_populated() -> None:
         "x_status_2030105637204676808",
         "generic_article",
         "github_issue_thread",
+        "hackernews_thread",
+        "reddit_post",
+        "youtube_page",
     ],
 )
 def test_parity_clean_html_is_non_empty(fixture_name: str) -> None:
@@ -334,3 +337,24 @@ def test_parity_clean_html_is_non_empty(fixture_name: str) -> None:
     assert report.html_snapshot_ok is True, (
         f"clean_html empty for {fixture_name}: {report.failures}"
     )
+
+
+@pytest.mark.parity
+def test_parity_fixture_hackernews_thread() -> None:
+    """Native extraction must satisfy the hackernews_thread contract."""
+    report = run_native_fixture_case("hackernews_thread")
+    assert report.html_snapshot_ok is True, f"Failures: {report.failures}"
+
+
+@pytest.mark.parity
+def test_parity_fixture_reddit_post() -> None:
+    """Native extraction must satisfy the reddit_post contract."""
+    report = run_native_fixture_case("reddit_post")
+    assert report.html_snapshot_ok is True, f"Failures: {report.failures}"
+
+
+@pytest.mark.parity
+def test_parity_fixture_youtube_page() -> None:
+    """Native extraction must satisfy the youtube_page contract."""
+    report = run_native_fixture_case("youtube_page")
+    assert report.html_snapshot_ok is True, f"Failures: {report.failures}"
