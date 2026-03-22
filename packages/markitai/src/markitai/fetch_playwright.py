@@ -535,7 +535,7 @@ class PlaywrightRenderer:
                 assert is_native_extraction_acceptable is not None
                 assert coerce_source_frontmatter is not None
                 try:
-                    extracted = extract_web_content(html_content, final_url or url)
+                    extracted = extract_web_content(html_content, url)
                 except Exception as e:
                     logger.debug(f"Native webextract failed, using fallback: {e}")
                 else:
