@@ -13,7 +13,7 @@ class TestCheckDeprecatedModels:
         warnings = check_deprecated_models(["gpt-4o"])
         assert len(warnings) == 1
         assert "gpt-4o" in warnings[0]
-        assert "gpt-5.2" in warnings[0]
+        assert "gpt-5.4" in warnings[0]
         assert "February 13, 2025" in warnings[0]
 
     def test_detects_multiple_deprecated_models(self) -> None:
@@ -46,7 +46,7 @@ class TestCheckDeprecatedModels:
         from markitai.providers import check_deprecated_models
 
         warnings = check_deprecated_models(
-            ["gpt-5.2", "claude-sonnet-4.5", "gemini-2.5-flash"]
+            ["gpt-5.4", "claude-sonnet-4.6", "gemini-3.1-flash-lite-preview"]
         )
         assert len(warnings) == 0
 
@@ -73,11 +73,11 @@ class TestDeprecatedModelsConstant:
         assert "gpt-5" in DEPRECATED_MODELS
 
     def test_all_replacements_are_gpt_5_2(self) -> None:
-        """Test that all deprecated models recommend gpt-5.2."""
+        """Test that all deprecated models recommend gpt-5.4."""
         from markitai.providers import DEPRECATED_MODELS
 
         for replacement in DEPRECATED_MODELS.values():
-            assert replacement == "gpt-5.2"
+            assert replacement == "gpt-5.4"
 
 
 class TestIsLocalProviderModel:
@@ -92,9 +92,7 @@ class TestIsLocalProviderModel:
         assert is_local_provider_model("claude-agent/opus") is True
         assert is_local_provider_model("claude-agent/haiku") is True
         # Full model strings
-        assert (
-            is_local_provider_model("claude-agent/claude-sonnet-4-5-20250929") is True
-        )
+        assert is_local_provider_model("claude-agent/claude-sonnet-4-6") is True
         assert is_local_provider_model("claude-agent/claude-opus-4-6") is True
         # Legacy format (still works)
         assert is_local_provider_model("claude-agent/claude-sonnet-4") is True
@@ -112,7 +110,7 @@ class TestIsLocalProviderModel:
         """Test that standard LiteLLM models are not identified as local."""
         from markitai.providers import is_local_provider_model
 
-        assert is_local_provider_model("gemini/gemini-2.5-flash") is False
+        assert is_local_provider_model("gemini/gemini-3.1-flash-lite-preview") is False
         assert is_local_provider_model("openai/gpt-4") is False
         assert is_local_provider_model("anthropic/claude-3-sonnet") is False
         assert is_local_provider_model("deepseek/deepseek-chat") is False
@@ -192,7 +190,10 @@ class TestGetLocalProviderModelInfo:
         """Test that non-local models return None."""
         from markitai.providers import get_local_provider_model_info
 
-        assert get_local_provider_model_info("gemini/gemini-2.5-flash") is None
+        assert (
+            get_local_provider_model_info("gemini/gemini-3.1-flash-lite-preview")
+            is None
+        )
         assert get_local_provider_model_info("openai/gpt-4") is None
         assert get_local_provider_model_info("anthropic/claude-3-sonnet") is None
 
@@ -306,7 +307,7 @@ class TestCountTokens:
 
         # Test with Claude model (always uses estimation)
         text = "Hello, world!"  # 13 chars
-        tokens = count_tokens(text, "claude-sonnet-4.5")
+        tokens = count_tokens(text, "claude-sonnet-4.6")
         # Estimation: 13 // 4 = 3
         assert tokens == 3
 
@@ -315,7 +316,7 @@ class TestCountTokens:
         from markitai.providers import count_tokens
 
         text = "a" * 1000  # 1000 chars
-        tokens = count_tokens(text, "claude-sonnet-4.5")
+        tokens = count_tokens(text, "claude-sonnet-4.6")
         # Estimation: 1000 // 4 = 250
         assert tokens == 250
 
@@ -817,7 +818,7 @@ class TestCopilotProvider:
         # GPT-5 series is now fully supported by Copilot
         assert "gpt-5" not in unsupported
         assert "gpt-5.1" not in unsupported
-        assert "gpt-5.2" not in unsupported
+        assert "gpt-5.4" not in unsupported
 
         # o1/o3 reasoning models should still be unsupported
         assert "o1" in unsupported
@@ -827,7 +828,7 @@ class TestCopilotProvider:
         assert "gpt-4.1" not in unsupported
 
         # Claude models should NOT be in unsupported list
-        assert "claude-sonnet-4.5" not in unsupported
+        assert "claude-sonnet-4.6" not in unsupported
 
 
 class TestCopilotAuthCheck:
@@ -1443,21 +1444,23 @@ class TestNewProviderIdentification:
         """Test that chatgpt models are identified as local."""
         from markitai.providers import is_local_provider_model
 
-        assert is_local_provider_model("chatgpt/gpt-5.2") is True
-        assert is_local_provider_model("chatgpt/gpt-5.2-codex") is True
+        assert is_local_provider_model("chatgpt/gpt-5.4") is True
+        assert is_local_provider_model("chatgpt/gpt-5.4-codex") is True
 
     def test_gemini_cli_model_is_local(self) -> None:
         """Test that gemini-cli models are identified as local."""
         from markitai.providers import is_local_provider_model
 
-        assert is_local_provider_model("gemini-cli/gemini-2.5-pro") is True
-        assert is_local_provider_model("gemini-cli/gemini-2.5-flash") is True
+        assert is_local_provider_model("gemini-cli/gemini-3.1-pro-preview") is True
+        assert (
+            is_local_provider_model("gemini-cli/gemini-3.1-flash-lite-preview") is True
+        )
 
     def test_chatgpt_model_info(self) -> None:
         """Test that chatgpt models return valid model info."""
         from markitai.providers import get_local_provider_model_info
 
-        info = get_local_provider_model_info("chatgpt/gpt-5.2")
+        info = get_local_provider_model_info("chatgpt/gpt-5.4")
         assert info is not None
         assert "max_input_tokens" in info
         assert "max_output_tokens" in info
@@ -1467,7 +1470,7 @@ class TestNewProviderIdentification:
         """Test that gemini-cli models return valid model info."""
         from markitai.providers import get_local_provider_model_info
 
-        info = get_local_provider_model_info("gemini-cli/gemini-2.5-pro")
+        info = get_local_provider_model_info("gemini-cli/gemini-3.1-pro-preview")
         assert info is not None
         assert "max_input_tokens" in info
         assert "max_output_tokens" in info
@@ -1480,7 +1483,9 @@ class TestNewProviderIdentification:
         from markitai.providers import validate_local_provider_deps
 
         with patch("importlib.util.find_spec", return_value=None):
-            warnings = validate_local_provider_deps(["gemini-cli/gemini-2.5-pro"])
+            warnings = validate_local_provider_deps(
+                ["gemini-cli/gemini-3.1-pro-preview"]
+            )
             assert len(warnings) >= 1
             assert any("google-auth" in w for w in warnings)
 
@@ -1492,7 +1497,7 @@ class TestCountTokensFallback:
         """English text: ~1 token per 4 chars."""
         from markitai.providers import count_tokens
 
-        result = count_tokens("Hello world, this is a test.", "claude-sonnet-4.5")
+        result = count_tokens("Hello world, this is a test.", "claude-sonnet-4.6")
         assert 5 <= result <= 15
 
     def test_chinese_text_estimation_not_undercounted(self) -> None:
@@ -1500,7 +1505,7 @@ class TestCountTokensFallback:
         from markitai.providers import count_tokens
 
         chinese_text = "这是一段中文文本用于测试令牌计数的准确性"  # 19 CJK chars
-        result = count_tokens(chinese_text, "claude-sonnet-4.5")
+        result = count_tokens(chinese_text, "claude-sonnet-4.6")
         assert result >= 15, f"Chinese token count {result} is too low (undercounted)"
 
     def test_mixed_cjk_and_english(self) -> None:

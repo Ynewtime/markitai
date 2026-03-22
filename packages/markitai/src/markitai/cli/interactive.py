@@ -316,9 +316,9 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
     )
 
     model_map = {
-        "anthropic": "anthropic/claude-sonnet-4-5-20250929",
-        "openai": "openai/gpt-5.2",
-        "gemini": "gemini/gemini-2.5-flash",
+        "anthropic": "anthropic/claude-sonnet-4-6",
+        "openai": "openai/gpt-5.4",
+        "gemini": "gemini/gemini-3.1-flash-lite-preview",
         "deepseek": "deepseek/deepseek-chat",
     }
 

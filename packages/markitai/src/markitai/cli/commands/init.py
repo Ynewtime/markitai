@@ -292,37 +292,53 @@ def _detect_providers() -> list[tuple[str, bool]]:
 def _build_config(
     providers: list[tuple[str, bool]] | None = None,
 ) -> dict:
-    """Build config data with all detected providers."""
+    """Build config data with all detected providers.
+
+    Deduplication rules to avoid redundant Router entries:
+    - Skip Anthropic API when Claude CLI is available (same model family)
+    - Skip OpenRouter Gemini when direct Gemini API is available
+    """
     model_list = []
 
     # Map provider display names to model configs
     provider_models = {
         "Claude": ("default", "claude-agent/sonnet"),
-        "Copilot": ("default", "copilot/claude-sonnet-4.5"),
+        "Copilot": ("default", "copilot/claude-sonnet-4.6"),
         "DeepSeek": ("default", "deepseek/deepseek-chat"),
-        "Gemini": ("default", "gemini/gemini-2.5-flash"),
-        "OpenAI": ("default", "openai/gpt-5.2"),
-        "Anthropic": ("default", "anthropic/claude-sonnet-4-5-20250929"),
-        "OpenRouter": ("default", "openrouter/google/gemini-2.5-flash"),
+        "Gemini": ("default", "gemini/gemini-3.1-flash-lite-preview"),
+        "OpenAI": ("default", "openai/gpt-5.4"),
+        "Anthropic": ("default", "anthropic/claude-sonnet-4-6"),
+        "OpenRouter": ("default", "openrouter/google/gemini-3.1-flash-lite-preview"),
     }
 
     if providers:
+        available_keys: set[str] = set()
         for name, available in providers:
             if not available:
                 continue
-            for key, (model_name, model_id) in provider_models.items():
+            for key in provider_models:
                 if key in name:
-                    model_list.append(
-                        {
-                            "model_name": model_name,
-                            "litellm_params": {"model": model_id},
-                        }
-                    )
+                    available_keys.add(key)
                     break
+
+        # Deduplicate: skip redundant provider routes
+        if "Claude" in available_keys and "Anthropic" in available_keys:
+            available_keys.discard("Anthropic")
+        if "Gemini" in available_keys and "OpenRouter" in available_keys:
+            available_keys.discard("OpenRouter")
+
+        # Build model_list preserving provider_models order
+        for key, (model_name, model_id) in provider_models.items():
+            if key in available_keys:
+                model_list.append(
+                    {
+                        "model_name": model_name,
+                        "litellm_params": {"model": model_id},
+                    }
+                )
 
     config_data: dict = {
         "output": {"dir": "./output"},
-        "image": {"compress": True, "quality": 75},
     }
 
     if model_list:

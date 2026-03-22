@@ -68,7 +68,7 @@ class TestDetectAllProviders:
             results = detect_all_providers()
             assert len(results) == 1
             assert results[0].provider == "copilot"
-            assert results[0].model == "copilot/claude-sonnet-4.5"
+            assert results[0].model == "copilot/claude-sonnet-4.6"
 
     def test_detect_env_providers(self) -> None:
         """Should detect environment variable providers."""
@@ -157,7 +157,7 @@ class TestDetectAllProviders:
             results = detect_all_providers()
             assert len(results) == 1
             assert results[0].provider == "chatgpt"
-            assert results[0].model == "chatgpt/gpt-5.2"
+            assert results[0].model == "chatgpt/gpt-5.4"
 
     def test_detect_gemini_cli_provider(self) -> None:
         """Should detect Gemini CLI when authenticated."""
@@ -176,7 +176,7 @@ class TestDetectAllProviders:
             results = detect_all_providers()
             assert len(results) == 1
             assert results[0].provider == "gemini-cli"
-            assert results[0].model == "gemini-cli/gemini-2.5-pro"
+            assert results[0].model == "gemini-cli/gemini-3.1-pro-preview"
 
 
 class TestDetectFirstProvider:
@@ -324,7 +324,7 @@ class TestProvidersToModelConfigs:
         providers = [
             ProviderDetectionResult(
                 provider="anthropic",
-                model="anthropic/claude-sonnet-4-5-20250929",
+                model="anthropic/claude-sonnet-4-6",
                 authenticated=True,
                 source="env",
             )
@@ -332,7 +332,7 @@ class TestProvidersToModelConfigs:
         configs = providers_to_model_configs(providers)
         assert len(configs) == 1
         assert isinstance(configs[0], ModelConfig)
-        assert configs[0].litellm_params.model == "anthropic/claude-sonnet-4-5-20250929"
+        assert configs[0].litellm_params.model == "anthropic/claude-sonnet-4-6"
         assert configs[0].model_name == "default"
 
     def test_converts_multiple_providers(self) -> None:
@@ -341,12 +341,14 @@ class TestProvidersToModelConfigs:
 
         providers = [
             ProviderDetectionResult("claude-agent", "claude-agent/sonnet", True, "cli"),
-            ProviderDetectionResult("gemini", "gemini/gemini-2.5-flash", True, "env"),
+            ProviderDetectionResult(
+                "gemini", "gemini/gemini-3.1-flash-lite-preview", True, "env"
+            ),
         ]
         configs = providers_to_model_configs(providers)
         assert len(configs) == 2
         assert configs[0].litellm_params.model == "claude-agent/sonnet"
-        assert configs[1].litellm_params.model == "gemini/gemini-2.5-flash"
+        assert configs[1].litellm_params.model == "gemini/gemini-3.1-flash-lite-preview"
 
     def test_empty_providers_returns_empty(self) -> None:
         """Should return empty list for empty input."""

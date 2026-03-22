@@ -1272,9 +1272,9 @@ class TestProviderRegistration:
         assert is_local_provider_model("claude-agent/opus") is True
         assert is_local_provider_model("claude-agent/haiku") is True
         assert is_local_provider_model("copilot/gpt-4.1") is True
-        assert is_local_provider_model("copilot/claude-sonnet-4.5") is True
+        assert is_local_provider_model("copilot/claude-sonnet-4.6") is True
 
         # Non-local providers
         assert is_local_provider_model("openai/gpt-4") is False
         assert is_local_provider_model("anthropic/claude-3-sonnet") is False
-        assert is_local_provider_model("gemini/gemini-2.5-pro") is False
+        assert is_local_provider_model("gemini/gemini-3.1-pro-preview") is False

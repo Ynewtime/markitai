@@ -23,13 +23,13 @@ Provider prefixes:
         Supported models:
         - Aliases (recommended): sonnet, opus, haiku, inherit
           (automatically resolves to latest version via LiteLLM database)
-        - Full model strings: claude-sonnet-4-5-20250929, claude-opus-4-6, etc.
+        - Full model strings: claude-sonnet-4-6, claude-opus-4-6, etc.
     - copilot/<model>: Uses GitHub Copilot SDK (Copilot CLI authentication)
-        Use direct model names: gpt-4.1, claude-sonnet-4.5, gemini-2.5-pro, etc.
+        Use direct model names: gpt-4.1, claude-sonnet-4.6, gemini-3.1-pro-preview, etc.
     - chatgpt/<model>: Uses ChatGPT subscription (OAuth Device Code Flow)
-        Models: gpt-5.2, gpt-5.2-codex, etc.
+        Models: gpt-5.4, gpt-5.4-codex, etc.
     - gemini-cli/<model>: Uses Google AI subscription (OAuth via Gemini CLI)
-        Models: gemini-2.5-pro, gemini-2.5-flash, etc.
+        Models: gemini-3.1-pro-preview, gemini-3.1-flash-lite-preview, etc.
 """
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ def count_tokens(text: str, model: str) -> int:
 
     Args:
         text: Text to count tokens for
-        model: Model name (e.g., "gpt-4.1", "claude-sonnet-4.5")
+        model: Model name (e.g., "gpt-4.1", "claude-sonnet-4.6")
 
     Returns:
         Estimated token count
@@ -260,7 +260,7 @@ def estimate_model_cost(
     3. Fallback to COPILOT_MODEL_PRICING constants
 
     Args:
-        model: Model name (e.g., "gpt-4.1", "claude-sonnet-4.5")
+        model: Model name (e.g., "gpt-4.1", "claude-sonnet-4.6")
         input_tokens: Number of input tokens
         output_tokens: Number of output tokens
 
@@ -336,11 +336,13 @@ def estimate_model_cost(
 # Models deprecated on 2025-02-13
 # Key: deprecated model name, Value: recommended replacement
 DEPRECATED_MODELS: dict[str, str] = {
-    "gpt-4o": "gpt-5.2",
-    "gpt-4.1": "gpt-5.2",
-    "gpt-4.1-mini": "gpt-5.2",
-    "o4-mini": "gpt-5.2",
-    "gpt-5": "gpt-5.2",
+    "gpt-4o": "gpt-5.4",
+    "gpt-4.1": "gpt-5.4",
+    "gpt-4.1-mini": "gpt-5.4",
+    "o4-mini": "gpt-5.4",
+    "gpt-5": "gpt-5.4",
+    "gpt-5.1": "gpt-5.4",
+    "gpt-5.2": "gpt-5.4",
 }
 
 
@@ -689,7 +691,7 @@ def _resolve_litellm_model(model: str) -> str | None:
         # Check if it's a known alias, use dynamic lookup
         if model_name in CLAUDE_CODE_ALIASES:
             return _find_latest_claude_model(model_name)
-        # Otherwise use as-is (for full model strings like claude-sonnet-4-5-20250929)
+        # Otherwise use as-is (for full model strings like claude-sonnet-4-6)
         return model_name
 
     if model.startswith("copilot/"):
@@ -699,12 +701,12 @@ def _resolve_litellm_model(model: str) -> str | None:
 
     if model.startswith("chatgpt/"):
         # ChatGPT models: strip prefix
-        # e.g., "chatgpt/gpt-5.2" → "gpt-5.2"
+        # e.g., "chatgpt/gpt-5.4" → "gpt-5.4"
         return model.replace("chatgpt/", "")
 
     if model.startswith("gemini-cli/"):
         # Gemini CLI models: strip prefix
-        # e.g., "gemini-cli/gemini-2.5-pro" → "gemini-2.5-pro"
+        # e.g., "gemini-cli/gemini-3.1-pro-preview" → "gemini-3.1-pro-preview"
         return model.replace("gemini-cli/", "")
 
     return None

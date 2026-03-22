@@ -68,7 +68,7 @@ uv pip install "markitai[all]"
 
 ```bash
 markitai --version
-# markitai 0.12.0
+# markitai 0.12.1
 ```
 
 ---
@@ -117,7 +117,7 @@ CLI 参数（含 --config / -c）> MARKITAI_CONFIG 环境变量 > ./markitai.jso
 常用环境变量：
 
 ```bash
-export MODEL="claude-sonnet-4-20250514"    # 指定 LLM 模型
+export MODEL="claude-sonnet-4-6"    # 指定 LLM 模型
 export MARKITAI_PURE=1                      # 启用纯净模式
 export ANTHROPIC_API_KEY="sk-..."           # Anthropic 认证
 export OPENAI_API_KEY="sk-..."              # OpenAI 认证

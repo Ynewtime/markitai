@@ -21,7 +21,7 @@ class TestPreflightAuthCheck:
 
     async def test_checks_gemini_cli_provider(self) -> None:
         """Checks auth for gemini-cli models with weight > 0."""
-        configs = [_make_model_config("gemini-cli/gemini-2.5-pro", weight=1)]
+        configs = [_make_model_config("gemini-cli/gemini-3.1-pro-preview", weight=1)]
 
         mock_status = AuthStatus(
             provider="gemini-cli",
@@ -64,7 +64,7 @@ class TestPreflightAuthCheck:
     async def test_skips_weight_zero_models(self) -> None:
         """Models with weight=0 are not checked."""
         configs = [
-            _make_model_config("gemini-cli/gemini-2.5-pro", weight=0),
+            _make_model_config("gemini-cli/gemini-3.1-pro-preview", weight=0),
             _make_model_config("chatgpt/codex-mini", weight=0),
         ]
 
@@ -80,7 +80,7 @@ class TestPreflightAuthCheck:
         """Non-local providers (openai, gemini, etc.) are not checked."""
         configs = [
             _make_model_config("openai/gpt-4o", weight=1),
-            _make_model_config("gemini/gemini-2.5-flash", weight=1),
+            _make_model_config("gemini/gemini-3.1-flash-lite-preview", weight=1),
         ]
 
         with patch("markitai.providers.AuthManager") as MockManager:
@@ -165,7 +165,7 @@ class TestPreflightAuthCheck:
     async def test_checks_all_local_providers(self) -> None:
         """All local providers checked when configured with weight > 0."""
         configs = [
-            _make_model_config("gemini-cli/gemini-2.5-pro", weight=1),
+            _make_model_config("gemini-cli/gemini-3.1-pro-preview", weight=1),
             _make_model_config("chatgpt/codex-mini", weight=1),
             _make_model_config("claude-agent/sonnet", weight=1),
             _make_model_config("copilot/gpt-4.1", weight=1),
@@ -195,8 +195,8 @@ class TestPreflightAuthCheck:
     async def test_deduplicates_same_provider(self) -> None:
         """Multiple models from same provider only trigger one check."""
         configs = [
-            _make_model_config("gemini-cli/gemini-2.5-pro", weight=1),
-            _make_model_config("gemini-cli/gemini-2.5-flash", weight=2),
+            _make_model_config("gemini-cli/gemini-3.1-pro-preview", weight=1),
+            _make_model_config("gemini-cli/gemini-3.1-flash-lite-preview", weight=2),
         ]
 
         mock_status = AuthStatus(

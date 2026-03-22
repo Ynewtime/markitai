@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-03-22
+
+### Added
+
+- **Stdout Terminal Image Display**: Inline image rendering for Kitty/iTerm2 terminals in stdout mode, with three-tier resolution cascade (terminal protocol → persistent asset store → markdown placeholder)
+- **Content-Addressed Asset Store**: Persistent image storage with symlink refs at `~/.markitai/assets/`, enabling stdout image persistence across sessions
+- **Terminal Image Protocol Detection**: Auto-detect Kitty and iTerm2 graphics protocols for native inline image display
+- **`stdout_persist` Config Fields**: New `image.stdout_persist` and `image.stdout_persist_dir` settings for controlling stdout image persistence
+- **External Image Inline Display**: Download and inline-display external images in single URL stdout mode (`image.stdout_fetch_external`)
+- **User Journey Documentation**: Comprehensive Chinese user journey document covering all features and workflows
+
+### Fixed
+
+- **Stdout Mode LLM Errors**: Make LLM errors visible in quiet/stdout mode via ERROR-level log handler
+- **LLM Warning Implementation**: Address third-party review findings on LLM warning display
+- **Kitty Graphics Protocol**: Convert images to PNG for Kitty protocol compatibility
+- **Stdout Image Handling**: Resolve three bugs in stdout image asset resolution and display
+- **Cross-Platform Tests**: Fix Windows test failures and missing Playwright browser handling
+- **`markitai init` Duplicate Routes**: Deduplicate overlapping default provider entries in generated configs, preferring Claude CLI over Anthropic API and direct Gemini API over OpenRouter Gemini
+
+### Changed
+
+- **Stdout Asset Resolution**: Rename `strip_asset_references` to `resolve_asset_references` with three-tier cascade logic
+- **Terminal Image Rendering**: Harden rendering pipeline and improve test coverage
+- **`markitai init` Default Config**: Stop writing redundant default `image.compress` and `image.quality` settings into newly generated configs
+
+## [0.12.0] - 2026-03-20
+
+### Added
+
+- **Native HTML Extraction Parity**: Introduce resolver-based extraction pipeline with typed extraction results, frontmatter builder, quality profiles, and semantic models for threaded pages
+- **Structured Site Extractors**: Rebuild threaded extraction on shared abstractions and add native resolver coverage for GitHub Discussions, X threads, and YouTube pages
+- **Webextract Quality Enhancements**: Add noise removal, enhanced scoring, standardization, multi-level retry, content patterns, heading anchors, callouts, srcset optimization, and code language detection
+- **CLI Force Flags**: Add `--static` to force static HTTP with native webextract and `--kreuzberg` to force kreuzberg conversion for all formats
+- **Async Enrichment Pipeline**: Add policy-aware enrichers and thread inclusion rules for structured extraction
+- **Language-Aware Vision Retry**: Retry and rewrite image analysis outputs in the document language
+
+### Fixed
+
+- **URL Stdout Fallback**: URL mode without `-o` now writes to stdout instead of erroring
+- **Concurrency Safety**: Make `ContentCache`, `_image_cache`, model cooldown tracking, and `io_semaphore` thread-safe and reuse the cached semaphore instance
+- **Atomic Writes**: Use atomic write patterns for `ConfigManager.save()` and async byte writes
+- **Resource Cleanup**: Reset semaphores and proxy-bypass state in shared-client cleanup
+- **Observability**: Add debug logging for previously silent exception handlers
+- **Webextract Regressions**: Fix `None` `tag.attrs`, selector conflicts, math protection, callout/task-list/table formatting, X.com Playwright crash, tweet noise, and resolver acceptance parity
+- **Tooling Hygiene**: Resolve remaining Ruff, Pyright, Pytest, and Bandit issues and close low-priority parity coverage gaps
+
+### Changed
+
+- **HTML Conversion Path**: Route HTML files through the native webextract pipeline by default
+- **Fetch Internals**: Split `fetch.py` into smaller modules and decompose `fetch_url()` into composable sub-functions
+- **CLI Logging UX**: Improve batch progress reporting and quiet/verbose URL logs
+- **Release Cleanup**: Update dependencies, CI and website docs, model metadata, and clean up project structure for the `0.12.0` release
+
+### Removed
+
+- **Obsolete Project Docs**: Remove outdated root docs, archived plans, and historical reference material during project cleanup
+
 ## [0.11.2] - 2026-03-14
 
 ### Fixed
@@ -787,6 +845,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build
 - Chinese and English documentation
 
+[0.12.1]: https://github.com/Ynewtime/markitai/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/Ynewtime/markitai/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/Ynewtime/markitai/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/Ynewtime/markitai/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/Ynewtime/markitai/compare/v0.10.0...v0.11.0
