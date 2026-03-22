@@ -1157,7 +1157,7 @@ def _build_native_fetch_result(
     assert coerce_source_frontmatter is not None
 
     try:
-        extracted = extract_web_content(html, final_url or url)
+        extracted = extract_web_content(html, url)
     except Exception as exc:
         logger.debug(f"Native webextract failed, falling back to markitdown: {exc}")
         return None
