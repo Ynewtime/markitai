@@ -73,3 +73,26 @@ def test_build_choices_returns_questionary_choices() -> None:
     for c in choices:
         assert hasattr(c, "title")
         assert hasattr(c, "value")
+
+
+def test_extract_settings_bool_before_int() -> None:
+    """Bool fields must be detected as 'bool', not 'int' (bool is subclass of int)."""
+    from markitai.cli.config_editor import extract_editable_settings
+
+    cfg = MarkitaiConfig()
+    settings = extract_editable_settings(cfg)
+    enabled = next(s for s in settings if s["key"] == "llm.enabled")
+    assert enabled["field_type"] == "bool"
+    assert enabled["value"] is False
+
+
+def test_extract_settings_optional_str() -> None:
+    """Optional[str] fields should still be editable as 'str'."""
+    from markitai.cli.config_editor import extract_editable_settings
+
+    cfg = MarkitaiConfig(output={"dir": "./output"})
+    settings = extract_editable_settings(cfg)
+    keys = {s["key"] for s in settings}
+    assert "output.dir" in keys
+    dir_setting = next(s for s in settings if s["key"] == "output.dir")
+    assert dir_setting["field_type"] == "str"
