@@ -706,7 +706,8 @@ class ConfigManager:
         """Generate minimal template config for init command.
 
         Only includes essential fields that users typically need to configure.
-        Auto-detectable values (max_tokens, supports_vision) are omitted.
+        Auto-detectable values (max_tokens, supports_vision) and settings that
+        match defaults (image.compress, image.quality) are omitted.
         """
         return {
             "output": {"dir": "./output"},
@@ -721,10 +722,6 @@ class ConfigManager:
                         },
                     }
                 ],
-            },
-            "image": {
-                "compress": True,
-                "quality": 75,
             },
         }
 

@@ -24,6 +24,7 @@ def test_extract_settings_includes_known_keys() -> None:
     cfg = MarkitaiConfig()
     settings = extract_editable_settings(cfg)
     keys = {s["key"] for s in settings}
+    assert "output.dir" in keys
     assert "llm.enabled" in keys
     assert "image.quality" in keys
     assert "log.level" in keys

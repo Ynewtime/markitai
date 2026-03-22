@@ -169,7 +169,7 @@ def build_choices(settings: list[dict[str, Any]]) -> list[Choice]:
         section = key.split(".")[0]
         if section != prev_section:
             if prev_section:
-                choices.append(Choice(title="", disabled="─" * 40))
+                choices.append(Choice(title="─" * 40, disabled=True, value="__sep__"))
             prev_section = section
 
         val_str = format_display_value(s["value"])
@@ -225,6 +225,7 @@ def _prompt_new_value(setting: dict[str, Any]) -> Any:
         ).ask()
         if result is None:
             return _CANCEL
+        # Empty input = keep current value (all int fields have non-Optional defaults)
         return int(result) if result else current
 
     if field_type == "float":
@@ -245,6 +246,7 @@ def _prompt_new_value(setting: dict[str, Any]) -> Any:
         ).ask()
         if result is None:
             return _CANCEL
+        # Empty input = keep current value (all float fields have non-Optional defaults)
         return float(result) if result else current
 
     # str fallback
