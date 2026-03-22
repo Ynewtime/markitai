@@ -7,7 +7,7 @@ import fnmatch
 import glob as glob_module
 import json
 import re
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -1312,8 +1312,7 @@ class BatchProcessor:
             except ImportError:
                 logger.debug("OCR preheat skipped: RapidOCR not installed")
 
-        # Create semaphore for concurrency control
-        semaphore = asyncio.Semaphore(self.config.concurrency)
+        concurrency = self.config.concurrency
 
         # Check if Live display was already started by caller
         live_already_started = self._live is not None
@@ -1343,11 +1342,10 @@ class BatchProcessor:
                 current="",
             )
 
-        async def process_with_limit(file_path: Path) -> None:
-            """Process a file with semaphore limit.
+        async def process_single(file_path: Path) -> None:
+            """Process a single file and update state.
 
-            State saving is performed outside the semaphore to avoid blocking
-            concurrent file processing.
+            Concurrency is controlled by the queue + worker pool, not a semaphore.
             """
             assert self.state is not None  # Guaranteed by _init_state() above
             file_key = str(file_path)
@@ -1360,15 +1358,14 @@ class BatchProcessor:
             # Update state to in_progress
             file_state.status = FileStatus.IN_PROGRESS
             file_state.started_at = datetime.now().astimezone().isoformat()
+            self._dirty_keys.add(file_key)
 
             start_time = asyncio.get_event_loop().time()
 
             try:
-                # Process file within semaphore
-                async with semaphore:
-                    # Show current file being processed
-                    progress.update(overall_task, current=f"({file_path.name})")
-                    result = await process_func(file_path)
+                # Show current file being processed
+                progress.update(overall_task, current=f"({file_path.name})")
+                result = await process_func(file_path)
 
                 if result.success:
                     file_state.status = FileStatus.COMPLETED
@@ -1382,16 +1379,19 @@ class BatchProcessor:
                     if result.error and result.error.startswith("skipped ("):
                         # e.g. "skipped (image_only)" → "image_only"
                         file_state.skip_reason = result.error[9:-1]
+                    self._dirty_keys.add(file_key)
                     # Collect image analysis result for JSON aggregation
                     if result.image_analysis_result is not None:
                         self.image_analysis_results.append(result.image_analysis_result)
                 else:
                     file_state.status = FileStatus.FAILED
                     file_state.error = result.error
+                    self._dirty_keys.add(file_key)
 
             except Exception as e:
                 file_state.status = FileStatus.FAILED
                 file_state.error = format_error_message(e)
+                self._dirty_keys.add(file_key)
                 logger.error(
                     f"Failed to process {file_path.name}: {format_error_message(e)}"
                 )
@@ -1405,14 +1405,38 @@ class BatchProcessor:
                 progress.advance(overall_task)
                 progress.update(overall_task, current="")
 
-            # Save state outside semaphore (non-blocking, throttled)
+            # Save state (non-blocking, throttled)
             # Use asyncio.to_thread to avoid blocking the event loop
             await asyncio.to_thread(self.save_state)
 
-        # If Live display was already started, just run the tasks without creating new Live
+        async def _run_with_workers(
+            file_iter: Iterable[Path], worker_count: int
+        ) -> None:
+            queue: asyncio.Queue[Path | None] = asyncio.Queue(maxsize=worker_count * 2)
+
+            async def producer() -> None:
+                for f in file_iter:
+                    await queue.put(f)
+                for _ in range(worker_count):
+                    await queue.put(None)
+
+            async def worker() -> None:
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    try:
+                        await process_single(item)
+                    except Exception:
+                        pass  # Already handled in process_single
+
+            producer_task = asyncio.create_task(producer())
+            workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
+            await asyncio.gather(producer_task, *workers)
+
+        # If Live display was already started, just run the workers without creating new Live
         if live_already_started:
-            tasks = [process_with_limit(f) for f in files]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await _run_with_workers(files, concurrency)
         else:
             # No external Live display provided - create one here
             # Disable console handler to avoid conflict with progress bar
@@ -1425,8 +1449,7 @@ class BatchProcessor:
             try:
                 # Progress bar only (verbose logs handled by loguru)
                 with Live(progress, console=self.console, refresh_per_second=4):
-                    tasks = [process_with_limit(f) for f in files]
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await _run_with_workers(files, concurrency)
             finally:
                 # Re-add console handler (restore original state)
                 if console_handler_id is not None:

@@ -1874,3 +1874,70 @@ class TestIncrementalStateSave:
         assert jsonl_size < 500, (
             f"Incremental write should be small, got {jsonl_size} bytes"
         )
+
+
+class TestQueueBasedProcessing:
+    """Tests for queue + worker concurrency model."""
+
+    @pytest.mark.asyncio
+    async def test_processes_all_files(
+        self, batch_config: BatchConfig, tmp_path: Path
+    ) -> None:
+        """All files should be processed exactly once."""
+        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        processed: list[str] = []
+
+        async def mock_process(path: Path) -> ProcessResult:
+            processed.append(path.name)
+            return ProcessResult(success=True)
+
+        files = [Path(f"/tmp/file{i}.txt") for i in range(20)]
+        await processor.process_batch(files=files, process_func=mock_process)
+
+        assert sorted(processed) == sorted(f.name for f in files)
+
+    @pytest.mark.asyncio
+    async def test_concurrency_bounded_by_config(
+        self, batch_config: BatchConfig, tmp_path: Path
+    ) -> None:
+        """Active workers should never exceed configured concurrency."""
+        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        concurrent_count = 0
+        max_concurrent = 0
+
+        async def mock_process(path: Path) -> ProcessResult:
+            nonlocal concurrent_count, max_concurrent
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+            await asyncio.sleep(0.01)
+            concurrent_count -= 1
+            return ProcessResult(success=True)
+
+        files = [Path(f"/tmp/file{i}.txt") for i in range(20)]
+        await processor.process_batch(files=files, process_func=mock_process)
+
+        assert max_concurrent <= batch_config.concurrency
+
+    @pytest.mark.asyncio
+    async def test_handles_exceptions_without_stopping(
+        self, batch_config: BatchConfig, tmp_path: Path
+    ) -> None:
+        """One file's failure should not prevent others from processing."""
+        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        processed: list[str] = []
+
+        async def mock_process(path: Path) -> ProcessResult:
+            processed.append(path.name)
+            if "fail" in path.name:
+                raise ValueError("test error")
+            return ProcessResult(success=True)
+
+        files = [
+            Path("/tmp/good1.txt"),
+            Path("/tmp/fail1.txt"),
+            Path("/tmp/good2.txt"),
+        ]
+        state = await processor.process_batch(files=files, process_func=mock_process)
+
+        assert len(processed) == 3
+        assert state.files[str(files[1])].status == FileStatus.FAILED
