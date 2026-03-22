@@ -105,7 +105,7 @@ def _prepare_png(data: bytes) -> bytes:
     if needs_resize:
         ratio = MAX_INLINE_WIDTH / img.width
         new_height = int(img.height * ratio)
-        img = img.resize((MAX_INLINE_WIDTH, new_height), Image.LANCZOS)
+        img = img.resize((MAX_INLINE_WIDTH, new_height), Image.LANCZOS)  # type: ignore[reportAttributeAccessIssue]
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
