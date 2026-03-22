@@ -42,6 +42,9 @@ markitai config get llm.enabled
 
 # 设置值
 markitai config set llm.enabled true
+
+# 交互式编辑器（引导式菜单）
+markitai config edit
 ```
 
 ### 完整配置示例
@@ -200,9 +203,9 @@ markitai config set llm.enabled true
 
 Markitai 通过 [LiteLLM](https://docs.litellm.ai/) 支持多个 LLM 提供商：
 
-- OpenAI (GPT-5.2, GPT-5-mini)
-- Anthropic (Claude 3.5/4)
-- Google (Gemini 2.x)
+- OpenAI (GPT-5.4)
+- Anthropic (Claude Sonnet 4.6)
+- Google (Gemini 3.1)
 - DeepSeek
 - OpenRouter
 - Ollama（本地模型）

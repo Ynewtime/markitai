@@ -343,7 +343,7 @@ markitai https://example.com --kreuzberg --playwright
 
 ### `markitai init`
 
-交互式配置向导，检查依赖项、检测 LLM 提供商并生成配置文件。
+交互式配置向导，检查依赖项、检测 LLM 提供商（包括 ChatGPT 和 Gemini CLI）并生成配置文件。
 
 ```bash
 # 交互式配置向导
@@ -402,6 +402,14 @@ markitai config set cache.enabled false
 
 ```bash
 markitai config path
+```
+
+### `markitai config edit`
+
+交互式编辑配置设置，通过引导式菜单操作。
+
+```bash
+markitai config edit
 ```
 
 ### `markitai config validate`

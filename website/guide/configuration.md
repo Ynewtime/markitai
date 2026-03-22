@@ -42,6 +42,9 @@ markitai config get llm.enabled
 
 # Set value
 markitai config set llm.enabled true
+
+# Interactive editor (guided menu)
+markitai config edit
 ```
 
 ### Full Configuration Example
@@ -200,9 +203,9 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 
 Markitai supports multiple LLM providers through [LiteLLM](https://docs.litellm.ai/):
 
-- OpenAI (GPT-5.2, GPT-5-mini)
-- Anthropic (Claude 3.5/4)
-- Google (Gemini 2.x)
+- OpenAI (GPT-5.4)
+- Anthropic (Claude Sonnet 4.6)
+- Google (Gemini 3.1)
 - DeepSeek
 - OpenRouter
 - Ollama (local models)
