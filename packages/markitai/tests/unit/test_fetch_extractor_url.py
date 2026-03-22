@@ -10,7 +10,9 @@ def test_extractor_matches_original_url_not_redirect() -> None:
     login_url = "https://x.com/i/flow/login"
 
     result = extract_web_content(html, original_url)
+    assert result.info is not None
     assert result.info.extractor_name == "x_tweet"
 
     result2 = extract_web_content(html, login_url)
+    assert result2.info is not None
     assert result2.info.extractor_name == "generic"

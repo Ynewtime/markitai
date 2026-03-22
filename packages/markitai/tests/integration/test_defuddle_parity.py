@@ -389,6 +389,7 @@ def test_parity_content_profile_matches(fixture_name: str) -> None:
         or f"https://example.com/{fixture_name}"
     )
     result = extract_web_content(html, url)
+    assert result.info is not None
     assert result.info.content_profile.value == expected_profile, (
         f"Expected content_profile={expected_profile!r}, "
         f"got {result.info.content_profile.value!r}"
