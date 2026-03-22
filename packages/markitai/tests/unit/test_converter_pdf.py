@@ -151,6 +151,30 @@ Some text here.
         result = converter._fix_image_paths(markdown, image_path)  # type: ignore[reportAttributeAccessIssue]
         assert result == "![test](.markitai/assets/document.pdf-1-0.jpg)"
 
+    def test_filename_with_parentheses(self) -> None:
+        """Filenames with parentheses must not break path fixing."""
+        converter = PdfConverter()
+        image_path = Path("/tmp/.markitai/assets")
+        markdown = f"![]({image_path.as_posix()}/report(final).pdf-0-0.jpg)"
+        result = converter._fix_image_paths(markdown, image_path)  # type: ignore[reportAttributeAccessIssue]
+        assert result == "![](.markitai/assets/report(final).pdf-0-0.jpg)"
+
+    def test_filename_with_dollar_sign(self) -> None:
+        """Filenames with $ must not break path fixing."""
+        converter = PdfConverter()
+        image_path = Path("/tmp/.markitai/assets")
+        markdown = f"![]({image_path.as_posix()}/price$100.pdf-0-0.jpg)"
+        result = converter._fix_image_paths(markdown, image_path)  # type: ignore[reportAttributeAccessIssue]
+        assert result == "![](.markitai/assets/price$100.pdf-0-0.jpg)"
+
+    def test_filename_with_spaces(self) -> None:
+        """Filenames with spaces must not break path fixing."""
+        converter = PdfConverter()
+        image_path = Path("/tmp/.markitai/assets")
+        markdown = f"![alt text]({image_path.as_posix()}/my document.pdf-0-0.jpg)"
+        result = converter._fix_image_paths(markdown, image_path)  # type: ignore[reportAttributeAccessIssue]
+        assert result == "![alt text](.markitai/assets/my document.pdf-0-0.jpg)"
+
 
 class TestCollectEmbeddedImages:
     """Tests for _collect_embedded_images helper method."""
