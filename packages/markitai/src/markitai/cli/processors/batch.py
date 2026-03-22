@@ -949,7 +949,7 @@ async def process_batch(
                             else:
                                 await process_file_with_state(args)
                         except Exception:
-                            pass  # Already handled in process_*_with_state
+                            logger.debug("Unexpected error in worker", exc_info=True)
 
                 producer_task = asyncio.create_task(producer())
                 workers = [
