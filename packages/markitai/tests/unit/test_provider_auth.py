@@ -1313,6 +1313,51 @@ class TestAttemptLogin:
         assert result.authenticated is True
         mock_check.assert_called_once()
 
+    async def test_chatgpt_login_clears_stale_device_code_cooldown(
+        self, tmp_path: Path
+    ) -> None:
+        """Explicit login clears incomplete device-code cooldown markers first."""
+        from markitai.providers.auth import attempt_login
+
+        auth_dir = tmp_path / ".config" / "litellm" / "chatgpt"
+        auth_dir.mkdir(parents=True)
+        auth_file = auth_dir / "auth.json"
+        auth_file.write_text(json.dumps({"device_code_requested_at": 123.0}))
+
+        def _assert_stale_marker_cleared() -> str:
+            data = json.loads(auth_file.read_text())
+            assert "device_code_requested_at" not in data
+            return "fake-token"
+
+        mock_authenticator = MagicMock()
+        mock_authenticator.get_access_token.side_effect = _assert_stale_marker_cleared
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "markitai.providers.auth._check_chatgpt_auth",
+                return_value=AuthStatus(
+                    provider="chatgpt",
+                    authenticated=True,
+                    user="user@example.com",
+                    expires_at=None,
+                    error=None,
+                ),
+            ),
+            patch.dict(
+                "sys.modules",
+                {
+                    "litellm.llms.chatgpt.authenticator": MagicMock(
+                        Authenticator=MagicMock(return_value=mock_authenticator)
+                    )
+                },
+            ),
+        ):
+            result = await attempt_login("chatgpt")
+
+        assert result.authenticated is True
+        assert json.loads(auth_file.read_text()) == {}
+
     async def test_chatgpt_login_import_failure(self) -> None:
         """attempt_login('chatgpt') returns error when authenticator unavailable."""
         from markitai.providers.auth import attempt_login

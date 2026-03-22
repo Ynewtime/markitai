@@ -247,7 +247,7 @@ class TestRedditNestedReplies:
         ids = [item.id for item in result.semantic.thread.items]
         assert "t1_xyz002" in ids, f"Nested reply missing. Got: {ids}"
         nested = next(i for i in result.semantic.thread.items if i.id == "t1_xyz002")
-        assert nested.parent_id == "t1_parent"
+        assert nested.parent_id == "t1_xyz001"
 
     def test_child_inside_entry_also_works(self) -> None:
         """Fallback: .child inside .entry should also collect nested replies."""

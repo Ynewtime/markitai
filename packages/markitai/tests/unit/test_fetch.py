@@ -2131,8 +2131,8 @@ class TestFetchWithFallback:
 
             result = await _fetch_with_fallback(
                 "https://example.com",
-                mock_config,
-                start_with_browser=False,  # type: ignore[reportArgumentType]
+                mock_config,  # type: ignore[reportArgumentType]
+                start_with_browser=False,
             )
 
             assert result.strategy_used == "static"
@@ -2370,8 +2370,8 @@ class TestFetchWithFallback:
         ):
             result = await _fetch_with_fallback(
                 "http://127.0.0.1:8000",
-                mock_config,
-                start_with_browser=False,  # type: ignore[reportArgumentType]
+                mock_config,  # type: ignore[reportArgumentType]
+                start_with_browser=False,
             )
 
         assert result.strategy_used == "static"

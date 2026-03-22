@@ -564,6 +564,30 @@ class TestChatGPTOAuthUX:
                 [{"role": "user", "content": "test"}],
             )
 
+    async def test_auth_file_without_token_raises_error(self, tmp_path: Any) -> None:
+        """acompletion() rejects partial auth files without access_token."""
+        from markitai.providers.chatgpt import ChatGPTProvider
+        from markitai.providers.errors import AuthenticationError
+
+        auth_dir = tmp_path / ".config" / "litellm" / "chatgpt"
+        auth_dir.mkdir(parents=True)
+        auth_file = auth_dir / "auth.json"
+        auth_file.write_text(json.dumps({"device_code_requested_at": 123.0}))
+
+        provider = ChatGPTProvider()
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch.object(provider, "_get_authenticator") as mock_get_auth,
+            pytest.raises(AuthenticationError, match="not authenticated"),
+        ):
+            await provider.acompletion(
+                "chatgpt/codex-mini",
+                [{"role": "user", "content": "test"}],
+            )
+
+        mock_get_auth.assert_not_called()
+
     async def test_cached_authenticator_skips_file_check(self) -> None:
         """When _authenticator is already set, auth file check is skipped."""
         from markitai.providers.chatgpt import ChatGPTProvider
