@@ -358,3 +358,38 @@ def test_parity_fixture_youtube_page() -> None:
     """Native extraction must satisfy the youtube_page contract."""
     report = run_native_fixture_case("youtube_page")
     assert report.html_snapshot_ok is True, f"Failures: {report.failures}"
+
+
+@pytest.mark.parity
+@pytest.mark.parametrize(
+    "fixture_name",
+    [
+        "x_status_2030105637204676808",
+        "generic_article",
+        "github_issue_thread",
+        "hackernews_thread",
+        "reddit_post",
+        "youtube_page",
+    ],
+)
+def test_parity_content_profile_matches(fixture_name: str) -> None:
+    """Extraction content_profile must match expected.json info.content_profile."""
+    expected_path = _FIXTURE_DIR / f"{fixture_name}.expected.json"
+    expected = json.loads(expected_path.read_text(encoding="utf-8"))
+    info_expected = expected.get("info", {})
+    expected_profile = info_expected.get("content_profile")
+    if expected_profile is None:
+        pytest.skip("No content_profile in expected.json")
+
+    html_path = _FIXTURE_DIR / f"{fixture_name}.playwright.html"
+    html = html_path.read_text(encoding="utf-8")
+    url = (
+        expected.get("url")
+        or _extract_og_url(html)
+        or f"https://example.com/{fixture_name}"
+    )
+    result = extract_web_content(html, url)
+    assert result.info.content_profile.value == expected_profile, (
+        f"Expected content_profile={expected_profile!r}, "
+        f"got {result.info.content_profile.value!r}"
+    )
