@@ -22,6 +22,7 @@ class TestAssetStoreInit:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows
         store = AssetStore(Path("~/.markitai/assets"))
         assert store.persist_dir == tmp_path / ".markitai" / "assets"
 
