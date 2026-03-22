@@ -182,167 +182,182 @@ class PdfConverter(BaseConverter):
 
         # Determine image output path
         temp_dir: Path | None = None
-        if output_dir:
-            image_path = ensure_assets_dir(output_dir)
-            write_images = True
-        else:
-            # Use temp directory if no output dir specified
-            temp_dir = Path(tempfile.mkdtemp())
-            image_path = temp_dir
-            write_images = True
+        try:
+            if output_dir:
+                image_path = ensure_assets_dir(output_dir)
+                write_images = True
+            else:
+                # Use temp directory if no output dir specified
+                temp_dir = Path(tempfile.mkdtemp())
+                image_path = temp_dir
+                write_images = True
 
-        # Get image format from config
-        image_format = "png"
-        dpi = DEFAULT_RENDER_DPI
-        if self.config:
-            image_format = normalize_image_extension(self.config.image.format)
+            # Get image format from config
+            image_format = "png"
+            dpi = DEFAULT_RENDER_DPI
+            if self.config:
+                image_format = normalize_image_extension(self.config.image.format)
 
-        # Convert using pymupdf4llm with page_chunks=True for page-level splitting
-        # This allows proper text-to-screenshot alignment in batched LLM processing
-        page_results = pymupdf4llm.to_markdown(
-            str(input_path),
-            write_images=write_images,
-            image_path=str(image_path),
-            image_format=image_format,
-            dpi=dpi,
-            force_text=True,
-            page_chunks=True,  # Return list of page chunks instead of single string
-            use_ocr=False,  # Markitai handles OCR separately; suppress Tesseract probing
-        )
-
-        # Merge page chunks and add page markers for proper splitting
-        # Format: <!-- Page number: N --> (consistent with Slide number format)
-        # Ensure blank line after marker for proper markdown formatting
-        markdown_parts = []
-        reference_images: list[dict[str, Any]] = []
-        for i, chunk in enumerate(page_results):
-            page_num = i + 1
-            page_text = chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
-            if isinstance(chunk, dict):
-                chunk_page_num = chunk.get("metadata", {}).get("page_number")
-                if isinstance(chunk_page_num, int) and chunk_page_num > 0:
-                    page_num = chunk_page_num
-                page_text, page_references = self._demote_reference_picture_blocks(
-                    chunk, page_num
-                )
-                reference_images.extend(page_references)
-            page_marker = f"<!-- Page number: {page_num} -->"
-            markdown_parts.append(f"{page_marker}\n\n{page_text}")
-
-        markdown = "\n\n".join(markdown_parts)
-
-        # Fix image paths in markdown: pymupdf4llm uses absolute/full paths,
-        # we need relative paths (assets/xxx.jpg)
-        markdown = self._fix_image_paths(markdown, image_path)
-
-        # Collect extracted images (only for current file)
-        if write_images and image_path.exists():
-            # Use input filename as prefix to filter images from this file only
-            file_prefix = input_path.name
-            image_processor = ImageProcessor(self.config.image if self.config else None)
-            for idx, img_file in enumerate(
-                sorted(image_path.glob(f"{file_prefix}*.{image_format}"))
-            ):
-                suffix = img_file.suffix.lower().lstrip(".")
-                width = 0
-                height = 0
-
-                # Optionally compress and overwrite to keep sizes consistent
-                if self.config and self.config.image.compress:
-                    format_map = {
-                        "jpg": "JPEG",
-                        "jpeg": "JPEG",
-                        "png": "PNG",
-                        "webp": "WEBP",
-                    }
-                    output_format = format_map.get(suffix, "PNG")
-                    try:
-                        from PIL import Image
-
-                        with Image.open(img_file) as img:
-                            compressed_img, compressed_data = image_processor.compress(
-                                img.copy(),
-                                quality=self.config.image.quality,
-                                max_size=(
-                                    self.config.image.max_width,
-                                    self.config.image.max_height,
-                                ),
-                                output_format=output_format,
-                            )
-                            img_file.write_bytes(compressed_data)
-                            width, height = compressed_img.size
-                    except Exception as e:
-                        logger.debug(
-                            "[PDF] Image compression failed for {}: {}",
-                            img_file.name,
-                            e,
-                        )
-
-                if width == 0 or height == 0:
-                    try:
-                        from PIL import Image
-
-                        with Image.open(img_file) as img:
-                            width, height = img.size
-                    except Exception as e:
-                        logger.debug("[PDF] Image dimension extraction failed: {}", e)
-                        width, height = 0, 0
-
-                # Determine MIME type
-                mime_type = get_mime_type(suffix, default="image/png")
-
-                images.append(
-                    ExtractedImage(
-                        path=img_file,
-                        index=idx + 1,
-                        original_name=img_file.name,
-                        mime_type=mime_type,
-                        width=width,
-                        height=height,
-                    )
-                )
-
-        metadata: dict[str, Any] = {
-            "source": str(input_path),
-            "format": "PDF",
-            "images": len(images),
-        }
-        if reference_images and output_dir:
-            metadata["reference_images"] = reference_images
-
-        # Render page screenshots if enabled (independent of OCR)
-        enable_screenshot = self.config and self.config.screenshot.enabled
-        if enable_screenshot and output_dir:
-            page_images: list[dict] = []
-            screenshots_dir = ensure_screenshots_dir(output_dir)
-
-            screenshot_format = image_format if image_format != "png" else "jpg"
-            page_results = self._render_pages_parallel(
-                input_path, screenshots_dir, screenshot_format, dpi=DEFAULT_RENDER_DPI
+            # Convert using pymupdf4llm with page_chunks=True for page-level splitting
+            # This allows proper text-to-screenshot alignment in batched LLM processing
+            page_results = pymupdf4llm.to_markdown(
+                str(input_path),
+                write_images=write_images,
+                image_path=str(image_path),
+                image_format=image_format,
+                dpi=dpi,
+                force_text=True,
+                page_chunks=True,  # Return list of page chunks instead of single string
+                use_ocr=False,  # Markitai handles OCR separately; suppress Tesseract probing
             )
-            for _extracted_img, page_info in page_results:
-                page_images.append(page_info)
 
-            if page_images:
-                logger.debug(f"Rendered {len(page_images)} page screenshots")
+            # Merge page chunks and add page markers for proper splitting
+            # Format: <!-- Page number: N --> (consistent with Slide number format)
+            # Ensure blank line after marker for proper markdown formatting
+            markdown_parts = []
+            reference_images: list[dict[str, Any]] = []
+            for i, chunk in enumerate(page_results):
+                page_num = i + 1
+                page_text = (
+                    chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
+                )
+                if isinstance(chunk, dict):
+                    chunk_page_num = chunk.get("metadata", {}).get("page_number")
+                    if isinstance(chunk_page_num, int) and chunk_page_num > 0:
+                        page_num = chunk_page_num
+                    page_text, page_references = self._demote_reference_picture_blocks(
+                        chunk, page_num
+                    )
+                    reference_images.extend(page_references)
+                page_marker = f"<!-- Page number: {page_num} -->"
+                markdown_parts.append(f"{page_marker}\n\n{page_text}")
 
-            metadata["page_images"] = page_images
-            metadata["pages"] = len(page_images)
-            metadata["extracted_text"] = markdown
+            markdown = "\n\n".join(markdown_parts)
 
-        # Clean up temporary directory if used
-        if temp_dir and temp_dir.exists():
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            # Clear images whose paths pointed into the now-deleted temp dir,
-            # so callers never receive dangling file references.
-            images = [img for img in images if img.path and img.path.exists()]
-            metadata.pop("reference_images", None)
+            # Fix image paths in markdown: pymupdf4llm uses absolute/full paths,
+            # we need relative paths (assets/xxx.jpg)
+            markdown = self._fix_image_paths(markdown, image_path)
 
-        return ConvertResult(
-            markdown=markdown,
-            images=images,
-            metadata=metadata,
-        )
+            # Collect extracted images (only for current file)
+            if write_images and image_path.exists():
+                # Use input filename as prefix to filter images from this file only
+                file_prefix = input_path.name
+                image_processor = ImageProcessor(
+                    self.config.image if self.config else None
+                )
+                for idx, img_file in enumerate(
+                    sorted(image_path.glob(f"{file_prefix}*.{image_format}"))
+                ):
+                    suffix = img_file.suffix.lower().lstrip(".")
+                    width = 0
+                    height = 0
+
+                    # Optionally compress and overwrite to keep sizes consistent
+                    if self.config and self.config.image.compress:
+                        format_map = {
+                            "jpg": "JPEG",
+                            "jpeg": "JPEG",
+                            "png": "PNG",
+                            "webp": "WEBP",
+                        }
+                        output_format = format_map.get(suffix, "PNG")
+                        try:
+                            from PIL import Image
+
+                            with Image.open(img_file) as img:
+                                compressed_img, compressed_data = (
+                                    image_processor.compress(
+                                        img.copy(),
+                                        quality=self.config.image.quality,
+                                        max_size=(
+                                            self.config.image.max_width,
+                                            self.config.image.max_height,
+                                        ),
+                                        output_format=output_format,
+                                    )
+                                )
+                                img_file.write_bytes(compressed_data)
+                                width, height = compressed_img.size
+                        except Exception as e:
+                            logger.debug(
+                                "[PDF] Image compression failed for {}: {}",
+                                img_file.name,
+                                e,
+                            )
+
+                    if width == 0 or height == 0:
+                        try:
+                            from PIL import Image
+
+                            with Image.open(img_file) as img:
+                                width, height = img.size
+                        except Exception as e:
+                            logger.debug(
+                                "[PDF] Image dimension extraction failed: {}", e
+                            )
+                            width, height = 0, 0
+
+                    # Determine MIME type
+                    mime_type = get_mime_type(suffix, default="image/png")
+
+                    images.append(
+                        ExtractedImage(
+                            path=img_file,
+                            index=idx + 1,
+                            original_name=img_file.name,
+                            mime_type=mime_type,
+                            width=width,
+                            height=height,
+                        )
+                    )
+
+            metadata: dict[str, Any] = {
+                "source": str(input_path),
+                "format": "PDF",
+                "images": len(images),
+            }
+            if reference_images and output_dir:
+                metadata["reference_images"] = reference_images
+
+            # Render page screenshots if enabled (independent of OCR)
+            enable_screenshot = self.config and self.config.screenshot.enabled
+            if enable_screenshot and output_dir:
+                page_images: list[dict] = []
+                screenshots_dir = ensure_screenshots_dir(output_dir)
+
+                screenshot_format = image_format if image_format != "png" else "jpg"
+                page_results = self._render_pages_parallel(
+                    input_path,
+                    screenshots_dir,
+                    screenshot_format,
+                    dpi=DEFAULT_RENDER_DPI,
+                )
+                for _extracted_img, page_info in page_results:
+                    page_images.append(page_info)
+
+                if page_images:
+                    logger.debug(f"Rendered {len(page_images)} page screenshots")
+
+                metadata["page_images"] = page_images
+                metadata["pages"] = len(page_images)
+                metadata["extracted_text"] = markdown
+
+            # Clean up temporary directory if used
+            if temp_dir and temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                # Clear images whose paths pointed into the now-deleted temp dir,
+                # so callers never receive dangling file references.
+                images = [img for img in images if img.path and img.path.exists()]
+                metadata.pop("reference_images", None)
+
+            return ConvertResult(
+                markdown=markdown,
+                images=images,
+                metadata=metadata,
+            )
+        finally:
+            if temp_dir and temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _render_pages_parallel(
         self,

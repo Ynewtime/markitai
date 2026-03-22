@@ -179,3 +179,49 @@ class TestRenderSemanticContent:
 
         assert "> @child" in markdown
         assert "> Nested reply" in markdown
+
+
+class TestRenderDepthLimit:
+    """Tests for reply nesting depth limit."""
+
+    def test_deeply_nested_thread_does_not_crash(self) -> None:
+        """A thread with 200+ levels of nesting should not hit RecursionError."""
+        items = []
+        for i in range(200):
+            parent = "root" if i == 0 else f"item_{i - 1}"
+            items.append(
+                ConversationItem(
+                    id=f"item_{i}",
+                    author_name=f"user_{i}",
+                    text=f"Reply level {i}",
+                    parent_id=parent,
+                )
+            )
+
+        thread = _make_thread(replies=items)
+        html = render_semantic_content(SemanticExtraction(thread=thread))
+        assert "item_0" in html
+        assert "Reply level 0" in html
+
+    def test_items_beyond_depth_limit_are_truncated(self) -> None:
+        """Items beyond MAX_REPLY_DEPTH should not produce nested blockquotes."""
+        from markitai.webextract.render import _MAX_REPLY_DEPTH
+
+        depth = _MAX_REPLY_DEPTH + 10
+        items = []
+        for i in range(depth):
+            parent = "root" if i == 0 else f"item_{i - 1}"
+            items.append(
+                ConversationItem(
+                    id=f"item_{i}",
+                    author_name=f"user_{i}",
+                    text=f"Reply level {i}",
+                    parent_id=parent,
+                )
+            )
+
+        thread = _make_thread(replies=items)
+        html = render_semantic_content(SemanticExtraction(thread=thread))
+
+        nesting_count = html.count('class="reply-thread"')
+        assert nesting_count <= _MAX_REPLY_DEPTH

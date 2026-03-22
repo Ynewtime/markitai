@@ -1167,6 +1167,27 @@ class TestThreadPoolLimits:
         assert workers >= 1
 
 
+class TestPdfTempDirCleanup:
+    """Tests for temp_dir cleanup on exception paths."""
+
+    @patch("markitai.converter.pdf.pymupdf4llm")
+    @patch("markitai.converter.pdf.tempfile.mkdtemp")
+    def test_temp_dir_cleaned_on_exception(
+        self, mock_mkdtemp: Mock, mock_pymupdf4llm: Mock, tmp_path: Path
+    ) -> None:
+        """Temp directory is removed even when conversion throws."""
+        leaked_dir = tmp_path / "leaked_temp"
+        leaked_dir.mkdir()
+        mock_mkdtemp.return_value = str(leaked_dir)
+        mock_pymupdf4llm.to_markdown.side_effect = RuntimeError("corrupt PDF")
+
+        converter = PdfConverter()
+        with pytest.raises(RuntimeError, match="corrupt PDF"):
+            converter.convert(Path("fake.pdf"), output_dir=None)
+
+        assert not leaked_dir.exists(), "temp_dir should be cleaned up on exception"
+
+
 class TestScreenshotExtensionConsistency:
     """save_screenshot may change .png to .jpg in the extreme fallback.
 
