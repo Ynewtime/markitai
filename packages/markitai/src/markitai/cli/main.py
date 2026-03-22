@@ -684,11 +684,15 @@ def app(
             # Collect auth result summaries — these survive intermediate erasure
             auth_summaries: list[str] = []
 
+            # Auth output goes directly to stderr console — must be
+            # visible in all modes (stdout, verbose, quiet).
+            stderr_console = get_stderr_console()
+
             for status in auth_results:
                 if status.authenticated:
                     continue
 
-                om.print(
+                stderr_console.print(
                     f"[yellow]  ! {status.provider}:"
                     f" {escape(status.error or '')}[/yellow]"
                 )
@@ -701,15 +705,10 @@ def app(
                             default="y",
                             err=True,
                         )
-                        om.track_external_lines(1)  # prompt + response on 1 line
                         if response.lower() == "y":
                             login_result = await attempt_login(
                                 status.provider, output_manager=om
                             )
-                            # copilot/claude-agent run with inherited stdio;
-                            # estimate their terminal output for erasure
-                            if status.provider in ("copilot", "claude-agent"):
-                                om.track_external_lines(2)
                             if login_result.authenticated:
                                 auth_summaries.append(
                                     f"  [green]✓[/green] {status.provider}"
@@ -721,19 +720,13 @@ def app(
                                     f" {escape(login_result.error or '')}"
                                 )
                     except (EOFError, KeyboardInterrupt):
-                        om.print("")
+                        stderr_console.print("")
                 else:
                     hint = get_auth_resolution_hint(status.provider)
-                    om.print(f"    [dim]{hint}[/dim]")
+                    stderr_console.print(f"    [dim]{hint}[/dim]")
 
-            # Erase intermediate auth output (warnings, prompts, subprocess
-            # output) then print condensed result lines directly to stderr
-            # so they persist through the progress-erase phase.
-            # Always erase — even when no login was attempted, intermediate
-            # warning/hint lines were tracked and should be cleaned up.
-            om.erase_all()
             for summary in auth_summaries:
-                om.print_persistent(summary)
+                stderr_console.print(summary)
 
         # ── Phase 3: Dispatch to appropriate processor ──
 

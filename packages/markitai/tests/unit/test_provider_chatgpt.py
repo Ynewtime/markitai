@@ -611,3 +611,38 @@ class TestChatGPTOAuthUX:
 
         assert result.choices[0].message.content == "result"
         mock_auth.get_access_token.assert_called_once()
+
+
+class TestChatGPTAuthGuardRegression:
+    """Regression: auth guard must validate access_token, not just file existence.
+
+    Bug 3: chatgpt.py previously only checked if auth.json exists, not
+    whether it contains a valid access_token. A file with only
+    device_code_requested_at would pass the guard and trigger device code
+    flow mid-workflow.  Guard now calls _check_chatgpt_auth() which
+    validates the access_token field.
+    """
+
+    async def test_stale_device_code_only_raises_auth_error(
+        self, tmp_path: Any
+    ) -> None:
+        """acompletion raises AuthenticationError when auth.json exists
+        but has no access_token — only device_code_requested_at."""
+        from markitai.providers.chatgpt import ChatGPTProvider
+        from markitai.providers.errors import AuthenticationError
+
+        auth_dir = tmp_path / ".config" / "litellm" / "chatgpt"
+        auth_dir.mkdir(parents=True)
+        auth_file = auth_dir / "auth.json"
+        auth_file.write_text(json.dumps({"device_code_requested_at": 1700000000.0}))
+
+        provider = ChatGPTProvider()
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            pytest.raises(AuthenticationError, match="not authenticated"),
+        ):
+            await provider.acompletion(
+                "chatgpt/codex-mini",
+                [{"role": "user", "content": "test"}],
+            )

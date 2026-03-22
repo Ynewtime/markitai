@@ -1560,3 +1560,58 @@ class TestCanAttemptLogin:
         from markitai.providers.auth import can_attempt_login
 
         assert can_attempt_login("nonexistent") is False
+
+
+class TestClearStaleChatGPTDeviceCodeRequest:
+    """Regression tests for _clear_stale_chatgpt_device_code_request.
+
+    Bug: when auth.json contained only device_code_requested_at (no
+    access_token), LiteLLM's Authenticator.get_access_token() would
+    silently wait for a cooldown that will never resolve.
+    """
+
+    def test_removes_marker_when_no_access_token(self, tmp_path: Path) -> None:
+        """Clears device_code_requested_at when no access_token exists."""
+        from markitai.providers.auth import _clear_stale_chatgpt_device_code_request
+
+        auth_dir = tmp_path / ".config" / "litellm" / "chatgpt"
+        auth_dir.mkdir(parents=True)
+        auth_file = auth_dir / "auth.json"
+        auth_file.write_text(json.dumps({"device_code_requested_at": 1700000000.0}))
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            _clear_stale_chatgpt_device_code_request()
+
+        data = json.loads(auth_file.read_text(encoding="utf-8"))
+        assert "device_code_requested_at" not in data
+
+    def test_preserves_marker_when_access_token_exists(self, tmp_path: Path) -> None:
+        """Does NOT remove device_code_requested_at when access_token exists."""
+        from markitai.providers.auth import _clear_stale_chatgpt_device_code_request
+
+        auth_dir = tmp_path / ".config" / "litellm" / "chatgpt"
+        auth_dir.mkdir(parents=True)
+        auth_file = auth_dir / "auth.json"
+        auth_file.write_text(
+            json.dumps(
+                {
+                    "access_token": "valid-token",
+                    "device_code_requested_at": 1700000000.0,
+                }
+            )
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            _clear_stale_chatgpt_device_code_request()
+
+        data = json.loads(auth_file.read_text(encoding="utf-8"))
+        assert "device_code_requested_at" in data
+        assert data["access_token"] == "valid-token"
+
+    def test_handles_missing_auth_file_gracefully(self, tmp_path: Path) -> None:
+        """No error when auth file does not exist."""
+        from markitai.providers.auth import _clear_stale_chatgpt_device_code_request
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            # Should not raise
+            _clear_stale_chatgpt_device_code_request()

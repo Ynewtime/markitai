@@ -12,6 +12,7 @@ from markitai.providers.oauth_display import (
     DeviceCodeInterceptor,
     parse_chatgpt_device_code,
     show_device_code,
+    show_login_start,
     show_oauth_start,
     show_oauth_success,
     suppress_stdout,
@@ -218,3 +219,70 @@ class TestDeviceCodeInterceptor:
         interceptor.write("some unrelated text\n")
         assert not interceptor.displayed
         assert buf.getvalue() == ""
+
+
+class TestShowDeviceCodeStderr:
+    """Regression tests: show_device_code always writes to stderr console."""
+
+    def test_show_device_code_writes_to_stderr_console(self) -> None:
+        """show_device_code outputs via the provided console (stderr by default).
+
+        Regression: when OutputManager._enabled was False, device codes were
+        silently swallowed because show_device_code used OutputManager.print().
+        Now it writes directly to stderr console.
+        """
+        console, buf = _make_test_console()
+        show_device_code(
+            "https://chatgpt.com/auth/device",
+            "REGR-1234",
+            console=console,
+        )
+        output = buf.getvalue()
+        assert "REGR-1234" in output
+        assert "chatgpt.com/auth/device" in output
+
+    def test_device_code_interceptor_displays_via_stderr_console(self) -> None:
+        """DeviceCodeInterceptor renders device codes through its console.
+
+        Regression: interceptor must display via stderr console so that codes
+        are visible even when OutputManager is disabled.
+        """
+        console, buf = _make_test_console()
+        interceptor = DeviceCodeInterceptor(console=console)
+
+        interceptor.write(
+            "1) Visit https://chatgpt.com/auth/device\n2) Enter code: INTERCEPT-42\n"
+        )
+
+        assert interceptor.displayed
+        output = buf.getvalue()
+        assert "INTERCEPT-42" in output
+        assert "chatgpt.com/auth/device" in output
+
+
+class TestShowLoginStart:
+    """Tests for show_login_start."""
+
+    def test_outputs_provider_label(self) -> None:
+        """show_login_start output includes the provider label."""
+        console, buf = _make_test_console()
+        show_login_start("copilot", console=console)
+        output = buf.getvalue()
+        assert "GitHub Copilot" in output
+
+    def test_claude_agent_label(self) -> None:
+        """show_login_start maps claude-agent to Claude label."""
+        console, buf = _make_test_console()
+        show_login_start("claude-agent", console=console)
+        output = buf.getvalue()
+        assert "Claude" in output
+
+    def test_uses_dim_style(self) -> None:
+        """show_login_start wraps text in dim style."""
+        # Use a console WITH color to verify markup is applied
+        buf = io.StringIO()
+        console = Console(file=buf, width=120, highlight=False, force_terminal=True)
+        show_login_start("copilot", console=console)
+        output = buf.getvalue()
+        # Rich dim style produces ANSI dim escape (ESC[2m)
+        assert "\x1b[2m" in output
