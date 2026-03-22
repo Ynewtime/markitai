@@ -1336,7 +1336,7 @@ print_user_completion() {
         "  ${CYAN}markitai -I${NC}" \
         "" \
         "$(i18n configure_llm):" \
-        "  ${CYAN}markitai config init${NC}" \
+        "  ${CYAN}markitai init${NC}" \
         "" \
         "$(i18n convert_file):" \
         "  ${CYAN}markitai file.pdf${NC}" \
@@ -1367,7 +1367,7 @@ print_dev_completion() {
 # Returns: 0 always
 init_config() {
     if command -v markitai >/dev/null 2>&1; then
-        markitai config init --yes >/dev/null 2>&1 || true
+        markitai init --yes >/dev/null 2>&1 || true
     fi
     return 0
 }

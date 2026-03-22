@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.14
+    rev: v0.15.7
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -11,7 +11,7 @@ repos:
       - id: pyright
         name: pyright
         entry: uv run pyright
-        args: [packages/markitai/src]
+        args: [packages/markitai/src, packages/markitai/tests]
         language: system
         types: [python]
         pass_filenames: false

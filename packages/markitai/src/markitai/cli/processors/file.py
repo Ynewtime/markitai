@@ -101,18 +101,6 @@ def resolve_asset_references(
     return _ASSET_REF_PATTERN.sub(_replace, markdown)
 
 
-# Backward compatibility alias — placeholder-only mode (no protocol, no store)
-_PLACEHOLDER_DIR = Path()
-
-
-def strip_asset_references(markdown: str) -> str:
-    """Backward compatibility wrapper for resolve_asset_references.
-
-    Always uses placeholder fallback (no protocol detection, no asset store).
-    """
-    return resolve_asset_references(markdown, temp_dir=_PLACEHOLDER_DIR)
-
-
 async def process_single_file(
     input_path: Path,
     output_dir: Path | None,

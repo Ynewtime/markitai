@@ -15,7 +15,6 @@ __all__ = [
     "add_basic_frontmatter",
     "convert_document_core",
     "merge_llm_usage",
-    "write_assets_json",
     "write_images_json",
 ]
 
@@ -37,10 +36,6 @@ def __getattr__(name: str) -> Any:
         from markitai.workflow import helpers as _helpers
 
         return getattr(_helpers, name)
-    if name == "write_assets_json":
-        from markitai.workflow.helpers import write_images_json
-
-        return write_images_json
     if name in {"ImageAnalysisResult", "SingleFileWorkflow"}:
         from markitai.workflow import single as _single
 

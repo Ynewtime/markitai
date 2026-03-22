@@ -1381,7 +1381,7 @@ function Print-UserCompletion {
         "  markitai -I" `
         "" `
         "$(i18n 'configure_llm'):" `
-        "  markitai config init" `
+        "  markitai init" `
         "" `
         "$(i18n 'convert_file'):" `
         "  markitai file.pdf" `
@@ -1412,7 +1412,7 @@ function Initialize-Config {
     $markitaiExists = Get-Command markitai -ErrorAction SilentlyContinue
     if ($markitaiExists) {
         try {
-            $null = & markitai config init --yes 2>$null
+            $null = & markitai init --yes 2>$null
         } catch {}
     }
 }
