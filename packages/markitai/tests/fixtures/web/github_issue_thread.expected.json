@@ -3,7 +3,7 @@
     "title": "Bug: extraction fails on empty HTML"
   },
   "info": {
-    "content_profile": "threaded_discussion"
+    "content_profile": "discussion_issue"
   },
   "semantic": {
     "thread": {
