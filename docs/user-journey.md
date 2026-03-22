@@ -85,7 +85,7 @@ markitai init
 
 系统会自动完成以下步骤：
 1. 检查系统依赖（Playwright、LibreOffice、FFmpeg、RapidOCR）
-2. 检测可用的 LLM 提供商（Claude CLI、Copilot CLI，以及 DeepSeek/Gemini/OpenAI/Anthropic/OpenRouter API Key）
+2. 检测可用的 LLM 提供商（Claude CLI、Copilot CLI、ChatGPT、Gemini CLI，以及 DeepSeek/Gemini/OpenAI/Anthropic/OpenRouter API Key）
 3. 让用户选择配置文件保存位置（全局 `~/.markitai/config.json` 或本地 `./markitai.json`）
 4. 写入配置文件
 
@@ -737,6 +737,9 @@ markitai config validate ./markitai.json
 # 获取/设置配置值
 markitai config get llm.enabled
 markitai config set llm.enabled true
+
+# 交互式编辑配置（搜索、浏览、修改各项设置）
+markitai config edit
 ```
 
 ### 9.4 交互模式
@@ -923,5 +926,6 @@ markitai https://news.example.com/article
 | 交互模式 | `markitai file.pdf -I` |
 | 健康检查 | `markitai doctor` |
 | 查看配置 | `markitai config list` |
+| 交互式编辑配置 | `markitai config edit` |
 | 认证状态 | `markitai auth claude status` |
 | 缓存统计 | `markitai cache stats` |
