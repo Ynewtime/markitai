@@ -244,10 +244,17 @@ def setup_logging(
 
     logger.remove()
 
-    # Console logging: disabled in quiet mode
-    # DEBUG goes to file only; console shows INFO+ with filter
+    # Console logging: quiet mode only shows ERROR+, normal mode shows INFO+
+    # DEBUG goes to file only; console shows INFO+ (or ERROR+ in quiet) with filter
     console_handler_id: int | None = None
-    if not quiet:
+    if quiet:
+        # In quiet mode, still surface errors so LLM failures aren't invisible
+        console_handler_id = logger.add(
+            sys.stderr,
+            level="ERROR",
+            format="<level>{message}</level>",
+        )
+    else:
         console_handler_id = logger.add(
             sys.stderr,
             level="INFO",

@@ -185,7 +185,6 @@ class SingleFileWorkflow:
 
         except Exception as e:
             logger.error(f"LLM processing failed: {format_error_message(e)}")
-            logger.warning("LLM processing failed, returning original content")
             return markdown, 0.0, {}
 
     async def process_document_pure(
@@ -216,7 +215,7 @@ class SingleFileWorkflow:
             return markdown, cost, usage
         except Exception as e:
             logger.error(f"Pure LLM processing failed: {format_error_message(e)}")
-            logger.warning("Pure LLM processing failed, returning original content")
+
             return markdown, 0.0, {}
 
     async def analyze_images(
@@ -381,7 +380,7 @@ class SingleFileWorkflow:
 
         except Exception as e:
             logger.error(f"Image analysis failed: {format_error_message(e)}")
-            logger.warning("Image analysis failed, returning original content")
+
             return markdown, 0.0, {}, None
 
     async def enhance_with_vision(
@@ -437,7 +436,7 @@ class SingleFileWorkflow:
 
         except Exception as e:
             logger.error(f"Document enhancement failed: {format_error_message(e)}")
-            logger.warning("Vision enhancement failed, returning original content")
+
             return (
                 extracted_text,
                 _fallback_frontmatter(source, original_title),
@@ -522,5 +521,5 @@ class SingleFileWorkflow:
             logger.error(
                 f"Screenshot-only extraction failed: {format_error_message(e)}"
             )
-            logger.warning("Screenshot-only extraction failed, returning empty content")
+
             return "", _fallback_frontmatter(source, original_title), 0.0, {}

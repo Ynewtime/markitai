@@ -68,3 +68,49 @@ class TestShouldShowLog:
             ),
             verbose=False,
         )
+
+
+class TestQuietModeErrorHandler:
+    """Tests that quiet mode still surfaces ERROR+ to stderr."""
+
+    def test_quiet_mode_returns_console_handler(self) -> None:
+        """setup_logging(quiet=True) should still return a console handler ID."""
+        from loguru import logger
+
+        from markitai.cli.logging_config import setup_logging
+
+        # Save and restore loguru state
+        handler_id, _ = setup_logging(verbose=False, quiet=True, log_dir=None)
+        assert handler_id is not None, (
+            "quiet mode should add an ERROR-level console handler"
+        )
+        # Clean up
+        logger.remove(handler_id)
+
+    def test_quiet_mode_error_reaches_stderr(self, capsys) -> None:
+        """In quiet mode, logger.error() should still appear on stderr."""
+        from loguru import logger
+
+        from markitai.cli.logging_config import setup_logging
+
+        handler_id, _ = setup_logging(verbose=False, quiet=True, log_dir=None)
+        try:
+            logger.error("LLM processing failed: test error")
+            captured = capsys.readouterr()
+            assert "LLM processing failed" in captured.err
+        finally:
+            logger.remove(handler_id)
+
+    def test_quiet_mode_warning_hidden_from_stderr(self, capsys) -> None:
+        """In quiet mode, logger.warning() should NOT appear on stderr."""
+        from loguru import logger
+
+        from markitai.cli.logging_config import setup_logging
+
+        handler_id, _ = setup_logging(verbose=False, quiet=True, log_dir=None)
+        try:
+            logger.warning("This should be hidden")
+            captured = capsys.readouterr()
+            assert "This should be hidden" not in captured.err
+        finally:
+            logger.remove(handler_id)

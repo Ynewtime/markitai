@@ -1141,8 +1141,12 @@ class TestProcessDocumentPure:
         mock_processor.format_llm_output.assert_not_called()
 
 
-class TestLLMFailureWarnings:
-    """Tests that LLM failures emit logger.warning, not silent fallbacks."""
+class TestLLMFailureErrorLogging:
+    """Tests that LLM failures emit logger.error visible even in quiet mode.
+
+    The logging_config adds an ERROR-level console handler in quiet mode,
+    so logger.error() is the mechanism for user-visible failure notices.
+    """
 
     @pytest.fixture
     def mock_config(self):
@@ -1164,10 +1168,10 @@ class TestLLMFailureWarnings:
         return processor
 
     @pytest.mark.asyncio
-    async def test_process_document_pure_warns_on_failure(
+    async def test_process_document_pure_logs_error_on_failure(
         self, mock_config, mock_processor
     ) -> None:
-        """process_document_pure should log warning on exception."""
+        """process_document_pure should log error on exception."""
         mock_processor.clean_document_pure = AsyncMock(
             side_effect=RuntimeError("API error")
         )
@@ -1176,14 +1180,14 @@ class TestLLMFailureWarnings:
             await workflow.process_document_pure(
                 "# test", "test.md", Path("/tmp/test.md")
             )
-            mock_logger.warning.assert_called_once()
-            assert "failed" in mock_logger.warning.call_args[0][0].lower()
+            mock_logger.error.assert_called_once()
+            assert "failed" in mock_logger.error.call_args[0][0].lower()
 
     @pytest.mark.asyncio
-    async def test_analyze_images_outer_except_warns(
+    async def test_analyze_images_outer_except_logs_error(
         self, mock_config, mock_processor
     ) -> None:
-        """analyze_images outer except should log warning."""
+        """analyze_images outer except should log error."""
         # Make get_context_cost raise to trigger the outer except block.
         # Note: per-image failures are caught inside analyze_single_image and
         # returned as None — they don't reach this outer handler.
@@ -1196,14 +1200,14 @@ class TestLLMFailureWarnings:
             await workflow.analyze_images(
                 [Path("/tmp/img.png")], "# test", Path("/tmp/test.md")
             )
-            mock_logger.warning.assert_called_once()
-            assert "failed" in mock_logger.warning.call_args[0][0].lower()
+            mock_logger.error.assert_called_once()
+            assert "failed" in mock_logger.error.call_args[0][0].lower()
 
     @pytest.mark.asyncio
-    async def test_extract_from_screenshots_warns_on_failure(
+    async def test_extract_from_screenshots_logs_error_on_failure(
         self, mock_config, mock_processor
     ) -> None:
-        """extract_from_screenshots should log warning on exception."""
+        """extract_from_screenshots should log error on exception."""
         # Mock the singular method that the production code actually calls
         mock_processor.extract_from_screenshot = AsyncMock(
             side_effect=RuntimeError("Screenshot extraction error")
@@ -1214,5 +1218,5 @@ class TestLLMFailureWarnings:
                 page_images=[{"path": "/tmp/page1.png", "page": 1}],
                 source="test.pdf",
             )
-            mock_logger.warning.assert_called_once()
-            assert "failed" in mock_logger.warning.call_args[0][0].lower()
+            mock_logger.error.assert_called_once()
+            assert "failed" in mock_logger.error.call_args[0][0].lower()
