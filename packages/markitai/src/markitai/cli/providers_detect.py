@@ -155,7 +155,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
             results.append(
                 ProviderDetectionResult(
                     provider="copilot",
-                    model="copilot/claude-sonnet-4.5",
+                    model="copilot/claude-sonnet-4.6",
                     authenticated=True,
                     source="cli",
                 )
@@ -166,7 +166,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
         results.append(
             ProviderDetectionResult(
                 provider="chatgpt",
-                model="chatgpt/gpt-5.2",
+                model="chatgpt/gpt-5.4",
                 authenticated=True,
                 source="cli",
             )
@@ -177,7 +177,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
         results.append(
             ProviderDetectionResult(
                 provider="gemini-cli",
-                model="gemini-cli/gemini-2.5-pro",
+                model="gemini-cli/gemini-3.1-pro-preview",
                 authenticated=True,
                 source="cli",
             )
@@ -185,11 +185,15 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
 
     # 5-9. Check environment variables
     env_providers = [
-        ("ANTHROPIC_API_KEY", "anthropic", "anthropic/claude-sonnet-4-5-20250929"),
-        ("OPENAI_API_KEY", "openai", "openai/gpt-5.2"),
-        ("GEMINI_API_KEY", "gemini", "gemini/gemini-2.5-flash"),
+        ("ANTHROPIC_API_KEY", "anthropic", "anthropic/claude-sonnet-4-6"),
+        ("OPENAI_API_KEY", "openai", "openai/gpt-5.4"),
+        ("GEMINI_API_KEY", "gemini", "gemini/gemini-3.1-flash-lite-preview"),
         ("DEEPSEEK_API_KEY", "deepseek", "deepseek/deepseek-chat"),
-        ("OPENROUTER_API_KEY", "openrouter", "openrouter/google/gemini-2.5-flash"),
+        (
+            "OPENROUTER_API_KEY",
+            "openrouter",
+            "openrouter/google/gemini-3.1-flash-lite-preview",
+        ),
     ]
     for env_var, provider, model in env_providers:
         if os.environ.get(env_var):

@@ -80,7 +80,7 @@ class TestCheckCopilotUnsupportedModels:
     def test_no_warning_for_supported_models(self):
         """Should not warn about supported copilot models."""
         model_list = [
-            _make_model_config("copilot/claude-sonnet-4.5"),
+            _make_model_config("copilot/claude-sonnet-4.6"),
             _make_model_config("copilot/gpt-4o"),
         ]
         console = MagicMock()

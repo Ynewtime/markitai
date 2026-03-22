@@ -13,7 +13,7 @@ Usage:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "gemini-cli/gemini-2.5-pro"
+                        "model": "gemini-cli/gemini-3.1-pro-preview"
                     }
                 }
             ]
@@ -1272,7 +1272,7 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
         """Async completion using Gemini Code Assist API.
 
         Args:
-            model: Model identifier (e.g., "gemini-cli/gemini-2.5-pro").
+            model: Model identifier (e.g., "gemini-cli/gemini-3.1-pro-preview").
             messages: OpenAI-style message list.
             **kwargs: Additional parameters (temperature, max_tokens, etc.).
 

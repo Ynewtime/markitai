@@ -54,7 +54,7 @@ markitai config set llm.enabled true
       {
         "model_name": "default",
         "litellm_params": {
-          "model": "gemini/gemini-2.5-flash",
+          "model": "gemini/gemini-3.1-flash-lite-preview",
           "api_key": "env:GEMINI_API_KEY"
         }
       }
@@ -264,40 +264,40 @@ provider/model-name
 ```
 
 示例：
-- `openai/gpt-5.2`
-- `anthropic/claude-sonnet-4-20250514`
-- `gemini/gemini-2.5-flash`
+- `openai/gpt-5.4`
+- `anthropic/claude-sonnet-4-6`
+- `gemini/gemini-3.1-flash-lite-preview`
 - `deepseek/deepseek-chat`
 - `ollama/llama3.2`
 - `claude-agent/sonnet`（本地，需要 Claude Code CLI）
-- `copilot/gpt-5.2`（本地，需要 Copilot CLI）
-- `chatgpt/gpt-5.2`（本地，需要 ChatGPT 订阅）
-- `gemini-cli/gemini-2.5-pro`（本地，需要 Gemini CLI 或 OAuth）
+- `copilot/gpt-5.4`（本地，需要 Copilot CLI）
+- `chatgpt/gpt-5.4`（本地，需要 ChatGPT 订阅）
+- `gemini-cli/gemini-3.1-pro-preview`（本地，需要 Gemini CLI 或 OAuth）
 
 Claude Agent SDK 支持的模型：
 - 别名（推荐）：`sonnet`、`opus`、`haiku`、`inherit`
-- 完整模型字符串：`claude-sonnet-4-5-20250929`、`claude-opus-4-6`、`claude-opus-4-5-20251101`
+- 完整模型字符串：`claude-sonnet-4-6`、`claude-opus-4-6`、`claude-opus-4-5-20251101`
 
 GitHub Copilot SDK 支持的模型：
 - 支持 Copilot 订阅可用的所有模型（o1/o3 推理模型除外）
-- 例如：`gpt-5.2`、`claude-sonnet-4.5`、`gemini-2.5-pro` 等
+- 例如：`gpt-5.4`、`claude-sonnet-4.6`、`gemini-3.1-pro-preview` 等
 - 可用性取决于您的 Copilot 订阅计划
 
 ChatGPT 支持的模型：
-- `gpt-5.2`、`gpt-5.2-codex`、`codex-mini` 等
+- `gpt-5.4`、`gpt-5.4-codex`、`codex-mini` 等
 
 Gemini CLI 支持的模型：
-- `gemini-2.5-pro`、`gemini-2.5-flash`、`gemini-3-flash-preview` 等
+- `gemini-3.1-pro-preview`、`gemini-3.1-flash-lite-preview`、`gemini-3.1-flash-image-preview` 等
 
 ::: warning 已下线模型
 以下模型已于 **2025年2月13日** 下线，不再可用：
-- `gpt-4o`、`gpt-4.1`、`gpt-4.1-mini`、`o4-mini`、`gpt-5`
+- `gpt-4o`、`gpt-4.1`、`gpt-4.1-mini`、`o4-mini`、`gpt-5`、`gpt-5.1`、`gpt-5.2`
 
-请使用 `gpt-5.2` 或其他当前支持的模型。
+请使用 `gpt-5.4` 或其他当前支持的模型。
 :::
 
 ::: tip 本地提供商支持 Vision
-本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`、`gemini-cli/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-5.2`、`gemini-cli/gemini-2.5-pro`）。
+本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`、`gemini-cli/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-5.4`、`gemini-cli/gemini-3.1-pro-preview`）。
 :::
 
 ::: tip 本地提供商故障排除
@@ -346,7 +346,7 @@ Gemini CLI 支持的模型：
 
 // Azure OpenAI
 {
-  "model": "azure/gpt-5.2",
+  "model": "azure/gpt-5.4",
   "api_key": "env:AZURE_API_KEY",
   "api_base": "https://your-resource.openai.azure.com"
 }
@@ -367,7 +367,7 @@ Gemini CLI 支持的模型：
 
 // 引用环境变量
 {
-  "model": "anthropic/claude-sonnet-4-5-20250929",
+  "model": "anthropic/claude-sonnet-4-6",
   "api_key": "env:ANTHROPIC_API_KEY",
   "api_base": "env:ANTHROPIC_BASE_URL"
 }
@@ -399,7 +399,7 @@ Gemini CLI 支持的模型：
       {
         "model_name": "default",
         "litellm_params": {
-          "model": "gemini/gemini-2.5-flash",
+          "model": "gemini/gemini-3.1-flash-lite-preview",
           "api_key": "env:GEMINI_API_KEY"
         },
         "model_info": {
@@ -444,7 +444,7 @@ Gemini CLI 支持的模型：
 {
   "model_name": "default",
   "litellm_params": {
-    "model": "gemini/gemini-2.5-flash",
+    "model": "gemini/gemini-3.1-flash-lite-preview",
     "api_key": "env:GEMINI_API_KEY",
     "weight": 10
   }
@@ -1071,7 +1071,7 @@ $env:NPM_CONFIG_REGISTRY = "https://registry.npmmirror.com"
       {
         "model_name": "default",
         "litellm_params": {
-          "model": "openai/gpt-5.2",
+          "model": "openai/gpt-5.4",
           "api_key": "env:OPENAI_API_KEY",
           "api_base": "https://your-api-proxy.com/v1"
         }

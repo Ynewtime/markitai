@@ -54,7 +54,7 @@ markitai config set llm.enabled true
       {
         "model_name": "default",
         "litellm_params": {
-          "model": "gemini/gemini-2.5-flash",
+          "model": "gemini/gemini-3.1-flash-lite-preview",
           "api_key": "env:GEMINI_API_KEY"
         }
       }
@@ -264,40 +264,40 @@ provider/model-name
 ```
 
 Examples:
-- `openai/gpt-5.2`
-- `anthropic/claude-sonnet-4-20250514`
-- `gemini/gemini-2.5-flash`
+- `openai/gpt-5.4`
+- `anthropic/claude-sonnet-4-6`
+- `gemini/gemini-3.1-flash-lite-preview`
 - `deepseek/deepseek-chat`
 - `ollama/llama3.2`
 - `claude-agent/sonnet` (local, requires Claude Code CLI)
-- `copilot/gpt-5.2` (local, requires Copilot CLI)
-- `chatgpt/gpt-5.2` (local, requires ChatGPT subscription)
-- `gemini-cli/gemini-2.5-pro` (local, requires Gemini CLI or OAuth)
+- `copilot/gpt-5.4` (local, requires Copilot CLI)
+- `chatgpt/gpt-5.4` (local, requires ChatGPT subscription)
+- `gemini-cli/gemini-3.1-pro-preview` (local, requires Gemini CLI or OAuth)
 
 Claude Agent SDK supported models:
 - Aliases (recommended): `sonnet`, `opus`, `haiku`, `inherit`
-- Full model strings: `claude-sonnet-4-5-20250929`, `claude-opus-4-6`, `claude-opus-4-5-20251101`
+- Full model strings: `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-5-20251101`
 
 GitHub Copilot SDK supported models:
 - Supports all models available to your Copilot subscription (except o1/o3 reasoning models)
-- Examples: `gpt-5.2`, `claude-sonnet-4.5`, `gemini-2.5-pro`, etc.
+- Examples: `gpt-5.4`, `claude-sonnet-4.6`, `gemini-3.1-pro-preview`, etc.
 - Availability depends on your Copilot subscription plan
 
 ChatGPT supported models:
-- `gpt-5.2`, `gpt-5.2-codex`, `codex-mini`, etc.
+- `gpt-5.4`, `gpt-5.4-codex`, `codex-mini`, etc.
 
 Gemini CLI supported models:
-- `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3-flash-preview`, etc.
+- `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3.1-flash-image-preview`, etc.
 
 ::: warning Deprecated Models
 The following models were **retired on February 13, 2025** and are no longer available:
-- `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini`, `gpt-5`
+- `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini`, `gpt-5`, `gpt-5.1`, `gpt-5.2`
 
-Please use `gpt-5.2` or other currently supported models.
+Please use `gpt-5.4` or other currently supported models.
 :::
 
 ::: tip Local Providers Support Vision
-Local providers (`claude-agent/`, `copilot/`, `chatgpt/`, `gemini-cli/`) support image analysis (`--alt`, `--desc`) via file attachments. Make sure to use a vision-capable model (e.g., `copilot/gpt-5.2`, `gemini-cli/gemini-2.5-pro`).
+Local providers (`claude-agent/`, `copilot/`, `chatgpt/`, `gemini-cli/`) support image analysis (`--alt`, `--desc`) via file attachments. Make sure to use a vision-capable model (e.g., `copilot/gpt-5.4`, `gemini-cli/gemini-3.1-pro-preview`).
 :::
 
 ::: tip Troubleshooting Local Providers
@@ -346,7 +346,7 @@ Examples:
 
 // Azure OpenAI
 {
-  "model": "azure/gpt-5.2",
+  "model": "azure/gpt-5.4",
   "api_key": "env:AZURE_API_KEY",
   "api_base": "https://your-resource.openai.azure.com"
 }
@@ -367,7 +367,7 @@ Examples:
 
 // Reference environment variable
 {
-  "model": "anthropic/claude-sonnet-4-5-20250929",
+  "model": "anthropic/claude-sonnet-4-6",
   "api_key": "env:ANTHROPIC_API_KEY",
   "api_base": "env:ANTHROPIC_BASE_URL"
 }
@@ -399,7 +399,7 @@ To explicitly override auto-detection, set `supports_vision`:
       {
         "model_name": "default",
         "litellm_params": {
-          "model": "gemini/gemini-2.5-flash",
+          "model": "gemini/gemini-3.1-flash-lite-preview",
           "api_key": "env:GEMINI_API_KEY"
         },
         "model_info": {
@@ -444,7 +444,7 @@ Each model in `model_list` accepts a `weight` parameter in `litellm_params` to c
 {
   "model_name": "default",
   "litellm_params": {
-    "model": "gemini/gemini-2.5-flash",
+    "model": "gemini/gemini-3.1-flash-lite-preview",
     "api_key": "env:GEMINI_API_KEY",
     "weight": 10
   }

@@ -490,7 +490,7 @@ class TestBuildRequest:
 
         provider = GeminiCLIProvider()
         messages = [{"role": "user", "content": "Hello"}]
-        request = provider._build_request("gemini-2.5-pro", messages)
+        request = provider._build_request("gemini-3.1-pro-preview", messages)
 
         assert "model" in request
         assert "request" in request
@@ -502,9 +502,9 @@ class TestBuildRequest:
 
         provider = GeminiCLIProvider()
         messages = [{"role": "user", "content": "Hello"}]
-        request = provider._build_request("gemini-cli/gemini-2.5-pro", messages)
+        request = provider._build_request("gemini-cli/gemini-3.1-pro-preview", messages)
 
-        assert request["model"] == "gemini-2.5-pro"
+        assert request["model"] == "gemini-3.1-pro-preview"
 
     def test_generation_config_from_kwargs(self) -> None:
         """Generation config params are passed through."""
@@ -513,7 +513,7 @@ class TestBuildRequest:
         provider = GeminiCLIProvider()
         messages = [{"role": "user", "content": "Hello"}]
         request = provider._build_request(
-            "gemini-2.5-pro",
+            "gemini-3.1-pro-preview",
             messages,
             temperature=0.5,
             max_tokens=1024,
@@ -532,7 +532,7 @@ class TestBuildRequest:
             {"role": "system", "content": "Be helpful."},
             {"role": "user", "content": "Hello"},
         ]
-        request = provider._build_request("gemini-2.5-pro", messages)
+        request = provider._build_request("gemini-3.1-pro-preview", messages)
 
         assert "systemInstruction" in request["request"]
         assert request["request"]["systemInstruction"]["parts"] == [
@@ -545,7 +545,7 @@ class TestBuildRequest:
 
         provider = GeminiCLIProvider()
         messages = [{"role": "user", "content": "Hello"}]
-        request = provider._build_request("gemini-2.5-pro", messages)
+        request = provider._build_request("gemini-3.1-pro-preview", messages)
 
         assert "systemInstruction" not in request["request"]
 
@@ -556,7 +556,7 @@ class TestBuildRequest:
         provider = GeminiCLIProvider()
         messages = [{"role": "user", "content": "Hello"}]
         request = provider._build_request(
-            "gemini-2.5-pro", messages, project="my-project-123"
+            "gemini-3.1-pro-preview", messages, project="my-project-123"
         )
 
         assert request["project"] == "my-project-123"
@@ -567,7 +567,7 @@ class TestBuildRequest:
 
         provider = GeminiCLIProvider()
         messages = [{"role": "user", "content": "Hello"}]
-        request = provider._build_request("gemini-2.5-pro", messages)
+        request = provider._build_request("gemini-3.1-pro-preview", messages)
 
         assert "project" not in request
 
@@ -733,7 +733,7 @@ class TestACompletion:
             mock_httpx.AsyncClient.return_value = mock_client
 
             result = await provider.acompletion(
-                "gemini-cli/gemini-2.5-pro",
+                "gemini-cli/gemini-3.1-pro-preview",
                 [{"role": "user", "content": "Hello"}],
             )
 
@@ -771,7 +771,7 @@ class TestACompletion:
 
             with pytest.raises(QuotaError) as exc_info:
                 await provider.acompletion(
-                    "gemini-cli/gemini-2.5-flash-lite",
+                    "gemini-cli/gemini-3.1-flash-lite-preview",
                     [{"role": "user", "content": "Hello"}],
                 )
 
@@ -805,7 +805,7 @@ class TestACompletion:
 
             with pytest.raises(AuthenticationError) as exc_info:
                 await provider.acompletion(
-                    "gemini-cli/gemini-2.5-pro",
+                    "gemini-cli/gemini-3.1-pro-preview",
                     [{"role": "user", "content": "Hello"}],
                 )
 
@@ -837,7 +837,7 @@ class TestACompletion:
 
             with pytest.raises(AuthenticationError):
                 await provider.acompletion(
-                    "gemini-cli/gemini-2.5-pro",
+                    "gemini-cli/gemini-3.1-pro-preview",
                     [{"role": "user", "content": "Hello"}],
                 )
 
@@ -868,7 +868,7 @@ class TestACompletion:
 
             with pytest.raises(ProviderError) as exc_info:
                 await provider.acompletion(
-                    "gemini-cli/gemini-2.5-pro",
+                    "gemini-cli/gemini-3.1-pro-preview",
                     [{"role": "user", "content": "Hello"}],
                 )
 
@@ -900,7 +900,7 @@ class TestACompletion:
             mock_httpx.AsyncClient.return_value = mock_client
 
             result = await provider.acompletion(
-                "gemini-cli/gemini-2.5-pro",
+                "gemini-cli/gemini-3.1-pro-preview",
                 [{"role": "user", "content": "Hello"}],
             )
 
@@ -931,7 +931,7 @@ class TestACompletion:
             mock_httpx.AsyncClient.return_value = mock_client
 
             result = await provider.acompletion(
-                "gemini-cli/gemini-2.5-pro",
+                "gemini-cli/gemini-3.1-pro-preview",
                 [{"role": "user", "content": "Hello"}],
             )
 
@@ -1675,7 +1675,7 @@ class TestSyncCompletion:
         ):
             # sync_completion uses asyncio.run() internally
             result = provider.completion(
-                "gemini-cli/gemini-2.5-pro",
+                "gemini-cli/gemini-3.1-pro-preview",
                 [{"role": "user", "content": "Hello"}],
             )
 
@@ -1733,7 +1733,9 @@ class TestConstants:
 
         provider = GeminiCLIProvider()
         data = _gemini_api_response(text="wrapped text", wrapped=True)
-        result = provider._parse_response(data, "gemini-cli/gemini-2.5-flash")
+        result = provider._parse_response(
+            data, "gemini-cli/gemini-3.1-flash-lite-preview"
+        )
 
         assert result.choices[0].message.content == "wrapped text"
 
@@ -1743,7 +1745,9 @@ class TestConstants:
 
         provider = GeminiCLIProvider()
         data = _gemini_api_response(text="raw text", wrapped=False)
-        result = provider._parse_response(data, "gemini-cli/gemini-2.5-flash")
+        result = provider._parse_response(
+            data, "gemini-cli/gemini-3.1-flash-lite-preview"
+        )
 
         assert result.choices[0].message.content == "raw text"
 

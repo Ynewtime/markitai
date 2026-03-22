@@ -147,7 +147,7 @@ def _build_resolution_hint(provider: str) -> str:
         return (
             "ChatGPT provider uses OAuth Device Code Flow.\n"
             "Run any chatgpt/ model to trigger automatic login,\n"
-            "or install and authenticate via: pip install litellm && litellm --model chatgpt/gpt-5.2"
+            "or install and authenticate via: pip install litellm && litellm --model chatgpt/gpt-5.4"
         )
     elif provider == "gemini-cli":
         return (

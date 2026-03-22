@@ -482,8 +482,11 @@ class TestLocalProviderWrapper:
     def test_image_capable_includes_gemini_cli(self):
         """gemini-cli/ models should be recognized as image-capable."""
         wrapper = LocalProviderWrapper([])
-        assert wrapper._is_image_capable("gemini-cli/gemini-2.5-pro") is True
-        assert wrapper._is_image_capable("gemini-cli/gemini-2.5-flash") is True
+        assert wrapper._is_image_capable("gemini-cli/gemini-3.1-pro-preview") is True
+        assert (
+            wrapper._is_image_capable("gemini-cli/gemini-3.1-flash-lite-preview")
+            is True
+        )
 
 
 # =============================================================================
@@ -560,7 +563,10 @@ class TestHybridRouter:
             },
             {
                 "model_name": "default",
-                "litellm_params": {"model": "gemini/gemini-2.5-flash", "weight": 0},
+                "litellm_params": {
+                    "model": "gemini/gemini-3.1-flash-lite-preview",
+                    "weight": 0,
+                },
             },
         ]
 
@@ -1694,7 +1700,12 @@ class TestLLMProcessorRouterHelpers:
         mock_router.model_list = [
             {"litellm_params": {"model": "deepseek/deepseek-chat", "weight": 0}},
             {"litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 20}},
-            {"litellm_params": {"model": "gemini/gemini-2.5-flash", "weight": 0}},
+            {
+                "litellm_params": {
+                    "model": "gemini/gemini-3.1-flash-lite-preview",
+                    "weight": 0,
+                }
+            },
         ]
 
         result = processor._get_router_primary_model(mock_router)
@@ -1971,7 +1982,7 @@ class TestLLMProcessorRouterCreation:
                 ModelConfig(
                     model_name="default",
                     litellm_params=LiteLLMParams(
-                        model="openai/gpt-5.2",
+                        model="openai/gpt-5.4",
                         api_key="test-key",
                         weight=1,
                     ),

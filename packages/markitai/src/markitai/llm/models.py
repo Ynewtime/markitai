@@ -25,7 +25,7 @@ def get_model_info_cached(model: str) -> dict[str, Any]:
     """Get model info from litellm with caching.
 
     Args:
-        model: Model identifier (e.g., "deepseek/deepseek-chat", "gemini/gemini-2.5-flash")
+        model: Model identifier (e.g., "deepseek/deepseek-chat", "gemini/gemini-3.1-flash-lite-preview")
 
     Returns:
         Dict with keys:
@@ -78,7 +78,7 @@ def get_model_max_output_tokens(model: str) -> int:
     """Get max_output_tokens for a model using litellm.get_model_info().
 
     Args:
-        model: Model identifier (e.g., "deepseek/deepseek-chat", "gemini/gemini-2.5-flash")
+        model: Model identifier (e.g., "deepseek/deepseek-chat", "gemini/gemini-3.1-flash-lite-preview")
 
     Returns:
         max_output_tokens value, or DEFAULT_MAX_OUTPUT_TOKENS if unavailable

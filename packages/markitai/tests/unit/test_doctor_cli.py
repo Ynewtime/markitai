@@ -100,7 +100,7 @@ class TestAuthenticationChecks:
         """Create a mock config with Copilot model configured."""
         config = MagicMock()
         mock_model = MagicMock()
-        mock_model.litellm_params.model = "copilot/claude-sonnet-4.5"
+        mock_model.litellm_params.model = "copilot/claude-sonnet-4.6"
         mock_model.model_info = None
         config.llm.model_list = [mock_model]
         config.ocr = MagicMock()
@@ -228,7 +228,7 @@ class TestAuthenticationChecks:
         """Create a mock config with Gemini CLI model configured."""
         config = MagicMock()
         mock_model = MagicMock()
-        mock_model.litellm_params.model = "gemini-cli/gemini-2.5-pro"
+        mock_model.litellm_params.model = "gemini-cli/gemini-3.1-pro-preview"
         mock_model.model_info = None
         config.llm.model_list = [mock_model]
         config.ocr = MagicMock()
@@ -344,7 +344,7 @@ class TestAuthenticationChecks:
 
         mock_config = MagicMock()
         mock_model = MagicMock()
-        mock_model.litellm_params.model = "copilot/claude-sonnet-4.5"
+        mock_model.litellm_params.model = "copilot/claude-sonnet-4.6"
         mock_model.litellm_params.weight = 0
         mock_model.model_info = None
         mock_config.llm.model_list = [mock_model]

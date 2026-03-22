@@ -134,7 +134,7 @@ class TestModelEnvVarDetection:
         detected = [
             ProviderDetectionResult(
                 provider="gemini",
-                model="gemini/gemini-2.5-flash",
+                model="gemini/gemini-3.1-flash-lite-preview",
                 authenticated=True,
                 source="env",
             )

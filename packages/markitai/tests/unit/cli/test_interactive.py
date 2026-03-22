@@ -67,7 +67,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "copilot"
-            assert result.model == "copilot/claude-sonnet-4.5"
+            assert result.model == "copilot/claude-sonnet-4.6"
 
     def test_detect_anthropic_api_key(self) -> None:
         """Should detect ANTHROPIC_API_KEY environment variable."""
@@ -86,7 +86,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "anthropic"
-            assert result.model == "anthropic/claude-sonnet-4-5-20250929"
+            assert result.model == "anthropic/claude-sonnet-4-6"
 
     def test_detect_openai_api_key(self) -> None:
         """Should detect OPENAI_API_KEY when no other provider available."""
@@ -105,7 +105,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "openai"
-            assert result.model == "openai/gpt-5.2"
+            assert result.model == "openai/gpt-5.4"
 
     def test_detect_gemini_api_key(self) -> None:
         """Should detect GEMINI_API_KEY when no other provider available."""
@@ -124,7 +124,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "gemini"
-            assert result.model == "gemini/gemini-2.5-flash"
+            assert result.model == "gemini/gemini-3.1-flash-lite-preview"
 
     def test_detect_deepseek_api_key(self) -> None:
         """Should detect DEEPSEEK_API_KEY when no higher-priority provider available."""
@@ -162,7 +162,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "openrouter"
-            assert result.model == "openrouter/google/gemini-2.5-flash"
+            assert result.model == "openrouter/google/gemini-3.1-flash-lite-preview"
 
     def test_detect_no_provider(self) -> None:
         """Should return None when no provider detected."""
@@ -228,7 +228,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "chatgpt"
-            assert result.model == "chatgpt/gpt-5.2"
+            assert result.model == "chatgpt/gpt-5.4"
 
     def test_detect_gemini_cli_provider(self) -> None:
         """Should detect Gemini CLI when authenticated."""
@@ -247,7 +247,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "gemini-cli"
-            assert result.model == "gemini-cli/gemini-2.5-pro"
+            assert result.model == "gemini-cli/gemini-3.1-pro-preview"
 
 
 class TestInteractiveSession:
