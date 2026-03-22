@@ -219,6 +219,14 @@ def _clean_tweet_internals(tweet: Tag) -> None:
         if el.parent:
             el.parent.decompose()
 
+    # Deduplicate User-Name links: keep display name, remove @handle link
+    for user_name_el in list(tweet.find_all(attrs={"data-testid": "User-Name"})):
+        links = user_name_el.find_all("a")
+        if len(links) >= 2:
+            # Second link is typically the @handle duplicate
+            for link in links[1:]:
+                link.decompose()
+
 
 def _is_timestamp_text(text: str) -> bool:
     """Check if text looks like a tweet timestamp."""
