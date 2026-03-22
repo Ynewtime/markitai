@@ -1272,6 +1272,7 @@ class TestConcurrentProcessing:
         self,
         batch_config: BatchConfig,
         sample_output_dir: Path,
+        tmp_path: Path,
     ) -> None:
         """Test that semaphore correctly limits concurrency."""
         processor = BatchProcessor(
@@ -1290,11 +1291,15 @@ class TestConcurrentProcessing:
             concurrent_count -= 1
             return ProcessResult(success=True)
 
-        files = [Path(f"/tmp/file{i}.txt") for i in range(10)]
+        input_dir = tmp_path / "input"
+        input_dir.mkdir(exist_ok=True)
+        files = [input_dir / f"file{i}.txt" for i in range(10)]
+        for f in files:
+            f.touch()
 
         # Initialize state
         processor.state = processor.init_state(
-            input_dir=Path("/tmp"),
+            input_dir=input_dir,
             files=files,
             options={},
         )
@@ -1313,6 +1318,7 @@ class TestConcurrentProcessing:
         self,
         batch_config: BatchConfig,
         sample_output_dir: Path,
+        tmp_path: Path,
     ) -> None:
         """Test that batch processing continues when individual files fail."""
         processor = BatchProcessor(
@@ -1329,14 +1335,18 @@ class TestConcurrentProcessing:
                 return ProcessResult(success=False, error="Simulated error")
             return ProcessResult(success=True, output_path=f"{path}.md")
 
+        input_dir = tmp_path / "input"
+        input_dir.mkdir(exist_ok=True)
         files = [
-            Path("/tmp/good1.txt"),
-            Path("/tmp/bad.txt"),
-            Path("/tmp/good2.txt"),
+            input_dir / "good1.txt",
+            input_dir / "bad.txt",
+            input_dir / "good2.txt",
         ]
+        for f in files:
+            f.touch()
 
         processor.state = processor.init_state(
-            input_dir=Path("/tmp"),
+            input_dir=input_dir,
             files=files,
             options={},
         )
@@ -1757,9 +1767,13 @@ class TestIncrementalStateSave:
     ) -> None:
         """Throttled saves should append to .jsonl instead of rewriting full state."""
         processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
-        files = [Path(f"/tmp/file{i}.txt") for i in range(100)]
+        input_dir = tmp_path / "input"
+        input_dir.mkdir(exist_ok=True)
+        files = [input_dir / f"file{i}.txt" for i in range(100)]
+        for f in files:
+            f.touch()
         processor.state = processor.init_state(
-            input_dir=Path("/tmp"), files=files, options={}
+            input_dir=input_dir, files=files, options={}
         )
         # Force initial full save
         processor.save_state(force=True)
@@ -1783,9 +1797,13 @@ class TestIncrementalStateSave:
     ) -> None:
         """load_state should replay .jsonl entries on top of base state."""
         processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
-        files = [Path(f"/tmp/file{i}.txt") for i in range(10)]
+        input_dir = tmp_path / "input"
+        input_dir.mkdir(exist_ok=True)
+        files = [input_dir / f"file{i}.txt" for i in range(10)]
+        for f in files:
+            f.touch()
         processor.state = processor.init_state(
-            input_dir=Path("/tmp"), files=files, options={}
+            input_dir=input_dir, files=files, options={}
         )
         processor.save_state(force=True)
 
@@ -1817,9 +1835,13 @@ class TestIncrementalStateSave:
     ) -> None:
         """compact_state should merge .jsonl into base and delete the log."""
         processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
-        files = [Path(f"/tmp/file{i}.txt") for i in range(10)]
+        input_dir = tmp_path / "input"
+        input_dir.mkdir(exist_ok=True)
+        files = [input_dir / f"file{i}.txt" for i in range(10)]
+        for f in files:
+            f.touch()
         processor.state = processor.init_state(
-            input_dir=Path("/tmp"), files=files, options={}
+            input_dir=input_dir, files=files, options={}
         )
         processor.save_state(force=True)
 
@@ -1855,9 +1877,13 @@ class TestIncrementalStateSave:
     ) -> None:
         """Each incremental flush should write O(changed_files), not O(total_files)."""
         processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
-        files = [Path(f"/tmp/file{i}.txt") for i in range(1000)]
+        input_dir = tmp_path / "input"
+        input_dir.mkdir(exist_ok=True)
+        files = [input_dir / f"file{i}.txt" for i in range(1000)]
+        for f in files:
+            f.touch()
         processor.state = processor.init_state(
-            input_dir=Path("/tmp"), files=files, options={}
+            input_dir=input_dir, files=files, options={}
         )
         processor.save_state(force=True)
 
@@ -1891,7 +1917,11 @@ class TestQueueBasedProcessing:
             processed.append(path.name)
             return ProcessResult(success=True)
 
-        files = [Path(f"/tmp/file{i}.txt") for i in range(20)]
+        input_dir = tmp_path / "input"
+        input_dir.mkdir(exist_ok=True)
+        files = [input_dir / f"file{i}.txt" for i in range(20)]
+        for f in files:
+            f.touch()
         await processor.process_batch(files=files, process_func=mock_process)
 
         assert sorted(processed) == sorted(f.name for f in files)
@@ -1913,7 +1943,11 @@ class TestQueueBasedProcessing:
             concurrent_count -= 1
             return ProcessResult(success=True)
 
-        files = [Path(f"/tmp/file{i}.txt") for i in range(20)]
+        input_dir = tmp_path / "input"
+        input_dir.mkdir(exist_ok=True)
+        files = [input_dir / f"file{i}.txt" for i in range(20)]
+        for f in files:
+            f.touch()
         await processor.process_batch(files=files, process_func=mock_process)
 
         assert max_concurrent <= batch_config.concurrency
@@ -1932,11 +1966,15 @@ class TestQueueBasedProcessing:
                 raise ValueError("test error")
             return ProcessResult(success=True)
 
+        input_dir = tmp_path / "input"
+        input_dir.mkdir(exist_ok=True)
         files = [
-            Path("/tmp/good1.txt"),
-            Path("/tmp/fail1.txt"),
-            Path("/tmp/good2.txt"),
+            input_dir / "good1.txt",
+            input_dir / "fail1.txt",
+            input_dir / "good2.txt",
         ]
+        for f in files:
+            f.touch()
         state = await processor.process_batch(files=files, process_func=mock_process)
 
         assert len(processed) == 3
