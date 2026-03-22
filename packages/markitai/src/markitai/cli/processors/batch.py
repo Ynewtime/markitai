@@ -909,31 +909,53 @@ async def process_batch(
         # Save state (non-blocking, throttled)
         await asyncio.to_thread(batch.save_state)
 
-    # Run all tasks in parallel (URLs + files)
+    # Run all tasks via queue + worker pool (URLs + files)
     state = batch.state
     try:
         if files or url_entries_from_files:
-            # Build task list
-            all_tasks = []
+            logger.debug(
+                f"Processing {len(files)} files and {len(url_entries_from_files)} URLs "
+                f"with concurrency {cfg.batch.concurrency}"
+            )
 
-            # Add URL tasks
+            items: list[tuple[str, Any]] = []
             for source_file, entry in url_entries_from_files:
-                all_tasks.append(
-                    process_url_with_state(entry.url, source_file, entry.output_name)
-                )
-
-            # Add file tasks
+                items.append(("url", (entry.url, source_file, entry.output_name)))
             for file_path in files:
-                all_tasks.append(process_file_with_state(file_path))
+                items.append(("file", file_path))
 
-            if all_tasks:
-                logger.debug(
-                    f"Processing {len(files)} files and {len(url_entries_from_files)} URLs "
-                    f"with concurrency {cfg.batch.concurrency}"
+            if items:
+                max_concurrency = max(cfg.batch.concurrency, cfg.batch.url_concurrency)
+                queue: asyncio.Queue[tuple[str, Any] | None] = asyncio.Queue(
+                    maxsize=max_concurrency * 2
                 )
 
-                # Run all tasks in parallel
-                await asyncio.gather(*all_tasks, return_exceptions=True)
+                async def producer() -> None:
+                    for item in items:
+                        await queue.put(item)
+                    for _ in range(max_concurrency):
+                        await queue.put(None)
+
+                async def worker() -> None:
+                    while True:
+                        item = await queue.get()
+                        if item is None:
+                            break
+                        try:
+                            item_type, args = item
+                            if item_type == "url":
+                                url, src_file, custom_name = args
+                                await process_url_with_state(url, src_file, custom_name)
+                            else:
+                                await process_file_with_state(args)
+                        except Exception:
+                            pass  # Already handled in process_*_with_state
+
+                producer_task = asyncio.create_task(producer())
+                workers = [
+                    asyncio.create_task(worker()) for _ in range(max_concurrency)
+                ]
+                await asyncio.gather(producer_task, *workers)
 
     finally:
         # Stop Live display and restore console handler
