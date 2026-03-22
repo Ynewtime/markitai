@@ -740,7 +740,7 @@ class TestBatchProcessor:
             status=FileStatus.COMPLETED,
         )
 
-        processor.save_state()
+        processor.save_state(force=True)
 
         # Load state
         loaded = processor.load_state()
