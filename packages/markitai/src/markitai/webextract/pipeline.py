@@ -47,10 +47,20 @@ def extract_web_content(html: str, url: str) -> ExtractedWebContent:
     Returns:
         Extracted web content with cleaned HTML and derived Markdown.
     """
+    from loguru import logger
+
     # Try resolver path first (structured extraction for known sites)
     resolved = resolve_page(html, url)
     if resolved is not None and (resolved.content_html or resolved.content_root):
         return _build_from_resolved(html, url, resolved)
+
+    if resolved is not None:
+        diag = resolved.diagnostics
+        logger.debug(
+            "[Webextract] Resolver matched but returned no content for {}: {}",
+            url,
+            diag,
+        )
 
     # Generic pipeline path
     return _extract_generic(html, url)
