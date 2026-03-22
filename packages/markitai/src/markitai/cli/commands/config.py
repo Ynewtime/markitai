@@ -242,4 +242,12 @@ def config_set(key: str, value: str) -> None:
         raise SystemExit(1)
 
 
+@config.command("edit")
+def config_edit() -> None:
+    """Interactively edit configuration settings."""
+    from markitai.cli.config_editor import run_config_editor
+
+    run_config_editor()
+
+
 __all__ = ["config"]
