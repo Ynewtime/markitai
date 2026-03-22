@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+from urllib.parse import unquote
+
 from bs4 import BeautifulSoup, Tag
 
-UNSAFE_URL_PREFIXES = ("javascript:", "data:text/html", "data:image/svg+xml")
+UNSAFE_URL_PREFIXES = (
+    "javascript:",
+    "data:text/html",
+    "data:image/svg+xml",
+    "data:text/javascript",
+    "vbscript:",
+)
+_URL_ATTRS = ("href", "src", "action", "formaction")
 REMOVE_TAGS = {
     "script",
     "style",
@@ -60,9 +69,9 @@ def _sanitize_tag(tag: Tag) -> None:
         if attr.startswith("on"):
             del tag.attrs[attr]
 
-    for attr in ("href", "src"):
+    for attr in _URL_ATTRS:
         value = tag.get(attr)
-        if isinstance(value, str) and value.strip().lower().startswith(
-            UNSAFE_URL_PREFIXES
-        ):
-            del tag.attrs[attr]
+        if isinstance(value, str):
+            decoded = unquote(value).strip().lower()
+            if decoded.startswith(UNSAFE_URL_PREFIXES):
+                del tag.attrs[attr]

@@ -1139,3 +1139,72 @@ class TestProcessDocumentPure:
 
         await workflow.process_document_pure("# x", "test.txt", output_file)
         mock_processor.format_llm_output.assert_not_called()
+
+
+class TestLLMFailureStderrWarnings:
+    """Tests that LLM failures produce stderr warnings, not silent fallbacks."""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.llm.concurrency = 5
+        config.image.alt_enabled = True
+        config.image.desc_enabled = True
+        config.cache.no_cache = False
+        config.cache.no_cache_patterns = []
+        return config
+
+    @pytest.fixture
+    def mock_processor(self):
+        processor = MagicMock()
+        processor.get_context_cost = MagicMock(return_value=0.05)
+        processor.get_context_usage = MagicMock(
+            return_value={"gpt-4": {"requests": 1, "input_tokens": 100}}
+        )
+        return processor
+
+    @pytest.mark.asyncio
+    async def test_process_document_pure_warns_on_failure(
+        self, mock_config, mock_processor, capsys
+    ) -> None:
+        """process_document_pure should print warning to stderr on exception."""
+        mock_processor.clean_document_pure = AsyncMock(
+            side_effect=RuntimeError("API error")
+        )
+        workflow = SingleFileWorkflow(mock_config, mock_processor)
+        await workflow.process_document_pure("# test", "test.md", Path("/tmp/test.md"))
+        captured = capsys.readouterr()
+        assert "warning" in captured.err.lower() or "failed" in captured.err.lower()
+
+    @pytest.mark.asyncio
+    async def test_analyze_images_warns_on_failure(
+        self, mock_config, mock_processor, capsys
+    ) -> None:
+        """analyze_images should print warning to stderr on exception."""
+        mock_processor.analyze_image = AsyncMock(return_value=None)
+        # Make get_context_cost raise inside the try block (after gather)
+        mock_processor.get_context_cost = MagicMock(
+            side_effect=RuntimeError("Vision API error")
+        )
+        workflow = SingleFileWorkflow(mock_config, mock_processor)
+        await workflow.analyze_images(
+            [Path("/tmp/img.png")], "# test", Path("/tmp/test.md")
+        )
+        captured = capsys.readouterr()
+        assert "warning" in captured.err.lower() or "failed" in captured.err.lower()
+
+    @pytest.mark.asyncio
+    async def test_extract_from_screenshots_warns_on_failure(
+        self, mock_config, mock_processor, capsys
+    ) -> None:
+        """extract_from_screenshots should print warning to stderr on exception."""
+        mock_processor.extract_from_screenshots = AsyncMock(
+            side_effect=RuntimeError("Screenshot extraction error")
+        )
+        workflow = SingleFileWorkflow(mock_config, mock_processor)
+        await workflow.extract_from_screenshots(
+            page_images=[{"path": "/tmp/page1.png", "page": 1}],
+            source="test.pdf",
+        )
+        captured = capsys.readouterr()
+        assert "warning" in captured.err.lower() or "failed" in captured.err.lower()

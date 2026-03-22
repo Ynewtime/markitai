@@ -94,6 +94,28 @@ def _is_tiktoken_available() -> bool:
 _tiktoken_encodings: dict[str, object] = {}
 
 
+def _estimate_tokens_by_chars(text: str) -> int:
+    """Estimate token count with CJK-aware character classification.
+
+    English/Latin text averages ~1 token per 4 characters.
+    CJK characters average ~1.5 tokens per character.
+    """
+    cjk_count = 0
+    for ch in text:
+        cp = ord(ch)
+        if (
+            0x4E00 <= cp <= 0x9FFF  # CJK Unified Ideographs
+            or 0x3400 <= cp <= 0x4DBF  # CJK Extension A
+            or 0x3000 <= cp <= 0x303F  # CJK Symbols and Punctuation
+            or 0xFF00 <= cp <= 0xFFEF  # Fullwidth Forms
+            or 0xAC00 <= cp <= 0xD7AF  # Hangul Syllables
+            or 0x3040 <= cp <= 0x30FF  # Hiragana + Katakana
+        ):
+            cjk_count += 1
+    non_cjk_count = len(text) - cjk_count
+    return int(cjk_count * 1.5) + non_cjk_count // 4
+
+
 def count_tokens(text: str, model: str) -> int:
     """Count tokens in text for a given model.
 
@@ -132,10 +154,10 @@ def count_tokens(text: str, model: str) -> int:
                 "[Providers] tiktoken encoding failed, using estimation: {}", e
             )
 
-    # Fallback: character-based estimation
-    # Rough estimate: 1 token ≈ 4 characters for English
-    # This is less accurate but works for all models
-    return len(text) // 4
+    # Fallback: character-based estimation with CJK awareness
+    # English: ~1 token per 4 characters
+    # CJK (Chinese/Japanese/Korean): ~1.5 tokens per character
+    return _estimate_tokens_by_chars(text)
 
 
 # Cache for fuzzy model matching to avoid repeated LiteLLM database scans

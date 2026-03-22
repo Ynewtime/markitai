@@ -32,3 +32,29 @@ def test_sanitize_html_removes_event_handlers_and_javascript_links() -> None:
     assert "onclick" not in sanitized
     assert "javascript:" not in sanitized
     assert "safe" in sanitized
+
+
+def test_sanitize_removes_url_encoded_javascript() -> None:
+    """URL-encoded javascript: should be caught after decoding."""
+    from markitai.webextract.sanitize import sanitize_html_fragment
+
+    sanitized = sanitize_html_fragment('<a href="javascript%3Aalert(1)">click</a>')
+    assert "javascript" not in sanitized.lower() or "href" not in sanitized
+
+
+def test_sanitize_removes_vbscript_links() -> None:
+    """vbscript: scheme should be removed."""
+    from markitai.webextract.sanitize import sanitize_html_fragment
+
+    sanitized = sanitize_html_fragment('<a href="vbscript:evil()">click</a>')
+    assert "vbscript" not in sanitized.lower() or "href" not in sanitized
+
+
+def test_sanitize_checks_formaction_attribute() -> None:
+    """formaction with javascript: should be removed."""
+    from markitai.webextract.sanitize import sanitize_html_fragment
+
+    sanitized = sanitize_html_fragment(
+        '<div formaction="javascript:evil()"><p>safe</p></div>'
+    )
+    assert "formaction" not in sanitized

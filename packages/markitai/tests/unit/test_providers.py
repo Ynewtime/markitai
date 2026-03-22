@@ -1483,3 +1483,30 @@ class TestNewProviderIdentification:
             warnings = validate_local_provider_deps(["gemini-cli/gemini-2.5-pro"])
             assert len(warnings) >= 1
             assert any("google-auth" in w for w in warnings)
+
+
+class TestCountTokensFallback:
+    """Tests for the character-based token estimation fallback."""
+
+    def test_english_text_estimation(self) -> None:
+        """English text: ~1 token per 4 chars."""
+        from markitai.providers import count_tokens
+
+        result = count_tokens("Hello world, this is a test.", "claude-sonnet-4.5")
+        assert 5 <= result <= 15
+
+    def test_chinese_text_estimation_not_undercounted(self) -> None:
+        """Chinese text should not be estimated at 1/4 char per token."""
+        from markitai.providers import count_tokens
+
+        chinese_text = "这是一段中文文本用于测试令牌计数的准确性"  # 19 CJK chars
+        result = count_tokens(chinese_text, "claude-sonnet-4.5")
+        assert result >= 15, f"Chinese token count {result} is too low (undercounted)"
+
+    def test_mixed_cjk_and_english(self) -> None:
+        """Mixed content should count CJK and English differently."""
+        from markitai.providers import count_tokens
+
+        mixed = "Hello 你好世界 World"  # mixed CJK + English
+        result = count_tokens(mixed, "deepseek-chat")
+        assert result >= 6, f"Mixed token count {result} is too low"

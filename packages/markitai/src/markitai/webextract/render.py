@@ -20,6 +20,8 @@ from html import escape
 from markitai.webextract.semantics import ConversationItem, ConversationThread
 from markitai.webextract.types import SemanticExtraction
 
+_MAX_REPLY_DEPTH = 50
+
 
 def render_semantic_content(extraction: SemanticExtraction) -> str:
     """Render a ``SemanticExtraction`` to a canonical HTML fragment.
@@ -136,13 +138,19 @@ def _iter_child_items(
 def _render_item_tree(
     item: ConversationItem,
     items: list[ConversationItem],
+    depth: int = 0,
 ) -> str:
-    """Render a conversation item along with any nested replies."""
+    """Render a conversation item along with any nested replies.
+
+    Stops recursing beyond ``_MAX_REPLY_DEPTH`` to prevent stack overflow
+    on deeply nested threads (e.g. Reddit, HackerNews).
+    """
     parts = [_render_item(item)]
-    children = _iter_child_items(item.id, items)
-    if children:
-        parts.append('<blockquote class="reply-thread">')
-        for child in children:
-            parts.append(_render_item_tree(child, items))
-        parts.append("</blockquote>")
+    if depth < _MAX_REPLY_DEPTH:
+        children = _iter_child_items(item.id, items)
+        if children:
+            parts.append('<blockquote class="reply-thread">')
+            for child in children:
+                parts.append(_render_item_tree(child, items, depth + 1))
+            parts.append("</blockquote>")
     return "\n".join(parts)

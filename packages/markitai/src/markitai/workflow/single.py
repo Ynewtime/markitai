@@ -220,6 +220,11 @@ class SingleFileWorkflow:
             return markdown, cost, usage
         except Exception as e:
             logger.error(f"Pure LLM processing failed: {format_error_message(e)}")
+            from rich.console import Console
+
+            Console(stderr=True).print(
+                f"[yellow]Warning: Pure LLM processing failed: {format_error_message(e)}[/yellow]"
+            )
             return markdown, 0.0, {}
 
     async def analyze_images(
@@ -384,6 +389,11 @@ class SingleFileWorkflow:
 
         except Exception as e:
             logger.error(f"Image analysis failed: {format_error_message(e)}")
+            from rich.console import Console
+
+            Console(stderr=True).print(
+                f"[yellow]Warning: Image analysis failed: {format_error_message(e)}[/yellow]"
+            )
             return markdown, 0.0, {}, None
 
     async def enhance_with_vision(
@@ -527,5 +537,10 @@ class SingleFileWorkflow:
         except Exception as e:
             logger.error(
                 f"Screenshot-only extraction failed: {format_error_message(e)}"
+            )
+            from rich.console import Console
+
+            Console(stderr=True).print(
+                f"[yellow]Warning: Screenshot-only extraction failed: {format_error_message(e)}[/yellow]"
             )
             return "", _fallback_frontmatter(source, original_title), 0.0, {}
