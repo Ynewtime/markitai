@@ -455,6 +455,39 @@ def _check_chatgpt_auth() -> AuthStatus:
         )
 
 
+def _clear_stale_chatgpt_device_code_request() -> None:
+    """Clear incomplete ChatGPT device-code cooldown state before login.
+
+    LiteLLM records ``device_code_requested_at`` before the device-code flow
+    completes. If the user aborts before tokens are written, a later
+    ``get_access_token()`` call can spend several minutes silently waiting for
+    a token that will never arrive. When the user explicitly asks to log in
+    again, drop that stale cooldown marker and start a fresh device-code flow.
+    """
+    auth_path = Path.home() / ".config" / "litellm" / "chatgpt" / "auth.json"
+    if not auth_path.exists():
+        return
+
+    try:
+        data: dict[str, Any] = json.loads(auth_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.debug(
+            "[Auth] Failed to read ChatGPT auth file for cooldown reset: {}", e
+        )
+        return
+
+    if data.get("access_token") or "device_code_requested_at" not in data:
+        return
+
+    data.pop("device_code_requested_at", None)
+    try:
+        auth_path.write_text(json.dumps(data), encoding="utf-8")
+    except Exception as e:
+        logger.debug("[Auth] Failed to clear stale ChatGPT cooldown marker: {}", e)
+    else:
+        logger.debug("[Auth] Cleared stale ChatGPT cooldown marker")
+
+
 def _check_gemini_cli_auth() -> AuthStatus:
     """Check Gemini CLI authentication by reading OAuth credentials.
 
@@ -889,8 +922,9 @@ async def _login_chatgpt(output_manager: Any = None) -> AuthStatus:
         show_oauth_success,
     )
 
+    _clear_stale_chatgpt_device_code_request()
     authenticator = Authenticator()
-    interceptor = DeviceCodeInterceptor(output_manager=output_manager)
+    interceptor = DeviceCodeInterceptor()
     original_stdout = sys.stdout
     sys.stdout = interceptor  # type: ignore[assignment]
     try:
@@ -907,7 +941,7 @@ async def _login_chatgpt(output_manager: Any = None) -> AuthStatus:
         sys.stdout = original_stdout
 
     if interceptor.displayed:
-        show_oauth_success("chatgpt", output_manager=output_manager)
+        show_oauth_success("chatgpt")
 
     AuthManager().clear_cache("chatgpt")
     return _check_chatgpt_auth()

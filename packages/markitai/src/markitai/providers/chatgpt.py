@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 from loguru import logger
 
-from markitai.providers.auth import get_auth_resolution_hint
+from markitai.providers.auth import _check_chatgpt_auth, get_auth_resolution_hint
 from markitai.providers.common import UNSUPPORTED_PARAMS, sync_completion
 from markitai.providers.errors import AuthenticationError, ProviderError
 
@@ -321,18 +321,17 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
         model_name = model.replace("chatgpt/", "")
 
         # Authenticate — get access token (may silently refresh).
-        # Guard on first use: if no auth file exists, fail fast instead of
-        # blocking on interactive Device Code Flow (up to 900s inside a
-        # spinner).  Interactive auth should go through preflight / `markitai
-        # auth`.  When _authenticator is already set (subsequent calls or
-        # tests), skip the guard — auth was already established.
+        # Guard on first use: if ChatGPT auth is missing or incomplete, fail
+        # fast instead of silently entering interactive Device Code Flow.
+        # Interactive auth should go through preflight / `markitai auth`.
+        # When _authenticator is already set (subsequent calls or tests), skip
+        # the guard — auth was already established.
         if self._authenticator is None:
-            from pathlib import Path
-
-            auth_file = Path.home() / ".config" / "litellm" / "chatgpt" / "auth.json"
-            if not auth_file.exists():
+            status = _check_chatgpt_auth()
+            if not status.authenticated:
+                detail = f": {status.error}" if status.error else ""
                 raise AuthenticationError(
-                    "ChatGPT not authenticated. "
+                    f"ChatGPT not authenticated{detail}. "
                     "Run 'markitai auth chatgpt login' to authenticate first.",
                     provider="chatgpt",
                     resolution_hint=get_auth_resolution_hint("chatgpt"),
