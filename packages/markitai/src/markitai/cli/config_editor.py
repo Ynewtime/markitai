@@ -163,8 +163,15 @@ def build_choices(settings: list[dict[str, Any]]) -> list[Choice]:
     max_val_len = min(max_val_len, 30)
 
     choices: list[Choice] = []
+    prev_section = ""
     for s in settings:
         key = s["key"]
+        section = key.split(".")[0]
+        if section != prev_section:
+            if prev_section:
+                choices.append(Choice(title="", disabled="─" * 40))
+            prev_section = section
+
         val_str = format_display_value(s["value"])
         padded_key = key.ljust(max_key_len)
         padded_val = val_str.ljust(max_val_len)
