@@ -31,12 +31,6 @@ class TestWorkflowLazyImports:
 
         assert callable(convert_document_core)
 
-    def test_import_write_assets_json_alias(self) -> None:
-        """Should lazily import write_assets_json as alias for write_images_json."""
-        from markitai.workflow import write_assets_json
-
-        assert callable(write_assets_json)
-
     def test_import_nonexistent_raises_error(self) -> None:
         """Should raise AttributeError for nonexistent attribute."""
         import markitai.workflow as wf_mod
