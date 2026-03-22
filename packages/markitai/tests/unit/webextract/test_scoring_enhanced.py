@@ -13,6 +13,7 @@ class TestEnhancedScoring:
         html = '<div><a href="/1">link text</a> normal text</div>'
         soup = parse_html(html)
         el = soup.find("div")
+        assert el is not None
         score = score_candidate(el)
         # Score should be reduced by link density factor
         assert score < 4  # 4 words without penalty would be 4.0
@@ -22,6 +23,7 @@ class TestEnhancedScoring:
         html = "<div><p>First, second, third, fourth, fifth item here.</p></div>"
         soup = parse_html(html)
         el = soup.find("div")
+        assert el is not None
         score = score_candidate(el)
         # 7 words + 4 commas + 1 paragraph bonus
         assert score > 7  # more than just word count
@@ -35,6 +37,7 @@ class TestEnhancedScoring:
         </div>"""
         soup = parse_html(html)
         el = soup.find("div")
+        assert el is not None
         score = score_candidate(el)
         # Navigation heading + high link density should produce low score
         assert score < 10

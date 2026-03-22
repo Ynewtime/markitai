@@ -592,7 +592,7 @@ class TestPlaceholderProtection:
         content = (
             "<!-- Slide number: 1 -->\n# Title\n<!-- Slide number: 2 -->\n# Title 2"
         )
-        protected, mapping = LLMProcessor.protect_content(content)
+        _protected, mapping = LLMProcessor.protect_content(content)
 
         # Simulate LLM adding hallucinated slide comments
         hallucinated = (
@@ -617,7 +617,7 @@ class TestPlaceholderProtection:
     def test_unprotect_removes_hallucinated_page_comments(self):
         """Test that hallucinated page comments are removed."""
         content = "<!-- Page number: 1 -->\nContent\n<!-- Page number: 2 -->\nMore"
-        protected, mapping = LLMProcessor.protect_content(content)
+        _protected, mapping = LLMProcessor.protect_content(content)
 
         # Simulate LLM adding hallucinated page comments
         hallucinated = (

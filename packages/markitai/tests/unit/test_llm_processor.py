@@ -1590,7 +1590,7 @@ class TestGetCachedImageSVG:
         svg_path.write_bytes(svg_content)
 
         with patch("markitai.llm.processor.cairosvg", None):
-            raw_bytes, b64_str = processor._get_cached_image(svg_path)
+            raw_bytes, _b64_str = processor._get_cached_image(svg_path)
 
         # Falls through without rasterization — returns raw SVG bytes
         assert raw_bytes == svg_content
@@ -1655,7 +1655,7 @@ class TestLLMProcessorDynamicMaxTokens:
                 [{"role": "user", "content": table_content}], "test/model"
             )
             # Should have higher floor for table-heavy content
-            assert result >= 4000
+            assert result is not None and result >= 4000
 
     def test_uses_router_model_limits(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
@@ -1684,7 +1684,7 @@ class TestLLMProcessorDynamicMaxTokens:
                 router=mock_router,
             )
             # Should use minimum max_output (4096)
-            assert result <= 4096
+            assert result is not None and result <= 4096
 
 
 class TestLLMProcessorRouterHelpers:

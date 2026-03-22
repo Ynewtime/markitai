@@ -157,7 +157,7 @@ class TestProcessWithLLM:
                 return_value="# Cleaned\n\nContent",
             ),
         ):
-            result_md, cost, usage = await process_with_llm(
+            _result_md, _cost, _usage = await process_with_llm(
                 markdown=markdown,
                 source="test.md",
                 cfg=markitai_config,
@@ -528,7 +528,7 @@ class TestAnalyzeImagesWithLLM:
             return_value=[sample_image_analysis]
         )
 
-        markdown, cost, usage, analysis_result = await analyze_images_with_llm(
+        markdown, _cost, _usage, analysis_result = await analyze_images_with_llm(
             image_paths=[image_path],
             markdown="# Test\n\n![](.markitai/assets/test.jpg)",
             output_file=output_file,
@@ -612,7 +612,7 @@ class TestAnalyzeImagesWithLLM:
             "markitai.cli.processors.llm.format_standalone_image_markdown",
             return_value="# Formatted standalone image",
         ):
-            markdown, cost, usage, analysis_result = await analyze_images_with_llm(
+            _markdown, _cost, _usage, _analysis_result = await analyze_images_with_llm(
                 image_paths=[image_path],
                 markdown="![](.markitai/assets/photo.jpg)",
                 output_file=output_file,
@@ -638,7 +638,7 @@ class TestAnalyzeImagesWithLLM:
 
         mock_llm_processor.analyze_images_batch = AsyncMock(return_value=[])
 
-        markdown, cost, usage, analysis_result = await analyze_images_with_llm(
+        markdown, _cost, _usage, analysis_result = await analyze_images_with_llm(
             image_paths=[],
             markdown="# No images",
             output_file=output_file,
@@ -669,7 +669,7 @@ class TestAnalyzeImagesWithLLM:
             side_effect=Exception("Vision API Error")
         )
 
-        markdown, cost, usage, analysis_result = await analyze_images_with_llm(
+        markdown, cost, _usage, analysis_result = await analyze_images_with_llm(
             image_paths=[image_path],
             markdown="# Test\n\n![](.markitai/assets/test.jpg)",
             output_file=output_file,
@@ -718,7 +718,7 @@ class TestAnalyzeImagesWithLLM:
             return_value=[sample_image_analysis]
         )
 
-        markdown, cost, usage, analysis_result = await analyze_images_with_llm(
+        markdown, _cost, _usage, _analysis_result = await analyze_images_with_llm(
             image_paths=[image_path],
             markdown="# Test\n\n![](.markitai/assets/test.jpg)",
             output_file=output_file,
@@ -768,7 +768,7 @@ class TestAnalyzeImagesWithLLM:
             return_value=[sample_image_analysis]
         )
 
-        markdown, cost, usage, analysis_result = await analyze_images_with_llm(
+        _markdown, _cost, _usage, analysis_result = await analyze_images_with_llm(
             image_paths=[image_path],
             markdown="# Test\n\n![](.markitai/assets/test.jpg)",
             output_file=output_file,
@@ -894,7 +894,7 @@ class TestAnalyzeImagesWithLLM:
 
         writer_task = asyncio.create_task(write_and_signal())
 
-        markdown, cost, usage, analysis_result = await analyze_images_with_llm(
+        _markdown, _cost, _usage, _analysis_result = await analyze_images_with_llm(
             image_paths=[image_path],
             markdown="# Test\n\n![](.markitai/assets/test.jpg)",
             output_file=output_file,
@@ -937,7 +937,7 @@ class TestAnalyzeImagesWithLLM:
         # Create event but never set it — will timeout
         event = asyncio.Event()
 
-        markdown, cost, usage, analysis_result = await analyze_images_with_llm(
+        _markdown, _cost, _usage, _analysis_result = await analyze_images_with_llm(
             image_paths=[image_path],
             markdown="# Test\n\n![](.markitai/assets/test.jpg)",
             output_file=output_file,
@@ -975,7 +975,7 @@ class TestEnhanceDocumentWithVision:
         page_images = [{"page": 1, "path": str(page1)}]
         extracted_text = "# Document\n\nSome extracted text."
 
-        cleaned, frontmatter, cost, usage = await enhance_document_with_vision(
+        cleaned, _frontmatter, cost, _usage = await enhance_document_with_vision(
             extracted_text=extracted_text,
             page_images=page_images,
             cfg=markitai_config,
@@ -1001,7 +1001,7 @@ class TestEnhanceDocumentWithVision:
             page.write_bytes(b"fake image")
             page_images.append({"page": i + 1, "path": str(page)})
 
-        cleaned, frontmatter, cost, usage = await enhance_document_with_vision(
+        _cleaned, _frontmatter, _cost, _usage = await enhance_document_with_vision(
             extracted_text="# Multi-page document",
             page_images=page_images,
             cfg=markitai_config,
@@ -1443,7 +1443,7 @@ class TestProcessWithLLMPureMode:
             "markitai.cli.processors.llm.create_llm_processor",
             return_value=processor,
         ):
-            result_md, cost, usage = await process_with_llm(
+            _result_md, _cost, _usage = await process_with_llm(
                 markdown=markdown,
                 source="test.md",
                 cfg=markitai_config,

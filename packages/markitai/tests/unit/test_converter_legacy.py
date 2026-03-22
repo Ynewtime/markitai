@@ -60,8 +60,8 @@ class TestLegacyPptArtifacts:
         )
 
         converter = PptConverter()
-        converter._pptx_converter = MagicMock()
-        converter._pptx_converter.convert.return_value = result
+        converter._pptx_converter = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        converter._pptx_converter.convert.return_value = result  # type: ignore[reportAttributeAccessIssue]
 
         input_path = tmp_path / "sample.ppt"
         input_path.write_bytes(b"ppt")

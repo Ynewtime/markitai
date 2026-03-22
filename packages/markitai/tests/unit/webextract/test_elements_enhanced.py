@@ -11,6 +11,7 @@ class TestHeadingAnchorRemoval:
 
         soup = parse_html('<div><h2>Title <a href="#title">#</a></h2></div>')
         root = soup.find("div")
+        assert root is not None
         normalize_headings(root)
         h2 = root.find("h2")
         assert h2 is not None
@@ -22,6 +23,7 @@ class TestHeadingAnchorRemoval:
 
         soup = parse_html('<div><h3>Section <a href="#section">¶</a></h3></div>')
         root = soup.find("div")
+        assert root is not None
         normalize_headings(root)
         assert "¶" not in root.get_text()
         assert "Section" in root.get_text()
@@ -33,6 +35,7 @@ class TestHeadingAnchorRemoval:
             '<div><h2><a href="https://example.com">External Link Title</a></h2></div>'
         )
         root = soup.find("div")
+        assert root is not None
         normalize_headings(root)
         assert root.find("a") is not None
 
@@ -47,6 +50,7 @@ class TestCalloutStandardization:
             "<p>Important info here.</p></div></div>"
         )
         root = soup.find("div")
+        assert root is not None
         normalize_callouts(root)
         bq = root.find("blockquote")
         assert bq is not None
@@ -59,6 +63,7 @@ class TestCalloutStandardization:
             '<div><div class="alert alert-warning"><p>Warning message.</p></div></div>'
         )
         root = soup.find("div")
+        assert root is not None
         normalize_callouts(root)
         bq = root.find("blockquote")
         assert bq is not None
@@ -71,5 +76,6 @@ class TestCalloutStandardization:
             '<div><div class="regular-div"><p>Normal content.</p></div></div>'
         )
         root = soup.find("div")
+        assert root is not None
         normalize_callouts(root)
         assert root.find("blockquote") is None

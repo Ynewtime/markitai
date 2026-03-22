@@ -23,7 +23,7 @@ class TestPatternConsolidation:
         from markitai.llm.content import protect_image_positions
 
         md = "![alt](.markitai/assets/doc.0001.jpg)\n![Page 1](.markitai/screenshots/page1.jpg)"
-        protected, mapping = protect_image_positions(md, exclude_screenshots=True)
+        protected, _mapping = protect_image_positions(md, exclude_screenshots=True)
         # Only the assets image should be protected, not the screenshot
         assert ".markitai/screenshots/page1.jpg" in protected
         assert ".markitai/assets/doc.0001.jpg" not in protected
@@ -56,7 +56,7 @@ class TestPatternConsolidation:
         from markitai.llm.document import DocumentMixin
 
         md = "![alt](.markitai/assets/doc.jpg)\n![Page 1](.markitai/screenshots/page1.jpg)"
-        protected, mapping = DocumentMixin._protect_image_positions(md)
+        protected, _mapping = DocumentMixin._protect_image_positions(md)
         # Should exclude screenshots (like the old behavior)
         assert ".markitai/screenshots/page1.jpg" in protected
         assert ".markitai/assets/doc.jpg" not in protected

@@ -23,6 +23,7 @@ class TestRemoveSmallImages:
     def test_removes_tracking_pixel(self):
         soup = _make_soup('<div><img src="pixel.gif" width="1" height="1"></div>')
         root = soup.find("div")
+        assert root is not None
         removed = remove_small_images(root)
         assert removed == 1
         assert root.find("img") is None
@@ -30,6 +31,7 @@ class TestRemoveSmallImages:
     def test_keeps_normal_image(self):
         soup = _make_soup('<div><img src="photo.jpg" width="800" height="600"></div>')
         root = soup.find("div")
+        assert root is not None
         removed = remove_small_images(root)
         assert removed == 0
         assert root.find("img") is not None
@@ -39,6 +41,7 @@ class TestRemoveSmallImages:
             '<div><img src="icon.png" style="width: 16px; height: 16px"></div>'
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_small_images(root)
         assert removed == 1
 
@@ -46,6 +49,7 @@ class TestRemoveSmallImages:
         """Images without known dimensions should be kept (conservative)."""
         soup = _make_soup('<div><img src="unknown.jpg"></div>')
         root = soup.find("div")
+        assert root is not None
         removed = remove_small_images(root)
         assert removed == 0
         assert root.find("img") is not None
@@ -55,6 +59,7 @@ class TestRemoveSmallImages:
             '<div><svg width="10" height="10"><circle r="5"/></svg></div>'
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_small_images(root)
         assert removed == 1
 
@@ -63,6 +68,7 @@ class TestRemoveSmallImages:
             '<div><svg width="200" height="200"><circle r="100"/></svg></div>'
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_small_images(root)
         assert removed == 0
 
@@ -76,6 +82,7 @@ class TestRemoveHiddenElements:
             '<div><p>visible</p><p style="display: none">hidden</p></div>'
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_hidden_elements(root)
         assert removed == 1
         assert "hidden" not in root.get_text()
@@ -85,6 +92,7 @@ class TestRemoveHiddenElements:
             '<div><p>visible</p><p style="visibility: hidden">hidden</p></div>'
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_hidden_elements(root)
         assert removed == 1
 
@@ -93,12 +101,14 @@ class TestRemoveHiddenElements:
             '<div><p>visible</p><span style="opacity: 0">hidden</span></div>'
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_hidden_elements(root)
         assert removed == 1
 
     def test_removes_hidden_class(self):
         soup = _make_soup('<div><p>visible</p><div class="hidden">hidden</div></div>')
         root = soup.find("div")
+        assert root is not None
         removed = remove_hidden_elements(root)
         assert removed == 1
 
@@ -108,6 +118,7 @@ class TestRemoveHiddenElements:
             '<div><span class="katex" aria-hidden="true">math</span></div>'
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_hidden_elements(root)
         assert removed == 0
         assert "math" in root.get_text()
@@ -115,6 +126,7 @@ class TestRemoveHiddenElements:
     def test_preserves_visible_elements(self):
         soup = _make_soup('<div><p style="display: block">visible</p></div>')
         root = soup.find("div")
+        assert root is not None
         removed = remove_hidden_elements(root)
         assert removed == 0
 
@@ -126,6 +138,7 @@ class TestRemoveBySelectors:
     def test_removes_nav_element(self):
         soup = _make_soup("<div><nav>menu</nav><article>content</article></div>")
         root = soup.find("div")
+        assert root is not None
         removed = remove_by_selectors(root, None)
         assert removed >= 1
         assert root.find("nav") is None
@@ -134,6 +147,7 @@ class TestRemoveBySelectors:
     def test_removes_footer(self):
         soup = _make_soup("<div><p>content</p><footer>copyright 2026</footer></div>")
         root = soup.find("div")
+        assert root is not None
         removed = remove_by_selectors(root, None)
         assert removed >= 1
         assert root.find("footer") is None
@@ -141,6 +155,7 @@ class TestRemoveBySelectors:
     def test_removes_sidebar(self):
         soup = _make_soup('<div><p>content</p><div class="sidebar">links</div></div>')
         root = soup.find("div")
+        assert root is not None
         removed = remove_by_selectors(root, None)
         assert removed >= 1
         assert root.find("div", class_="sidebar") is None
@@ -148,6 +163,7 @@ class TestRemoveBySelectors:
     def test_removes_ad_class(self):
         soup = _make_soup('<div><p>content</p><div class="ad">sponsor</div></div>')
         root = soup.find("div")
+        assert root is not None
         removed = remove_by_selectors(root, None)
         assert removed >= 1
 
@@ -156,6 +172,7 @@ class TestRemoveBySelectors:
             '<div><p>content</p><div class="newsletter-signup">Subscribe!</div></div>'
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_by_selectors(root, None, use_partial=True)
         assert removed >= 1
         assert root.find("div", class_="newsletter-signup") is None
@@ -166,6 +183,7 @@ class TestRemoveBySelectors:
             '<div><p>content</p><div class="newsletter-signup">Subscribe!</div></div>'
         )
         root = soup.find("div")
+        assert root is not None
         remove_by_selectors(root, None, use_partial=False)
         # newsletter-signup is only a partial match, should not be removed
         assert root.find("div", class_="newsletter-signup") is not None
@@ -174,6 +192,7 @@ class TestRemoveBySelectors:
         """Elements containing main_content should not be removed."""
         soup = _make_soup('<div><nav><article id="main">content</article></nav></div>')
         root = soup.find("div")
+        assert root is not None
         main = soup.find("article")
         remove_by_selectors(root, main)
         # nav should NOT be removed because it contains main content
@@ -185,6 +204,7 @@ class TestRemoveBySelectors:
             '<div><pre><code><span class="comment">// test</span></code></pre></div>'
         )
         root = soup.find("div")
+        assert root is not None
         remove_by_selectors(root, None)
         assert root.find("span", class_="comment") is not None
 
@@ -193,12 +213,14 @@ class TestRemoveBySelectors:
             "<div><p>content</p><form><input><button>go</button></form></div>"
         )
         root = soup.find("div")
+        assert root is not None
         remove_by_selectors(root, None)
         assert root.find("form") is None
 
     def test_removes_hidden_attribute(self):
         soup = _make_soup("<div><p>content</p><div hidden>hidden</div></div>")
         root = soup.find("div")
+        assert root is not None
         removed = remove_by_selectors(root, None)
         assert removed >= 1
 
@@ -225,6 +247,7 @@ class TestScoreAndRemove:
             </div>"""
         )
         root = soup.find("div")
+        assert root is not None
         removed = score_and_remove(root)
         assert removed >= 1
 
@@ -242,6 +265,7 @@ class TestScoreAndRemove:
             </div>"""
         )
         root = soup.find("div")
+        assert root is not None
         removed = score_and_remove(root)
         assert removed == 0
 
@@ -257,6 +281,7 @@ class TestScoreAndRemove:
             </div>"""
         )
         root = soup.find("div")
+        assert root is not None
         removed = score_and_remove(root)
         assert removed >= 1
 
@@ -270,6 +295,7 @@ class TestScoreAndRemove:
             </div>"""
         )
         root = soup.find("div")
+        assert root is not None
         removed = score_and_remove(root)
         assert removed == 0
         assert root.find("pre") is not None
@@ -302,6 +328,7 @@ class TestApplyRemovals:
         """
         soup = _make_soup(html)
         root = soup.find("div")
+        assert root is not None
         stats = apply_removals(root)
         assert stats["small_images"] >= 1
         assert stats["hidden"] >= 1
@@ -314,6 +341,7 @@ class TestApplyRemovals:
         html = '<div><p>content</p><div class="newsletter-signup">Sub</div></div>'
         soup = _make_soup(html)
         root = soup.find("div")
+        assert root is not None
         apply_removals(root, use_partial_selectors=False, use_scoring=False)
         # Partial selector not applied and scoring disabled, so newsletter-signup stays
         assert root.find("div", class_="newsletter-signup") is not None
@@ -322,6 +350,7 @@ class TestApplyRemovals:
         html = '<div><p>visible</p><p style="display:none">hidden</p></div>'
         soup = _make_soup(html)
         root = soup.find("div")
+        assert root is not None
         stats = apply_removals(root, use_hidden_removal=False)
         assert "hidden" not in stats  # hidden stage not run
         assert "hidden" in root.get_text()

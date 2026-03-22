@@ -96,7 +96,7 @@ class TestResolvedPage:
         assert page.content_html == "<article><p>Hello</p></article>"
 
     def test_resolved_page_accepts_semantic(self) -> None:
-        sem = SemanticExtraction(thread={"items": ["a", "b"]})
+        sem = SemanticExtraction(thread={"items": ["a", "b"]})  # type: ignore[reportArgumentType]
         page = ResolvedPage(semantic=sem)
         assert page.semantic is sem
 

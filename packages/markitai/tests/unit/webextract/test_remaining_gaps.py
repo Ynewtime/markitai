@@ -53,6 +53,7 @@ class TestImageSrcset:
             '<div><img src="small.jpg" srcset="medium.jpg 800w, large.jpg 1200w, small.jpg 400w"></div>'
         )
         root = soup.find("div")
+        assert root is not None
         normalize_images(root, "https://example.com")
         img = root.find("img")
         assert img is not None
@@ -64,6 +65,7 @@ class TestImageSrcset:
 
         soup = parse_html('<div><img src="1x.jpg" srcset="2x.jpg 2x, 3x.jpg 3x"></div>')
         root = soup.find("div")
+        assert root is not None
         normalize_images(root, "https://example.com")
         img = root.find("img")
         assert img is not None
@@ -75,8 +77,10 @@ class TestImageSrcset:
 
         soup = parse_html('<div><img src="photo.jpg" alt="photo"></div>')
         root = soup.find("div")
+        assert root is not None
         normalize_images(root, "https://example.com")
         img = root.find("img")
+        assert img is not None
         assert "photo.jpg" in str(img.get("src", ""))
 
 
@@ -88,12 +92,13 @@ class TestCodeLanguageDetection:
             '<div><pre><code class="language-python">print("hello")</code></pre></div>'
         )
         root = soup.find("div")
+        assert root is not None
         normalize_code_blocks(root)
         code = root.find("code")
         assert code is not None
-        classes = code.get("class", [])
+        classes = code.get("class", [])  # type: ignore[reportArgumentType]
         # language-python class should be preserved
-        assert any("python" in c for c in classes)
+        assert any("python" in c for c in classes)  # type: ignore[reportOptionalIterable]
 
     def test_lang_class_variant(self):
         from markitai.webextract.elements.code import normalize_code_blocks
@@ -102,12 +107,13 @@ class TestCodeLanguageDetection:
             '<div><pre><code class="lang-javascript">var x = 1;</code></pre></div>'
         )
         root = soup.find("div")
+        assert root is not None
         normalize_code_blocks(root)
         code = root.find("code")
         assert code is not None
-        classes = code.get("class", [])
+        classes = code.get("class", [])  # type: ignore[reportArgumentType]
         # Should normalize to language-javascript
-        assert any("javascript" in c for c in classes)
+        assert any("javascript" in c for c in classes)  # type: ignore[reportOptionalIterable]
 
     def test_highlight_class_variant(self):
         from markitai.webextract.elements.code import normalize_code_blocks
@@ -116,11 +122,12 @@ class TestCodeLanguageDetection:
             '<div><pre class="highlight-ruby"><code>puts "hello"</code></pre></div>'
         )
         root = soup.find("div")
+        assert root is not None
         normalize_code_blocks(root)
         code = root.find("code")
         assert code is not None
-        classes = code.get("class", [])
-        assert any("ruby" in c for c in classes)
+        classes = code.get("class", [])  # type: ignore[reportArgumentType]
+        assert any("ruby" in c for c in classes)  # type: ignore[reportOptionalIterable]
 
     def test_data_lang_attribute(self):
         from markitai.webextract.elements.code import normalize_code_blocks
@@ -129,8 +136,9 @@ class TestCodeLanguageDetection:
             '<div><pre data-lang="rust"><code>fn main() {}</code></pre></div>'
         )
         root = soup.find("div")
+        assert root is not None
         normalize_code_blocks(root)
         code = root.find("code")
         assert code is not None
-        classes = code.get("class", [])
-        assert any("rust" in c for c in classes)
+        classes = code.get("class", [])  # type: ignore[reportArgumentType]
+        assert any("rust" in c for c in classes)  # type: ignore[reportOptionalIterable]

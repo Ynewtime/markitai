@@ -790,19 +790,20 @@ class TestBatchProcessor:
                 self.advanced.append(task_id)
 
         processor = BatchProcessor(BatchConfig(), tmp_path / "output")
-        processor._progress = FakeProgress()
-        processor._overall_task_id = 1
+        processor._progress = FakeProgress()  # type: ignore[reportAttributeAccessIssue]
+        processor._overall_task_id = 1  # type: ignore[reportAttributeAccessIssue]
 
         processor.set_current_file("alpha.txt")
         processor.set_current_file("beta.txt")
 
-        current = processor._progress.updates[-1]["current"]
+        assert processor._progress is not None
+        current = processor._progress.updates[-1]["current"]  # type: ignore[reportAttributeAccessIssue]
         assert "alpha.txt" in current
         assert "beta.txt" in current
 
         processor.advance_progress(current_item="alpha.txt")
 
-        current = processor._progress.updates[-1]["current"]
+        current = processor._progress.updates[-1]["current"]  # type: ignore[reportAttributeAccessIssue]
         assert "beta.txt" in current
         assert "alpha.txt" not in current
 
@@ -821,19 +822,20 @@ class TestBatchProcessor:
                 self.advanced.append(task_id)
 
         processor = BatchProcessor(BatchConfig(), tmp_path / "output")
-        processor._progress = FakeProgress()
-        processor._url_task_id = 2
+        processor._progress = FakeProgress()  # type: ignore[reportAttributeAccessIssue]
+        processor._url_task_id = 2  # type: ignore[reportAttributeAccessIssue]
 
         processor.update_url_status("https://a.example.com/path")
         processor.update_url_status("https://b.example.com/path")
 
-        current = processor._progress.updates[-1]["current"]
+        assert processor._progress is not None
+        current = processor._progress.updates[-1]["current"]  # type: ignore[reportAttributeAccessIssue]
         assert "a.example.com" in current
         assert "b.example.com" in current
 
         processor.update_url_status("https://a.example.com/path", completed=True)
 
-        current = processor._progress.updates[-1]["current"]
+        current = processor._progress.updates[-1]["current"]  # type: ignore[reportAttributeAccessIssue]
         assert "b.example.com" in current
         assert "a.example.com" not in current
 

@@ -10,6 +10,7 @@ class TestReadTimeRemoval:
     def test_removes_read_time_metadata(self):
         soup = parse_html("<div><p>3 min read</p><p>Article content here.</p></div>")
         root = soup.find("div")
+        assert root is not None
         removed = remove_content_patterns(root)
         assert removed >= 1
         assert "min read" not in root.get_text()
@@ -17,12 +18,14 @@ class TestReadTimeRemoval:
     def test_removes_minutes_read_variant(self):
         soup = parse_html("<div><span>5 minutes read</span><p>Content.</p></div>")
         root = soup.find("div")
+        assert root is not None
         remove_content_patterns(root)
         assert "minutes read" not in root.get_text()
 
     def test_keeps_non_matching_text(self):
         soup = parse_html("<div><p>Read this article about Python.</p></div>")
         root = soup.find("div")
+        assert root is not None
         removed = remove_content_patterns(root)
         assert removed == 0
         assert "Read this article" in root.get_text()
@@ -34,6 +37,7 @@ class TestBoilerplateRemoval:
             "<div><p>Content.</p><p>Originally published in The Atlantic.</p></div>"
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_content_patterns(root)
         assert removed >= 1
         assert "Originally published" not in root.get_text()
@@ -43,12 +47,14 @@ class TestBoilerplateRemoval:
             "<div><p>Content.</p><p>This article appeared in Nature.</p></div>"
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_content_patterns(root)
         assert removed >= 1
 
     def test_keeps_normal_sentences(self):
         soup = parse_html("<div><p>This article discusses important topics.</p></div>")
         root = soup.find("div")
+        assert root is not None
         removed = remove_content_patterns(root)
         assert removed == 0
 
@@ -60,6 +66,7 @@ class TestAuthorBylineRemoval:
             "<p>Article content with enough words.</p></div>"
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_content_patterns(root)
         assert removed >= 1
 
@@ -71,5 +78,6 @@ class TestAuthorBylineRemoval:
             "through extensive experimentation.</p></div>"
         )
         root = soup.find("div")
+        assert root is not None
         removed = remove_content_patterns(root)
         assert removed == 0

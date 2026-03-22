@@ -428,7 +428,7 @@ class TestCreateUrlProcessor:
             "fetch_url",
             new=AsyncMock(side_effect=FetchError("Network error")),
         ):
-            result, extra_info = await process_url(
+            result, _extra_info = await process_url(
                 "https://nonexistent-domain-12345.invalid",
                 sample_input_dir / "urls.txt",
                 None,
@@ -459,6 +459,7 @@ class TestCreateUrlProcessor:
         )
 
         assert result.success is False
+        assert result.error is not None
         assert "No content" in result.error
 
     @pytest.mark.asyncio
@@ -494,7 +495,7 @@ class TestCreateUrlProcessor:
             "markitai.fetch.fetch_url",
             new=AsyncMock(return_value=mock_fetch_result),
         ):
-            result, extra_info = await process_url(
+            result, _extra_info = await process_url(
                 "https://example.com",
                 sample_input_dir / "urls.txt",
                 "my_custom_name",
@@ -544,7 +545,7 @@ class TestCreateUrlProcessor:
                 return_value=("# Enhanced", 0.0, {}),
             ),
         ):
-            result, extra_info = await process_url(
+            result, _extra_info = await process_url(
                 "https://example.com",
                 sample_input_dir / "urls.txt",
                 None,
@@ -659,6 +660,7 @@ class TestCreateUrlProcessor:
         async def fake_analyze_images(*args: Any, **kwargs: Any):
             observed["event"] = kwargs.get("llm_ready_event")
             try:
+                assert observed["event"] is not None
                 await observed["event"].wait()
                 return (args[1], 0.0, {}, None)
             finally:
@@ -747,6 +749,7 @@ class TestCreateUrlProcessor:
         async def fake_analyze_images(*args: Any, **kwargs: Any):
             observed["event"] = kwargs.get("llm_ready_event")
             try:
+                assert observed["event"] is not None
                 await observed["event"].wait()
                 return (args[1], 0.0, {}, None)
             finally:
@@ -1554,6 +1557,7 @@ class TestUrlProcessingIntegration:
         )
 
         assert result.success is False
+        assert result.error is not None
         assert "rate limit" in result.error.lower()
 
     @pytest.mark.asyncio

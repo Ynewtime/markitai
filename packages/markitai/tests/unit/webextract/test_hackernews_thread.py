@@ -130,7 +130,7 @@ def test_registry_resolves_hn_extractor_for_item_urls() -> None:
 
     assert extractor is not None
     assert hasattr(extractor, "resolve")
-    assert callable(extractor.resolve)
+    assert callable(extractor.resolve)  # type: ignore[reportAttributeAccessIssue]
 
 
 def test_registry_does_not_match_hn_for_non_item_urls() -> None:

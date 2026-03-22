@@ -17,7 +17,7 @@ class TestApplyOpenpyxlPatches:
         apply_openpyxl_patches()
 
         # Should not raise even with 'bg' kwarg
-        fv = FileVersion(appName="test", bg="some_value")
+        fv = FileVersion(appName="test", bg="some_value")  # type: ignore[reportCallIssue]
         assert fv.appName == "test"
 
     def test_preserves_normal_kwargs(self):

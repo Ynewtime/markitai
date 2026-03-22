@@ -139,7 +139,7 @@ def test_registry_resolves_github_thread_extractor_for_issue_urls() -> None:
 
     assert extractor is not None
     assert hasattr(extractor, "resolve")
-    assert callable(extractor.resolve)
+    assert callable(extractor.resolve)  # type: ignore[reportAttributeAccessIssue]
 
 
 def test_registry_resolves_github_thread_extractor_for_pr_urls() -> None:
@@ -150,4 +150,4 @@ def test_registry_resolves_github_thread_extractor_for_pr_urls() -> None:
 
     assert extractor is not None
     assert hasattr(extractor, "resolve")
-    assert callable(extractor.resolve)
+    assert callable(extractor.resolve)  # type: ignore[reportAttributeAccessIssue]

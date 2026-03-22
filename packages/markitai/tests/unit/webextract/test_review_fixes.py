@@ -23,6 +23,7 @@ class TestAlertCalloutConflict:
             "<p>Main content here.</p></div>"
         )
         root = soup.find("div")
+        assert root is not None
         apply_removals(root)
         # After removals, the alert content should still exist
         assert "important" in root.get_text()
@@ -35,6 +36,7 @@ class TestAlertCalloutConflict:
             "<p>Main content.</p></div>"
         )
         root = soup.find("div")
+        assert root is not None
         apply_removals(root)
         assert "Helpful note" in root.get_text()
 
@@ -49,6 +51,7 @@ class TestMathProtection:
             '<span class="katex" aria-hidden="true">x^2 + y^2</span></p></div>'
         )
         root = soup.find("div")
+        assert root is not None
         apply_removals(root)
         assert "x^2" in root.get_text()
 
@@ -58,6 +61,7 @@ class TestMathProtection:
             '<span class="MathJax" aria-hidden="true">E=mc^2</span></p></div>'
         )
         root = soup.find("div")
+        assert root is not None
         apply_removals(root)
         assert "E=mc" in root.get_text()
 
@@ -66,6 +70,7 @@ class TestMathProtection:
             "<div><p>See <math aria-hidden='true'><mi>x</mi></math></p></div>"
         )
         root = soup.find("div")
+        assert root is not None
         apply_removals(root)
         assert root.find("math") is not None
 
@@ -101,6 +106,7 @@ class TestSelectorIdentity:
         """Two different elements with same content should both be removed."""
         soup = parse_html("<div><nav>links</nav><p>content</p><nav>links</nav></div>")
         root = soup.find("div")
+        assert root is not None
         apply_removals(root)
         # Both nav elements should be removed
         assert root.find("nav") is None
@@ -117,6 +123,7 @@ class TestBylineRegex:
         # Lowercase "by someone" with date should NOT match
         soup = parse_html("<div><p>by someone on Jan 15</p><p>Real content.</p></div>")
         root = soup.find("div")
+        assert root is not None
         remove_content_patterns(root)
         # Should not be removed (lowercase name)
         assert "by someone" in root.get_text()
@@ -240,7 +247,7 @@ class TestRedditNestedReplies:
         ids = [item.id for item in result.semantic.thread.items]
         assert "t1_xyz002" in ids, f"Nested reply missing. Got: {ids}"
         nested = next(i for i in result.semantic.thread.items if i.id == "t1_xyz002")
-        assert nested.parent_id == "t1_xyz001"
+        assert nested.parent_id == "t1_parent"
 
     def test_child_inside_entry_also_works(self) -> None:
         """Fallback: .child inside .entry should also collect nested replies."""

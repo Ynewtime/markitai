@@ -885,6 +885,7 @@ https://example.org
 
         assert result.exit_code == 0
         assert mock_process_url_batch.await_count == 1
+        assert mock_process_url_batch.await_args is not None
         assert (
             mock_process_url_batch.await_args.kwargs["console_handler_id"] is not None
         )

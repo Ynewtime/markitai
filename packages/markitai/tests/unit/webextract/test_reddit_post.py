@@ -128,7 +128,7 @@ def test_registry_resolves_reddit_extractor_for_post_urls() -> None:
 
     assert extractor is not None
     assert hasattr(extractor, "resolve")
-    assert callable(extractor.resolve)
+    assert callable(extractor.resolve)  # type: ignore[reportAttributeAccessIssue]
 
 
 def test_registry_resolves_reddit_extractor_for_comments_urls() -> None:

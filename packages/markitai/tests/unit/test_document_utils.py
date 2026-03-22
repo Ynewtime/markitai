@@ -67,7 +67,7 @@ class TestProtectImagePositions:
     def test_external_url_images(self) -> None:
         """Test protection of external URL images."""
         text = "![logo](https://example.com/logo.png)"
-        protected, mapping = DocumentMixin._protect_image_positions(text)
+        _protected, mapping = DocumentMixin._protect_image_positions(text)
 
         assert len(mapping) == 1
         assert "https://example.com/logo.png" in mapping["__MARKITAI_IMG_0__"]
@@ -75,7 +75,7 @@ class TestProtectImagePositions:
     def test_empty_alt_text(self) -> None:
         """Test image with empty alt text."""
         text = "![](image.jpg)"
-        protected, mapping = DocumentMixin._protect_image_positions(text)
+        _protected, mapping = DocumentMixin._protect_image_positions(text)
 
         assert len(mapping) == 1
         assert mapping["__MARKITAI_IMG_0__"] == "![](image.jpg)"
@@ -546,7 +546,7 @@ def mock_processor(llm_config: LLMConfig, prompts_config: PromptsConfig) -> Magi
     from markitai.llm import LLMProcessor
 
     processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-    return processor
+    return processor  # type: ignore[reportReturnType]
 
 
 @pytest.fixture
@@ -913,7 +913,7 @@ Original second page.
 
             # Input has frontmatter with title
             input_content = "---\ntitle: Original Title\n---\n\n# Content"
-            cleaned, frontmatter = await processor.process_document(
+            _cleaned, frontmatter = await processor.process_document(
                 input_content, "test.md"
             )
 
@@ -1647,7 +1647,7 @@ Tail.
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, frontmatter = await processor.enhance_document_complete(
+            _cleaned, frontmatter = await processor.enhance_document_complete(
                 content,
                 page_images,
                 "test.pdf",
@@ -2403,7 +2403,7 @@ class TestErrorHandlingAsync:
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, frontmatter = await processor.enhance_document_complete(
+            _cleaned, frontmatter = await processor.enhance_document_complete(
                 content,
                 page_images,
                 "test.pdf",
@@ -2511,9 +2511,9 @@ class TestFallbackFrontmatterTitle:
         """When structured processing fails but cleaning changes the title,
         fallback frontmatter should reflect the cleaned title."""
         mixin = DocumentMixin()
-        mixin._config = MagicMock()
-        mixin._config.prompts = MagicMock()
-        mixin._prompts_config = MagicMock()
+        mixin._config = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        mixin._config.prompts = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        mixin._prompts_config = MagicMock()  # type: ignore[reportAttributeAccessIssue]
 
         original_markdown = "# Old Tittle With Typo\n\nSome content here."
         cleaned_markdown = "# Corrected Title\n\nSome content here."
