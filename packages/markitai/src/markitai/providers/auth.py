@@ -779,6 +779,8 @@ async def _login_copilot(output_manager: Any = None) -> AuthStatus:
     """
     import asyncio
 
+    from markitai.providers.oauth_display import show_login_start
+
     cli_path = _resolve_cli_path("copilot")
     if not cli_path:
         return AuthStatus(
@@ -789,6 +791,7 @@ async def _login_copilot(output_manager: Any = None) -> AuthStatus:
             error="Copilot CLI not found in PATH",
         )
 
+    show_login_start("copilot")
     proc = await asyncio.create_subprocess_exec(cli_path, "login")
     returncode = await proc.wait()
 
@@ -821,6 +824,8 @@ async def _login_claude_agent(output_manager: Any = None) -> AuthStatus:
     """
     import asyncio
 
+    from markitai.providers.oauth_display import show_login_start
+
     cli_path = _resolve_cli_path("claude")
     if not cli_path:
         return AuthStatus(
@@ -831,6 +836,7 @@ async def _login_claude_agent(output_manager: Any = None) -> AuthStatus:
             error="Claude CLI not found in PATH",
         )
 
+    show_login_start("claude-agent")
     proc = await asyncio.create_subprocess_exec(cli_path, "auth", "login")
     returncode = await proc.wait()
 

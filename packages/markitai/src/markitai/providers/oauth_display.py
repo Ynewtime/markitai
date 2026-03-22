@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
 
 _PROVIDER_LABELS: dict[str, str] = {
+    "copilot": "GitHub Copilot",
+    "claude-agent": "Claude",
     "gemini-cli": "Gemini",
     "chatgpt": "ChatGPT",
 }
@@ -45,6 +47,21 @@ def suppress_stdout() -> Generator[io.StringIO]:
         yield captured
     finally:
         sys.stdout = original
+
+
+def show_login_start(provider: str, *, console: Console | None = None) -> None:
+    """Display a brief login start message on stderr.
+
+    Used before subprocess-based logins (copilot, claude) to provide
+    visual context consistent with the chatgpt/gemini Rich-formatted flows.
+
+    Args:
+        provider: Provider name (e.g., "copilot", "claude-agent").
+        console: Optional console override for testing.
+    """
+    c = console or _get_stderr_console()
+    label = _PROVIDER_LABELS.get(provider, provider)
+    c.print(f"  [dim]Running {label} login...[/]")
 
 
 def show_oauth_start(provider: str, *, console: Console | None = None) -> None:
