@@ -343,7 +343,7 @@ markitai https://example.com --kreuzberg --playwright
 
 ### `markitai init`
 
-Interactive setup wizard that checks dependencies, detects LLM providers, and generates a configuration file.
+Interactive setup wizard that checks dependencies, detects LLM providers (including ChatGPT and Gemini CLI), and generates a configuration file.
 
 ```bash
 # Interactive setup wizard
@@ -402,6 +402,14 @@ Show configuration file paths.
 
 ```bash
 markitai config path
+```
+
+### `markitai config edit`
+
+Interactively edit configuration settings with a guided menu.
+
+```bash
+markitai config edit
 ```
 
 ### `markitai config validate`
