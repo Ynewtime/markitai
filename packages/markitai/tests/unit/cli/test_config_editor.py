@@ -60,3 +60,16 @@ def test_format_value_for_display() -> None:
     assert format_display_value(None) == "—"
     assert format_display_value(85) == "85"
     assert format_display_value("./output") == "./output"
+
+
+def test_build_choices_returns_questionary_choices() -> None:
+    """build_choices should return a list of questionary Choice objects."""
+    from markitai.cli.config_editor import build_choices, extract_editable_settings
+
+    cfg = MarkitaiConfig()
+    settings = extract_editable_settings(cfg)
+    choices = build_choices(settings)
+    assert len(choices) > 0
+    for c in choices:
+        assert hasattr(c, "title")
+        assert hasattr(c, "value")

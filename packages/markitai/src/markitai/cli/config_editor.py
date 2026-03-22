@@ -13,6 +13,7 @@ from typing import Any, get_args, get_origin
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
+from questionary import Choice
 
 from markitai.config import MarkitaiConfig
 
@@ -151,3 +152,149 @@ def format_display_value(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
+
+
+def build_choices(settings: list[dict[str, Any]]) -> list[Choice]:
+    """Build questionary Choice objects from settings list."""
+    max_key_len = max(len(s["key"]) for s in settings) if settings else 20
+    max_val_len = (
+        max(len(format_display_value(s["value"])) for s in settings) if settings else 10
+    )
+    max_val_len = min(max_val_len, 30)
+
+    choices: list[Choice] = []
+    for s in settings:
+        key = s["key"]
+        val_str = format_display_value(s["value"])
+        padded_key = key.ljust(max_key_len)
+        padded_val = val_str.ljust(max_val_len)
+        title = f"{padded_key}  {padded_val}"
+        choices.append(
+            Choice(
+                title=title,
+                value=s["key"],
+                description=s.get("description", ""),
+            )
+        )
+    return choices
+
+
+def _prompt_new_value(setting: dict[str, Any]) -> Any:
+    """Prompt the user for a new value based on field type.
+
+    Returns the new value, or _CANCEL if the user cancelled (Esc / Ctrl-C).
+    """
+    import questionary
+
+    key = setting["key"]
+    current = setting["value"]
+    field_type = setting["field_type"]
+
+    if field_type == "bool":
+        result = questionary.confirm(
+            f"  {key}",
+            default=current if current is not None else False,
+        ).ask()
+        return _CANCEL if result is None else result
+
+    if field_type == "literal":
+        choices = setting.get("choices", [])
+        result = questionary.select(
+            f"  {key}",
+            choices=[str(c) for c in choices],
+            default=str(current) if current is not None else None,
+        ).ask()
+        return _CANCEL if result is None else result
+
+    if field_type == "int":
+        result = questionary.text(
+            f"  {key}",
+            default=str(current) if current is not None else "",
+            validate=lambda v: (
+                v == ""
+                or (v.lstrip("-").isdigit() and v != "-")
+                or "Must be an integer"
+            ),
+        ).ask()
+        if result is None:
+            return _CANCEL
+        return int(result) if result else current
+
+    if field_type == "float":
+
+        def _validate_float(v: str) -> bool | str:
+            if v == "":
+                return True
+            try:
+                float(v)
+                return True
+            except ValueError:
+                return "Must be a number"
+
+        result = questionary.text(
+            f"  {key}",
+            default=str(current) if current is not None else "",
+            validate=_validate_float,
+        ).ask()
+        if result is None:
+            return _CANCEL
+        return float(result) if result else current
+
+    # str fallback
+    result = questionary.text(
+        f"  {key}",
+        default=str(current) if current is not None else "",
+    ).ask()
+    return _CANCEL if result is None else result
+
+
+def run_config_editor() -> None:
+    """Run the interactive config editor loop."""
+    import questionary
+    from rich.console import Console
+
+    from markitai.config import ConfigManager
+
+    console = Console(stderr=True)
+    manager = ConfigManager()
+    manager.load()
+    cfg = manager.config
+
+    console.print()
+    config_path = manager.config_path or "defaults"
+    console.print(f"  [bold]Markitai Configuration[/]  [dim]({config_path})[/]")
+    console.print()
+
+    while True:
+        settings = extract_editable_settings(cfg)
+        choices = build_choices(settings)
+
+        selected_key = questionary.select(
+            "Select a setting to edit:",
+            choices=choices,
+            use_search_filter=True,
+            instruction="(↑↓ move · type to filter · Esc to exit)",
+        ).ask()
+
+        if selected_key is None:
+            break
+
+        setting = next((s for s in settings if s["key"] == selected_key), None)
+        if setting is None:
+            continue
+
+        new_value = _prompt_new_value(setting)
+        if new_value is _CANCEL:
+            continue
+
+        try:
+            manager.set(selected_key, new_value)
+            manager.save()
+            console.print(
+                f"  [green]✓[/] {selected_key} = {format_display_value(new_value)}"
+            )
+            cfg = manager.config
+        except Exception as e:
+            console.print(f"  [red]✗[/] Error: {e}")
+
+    console.print()
