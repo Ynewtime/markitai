@@ -1141,8 +1141,8 @@ class TestProcessDocumentPure:
         mock_processor.format_llm_output.assert_not_called()
 
 
-class TestLLMFailureStderrWarnings:
-    """Tests that LLM failures produce stderr warnings, not silent fallbacks."""
+class TestLLMFailureWarnings:
+    """Tests that LLM failures emit logger.warning, not silent fallbacks."""
 
     @pytest.fixture
     def mock_config(self):
@@ -1165,46 +1165,54 @@ class TestLLMFailureStderrWarnings:
 
     @pytest.mark.asyncio
     async def test_process_document_pure_warns_on_failure(
-        self, mock_config, mock_processor, capsys
+        self, mock_config, mock_processor
     ) -> None:
-        """process_document_pure should print warning to stderr on exception."""
+        """process_document_pure should log warning on exception."""
         mock_processor.clean_document_pure = AsyncMock(
             side_effect=RuntimeError("API error")
         )
         workflow = SingleFileWorkflow(mock_config, mock_processor)
-        await workflow.process_document_pure("# test", "test.md", Path("/tmp/test.md"))
-        captured = capsys.readouterr()
-        assert "warning" in captured.err.lower() or "failed" in captured.err.lower()
+        with patch("markitai.workflow.single.logger") as mock_logger:
+            await workflow.process_document_pure(
+                "# test", "test.md", Path("/tmp/test.md")
+            )
+            mock_logger.warning.assert_called_once()
+            assert "failed" in mock_logger.warning.call_args[0][0].lower()
 
     @pytest.mark.asyncio
-    async def test_analyze_images_warns_on_failure(
-        self, mock_config, mock_processor, capsys
+    async def test_analyze_images_outer_except_warns(
+        self, mock_config, mock_processor
     ) -> None:
-        """analyze_images should print warning to stderr on exception."""
+        """analyze_images outer except should log warning."""
+        # Make get_context_cost raise to trigger the outer except block.
+        # Note: per-image failures are caught inside analyze_single_image and
+        # returned as None — they don't reach this outer handler.
         mock_processor.analyze_image = AsyncMock(return_value=None)
-        # Make get_context_cost raise inside the try block (after gather)
         mock_processor.get_context_cost = MagicMock(
-            side_effect=RuntimeError("Vision API error")
+            side_effect=RuntimeError("cost lookup error")
         )
         workflow = SingleFileWorkflow(mock_config, mock_processor)
-        await workflow.analyze_images(
-            [Path("/tmp/img.png")], "# test", Path("/tmp/test.md")
-        )
-        captured = capsys.readouterr()
-        assert "warning" in captured.err.lower() or "failed" in captured.err.lower()
+        with patch("markitai.workflow.single.logger") as mock_logger:
+            await workflow.analyze_images(
+                [Path("/tmp/img.png")], "# test", Path("/tmp/test.md")
+            )
+            mock_logger.warning.assert_called_once()
+            assert "failed" in mock_logger.warning.call_args[0][0].lower()
 
     @pytest.mark.asyncio
     async def test_extract_from_screenshots_warns_on_failure(
-        self, mock_config, mock_processor, capsys
+        self, mock_config, mock_processor
     ) -> None:
-        """extract_from_screenshots should print warning to stderr on exception."""
-        mock_processor.extract_from_screenshots = AsyncMock(
+        """extract_from_screenshots should log warning on exception."""
+        # Mock the singular method that the production code actually calls
+        mock_processor.extract_from_screenshot = AsyncMock(
             side_effect=RuntimeError("Screenshot extraction error")
         )
         workflow = SingleFileWorkflow(mock_config, mock_processor)
-        await workflow.extract_from_screenshots(
-            page_images=[{"path": "/tmp/page1.png", "page": 1}],
-            source="test.pdf",
-        )
-        captured = capsys.readouterr()
-        assert "warning" in captured.err.lower() or "failed" in captured.err.lower()
+        with patch("markitai.workflow.single.logger") as mock_logger:
+            await workflow.extract_from_screenshots(
+                page_images=[{"path": "/tmp/page1.png", "page": 1}],
+                source="test.pdf",
+            )
+            mock_logger.warning.assert_called_once()
+            assert "failed" in mock_logger.warning.call_args[0][0].lower()

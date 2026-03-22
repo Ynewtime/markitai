@@ -497,7 +497,6 @@ elif cfg.llm.pure and not cfg.llm.enabled:
 
 **问题**:
 - 部分 LLM 模式（pure、screenshot-only）失败时静默降级（P1-2），用户不知道是否生效
-- 进度信息不显示 fetch 策略和 retry 状态（P2-2）
 - `markitai doctor` 中 model list 为空时显示 "missing"，即使 API key 已正确——可能困惑新用户
 
 ### 配置体验
