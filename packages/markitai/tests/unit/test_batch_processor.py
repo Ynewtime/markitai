@@ -1747,3 +1747,130 @@ class TestTaskHash:
         # that affects hash, and we're passing different keys
         # The actual implementation uses llm_enabled, not llm
         # This test shows the intended behavior
+
+
+class TestIncrementalStateSave:
+    """Tests for WAL-based incremental state saving."""
+
+    def test_save_state_creates_jsonl_on_throttled_save(
+        self, batch_config: BatchConfig, tmp_path: Path
+    ) -> None:
+        """Throttled saves should append to .jsonl instead of rewriting full state."""
+        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        files = [Path(f"/tmp/file{i}.txt") for i in range(100)]
+        processor.state = processor.init_state(
+            input_dir=Path("/tmp"), files=files, options={}
+        )
+        # Force initial full save
+        processor.save_state(force=True)
+        assert processor.state_file.exists()
+
+        # Simulate completing one file
+        processor.state.files[str(files[0])].status = FileStatus.COMPLETED
+        processor.state.files[str(files[0])].output = "out/file0.md"
+        processor._dirty_keys.add(str(files[0]))
+
+        # Bypass throttle interval so non-forced save actually writes
+        processor._last_state_save = None
+        # Non-forced save should use incremental path (append to .jsonl)
+        processor.save_state(force=False)
+
+        jsonl_path = processor.state_file.with_suffix(".jsonl")
+        assert jsonl_path.exists(), "Incremental save should create .jsonl sidecar"
+
+    def test_load_state_replays_jsonl(
+        self, batch_config: BatchConfig, tmp_path: Path
+    ) -> None:
+        """load_state should replay .jsonl entries on top of base state."""
+        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        files = [Path(f"/tmp/file{i}.txt") for i in range(10)]
+        processor.state = processor.init_state(
+            input_dir=Path("/tmp"), files=files, options={}
+        )
+        processor.save_state(force=True)
+
+        # Simulate incremental updates
+        for i in range(5):
+            key = str(files[i])
+            processor.state.files[key].status = FileStatus.COMPLETED
+            processor.state.files[key].output = f"out/file{i}.md"
+            processor._dirty_keys.add(key)
+        # Non-forced save writes incrementally to .jsonl
+        processor._last_state_save = None
+        processor.save_state(force=False)
+
+        # Load state in a fresh processor
+        processor2 = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        processor2.state_file = processor.state_file
+        loaded = processor2.load_state()
+
+        assert loaded is not None
+        for i in range(5):
+            key = str(files[i])
+            assert loaded.files[key].status == FileStatus.COMPLETED
+        for i in range(5, 10):
+            key = str(files[i])
+            assert loaded.files[key].status == FileStatus.PENDING
+
+    def test_compact_merges_jsonl_into_base(
+        self, batch_config: BatchConfig, tmp_path: Path
+    ) -> None:
+        """compact_state should merge .jsonl into base and delete the log."""
+        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        files = [Path(f"/tmp/file{i}.txt") for i in range(10)]
+        processor.state = processor.init_state(
+            input_dir=Path("/tmp"), files=files, options={}
+        )
+        processor.save_state(force=True)
+
+        # Create some incremental entries
+        for i in range(3):
+            key = str(files[i])
+            processor.state.files[key].status = FileStatus.COMPLETED
+            processor.state.files[key].output = f"out/file{i}.md"
+            processor._dirty_keys.add(key)
+        # Non-forced save writes incrementally to .jsonl
+        processor._last_state_save = None
+        processor.save_state(force=False)
+
+        jsonl_path = processor.state_file.with_suffix(".jsonl")
+        assert jsonl_path.exists()
+
+        # Compact
+        processor.compact_state()
+
+        assert not jsonl_path.exists(), ".jsonl should be deleted after compaction"
+        assert processor.state_file.exists(), "Base state should still exist"
+
+        # Verify compacted state is complete
+        processor2 = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        processor2.state_file = processor.state_file
+        loaded = processor2.load_state()
+        assert loaded is not None
+        for i in range(3):
+            assert loaded.files[str(files[i])].status == FileStatus.COMPLETED
+
+    def test_incremental_write_size_is_constant_per_flush(
+        self, batch_config: BatchConfig, tmp_path: Path
+    ) -> None:
+        """Each incremental flush should write O(changed_files), not O(total_files)."""
+        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        files = [Path(f"/tmp/file{i}.txt") for i in range(1000)]
+        processor.state = processor.init_state(
+            input_dir=Path("/tmp"), files=files, options={}
+        )
+        processor.save_state(force=True)
+
+        # Mark one file as complete and flush incrementally
+        processor.state.files[str(files[0])].status = FileStatus.COMPLETED
+        processor.state.files[str(files[0])].output = "out/file0.md"
+        processor._dirty_keys.add(str(files[0]))
+        processor._last_state_save = None
+        processor.save_state(force=False)
+
+        jsonl_path = processor.state_file.with_suffix(".jsonl")
+        # The .jsonl should be tiny (one entry), not 1000 entries
+        jsonl_size = jsonl_path.stat().st_size
+        assert jsonl_size < 500, (
+            f"Incremental write should be small, got {jsonl_size} bytes"
+        )

@@ -797,6 +797,7 @@ async def process_batch(
         # Update state to in_progress
         url_state.status = FileStatus.IN_PROGRESS
         url_state.started_at = datetime.now().astimezone().isoformat()
+        batch._dirty_keys.add(url)
 
         start_time = asyncio.get_event_loop().time()
 
@@ -813,17 +814,20 @@ async def process_batch(
                 url_state.cost_usd = result.cost_usd
                 url_state.llm_usage = result.llm_usage
                 url_state.cache_hit = result.cache_hit
+                batch._dirty_keys.add(url)
                 # Collect image analysis for JSON output
                 if result.image_analysis_result is not None:
                     batch.image_analysis_results.append(result.image_analysis_result)
             else:
                 url_state.status = FileStatus.FAILED
                 url_state.error = result.error
+                batch._dirty_keys.add(url)
 
         except Exception as e:
             err_msg = format_error_message(e)
             url_state.status = FileStatus.FAILED
             url_state.error = err_msg
+            batch._dirty_keys.add(url)
             logger.error(f"[URL] Failed {url}: {err_msg}")
 
         finally:
@@ -850,6 +854,7 @@ async def process_batch(
         # Update state to in_progress
         file_state.status = FileStatus.IN_PROGRESS
         file_state.started_at = datetime.now().astimezone().isoformat()
+        batch._dirty_keys.add(file_key)
 
         start_time = asyncio.get_event_loop().time()
 
@@ -877,17 +882,20 @@ async def process_batch(
                 # Extract skip reason from ProcessResult error field
                 if result.error and result.error.startswith("skipped ("):
                     file_state.skip_reason = result.error[9:-1]
+                batch._dirty_keys.add(file_key)
                 # Collect image analysis for JSON output
                 if result.image_analysis_result is not None:
                     batch.image_analysis_results.append(result.image_analysis_result)
             else:
                 file_state.status = FileStatus.FAILED
                 file_state.error = result.error
+                batch._dirty_keys.add(file_key)
 
         except Exception as e:
             file_state.status = FileStatus.FAILED
             err_msg = format_error_message(e)
             file_state.error = err_msg
+            batch._dirty_keys.add(file_key)
             logger.error(f"[FAIL] {file_path.name}: {err_msg}")
 
         finally:
@@ -939,7 +947,7 @@ async def process_batch(
     if state:
         # Update state timestamp
         state.updated_at = datetime.now().astimezone().isoformat()
-        batch.save_state(force=True)
+        batch.compact_state()
 
         # Print summary (uses state for URL stats)
         batch.print_summary(

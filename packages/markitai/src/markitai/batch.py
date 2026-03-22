@@ -512,6 +512,7 @@ class BatchProcessor:
         self._completed_files: int = 0
         self._active_file_items: dict[str, str] = {}
         self._active_url_items: dict[str, str] = {}
+        self._dirty_keys: set[str] = set()
 
     def _compute_task_hash(self) -> str:
         """Compute hash from task input parameters.
@@ -890,7 +891,10 @@ class BatchProcessor:
         return positive_patterns, negative_patterns
 
     def load_state(self) -> BatchState | None:
-        """Load state from state file if exists (for resume capability)."""
+        """Load state from state file if exists (for resume capability).
+
+        Also replays any .jsonl sidecar entries on top of the base state.
+        """
         from markitai.constants import MAX_STATE_FILE_SIZE
         from markitai.security import validate_file_size
 
@@ -901,10 +905,62 @@ class BatchProcessor:
             # Validate file size to prevent DoS
             validate_file_size(self.state_file, MAX_STATE_FILE_SIZE)
             data = json.loads(self.state_file.read_text(encoding="utf-8"))
-            return BatchState.from_dict(data)
+            state = BatchState.from_dict(data)
         except Exception as e:
             logger.warning(f"Failed to load state file for resume: {e}")
             return None
+
+        # Replay .jsonl sidecar if present
+        jsonl_path = self.state_file.with_suffix(".jsonl")
+        if jsonl_path.exists():
+            try:
+                # Build reverse lookup: relative_path -> absolute_key (O(N) once)
+                input_dir_path = Path(state.input_dir) if state.input_dir else Path(".")
+                rel_to_abs: dict[str, str] = {}
+                for abs_key in state.files:
+                    file_path = Path(abs_key).resolve()
+                    try:
+                        rel_path = str(file_path.relative_to(input_dir_path.resolve()))
+                    except ValueError:
+                        rel_path = file_path.name
+                    rel_to_abs[rel_path] = abs_key
+
+                with open(jsonl_path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        entry = json.loads(line)
+                        entry_type = entry.get("type")
+                        key = entry.get("key", "")
+                        entry_data = entry.get("data", {})
+
+                        if entry_type == "file":
+                            # Resolve relative key to absolute key
+                            abs_key = rel_to_abs.get(key)
+                            if abs_key and abs_key in state.files:
+                                fs = state.files[abs_key]
+                                fs.status = FileStatus(
+                                    entry_data.get("status", "pending")
+                                )
+                                if "output" in entry_data:
+                                    fs.output = entry_data["output"]
+                                if "error" in entry_data:
+                                    fs.error = entry_data["error"]
+                        elif entry_type == "url":
+                            if key in state.urls:
+                                us = state.urls[key]
+                                us.status = FileStatus(
+                                    entry_data.get("status", "pending")
+                                )
+                                if "output" in entry_data:
+                                    us.output = entry_data["output"]
+                                if "error" in entry_data:
+                                    us.error = entry_data["error"]
+            except Exception as e:
+                logger.warning(f"Failed to replay .jsonl sidecar, ignoring: {e}")
+
+        return state
 
     def save_state(self, force: bool = False, log: bool = False) -> None:
         """Save current state to state file for resume capability.
@@ -915,6 +971,9 @@ class BatchProcessor:
         1. Quick interval check before lock (optimization)
         2. Blocking lock with timeout (prevents silent skips)
         3. Re-check interval after lock (correctness)
+
+        On force=True: writes full state via atomic_write_json + deletes .jsonl
+        On force=False: appends only dirty entries to .jsonl sidecar (O(dirty) I/O)
 
         Args:
             force: Force save even if interval hasn't passed
@@ -953,19 +1012,97 @@ class BatchProcessor:
 
             self.state.updated_at = now.isoformat()
 
-            # Build minimal state document (only what's needed for resume)
-            state_data = self.state.to_minimal_dict()
-
             # Ensure states directory exists
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
-            atomic_write_json(self.state_file, state_data, order_func=order_state)
+            if force:
+                # Full save: write complete state + delete .jsonl sidecar
+                state_data = self.state.to_minimal_dict()
+                atomic_write_json(self.state_file, state_data, order_func=order_state)
+                jsonl_path = self.state_file.with_suffix(".jsonl")
+                if jsonl_path.exists():
+                    jsonl_path.unlink()
+                self._dirty_keys.clear()
+            else:
+                # Incremental save: append only dirty entries to .jsonl
+                dirty = set(self._dirty_keys)
+                if dirty:
+                    self._append_incremental(dirty)
+                    self._dirty_keys -= (
+                        dirty  # -= not .clear(): preserves keys added during flush
+                    )
+
             self._last_state_save = now
 
             if log:
                 logger.debug(f"State file saved: {self.state_file.resolve()}")
         finally:
             self._save_lock.release()
+
+    def _append_incremental(self, dirty_keys: set[str]) -> None:
+        """Append changed entries to .jsonl sidecar file.
+
+        Each line is a JSON object: {"type": "file"|"url", "key": <key>, "data": {...}}
+        File keys are stored as relative paths (relative to input_dir) for consistency
+        with the base state file format.
+        """
+        jsonl_path = self.state_file.with_suffix(".jsonl")
+        assert self.state is not None
+        input_dir_path = Path(self.state.input_dir).resolve()
+
+        lines: list[str] = []
+        for key in dirty_keys:
+            if key in self.state.files:
+                file_state = self.state.files[key]
+                # Convert to relative path for consistency with to_minimal_dict
+                file_path = Path(key).resolve()
+                try:
+                    rel_path = str(file_path.relative_to(input_dir_path))
+                except ValueError:
+                    rel_path = file_path.name
+
+                entry: dict[str, Any] = {"status": file_state.status.value}
+                if file_state.status == FileStatus.COMPLETED and file_state.output:
+                    entry["output"] = file_state.output
+                elif file_state.status == FileStatus.FAILED and file_state.error:
+                    entry["error"] = file_state.error
+
+                lines.append(
+                    json.dumps(
+                        {"type": "file", "key": rel_path, "data": entry},
+                        separators=(",", ":"),
+                    )
+                )
+            elif key in self.state.urls:
+                url_state = self.state.urls[key]
+                entry = {
+                    "status": url_state.status.value,
+                    "source_file": url_state.source_file,
+                }
+                if url_state.status == FileStatus.COMPLETED and url_state.output:
+                    entry["output"] = url_state.output
+                elif url_state.status == FileStatus.FAILED and url_state.error:
+                    entry["error"] = url_state.error
+
+                lines.append(
+                    json.dumps(
+                        {"type": "url", "key": key, "data": entry},
+                        separators=(",", ":"),
+                    )
+                )
+
+        if lines:
+            with open(jsonl_path, "a", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+
+    def compact_state(self) -> None:
+        """Merge .jsonl sidecar into base state file and delete the log.
+
+        This performs a full save (force=True), which writes the complete
+        in-memory state to the base JSON file and removes the .jsonl sidecar.
+        Called at the end of batch processing.
+        """
+        self.save_state(force=True)
 
     def _compute_summary(self) -> dict[str, Any]:
         """Compute summary statistics for report."""
@@ -1305,8 +1442,8 @@ class BatchProcessor:
                     )
                     self._restored_console_handler_id = new_handler_id
 
-        # Final save
-        self.save_state(force=True)
+        # Final save — compact WAL into base state
+        self.compact_state()
 
         return self.state
 
