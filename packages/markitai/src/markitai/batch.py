@@ -930,7 +930,11 @@ class BatchProcessor:
                         line = line.strip()
                         if not line:
                             continue
-                        entry = json.loads(line)
+                        try:
+                            entry = json.loads(line)
+                        except json.JSONDecodeError:
+                            logger.debug(f"Skipping corrupt JSONL line: {line!r}")
+                            continue
                         entry_type = entry.get("type")
                         key = entry.get("key", "")
                         entry_data = entry.get("data", {})
@@ -1047,7 +1051,8 @@ class BatchProcessor:
         with the base state file format.
         """
         jsonl_path = self.state_file.with_suffix(".jsonl")
-        assert self.state is not None
+        if self.state is None:
+            return
         input_dir_path = Path(self.state.input_dir).resolve()
 
         lines: list[str] = []
@@ -1428,7 +1433,7 @@ class BatchProcessor:
                     try:
                         await process_single(item)
                     except Exception:
-                        pass  # Already handled in process_single
+                        logger.debug("Unexpected error in worker", exc_info=True)
 
             producer_task = asyncio.create_task(producer())
             workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
