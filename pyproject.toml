@@ -88,7 +88,7 @@ skips = [
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
 include = ["packages/markitai/src"]
-exclude = ["**/tests", "**/__pycache__"]
+exclude = ["**/__pycache__"]
 venvPath = "."
 venv = ".venv"
 # Allow optional dependencies to be missing (claude-agent-sdk)

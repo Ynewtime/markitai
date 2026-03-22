@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 __all__ = [
@@ -36,6 +37,15 @@ def __getattr__(name: str) -> Any:
         from markitai.workflow import helpers as _helpers
 
         return getattr(_helpers, name)
+    if name == "write_assets_json":
+        warnings.warn(
+            "write_assets_json is deprecated, use write_images_json instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from markitai.workflow.helpers import write_images_json
+
+        return write_images_json
     if name in {"ImageAnalysisResult", "SingleFileWorkflow"}:
         from markitai.workflow import single as _single
 
