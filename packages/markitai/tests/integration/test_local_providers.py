@@ -106,9 +106,9 @@ class TestClaudeAgentIntegration:
 
         # Verify usage
         assert hasattr(response, "usage")
-        assert response.usage.prompt_tokens == 25
-        assert response.usage.completion_tokens == 10
-        assert response.usage.total_tokens == 35
+        assert response.usage.prompt_tokens == 25  # type: ignore[reportAttributeAccessIssue]
+        assert response.usage.completion_tokens == 10  # type: ignore[reportAttributeAccessIssue]
+        assert response.usage.total_tokens == 35  # type: ignore[reportAttributeAccessIssue]
 
         # Verify model identifier preserved
         assert response.model == "claude-agent/sonnet"
@@ -647,10 +647,10 @@ class TestClaudeAgentIntegration:
             )
 
         # Verify input tokens were estimated (should be ~len(long_content)//4)
-        assert response.usage.prompt_tokens > 5
+        assert response.usage.prompt_tokens > 5  # type: ignore[reportAttributeAccessIssue]
         expected_estimate = len(long_content) // 4
-        assert response.usage.prompt_tokens == expected_estimate
-        assert response.usage.completion_tokens == 100
+        assert response.usage.prompt_tokens == expected_estimate  # type: ignore[reportAttributeAccessIssue]
+        assert response.usage.completion_tokens == 100  # type: ignore[reportAttributeAccessIssue]
 
     @pytest.mark.asyncio
     async def test_preserves_input_tokens_when_sdk_reports_enough(self) -> None:
@@ -719,8 +719,8 @@ class TestClaudeAgentIntegration:
             )
 
         # SDK value should be preserved when >= 50
-        assert response.usage.prompt_tokens == 500
-        assert response.usage.completion_tokens == 100
+        assert response.usage.prompt_tokens == 500  # type: ignore[reportAttributeAccessIssue]
+        assert response.usage.completion_tokens == 100  # type: ignore[reportAttributeAccessIssue]
 
 
 # =============================================================================
@@ -898,8 +898,8 @@ class TestCopilotIntegration:
 
         # Verify usage exists
         assert hasattr(response, "usage")
-        assert response.usage.prompt_tokens > 0
-        assert response.usage.completion_tokens > 0
+        assert response.usage.prompt_tokens > 0  # type: ignore[reportAttributeAccessIssue]
+        assert response.usage.completion_tokens > 0  # type: ignore[reportAttributeAccessIssue]
 
         # Verify model identifier preserved
         assert response.model == "copilot/gpt-4.1"

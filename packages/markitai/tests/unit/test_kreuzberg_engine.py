@@ -63,7 +63,7 @@ class TestKreuzbergEngineOverride:
             result = validate_and_detect_format(ctx, max_size=500_000_000)
 
         assert not result.success
-        assert "kreuzberg" in result.error.lower()
+        assert result.error is not None and "kreuzberg" in result.error.lower()
 
     def test_no_flag_uses_default_converter(self, tmp_path: Path):
         """Without --kreuzberg, normal converter registry should be used."""

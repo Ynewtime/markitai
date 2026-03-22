@@ -10,7 +10,7 @@ import pytest
 
 # Check if playwright is available for tests that require it
 try:
-    import playwright  # noqa: F401
+    import playwright  # noqa: F401  # type: ignore[reportUnusedImport]
 
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
@@ -1304,7 +1304,7 @@ class TestPlaywrightConfigExtended:
             http_credentials={"username": "user", "password": "pass"},
         )
         assert config.wait_for_selector == "#main-content"
-        assert len(config.cookies) == 1
+        assert config.cookies is not None and len(config.cookies) == 1
         assert config.cookies[0]["name"] == "session"
         assert config.reject_resource_patterns == ["**/*.css", "**/*.woff2"]
         assert config.extra_http_headers == {"Accept-Language": "zh-CN"}

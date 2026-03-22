@@ -389,7 +389,7 @@ class TestConvertMessages:
             {"role": "assistant", "content": "Hello!"},
             {"role": "user", "content": "How are you?"},
         ]
-        contents, system = provider._convert_messages(messages)
+        contents, _system = provider._convert_messages(messages)
 
         assert len(contents) == 3
         assert contents[0]["role"] == "user"
@@ -434,7 +434,7 @@ class TestConvertMessages:
                 ],
             }
         ]
-        contents, system = provider._convert_messages(messages)
+        contents, _system = provider._convert_messages(messages)
 
         assert len(contents) == 1
         parts = contents[0]["parts"]
@@ -467,7 +467,7 @@ class TestConvertMessages:
             {"role": "system", "content": "Rule 2."},
             {"role": "user", "content": "Hello"},
         ]
-        contents, system = provider._convert_messages(messages)
+        _contents, system = provider._convert_messages(messages)
 
         assert system is not None
         # Both system texts should be present
@@ -738,9 +738,9 @@ class TestACompletion:
             )
 
         assert result.choices[0].message.content == "Test response"
-        assert result.usage.prompt_tokens == 15
-        assert result.usage.completion_tokens == 25
-        assert result.usage.total_tokens == 40
+        assert result.usage.prompt_tokens == 15  # type: ignore[reportAttributeAccessIssue]
+        assert result.usage.completion_tokens == 25  # type: ignore[reportAttributeAccessIssue]
+        assert result.usage.total_tokens == 40  # type: ignore[reportAttributeAccessIssue]
 
     async def test_429_raises_quota_error_immediately(self) -> None:
         """GeminiCLI should raise QuotaError on first 429 (no internal retries).
@@ -904,9 +904,9 @@ class TestACompletion:
                 [{"role": "user", "content": "Hello"}],
             )
 
-        assert result.usage.prompt_tokens == 100
-        assert result.usage.completion_tokens == 200
-        assert result.usage.total_tokens == 300
+        assert result.usage.prompt_tokens == 100  # type: ignore[reportAttributeAccessIssue]
+        assert result.usage.completion_tokens == 200  # type: ignore[reportAttributeAccessIssue]
+        assert result.usage.total_tokens == 300  # type: ignore[reportAttributeAccessIssue]
 
     async def test_model_name_in_response(self) -> None:
         """Response model field preserves full model ID with prefix."""
@@ -936,7 +936,7 @@ class TestACompletion:
             )
 
         # Full model ID with prefix is preserved for tracking
-        assert "gemini-cli" in result.model
+        assert result.model is not None and "gemini-cli" in result.model
 
 
 # ===================================================================

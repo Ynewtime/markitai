@@ -986,7 +986,7 @@ class TestProcessWithVisionLLM:
         result = await process_with_vision_llm(ctx)
 
         assert result.success is False
-        assert "Missing conversion result" in result.error
+        assert result.error is not None and "Missing conversion result" in result.error
 
     @pytest.mark.asyncio
     async def test_with_page_images_calls_workflow(
@@ -1475,7 +1475,7 @@ class TestProcessWithStandardLLM:
         result = await process_with_standard_llm(ctx)
 
         assert result.success is False
-        assert "Missing conversion result" in result.error
+        assert result.error is not None and "Missing conversion result" in result.error
 
     @pytest.mark.asyncio
     async def test_standalone_image_processing(
@@ -1704,6 +1704,7 @@ Extra drift
             *args: object, **kwargs: object
         ) -> tuple[str, float, dict]:
             del args, kwargs
+            assert ctx.output_file is not None
             llm_output = ctx.output_file.with_suffix(".llm.md")
             llm_output.write_text(
                 f"---\ntitle: Test\n---\n\n{drifted_markdown}",
@@ -2921,6 +2922,7 @@ class TestLLMOnlyOutput:
         result = write_base_markdown(ctx)
         assert result.success is True
         # Base .md should NOT exist on disk (LLM mode, no --keep-base)
+        assert ctx.output_file is not None
         assert not ctx.output_file.exists()
         # But in-memory markdown is still available
         assert ctx.conversion_result is not None
@@ -2957,6 +2959,7 @@ class TestLLMOnlyOutput:
         await process_embedded_images(ctx)
         result = write_base_markdown(ctx)
         assert result.success is True
+        assert ctx.output_file is not None
         assert ctx.output_file.exists()
 
     async def test_non_llm_always_writes_md_file(
@@ -3071,6 +3074,7 @@ class TestPureWithoutLLMOutput:
         result = write_base_markdown(ctx)
 
         assert result.success
+        assert ctx.output_file is not None
         assert ctx.output_file.exists()
         content = ctx.output_file.read_text()
         # Should NOT have frontmatter
@@ -3105,6 +3109,7 @@ class TestPureWithoutLLMOutput:
         result = write_base_markdown(ctx)
 
         assert result.success
+        assert ctx.output_file is not None
         content = ctx.output_file.read_text()
         assert content == "Just plain text."
 
@@ -3133,6 +3138,7 @@ class TestPureWithoutLLMOutput:
         result = write_base_markdown(ctx)
 
         assert result.success
+        assert ctx.output_file is not None
         content = ctx.output_file.read_text()
         assert content.startswith("---")
 
@@ -3293,6 +3299,7 @@ class TestProcessImageWithVisionPure:
         result = await process_image_with_vision_pure(ctx)
 
         assert not result.success
+        assert result.error is not None
         assert "Vision" in result.error or "failed" in result.error.lower()
 
     @pytest.mark.asyncio
@@ -3488,6 +3495,7 @@ class TestPureDecouplingBehaviorMatrix:
 
         result = write_base_markdown(ctx)
         assert result.success
+        assert ctx.output_file is not None
         content = ctx.output_file.read_text()
         assert not content.startswith("---")
         assert "# Test content" in content

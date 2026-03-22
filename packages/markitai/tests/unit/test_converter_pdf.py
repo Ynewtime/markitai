@@ -83,7 +83,7 @@ class TestFixImagePaths:
         # On POSIX, this won't match since the path uses Windows format
         # Test with POSIX path
         markdown = f"![]({image_path.as_posix()}/image1.jpg)"
-        result = converter._fix_image_paths(markdown, image_path)
+        result = converter._fix_image_paths(markdown, image_path)  # type: ignore[reportAttributeAccessIssue]
         assert result == "![](.markitai/assets/image1.jpg)"
 
     def test_fix_multiple_images(self) -> None:
@@ -99,7 +99,7 @@ Some text here.
 
 ![Second image]({image_path.as_posix()}/image2.jpg)
 """
-        result = converter._fix_image_paths(markdown, image_path)
+        result = converter._fix_image_paths(markdown, image_path)  # type: ignore[reportAttributeAccessIssue]
         assert "![First image](.markitai/assets/image1.png)" in result
         assert "![Second image](.markitai/assets/image2.jpg)" in result
         assert image_path.as_posix() not in result
@@ -110,7 +110,7 @@ Some text here.
         image_path = Path("/tmp/.markitai/assets")
 
         markdown = f"![Alt text with spaces]({image_path.as_posix()}/image.png)"
-        result = converter._fix_image_paths(markdown, image_path)
+        result = converter._fix_image_paths(markdown, image_path)  # type: ignore[reportAttributeAccessIssue]
         assert result == "![Alt text with spaces](.markitai/assets/image.png)"
 
     def test_empty_alt_text(self) -> None:
@@ -119,7 +119,7 @@ Some text here.
         image_path = Path("/tmp/.markitai/assets")
 
         markdown = f"![]({image_path.as_posix()}/image.png)"
-        result = converter._fix_image_paths(markdown, image_path)
+        result = converter._fix_image_paths(markdown, image_path)  # type: ignore[reportAttributeAccessIssue]
         assert result == "![](.markitai/assets/image.png)"
 
     def test_no_change_for_relative_paths(self) -> None:
@@ -128,7 +128,7 @@ Some text here.
         image_path = Path("/different/path")
 
         markdown = "![](.markitai/assets/image.png)"
-        result = converter._fix_image_paths(markdown, image_path)
+        result = converter._fix_image_paths(markdown, image_path)  # type: ignore[reportAttributeAccessIssue]
         assert result == "![](.markitai/assets/image.png)"
 
     def test_special_characters_in_path(self) -> None:
@@ -138,7 +138,7 @@ Some text here.
         image_path = Path("/tmp/test[1]/.markitai/assets")
 
         markdown = f"![]({image_path.as_posix()}/image.png)"
-        result = converter._fix_image_paths(markdown, image_path)
+        result = converter._fix_image_paths(markdown, image_path)  # type: ignore[reportAttributeAccessIssue]
         assert result == "![](.markitai/assets/image.png)"
 
     def test_cross_platform_path(self) -> None:
@@ -148,7 +148,7 @@ Some text here.
         image_path = Path("/home/user/documents/output/.markitai/assets")
 
         markdown = f"![test]({image_path.as_posix()}/document.pdf-1-0.jpg)"
-        result = converter._fix_image_paths(markdown, image_path)
+        result = converter._fix_image_paths(markdown, image_path)  # type: ignore[reportAttributeAccessIssue]
         assert result == "![test](.markitai/assets/document.pdf-1-0.jpg)"
 
 
@@ -169,7 +169,7 @@ class TestCollectEmbeddedImages:
         # Mock pymupdf module in sys.modules
         mock_pymupdf = create_pymupdf_mock()
         with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            images = converter._collect_embedded_images(assets_dir, "test.pdf")
+            images = converter._collect_embedded_images(assets_dir, "test.pdf")  # type: ignore[reportAttributeAccessIssue]
 
         assert len(images) == 3
         # Check all images are ExtractedImage instances
@@ -191,7 +191,7 @@ class TestCollectEmbeddedImages:
 
         mock_pymupdf = create_pymupdf_mock()
         with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            images = converter._collect_embedded_images(assets_dir, "test.pdf")
+            images = converter._collect_embedded_images(assets_dir, "test.pdf")  # type: ignore[reportAttributeAccessIssue]
 
         assert len(images) == 1
         assert images[0].original_name == "test.pdf-0-0.png"
@@ -207,7 +207,7 @@ class TestCollectEmbeddedImages:
 
         mock_pymupdf = create_pymupdf_mock()
         with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            images = converter._collect_embedded_images(assets_dir, "doc.pdf")
+            images = converter._collect_embedded_images(assets_dir, "doc.pdf")  # type: ignore[reportAttributeAccessIssue]
 
         assert len(images) == 2
         # Check MIME types are correct
@@ -225,7 +225,7 @@ class TestCollectEmbeddedImages:
 
         mock_pymupdf = create_pymupdf_mock()
         with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            images = converter._collect_embedded_images(assets_dir, "doc.pdf")
+            images = converter._collect_embedded_images(assets_dir, "doc.pdf")  # type: ignore[reportAttributeAccessIssue]
 
         assert len(images) == 1
         # Index should be page_idx * 100 + img_idx = 2 * 100 + 3 = 203
@@ -237,7 +237,7 @@ class TestCollectEmbeddedImages:
         assets_dir = tmp_path / "assets"
         assets_dir.mkdir()
 
-        images = converter._collect_embedded_images(assets_dir, "test.pdf")
+        images = converter._collect_embedded_images(assets_dir, "test.pdf")  # type: ignore[reportAttributeAccessIssue]
         assert images == []
 
     def test_handle_dimension_error(self, tmp_path: Path) -> None:
@@ -253,7 +253,7 @@ class TestCollectEmbeddedImages:
         mock_pymupdf.Pixmap.side_effect = Exception("Failed to read image")
 
         with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            images = converter._collect_embedded_images(assets_dir, "test.pdf")
+            images = converter._collect_embedded_images(assets_dir, "test.pdf")  # type: ignore[reportAttributeAccessIssue]
 
         assert len(images) == 1
         assert images[0].width == 0
@@ -685,7 +685,7 @@ class TestRenderPagesForLLM:
         with patch("markitai.converter.pdf.pymupdf4llm") as mock_pymupdf4llm:
             mock_pymupdf4llm.to_markdown.return_value = "Extracted text"
             with patch.object(converter, "_render_pages_parallel", return_value=[]):
-                converter._render_pages_for_llm(pdf_file, tmp_path)
+                converter._render_pages_for_llm(pdf_file, tmp_path)  # type: ignore[reportAttributeAccessIssue]
 
         call_args = mock_pymupdf4llm.to_markdown.call_args
         assert call_args[1]["use_ocr"] is False
@@ -976,7 +976,7 @@ class TestMIMETypeHandling:
 
         mock_pymupdf = create_pymupdf_mock()
         with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            images = converter._collect_embedded_images(assets_dir, "doc.pdf")
+            images = converter._collect_embedded_images(assets_dir, "doc.pdf")  # type: ignore[reportAttributeAccessIssue]
 
         assert images[0].mime_type == "image/png"
 
@@ -990,7 +990,7 @@ class TestMIMETypeHandling:
 
         mock_pymupdf = create_pymupdf_mock()
         with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            images = converter._collect_embedded_images(assets_dir, "doc.pdf")
+            images = converter._collect_embedded_images(assets_dir, "doc.pdf")  # type: ignore[reportAttributeAccessIssue]
 
         assert images[0].mime_type == "image/jpeg"
 
@@ -1004,7 +1004,7 @@ class TestMIMETypeHandling:
 
         mock_pymupdf = create_pymupdf_mock()
         with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            images = converter._collect_embedded_images(assets_dir, "doc.pdf")
+            images = converter._collect_embedded_images(assets_dir, "doc.pdf")  # type: ignore[reportAttributeAccessIssue]
 
         assert images[0].mime_type == "image/jpeg"
 
@@ -1115,7 +1115,7 @@ class TestEmbeddedImagesWebp:
 
         mock_pymupdf = create_pymupdf_mock()
         with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            images = converter._collect_embedded_images(assets_dir, "doc.pdf")
+            images = converter._collect_embedded_images(assets_dir, "doc.pdf")  # type: ignore[reportAttributeAccessIssue]
 
         assert len(images) == 2
         for img in images:
@@ -1134,7 +1134,7 @@ class TestEmbeddedImagesWebp:
 
         mock_pymupdf = create_pymupdf_mock()
         with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
-            images = converter._collect_embedded_images(assets_dir, "doc.pdf")
+            images = converter._collect_embedded_images(assets_dir, "doc.pdf")  # type: ignore[reportAttributeAccessIssue]
 
         assert len(images) == 4
         extensions = {img.original_name.rsplit(".", 1)[-1] for img in images}
@@ -1152,7 +1152,7 @@ class TestThreadPoolLimits:
         pdf_file = tmp_path / "small.pdf"
         pdf_file.write_bytes(b"x" * (1 * 1024 * 1024))  # 1 MB
 
-        workers = converter._get_worker_count(pdf_file, task_count=1000)
+        workers = converter._get_worker_count(pdf_file, task_count=1000)  # type: ignore[reportAttributeAccessIssue]
         # Even with many pages and small file, should not exceed 6
         assert workers <= 6
 
@@ -1163,7 +1163,7 @@ class TestThreadPoolLimits:
         pdf_file = tmp_path / "tiny.pdf"
         pdf_file.write_bytes(b"x" * 100)  # Very small
 
-        workers = converter._get_worker_count(pdf_file, task_count=0)
+        workers = converter._get_worker_count(pdf_file, task_count=0)  # type: ignore[reportAttributeAccessIssue]
         assert workers >= 1
 
 
@@ -1246,7 +1246,7 @@ class TestScreenshotExtensionConsistency:
                 return_value=mock_img_processor,
             ),
         ):
-            results = converter._render_pages_parallel(
+            results = converter._render_pages_parallel(  # type: ignore[reportAttributeAccessIssue]
                 pdf_file, screenshots_dir, "png", max_workers=1
             )
 

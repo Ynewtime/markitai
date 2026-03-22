@@ -171,7 +171,7 @@ class TestSingleFileWorkflowProcessDocument:
         output_file = tmp_path / "output.md"
         output_file.write_text("# Original Content")
 
-        result, cost, usage = await workflow.process_document_with_llm(
+        _result, cost, _usage = await workflow.process_document_with_llm(
             markdown="# Original Content",
             source="doc.pdf",
             output_file=output_file,
@@ -356,7 +356,7 @@ class TestSingleFileWorkflowAnalyzeImages:
         """Test analyzing empty image list returns original markdown."""
         workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
 
-        markdown, cost, usage, result = await workflow.analyze_images(
+        markdown, _cost, _usage, result = await workflow.analyze_images(
             markdown="# Content",
             image_paths=[],
             output_file=Path("/tmp/test.md"),
@@ -385,7 +385,7 @@ class TestSingleFileWorkflowAnalyzeImages:
         output_file = tmp_path / "output.md"
         output_file.write_text("# Content\n\n![](.markitai/assets/test.png)")
 
-        markdown, cost, usage, result = await workflow.analyze_images(
+        _markdown, cost, _usage, _result = await workflow.analyze_images(
             markdown="# Content\n\n![](.markitai/assets/test.png)",
             image_paths=[image_file],
             output_file=output_file,
@@ -414,7 +414,7 @@ class TestSingleFileWorkflowAnalyzeImages:
         output_file = tmp_path / "standalone.png.md"
         output_file.write_text("# standalone\n\n![](.markitai/assets/standalone.png)")
 
-        markdown, cost, usage, result = await workflow.analyze_images(
+        _markdown, _cost, _usage, _result = await workflow.analyze_images(
             markdown="# standalone\n\n![](.markitai/assets/standalone.png)",
             image_paths=[image_file],
             output_file=output_file,
@@ -490,7 +490,7 @@ class TestSingleFileWorkflowEnhanceWithVision:
             {"path": str(img2), "page": 2},
         ]
 
-        markdown, frontmatter, cost, usage = await workflow.enhance_with_vision(
+        markdown, frontmatter, _cost, _usage = await workflow.enhance_with_vision(
             extracted_text="Original text",
             page_images=page_images,
             source="doc.pdf",
@@ -698,7 +698,7 @@ class TestSingleFileWorkflowExtractFromScreenshots:
 
         page_images = [{"path": str(img1), "page": 1}]
 
-        markdown, frontmatter, cost, usage = await workflow.extract_from_screenshots(
+        markdown, _frontmatter, _cost, _usage = await workflow.extract_from_screenshots(
             page_images=page_images,
             source="doc.pdf",
         )
@@ -763,7 +763,7 @@ class TestSingleFileWorkflowExtractFromScreenshots:
             {"path": str(img3), "page": 3},
         ]
 
-        markdown, frontmatter, cost, usage = await workflow.extract_from_screenshots(
+        markdown, _frontmatter, _cost, _usage = await workflow.extract_from_screenshots(
             page_images=page_images,
             source="doc.pdf",
         )
@@ -788,7 +788,7 @@ class TestSingleFileWorkflowExtractFromScreenshots:
 
         page_images = [{"path": str(img1), "page": 1}]
 
-        markdown, frontmatter, cost, usage = await workflow.extract_from_screenshots(
+        markdown, frontmatter, cost, _usage = await workflow.extract_from_screenshots(
             page_images=page_images,
             source="doc.pdf",
         )
@@ -894,7 +894,7 @@ class TestSingleFileWorkflowAnalyzeImagesAltTextUpdate:
         output_file = tmp_path / "output.md"
         output_file.write_text("# Content\n\n![](.markitai/assets/sunset.png)")
 
-        markdown, cost, usage, result = await workflow.analyze_images(
+        markdown, _cost, _usage, _result = await workflow.analyze_images(
             markdown="# Content\n\n![](.markitai/assets/sunset.png)",
             image_paths=[image_file],
             output_file=output_file,
@@ -920,7 +920,7 @@ class TestSingleFileWorkflowAnalyzeImagesAltTextUpdate:
         output_file = tmp_path / "output.md"
         output_file.write_text("# Content\n\n![](.markitai/assets/broken.png)")
 
-        markdown, cost, usage, result = await workflow.analyze_images(
+        _markdown, _cost, _usage, result = await workflow.analyze_images(
             markdown="# Content\n\n![](.markitai/assets/broken.png)",
             image_paths=[image_file],
             output_file=output_file,
@@ -966,7 +966,7 @@ class TestSingleFileWorkflowAnalyzeImagesAltTextUpdate:
         output_file = tmp_path / "output.md"
         output_file.write_text("# Report\n\n![](.markitai/assets/chart.png)")
 
-        markdown, cost, usage, result = await workflow.analyze_images(
+        markdown, _cost, _usage, result = await workflow.analyze_images(
             markdown="# Report\n\n![](.markitai/assets/chart.png)",
             image_paths=[image_file],
             output_file=output_file,
@@ -1076,6 +1076,7 @@ class TestWorkflowResult:
 
         assert result.llm_cost == 0.05
         assert result.llm_usage["gpt-4"]["requests"] == 1
+        assert result.image_analysis is not None
         assert result.image_analysis.source_file == "test.pdf"
 
 

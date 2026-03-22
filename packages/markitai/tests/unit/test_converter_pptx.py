@@ -71,8 +71,8 @@ class TestPptxOcrOnlySlideRendering:
         mock_markitdown_result = MagicMock()
         mock_markitdown_result.markdown = "# Slide text"
         mock_markitdown_result.title = None
-        converter._markitdown = MagicMock()
-        converter._markitdown.convert.return_value = mock_markitdown_result
+        converter._markitdown = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        converter._markitdown.convert.return_value = mock_markitdown_result  # type: ignore[reportAttributeAccessIssue]
 
         render_mock = _stub_render_slides(converter, slide_count=2)
 
@@ -96,8 +96,8 @@ class TestPptxOcrOnlySlideRendering:
         mock_markitdown_result = MagicMock()
         mock_markitdown_result.markdown = "# Slide text"
         mock_markitdown_result.title = None
-        converter._markitdown = MagicMock()
-        converter._markitdown.convert.return_value = mock_markitdown_result
+        converter._markitdown = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        converter._markitdown.convert.return_value = mock_markitdown_result  # type: ignore[reportAttributeAccessIssue]
 
         render_mock = _stub_render_slides(converter, slide_count=2)
 
@@ -118,8 +118,8 @@ class TestPptxOcrOnlySlideRendering:
         mock_markitdown_result = MagicMock()
         mock_markitdown_result.markdown = "# Slide text"
         mock_markitdown_result.title = None
-        converter._markitdown = MagicMock()
-        converter._markitdown.convert.return_value = mock_markitdown_result
+        converter._markitdown = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        converter._markitdown.convert.return_value = mock_markitdown_result  # type: ignore[reportAttributeAccessIssue]
 
         _stub_render_slides(converter, slide_count=2)
 
@@ -139,8 +139,8 @@ class TestPptxOcrOnlySlideRendering:
         mock_markitdown_result = MagicMock()
         mock_markitdown_result.markdown = "# Slide text"
         mock_markitdown_result.title = None
-        converter._markitdown = MagicMock()
-        converter._markitdown.convert.return_value = mock_markitdown_result
+        converter._markitdown = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        converter._markitdown.convert.return_value = mock_markitdown_result  # type: ignore[reportAttributeAccessIssue]
 
         render_mock = _stub_render_slides(converter, slide_count=1)
 
@@ -163,8 +163,8 @@ class TestPptxOcrLlmSlideRendering:
         mock_markitdown_result = MagicMock()
         mock_markitdown_result.markdown = "# Extracted text"
         mock_markitdown_result.title = None
-        converter._markitdown = MagicMock()
-        converter._markitdown.convert.return_value = mock_markitdown_result
+        converter._markitdown = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        converter._markitdown.convert.return_value = mock_markitdown_result  # type: ignore[reportAttributeAccessIssue]
 
         render_mock = _stub_render_slides(converter, slide_count=3)
 
@@ -189,8 +189,8 @@ class TestPptxOcrLlmSlideRendering:
         mock_markitdown_result = MagicMock()
         mock_markitdown_result.markdown = "# Extracted text"
         mock_markitdown_result.title = None
-        converter._markitdown = MagicMock()
-        converter._markitdown.convert.return_value = mock_markitdown_result
+        converter._markitdown = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        converter._markitdown.convert.return_value = mock_markitdown_result  # type: ignore[reportAttributeAccessIssue]
 
         render_mock = _stub_render_slides(converter, slide_count=3)
 
@@ -210,8 +210,8 @@ class TestPptxOcrLlmSlideRendering:
         mock_markitdown_result = MagicMock()
         mock_markitdown_result.markdown = "# Extracted text from slides"
         mock_markitdown_result.title = None
-        converter._markitdown = MagicMock()
-        converter._markitdown.convert.return_value = mock_markitdown_result
+        converter._markitdown = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        converter._markitdown.convert.return_value = mock_markitdown_result  # type: ignore[reportAttributeAccessIssue]
 
         _stub_render_slides(converter, slide_count=1)
 
@@ -230,8 +230,8 @@ class TestPptxOcrLlmSlideRendering:
         mock_markitdown_result = MagicMock()
         mock_markitdown_result.markdown = "# Slide text"
         mock_markitdown_result.title = None
-        converter._markitdown = MagicMock()
-        converter._markitdown.convert.return_value = mock_markitdown_result
+        converter._markitdown = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        converter._markitdown.convert.return_value = mock_markitdown_result  # type: ignore[reportAttributeAccessIssue]
 
         render_mock = _stub_render_slides(converter, slide_count=1)
 
@@ -252,8 +252,8 @@ class TestPptxDefaultModeScreenshotIndependence:
         mock_markitdown_result = MagicMock()
         mock_markitdown_result.markdown = "# Just text"
         mock_markitdown_result.title = None
-        converter._markitdown = MagicMock()
-        converter._markitdown.convert.return_value = mock_markitdown_result
+        converter._markitdown = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        converter._markitdown.convert.return_value = mock_markitdown_result  # type: ignore[reportAttributeAccessIssue]
 
         render_mock = _stub_render_slides(converter, slide_count=2)
 
@@ -350,7 +350,7 @@ class TestPptxScreenshotExtensionConsistency:
             patch("subprocess.run", side_effect=fake_subprocess_run),
             patch("tempfile.TemporaryDirectory", return_value=mock_temp_dir),
         ):
-            images, slide_images = converter._render_slides_via_pdf(
+            images, slide_images = converter._render_slides_via_pdf(  # type: ignore[reportAttributeAccessIssue]
                 Path("test.pptx"), screenshots_dir, "png"
             )
 

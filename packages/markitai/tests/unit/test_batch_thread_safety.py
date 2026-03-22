@@ -23,7 +23,7 @@ class TestBatchStateSaving:
         processor.config.state_flush_interval_seconds = 5
         processor.state_file = MagicMock()
         processor.state_file.parent = MagicMock()
-        processor._last_state_save = None
+        processor._last_state_save = None  # type: ignore[reportAttributeAccessIssue]
 
         # Should succeed without error
         with patch("markitai.batch.atomic_write_json"):
@@ -74,7 +74,7 @@ class TestBatchStateSaving:
         processor.config.state_flush_interval_seconds = 0
         processor.state_file = MagicMock()
         processor.state_file.parent = MagicMock()
-        processor._last_state_save = None
+        processor._last_state_save = None  # type: ignore[reportAttributeAccessIssue]
 
         save_count = {"count": 0}
 

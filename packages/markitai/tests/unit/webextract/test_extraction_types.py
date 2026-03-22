@@ -88,7 +88,7 @@ class TestSemanticExtraction:
         assert sem.thread is None
 
     def test_thread_can_be_set(self) -> None:
-        sem = SemanticExtraction(thread={"items": []})
+        sem = SemanticExtraction(thread={"items": []})  # type: ignore[reportArgumentType]
         assert sem.thread == {"items": []}
 
 
@@ -136,6 +136,7 @@ class TestExtractedWebContentBackwardCompat:
         )
         assert content.info is info
         assert content.quality is quality
+        assert content.info is not None
         assert content.info.content_profile == ContentProfile.SOCIAL_POST
 
     def test_diagnostics_defaults_to_empty_dict(self) -> None:

@@ -1976,7 +1976,7 @@ class TestGetMarkitdown:
                 mock_markitdown_class = MagicMock()
                 mock_instance = MagicMock()
                 mock_markitdown_class.return_value = mock_instance
-                sys.modules["markitdown"].MarkItDown = mock_markitdown_class
+                sys.modules["markitdown"].MarkItDown = mock_markitdown_class  # type: ignore[reportAttributeAccessIssue]
 
                 result = _get_markitdown()
 
@@ -2130,7 +2130,9 @@ class TestFetchWithFallback:
             mock_static.return_value = mock_result
 
             result = await _fetch_with_fallback(
-                "https://example.com", mock_config, start_with_browser=False
+                "https://example.com",
+                mock_config,
+                start_with_browser=False,  # type: ignore[reportArgumentType]
             )
 
             assert result.strategy_used == "static"
@@ -2202,7 +2204,7 @@ class TestFetchWithFallback:
             with pytest.raises(FetchError) as exc_info:
                 await _fetch_with_fallback(
                     "https://example.com",
-                    mock_config,
+                    mock_config,  # type: ignore[reportArgumentType]
                     start_with_browser=False,
                 )
 
@@ -2286,7 +2288,7 @@ class TestFetchWithFallback:
         ):
             result = await _fetch_with_fallback(
                 "https://example.com",
-                mock_config,
+                mock_config,  # type: ignore[reportArgumentType]
                 start_with_browser=True,
             )
 
@@ -2367,7 +2369,9 @@ class TestFetchWithFallback:
             ) as mock_jina,
         ):
             result = await _fetch_with_fallback(
-                "http://127.0.0.1:8000", mock_config, start_with_browser=False
+                "http://127.0.0.1:8000",
+                mock_config,
+                start_with_browser=False,  # type: ignore[reportArgumentType]
             )
 
         assert result.strategy_used == "static"
@@ -2615,7 +2619,7 @@ class TestIsInvalidContentAdditional:
 
         Another section with equally important information.
         """
-        is_invalid, reason = _is_invalid_content(content)
+        is_invalid, _reason = _is_invalid_content(content)
         assert is_invalid is False
 
     def test_content_with_special_patterns_not_invalid(self) -> None:
@@ -2638,7 +2642,7 @@ class TestIsInvalidContentAdditional:
         Once you master the basics, you can explore more advanced features
         like async/await, promises, and modern ES6+ syntax.
         """
-        is_invalid, reason = _is_invalid_content(content)
+        is_invalid, _reason = _is_invalid_content(content)
         assert is_invalid is False
 
 
@@ -2798,7 +2802,7 @@ class TestScreenshotDecoupled:
             result = await fetch_url(
                 "https://example.com",
                 FetchStrategy.AUTO,
-                mock_config,
+                mock_config,  # type: ignore[reportArgumentType]
                 screenshot=True,
                 screenshot_dir=Path("/tmp"),
             )
@@ -2866,7 +2870,7 @@ class TestScreenshotDecoupled:
             result = await fetch_url(
                 "https://example.com",
                 FetchStrategy.AUTO,
-                mock_config,
+                mock_config,  # type: ignore[reportArgumentType]
                 screenshot=True,
                 screenshot_dir=Path("/tmp"),
             )
@@ -2912,7 +2916,7 @@ class TestScreenshotDecoupled:
             result = await fetch_url(
                 "https://example.com",
                 FetchStrategy.AUTO,
-                mock_config,
+                mock_config,  # type: ignore[reportArgumentType]
                 screenshot=True,
                 screenshot_dir=Path("/tmp"),
             )
@@ -2975,7 +2979,7 @@ class TestScreenshotDecoupled:
             result = await fetch_url(
                 url,
                 FetchStrategy.DEFUDDLE,
-                mock_config,
+                mock_config,  # type: ignore[reportArgumentType]
                 cache=cache,
                 screenshot=True,
                 screenshot_dir=tmp_path / "screenshots",
@@ -3003,7 +3007,7 @@ class TestScreenshotDecoupled:
             await fetch_url(
                 "http://127.0.0.1:8000/private",
                 FetchStrategy.DEFUDDLE,
-                mock_config,
+                mock_config,  # type: ignore[reportArgumentType]
                 explicit_strategy=True,
             )
 
@@ -3034,7 +3038,7 @@ class TestScreenshotDecoupled:
             result = await fetch_url(
                 "https://example.com",
                 FetchStrategy.CLOUDFLARE,
-                mock_config,
+                mock_config,  # type: ignore[reportArgumentType]
                 explicit_strategy=False,
             )
 
@@ -3403,7 +3407,7 @@ class TestFetchWithFallbackJsDetection:
 
             result = await _fetch_with_fallback(
                 "https://example.com",
-                mock_config,
+                mock_config,  # type: ignore[reportArgumentType]
                 start_with_browser=False,
             )
 
@@ -3600,7 +3604,7 @@ class TestContentNegotiation:
 
         async def mock_get(url, headers=None, timeout_s=30.0, proxy=None):
             # Verify Accept header is sent even for non-CF sites
-            assert "text/markdown" in headers.get("Accept", "")
+            assert headers is not None and "text/markdown" in headers.get("Accept", "")
             return StaticHttpResponse(
                 content=b"<html><body><h1>Normal HTML</h1><p>Regular content.</p></body></html>",
                 status_code=200,
@@ -4574,7 +4578,7 @@ class TestBuildLocalOnlyPatterns:
             inherit_no_proxy=False,
         )
         with patch.dict("os.environ", {"NO_PROXY": "localhost,127.0.0.1"}):
-            result = _build_local_only_patterns(policy)
+            result = _build_local_only_patterns(policy)  # type: ignore[reportArgumentType]
 
         assert result == ["*.internal.corp", "10.0.0.0/8"]
 
@@ -4585,7 +4589,7 @@ class TestBuildLocalOnlyPatterns:
             inherit_no_proxy=True,
         )
         with patch.dict("os.environ", {"NO_PROXY": "localhost,127.0.0.1"}, clear=False):
-            result = _build_local_only_patterns(policy)
+            result = _build_local_only_patterns(policy)  # type: ignore[reportArgumentType]
 
         assert result == ["*.internal.corp", "localhost", "127.0.0.1"]
 
@@ -4604,7 +4608,7 @@ class TestBuildLocalOnlyPatterns:
             # Remove uppercase NO_PROXY if present to exercise lowercase path
             env = {"no_proxy": "192.168.1.0/24,*.dev.local"}
             with patch.dict("os.environ", env, clear=True):
-                result = _build_local_only_patterns(policy)
+                result = _build_local_only_patterns(policy)  # type: ignore[reportArgumentType]
 
         assert result == ["*.local", "192.168.1.0/24", "*.dev.local"]
 
@@ -4619,7 +4623,7 @@ class TestBuildLocalOnlyPatterns:
             {"NO_PROXY": "localhost,10.0.0.0/8,*.internal.corp"},
             clear=False,
         ):
-            result = _build_local_only_patterns(policy)
+            result = _build_local_only_patterns(policy)  # type: ignore[reportArgumentType]
 
         # Only 10.0.0.0/8 should be new; duplicates not repeated
         assert result == ["localhost", "*.internal.corp", "10.0.0.0/8"]
@@ -4632,7 +4636,7 @@ class TestBuildLocalOnlyPatterns:
         )
         # Unset both NO_PROXY and no_proxy
         with patch.dict("os.environ", {}, clear=True):
-            result = _build_local_only_patterns(policy)
+            result = _build_local_only_patterns(policy)  # type: ignore[reportArgumentType]
 
         assert result == ["*.internal.corp"]
 
@@ -4647,7 +4651,7 @@ class TestBuildLocalOnlyPatterns:
             {"NO_PROXY": "localhost,127.0.0.1,::1"},
             clear=False,
         ):
-            result = _build_local_only_patterns(policy)
+            result = _build_local_only_patterns(policy)  # type: ignore[reportArgumentType]
 
         assert result == ["localhost", "127.0.0.1", "::1"]
 

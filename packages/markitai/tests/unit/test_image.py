@@ -106,7 +106,7 @@ class TestImageCompression:
         img = Image.new("RGB", (200, 200), "red")
         processor = ImageProcessor()
 
-        compressed_img, compressed_data = processor.compress(
+        compressed_img, _compressed_data = processor.compress(
             img, quality=85, max_size=(100, 100)
         )
 
@@ -119,7 +119,7 @@ class TestImageCompression:
         img = Image.new("RGBA", (100, 100), (255, 0, 0, 128))
         processor = ImageProcessor()
 
-        compressed_img, compressed_data = processor.compress(
+        compressed_img, _compressed_data = processor.compress(
             img, quality=85, output_format="JPEG"
         )
 
@@ -568,7 +568,7 @@ class TestSaveScreenshot:
         samples = img.tobytes()
 
         output_path = tmp_path / "resized.jpg"
-        final_size, actual_path = processor.save_screenshot(
+        final_size, _actual_path = processor.save_screenshot(
             samples, img.width, img.height, output_path
         )
 
@@ -667,7 +667,7 @@ class TestCompressImageWorkerFunctions:
         )
 
         assert result is not None
-        compressed_data, width, height = result
+        compressed_data, _width, _height = result
         assert len(compressed_data) > 0
         # PNG signature
         assert compressed_data[:4] == b"\x89PNG"
@@ -687,7 +687,7 @@ class TestCompressImageWorkerFunctions:
         )
 
         assert result is not None
-        compressed_data, width, height = result
+        compressed_data, _width, _height = result
         assert len(compressed_data) > 0
         # WebP signature
         assert compressed_data[:4] == b"RIFF"
@@ -708,7 +708,7 @@ class TestCompressImageWorkerFunctions:
         )
 
         assert result is not None
-        compressed_data, width, height = result
+        compressed_data, _width, _height = result
         assert len(compressed_data) > 0
 
     def test_compress_image_worker_handles_invalid_data(self) -> None:
@@ -747,7 +747,7 @@ class TestCompressImageWorkerFunctions:
         )
 
         assert result is not None
-        compressed_data, width, height = result
+        compressed_data, _width, _height = result
         # Should produce valid JPEG
         assert compressed_data[:2] == b"\xff\xd8"  # JPEG signature
 
@@ -1712,7 +1712,7 @@ class TestDownloadUrlImages:
             def raise_for_status(self):
                 raise httpx.HTTPStatusError(
                     "404",
-                    request=None,
+                    request=None,  # type: ignore[reportArgumentType]
                     response=self,  # type: ignore
                 )
 
@@ -2549,7 +2549,7 @@ class TestSaveScreenshotReturnsActualPath:
         samples = img.tobytes()
         output_path = tmp_path / "screenshot.jpg"
 
-        size, actual_path = processor.save_screenshot(
+        _size, actual_path = processor.save_screenshot(
             samples, img.width, img.height, output_path
         )
 
@@ -2573,7 +2573,7 @@ class TestSaveScreenshotReturnsActualPath:
         samples = img.tobytes()
 
         output_path = tmp_path / "screenshot.png"
-        size, actual_path = processor.save_screenshot(
+        _size, actual_path = processor.save_screenshot(
             samples, img.width, img.height, output_path, max_bytes=1024
         )
 
@@ -2595,7 +2595,7 @@ class TestSaveScreenshotReturnsActualPath:
         samples = img.tobytes()
         output_path = tmp_path / "page001.jpg"
 
-        size, actual_path = processor.save_screenshot(
+        _size, actual_path = processor.save_screenshot(
             samples, img.width, img.height, output_path
         )
 

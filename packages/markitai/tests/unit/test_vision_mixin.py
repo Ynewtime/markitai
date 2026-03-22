@@ -325,7 +325,7 @@ class TestAnalyzeImage:
         assert result.description == "Cached description"
         assert result.extracted_text == "Cached text"
         # Vision router should not be called on cache hit
-        mock_processor_with_cache.vision_router.acompletion.assert_not_called()
+        mock_processor_with_cache.vision_router.acompletion.assert_not_called()  # type: ignore[reportAttributeAccessIssue]
 
     @pytest.mark.asyncio
     async def test_cache_miss_calls_llm(
@@ -658,7 +658,7 @@ class TestAnalyzeBatch:
         assert len(result) == 2
         assert all(r.caption == "Cached caption" for r in result)
         # Vision router should not be called
-        mock_processor_with_cache.vision_router.acompletion.assert_not_called()
+        mock_processor_with_cache.vision_router.acompletion.assert_not_called()  # type: ignore[reportAttributeAccessIssue]
 
     @pytest.mark.asyncio
     async def test_mixed_cached_and_new(
@@ -1047,7 +1047,7 @@ class TestAnalyzeWithJsonMode:
         mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
         mock_response._hidden_params = {"total_cost_usd": 0.001}
 
-        mock_processor.vision_router.acompletion.return_value = mock_response
+        mock_processor.vision_router.acompletion.return_value = mock_response  # type: ignore[reportAttributeAccessIssue]
 
         result = await mock_processor._analyze_with_json_mode(
             messages, "default", context="test"
@@ -1086,7 +1086,7 @@ class TestAnalyzeWithJsonMode:
         mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
         mock_response._hidden_params = {}
 
-        mock_processor.vision_router.acompletion.return_value = mock_response
+        mock_processor.vision_router.acompletion.return_value = mock_response  # type: ignore[reportAttributeAccessIssue]
 
         # Should not raise, control chars are cleaned
         result = await mock_processor._analyze_with_json_mode(
@@ -1139,7 +1139,7 @@ class TestAnalyzeWithJsonMode:
         mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
         mock_response._hidden_params = {"total_cost_usd": 0.001}
 
-        mock_processor.vision_router.acompletion.return_value = mock_response
+        mock_processor.vision_router.acompletion.return_value = mock_response  # type: ignore[reportAttributeAccessIssue]
 
         result = await mock_processor._analyze_with_json_mode(
             messages, "default", context="test"
@@ -1150,7 +1150,7 @@ class TestAnalyzeWithJsonMode:
 
         # Verify the actual messages sent to the LLM have JSON instruction
         # appended to the USER message (index 1), not the system message
-        call_args = mock_processor.vision_router.acompletion.call_args
+        call_args = mock_processor.vision_router.acompletion.call_args  # type: ignore[reportAttributeAccessIssue]
         sent_messages = call_args.kwargs["messages"]
         # System message should remain a plain string
         assert isinstance(sent_messages[0]["content"], str)
@@ -1181,7 +1181,7 @@ class TestAnalyzeWithJsonMode:
         mock_response.model = "test/model"
         mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
 
-        mock_processor.vision_router.acompletion.return_value = mock_response
+        mock_processor.vision_router.acompletion.return_value = mock_response  # type: ignore[reportAttributeAccessIssue]
 
         with pytest.raises(json.JSONDecodeError):
             await mock_processor._analyze_with_json_mode(messages, "default")

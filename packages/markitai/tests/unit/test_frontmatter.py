@@ -475,7 +475,7 @@ class TestFrontmatterToYaml:
             ]
         )
 
-        yaml_str = frontmatter_to_yaml(frontmatter)
+        yaml_str = frontmatter_to_yaml(frontmatter)  # type: ignore[reportArgumentType]
 
         # Check order in output
         title_pos = yaml_str.find("title:")

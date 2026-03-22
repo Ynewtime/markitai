@@ -162,6 +162,7 @@ class TestSemanticExtractionWithThread:
         thread = ConversationThread(title="Post by @ixiaowenz", main_item=main)
         sem = SemanticExtraction(thread=thread)
         assert sem.thread is thread
+        assert sem.thread is not None
         assert sem.thread.main_item.author_handle == "@ixiaowenz"
 
     def test_semantic_extraction_thread_none_by_default(self) -> None:

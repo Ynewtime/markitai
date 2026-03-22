@@ -142,7 +142,7 @@ def test_registry_resolves_youtube_extractor_for_watch_urls() -> None:
 
     assert extractor is not None
     assert hasattr(extractor, "resolve")
-    assert callable(extractor.resolve)
+    assert callable(extractor.resolve)  # type: ignore[reportAttributeAccessIssue]
 
 
 def test_registry_does_not_match_non_youtube_urls() -> None:

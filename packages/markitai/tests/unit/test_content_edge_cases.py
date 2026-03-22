@@ -92,7 +92,7 @@ class TestProtectContent:
             "<!-- Page number: 2 -->\n"
             "Page 2 content."
         )
-        protected, mapping = protect_content(text)
+        _protected, mapping = protect_content(text)
         assert len(mapping) == 2
 
     def test_protect_and_unprotect_roundtrip(self):

@@ -74,7 +74,7 @@ def test_select_best_candidate_picks_content_rich_node() -> None:
     soup = parse_html(html)
     best = select_best_candidate(soup)
     assert best is not None
-    assert "content" in best.get("class", [])
+    assert "content" in best.get("class", [])  # type: ignore[reportArgumentType, reportOperatorIssue]
 
 
 def test_score_candidate_large_dom_many_candidates() -> None:
