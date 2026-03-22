@@ -27,6 +27,15 @@ from markitai.webextract.types import (
 )
 from markitai.webextract.utils import count_words
 
+_EXTRACTOR_CONTENT_PROFILES: dict[str, ContentProfile] = {
+    "x_tweet": ContentProfile.SOCIAL_POST,
+    "x_article": ContentProfile.SOCIAL_POST,
+    "github_thread": ContentProfile.DISCUSSION_ISSUE,
+    "reddit_post": ContentProfile.DISCUSSION_THREAD,
+    "hackernews_thread": ContentProfile.DISCUSSION_THREAD,
+    "youtube_page": ContentProfile.RICH_MEDIA_PAGE,
+}
+
 
 def extract_web_content(html: str, url: str) -> ExtractedWebContent:
     """Extract the primary content from raw HTML.
@@ -172,15 +181,18 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
     markdown = result[1]
     word_count = count_words(markdown)
 
+    extractor_name = extractor.name if extractor is not None else "generic"
+    content_profile = _EXTRACTOR_CONTENT_PROFILES.get(
+        extractor_name, ContentProfile.GENERIC_ARTICLE
+    )
+
     info = ExtractionInfo(
-        content_profile=ContentProfile.GENERIC_ARTICLE,
-        extractor_name=extractor.name if extractor is not None else "generic",
+        content_profile=content_profile,
+        extractor_name=extractor_name,
         word_count=word_count,
     )
 
-    quality = assess_native_markdown(
-        markdown, profile=ContentProfile.GENERIC_ARTICLE.value
-    )
+    quality = assess_native_markdown(markdown, profile=content_profile.value)
 
     return ExtractedWebContent(
         clean_html=clean_html,
