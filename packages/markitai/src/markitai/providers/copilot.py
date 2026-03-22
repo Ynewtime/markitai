@@ -500,7 +500,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                     "[Copilot] Bundled CLI unavailable, falling back to PATH CLI: "
                     f"{cli_path} ({e})"
                 )
-                client = CopilotClient({"cli_path": cli_path})
+                client = CopilotClient({"cli_path": cli_path})  # type: ignore[reportArgumentType]
 
             await client.start()
 

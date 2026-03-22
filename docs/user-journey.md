@@ -68,7 +68,7 @@ uv pip install "markitai[all]"
 
 ```bash
 markitai --version
-# markitai 0.12.1
+# markitai 0.13.0
 ```
 
 ---

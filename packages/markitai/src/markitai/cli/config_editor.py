@@ -169,7 +169,7 @@ def build_choices(settings: list[dict[str, Any]]) -> list[Choice]:
         section = key.split(".")[0]
         if section != prev_section:
             if prev_section:
-                choices.append(Choice(title="─" * 40, disabled=True, value="__sep__"))
+                choices.append(Choice(title="─" * 40, disabled="─", value="__sep__"))
             prev_section = section
 
         val_str = format_display_value(s["value"])
