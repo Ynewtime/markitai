@@ -7,6 +7,8 @@ from bs4 import BeautifulSoup
 
 from markitai.webextract.types import WebMetadata
 
+_MAX_TITLE_LENGTH = 120
+
 
 def clean_title(value: str | None, site: str | None = None) -> str | None:
     """Normalize a page title and strip repeated site affixes.
@@ -16,9 +18,8 @@ def clean_title(value: str | None, site: str | None = None) -> str | None:
         site: Optional site name for prefix/suffix removal.
 
     Returns:
-        Cleaned title string.
+        Cleaned title string, truncated to _MAX_TITLE_LENGTH if needed.
     """
-
     if not value:
         return None
 
@@ -27,9 +28,19 @@ def clean_title(value: str | None, site: str | None = None) -> str | None:
         site = " ".join(site.split())
         for sep in (" | ", " - ", " -- ", " · ", " — "):
             if title.endswith(f"{sep}{site}"):
-                return title[: -len(f"{sep}{site}")]
+                title = title[: -len(f"{sep}{site}")]
+                break
             if title.startswith(f"{site}{sep}"):
-                return title[len(f"{site}{sep}") :]
+                title = title[len(f"{site}{sep}") :]
+                break
+
+    if len(title) > _MAX_TITLE_LENGTH:
+        cut = title[:_MAX_TITLE_LENGTH].rfind(" ")
+        if cut > 0:
+            title = title[:cut] + "…"
+        else:
+            title = title[:_MAX_TITLE_LENGTH] + "…"
+
     return title
 
 
