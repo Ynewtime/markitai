@@ -14,6 +14,7 @@ class TestBatchStateSaving:
 
         processor = BatchProcessor.__new__(BatchProcessor)
         processor._save_lock = threading.Lock()
+        processor._dirty_keys = set()
         processor.state = MagicMock()
         processor.state.to_minimal_dict.return_value = {
             "version": "1.0",
@@ -37,6 +38,7 @@ class TestBatchStateSaving:
 
         processor = BatchProcessor.__new__(BatchProcessor)
         processor._save_lock = threading.Lock()
+        processor._dirty_keys = set()
         processor.state = MagicMock()
         processor.state.to_minimal_dict.return_value = {
             "version": "1.0",
@@ -65,6 +67,7 @@ class TestBatchStateSaving:
 
         processor = BatchProcessor.__new__(BatchProcessor)
         processor._save_lock = threading.Lock()
+        processor._dirty_keys = set()
         processor.state = MagicMock()
         processor.state.to_minimal_dict.return_value = {
             "version": "1.0",
