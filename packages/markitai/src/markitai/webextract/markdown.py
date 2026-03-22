@@ -287,14 +287,16 @@ def _html_to_markdown(html: str, md_instance: object | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 _EXCESS_BLANK_LINES_RE = re.compile(r"\n{4,}")
+_ORPHAN_SEPARATOR_RE = re.compile(r"^\s*[·|—–•]\s*$", re.MULTILINE)
 
 
 def _postprocess_markdown(markdown: str) -> str:
     """Apply post-processing to the raw MarkItDown output.
 
     Transformations:
-    1. Collapse runs of 4+ newlines to at most 2 blank lines (3 newlines).
-    2. Strip trailing whitespace from every line.
+    1. Strip trailing whitespace from every line.
+    2. Remove lines containing only separator characters.
+    3. Collapse runs of 4+ newlines to at most 2 blank lines (3 newlines).
 
     Args:
         markdown: Raw Markdown string from MarkItDown.
@@ -305,6 +307,9 @@ def _postprocess_markdown(markdown: str) -> str:
     # Strip trailing whitespace per line
     lines = [line.rstrip() for line in markdown.splitlines()]
     markdown = "\n".join(lines)
+
+    # Remove lines containing only separator characters
+    markdown = _ORPHAN_SEPARATOR_RE.sub("", markdown)
 
     # Collapse excessive blank lines (>2 consecutive blank lines → 2)
     markdown = _EXCESS_BLANK_LINES_RE.sub("\n\n\n", markdown)
