@@ -166,6 +166,41 @@ from markitai.providers.auth import AuthManager, get_auth_resolution_hint
 console = get_console()
 
 
+def _check_chatgpt_auth() -> dict[str, str]:
+    """Check ChatGPT authentication status.
+
+    Returns:
+        Result dict with status, message, install_hint
+    """
+    auth_manager = AuthManager()
+    try:
+        status = asyncio.run(auth_manager.check_auth("chatgpt"))
+        if status.authenticated:
+            return {
+                "name": "ChatGPT Auth",
+                "description": "ChatGPT OAuth authentication status",
+                "status": "ok",
+                "message": "Authenticated",
+                "install_hint": "",
+            }
+        else:
+            return {
+                "name": "ChatGPT Auth",
+                "description": "ChatGPT OAuth authentication status",
+                "status": "error",
+                "message": status.error or "Not authenticated",
+                "install_hint": get_auth_resolution_hint("chatgpt"),
+            }
+    except Exception as e:
+        return {
+            "name": "ChatGPT Auth",
+            "description": "ChatGPT OAuth authentication status",
+            "status": "error",
+            "message": f"Failed to check auth: {e}",
+            "install_hint": get_auth_resolution_hint("chatgpt"),
+        }
+
+
 def _check_copilot_auth() -> dict[str, str]:
     """Check Copilot authentication status.
 
@@ -550,6 +585,11 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         for m in configured_models
         if _is_active_model(m)
     )
+    uses_chatgpt = any(
+        m.litellm_params.model.startswith("chatgpt/")
+        for m in configured_models
+        if _is_active_model(m)
+    )
     uses_gemini_cli = any(
         m.litellm_params.model.startswith("gemini-cli/")
         for m in configured_models
@@ -644,6 +684,9 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         # 5c. Check Copilot authentication status
         results["copilot-auth"] = _check_copilot_auth()
 
+    if uses_chatgpt:
+        results["chatgpt-auth"] = _check_chatgpt_auth()
+
     if uses_gemini_cli:
         results["gemini-cli-auth"] = _check_gemini_cli_auth_status()
 
@@ -706,7 +749,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     required_deps = ["playwright", "libreoffice", "rapidocr"]
     optional_deps = ["ffmpeg"]
     llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
-    auth_keys = ["claude-agent-auth", "copilot-auth", "gemini-cli-auth"]
+    auth_keys = ["claude-agent-auth", "copilot-auth", "chatgpt-auth", "gemini-cli-auth"]
 
     # Required dependencies
     ui.section(t("doctor.required"))
