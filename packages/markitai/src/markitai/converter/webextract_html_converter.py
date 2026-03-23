@@ -74,6 +74,43 @@ def _detect_language(el: Any) -> str | None:
 class WebExtractMarkdownConverter(_CustomMarkdownify):
     """Markdownify converter with enhanced rules for web content."""
 
+    def convert_math(self, el: Any, text: str, parent_tags: set) -> str:
+        """Convert <math> to LaTeX. Prefers alttext, then KaTeX annotation."""
+        alttext = el.get("alttext", "")
+        if alttext:
+            is_block = el.get("display") == "block"
+            return f"\n\n$${alttext}$$\n\n" if is_block else f"${alttext}$"
+        annotation = el.find("annotation", attrs={"encoding": "application/x-tex"})
+        if annotation and annotation.string:
+            return f"${annotation.string.strip()}$"
+        math_text = el.get_text(strip=True)
+        return f"${math_text}$" if math_text else ""
+
+    def convert_script(self, el: Any, text: str, parent_tags: set) -> str:
+        """Convert math/tex script elements to LaTeX."""
+        script_type = str(el.get("type", ""))
+        if "math/tex" not in script_type:
+            return ""
+        latex = (el.string or "").strip()
+        if not latex:
+            return ""
+        is_display = "mode=display" in script_type
+        return f"\n\n$${latex}$$\n\n" if is_display else f"${latex}$"
+
+    def convert_span(self, el: Any, text: str, parent_tags: set) -> str:
+        """Handle KaTeX wrapper spans."""
+        classes = el.get("class", [])
+        if isinstance(classes, str):
+            classes = classes.split()
+        if "katex" in classes:
+            annotation = el.find("annotation", attrs={"encoding": "application/x-tex"})
+            if annotation and annotation.string:
+                latex = annotation.string.strip()
+                if "katex-display" in classes:
+                    return f"\n\n$${latex}$$\n\n"
+                return f"${latex}$"
+        return text
+
     def convert_pre(self, el: Any, text: str, parent_tags: set) -> str:
         """Convert <pre> to fenced code block with language detection."""
         code_el = el.find("code") if el.name == "pre" else el
