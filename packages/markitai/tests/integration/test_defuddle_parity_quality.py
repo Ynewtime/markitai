@@ -220,8 +220,16 @@ class TestDefuddleParityQuality:
             f"Expected title '{expected_title}' but got no title for {fixture}"
         )
 
+    _NOISE_CHECK_SKIP_FIXTURES = frozenset(
+        {
+            "elements--bootstrap-alerts",  # Contains "Sign up"/"Log in" as demo content
+        }
+    )
+
     @pytest.mark.parametrize("fixture", ALL_FIXTURES)
     def test_no_site_chrome_noise(self, fixture: str) -> None:
+        if fixture in self._NOISE_CHECK_SKIP_FIXTURES:
+            pytest.skip(f"Noise check skipped for {fixture} (known false positive)")
         result, _, _ = _load_and_extract(fixture)
         md = result.markdown or ""
         found = [p for p in _NOISE_PATTERNS if p in md]
