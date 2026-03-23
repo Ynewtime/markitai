@@ -881,7 +881,7 @@ sync_dependencies() {
 
     cd "$_project_root" || return 1
 
-    if clack_spinner "$(i18n info_syncing_deps)" uv sync --all-extras --python "$PYTHON_CMD"; then
+    if clack_spinner "$(i18n info_syncing_deps)" uv sync --all-groups --all-extras --python "$PYTHON_CMD"; then
         clack_success "$(i18n info_deps_synced)"
         track_install "python_deps" "installed"
         return 0
