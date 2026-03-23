@@ -6,10 +6,10 @@ semantic ConversationThread structure, then renders to markdown.
 
 from __future__ import annotations
 
-import logging
 import re
 
 import httpx
+from loguru import logger
 
 from markitai.fetch_types import FetchResult
 from markitai.webextract.markdown import html_to_markdown, postprocess_markdown
@@ -21,8 +21,6 @@ from markitai.webextract.semantics import (
     MediaAttachment,
 )
 from markitai.webextract.types import SemanticExtraction
-
-logger = logging.getLogger(__name__)
 
 _TWITTER_STATUS_RE = re.compile(
     r"https?://(?:www\.)?(?:x\.com|twitter\.com)/([^/]+)/status/(\d+)"
@@ -47,7 +45,7 @@ def _extract_twitter_url_parts(url: str) -> tuple[str, str] | None:
 def _build_conversation_thread(
     tweet_data: dict,
     tweet_id: str,
-    url: str,
+    url: str = "",  # noqa: ARG001
 ) -> ConversationThread:
     """Convert FxTwitter API tweet JSON to a ConversationThread."""
     author = tweet_data.get("author", {})
@@ -140,10 +138,15 @@ async def fetch_with_fxtwitter(url: str) -> FetchResult | None:
         logger.debug("FxTwitter response missing tweet data for %s", url)
         return None
 
-    thread = _build_conversation_thread(tweet_data, tweet_id, url)
+    thread = _build_conversation_thread(tweet_data, tweet_id)
     extraction = SemanticExtraction(thread=thread)
     html = render_semantic_content(extraction)
-    markdown = html_to_markdown(html)
+
+    # Use the pipeline's MarkItDown instance (with custom converter)
+    from markitai.webextract.pipeline import _create_markitdown
+
+    md_instance = _create_markitdown()
+    markdown = html_to_markdown(html, md_instance)
     markdown = postprocess_markdown(markdown)
 
     return FetchResult(

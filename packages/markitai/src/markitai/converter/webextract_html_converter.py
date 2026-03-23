@@ -142,7 +142,7 @@ class WebExtractMarkdownConverter(_CustomMarkdownify):
 
         language = _detect_language(code_el) or ""
 
-        code_text = code_el.get_text() if code_el else el.get_text()
+        code_text = code_el.get_text()
         if code_text.startswith("\n"):
             code_text = code_text[1:]
         if code_text.endswith("\n"):
