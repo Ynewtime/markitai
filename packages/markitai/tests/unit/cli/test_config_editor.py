@@ -171,6 +171,13 @@ class TestPromptNewValueCancel:
 
 def test_add_esc_to_question_injects_escape_binding() -> None:
     """_add_esc_to_question should merge Esc key binding into a select Question."""
+    import sys
+
+    import pytest
+
+    if sys.platform == "win32":
+        pytest.skip("questionary.select() requires a console on Windows")
+
     import questionary
     from prompt_toolkit.keys import Keys
 
@@ -178,6 +185,7 @@ def test_add_esc_to_question_injects_escape_binding() -> None:
 
     q = questionary.select("test", choices=["a", "b"], use_jk_keys=False)
     original_bindings = q.application.key_bindings
+    assert original_bindings is not None
 
     # Esc should NOT be bound before injection
     esc_before = [b for b in original_bindings.bindings if b.keys == (Keys.Escape,)]
@@ -186,9 +194,9 @@ def test_add_esc_to_question_injects_escape_binding() -> None:
     _add_esc_to_question(q)
 
     # Esc SHOULD be bound after injection
-    esc_after = [
-        b for b in q.application.key_bindings.bindings if b.keys == (Keys.Escape,)
-    ]
+    merged_bindings = q.application.key_bindings
+    assert merged_bindings is not None
+    esc_after = [b for b in merged_bindings.bindings if b.keys == (Keys.Escape,)]
     assert len(esc_after) == 1
 
 
