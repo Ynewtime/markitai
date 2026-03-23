@@ -1400,6 +1400,7 @@ dependencies = [
     { name = "questionary" },
     { name = "rapidocr" },
     { name = "rich" },
+    { name = "tinycss2" },
 ]
 
 [package.optional-dependencies]
@@ -1479,6 +1480,7 @@ requires-dist = [
     { name = "questionary", specifier = ">=2.1.0" },
     { name = "rapidocr", specifier = ">=3.7.0" },
     { name = "rich", specifier = ">=14.3.0" },
+    { name = "tinycss2", specifier = ">=1.2" },
 ]
 provides-extras = ["claude-agent", "copilot", "gemini-cli", "browser", "extra-fetch", "kreuzberg", "svg", "all"]
 
