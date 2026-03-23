@@ -81,6 +81,18 @@ class TestHighlightAndStrikethrough:
         assert "~~struck~~" in md
 
 
+class TestFootnoteConversion:
+    def test_sup_footnote_ref(self) -> None:
+        html = '<p>Some text<sup><a href="#fn1" id="fnref1">1</a></sup> continues.</p>'
+        md = _convert(html)
+        assert "[^1]" in md
+
+    def test_sup_non_footnote_preserved(self) -> None:
+        html = "<p>x<sup>2</sup> + y<sup>2</sup></p>"
+        md = _convert(html)
+        assert "[^" not in md
+
+
 class TestMathConversion:
     def test_katex_annotation(self) -> None:
         html = '<span class="katex"><span class="katex-mathml"><math><semantics><annotation encoding="application/x-tex">E = mc^2</annotation></semantics></math></span></span>'
