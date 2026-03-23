@@ -116,7 +116,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
 @click.option(
     "--preset",
     "-p",
-    type=click.Choice(["rich", "standard", "minimal"], case_sensitive=False),
+    type=str,
     default=None,
     help="Use a preset configuration (rich/standard/minimal).",
 )
