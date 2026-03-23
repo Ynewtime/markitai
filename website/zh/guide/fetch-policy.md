@@ -35,7 +35,7 @@ Defuddle → Jina → Playwright (浏览器) → Cloudflare → Static
   "fetch": {
     "policy": {
       "enabled": true,
-      "max_strategy_hops": 4
+      "max_strategy_hops": 5
     },
     "domain_profiles": {
       "x.com": {
@@ -57,7 +57,10 @@ Defuddle → Jina → Playwright (浏览器) → Cloudflare → Static
 | 选项 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `enabled` | boolean | `true` | 启用或禁用智能策略排序 |
-| `max_strategy_hops` | integer | `4` | 放弃前尝试的最大策略数 |
+| `max_strategy_hops` | integer | `5` | 放弃前尝试的最大策略数 |
+| `strategy_priority` | list | `null` | 自定义全局策略顺序（覆盖默认优先级） |
+| `local_only_patterns` | list | `[]` | 限制为本地策略的域名/IP 模式（NO_PROXY 语法） |
+| `inherit_no_proxy` | boolean | `true` | 将 `NO_PROXY` 环境变量合并到 `local_only_patterns` |
 
 ### 域名配置
 
@@ -69,6 +72,7 @@ Defuddle → Jina → Playwright (浏览器) → Cloudflare → Static
 | `wait_for` | string | `"domcontentloaded"` | 等待的页面加载事件（`load`、`domcontentloaded`、`networkidle`） |
 | `extra_wait_ms` | integer | `3000` | 页面加载事件后的额外等待毫秒数 |
 | `prefer_strategy` | string | `null` | 该域名的首选策略（`static`、`defuddle`、`playwright`、`cloudflare`、`jina`） |
+| `strategy_priority` | list | `null` | 该域名的自定义策略顺序（覆盖全局和 `prefer_strategy`） |
 
 多域名配置示例：
 
@@ -137,14 +141,15 @@ URL 请求
     │       └─ 是 → 仅使用该策略
     │
     ├─ 域名在 SPA 缓存中或已知需要 JS?
-    │       └─ 是 → SPA 顺序（Playwright 优先）
+    │       └─ 是 → SPA 顺序（Defuddle → Jina → Playwright → Cloudflare → Static）
     │
-    └─ 默认 → 标准顺序（Static 优先）
+    └─ 默认 → 标准顺序（Defuddle → Jina → Static → Playwright → Cloudflare）
             │
             ├─ 尝试策略 #1 → 成功? → 完成
             ├─ 尝试策略 #2 → 成功? → 完成
             ├─ 尝试策略 #3 → 成功? → 完成
-            └─ 尝试策略 #4 → 成功? → 完成 / 放弃
+            ├─ 尝试策略 #4 → 成功? → 完成
+            └─ 尝试策略 #5 → 成功? → 完成 / 放弃
 ```
 
 每个策略在接受结果前都会验证内容质量。如果内容为空或过短，将回退到下一个策略。
