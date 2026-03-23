@@ -97,6 +97,12 @@ markers = [
     "network: marks tests that require network access (deselect with '-m \"not network\"')",
     "parity: marks extraction parity tests against fixture contracts",
 ]
+filterwarnings = [
+    # pydub: checks for ffmpeg at import time, not always on PATH in CI venvs
+    "ignore:Couldn't find ffmpeg or avconv:RuntimeWarning:pydub",
+    # litellm: async mock coroutines not awaited inside cost_calculator
+    "ignore:coroutine .* was never awaited:RuntimeWarning",
+]
 
 [tool.ruff]
 target-version = "py313"
