@@ -430,6 +430,7 @@ Display cache statistics.
 markitai cache stats
 markitai cache stats --verbose    # Verbose mode
 markitai cache stats --json       # JSON output
+markitai cache stats --verbose --limit 50   # Limit entries shown
 ```
 
 ### `markitai cache clear`
@@ -466,6 +467,7 @@ Check system health, dependencies, and authentication status. This is the primar
 markitai doctor
 markitai doctor --fix     # Auto-fix missing components
 markitai doctor --json    # JSON output
+markitai doctor --suggest-extras   # List recommended pip extras
 ```
 
 This command verifies:
@@ -531,6 +533,7 @@ Show GitHub Copilot CLI authentication status.
 
 ```bash
 markitai auth copilot status
+markitai auth copilot status --json    # JSON output
 ```
 
 ### `markitai auth copilot login`
@@ -547,6 +550,7 @@ Show Claude Code CLI authentication status.
 
 ```bash
 markitai auth claude status
+markitai auth claude status --json    # JSON output
 ```
 
 ### `markitai auth claude login`
@@ -563,6 +567,7 @@ Show ChatGPT OAuth authentication status.
 
 ```bash
 markitai auth chatgpt status
+markitai auth chatgpt status --json    # JSON output
 ```
 
 ### `markitai auth chatgpt login`
@@ -611,12 +616,12 @@ Specify configuration file path.
 markitai document.docx --config ./my-config.json
 ```
 
-### `-v, --version`
+### `-V, --version`
 
 Show version information.
 
 ```bash
-markitai -v
+markitai -V
 ```
 
 ### `-h, --help`
