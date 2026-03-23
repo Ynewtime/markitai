@@ -212,3 +212,20 @@ def test_pipeline_output_stable_after_preprocess_bypass() -> None:
     assert "large.jpg" in result.markdown
     # figcaption text preserved
     assert "caption" in result.markdown.lower()
+
+
+def test_pipeline_detects_code_block_language() -> None:
+    """Pipeline must produce language-tagged code blocks."""
+    from markitai.webextract.pipeline import extract_web_content
+
+    html = """<html><body><article>
+    <p>Here is an article with enough content to pass extraction threshold checks easily.</p>
+    <pre><code class="language-python">
+def hello():
+    print("world")
+    </code></pre>
+    <p>More content after the code block for word count.</p>
+    </article></body></html>"""
+    result = extract_web_content(html, "https://example.com")
+    assert "```python" in result.markdown
+    assert "def hello():" in result.markdown
