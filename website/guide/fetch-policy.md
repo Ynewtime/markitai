@@ -35,7 +35,7 @@ You can tune the fetch policy in your `markitai.json`:
   "fetch": {
     "policy": {
       "enabled": true,
-      "max_strategy_hops": 4
+      "max_strategy_hops": 5
     },
     "domain_profiles": {
       "x.com": {
@@ -57,7 +57,10 @@ You can tune the fetch policy in your `markitai.json`:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable or disable intelligent strategy ordering |
-| `max_strategy_hops` | integer | `4` | Maximum number of strategies to attempt before giving up |
+| `max_strategy_hops` | integer | `5` | Maximum number of strategies to attempt before giving up |
+| `strategy_priority` | list | `null` | Custom global strategy order (overrides default priority) |
+| `local_only_patterns` | list | `[]` | Domain/IP patterns restricted to local strategies (NO_PROXY syntax) |
+| `inherit_no_proxy` | boolean | `true` | Merge `NO_PROXY` env var into `local_only_patterns` |
 
 ### Domain Profiles
 
@@ -69,6 +72,7 @@ Domain profiles allow per-domain overrides for fetch behavior:
 | `wait_for` | string | `"domcontentloaded"` | Page load event to wait for (`load`, `domcontentloaded`, `networkidle`) |
 | `extra_wait_ms` | integer | `3000` | Extra milliseconds to wait after page load event |
 | `prefer_strategy` | string | `null` | Preferred strategy for this domain (`static`, `defuddle`, `playwright`, `cloudflare`, `jina`) |
+| `strategy_priority` | list | `null` | Custom strategy order for this domain (overrides global and `prefer_strategy`) |
 
 Example with multiple domains:
 
@@ -137,14 +141,15 @@ URL Request
     │       └─ Yes → Use only that strategy
     │
     ├─ Domain in SPA cache or known JS-heavy?
-    │       └─ Yes → SPA order (Playwright first)
+    │       └─ Yes → SPA order (Defuddle → Jina → Playwright → Cloudflare → Static)
     │
-    └─ Default → Standard order (Static first)
+    └─ Default → Standard order (Defuddle → Jina → Static → Playwright → Cloudflare)
             │
             ├─ Try strategy #1 → Success? → Done
             ├─ Try strategy #2 → Success? → Done
             ├─ Try strategy #3 → Success? → Done
-            └─ Try strategy #4 → Success? → Done / Give up
+            ├─ Try strategy #4 → Success? → Done
+            └─ Try strategy #5 → Success? → Done / Give up
 ```
 
 Each strategy validates content quality before accepting the result. If the content appears empty or too short, it falls through to the next strategy.
