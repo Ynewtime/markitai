@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import io
 from dataclasses import asdict
 
@@ -152,6 +153,26 @@ def _build_from_resolved(
     )
 
 
+class _ExtractionContext:
+    """Cache expensive computations across retry levels."""
+
+    def __init__(self, html: str, url: str) -> None:
+        self.raw_html = html
+        self.url = url
+        self.original_soup = parse_html(html)
+        self.metadata = extract_metadata(self.original_soup, url)
+        self.md_instance = _create_markitdown()
+
+    def fresh_soup_and_root(
+        self, extractor: object | None, diagnostics: dict[str, object]
+    ) -> tuple[BeautifulSoup, Tag | BeautifulSoup]:
+        """Return a fresh deep-copy of the parsed soup with root selected."""
+        soup = copy.deepcopy(self.original_soup)
+        root = _pick_root(soup, extractor)
+        root = _maybe_apply_schema_fallback(soup, root, diagnostics)
+        return soup, root
+
+
 def _extract_generic(html: str, url: str) -> ExtractedWebContent:
     """Run the generic extraction pipeline (no resolver match).
 
@@ -162,10 +183,9 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
     Returns:
         Extracted web content with cleaned HTML and derived Markdown.
     """
-    soup = parse_html(html)
+    ctx = _ExtractionContext(html, url)
     extractor = find_extractor(url)
-    root = _pick_root(soup, extractor)
-    metadata = extract_metadata(soup, url)
+    root = _pick_root(ctx.original_soup, extractor)
     diagnostics: dict[str, object] = {
         "extractor": extractor.name if extractor is not None else "generic",
         "schema_fallback_used": False,
@@ -173,16 +193,12 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
         "removed_partial_selectors": False,
     }
 
-    root = _maybe_apply_schema_fallback(soup, root, diagnostics)
+    root = _maybe_apply_schema_fallback(ctx.original_soup, root, diagnostics)
 
     # Multi-level extraction with adaptive retry
-    md_instance = _create_markitdown()
     result = _extract_with_retry(
-        html,
-        soup,
+        ctx,
         root,
-        metadata,
-        md_instance,
         diagnostics,
         extractor=extractor,
     )
@@ -207,12 +223,12 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
     return ExtractedWebContent(
         clean_html=clean_html,
         markdown=markdown,
-        metadata=metadata,
+        metadata=ctx.metadata,
         word_count=word_count,
         info=info,
         quality=quality,
         semantic=None,
-        diagnostics={**diagnostics, "metadata": asdict(metadata)},
+        diagnostics={**diagnostics, "metadata": asdict(ctx.metadata)},
     )
 
 
@@ -249,11 +265,8 @@ def _extract_once(
 
 
 def _extract_with_retry(
-    raw_html: str,
-    soup: BeautifulSoup,
+    ctx: _ExtractionContext,
     root: Tag | BeautifulSoup,
-    metadata: object,
-    md_instance: object,
     diagnostics: dict[str, object],
     *,
     extractor: object | None,
@@ -266,14 +279,14 @@ def _extract_with_retry(
     Level 4: Disable all removals (listing page)
     Fallback: Broaden to <body>
     """
-    url = getattr(metadata, "canonical_url", "") or ""
+    url = getattr(ctx.metadata, "canonical_url", "") or ""
     use_scoring = extractor is None
 
     # Level 1: Full pipeline
     clean_html, markdown, removal_stats = _extract_once(
         root,
-        metadata,
-        md_instance,
+        ctx.metadata,
+        ctx.md_instance,
         url,
         use_scoring=use_scoring,
     )
@@ -286,11 +299,11 @@ def _extract_with_retry(
         return clean_html, markdown
 
     # Level 2: Retry without partial selectors
-    _soup2, root2 = _rebuild_retry_root(raw_html, extractor, diagnostics)
+    _soup2, root2 = ctx.fresh_soup_and_root(extractor, diagnostics)
     clean2, md2, _ = _extract_once(
         root2,
-        metadata,
-        md_instance,
+        ctx.metadata,
+        ctx.md_instance,
         url,
         use_partial_selectors=False,
         use_scoring=use_scoring,
@@ -304,11 +317,11 @@ def _extract_with_retry(
         return clean_html, markdown
 
     # Level 3: Retry without hidden element removal
-    _soup3, root3 = _rebuild_retry_root(raw_html, extractor, diagnostics)
+    _soup3, root3 = ctx.fresh_soup_and_root(extractor, diagnostics)
     clean3, md3, _ = _extract_once(
         root3,
-        metadata,
-        md_instance,
+        ctx.metadata,
+        ctx.md_instance,
         url,
         use_hidden_removal=False,
         use_scoring=use_scoring,
@@ -322,11 +335,11 @@ def _extract_with_retry(
         return clean_html, markdown
 
     # Level 4: Retry with all removals disabled
-    _soup4, root4 = _rebuild_retry_root(raw_html, extractor, diagnostics)
+    _soup4, root4 = ctx.fresh_soup_and_root(extractor, diagnostics)
     clean4, md4, _ = _extract_once(
         root4,
-        metadata,
-        md_instance,
+        ctx.metadata,
+        ctx.md_instance,
         url,
         use_partial_selectors=False,
         use_hidden_removal=False,
@@ -338,15 +351,15 @@ def _extract_with_retry(
         diagnostics["adaptive_retry_used"] = True
         diagnostics["retry_level"] = 4
 
-    # Fallback: broaden to <body> (fresh parse to avoid mutated state)
+    # Fallback: broaden to <body> (deep-copy to avoid mutated state)
     if word_count <= _RETRY_VERY_SPARSE_THRESHOLD:
-        soup_body = parse_html(raw_html)
+        soup_body = copy.deepcopy(ctx.original_soup)
         body = soup_body.body
         if body is not None:
             body_html, body_md, _ = _extract_once(
                 body,
-                metadata,
-                md_instance,
+                ctx.metadata,
+                ctx.md_instance,
                 url,
                 use_partial_selectors=False,
                 use_hidden_removal=False,
@@ -359,18 +372,6 @@ def _extract_with_retry(
                 diagnostics["retry_level"] = "body_fallback"
 
     return clean_html, markdown
-
-
-def _rebuild_retry_root(
-    raw_html: str,
-    extractor: object | None,
-    diagnostics: dict[str, object],
-) -> tuple[BeautifulSoup, Tag | BeautifulSoup]:
-    """Reparse HTML and rebuild the root using the original selection strategy."""
-    soup = parse_html(raw_html)
-    root = _pick_root(soup, extractor)
-    root = _maybe_apply_schema_fallback(soup, root, diagnostics)
-    return soup, root
 
 
 def _pick_root(soup: BeautifulSoup, extractor: object | None) -> Tag | BeautifulSoup:
