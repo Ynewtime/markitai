@@ -78,6 +78,35 @@ def test_profile_overrides_no_match_returns_empty() -> None:
         "x.com": DomainProfileConfig(skip_auto_scroll=True),
     }
     overrides = _resolve_playwright_profile_overrides(
-        "https://github.com/repo", profiles
+        "https://example.com/page", profiles
     )
     assert overrides == {}
+
+
+def test_builtin_profiles_applied_for_x_com() -> None:
+    """x.com should get built-in profile with skip_auto_scroll and wait_for_selector."""
+    from markitai.domain_profiles import BUILTIN_DOMAIN_PROFILES
+    from markitai.fetch import _resolve_playwright_profile_overrides
+
+    assert "x.com" in BUILTIN_DOMAIN_PROFILES
+    assert BUILTIN_DOMAIN_PROFILES["x.com"].skip_auto_scroll is True
+
+    overrides = _resolve_playwright_profile_overrides(
+        "https://x.com/user/status/123", {}
+    )
+    assert overrides.get("skip_auto_scroll") is True
+    assert overrides.get("wait_for_selector") == '[data-testid="tweet"]'
+
+
+def test_user_profile_overrides_builtin() -> None:
+    """User-configured profile takes precedence over built-in."""
+    from markitai.fetch import _resolve_playwright_profile_overrides
+
+    user_profiles = {
+        "x.com": DomainProfileConfig(extra_wait_ms=2000),
+    }
+    overrides = _resolve_playwright_profile_overrides(
+        "https://x.com/user/status/123", user_profiles
+    )
+    assert overrides.get("extra_wait_ms") == 2000
+    assert "skip_auto_scroll" not in overrides

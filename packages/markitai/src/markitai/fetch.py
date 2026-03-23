@@ -834,8 +834,12 @@ def _resolve_playwright_profile_overrides(
     """Resolve domain-specific Playwright overrides from config."""
     from urllib.parse import urlparse
 
+    from markitai.domain_profiles import BUILTIN_DOMAIN_PROFILES
+
     domain = urlparse(url).netloc.lower()
     profile = domain_profiles.get(domain)
+    if not profile:
+        profile = BUILTIN_DOMAIN_PROFILES.get(domain)
     if not profile:
         return {}
 
