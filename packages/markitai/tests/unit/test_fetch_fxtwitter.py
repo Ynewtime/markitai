@@ -120,3 +120,37 @@ class TestFetchWithFxtwitter:
             MockClient.return_value = client_instance
             result = await fetch_with_fxtwitter("https://x.com/testuser/status/123")
             assert result is None
+
+
+@pytest.mark.asyncio
+async def test_dispatch_strategy_tries_fxtwitter_before_playwright() -> None:
+    """_dispatch_strategy should attempt FxTwitter before Playwright for x.com URLs."""
+    from markitai.config import FetchConfig
+    from markitai.fetch_types import FetchResult, FetchStrategy
+
+    mock_fxtwitter_result = FetchResult(
+        content="# FxTwitter content",
+        strategy_used="fxtwitter",
+        title="Test tweet",
+        url="https://x.com/user/status/123",
+    )
+
+    with patch(
+        "markitai.fetch_fxtwitter.fetch_with_fxtwitter",
+        new_callable=AsyncMock,
+        return_value=mock_fxtwitter_result,
+    ) as mock_fx:
+        from markitai.fetch import _dispatch_strategy
+
+        result, _ = await _dispatch_strategy(
+            url="https://x.com/user/status/123",
+            strategy=FetchStrategy.PLAYWRIGHT,
+            config=FetchConfig(),
+            explicit_strategy=False,
+            screenshot_kwargs={},
+            screenshot_config=None,
+            screenshot_dir=None,
+            renderer=None,
+        )
+        mock_fx.assert_called_once()
+        assert result.strategy_used == "fxtwitter"

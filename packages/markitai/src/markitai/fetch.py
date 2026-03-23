@@ -1741,6 +1741,15 @@ async def _dispatch_strategy(
     validators_to_write: tuple[str | None, str | None] | None = None
 
     if strategy == FetchStrategy.PLAYWRIGHT:
+        # FxTwitter enrichment: try API before launching browser for tweet URLs
+        if not explicit_strategy:
+            from markitai.fetch_fxtwitter import fetch_with_fxtwitter
+
+            fxtwitter_result = await fetch_with_fxtwitter(url)
+            if fxtwitter_result is not None:
+                logger.debug("[Fetch] FxTwitter succeeded for {}", url)
+                return fxtwitter_result, None
+
         from markitai.fetch_playwright import (
             fetch_with_playwright,
             is_playwright_available,
