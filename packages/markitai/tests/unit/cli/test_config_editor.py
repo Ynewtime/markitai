@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 from markitai.config import MarkitaiConfig
 
 
@@ -63,19 +65,6 @@ def test_format_value_for_display() -> None:
     assert format_display_value("./output") == "./output"
 
 
-def test_build_choices_returns_questionary_choices() -> None:
-    """build_choices should return a list of questionary Choice objects."""
-    from markitai.cli.config_editor import build_choices, extract_editable_settings
-
-    cfg = MarkitaiConfig()
-    settings = extract_editable_settings(cfg)
-    choices = build_choices(settings)
-    assert len(choices) > 0
-    for c in choices:
-        assert hasattr(c, "title")
-        assert hasattr(c, "value")
-
-
 def test_extract_settings_bool_before_int() -> None:
     """Bool fields must be detected as 'bool', not 'int' (bool is subclass of int)."""
     from markitai.cli.config_editor import extract_editable_settings
@@ -97,3 +86,155 @@ def test_extract_settings_optional_str() -> None:
     assert "output.dir" in keys
     dir_setting = next(s for s in settings if s["key"] == "output.dir")
     assert dir_setting["field_type"] == "str"
+
+
+class TestPromptNewValueCancel:
+    """Pressing Esc/Ctrl-C in any sub-prompt should return _CANCEL."""
+
+    def _make_setting(self, field_type: str, **kwargs):
+        base = {
+            "key": "test.key",
+            "value": kwargs.get("value"),
+            "field_type": field_type,
+            "description": "",
+        }
+        base.update(kwargs)
+        return base
+
+    def _mock_ask_none(self):
+        """Return a mock questionary prompt whose .ask() returns None (cancel)."""
+        mock_prompt = MagicMock()
+        mock_prompt.ask.return_value = None
+        return mock_prompt
+
+    @patch("questionary.text")
+    def test_cancel_str_prompt(self, mock_text) -> None:
+        from markitai.cli.config_editor import _CANCEL, _prompt_new_value
+
+        mock_text.return_value = self._mock_ask_none()
+        result = _prompt_new_value(self._make_setting("str", value="hello"))
+        assert result is _CANCEL
+
+    @patch("questionary.text")
+    def test_cancel_int_prompt(self, mock_text) -> None:
+        from markitai.cli.config_editor import _CANCEL, _prompt_new_value
+
+        mock_text.return_value = self._mock_ask_none()
+        result = _prompt_new_value(self._make_setting("int", value=42))
+        assert result is _CANCEL
+
+    @patch("questionary.text")
+    def test_cancel_float_prompt(self, mock_text) -> None:
+        from markitai.cli.config_editor import _CANCEL, _prompt_new_value
+
+        mock_text.return_value = self._mock_ask_none()
+        result = _prompt_new_value(self._make_setting("float", value=3.14))
+        assert result is _CANCEL
+
+    @patch("questionary.select")
+    def test_cancel_bool_prompt(self, mock_select) -> None:
+        from markitai.cli.config_editor import _CANCEL, _prompt_new_value
+
+        mock_select.return_value = self._mock_ask_none()
+        result = _prompt_new_value(self._make_setting("bool", value=True))
+        assert result is _CANCEL
+
+    @patch("questionary.select")
+    def test_cancel_literal_prompt(self, mock_select) -> None:
+        from markitai.cli.config_editor import _CANCEL, _prompt_new_value
+
+        mock_select.return_value = self._mock_ask_none()
+        result = _prompt_new_value(
+            self._make_setting("literal", value="INFO", choices=["INFO", "DEBUG"])
+        )
+        assert result is _CANCEL
+
+    @patch("questionary.text")
+    def test_str_prompt_passes_key_bindings(self, mock_text) -> None:
+        """text() prompts must receive key_bindings for Esc support."""
+        mock_text.return_value = self._mock_ask_none()
+        from markitai.cli.config_editor import _prompt_new_value
+
+        _prompt_new_value(self._make_setting("str", value="test"))
+        _, kwargs = mock_text.call_args
+        assert "key_bindings" in kwargs
+
+    @patch("questionary.select")
+    def test_bool_uses_select_not_confirm(self, mock_select) -> None:
+        """Bool fields should use select() (supports Esc), not confirm()."""
+        mock_select.return_value = self._mock_ask_none()
+        from markitai.cli.config_editor import _prompt_new_value
+
+        _prompt_new_value(self._make_setting("bool", value=False))
+        mock_select.assert_called_once()
+
+
+def test_add_esc_to_question_injects_escape_binding() -> None:
+    """_add_esc_to_question should merge Esc key binding into a select Question."""
+    import questionary
+    from prompt_toolkit.keys import Keys
+
+    from markitai.cli.config_editor import _add_esc_to_question
+
+    q = questionary.select("test", choices=["a", "b"], use_jk_keys=False)
+    original_bindings = q.application.key_bindings
+
+    # Esc should NOT be bound before injection
+    esc_before = [b for b in original_bindings.bindings if b.keys == (Keys.Escape,)]
+    assert len(esc_before) == 0
+
+    _add_esc_to_question(q)
+
+    # Esc SHOULD be bound after injection
+    esc_after = [
+        b for b in q.application.key_bindings.bindings if b.keys == (Keys.Escape,)
+    ]
+    assert len(esc_after) == 1
+
+
+class TestFuzzyMatch:
+    """Tests for fuzzy_match pure function."""
+
+    def test_exact_match(self) -> None:
+        from markitai.cli.config_editor import fuzzy_match
+
+        matched, _score = fuzzy_match("output", "output.dir ./output")
+        assert matched is True
+
+    def test_fuzzy_order_preserved(self) -> None:
+        from markitai.cli.config_editor import fuzzy_match
+
+        matched, _ = fuzzy_match("odir", "output.dir ./output")
+        assert matched is True
+
+    def test_no_match(self) -> None:
+        from markitai.cli.config_editor import fuzzy_match
+
+        matched, _ = fuzzy_match("zzz", "output.dir ./output")
+        assert matched is False
+
+    def test_case_insensitive(self) -> None:
+        from markitai.cli.config_editor import fuzzy_match
+
+        matched, _ = fuzzy_match("OUTPUT", "output.dir ./output")
+        assert matched is True
+
+    def test_empty_query_matches_all(self) -> None:
+        from markitai.cli.config_editor import fuzzy_match
+
+        matched, score = fuzzy_match("", "anything")
+        assert matched is True
+        assert score == 0
+
+    def test_consecutive_chars_score_better(self) -> None:
+        from markitai.cli.config_editor import fuzzy_match
+
+        _, score_consecutive = fuzzy_match("out", "output.dir ./output")
+        _, score_spread = fuzzy_match("odr", "output.dir ./output")
+        assert score_consecutive < score_spread
+
+    def test_query_longer_than_text(self) -> None:
+        from markitai.cli.config_editor import fuzzy_match
+
+        matched, _ = fuzzy_match("very long query", "short")
+        assert matched is False

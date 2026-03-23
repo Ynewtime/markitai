@@ -157,9 +157,16 @@ def _validate_local_only_pattern(pattern: str) -> None:
 class OutputConfig(BaseModel):
     """Output configuration."""
 
-    dir: str | None = DEFAULT_OUTPUT_DIR
-    on_conflict: Literal["skip", "overwrite", "rename"] = DEFAULT_ON_CONFLICT
-    allow_symlinks: bool = False
+    dir: str | None = Field(
+        default=DEFAULT_OUTPUT_DIR, description="Default output directory"
+    )
+    on_conflict: Literal["skip", "overwrite", "rename"] = Field(
+        default=DEFAULT_ON_CONFLICT,
+        description="skip, overwrite, or rename on conflict",
+    )
+    allow_symlinks: bool = Field(
+        default=False, description="Follow symlinks when processing files"
+    )
 
 
 class LiteLLMParams(BaseModel):
@@ -232,9 +239,16 @@ class RouterSettings(BaseModel):
 
     routing_strategy: Literal[
         "simple-shuffle", "least-busy", "usage-based-routing", "latency-based-routing"
-    ] = DEFAULT_ROUTING_STRATEGY
-    num_retries: int = DEFAULT_ROUTER_NUM_RETRIES
-    timeout: int = DEFAULT_ROUTER_TIMEOUT
+    ] = Field(
+        default=DEFAULT_ROUTING_STRATEGY,
+        description="LLM router load balancing strategy",
+    )
+    num_retries: int = Field(
+        default=DEFAULT_ROUTER_NUM_RETRIES, description="Max retries on LLM failure"
+    )
+    timeout: int = Field(
+        default=DEFAULT_ROUTER_TIMEOUT, description="LLM request timeout in seconds"
+    )
     fallbacks: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -252,39 +266,71 @@ class LLMConfig(BaseModel):
     )
     model_list: list[ModelConfig] = Field(default_factory=list)
     router_settings: RouterSettings = Field(default_factory=RouterSettings)
-    concurrency: int = DEFAULT_LLM_CONCURRENCY
+    concurrency: int = Field(
+        default=DEFAULT_LLM_CONCURRENCY, description="Max parallel LLM requests"
+    )
 
 
 class ImageFilterConfig(BaseModel):
     """Image filter configuration."""
 
-    min_width: int = DEFAULT_IMAGE_FILTER_MIN_WIDTH
-    min_height: int = DEFAULT_IMAGE_FILTER_MIN_HEIGHT
-    min_area: int = DEFAULT_IMAGE_FILTER_MIN_AREA
-    deduplicate: bool = True
+    min_width: int = Field(
+        default=DEFAULT_IMAGE_FILTER_MIN_WIDTH,
+        description="Skip images narrower than this (px)",
+    )
+    min_height: int = Field(
+        default=DEFAULT_IMAGE_FILTER_MIN_HEIGHT,
+        description="Skip images shorter than this (px)",
+    )
+    min_area: int = Field(
+        default=DEFAULT_IMAGE_FILTER_MIN_AREA,
+        description="Skip images smaller than this (px²)",
+    )
+    deduplicate: bool = Field(
+        default=True, description="Remove duplicate images by hash"
+    )
 
 
 class ImageConfig(BaseModel):
     """Image processing configuration."""
 
-    alt_enabled: bool = False  # Generate alt text for images via LLM
-    desc_enabled: bool = False  # Generate description files for images
-    compress: bool = True
-    quality: int = Field(default=DEFAULT_IMAGE_QUALITY, ge=1, le=100)
-    format: Literal["jpeg", "png", "webp"] = DEFAULT_IMAGE_FORMAT
-    max_width: int = DEFAULT_IMAGE_MAX_WIDTH
-    max_height: int = DEFAULT_IMAGE_MAX_HEIGHT
+    alt_enabled: bool = Field(default=False, description="Generate alt text via LLM")
+    desc_enabled: bool = Field(
+        default=False, description="Generate description files via LLM"
+    )
+    compress: bool = Field(default=True, description="Compress images before embedding")
+    quality: int = Field(
+        default=DEFAULT_IMAGE_QUALITY,
+        ge=1,
+        le=100,
+        description="JPEG/WebP quality (1-100)",
+    )
+    format: Literal["jpeg", "png", "webp"] = Field(
+        default=DEFAULT_IMAGE_FORMAT, description="Output image format"
+    )
+    max_width: int = Field(
+        default=DEFAULT_IMAGE_MAX_WIDTH,
+        description="Downscale images wider than this (px)",
+    )
+    max_height: int = Field(
+        default=DEFAULT_IMAGE_MAX_HEIGHT,
+        description="Downscale images taller than this (px)",
+    )
     filter: ImageFilterConfig = Field(default_factory=ImageFilterConfig)
-    stdout_persist: bool = False
-    stdout_persist_dir: str = "~/.markitai/assets"
-    stdout_fetch_external: bool = False
+    stdout_persist: bool = Field(default=False, description="Save piped images to disk")
+    stdout_persist_dir: str = Field(
+        default="~/.markitai/assets", description="Directory for persisted piped images"
+    )
+    stdout_fetch_external: bool = Field(
+        default=False, description="Download external image URLs from stdin"
+    )
 
 
 class OCRConfig(BaseModel):
     """OCR configuration."""
 
     enabled: bool = False
-    lang: str = DEFAULT_OCR_LANG
+    lang: str = Field(default=DEFAULT_OCR_LANG, description="OCR language code")
 
 
 class ScreenshotConfig(BaseModel):
@@ -296,15 +342,27 @@ class ScreenshotConfig(BaseModel):
 
     enabled: bool = False
     # URL screenshot settings
-    viewport_width: int = DEFAULT_SCREENSHOT_VIEWPORT_WIDTH
-    viewport_height: int = DEFAULT_SCREENSHOT_VIEWPORT_HEIGHT
-    quality: int = Field(default=DEFAULT_SCREENSHOT_QUALITY, ge=1, le=100)
-    max_height: int = (
-        DEFAULT_SCREENSHOT_MAX_HEIGHT  # Max height for full-page URL screenshots
+    viewport_width: int = Field(
+        default=DEFAULT_SCREENSHOT_VIEWPORT_WIDTH,
+        description="Browser viewport width (px)",
     )
-    # Screenshot-only mode: LLM extracts content purely from screenshots
-    # without using pre-extracted text from Playwright/markitdown
-    screenshot_only: bool = False
+    viewport_height: int = Field(
+        default=DEFAULT_SCREENSHOT_VIEWPORT_HEIGHT,
+        description="Browser viewport height (px)",
+    )
+    quality: int = Field(
+        default=DEFAULT_SCREENSHOT_QUALITY,
+        ge=1,
+        le=100,
+        description="Screenshot JPEG quality (1-100)",
+    )
+    max_height: int = Field(
+        default=DEFAULT_SCREENSHOT_MAX_HEIGHT,
+        description="Max full-page screenshot height (px)",
+    )
+    screenshot_only: bool = Field(
+        default=False, description="LLM reads only screenshots, no text extraction"
+    )
 
 
 class PromptsConfig(BaseModel):
@@ -342,43 +400,76 @@ class PromptsConfig(BaseModel):
 class BatchConfig(BaseModel):
     """Batch processing configuration."""
 
-    concurrency: int = Field(default=DEFAULT_BATCH_CONCURRENCY, ge=1)
+    concurrency: int = Field(
+        default=DEFAULT_BATCH_CONCURRENCY,
+        ge=1,
+        description="Max parallel file processing tasks",
+    )
     url_concurrency: int = Field(
-        default=DEFAULT_URL_CONCURRENCY, ge=1
-    )  # Separate concurrency for URL fetching
-    state_flush_interval_seconds: int = DEFAULT_STATE_FLUSH_INTERVAL_SECONDS
-    scan_max_depth: int = Field(default=DEFAULT_SCAN_MAX_DEPTH, ge=0)
-    scan_max_files: int = Field(default=DEFAULT_SCAN_MAX_FILES, ge=1)
-    heavy_task_limit: int = Field(default=DEFAULT_HEAVY_TASK_LIMIT, ge=0)
+        default=DEFAULT_URL_CONCURRENCY, ge=1, description="Max parallel URL fetches"
+    )
+    state_flush_interval_seconds: int = Field(
+        default=DEFAULT_STATE_FLUSH_INTERVAL_SECONDS,
+        description="Seconds between state file writes",
+    )
+    scan_max_depth: int = Field(
+        default=DEFAULT_SCAN_MAX_DEPTH,
+        ge=0,
+        description="Max directory recursion depth",
+    )
+    scan_max_files: int = Field(
+        default=DEFAULT_SCAN_MAX_FILES,
+        ge=1,
+        description="Max files to scan per directory",
+    )
+    heavy_task_limit: int = Field(
+        default=DEFAULT_HEAVY_TASK_LIMIT,
+        ge=0,
+        description="Max heavy tasks (0=unlimited)",
+    )
 
 
 class LogConfig(BaseModel):
     """Logging configuration."""
 
-    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = DEFAULT_LOG_LEVEL
-    dir: str | None = DEFAULT_LOG_DIR
-    rotation: str = DEFAULT_LOG_ROTATION
-    retention: str = DEFAULT_LOG_RETENTION
-    format: Literal["text", "json"] = "text"
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        default=DEFAULT_LOG_LEVEL, description="Minimum log level"
+    )
+    dir: str | None = Field(default=DEFAULT_LOG_DIR, description="Log file directory")
+    rotation: str = Field(
+        default=DEFAULT_LOG_ROTATION, description="Rotate log file at this size"
+    )
+    retention: str = Field(
+        default=DEFAULT_LOG_RETENTION, description="Delete old logs after this period"
+    )
+    format: Literal["text", "json"] = Field(
+        default="text", description="Log output format"
+    )
 
 
 class CacheConfig(BaseModel):
     """Cache configuration."""
 
     enabled: bool = True
-    no_cache: bool = False  # Skip reading cache but still write (Bun semantics)
+    no_cache: bool = Field(default=False, description="Skip reading cache, still write")
     no_cache_patterns: list[
         str
     ] = []  # Patterns to skip cache (glob, relative to input_dir)
-    max_size_bytes: int = DEFAULT_CACHE_SIZE_LIMIT
-    global_dir: str = DEFAULT_GLOBAL_CACHE_DIR
+    max_size_bytes: int = Field(
+        default=DEFAULT_CACHE_SIZE_LIMIT, description="Max cache size in bytes"
+    )
+    global_dir: str = Field(
+        default=DEFAULT_GLOBAL_CACHE_DIR, description="Global cache/config directory"
+    )
 
 
 class FetchPolicyConfig(BaseModel):
     """Configuration for fetch strategy policy engine."""
 
     enabled: bool = True
-    max_strategy_hops: int = Field(default=5, ge=1, le=6)
+    max_strategy_hops: int = Field(
+        default=5, ge=1, le=6, description="Max strategy fallback attempts"
+    )
     strategy_priority: list[str] | None = Field(
         default=None,
         description="Custom global strategy order. Overrides the default priority.",
@@ -444,21 +535,32 @@ class DomainProfileConfig(BaseModel):
 class PlaywrightConfig(BaseModel):
     """Playwright configuration for JS-rendered pages."""
 
-    timeout: int = DEFAULT_PLAYWRIGHT_TIMEOUT  # milliseconds
-    wait_for: Literal["load", "domcontentloaded", "networkidle"] = (
-        DEFAULT_PLAYWRIGHT_WAIT_FOR
+    timeout: int = Field(
+        default=DEFAULT_PLAYWRIGHT_TIMEOUT, description="Navigation timeout (ms)"
     )
-    extra_wait_ms: int = DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS  # Extra wait after load
+    wait_for: Literal["load", "domcontentloaded", "networkidle"] = Field(
+        default=DEFAULT_PLAYWRIGHT_WAIT_FOR, description="Page load event to wait for"
+    )
+    extra_wait_ms: int = Field(
+        default=DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS,
+        description="Extra wait after page load (ms)",
+    )
 
-    session_mode: Literal["isolated", "domain_persistent"] = "isolated"
-    session_ttl_seconds: int = Field(default=600, ge=60, le=7200)
+    session_mode: Literal["isolated", "domain_persistent"] = Field(
+        default="isolated", description="Browser session reuse mode"
+    )
+    session_ttl_seconds: int = Field(
+        default=600, ge=60, le=7200, description="Persistent session TTL (seconds)"
+    )
 
     # Advanced browser control (aligned with CF Browser Rendering API capabilities)
-    wait_for_selector: str | None = None  # CSS selector to wait for before extraction
+    wait_for_selector: str | None = Field(
+        default=None, description="CSS selector to wait for"
+    )
     cookies: list[dict[str, str]] | None = None  # [{name, value, domain, path}, ...]
     reject_resource_patterns: list[str] | None = None  # ["**/*.css", "**/*.woff2"]
     extra_http_headers: dict[str, str] | None = None  # {"Accept-Language": "zh-CN"}
-    user_agent: str | None = None  # Custom User-Agent string
+    user_agent: str | None = Field(default=None, description="Custom User-Agent string")
     http_credentials: dict[str, str] | None = None  # {username, password}
 
 
@@ -474,22 +576,32 @@ class DefuddleConfig(BaseModel):
     may still need playwright as fallback.
     """
 
-    timeout: int = DEFAULT_DEFUDDLE_TIMEOUT  # seconds
-    rpm: int = Field(default=DEFAULT_DEFUDDLE_RPM, ge=1)  # requests per minute limit
+    timeout: int = Field(
+        default=DEFAULT_DEFUDDLE_TIMEOUT, description="Request timeout in seconds"
+    )
+    rpm: int = Field(
+        default=DEFAULT_DEFUDDLE_RPM, ge=1, description="Max requests per minute"
+    )
 
 
 class JinaConfig(BaseModel):
     """Jina Reader API configuration."""
 
-    api_key: str | None = None  # Supports env: syntax
-    timeout: int = DEFAULT_JINA_TIMEOUT  # seconds
-    rpm: int = Field(default=DEFAULT_JINA_RPM, ge=1)  # requests per minute limit
-    no_cache: bool = False  # Skip Jina server-side cache (X-No-Cache header)
-    target_selector: str | None = (
-        None  # CSS selector for content extraction (X-Target-Selector)
+    api_key: str | None = Field(
+        default=None, description="Jina Reader API key (supports env: syntax)"
     )
-    wait_for_selector: str | None = (
-        None  # Wait for element before extraction (X-Wait-For-Selector)
+    timeout: int = Field(
+        default=DEFAULT_JINA_TIMEOUT, description="Request timeout in seconds"
+    )
+    rpm: int = Field(
+        default=DEFAULT_JINA_RPM, ge=1, description="Max requests per minute"
+    )
+    no_cache: bool = Field(default=False, description="Skip Jina server-side cache")
+    target_selector: str | None = Field(
+        default=None, description="CSS selector for content extraction"
+    )
+    wait_for_selector: str | None = Field(
+        default=None, description="Wait for element before extraction"
     )
 
     def get_resolved_api_key(self, strict: bool = False) -> str | None:
@@ -512,19 +624,31 @@ class CloudflareConfig(BaseModel):
     Both api_token and account_id support env: syntax for environment variable resolution.
     """
 
-    api_token: str | None = None  # Supports env: syntax (CF API token)
-    account_id: str | None = None  # Supports env: syntax (CF account ID)
-    timeout: int = 30000  # milliseconds (for BR /markdown API)
-    wait_until: str = "networkidle0"  # CF BR wait event
-    cache_ttl: int = 0  # BR cache TTL in seconds (0 = no cache)
+    api_token: str | None = Field(
+        default=None, description="CF API token (supports env: syntax)"
+    )
+    account_id: str | None = Field(
+        default=None, description="CF account ID (supports env: syntax)"
+    )
+    timeout: int = Field(default=30000, description="Browser rendering timeout (ms)")
+    wait_until: str = Field(
+        default="networkidle0", description="Page load event to wait for"
+    )
+    cache_ttl: int = Field(
+        default=0, description="Browser rendering cache TTL (seconds)"
+    )
     reject_resource_patterns: list[str] | None = None  # e.g. ["/\\.css$/"]
-    user_agent: str | None = None  # Custom User-Agent for BR
+    user_agent: str | None = Field(default=None, description="Custom User-Agent string")
     cookies: list[dict[str, str]] | None = None  # Cookies to set before navigation
-    wait_for_selector: str | None = None  # CSS selector to wait for after load
+    wait_for_selector: str | None = Field(
+        default=None, description="CSS selector to wait for after load"
+    )
     http_credentials: dict[str, str] | None = (
         None  # HTTP Basic Auth {username, password}
     )
-    convert_enabled: bool = False  # Enable Workers AI toMarkdown for files
+    convert_enabled: bool = Field(
+        default=False, description="Use Workers AI for file conversion"
+    )
 
     def get_resolved_api_token(self, strict: bool = False) -> str | None:
         """Get API token with env: syntax resolved.
@@ -550,7 +674,7 @@ class FetchConfig(BaseModel):
 
     strategy: Literal[
         "auto", "static", "defuddle", "playwright", "jina", "cloudflare"
-    ] = DEFAULT_FETCH_STRATEGY
+    ] = Field(default=DEFAULT_FETCH_STRATEGY, description="Default URL fetch strategy")
     defuddle: DefuddleConfig = Field(default_factory=DefuddleConfig)
     playwright: PlaywrightConfig = Field(default_factory=PlaywrightConfig)
     jina: JinaConfig = Field(default_factory=JinaConfig)

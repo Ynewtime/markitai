@@ -1,8 +1,9 @@
 """Interactive config editor — schema introspection and edit loop.
 
 Walks the Pydantic MarkitaiConfig model tree to extract a flat list of
-editable scalar settings, then presents them as a searchable questionary
-select list for interactive editing.
+editable scalar settings.  The main selector uses a prompt_toolkit
+Application (search box, fuzzy filtering, scrollable list).  Sub-editors
+for individual values use questionary prompts with injected Esc support.
 """
 
 from __future__ import annotations
@@ -13,11 +14,8 @@ from typing import Any, get_args, get_origin
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
-from questionary import Choice
 
 from markitai.config import MarkitaiConfig
-
-_SCALAR_TYPES = (str, int, float, bool, type(None))
 
 # Sections to skip entirely (too complex or too advanced for inline editing)
 _SKIP_SECTIONS = {"presets", "prompts", "domain_profiles"}
@@ -154,36 +152,236 @@ def format_display_value(value: Any) -> str:
     return str(value)
 
 
-def build_choices(settings: list[dict[str, Any]]) -> list[Choice]:
-    """Build questionary Choice objects from settings list."""
-    max_key_len = max(len(s["key"]) for s in settings) if settings else 20
-    max_val_len = (
-        max(len(format_display_value(s["value"])) for s in settings) if settings else 10
-    )
-    max_val_len = min(max_val_len, 30)
+def fuzzy_match(query: str, text: str) -> tuple[bool, int]:
+    """Case-insensitive fuzzy match with scoring.
 
-    choices: list[Choice] = []
-    prev_section = ""
-    for s in settings:
-        key = s["key"]
-        section = key.split(".")[0]
-        if section != prev_section:
-            if prev_section:
-                choices.append(Choice(title="─" * 40, disabled="─", value="__sep__"))
-            prev_section = section
+    Characters in *query* must appear in *text* in order but not
+    necessarily consecutively.
 
-        val_str = format_display_value(s["value"])
-        padded_key = key.ljust(max_key_len)
-        padded_val = val_str.ljust(max_val_len)
-        title = f"{padded_key}  {padded_val}"
-        choices.append(
-            Choice(
-                title=title,
-                value=s["key"],
-                description=s.get("description", ""),
-            )
+    Returns (matched, score) — lower score is better.
+    Empty query matches everything with score 0.
+    """
+    if not query:
+        return True, 0
+    ql, tl = query.lower(), text.lower()
+    qi, score, prev = 0, 0, -2
+    for ti, ch in enumerate(tl):
+        if qi < len(ql) and ch == ql[qi]:
+            score += ti
+            if ti == prev + 1:
+                score -= ti
+            prev = ti
+            qi += 1
+    return (True, score) if qi == len(ql) else (False, 0)
+
+
+def _select_setting(settings: list[dict[str, Any]], config_path: str) -> str | None:
+    """Claude Code-style setting selector built on prompt_toolkit.
+
+    Returns the selected setting key, or None if cancelled.
+    """
+    from prompt_toolkit import Application
+    from prompt_toolkit.buffer import Buffer
+    from prompt_toolkit.formatted_text import FormattedText
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import HSplit, Layout, Window
+    from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+    from prompt_toolkit.layout.dimension import Dimension
+    from prompt_toolkit.widgets import Frame
+
+    if not settings:
+        return None
+
+    VISIBLE = 15
+    state: dict[str, Any] = {
+        "cursor": 0,
+        "scroll": 0,
+        "rendered_lines": 0,
+        "filtered": list(range(len(settings))),
+        "last_query": "",
+    }
+
+    def _refresh_filtered() -> list[int]:
+        """Recompute filtered indices when search query changes."""
+        q = search_buf.text.strip()
+        if q == state["last_query"]:
+            return state["filtered"]
+        state["last_query"] = q
+        if not q:
+            state["filtered"] = list(range(len(settings)))
+        else:
+            scored = []
+            for i, s in enumerate(settings):
+                text = f"{s['key']} {format_display_value(s['value'])}"
+                ok, sc = fuzzy_match(q, text)
+                if ok:
+                    scored.append((sc, i))
+            scored.sort(key=lambda x: x[0])
+            state["filtered"] = [i for _, i in scored]
+        return state["filtered"]
+
+    def _get_list_text() -> FormattedText:
+        filtered = _refresh_filtered()
+        if not filtered:
+            return FormattedText([("", "  (no matches)\n")])
+
+        cursor = state["cursor"]
+        scroll = state["scroll"]
+
+        # Clamp cursor
+        if cursor >= len(filtered):
+            state["cursor"] = cursor = max(0, len(filtered) - 1)
+        if cursor < scroll:
+            state["scroll"] = scroll = cursor
+        if cursor >= scroll + VISIBLE:
+            state["scroll"] = scroll = cursor - VISIBLE + 1
+
+        max_key = max(len(settings[i]["key"]) for i in filtered)
+        max_val = min(
+            max(len(format_display_value(settings[i]["value"])) for i in filtered),
+            30,
         )
-    return choices
+
+        parts: list[tuple[str, str]] = []
+
+        # "N more above"
+        if scroll > 0:
+            parts.append(("class:muted", f"  ↑ {scroll} more above\n"))
+
+        end = min(scroll + VISIBLE, len(filtered))
+        for row in range(scroll, end):
+            idx = filtered[row]
+            s = settings[idx]
+            key = s["key"].ljust(max_key)
+            val = format_display_value(s["value"]).ljust(max_val)
+            desc = s.get("description", "")
+            prefix = " ❯ " if row == cursor else "   "
+            line = f"{prefix}{key}  {val}"
+            if desc:
+                line += f"  [{desc}]"
+            line += "\n"
+            style = "reverse" if row == cursor else ""
+            parts.append((style, line))
+
+        # "N more below"
+        remaining = len(filtered) - end
+        if remaining > 0:
+            parts.append(("class:muted", f"  ↓ {remaining} more below\n"))
+
+        # Track lines for erasure: items + indicators
+        state["rendered_lines"] = sum(1 for _, t in parts if t.endswith("\n"))
+        return FormattedText(parts)
+
+    def _get_footer() -> FormattedText:
+        if search_buf.text:
+            return FormattedText(
+                [("class:muted", "  Type to filter · Enter to edit · Esc to clear")]
+            )
+        return FormattedText(
+            [("class:muted", "  Type to filter · Enter to edit · Esc to exit")]
+        )
+
+    search_buf = Buffer(name="search")
+
+    def _on_search_changed(_: Any) -> None:
+        state["cursor"] = 0
+        state["scroll"] = 0
+        state["last_query"] = ""  # invalidate filter cache
+
+    search_buf.on_text_changed += _on_search_changed
+
+    kb = KeyBindings()
+
+    @kb.add("up")
+    def _up(_event: Any) -> None:
+        if state["cursor"] > 0:
+            state["cursor"] -= 1
+
+    @kb.add("down")
+    def _down(_event: Any) -> None:
+        filtered = _refresh_filtered()
+        if state["cursor"] < len(filtered) - 1:
+            state["cursor"] += 1
+
+    @kb.add("enter")
+    def _enter(event: Any) -> None:
+        filtered = _refresh_filtered()
+        if filtered:
+            event.app.exit(result=settings[filtered[state["cursor"]]]["key"])
+        else:
+            event.app.exit(result=None)
+
+    @kb.add("escape")
+    def _escape(event: Any) -> None:
+        if search_buf.text:
+            search_buf.text = ""
+            state["cursor"] = 0
+            state["scroll"] = 0
+        else:
+            event.app.exit(result=None)
+
+    @kb.add("c-c")
+    def _ctrl_c(event: Any) -> None:
+        event.app.exit(result=None)
+
+    list_control = FormattedTextControl(_get_list_text)
+
+    layout = Layout(
+        HSplit(
+            [
+                Window(
+                    FormattedTextControl(
+                        FormattedText(
+                            [
+                                ("bold", "  Markitai Configuration  "),
+                                ("class:muted", f"({config_path})"),
+                            ]
+                        )
+                    ),
+                    height=2,
+                ),
+                Frame(Window(BufferControl(search_buf), height=1)),
+                Window(list_control, height=Dimension(max=VISIBLE + 2)),
+                Window(FormattedTextControl(_get_footer), height=1),
+            ]
+        )
+    )
+
+    app: Application[str | None] = Application(
+        layout=layout, key_bindings=kb, full_screen=False
+    )
+    try:
+        result = app.run()
+    except (EOFError, KeyboardInterrupt):
+        result = None
+
+    # Erase rendered UI: header(2) + frame(3) + list lines + footer(1)
+    total = 2 + 3 + state["rendered_lines"] + 1
+    _erase_lines(total)
+    return result
+
+
+def _esc_key_bindings():
+    """Create key bindings that map Esc to cancel (same as Ctrl-C)."""
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.keys import Keys
+
+    kb = KeyBindings()
+
+    @kb.add(Keys.Escape, eager=True)
+    def _(event):
+        event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
+
+    return kb
+
+
+def _add_esc_to_question(question):
+    """Inject Esc key binding into a questionary Question's application."""
+    from prompt_toolkit.key_binding import merge_key_bindings
+
+    app = question.application
+    app.key_bindings = merge_key_bindings([app.key_bindings, _esc_key_bindings()])
+    return question
 
 
 def _prompt_new_value(setting: dict[str, Any]) -> Any:
@@ -192,26 +390,48 @@ def _prompt_new_value(setting: dict[str, Any]) -> Any:
     Returns the new value, or _CANCEL if the user cancelled (Esc / Ctrl-C).
     """
     import questionary
+    from questionary import Choice
 
     key = setting["key"]
     current = setting["value"]
     field_type = setting["field_type"]
 
     if field_type == "bool":
-        result = questionary.confirm(
-            f"  {key}",
-            default=current if current is not None else False,
+        current_bool = current if current is not None else False
+        choice_true = Choice(title="true", value=True)
+        choice_false = Choice(title="false", value=False)
+        result = _add_esc_to_question(
+            questionary.select(
+                f"  {key}",
+                choices=[choice_true, choice_false],
+                default=choice_true if current_bool else choice_false,
+                use_jk_keys=False,
+                instruction="(↑↓ move · Esc to cancel)",
+            )
         ).ask()
         return _CANCEL if result is None else result
 
     if field_type == "literal":
-        choices = setting.get("choices", [])
-        result = questionary.select(
-            f"  {key}",
-            choices=[str(c) for c in choices],
-            default=str(current) if current is not None else None,
+        raw_choices = setting.get("choices", [])
+        # Preserve original typed values via Choice(value=...)
+        choice_objs = [Choice(title=str(c), value=c) for c in raw_choices]
+        default_choice = None
+        if current is not None:
+            default_choice = next(
+                (ch for ch in choice_objs if ch.value == current), None
+            )
+        result = _add_esc_to_question(
+            questionary.select(
+                f"  {key}",
+                choices=choice_objs,
+                default=default_choice,
+                use_jk_keys=False,
+                instruction="(↑↓ move · Esc to cancel)",
+            )
         ).ask()
         return _CANCEL if result is None else result
+
+    kb = _esc_key_bindings()
 
     if field_type == "int":
         result = questionary.text(
@@ -222,6 +442,8 @@ def _prompt_new_value(setting: dict[str, Any]) -> Any:
                 or (v.lstrip("-").isdigit() and v != "-")
                 or "Must be an integer"
             ),
+            instruction="(Esc to cancel)",
+            key_bindings=kb,
         ).ask()
         if result is None:
             return _CANCEL
@@ -243,6 +465,8 @@ def _prompt_new_value(setting: dict[str, Any]) -> Any:
             f"  {key}",
             default=str(current) if current is not None else "",
             validate=_validate_float,
+            instruction="(Esc to cancel)",
+            key_bindings=kb,
         ).ask()
         if result is None:
             return _CANCEL
@@ -253,13 +477,54 @@ def _prompt_new_value(setting: dict[str, Any]) -> Any:
     result = questionary.text(
         f"  {key}",
         default=str(current) if current is not None else "",
+        instruction="(Esc to cancel)",
+        key_bindings=kb,
     ).ask()
     return _CANCEL if result is None else result
 
 
+def _erase_lines(n: int) -> None:
+    """Erase the last *n* lines from the terminal (move up + clear to end)."""
+    import sys
+
+    if n > 0 and sys.stdout.isatty():
+        sys.stdout.write(f"\033[{n}A\033[J")
+        sys.stdout.flush()
+
+
+def _get_cursor_row() -> int:
+    """Query the terminal for the current cursor row (1-based). Returns 0 on failure."""
+    import sys
+
+    if not sys.stdin.isatty():
+        return 0
+    try:
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            sys.stdout.write("\033[6n")
+            sys.stdout.flush()
+            buf = b""
+            while True:
+                ch = sys.stdin.buffer.read(1)
+                buf += ch
+                if ch == b"R":
+                    break
+            # Response: ESC [ row ; col R
+            parts = buf.decode().lstrip("\033[").rstrip("R").split(";")
+            return int(parts[0])
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    except Exception:
+        return 0
+
+
 def run_config_editor() -> None:
     """Run the interactive config editor loop."""
-    import questionary
     from rich.console import Console
 
     from markitai.config import ConfigManager
@@ -268,22 +533,12 @@ def run_config_editor() -> None:
     manager = ConfigManager()
     manager.load()
     cfg = manager.config
-
-    console.print()
-    config_path = manager.config_path or "defaults"
-    console.print(f"  [bold]Markitai Configuration[/]  [dim]({config_path})[/]")
-    console.print()
+    config_path = str(manager.config_path or "defaults")
 
     while True:
         settings = extract_editable_settings(cfg)
-        choices = build_choices(settings)
-
-        selected_key = questionary.select(
-            "Select a setting to edit:",
-            choices=choices,
-            use_search_filter=True,
-            instruction="(↑↓ move · type to filter · Esc to exit)",
-        ).ask()
+        selected_key = _select_setting(settings, config_path)
+        # _select_setting erases its own UI on exit
 
         if selected_key is None:
             break
@@ -292,7 +547,15 @@ def run_config_editor() -> None:
         if setting is None:
             continue
 
+        row_before = _get_cursor_row()
         new_value = _prompt_new_value(setting)
+        row_after = _get_cursor_row()
+        if row_before and row_after:
+            _erase_lines(row_after - row_before)
+        else:
+            # Fallback: text prompts render 1 line, select prompts vary
+            _erase_lines(2)
+
         if new_value is _CANCEL:
             continue
 
@@ -305,5 +568,3 @@ def run_config_editor() -> None:
             cfg = manager.config
         except Exception as e:
             console.print(f"  [red]✗[/] Error: {e}")
-
-    console.print()
