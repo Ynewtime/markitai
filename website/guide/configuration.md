@@ -36,6 +36,9 @@ markitai init --local  # creates ./markitai.json
 ```bash
 # List all settings
 markitai config list
+markitai config list --format json    # JSON (default)
+markitai config list --format table   # Rich table view
+markitai config list --format yaml    # YAML (requires pyyaml: uv add pyyaml)
 
 # Get specific value
 markitai config get llm.enabled
@@ -45,6 +48,10 @@ markitai config set llm.enabled true
 
 # Interactive editor (guided menu)
 markitai config edit
+
+# Validate configuration
+markitai config validate
+markitai config validate ./markitai.json    # Validate specific file
 ```
 
 ### Full Configuration Example
@@ -67,7 +74,9 @@ markitai config edit
       "num_retries": 2,
       "timeout": 120
     },
-    "concurrency": 10
+    "concurrency": 10,
+    "pure": false,
+    "keep_base": false
   },
   "image": {
     "alt_enabled": false,
@@ -82,7 +91,10 @@ markitai config edit
       "min_height": 50,
       "min_area": 5000,
       "deduplicate": true
-    }
+    },
+    "stdout_persist": false,
+    "stdout_persist_dir": "~/.markitai/assets",
+    "stdout_fetch_external": false
   },
   "ocr": {
     "enabled": false,
@@ -112,6 +124,7 @@ markitai config edit
   },
   "fetch": {
     "strategy": "auto",
+    "kreuzberg_convert_enabled": false,
     "defuddle": {
       "timeout": 30,
       "rpm": 20
@@ -125,7 +138,9 @@ markitai config edit
       "reject_resource_patterns": null,
       "extra_http_headers": null,
       "user_agent": null,
-      "http_credentials": null
+      "http_credentials": null,
+      "session_mode": "isolated",
+      "session_ttl_seconds": 600
     },
     "jina": {
       "api_key": null,
@@ -142,17 +157,24 @@ markitai config edit
       "wait_until": "networkidle0",
       "cache_ttl": 0,
       "reject_resource_patterns": null,
-      "convert_enabled": false
+      "convert_enabled": false,
+      "user_agent": null,
+      "cookies": null,
+      "wait_for_selector": null,
+      "http_credentials": null
     },
     "policy": {
       "enabled": true,
-      "max_strategy_hops": 4
+      "max_strategy_hops": 5,
+      "strategy_priority": null,
+      "local_only_patterns": [],
+      "inherit_no_proxy": true
     },
     "domain_profiles": {},
     "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   },
   "output": {
-    "dir": "./output",
+    "dir": null,
     "on_conflict": "rename",
     "allow_symlinks": false
   },
@@ -196,6 +218,18 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 | `MARKITAI_LOG_DIR` | Directory for log files |
 | `MARKITAI_LOG_FORMAT` | Log format override (`text` or `json`) |
 | `MARKITAI_STATIC_HTTP` | Static HTTP backend: `httpx` (default) or `curl_cffi` (TLS impersonation) |
+| `MARKITAI_LANG` | CLI language override (`en` or `zh`) |
+| `MARKITAI_PURE` | Enable pure mode (`1`, `true`, or `yes`) |
+| `MODEL` | Single-model override when no `model_list` configured |
+
+### `.env` File Loading
+
+Markitai automatically loads `.env` files in the following order (first-loaded values win):
+
+1. `./.env` (current working directory — project-level)
+2. `~/.markitai/.env` (user home — global fallback)
+
+Project-level `.env` takes priority, allowing per-project overrides of global settings.
 
 ## LLM Configuration
 
@@ -217,7 +251,10 @@ Markitai also supports local providers that use CLI authentication and subscript
 - **Claude Agent** (`claude-agent/`): Uses [Claude Agent SDK](https://github.com/anthropics/claude-code) with Claude Code CLI authentication
 - **GitHub Copilot** (`copilot/`): Uses [GitHub Copilot SDK](https://github.com/github/copilot-sdk) with Copilot CLI authentication
 - **ChatGPT** (`chatgpt/`): Uses ChatGPT subscription via OAuth Device Code Flow and Responses API. No extra SDK required.
-- **Gemini CLI** (`gemini-cli/`): Uses Google's Gemini CLI OAuth credentials (`~/.gemini/oauth_creds.json`) with automatic token refresh.
+- **Gemini CLI** (`gemini-cli/`): Uses Google's Gemini CLI credentials with automatic token refresh. Credential sources (in priority order):
+  1. Markitai-managed profiles (`~/.markitai/auth/gemini-*.json`, created via `markitai auth gemini login`)
+  2. Shared Gemini CLI credentials (`~/.gemini/oauth_creds.json`)
+  3. Built-in OAuth flow (automatic on first use)
 
 These providers require:
 1. The respective CLI tool installed and authenticated (or environment variable auth — see below)
@@ -521,6 +558,9 @@ Control how images are processed and compressed:
 | `filter.min_height` | `50` | Skip images shorter than this |
 | `filter.min_area` | `5000` | Skip images with area below this |
 | `filter.deduplicate` | `true` | Remove duplicate images |
+| `stdout_persist` | `false` | Save piped images to persistent asset store |
+| `stdout_persist_dir` | `~/.markitai/assets` | Directory for persistent image storage |
+| `stdout_fetch_external` | `false` | Download external image URLs in stdout mode |
 
 ## Screenshot Configuration
 
@@ -824,7 +864,7 @@ The policy engine intelligently orders fetch strategies based on domain characte
   "fetch": {
     "policy": {
       "enabled": true,
-      "max_strategy_hops": 4
+      "max_strategy_hops": 5
     }
   }
 }
@@ -833,7 +873,10 @@ The policy engine intelligently orders fetch strategies based on domain characte
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `true` | Enable intelligent strategy ordering |
-| `max_strategy_hops` | `4` | Maximum number of strategies to attempt before giving up |
+| `max_strategy_hops` | `5` | Maximum number of strategies to attempt before giving up |
+| `strategy_priority` | `null` | Custom global strategy order (overrides default priority) |
+| `local_only_patterns` | `[]` | Domain/IP patterns restricted to local strategies (NO_PROXY syntax) |
+| `inherit_no_proxy` | `true` | Merge `NO_PROXY` env var into `local_only_patterns` |
 
 ### Domain Profiles
 
@@ -860,6 +903,7 @@ Configure per-domain fetch overrides for sites with specific requirements:
 | `wait_for` | `null` | Wait condition override: `load`, `domcontentloaded`, `networkidle` |
 | `extra_wait_ms` | `null` | Extra wait time override (ms) |
 | `prefer_strategy` | `null` | Preferred strategy: `static`, `defuddle`, `playwright`, `cloudflare`, `jina` |
+| `strategy_priority` | `null` | Custom strategy order for this domain (overrides global and `prefer_strategy`) |
 
 ### Fallback Patterns
 
@@ -938,7 +982,7 @@ Control output file handling:
 
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
-| `dir` | - | `./output` | Output directory |
+| `dir` | - | `null` | Output directory |
 | `on_conflict` | `rename`, `overwrite`, `skip` | `rename` | How to handle existing files |
 | `allow_symlinks` | - | `false` | Allow symlinks in output paths |
 
