@@ -170,8 +170,18 @@ _NOISE_PATTERNS = [
 ]
 
 
+_extraction_cache: dict[str, tuple[object, dict[str, str], str]] = {}
+
+
 def _load_and_extract(stem: str) -> tuple[object, dict[str, str], str]:
-    """Load fixture, run extraction, parse expected. Returns (result, expected_meta, expected_body)."""
+    """Load fixture, run extraction, parse expected.
+
+    Results are cached so the 4 parametrized tests per fixture share a
+    single extraction call instead of repeating it 4 times.
+    """
+    if stem in _extraction_cache:
+        return _extraction_cache[stem]
+
     html = (_HTML_DIR / f"{stem}.html").read_text(encoding="utf-8")
     expected_text = (_EXPECTED_DIR / f"{stem}.md").read_text(encoding="utf-8")
 
@@ -179,7 +189,9 @@ def _load_and_extract(stem: str) -> tuple[object, dict[str, str], str]:
     result = extract_web_content(html, url)
     expected_meta, expected_body = _parse_expected(expected_text)
 
-    return result, expected_meta, expected_body
+    entry = (result, expected_meta, expected_body)
+    _extraction_cache[stem] = entry
+    return entry
 
 
 @pytest.mark.skipif(not ALL_FIXTURES, reason="No defuddle fixtures found")

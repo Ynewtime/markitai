@@ -9,11 +9,11 @@ from bs4 import BeautifulSoup, Tag
 from markitai.webextract.dom import parse_html
 from markitai.webextract.extractors.registry import find_extractor
 from markitai.webextract.markdown import (
-    _html_to_markdown,
-    _postprocess_markdown,
-    _preserve_figure_captions,
-    _resolve_srcset,
+    html_to_markdown,
+    postprocess_markdown,
+    preserve_figure_captions,
     render_markdown,
+    resolve_srcset,
 )
 from markitai.webextract.metadata import extract_metadata
 from markitai.webextract.quality import assess_native_markdown
@@ -160,7 +160,16 @@ def _build_from_resolved(
 
 
 class _ExtractionContext:
-    """Cache expensive computations across retry levels."""
+    """Cache expensive computations across retry levels.
+
+    Note on mutation: Level 1 extraction operates directly on
+    ``original_soup`` (no copy), so removals/standardization mutate it
+    in place.  Subsequent retry levels call ``fresh_soup_and_root()``
+    which deep-copies the (now-mutated) soup.  This is correct because
+    ``_pick_root`` re-selects the content root on each copy, and the
+    mutations from Level 1 (decomposed noise elements) are desirable —
+    they won't reappear in copies.
+    """
 
     def __init__(self, html: str, url: str) -> None:
         self.raw_html = html
@@ -268,23 +277,14 @@ def _extract_once(
 
     # Apply markdown preprocessing directly on the parsed Tag to avoid
     # the redundant BeautifulSoup re-parse that render_markdown() performs.
-    # _resolve_srcset only needs find_all, which works on any Tag.
-    _resolve_srcset(root)
-    # _canonicalize_embeds is a no-op here: sanitize_tag_tree already
+    resolve_srcset(root)
+    # canonicalize_embeds is a no-op here: sanitize_tag_tree already
     # stripped all <iframe> elements.
-    # _preserve_figure_captions needs BeautifulSoup.new_tag() to create
-    # replacement elements.  Traverse up to the owning BeautifulSoup; its
-    # find_all will include root's descendants.  Any mutations outside root
-    # are harmless since we only serialize root below.
-    soup_owner: Tag | BeautifulSoup = root
-    while soup_owner.parent is not None:
-        soup_owner = soup_owner.parent
-    if isinstance(soup_owner, BeautifulSoup):
-        _preserve_figure_captions(soup_owner)
+    preserve_figure_captions(root)
 
     clean_html = str(root)
-    markdown = _html_to_markdown(clean_html, md_instance)
-    markdown = _postprocess_markdown(markdown)
+    markdown = html_to_markdown(clean_html, md_instance)
+    markdown = postprocess_markdown(markdown)
     return clean_html, markdown, removal_stats
 
 
