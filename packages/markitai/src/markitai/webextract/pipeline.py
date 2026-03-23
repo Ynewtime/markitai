@@ -200,13 +200,14 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
     """
     ctx = _ExtractionContext(html, url)
 
-    # Prune mobile-hidden elements before scoring
+    # Prune mobile-hidden elements before scoring.
+    # This mutates original_soup but that's OK — mobile style pruning
+    # should persist across all retry levels.
     from markitai.webextract.mobile_styles import apply_mobile_style_pruning
 
     apply_mobile_style_pruning(ctx.original_soup)
 
     extractor = find_extractor(url)
-    root = _pick_root(ctx.original_soup, extractor)
     diagnostics: dict[str, object] = {
         "extractor": extractor.name if extractor is not None else "generic",
         "schema_fallback_used": False,
@@ -214,7 +215,10 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
         "removed_partial_selectors": False,
     }
 
-    root = _maybe_apply_schema_fallback(ctx.original_soup, root, diagnostics)
+    # Use fresh_soup_and_root for Level 1 too — _extract_once mutates
+    # root in place (removals, standardize, sanitize), so operating on
+    # original_soup directly would corrupt it for subsequent retries.
+    _, root = ctx.fresh_soup_and_root(extractor, diagnostics)
 
     # Multi-level extraction with adaptive retry
     result = _extract_with_retry(
