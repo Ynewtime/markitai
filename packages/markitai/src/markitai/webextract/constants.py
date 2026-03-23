@@ -166,7 +166,10 @@ PARTIAL_SELECTOR_PATTERNS: list[str] = [
     "after_content",
     "after_main_article",
     "afterpost",
-    "-alert-",
+    # NOTE: "-alert-" removed — it false-positives on "markdown-alert" (GitHub
+    # callout/admonition classes).  Cookie/banner alerts are covered by
+    # "cookie", "-banner-", and the exact ".alert" selector was already
+    # excluded in EXACT_SELECTORS for the same reason.
     "alert-box",
     "_archive",
     "around-the-web",
@@ -738,6 +741,7 @@ CONTENT_PROTECTION_SELECTORS: list[str] = [
     "video",
     "blockquote",
     "figure",
+    'input[type="checkbox"]',  # task lists (GitHub-style)
 ]
 
 # Elements that are allowed to be empty (void elements)
