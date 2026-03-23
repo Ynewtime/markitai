@@ -62,3 +62,30 @@ class TestCodeBlockLanguageDetection:
         )
         md = _convert(html)
         assert "```solidity" in md
+
+
+class TestMathConversion:
+    def test_katex_annotation(self) -> None:
+        html = '<span class="katex"><span class="katex-mathml"><math><semantics><annotation encoding="application/x-tex">E = mc^2</annotation></semantics></math></span></span>'
+        md = _convert(html)
+        assert "$E = mc^2$" in md
+
+    def test_mathjax_tex_script(self) -> None:
+        html = '<script type="math/tex">\\alpha + \\beta</script>'
+        md = _convert(html)
+        assert "$\\alpha + \\beta$" in md
+
+    def test_mathjax_display_script(self) -> None:
+        html = '<script type="math/tex; mode=display">\\int_0^1 f(x) dx</script>'
+        md = _convert(html)
+        assert "$$\\int_0^1 f(x) dx$$" in md
+
+    def test_mathml_with_alttext(self) -> None:
+        html = '<math alttext="x^2 + y^2 = z^2"><mi>x</mi></math>'
+        md = _convert(html)
+        assert "$x^2 + y^2 = z^2$" in md
+
+    def test_math_display_block(self) -> None:
+        html = '<math display="block" alttext="\\sum_{i=1}^n i"><mi>sum</mi></math>'
+        md = _convert(html)
+        assert "$$\\sum_{i=1}^n i$$" in md
