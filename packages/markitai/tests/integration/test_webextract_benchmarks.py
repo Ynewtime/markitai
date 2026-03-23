@@ -152,3 +152,37 @@ def test_single_extraction_completes_quickly() -> None:
         f"Single extraction took {elapsed_ms:.1f} ms "
         f"(budget: {_SINGLE_ITERATION_BUDGET_MS} ms)"
     )
+
+
+@pytest.mark.slow
+def test_defuddle_fixture_extraction_performance() -> None:
+    """Profile extraction time on defuddle fixtures to establish baseline."""
+    defuddle_dir = Path(__file__).parents[1] / "defuddle_fixtures" / "fixtures"
+    if not defuddle_dir.exists():
+        pytest.skip("No defuddle fixtures")
+
+    # Defuddle fixtures include larger/more complex pages; use a generous budget.
+    _DEFUDDLE_BUDGET_MS = 2000
+
+    results: list[tuple[str, float]] = []
+    for html_path in sorted(defuddle_dir.glob("*.html"))[:10]:  # Sample 10
+        html = html_path.read_text(encoding="utf-8")
+        url = _extract_og_url(html) or f"https://{html_path.stem.split('--', 1)[-1]}"
+
+        start = time.perf_counter()
+        extract_web_content(html, url)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        results.append((html_path.stem, elapsed_ms))
+
+    # Report
+    for name, ms in sorted(results, key=lambda x: -x[1]):
+        print(f"  {ms:7.1f}ms  {name}")
+
+    avg_ms = sum(ms for _, ms in results) / len(results)
+    print(f"\n  Average: {avg_ms:.1f}ms over {len(results)} fixtures")
+
+    # Each fixture should complete within budget
+    for name, ms in results:
+        assert ms < _DEFUDDLE_BUDGET_MS, (
+            f"{name}: {ms:.1f}ms exceeds {_DEFUDDLE_BUDGET_MS}ms budget"
+        )
