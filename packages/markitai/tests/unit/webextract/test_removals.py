@@ -354,3 +354,31 @@ class TestApplyRemovals:
         stats = apply_removals(root, use_hidden_removal=False)
         assert "hidden" not in stats  # hidden stage not run
         assert "hidden" in root.get_text()
+
+
+def test_joined_selector_removes_same_elements_as_individual() -> None:
+    """Joining selectors into one query must produce identical results."""
+    html = """
+    <div>
+        <nav class="navigation">nav</nav>
+        <div class="ad">ad</div>
+        <footer>footer</footer>
+        <article>
+            <p>Main content here with enough words to be meaningful.</p>
+        </article>
+        <aside class="sidebar">sidebar</aside>
+    </div>
+    """
+    from bs4 import BeautifulSoup
+
+    from markitai.webextract.removals.selectors import remove_by_selectors
+
+    soup = BeautifulSoup(html, "html.parser")
+    root = soup.find("div")
+    assert root is not None
+
+    remove_by_selectors(root, main_content=None, use_partial=False)
+    remaining_text = root.get_text(strip=True)
+    assert "Main content" in remaining_text
+    assert "nav" not in remaining_text.lower().split()
+    assert "sidebar" not in remaining_text
