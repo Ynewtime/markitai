@@ -110,3 +110,13 @@ def test_user_profile_overrides_builtin() -> None:
     )
     assert overrides.get("extra_wait_ms") == 2000
     assert "skip_auto_scroll" not in overrides
+
+
+def test_site_noise_selectors_exist_for_x_com() -> None:
+    """x.com should have site-specific noise selectors."""
+    from markitai.constants import SITE_NOISE_SELECTORS
+
+    assert "x.com" in SITE_NOISE_SELECTORS
+    selectors = SITE_NOISE_SELECTORS["x.com"]
+    assert '[data-testid="sidebarColumn"]' in selectors
+    assert '[data-testid="bottomBar"]' in selectors
