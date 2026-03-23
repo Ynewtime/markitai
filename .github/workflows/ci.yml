@@ -41,7 +41,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync --frozen --all-groups
 
       - name: Run ruff check
         run: uv run ruff check packages/markitai/src packages/markitai/tests
@@ -77,7 +77,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --frozen --all-extras
+        run: uv sync --frozen --all-groups --all-extras
 
       - name: Install LibreOffice (Linux)
         if: runner.os == 'Linux'

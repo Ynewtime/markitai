@@ -884,7 +884,7 @@ function Sync-Dependencies {
         Clack-Info (i18n "info_syncing_deps")
         $oldErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
-        $syncResult = & uv sync --all-extras --python $script:PYTHON_CMD 2>&1
+        $syncResult = & uv sync --all-groups --all-extras --python $script:PYTHON_CMD 2>&1
         $ErrorActionPreference = $oldErrorAction
         if ($LASTEXITCODE -eq 0) {
             Clack-Success (i18n "info_deps_synced")
