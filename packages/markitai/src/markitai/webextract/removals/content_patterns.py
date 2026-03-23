@@ -60,12 +60,20 @@ def _remove_hero_headers(root: Tag) -> int:
     return removed
 
 
+_STRUCTURED_CONTENT_TAGS = frozenset(
+    {"table", "math", "pre", "code", "svg", "img", "picture", "video"}
+)
+
+
 def _remove_trailing_thin_sections(root: Tag) -> int:
     """Remove thin trailing sections (CTAs, newsletter prompts, etc.).
 
     Scans backward from the end of content. Removes blocks that have
     a heading but fewer than 25 words (typical of subscription CTAs,
     "Related articles", etc.). Stops at the first substantial block.
+
+    Blocks containing structured content (tables, math, code, media)
+    are always considered substantial regardless of word count.
     """
     removed = 0
     children = [c for c in root.children if isinstance(c, Tag)]
@@ -73,6 +81,12 @@ def _remove_trailing_thin_sections(root: Tag) -> int:
         text = child.get_text(strip=True)
         word_count = len(text.split())
         if word_count > 25:
+            break
+        # Protect blocks with structured content (math, tables, code, etc.)
+        # Check both the element itself and its descendants
+        if child.name in _STRUCTURED_CONTENT_TAGS or child.find(
+            _STRUCTURED_CONTENT_TAGS
+        ):
             break
         if child.find(["h2", "h3", "h4", "h5", "h6"]):
             child.decompose()
