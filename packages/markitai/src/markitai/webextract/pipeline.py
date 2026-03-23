@@ -199,6 +199,12 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
         Extracted web content with cleaned HTML and derived Markdown.
     """
     ctx = _ExtractionContext(html, url)
+
+    # Prune mobile-hidden elements before scoring
+    from markitai.webextract.mobile_styles import apply_mobile_style_pruning
+
+    apply_mobile_style_pruning(ctx.original_soup)
+
     extractor = find_extractor(url)
     root = _pick_root(ctx.original_soup, extractor)
     diagnostics: dict[str, object] = {
