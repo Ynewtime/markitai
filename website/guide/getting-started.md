@@ -13,11 +13,12 @@ These are required for specific features:
 
 | Dependency | Required For | Installation |
 |------------|--------------|--------------|
-| **Playwright** | `--playwright` (SPA rendering) | Package auto-installed, browser requires `uv run playwright install chromium` |
+| **Playwright** | `--playwright` (SPA rendering) | `uv pip install markitai[browser]`, browser requires `uv run playwright install chromium` |
 | **FFmpeg** | Audio/video processing | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
 | **Jina API Key** | `--jina` (URL conversion) | Set `JINA_API_KEY` env var |
 | **LLM API Key** | `--llm` (AI enhancement) | Set `OPENAI_API_KEY` or provider-specific key. Subscription providers (`chatgpt/`, `gemini-cli/`, `claude-agent/`, `copilot/`) use CLI/OAuth auth instead |
 | **Cloudflare** | `--cloudflare` (cloud rendering & conversion) | Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` env vars |
+| **CairoSVG** | High-quality SVG rendering | `uv pip install markitai[svg]` |
 
 ::: tip Browser Automation
 For SPA websites (Twitter, React apps, etc.), Playwright is used automatically. Before first use, install the browser:
@@ -54,7 +55,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Yne
 The script will:
 - Check for Python 3.11-3.13
 - Install [uv](https://docs.astral.sh/uv/) package manager (requires confirmation)
-- Install markitai with all optional dependencies
+- Install markitai with browser automation support (other optional extras installed on confirmation)
 
 #### Version Pinning
 
@@ -62,13 +63,13 @@ Pin specific versions using environment variables:
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.13.0"
+export MARKITAI_VERSION="0.13.1"
 export UV_VERSION="0.9.27"
 curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.13.0"
+$env:MARKITAI_VERSION = "0.13.1"
 $env:UV_VERSION = "0.9.27"
 powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
 ```
