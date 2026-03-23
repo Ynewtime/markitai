@@ -40,7 +40,12 @@ def remove_hidden_elements(root: Tag) -> int:
         Number of elements removed.
     """
     removed = 0
-    for el in root.find_all(True):
+    for el in list(root.find_all(True)):
+        if not isinstance(el, Tag):
+            continue
+        # Guard against decomposed elements (parent set to None during iteration)
+        if el.parent is None:
+            continue
         if _is_math_context(el):
             continue
         if _is_hidden(el):

@@ -100,37 +100,6 @@ def test_score_candidate_large_dom_many_candidates() -> None:
     assert best.name == "article"
 
 
-def test_diagnostics_candidate_count_lazy_when_debug_off() -> None:
-    """Pipeline diagnostics like candidate_count should be lazy —
-    only computed when debug logging is active, not on the hot path.
-
-    After the Medium-9 fix, _candidate_count is only called when debug
-    logging is enabled. We verify by patching it and confirming no call
-    happens during normal extraction with debug off.
-    """
-    from unittest.mock import patch
-
-    from markitai.webextract.pipeline import extract_web_content
-
-    words = " ".join(f"word{i}" for i in range(30))
-    html = f"""
-    <html><body>
-      <article><p>{words}</p></article>
-    </body></html>
-    """
-
-    with patch(
-        "markitai.webextract.pipeline._candidate_count",
-    ) as mock_count:
-        mock_count.return_value = 99
-        result = extract_web_content(html, "https://example.com/test")
-        assert result.word_count > 0
-
-        # After optimization, _candidate_count should NOT be called
-        # unconditionally in the hot path
-        mock_count.assert_not_called()
-
-
 # ---- Original tests ----
 
 

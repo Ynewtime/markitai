@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+from bs4 import BeautifulSoup, Tag
+
 from markitai.webextract.dom import parse_html
 from markitai.webextract.removals.content_patterns import remove_content_patterns
+
+
+def _make_root(html: str) -> Tag:
+    soup = BeautifulSoup(html, "html.parser")
+    return soup.find("div") or soup
 
 
 class TestReadTimeRemoval:
@@ -81,3 +88,51 @@ class TestAuthorBylineRemoval:
         assert root is not None
         removed = remove_content_patterns(root)
         assert removed == 0
+
+
+class TestHeroHeaderRemoval:
+    def test_removes_hero_header_with_time(self) -> None:
+        html = """<div>
+        <header><h1>Article Title</h1><time>March 23, 2026</time></header>
+        <p>This is the actual article content with enough words to matter.</p>
+        </div>"""
+        root = _make_root(html)
+        removed = remove_content_patterns(root)
+        text = root.get_text(strip=True)
+        assert "actual article content" in text
+        assert removed > 0
+
+    def test_preserves_substantial_header(self) -> None:
+        words = " ".join(f"word{i}" for i in range(35))
+        html = f"""<div>
+        <header><h1>Title</h1><p>{words}</p></header>
+        <p>Body content.</p>
+        </div>"""
+        root = _make_root(html)
+        remove_content_patterns(root)
+        text = root.get_text(strip=True)
+        assert "word0" in text
+
+
+class TestTrailingThinSectionRemoval:
+    def test_removes_trailing_cta(self) -> None:
+        html = """<div>
+        <p>Main article content with enough words to be meaningful.</p>
+        <div><h3>Subscribe</h3><p>Get updates</p></div>
+        </div>"""
+        root = _make_root(html)
+        removed = remove_content_patterns(root)
+        text = root.get_text(strip=True)
+        assert "Main article" in text
+        assert removed > 0
+
+    def test_preserves_substantial_trailing_section(self) -> None:
+        words = " ".join(f"word{i}" for i in range(30))
+        html = f"""<div>
+        <p>Main content.</p>
+        <div><h3>Conclusion</h3><p>{words}</p></div>
+        </div>"""
+        root = _make_root(html)
+        remove_content_patterns(root)
+        text = root.get_text(strip=True)
+        assert "word0" in text

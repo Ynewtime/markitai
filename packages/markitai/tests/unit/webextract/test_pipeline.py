@@ -212,3 +212,35 @@ def test_pipeline_output_stable_after_preprocess_bypass() -> None:
     assert "large.jpg" in result.markdown
     # figcaption text preserved
     assert "caption" in result.markdown.lower()
+
+
+def test_pipeline_detects_code_block_language() -> None:
+    """Pipeline must produce language-tagged code blocks."""
+    from markitai.webextract.pipeline import extract_web_content
+
+    html = """<html><body><article>
+    <p>Here is an article with enough content to pass extraction threshold checks easily.</p>
+    <pre><code class="language-python">
+def hello():
+    print("world")
+    </code></pre>
+    <p>More content after the code block for word count.</p>
+    </article></body></html>"""
+    result = extract_web_content(html, "https://example.com")
+    assert "```python" in result.markdown
+    assert "def hello():" in result.markdown
+
+
+def test_mobile_hidden_sidebar_removed_before_scoring() -> None:
+    """Mobile-hidden elements should be removed before content scoring."""
+    from markitai.webextract.pipeline import extract_web_content
+
+    html = """<html><head><style>
+    @media (max-width: 600px) { .sidebar { display: none; } }
+    </style></head><body>
+    <article><p>Real article content with enough words for extraction.</p></article>
+    <div class="sidebar"><nav><a href="/a">Link A</a><a href="/b">Link B</a></nav></div>
+    </body></html>"""
+    result = extract_web_content(html, "https://example.com")
+    assert "Real article" in result.markdown
+    assert "Link A" not in result.markdown

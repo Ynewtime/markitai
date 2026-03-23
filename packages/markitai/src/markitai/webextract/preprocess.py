@@ -12,7 +12,8 @@ Phases (in order):
 2. ``<wbr>`` removal — word-break hints that pollute extracted text
 3. Streamed / incomplete HTML normalisation — nothing to do yet; handled by
    tolerant parsers, but the hook is here for future use
-4. ``<noscript>`` content promotion — for static HTML where the main body
+4. React SSR streaming boundary resolution — ``$RC("B:X","S:X")`` calls
+5. ``<noscript>`` content promotion — for static HTML where the main body
    contains only script tags
 """
 
@@ -89,7 +90,69 @@ def _normalize_streamed_html(html: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Phase 4: <noscript> promotion
+# Phase 4: React SSR streaming boundary resolution
+# ---------------------------------------------------------------------------
+
+_RC_CALL_RE = re.compile(r'\$RC\s*\(\s*"(B:\d+)"\s*,\s*"(S:\d+)"\s*\)')
+
+
+def _resolve_react_ssr_boundaries(html: str) -> str:
+    """Replace React SSR streaming boundaries with actual content.
+
+    React Streaming SSR uses ``$RC("B:X","S:X")`` calls to replace
+    placeholder template boundaries with server-rendered content
+    stored in hidden divs.  The pattern::
+
+        <!--$?--><template id="B:0"></template>Loading...<!--/$-->
+        <div hidden id="S:0"><p>Actual content</p></div>
+        <script>$RC("B:0","S:0")</script>
+
+    is resolved to just the actual content.
+
+    Args:
+        html: Raw HTML string.
+
+    Returns:
+        HTML with React SSR boundaries resolved.
+    """
+    matches = list(_RC_CALL_RE.finditer(html))
+    if not matches:
+        return html
+
+    for match in matches:
+        boundary_id = match.group(1)  # e.g. "B:0"
+        content_id = match.group(2)  # e.g. "S:0"
+
+        # Find the hidden div with the content
+        content_pattern = re.compile(
+            rf'<div[^>]*\bid="{re.escape(content_id)}"[^>]*>(.*?)</div>',
+            re.DOTALL | re.IGNORECASE,
+        )
+        content_match = content_pattern.search(html)
+        if not content_match:
+            continue
+
+        content_html = content_match.group(1)
+
+        # Replace the boundary placeholder with actual content
+        boundary_pattern = re.compile(
+            rf"<!--\$\?-->\s*<template\s+id=\"{re.escape(boundary_id)}\"\s*>"
+            rf"\s*</template>.*?<!--/\$-->",
+            re.DOTALL,
+        )
+        html = boundary_pattern.sub(content_html, html)
+
+        # Remove the hidden source div
+        html = content_pattern.sub("", html)
+
+    # Remove remaining $RC script tags
+    html = re.sub(r"<script>[^<]*\$RC\s*\([^)]*\)[^<]*</script>", "", html)
+
+    return html
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: <noscript> promotion
 # ---------------------------------------------------------------------------
 
 # Detects a <body> that contains only script / noscript / whitespace
@@ -166,7 +229,8 @@ def preprocess_html(html: str) -> str:
     1. Declarative Shadow DOM flattening
     2. ``<wbr>`` removal
     3. Streamed HTML normalisation (no-op hook)
-    4. ``<noscript>`` content promotion
+    4. React SSR streaming boundary resolution
+    5. ``<noscript>`` content promotion
 
     Args:
         html: Raw HTML string to preprocess.
@@ -180,5 +244,6 @@ def preprocess_html(html: str) -> str:
     html = _flatten_declarative_shadow_dom(html)
     html = _remove_wbr_tags(html)
     html = _normalize_streamed_html(html)
+    html = _resolve_react_ssr_boundaries(html)
     html = _promote_noscript_content(html)
     return html
