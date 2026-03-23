@@ -27,8 +27,7 @@
 | Create | `packages/markitai/tests/integration/test_defuddle_parity_quality.py` | Parameterized parity tests against defuddle fixtures |
 | Modify | `packages/markitai/src/markitai/webextract/pipeline.py` | Introduce `_ExtractionContext`, eliminate redundant `parse_html()` in retries |
 | Modify | `packages/markitai/src/markitai/webextract/removals/selectors.py` | Join exact selectors into single CSS query |
-| Modify | `packages/markitai/src/markitai/webextract/standardize.py` | Absorb srcset/iframe/figcaption preprocessing from `markdown.py` |
-| Modify | `packages/markitai/src/markitai/webextract/markdown.py` | Remove preprocessing that moves to standardize; operate on HTML string only |
+| Modify | `packages/markitai/src/markitai/webextract/pipeline.py` | Also: bypass `render_markdown()` in `_extract_once()` to avoid redundant re-parse |
 | Modify | `packages/markitai/tests/integration/test_webextract_benchmarks.py` | Add defuddle fixture benchmarks |
 
 ---
@@ -59,14 +58,16 @@ if [[ ! -d "$DEFUDDLE_DIR/tests/fixtures" ]]; then
     exit 1
 fi
 
+# Ensure destination exists before writing anything
+mkdir -p "$DEST_DIR/fixtures" "$DEST_DIR/expected"
+
 # Record version
 COMMIT=$(git -C "$DEFUDDLE_DIR" rev-parse HEAD)
 echo "defuddle commit: $COMMIT" > "$DEST_DIR/VERSION"
 echo "synced at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$DEST_DIR/VERSION"
 
-# Sync fixtures
-rm -rf "$DEST_DIR/fixtures" "$DEST_DIR/expected"
-mkdir -p "$DEST_DIR/fixtures" "$DEST_DIR/expected"
+# Sync fixtures (clean then copy)
+rm -rf "$DEST_DIR/fixtures/"* "$DEST_DIR/expected/"*
 cp "$DEFUDDLE_DIR"/tests/fixtures/*.html "$DEST_DIR/fixtures/"
 cp "$DEFUDDLE_DIR"/tests/expected/*.md "$DEST_DIR/expected/"
 
@@ -143,17 +144,45 @@ class DefuddleFixture:
     url: str
 
 
-def _infer_url_from_fixture_name(name: str) -> str:
-    """Infer a plausible URL from a defuddle fixture filename.
+def _extract_og_url(html: str) -> str | None:
+    """Extract og:url from raw HTML for proper extractor routing."""
+    match = re.search(
+        r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
+        html, re.IGNORECASE,
+    )
+    if match:
+        return match.group(1)
+    match = re.search(
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:url["\']',
+        html, re.IGNORECASE,
+    )
+    return match.group(1) if match else None
 
-    Fixture names like ``general--x.com-article-2026-02-13`` encode the
-    domain. We extract it to route to the correct extractor.
+
+def _extract_canonical_url(html: str) -> str | None:
+    """Extract <link rel="canonical"> URL."""
+    match = re.search(
+        r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)["\']',
+        html, re.IGNORECASE,
+    )
+    return match.group(1) if match else None
+
+
+def _fixture_url(html_path: Path) -> str:
+    """Determine the best URL for a fixture.
+
+    Priority: og:url from HTML → canonical URL → fallback from filename.
+    This matches the existing test harness strategy.
     """
-    # Strip category prefix (e.g. "general--", "issues--", "elements--")
+    html = html_path.read_text(encoding="utf-8", errors="replace")
+    url = _extract_og_url(html) or _extract_canonical_url(html)
+    if url:
+        return url
+    # Fallback: construct from filename (last resort)
+    name = html_path.stem
     parts = name.split("--", 1)
     domain_part = parts[1] if len(parts) > 1 else parts[0]
-    # Convert first segment to URL-like format
-    return f"https://{domain_part.replace('.html', '')}"
+    return f"https://{domain_part}"
 
 
 def _collect_fixtures() -> list[DefuddleFixture]:
@@ -165,7 +194,7 @@ def _collect_fixtures() -> list[DefuddleFixture]:
         name = html_path.stem
         expected_path = _EXPECTED_DIR / f"{name}.md"
         if expected_path.exists():
-            url = _infer_url_from_fixture_name(name)
+            url = _fixture_url(html_path)
             fixtures.append(
                 DefuddleFixture(
                     name=name,
@@ -225,9 +254,29 @@ ALL_FIXTURES = _collect_fixtures()
 FIXTURE_IDS = [f.name for f in ALL_FIXTURES]
 
 
+# Known site-chrome noise patterns that should NOT appear in clean extraction
+_NOISE_PATTERNS: list[str] = [
+    "Sign up",
+    "Log in",
+    "Cookie",
+    "Accept all cookies",
+    "Privacy Policy",
+    "Terms of Service",
+    "Don't miss what's happening",
+    "Something went wrong",
+    "Retry",
+    "New to X?",
+]
+
+
 @pytest.mark.skipif(not ALL_FIXTURES, reason="No defuddle fixtures found")
 class TestDefuddleParityQuality:
-    """Level 1 parity: metadata + content coverage + no severe noise."""
+    """Level 1 parity: metadata + content coverage + no severe noise.
+
+    NOTE: This is a baseline-establishment task, not a TDD cycle.
+    Some tests are expected to fail initially — they track quality
+    improvement as we port defuddle features.
+    """
 
     @pytest.mark.parametrize("fixture", ALL_FIXTURES, ids=FIXTURE_IDS)
     def test_content_is_not_empty(self, fixture: DefuddleFixture) -> None:
@@ -235,6 +284,36 @@ class TestDefuddleParityQuality:
         html = fixture.html_path.read_text(encoding="utf-8")
         result = extract_web_content(html, fixture.url)
         assert result.markdown.strip(), f"{fixture.name}: empty markdown"
+
+    @pytest.mark.parametrize("fixture", ALL_FIXTURES, ids=FIXTURE_IDS)
+    def test_metadata_title_extracted(
+        self, fixture: DefuddleFixture
+    ) -> None:
+        """Extraction must produce a non-empty title when defuddle does."""
+        expected_meta, _ = _parse_expected_markdown(fixture.expected_path)
+        expected_title = expected_meta.get("title", "")
+        if not expected_title:
+            pytest.skip("Defuddle expected has no title")
+
+        html = fixture.html_path.read_text(encoding="utf-8")
+        result = extract_web_content(html, fixture.url)
+        actual_title = getattr(result.metadata, "title", "") or ""
+        assert actual_title.strip(), (
+            f"{fixture.name}: no title extracted "
+            f"(defuddle expects: {expected_title!r})"
+        )
+
+    @pytest.mark.parametrize("fixture", ALL_FIXTURES, ids=FIXTURE_IDS)
+    def test_no_site_chrome_noise(self, fixture: DefuddleFixture) -> None:
+        """Extracted markdown must not contain known site-chrome noise."""
+        html = fixture.html_path.read_text(encoding="utf-8")
+        result = extract_web_content(html, fixture.url)
+        md = result.markdown
+
+        found_noise = [p for p in _NOISE_PATTERNS if p in md]
+        assert not found_noise, (
+            f"{fixture.name}: site chrome noise found: {found_noise}"
+        )
 
     @pytest.mark.parametrize("fixture", ALL_FIXTURES, ids=FIXTURE_IDS)
     def test_word_count_within_tolerance(
@@ -264,7 +343,7 @@ class TestDefuddleParityQuality:
 - [ ] **Step 2: Run the tests to establish baseline**
 
 ```bash
-cd packages/markitai && python -m pytest tests/integration/test_defuddle_parity_quality.py -v --tb=short 2>&1 | tail -30
+cd packages/markitai && uv run pytest tests/integration/test_defuddle_parity_quality.py -v --tb=short 2>&1 | tail -30
 ```
 
 Expected: Some tests pass, some fail. This is the baseline. Record pass/fail counts.
@@ -298,7 +377,7 @@ def test_defuddle_fixture_extraction_performance() -> None:
     results: list[tuple[str, float]] = []
     for html_path in sorted(defuddle_dir.glob("*.html"))[:10]:  # Sample 10
         html = html_path.read_text(encoding="utf-8")
-        url = f"https://{html_path.stem.split('--', 1)[-1]}"
+        url = _extract_og_url(html) or f"https://{html_path.stem.split('--', 1)[-1]}"
 
         start = time.perf_counter()
         extract_web_content(html, url)
@@ -328,7 +407,7 @@ from pathlib import Path
 - [ ] **Step 2: Run baseline profiling**
 
 ```bash
-cd packages/markitai && python -m pytest tests/integration/test_webextract_benchmarks.py::test_defuddle_fixture_extraction_performance -v -s
+cd packages/markitai && uv run pytest tests/integration/test_webextract_benchmarks.py::test_defuddle_fixture_extraction_performance -v -s
 ```
 
 Expected: Performance numbers printed. Record baseline for comparison after optimization.
@@ -427,7 +506,7 @@ def test_joined_selector_removes_same_elements_as_individual() -> None:
 - [ ] **Step 2: Run test to verify it passes (validates current behavior)**
 
 ```bash
-cd packages/markitai && python -m pytest tests/unit/webextract/test_removals.py -v -k "test_joined"
+cd packages/markitai && uv run pytest tests/unit/webextract/test_removals.py -v -k "test_joined"
 ```
 
 - [ ] **Step 3: Add EXACT_SELECTORS_JOINED constant**
@@ -486,7 +565,7 @@ from markitai.webextract.constants import (
 - [ ] **Step 5: Run all existing selector tests**
 
 ```bash
-cd packages/markitai && python -m pytest tests/unit/webextract/test_removals.py -v
+cd packages/markitai && uv run pytest tests/unit/webextract/test_removals.py -v
 ```
 
 Expected: All tests pass.
@@ -494,7 +573,7 @@ Expected: All tests pass.
 - [ ] **Step 6: Run full webextract test suite for regression**
 
 ```bash
-cd packages/markitai && python -m pytest tests/unit/webextract/ -x -q
+cd packages/markitai && uv run pytest tests/unit/webextract/ -x -q
 ```
 
 Expected: No regressions.
@@ -516,14 +595,36 @@ This is the biggest performance win — replacing up to 5 `parse_html()` calls w
 - Modify: `packages/markitai/src/markitai/webextract/pipeline.py:155-373`
 - Test: existing `packages/markitai/tests/unit/webextract/test_pipeline.py`
 
-- [ ] **Step 1: Write test to verify extraction produces identical output after refactor**
+- [ ] **Step 1: Snapshot current extraction output BEFORE refactoring**
 
-Add a regression guard test:
+Run the following to capture a golden snapshot of the current output. This will be compared AFTER the refactor to verify equivalence:
+
+```bash
+cd packages/markitai && uv run python -c "
+from pathlib import Path
+from markitai.webextract import extract_web_content
+
+fixture_dir = Path('tests/fixtures/web')
+html = (fixture_dir / 'x_status_2030105637204676808.playwright.html').read_text()
+url = 'https://x.com/ixiaowenz/status/2030105637204676808'
+result = extract_web_content(html, url)
+
+snapshot = Path('tests/unit/webextract/_extraction_context_snapshot.txt')
+snapshot.write_text(f'word_count={result.word_count}\n---\n{result.markdown}')
+print(f'Snapshot saved: {result.word_count} words, {len(result.markdown)} chars')
+"
+```
+
+- [ ] **Step 2: Write regression test that compares against the snapshot**
 
 ```python
-def test_extraction_context_produces_identical_output() -> None:
-    """Refactoring retry logic must not change extraction output."""
+def test_extraction_context_output_matches_pre_refactor_snapshot() -> None:
+    """Verify ExtractionContext refactor produces identical output."""
     from pathlib import Path
+
+    snapshot_path = Path(__file__).parent / "_extraction_context_snapshot.txt"
+    if not snapshot_path.exists():
+        pytest.skip("Pre-refactor snapshot not found — run Step 1 first")
 
     fixture_dir = Path(__file__).parents[2] / "fixtures" / "web"
     html_path = fixture_dir / "x_status_2030105637204676808.playwright.html"
@@ -532,21 +633,22 @@ def test_extraction_context_produces_identical_output() -> None:
 
     html = html_path.read_text(encoding="utf-8")
     url = "https://x.com/ixiaowenz/status/2030105637204676808"
-
     result = extract_web_content(html, url)
-    # Snapshot key properties
-    assert result.markdown.strip()
-    assert result.word_count > 0
-    # Run again to verify determinism
-    result2 = extract_web_content(html, url)
-    assert result.markdown == result2.markdown
-    assert result.word_count == result2.word_count
+
+    snapshot = snapshot_path.read_text(encoding="utf-8")
+    header, expected_md = snapshot.split("\n---\n", 1)
+    expected_wc = int(header.split("=")[1])
+
+    assert result.word_count == expected_wc, (
+        f"Word count changed: {result.word_count} vs {expected_wc}"
+    )
+    assert result.markdown == expected_md, "Markdown output changed after refactor"
 ```
 
-- [ ] **Step 2: Run test — should pass (validates current behavior)**
+- [ ] **Step 2b: Run test — should pass (snapshot matches current output)**
 
 ```bash
-cd packages/markitai && python -m pytest tests/unit/webextract/test_pipeline.py -v -k "test_extraction_context"
+cd packages/markitai && uv run pytest tests/unit/webextract/test_pipeline.py -v -k "test_extraction_context_output"
 ```
 
 - [ ] **Step 3: Apply `_ExtractionContext` + `_extract_generic` + `_extract_with_retry` refactor atomically**
@@ -733,9 +835,9 @@ Delete the `_rebuild_retry_root` function (lines 364-373 in old code) — it is 
 - [ ] **Step 5: Run all webextract tests**
 
 ```bash
-cd packages/markitai && python -m pytest tests/unit/webextract/ -x -q
-cd packages/markitai && python -m pytest tests/integration/test_defuddle_parity.py -x -q
-cd packages/markitai && python -m pytest tests/integration/test_webextract_benchmarks.py -x -q
+cd packages/markitai && uv run pytest tests/unit/webextract/ -x -q
+cd packages/markitai && uv run pytest tests/integration/test_defuddle_parity.py -x -q
+cd packages/markitai && uv run pytest tests/integration/test_webextract_benchmarks.py -x -q
 ```
 
 Expected: All tests pass. If `copy.deepcopy` causes issues, the determinism test from Step 1 will catch it.
@@ -749,104 +851,104 @@ git commit -m "perf: introduce ExtractionContext to eliminate redundant HTML par
 
 ---
 
-### Task 6: Merge markdown preprocessing into standardize
+### Task 6: Eliminate extra parse in pipeline's markdown path
 
-Eliminate the extra `BeautifulSoup` parse in `_preprocess_for_markdown()` by moving its logic into `standardize_content()` which already operates on a parsed DOM.
+**Goal**: Eliminate the redundant `BeautifulSoup` parse that `_preprocess_for_markdown()` creates inside `render_markdown()`. **DO NOT modify `render_markdown()`'s public contract** — external callers (including `test_markdown_fidelity.py`) depend on it performing preprocessing on its own.
+
+**Strategy**: In the pipeline's `_extract_once()`, call the three preprocessing functions directly on the already-parsed `root` Tag, then call `_html_to_markdown()` directly (bypassing `render_markdown()` and its redundant re-parse). `render_markdown()` remains unchanged for all external callers.
 
 **Files:**
-- Modify: `packages/markitai/src/markitai/webextract/standardize.py`
-- Modify: `packages/markitai/src/markitai/webextract/markdown.py`
+- Modify: `packages/markitai/src/markitai/webextract/pipeline.py:223-248` (`_extract_once`)
 - Test: existing tests in `packages/markitai/tests/unit/webextract/`
 
-- [ ] **Step 1: Read current preprocessing functions to understand what moves**
-
-Read `packages/markitai/src/markitai/webextract/markdown.py` functions:
-- `_preprocess_for_markdown()` — does srcset resolution, embed canonicalization, figcaption preservation
-- `render_markdown()` — calls preprocess then `_html_to_markdown`
-
-The goal: move the three preprocessing operations into `standardize_content()` which receives a `Tag` (already parsed). Then `render_markdown()` can skip the preprocess step and call `_html_to_markdown()` directly on `str(root)`.
-
-- [ ] **Step 2: Write regression test to snapshot current markdown output**
+- [ ] **Step 1: Write regression test to snapshot current pipeline output**
 
 ```python
-def test_markdown_output_stable_after_preprocess_merge() -> None:
-    """Moving preprocessing to standardize must not change final markdown."""
+def test_pipeline_output_stable_after_preprocess_bypass() -> None:
+    """Bypassing render_markdown in pipeline must not change extraction output."""
     html = """
     <article>
+        <p>Main content paragraph with enough words to be meaningful for extraction.</p>
         <img srcset="small.jpg 400w, large.jpg 800w" src="small.jpg" alt="test">
         <iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe>
         <figure><img src="photo.jpg" alt="photo"><figcaption>A caption</figcaption></figure>
     </article>
     """
     result = extract_web_content(html, "https://example.com/article")
-    # These are the behaviors we must preserve:
     assert "large.jpg" in result.markdown  # srcset picks largest
     assert "youtube.com/watch" in result.markdown  # embed canonicalized
     assert "caption" in result.markdown.lower()  # figcaption preserved
 ```
 
-- [ ] **Step 3: Run test to verify it passes**
+- [ ] **Step 2: Run test to verify it passes (current behavior)**
 
 ```bash
-cd packages/markitai && python -m pytest tests/unit/webextract/test_pipeline.py -v -k "test_markdown_output_stable"
+cd packages/markitai && uv run pytest tests/unit/webextract/test_pipeline.py -v -k "test_pipeline_output_stable"
 ```
 
-- [ ] **Step 4: Move preprocessing functions from `markdown.py` to `standardize.py`**
+- [ ] **Step 3: Modify `_extract_once` to bypass `render_markdown`**
 
-The three functions (`_resolve_srcset`, `_canonicalize_embeds`, `_preserve_figure_captions`) in `markdown.py` already take a `BeautifulSoup` argument and operate in-place. Since `Tag` is a parent class of `BeautifulSoup`, these functions work on `Tag` without signature changes.
-
-In `standardize.py`, add these imports from `markdown.py`:
+In `pipeline.py`, change `_extract_once` (around line 223-248). Instead of calling `render_markdown(clean_html)` which re-parses HTML for preprocessing, call the preprocessing functions on the `root` Tag directly, then call `_html_to_markdown()`:
 
 ```python
 from markitai.webextract.markdown import (
+    _html_to_markdown,
+    _postprocess_markdown,
     _resolve_srcset,
     _canonicalize_embeds,
     _preserve_figure_captions,
 )
-```
 
-Then add to the end of `standardize_content()`, before the return:
+def _extract_once(
+    root: Tag | BeautifulSoup,
+    metadata: object,
+    md_instance: object,
+    url: str,
+    *,
+    use_partial_selectors: bool = True,
+    use_hidden_removal: bool = True,
+    use_scoring: bool = True,
+) -> tuple[str, str, dict[str, int]]:
+    """Run extraction pipeline once and return (clean_html, markdown, removal_stats)."""
+    title = getattr(metadata, "title", None)
+    removal_stats: dict[str, int] = {}
+    if isinstance(root, Tag):
+        removal_stats = apply_removals(
+            root,
+            use_partial_selectors=use_partial_selectors,
+            use_hidden_removal=use_hidden_removal,
+            use_scoring=use_scoring,
+        )
+    if isinstance(root, Tag):
+        standardize_content(root, title=title, base_url=url)
+    sanitize_tag_tree(root)
 
-```python
-    # ── Markdown fidelity preprocessing (moved from markdown.py) ──
+    # Apply markdown preprocessing on the already-parsed Tag (avoids re-parse)
     _resolve_srcset(root)
     _canonicalize_embeds(root)
     _preserve_figure_captions(root)
+
+    clean_html = str(root)
+    markdown = _html_to_markdown(clean_html, md_instance)
+    markdown = _postprocess_markdown(markdown)
+    return clean_html, markdown, removal_stats
 ```
 
-Note: `_canonicalize_embeds` takes `(soup)` with NO `base_url` parameter — the existing function signature is `_canonicalize_embeds(soup: BeautifulSoup) -> None`.
-
-- [ ] **Step 5: Remove `_preprocess_for_markdown` call from `render_markdown`**
-
-In `markdown.py`, change `render_markdown()` (line 45) from:
-
-```python
-    html = _preprocess_for_markdown(html)
-    markdown = _html_to_markdown(html, md_instance)
-```
-
-to:
-
-```python
-    markdown = _html_to_markdown(html, md_instance)
-```
-
-The `_preprocess_for_markdown` function and the three helper functions it calls (`_resolve_srcset`, `_canonicalize_embeds`, `_preserve_figure_captions`) should be kept in `markdown.py` for now (they are imported by `standardize.py`). Delete `_preprocess_for_markdown` itself since nothing calls it anymore.
-
-- [ ] **Step 6: Run all tests to verify no regression**
+- [ ] **Step 4: Run all tests — including markdown fidelity tests**
 
 ```bash
-cd packages/markitai && python -m pytest tests/unit/webextract/ -x -q
-cd packages/markitai && python -m pytest tests/integration/ -x -q
+cd packages/markitai && uv run pytest tests/unit/webextract/ -x -q
+cd packages/markitai && uv run pytest tests/unit/webextract/test_markdown_fidelity.py -v
+cd packages/markitai && uv run pytest tests/integration/ -x -q
 ```
 
-Expected: All tests pass, including the regression test from Step 2.
+Expected: All tests pass. `render_markdown()` is unchanged, so `test_markdown_fidelity.py` tests remain green. The pipeline regression test from Step 1 confirms identical output.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add packages/markitai/src/markitai/webextract/standardize.py packages/markitai/src/markitai/webextract/markdown.py
-git commit -m "perf: merge markdown preprocessing into standardize to eliminate extra parse"
+git add packages/markitai/src/markitai/webextract/pipeline.py
+git commit -m "perf: bypass render_markdown in pipeline to eliminate extra BeautifulSoup parse"
 ```
 
 ---
@@ -859,13 +961,13 @@ git commit -m "perf: merge markdown preprocessing into standardize to eliminate 
 - [ ] **Step 1: Run performance benchmarks**
 
 ```bash
-cd packages/markitai && python -m pytest tests/integration/test_webextract_benchmarks.py -v -s
+cd packages/markitai && uv run pytest tests/integration/test_webextract_benchmarks.py -v -s
 ```
 
 - [ ] **Step 2: Run defuddle fixture benchmarks**
 
 ```bash
-cd packages/markitai && python -m pytest tests/integration/test_webextract_benchmarks.py::test_defuddle_fixture_extraction_performance -v -s
+cd packages/markitai && uv run pytest tests/integration/test_webextract_benchmarks.py::test_defuddle_fixture_extraction_performance -v -s
 ```
 
 - [ ] **Step 3: Compare with baseline from Task 3**
@@ -875,7 +977,7 @@ Compare the average ms/fixture before and after optimizations. Document the impr
 - [ ] **Step 4: Run full test suite to verify everything is green**
 
 ```bash
-cd packages/markitai && python -m pytest tests/ -x -q --timeout=60
+cd packages/markitai && uv run pytest tests/ -x -q
 ```
 
 Expected: All tests pass. Phase 1 complete.
