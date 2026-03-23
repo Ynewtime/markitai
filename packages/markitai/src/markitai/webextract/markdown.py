@@ -43,8 +43,8 @@ def render_markdown(html: str, *, md_instance: object | None = None) -> str:
     if not html or not html.strip():
         return ""
     html = _preprocess_for_markdown(html)
-    markdown = _html_to_markdown(html, md_instance)
-    return _postprocess_markdown(markdown)
+    markdown = html_to_markdown(html, md_instance)
+    return postprocess_markdown(markdown)
 
 
 # ---------------------------------------------------------------------------
@@ -67,13 +67,13 @@ def _preprocess_for_markdown(html: str) -> str:
         Mutated HTML string ready for MarkItDown.
     """
     soup = BeautifulSoup(html, "html.parser")
-    _resolve_srcset(soup)
-    _canonicalize_embeds(soup)
-    _preserve_figure_captions(soup)
+    resolve_srcset(soup)
+    canonicalize_embeds(soup)
+    preserve_figure_captions(soup)
     return str(soup)
 
 
-def _resolve_srcset(soup: BeautifulSoup) -> None:
+def resolve_srcset(soup: Tag | BeautifulSoup) -> None:
     """Replace each ``img[srcset]`` src with the highest-resolution candidate.
 
     The srcset value is a comma-separated list of ``url width`` or ``url dpr``
@@ -82,7 +82,7 @@ def _resolve_srcset(soup: BeautifulSoup) -> None:
     present.
 
     Args:
-        soup: BeautifulSoup tree (mutated in place).
+        soup: BeautifulSoup tree or Tag subtree (mutated in place).
     """
     for img in soup.find_all("img"):
         if not isinstance(img, Tag):
@@ -149,16 +149,20 @@ _TWITTER_EMBED_RE = re.compile(
 )
 
 
-def _canonicalize_embeds(soup: BeautifulSoup) -> None:
+def canonicalize_embeds(root: Tag | BeautifulSoup) -> None:
     """Replace embed ``<iframe>`` elements with canonical ``<a>`` links.
 
     Handles YouTube, Vimeo, and Twitter/X embeds.  Unknown iframes are left
     intact.
 
     Args:
-        soup: BeautifulSoup tree (mutated in place).
+        root: BeautifulSoup tree or Tag subtree (mutated in place).
     """
-    for iframe in soup.find_all("iframe"):
+    tag_factory: BeautifulSoup = (
+        root if isinstance(root, BeautifulSoup) else BeautifulSoup("", "html.parser")
+    )
+
+    for iframe in root.find_all("iframe"):
         if not isinstance(iframe, Tag):
             continue
         src = str(iframe.get("src", "")).strip()
@@ -166,7 +170,7 @@ def _canonicalize_embeds(soup: BeautifulSoup) -> None:
             continue
         canonical = _embed_src_to_canonical(src)
         if canonical is not None:
-            link = soup.new_tag("a", href=canonical)
+            link = tag_factory.new_tag("a", href=canonical)
             link.string = canonical
             iframe.replace_with(link)
 
@@ -210,7 +214,7 @@ def _embed_src_to_canonical(src: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _preserve_figure_captions(soup: BeautifulSoup) -> None:
+def preserve_figure_captions(root: Tag | BeautifulSoup) -> None:
     """Ensure ``<figcaption>`` text survives MarkItDown conversion.
 
     MarkItDown drops ``<figcaption>`` elements.  We rewrite each
@@ -218,9 +222,17 @@ def _preserve_figure_captions(soup: BeautifulSoup) -> None:
     immediately after the image, which MarkItDown renders faithfully.
 
     Args:
-        soup: BeautifulSoup tree (mutated in place).
+        root: BeautifulSoup tree or Tag subtree (mutated in place).
     """
-    for figure in soup.find_all("figure"):
+    # new_tag() is only available on BeautifulSoup, not plain Tag.
+    # Use the root directly if it's a BeautifulSoup, otherwise create
+    # a lightweight factory — the created tags are inserted into root's
+    # tree regardless of which soup object created them.
+    tag_factory: BeautifulSoup = (
+        root if isinstance(root, BeautifulSoup) else BeautifulSoup("", "html.parser")
+    )
+
+    for figure in root.find_all("figure"):
         if not isinstance(figure, Tag):
             continue
         figcaption = figure.find("figcaption")
@@ -234,8 +246,8 @@ def _preserve_figure_captions(soup: BeautifulSoup) -> None:
         figcaption.decompose()
 
         # Append an <em><p> after the figure's image (or at end of figure)
-        caption_tag = soup.new_tag("p")
-        em_tag = soup.new_tag("em")
+        caption_tag = tag_factory.new_tag("p")
+        em_tag = tag_factory.new_tag("em")
         em_tag.string = caption_text
         caption_tag.append(em_tag)
 
@@ -252,7 +264,7 @@ def _preserve_figure_captions(soup: BeautifulSoup) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _html_to_markdown(html: str, md_instance: object | None = None) -> str:
+def html_to_markdown(html: str, md_instance: object | None = None) -> str:
     """Convert HTML to Markdown using MarkItDown.
 
     Args:
@@ -290,7 +302,7 @@ _EXCESS_BLANK_LINES_RE = re.compile(r"\n{4,}")
 _ORPHAN_SEPARATOR_RE = re.compile(r"^\s*[·|—–•]\s*$", re.MULTILINE)
 
 
-def _postprocess_markdown(markdown: str) -> str:
+def postprocess_markdown(markdown: str) -> str:
     """Apply post-processing to the raw MarkItDown output.
 
     Transformations:

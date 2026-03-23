@@ -235,20 +235,39 @@ def _build_shadow_dom_normalize_script() -> str:
     """
 
 
-def _build_dom_cleanup_script() -> str:
+def _build_dom_cleanup_script(url: str | None = None) -> str:
     """Build JavaScript for removing DOM noise before content extraction.
 
     Borrowed from baoyu-skills url-to-markdown pattern:
     Remove navigation, ads, popups, cookie banners, and inline event handlers.
 
+    Args:
+        url: Optional page URL used to look up site-specific noise selectors.
+
     Returns:
         JavaScript code string for page.evaluate()
     """
     import json
+    from urllib.parse import urlparse
 
-    from markitai.constants import DOM_NOISE_ATTRIBUTES, DOM_NOISE_SELECTORS
+    from markitai.constants import (
+        DOM_NOISE_ATTRIBUTES,
+        DOM_NOISE_SELECTORS,
+        SITE_NOISE_SELECTORS,
+    )
 
-    selectors_js = ", ".join(json.dumps(s) for s in DOM_NOISE_SELECTORS)
+    all_selectors = list(DOM_NOISE_SELECTORS)
+    if url:
+        try:
+            domain = urlparse(url).hostname or ""
+            # Strip leading 'www.' for lookup
+            domain = domain.removeprefix("www.")
+            site_selectors = SITE_NOISE_SELECTORS.get(domain, ())
+            all_selectors.extend(site_selectors)
+        except Exception:
+            pass
+
+    selectors_js = ", ".join(json.dumps(s) for s in all_selectors)
     attributes_js = ", ".join(json.dumps(a) for a in DOM_NOISE_ATTRIBUTES)
 
     return f"""
@@ -436,6 +455,7 @@ class PlaywrightRenderer:
         extra_http_headers: dict[str, str] | None = None,
         user_agent: str | None = None,
         http_credentials: dict[str, str] | None = None,
+        skip_auto_scroll: bool = False,
         # Session persistence
         session_key: str | None = None,
         persist_context: bool = False,
@@ -494,17 +514,20 @@ class PlaywrightRenderer:
                     logger.debug(
                         f"wait_for_selector '{wait_for_selector}' timed out: {e}"
                     )
+                # Short stabilization wait after selector found
+                if extra_wait_ms > 0:
+                    await asyncio.sleep(extra_wait_ms / 1000)
             elif extra_wait_ms > 0:
                 await asyncio.sleep(extra_wait_ms / 1000)
 
             # Auto-scroll to trigger lazy-loaded content
-            # (inspired by baoyu-skills url-to-markdown)
-            try:
-                scroll_script = _build_auto_scroll_script()
-                await page.evaluate(scroll_script)
-                await asyncio.sleep(DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS / 1000)
-            except Exception as e:
-                logger.debug(f"Auto-scroll failed (non-critical): {e}")
+            if not skip_auto_scroll:
+                try:
+                    scroll_script = _build_auto_scroll_script()
+                    await page.evaluate(scroll_script)
+                    await asyncio.sleep(DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS / 1000)
+                except Exception as e:
+                    logger.debug(f"Auto-scroll failed (non-critical): {e}")
 
             # Browser DOM normalize: flatten live shadow roots before extraction
             try:
@@ -515,7 +538,7 @@ class PlaywrightRenderer:
 
             # DOM cleanup: remove noise elements before extraction
             try:
-                cleanup_script = _build_dom_cleanup_script()
+                cleanup_script = _build_dom_cleanup_script(url=url)
                 await page.evaluate(cleanup_script)
             except Exception as e:
                 logger.debug(f"DOM cleanup failed (non-critical): {e}")
@@ -638,6 +661,8 @@ async def fetch_with_playwright(
     extra_http_headers: dict[str, str] | None = None,
     user_agent: str | None = None,
     http_credentials: dict[str, str] | None = None,
+    # Auto-scroll control
+    skip_auto_scroll: bool = False,
     # Session persistence
     session_key: str | None = None,
     persist_context: bool = False,
@@ -645,6 +670,8 @@ async def fetch_with_playwright(
     """Fetch URL using Playwright (reuses renderer if provided)."""
     # Collect advanced kwargs
     advanced_kwargs: dict[str, Any] = {}
+    if skip_auto_scroll:
+        advanced_kwargs["skip_auto_scroll"] = skip_auto_scroll
     if wait_for_selector is not None:
         advanced_kwargs["wait_for_selector"] = wait_for_selector
     if cookies is not None:

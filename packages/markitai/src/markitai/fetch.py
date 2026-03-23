@@ -834,8 +834,12 @@ def _resolve_playwright_profile_overrides(
     """Resolve domain-specific Playwright overrides from config."""
     from urllib.parse import urlparse
 
+    from markitai.domain_profiles import BUILTIN_DOMAIN_PROFILES
+
     domain = urlparse(url).netloc.lower()
     profile = domain_profiles.get(domain)
+    if not profile:
+        profile = BUILTIN_DOMAIN_PROFILES.get(domain)
     if not profile:
         return {}
 
@@ -846,6 +850,10 @@ def _resolve_playwright_profile_overrides(
         out["wait_for"] = profile.wait_for
     if profile.extra_wait_ms is not None:
         out["extra_wait_ms"] = profile.extra_wait_ms
+    if profile.skip_auto_scroll:
+        out["skip_auto_scroll"] = profile.skip_auto_scroll
+    if profile.reject_resource_patterns:
+        out["reject_resource_patterns"] = profile.reject_resource_patterns
     return out
 
 
@@ -1733,6 +1741,15 @@ async def _dispatch_strategy(
     validators_to_write: tuple[str | None, str | None] | None = None
 
     if strategy == FetchStrategy.PLAYWRIGHT:
+        # FxTwitter enrichment: try API before launching browser for tweet URLs
+        if not explicit_strategy:
+            from markitai.fetch_fxtwitter import fetch_with_fxtwitter
+
+            fxtwitter_result = await fetch_with_fxtwitter(url)
+            if fxtwitter_result is not None:
+                logger.debug("[Fetch] FxTwitter succeeded for {}", url)
+                return fxtwitter_result, None
+
         from markitai.fetch_playwright import (
             fetch_with_playwright,
             is_playwright_available,

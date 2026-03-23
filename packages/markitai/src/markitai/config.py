@@ -517,6 +517,14 @@ class DomainProfileConfig(BaseModel):
         default=None,
         description="Custom strategy order for this domain. Overrides global and prefer_strategy.",
     )
+    skip_auto_scroll: bool = Field(
+        default=False,
+        description="Skip auto-scrolling for single-content pages (tweets, issues, docs).",
+    )
+    reject_resource_patterns: list[str] | None = Field(
+        default=None,
+        description="URL patterns to block during Playwright navigation (e.g. '**/analytics/**').",
+    )
 
     @field_validator("strategy_priority")
     @classmethod

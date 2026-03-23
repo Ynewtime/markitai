@@ -9,11 +9,11 @@ from bs4 import BeautifulSoup, Tag
 from markitai.webextract.dom import parse_html
 from markitai.webextract.extractors.registry import find_extractor
 from markitai.webextract.markdown import (
-    _html_to_markdown,
-    _postprocess_markdown,
-    _preserve_figure_captions,
-    _resolve_srcset,
+    html_to_markdown,
+    postprocess_markdown,
+    preserve_figure_captions,
     render_markdown,
+    resolve_srcset,
 )
 from markitai.webextract.metadata import extract_metadata
 from markitai.webextract.quality import assess_native_markdown
@@ -160,7 +160,15 @@ def _build_from_resolved(
 
 
 class _ExtractionContext:
-    """Cache expensive computations across retry levels."""
+    """Cache expensive computations across retry levels.
+
+    Parses HTML once and caches ``original_soup`` and ``metadata``.
+    Every extraction level (including Level 1) uses
+    ``fresh_soup_and_root()`` which deep-copies the soup, ensuring
+    ``original_soup`` is never mutated by removals/standardization.
+    Mobile style pruning is the only pre-extraction mutation applied
+    to ``original_soup`` — it persists intentionally across all levels.
+    """
 
     def __init__(self, html: str, url: str) -> None:
         self.raw_html = html
@@ -190,8 +198,15 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
         Extracted web content with cleaned HTML and derived Markdown.
     """
     ctx = _ExtractionContext(html, url)
+
+    # Prune mobile-hidden elements before scoring.
+    # This mutates original_soup but that's OK — mobile style pruning
+    # should persist across all retry levels.
+    from markitai.webextract.mobile_styles import apply_mobile_style_pruning
+
+    apply_mobile_style_pruning(ctx.original_soup)
+
     extractor = find_extractor(url)
-    root = _pick_root(ctx.original_soup, extractor)
     diagnostics: dict[str, object] = {
         "extractor": extractor.name if extractor is not None else "generic",
         "schema_fallback_used": False,
@@ -199,7 +214,10 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
         "removed_partial_selectors": False,
     }
 
-    root = _maybe_apply_schema_fallback(ctx.original_soup, root, diagnostics)
+    # Use fresh_soup_and_root for Level 1 too — _extract_once mutates
+    # root in place (removals, standardize, sanitize), so operating on
+    # original_soup directly would corrupt it for subsequent retries.
+    _, root = ctx.fresh_soup_and_root(extractor, diagnostics)
 
     # Multi-level extraction with adaptive retry
     result = _extract_with_retry(
@@ -268,23 +286,14 @@ def _extract_once(
 
     # Apply markdown preprocessing directly on the parsed Tag to avoid
     # the redundant BeautifulSoup re-parse that render_markdown() performs.
-    # _resolve_srcset only needs find_all, which works on any Tag.
-    _resolve_srcset(root)
-    # _canonicalize_embeds is a no-op here: sanitize_tag_tree already
+    resolve_srcset(root)
+    # canonicalize_embeds is a no-op here: sanitize_tag_tree already
     # stripped all <iframe> elements.
-    # _preserve_figure_captions needs BeautifulSoup.new_tag() to create
-    # replacement elements.  Traverse up to the owning BeautifulSoup; its
-    # find_all will include root's descendants.  Any mutations outside root
-    # are harmless since we only serialize root below.
-    soup_owner: Tag | BeautifulSoup = root
-    while soup_owner.parent is not None:
-        soup_owner = soup_owner.parent
-    if isinstance(soup_owner, BeautifulSoup):
-        _preserve_figure_captions(soup_owner)
+    preserve_figure_captions(root)
 
     clean_html = str(root)
-    markdown = _html_to_markdown(clean_html, md_instance)
-    markdown = _postprocess_markdown(markdown)
+    markdown = html_to_markdown(clean_html, md_instance)
+    markdown = postprocess_markdown(markdown)
     return clean_html, markdown, removal_stats
 
 
@@ -429,41 +438,20 @@ def _maybe_apply_schema_fallback(
     return root
 
 
-def _retry_with_broader_root(
-    soup: BeautifulSoup,
-    original_root: Tag | BeautifulSoup,
-) -> Tag | BeautifulSoup | None:
-    """Attempt a broader extraction when initial root yielded too few words.
-
-    Strategy: fall back to ``<body>`` (or the full soup when ``<body>`` is
-    absent).  This captures content that sits outside the original scored
-    candidate---e.g. paragraphs placed directly under ``<body>``.
-
-    Returns:
-        A broader root element, or *None* if no better candidate exists.
-    """
-    body = soup.body
-    if body is None:
-        return None
-    # Avoid returning the same element the caller already tried.
-    if body is original_root:
-        return None
-    return body
-
-
-def _candidate_count(soup: BeautifulSoup) -> int:
-    return len(soup.find_all(["article", "main", "section", "div"])) or 1
-
-
 def _create_markitdown() -> object:
-    """Create a MarkItDown instance for HTML-to-Markdown conversion.
+    """Create a MarkItDown instance with WebExtract's custom converter.
 
-    Returns:
-        A MarkItDown instance that can be reused across multiple conversions.
+    Registers ``WebExtractHtmlConverter`` at higher priority than the
+    built-in ``HtmlConverter`` so code-block language detection and
+    other enhanced rules are applied.
     """
     from markitdown import MarkItDown
 
-    return MarkItDown()
+    from markitai.converter.webextract_html_converter import WebExtractHtmlConverter
+
+    md = MarkItDown()
+    md.register_converter(WebExtractHtmlConverter(), priority=-1)
+    return md
 
 
 def _html_fragment_to_markdown(html: str, md: object | None = None) -> str:

@@ -94,6 +94,53 @@ class TestStreamedContentNormalization:
         assert isinstance(result, str)
 
 
+class TestReactSsrBoundaryResolution:
+    """React SSR $RC boundaries should be resolved to actual content."""
+
+    def test_resolves_single_boundary(self) -> None:
+        html = """<html><body>
+        <!--$?--><template id="B:0"></template>Loading...<!--/$-->
+        <div hidden id="S:0"><p>Server-rendered content here.</p></div>
+        <script>$RC("B:0","S:0")</script>
+        </body></html>"""
+        result = preprocess_html(html)
+        assert "Server-rendered content here" in result
+        assert "$RC" not in result
+        assert 'id="B:0"' not in result
+        assert 'id="S:0"' not in result
+
+    def test_resolves_multiple_boundaries(self) -> None:
+        html = """<html><body>
+        <!--$?--><template id="B:0"></template>Loading A...<!--/$-->
+        <!--$?--><template id="B:1"></template>Loading B...<!--/$-->
+        <div hidden id="S:0"><p>Content A</p></div>
+        <div hidden id="S:1"><p>Content B</p></div>
+        <script>$RC("B:0","S:0")</script>
+        <script>$RC("B:1","S:1")</script>
+        </body></html>"""
+        result = preprocess_html(html)
+        assert "Content A" in result
+        assert "Content B" in result
+        assert "$RC" not in result
+        assert "Loading A" not in result
+        assert "Loading B" not in result
+
+    def test_no_change_when_no_boundaries(self) -> None:
+        html = "<html><body><p>Normal content</p></body></html>"
+        result = preprocess_html(html)
+        assert "Normal content" in result
+
+    def test_removes_loading_placeholder_text(self) -> None:
+        html = """<html><body>
+        <!--$?--><template id="B:0"></template>Loading spinner...<!--/$-->
+        <div hidden id="S:0"><p>Real content</p></div>
+        <script>$RC("B:0","S:0")</script>
+        </body></html>"""
+        result = preprocess_html(html)
+        assert "Loading spinner" not in result
+        assert "Real content" in result
+
+
 class TestNoscriptPromotion:
     """<noscript> content should be promoted when JS-dependent main content exists."""
 

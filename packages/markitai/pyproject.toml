@@ -36,6 +36,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "pywin32>=310; sys_platform == 'win32'",
     "questionary>=2.1.0",
+    "tinycss2>=1.2",
 ]
 
 [project.urls]

@@ -203,6 +203,24 @@ DOM_NOISE_ATTRIBUTES: tuple[str, ...] = (
     "onmouseout",
 )
 
+# Site-specific noise selectors injected into Playwright DOM cleanup
+# based on the URL domain. These target site chrome that the generic
+# selectors cannot match.
+_X_COM_NOISE_SELECTORS: tuple[str, ...] = (
+    '[data-testid="sidebarColumn"]',
+    '[data-testid="DMDrawer"]',
+    '[data-testid="sheetDialog"]',
+    '[data-testid="bottomBar"]',
+    '[data-testid="placementTracking"]',
+    '[aria-label="Sign up"]',
+    '[aria-label="Footer"]',
+)
+
+SITE_NOISE_SELECTORS: dict[str, tuple[str, ...]] = {
+    "x.com": _X_COM_NOISE_SELECTORS,
+    "twitter.com": _X_COM_NOISE_SELECTORS,
+}
+
 DEFAULT_JINA_TIMEOUT = 30  # seconds
 DEFAULT_JINA_RPM = 20  # Jina free tier: 20 requests per minute
 DEFAULT_JINA_BASE_URL = "https://r.jina.ai"
