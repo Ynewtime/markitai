@@ -8,7 +8,13 @@ from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.dom import parse_html
 from markitai.webextract.extractors.registry import find_extractor
-from markitai.webextract.markdown import render_markdown
+from markitai.webextract.markdown import (
+    _html_to_markdown,
+    _postprocess_markdown,
+    _preserve_figure_captions,
+    _resolve_srcset,
+    render_markdown,
+)
 from markitai.webextract.metadata import extract_metadata
 from markitai.webextract.quality import assess_native_markdown
 from markitai.webextract.removals import apply_removals
@@ -259,8 +265,26 @@ def _extract_once(
     if isinstance(root, Tag):
         standardize_content(root, title=title, base_url=url)
     sanitize_tag_tree(root)
+
+    # Apply markdown preprocessing directly on the parsed Tag to avoid
+    # the redundant BeautifulSoup re-parse that render_markdown() performs.
+    # _resolve_srcset only needs find_all, which works on any Tag.
+    _resolve_srcset(root)
+    # _canonicalize_embeds is a no-op here: sanitize_tag_tree already
+    # stripped all <iframe> elements.
+    # _preserve_figure_captions needs BeautifulSoup.new_tag() to create
+    # replacement elements.  Traverse up to the owning BeautifulSoup; its
+    # find_all will include root's descendants.  Any mutations outside root
+    # are harmless since we only serialize root below.
+    soup_owner: Tag | BeautifulSoup = root
+    while soup_owner.parent is not None:
+        soup_owner = soup_owner.parent
+    if isinstance(soup_owner, BeautifulSoup):
+        _preserve_figure_captions(soup_owner)
+
     clean_html = str(root)
-    markdown = render_markdown(clean_html, md_instance=md_instance)
+    markdown = _html_to_markdown(clean_html, md_instance)
+    markdown = _postprocess_markdown(markdown)
     return clean_html, markdown, removal_stats
 
 

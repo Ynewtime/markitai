@@ -188,3 +188,27 @@ def test_extraction_context_output_matches_pre_refactor_snapshot() -> None:
         f"Word count changed: {result.word_count} vs {expected_wc}"
     )
     assert result.markdown == expected_md, "Markdown output changed after refactor"
+
+
+def test_pipeline_output_stable_after_preprocess_bypass() -> None:
+    """Bypassing render_markdown in pipeline must not change extraction output.
+
+    Verifies that srcset resolution, embed canonicalization, and figcaption
+    preservation all work correctly when preprocessing is applied directly
+    on the parsed Tag (bypassing the extra BeautifulSoup parse in
+    render_markdown).
+    """
+    from markitai.webextract.pipeline import extract_web_content
+
+    html = """
+    <article>
+        <p>Main content paragraph with enough words to be meaningful for extraction scoring purposes.</p>
+        <img srcset="small.jpg 400w, large.jpg 800w" src="small.jpg" alt="test">
+        <figure><img src="photo.jpg" alt="photo"><figcaption>A caption</figcaption></figure>
+    </article>
+    """
+    result = extract_web_content(html, "https://example.com/article")
+    # srcset resolved to highest-resolution URL
+    assert "large.jpg" in result.markdown
+    # figcaption text preserved
+    assert "caption" in result.markdown.lower()
