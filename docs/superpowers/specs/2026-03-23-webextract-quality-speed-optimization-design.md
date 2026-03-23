@@ -63,7 +63,7 @@ Create `WebExtractMarkdownConverter` extending `_CustomMarkdownify` in a new `ma
 |------|--------|----------------|
 | Code block language detection | `defuddle/src/elements/code.ts` | `convert_pre()` — Extract language from `data-lang`, `class="language-*"`, Prism/Highlight.js/SyntaxHighlighter patterns (120+ languages) |
 | Table enhancement | `defuddle/src/markdown.ts` tables rule | `convert_table()` — Detect colspan/rowspan (preserve raw HTML), layout table extraction, ArXiv equation tables |
-| Image srcset smart selection | `defuddle/src/elements/images.ts` | `convert_img()` — Handle CDN URLs with commas in srcset, `data-src` lazy loading, base64 placeholder replacement |
+| Image rendering | `defuddle/src/markdown.ts` image rule | `convert_img()` — Final `<img>` → `![alt](src)` rendering only (srcset/lazy-load/placeholder handled in Module 5.1 standardization) |
 | List nesting & task lists | `defuddle/src/markdown.ts` lists rule | `convert_li()` — Tab indentation, `[x]`/`[ ]` checkbox, custom `start` numbering |
 
 ### P1 — Content Richness
@@ -111,7 +111,7 @@ Also enhance existing boilerplate truncation: cascade-delete all following sibli
 
 ### 2.2 CSS @media Mobile Style Analysis
 
-New module `webextract/removals/mobile_styles.py`.
+New module `webextract/mobile_styles.py` (NOT under `removals/` — see execution order below).
 
 **CSS parsing dependency**: Use `tinycss2` (maintained, standards-compliant, lightweight) to parse CSS from `<style>` tags. Pipeline:
 
@@ -121,7 +121,17 @@ New module `webextract/removals/mobile_styles.py`.
 4. Within those rules, find selectors whose declarations include `display: none`
 5. Apply those selectors via BeautifulSoup's `.select()` to remove elements
 
-Purpose: Suppress sidebars/navbars hidden on mobile that inflate content scoring noise.
+**Execution order**: This is a **document-level pruning step** that runs in `pipeline.py`'s `_extract_generic()` BEFORE `select_best_candidate()`. This ensures mobile-hidden sidebars/navbars are removed before they inflate content scoring. It operates on the full parsed soup, not on the selected content root.
+
+```
+pipeline flow:
+  parse_html(html)
+  → apply_mobile_style_pruning(soup)    ← NEW: prune before scoring
+  → select_best_candidate(soup)
+  → apply_removals(root, ...)
+  → standardize_content(root)
+  → render_markdown(root)
+```
 
 **New dependency**: Add `tinycss2` to `pyproject.toml` dependencies.
 
@@ -158,31 +168,34 @@ Inject into `_build_dom_cleanup_script()` based on URL domain.
 
 ### 3.1 Twitter/X FxTwitter API Integration
 
-New file `fetch_fxtwitter.py`:
+**Architecture**: FxTwitter is NOT a global fetch strategy (no new `FetchStrategy` enum value, no changes to config validation or policy engine). It is an **x.com/twitter.com-specific fetch enrichment** invoked inside `fetch.py`'s `_dispatch_strategy()` when:
+- URL matches `x.com` or `twitter.com` AND contains `/status/\d+`
+- The current strategy is `playwright` (or would fall through to playwright)
 
-**Strategy position**: Higher priority than playwright, lower than defuddle.
+The enrichment is attempted **before** launching Playwright. If it succeeds, the result is returned directly as a `FetchResult`; if it fails, execution continues to Playwright as usual.
 
-```
-x.com/twitter.com + /status/\d+ strategy order:
-defuddle → fxtwitter (new) → playwright → static
-```
+New file `fetch_fxtwitter.py` containing:
+- `async def fetch_with_fxtwitter(url: str, ...) -> FetchResult | None`
 
 **Implementation**:
+- Parse `{user}` and `{id}` from URL pattern
 - `GET https://api.fxtwitter.com/{user}/status/{id}`
 - Parse JSON: full tweet text, media URLs, quoted tweets, author info, timestamps
 - For X Articles (`tweet.article`): parse Draft.js block structure (unstyled/header/atomic/list-item)
 - For regular tweets: parse text + facets (mention/url/media rich text markers)
 - Convert to markitai's `ConversationThread` semantic structure, reuse `render_semantic_content()`
+- Return `None` on any failure (timeout, API error, parse error) to trigger fallback
 
-**Fallback chain**:
-- FxTwitter fails → Twitter oembed API (`publish.twitter.com/oembed?url=...&omit_script=true`)
+**Fallback chain within the enrichment**:
+- FxTwitter fails → try Twitter oembed API (`publish.twitter.com/oembed?url=...&omit_script=true`)
 - oembed returns blockquote HTML (may truncate long tweets, but still better than noisy playwright)
+- Both fail → return `None`, continue to playwright
 
 **Operational concerns**:
 - FxTwitter is a community service (not official Twitter API) — treat as best-effort, with 10s timeout
-- Rate limiting: undocumented, use conservative 20 RPM (same as defuddle strategy)
+- Rate limiting: undocumented, use conservative 20 RPM (reuse existing `_SlidingWindowRateLimiter`)
 - Cache successful responses in fetch cache (strategy key = "fxtwitter")
-- If FxTwitter is down, fall through to next strategy silently (no retry)
+- Silent fallback on failure (no retry, no error propagation)
 
 ### 3.2 XTweetExtractor Quality Gate Fix
 
@@ -192,12 +205,21 @@ Current `_QUOTE_CARD_PATTERN` (`^Quote$`) false-positive rejects tweets that quo
 
 ### 3.3 YouTube Transcript Enhancement
 
-Enhance `webextract/extractors/youtube_page.py`:
+**Architecture**: YouTube transcript/chapter fetching involves network IO (InnerTube API calls), but `extract_web_content(html, url)` is a synchronous, pure-HTML-input interface. To preserve this contract, transcript fetching is done at **fetch time** (not in the extractor).
 
-- **InnerTube API caption fetching**: POST `youtube.com/youtubei/v1/player`, get `captionTracks`, download caption XML
-- **Caption grouping algorithm**: Group by speaker (`>>`/`- ` markers) and sentence boundaries, merge short sentences (< 80 words, < 45s span)
-- **Chapter extraction**: From player overlay markersMap or engagement panel
+**Fetch-time enrichment** (in `fetch.py`):
+- When URL matches YouTube video pattern, **parallel-fetch** page HTML and InnerTube caption data
+- InnerTube API: POST `youtube.com/youtubei/v1/player` with video ID, get `captionTracks`, download caption XML
+- Store transcript data in `FetchResult.metadata["youtube_transcript"]`
 - **SSRF protection**: Validate caption URL hostname ends with `.youtube.com`
+
+**Extractor-side processing** (in `webextract/extractors/youtube_page.py`):
+- `extract_web_content()` receives pre-fetched transcript via an optional `context` parameter (or via metadata attached to the HTML)
+- Extractor only does offline processing: caption grouping, chapter formatting, markdown rendering
+- **Caption grouping algorithm**: Group by speaker (`>>`/`- ` markers) and sentence boundaries, merge short sentences (< 80 words, < 45s span)
+- **Chapter extraction**: From player response data (passed in metadata)
+
+This keeps the webextract pipeline synchronous and offline-testable. Tests mock the fetch layer, not the extractor.
 
 ### 3.4 Other Site Extractor Alignment
 
@@ -296,10 +318,11 @@ Port defuddle's exact retry acceptance heuristics (from `defuddle.ts` lines 74-1
 - Disable scoring removal, pattern removal, AND content pattern removal (not just scoring)
 - This handles card-style index pages where content is distributed across many small blocks
 
-### 5.4 DOM Parser Selection
+### ~~5.4 DOM Parser Selection~~ (REMOVED)
 
-- Playwright-rendered HTML: prefer `html.parser` (avoids lxml parsing differences on dynamic HTML)
-- Static-fetched HTML: keep lxml priority (speed advantage)
+~~Playwright-rendered HTML: prefer `html.parser`; Static-fetched HTML: keep lxml priority.~~
+
+**Removed**: The complexity of threading source context through `parse_html()` and all callers outweighs the marginal benefit. Keep the current lxml-preferred strategy uniformly. If specific parsing issues arise with dynamic HTML, address them case-by-case in standardization.
 
 ## Module 6: TDD Strategy — Reuse defuddle Test Suite
 
@@ -361,14 +384,20 @@ For each ported defuddle feature:
 
 ### 6.6 Performance Benchmark Tests
 
+Align with the existing benchmark infrastructure in `tests/integration/test_webextract_benchmarks.py`, which uses `time.perf_counter()` and a 1000ms per-iteration budget. Do NOT introduce `pytest-benchmark` as a new dependency.
+
 ```python
-@pytest.mark.benchmark
-@pytest.mark.parametrize("fixture", ALL_DEFUDDLE_FIXTURES)
-def test_extraction_performance(fixture, benchmark):
+@pytest.mark.slow
+@pytest.mark.parametrize("fixture", BENCHMARK_FIXTURES)
+def test_extraction_performance(fixture):
     html = read_fixture(fixture.html_path)
-    result = benchmark(extract_web_content, html, fixture.url)
-    assert benchmark.stats["mean"] < 0.2  # < 200ms per page
+    start = time.perf_counter()
+    result = extract_web_content(html, fixture.url)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    assert elapsed_ms < 1000, f"{fixture.name}: {elapsed_ms:.0f}ms exceeds 1000ms budget"
 ```
+
+The 1000ms budget is intentionally generous for CI stability. Tighten after Module 7 performance optimizations land and profiling confirms achievable targets.
 
 ## Module 7: Pipeline Performance Optimization
 
