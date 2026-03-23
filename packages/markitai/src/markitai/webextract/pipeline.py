@@ -162,13 +162,12 @@ def _build_from_resolved(
 class _ExtractionContext:
     """Cache expensive computations across retry levels.
 
-    Note on mutation: Level 1 extraction operates directly on
-    ``original_soup`` (no copy), so removals/standardization mutate it
-    in place.  Subsequent retry levels call ``fresh_soup_and_root()``
-    which deep-copies the (now-mutated) soup.  This is correct because
-    ``_pick_root`` re-selects the content root on each copy, and the
-    mutations from Level 1 (decomposed noise elements) are desirable —
-    they won't reappear in copies.
+    Parses HTML once and caches ``original_soup`` and ``metadata``.
+    Every extraction level (including Level 1) uses
+    ``fresh_soup_and_root()`` which deep-copies the soup, ensuring
+    ``original_soup`` is never mutated by removals/standardization.
+    Mobile style pruning is the only pre-extraction mutation applied
+    to ``original_soup`` — it persists intentionally across all levels.
     """
 
     def __init__(self, html: str, url: str) -> None:
@@ -437,32 +436,6 @@ def _maybe_apply_schema_fallback(
         if should_use_schema_fallback(schema_text, root.get_text(" ", strip=True)):
             diagnostics["schema_fallback_used"] = True
     return root
-
-
-def _retry_with_broader_root(
-    soup: BeautifulSoup,
-    original_root: Tag | BeautifulSoup,
-) -> Tag | BeautifulSoup | None:
-    """Attempt a broader extraction when initial root yielded too few words.
-
-    Strategy: fall back to ``<body>`` (or the full soup when ``<body>`` is
-    absent).  This captures content that sits outside the original scored
-    candidate---e.g. paragraphs placed directly under ``<body>``.
-
-    Returns:
-        A broader root element, or *None* if no better candidate exists.
-    """
-    body = soup.body
-    if body is None:
-        return None
-    # Avoid returning the same element the caller already tried.
-    if body is original_root:
-        return None
-    return body
-
-
-def _candidate_count(soup: BeautifulSoup) -> int:
-    return len(soup.find_all(["article", "main", "section", "div"])) or 1
 
 
 def _create_markitdown() -> object:

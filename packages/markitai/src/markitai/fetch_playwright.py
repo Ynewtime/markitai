@@ -661,6 +661,8 @@ async def fetch_with_playwright(
     extra_http_headers: dict[str, str] | None = None,
     user_agent: str | None = None,
     http_credentials: dict[str, str] | None = None,
+    # Auto-scroll control
+    skip_auto_scroll: bool = False,
     # Session persistence
     session_key: str | None = None,
     persist_context: bool = False,
@@ -668,6 +670,8 @@ async def fetch_with_playwright(
     """Fetch URL using Playwright (reuses renderer if provided)."""
     # Collect advanced kwargs
     advanced_kwargs: dict[str, Any] = {}
+    if skip_auto_scroll:
+        advanced_kwargs["skip_auto_scroll"] = skip_auto_scroll
     if wait_for_selector is not None:
         advanced_kwargs["wait_for_selector"] = wait_for_selector
     if cookies is not None:
