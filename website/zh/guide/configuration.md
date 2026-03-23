@@ -36,6 +36,9 @@ markitai init --local  # 创建 ./markitai.json
 ```bash
 # 列出所有设置
 markitai config list
+markitai config list --format json    # JSON（默认）
+markitai config list --format table   # Rich 表格视图
+markitai config list --format yaml    # YAML（需要 pyyaml：uv add pyyaml）
 
 # 获取特定值
 markitai config get llm.enabled
@@ -45,6 +48,10 @@ markitai config set llm.enabled true
 
 # 交互式编辑器（引导式菜单）
 markitai config edit
+
+# 验证配置
+markitai config validate
+markitai config validate ./markitai.json    # 验证指定文件
 ```
 
 ### 完整配置示例
@@ -67,7 +74,9 @@ markitai config edit
       "num_retries": 2,
       "timeout": 120
     },
-    "concurrency": 10
+    "concurrency": 10,
+    "pure": false,
+    "keep_base": false
   },
   "image": {
     "alt_enabled": false,
@@ -82,7 +91,10 @@ markitai config edit
       "min_height": 50,
       "min_area": 5000,
       "deduplicate": true
-    }
+    },
+    "stdout_persist": false,
+    "stdout_persist_dir": "~/.markitai/assets",
+    "stdout_fetch_external": false
   },
   "ocr": {
     "enabled": false,
@@ -112,6 +124,7 @@ markitai config edit
   },
   "fetch": {
     "strategy": "auto",
+    "kreuzberg_convert_enabled": false,
     "defuddle": {
       "timeout": 30,
       "rpm": 20
@@ -125,7 +138,9 @@ markitai config edit
       "reject_resource_patterns": null,
       "extra_http_headers": null,
       "user_agent": null,
-      "http_credentials": null
+      "http_credentials": null,
+      "session_mode": "isolated",
+      "session_ttl_seconds": 600
     },
     "jina": {
       "api_key": null,
@@ -142,17 +157,24 @@ markitai config edit
       "wait_until": "networkidle0",
       "cache_ttl": 0,
       "reject_resource_patterns": null,
-      "convert_enabled": false
+      "convert_enabled": false,
+      "user_agent": null,
+      "cookies": null,
+      "wait_for_selector": null,
+      "http_credentials": null
     },
     "policy": {
       "enabled": true,
-      "max_strategy_hops": 4
+      "max_strategy_hops": 5,
+      "strategy_priority": null,
+      "local_only_patterns": [],
+      "inherit_no_proxy": true
     },
     "domain_profiles": {},
     "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   },
   "output": {
-    "dir": "./output",
+    "dir": null,
     "on_conflict": "rename",
     "allow_symlinks": false
   },
@@ -196,6 +218,18 @@ markitai config edit
 | `MARKITAI_LOG_DIR` | 日志文件目录 |
 | `MARKITAI_LOG_FORMAT` | 日志格式覆盖（`text` 或 `json`） |
 | `MARKITAI_STATIC_HTTP` | 静态 HTTP 后端：`httpx`（默认）或 `curl_cffi`（TLS 指纹伪装） |
+| `MARKITAI_LANG` | CLI 语言覆盖（`en` 或 `zh`） |
+| `MARKITAI_PURE` | 启用 pure 模式（`1`、`true` 或 `yes`） |
+| `MODEL` | 无 `model_list` 配置时的单模型覆盖 |
+
+### `.env` 文件加载
+
+Markitai 按以下顺序自动加载 `.env` 文件（先加载的值优先）：
+
+1. `./.env`（当前工作目录 — 项目级）
+2. `~/.markitai/.env`（用户主目录 — 全局兜底）
+
+项目级 `.env` 优先级更高，允许按项目覆盖全局设置。
 
 ## LLM 配置
 
@@ -217,7 +251,10 @@ Markitai 还支持使用 CLI 认证和订阅额度的本地提供商：
 - **Claude Agent** (`claude-agent/`): 使用 [Claude Agent SDK](https://github.com/anthropics/claude-code) 通过 Claude Code CLI 认证
 - **GitHub Copilot** (`copilot/`): 使用 [GitHub Copilot SDK](https://github.com/github/copilot-sdk) 通过 Copilot CLI 认证
 - **ChatGPT** (`chatgpt/`): 使用 ChatGPT 订阅，通过 OAuth Device Code Flow 和 Responses API 认证，无需额外 SDK
-- **Gemini CLI** (`gemini-cli/`): 使用 Google Gemini CLI OAuth 凭据（`~/.gemini/oauth_creds.json`），支持自动令牌刷新
+- **Gemini CLI**（`gemini-cli/`）：使用 Google Gemini CLI 凭据，支持自动令牌刷新。凭据来源（按优先级）：
+  1. Markitai 管理的配置文件（`~/.markitai/auth/gemini-*.json`，通过 `markitai auth gemini login` 创建）
+  2. 共享 Gemini CLI 凭据（`~/.gemini/oauth_creds.json`）
+  3. 内置 OAuth 流程（首次使用时自动触发）
 
 这些提供商需要：
 1. 安装并认证对应的 CLI 工具（或使用环境变量认证——见下文）
@@ -521,6 +558,9 @@ Claude Agent provider 对超过 4KB 的系统提示词自动启用**提示缓存
 | `filter.min_height` | `50` | 跳过高度小于此值的图片 |
 | `filter.min_area` | `5000` | 跳过面积小于此值的图片 |
 | `filter.deduplicate` | `true` | 去除重复图片 |
+| `stdout_persist` | `false` | 将管道输出图片保存到持久化资产存储 |
+| `stdout_persist_dir` | `~/.markitai/assets` | 持久化图片存储目录 |
+| `stdout_fetch_external` | `false` | 在 stdout 模式下下载外部图片 URL |
 
 ## 截图配置
 
@@ -824,7 +864,7 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
   "fetch": {
     "policy": {
       "enabled": true,
-      "max_strategy_hops": 4
+      "max_strategy_hops": 5
     }
   }
 }
@@ -833,7 +873,10 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `enabled` | `true` | 启用智能策略排序 |
-| `max_strategy_hops` | `4` | 放弃前最多尝试的策略数 |
+| `max_strategy_hops` | `5` | 放弃前最多尝试的策略数 |
+| `strategy_priority` | `null` | 自定义全局策略顺序（覆盖默认优先级） |
+| `local_only_patterns` | `[]` | 限制为本地策略的域名/IP 模式（NO_PROXY 语法） |
+| `inherit_no_proxy` | `true` | 将 `NO_PROXY` 环境变量合并到 `local_only_patterns` |
 
 ### 域名配置
 
@@ -860,6 +903,7 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 | `wait_for` | `null` | 等待条件覆盖：`load`, `domcontentloaded`, `networkidle` |
 | `extra_wait_ms` | `null` | 额外等待时间覆盖（毫秒） |
 | `prefer_strategy` | `null` | 首选策略：`static`, `defuddle`, `playwright`, `cloudflare`, `jina` |
+| `strategy_priority` | `null` | 该域名的自定义策略顺序（覆盖全局和 `prefer_strategy`） |
 
 ### 回退模式
 
@@ -938,7 +982,7 @@ markitai ./docs --no-cache-for "file1.pdf,reports/**"
 
 | 设置 | 选项 | 默认值 | 说明 |
 |------|------|--------|------|
-| `dir` | - | `./output` | 输出目录 |
+| `dir` | - | `null` | 输出目录 |
 | `on_conflict` | `rename`, `overwrite`, `skip` | `rename` | 处理已存在文件的方式 |
 | `allow_symlinks` | - | `false` | 允许输出路径中的符号链接 |
 
@@ -951,7 +995,7 @@ markitai ./docs --no-cache-for "file1.pdf,reports/**"
   "log": {
     "level": "INFO",
     "format": "text",
-    "dir": "~/.markitai/logs",
+    "dir": null,
     "rotation": "10 MB",
     "retention": "7 days"
   }
