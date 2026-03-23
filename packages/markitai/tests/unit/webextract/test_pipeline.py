@@ -229,3 +229,18 @@ def hello():
     result = extract_web_content(html, "https://example.com")
     assert "```python" in result.markdown
     assert "def hello():" in result.markdown
+
+
+def test_mobile_hidden_sidebar_removed_before_scoring() -> None:
+    """Mobile-hidden elements should be removed before content scoring."""
+    from markitai.webextract.pipeline import extract_web_content
+
+    html = """<html><head><style>
+    @media (max-width: 600px) { .sidebar { display: none; } }
+    </style></head><body>
+    <article><p>Real article content with enough words for extraction.</p></article>
+    <div class="sidebar"><nav><a href="/a">Link A</a><a href="/b">Link B</a></nav></div>
+    </body></html>"""
+    result = extract_web_content(html, "https://example.com")
+    assert "Real article" in result.markdown
+    assert "Link A" not in result.markdown
