@@ -64,6 +64,23 @@ class TestCodeBlockLanguageDetection:
         assert "```solidity" in md
 
 
+class TestHighlightAndStrikethrough:
+    def test_mark_to_highlight(self) -> None:
+        html = "<p>This is <mark>highlighted</mark> text.</p>"
+        md = _convert(html)
+        assert "==highlighted==" in md
+
+    def test_del_to_strikethrough(self) -> None:
+        html = "<p>This is <del>deleted</del> text.</p>"
+        md = _convert(html)
+        assert "~~deleted~~" in md
+
+    def test_s_to_strikethrough(self) -> None:
+        html = "<p>This is <s>struck</s> text.</p>"
+        md = _convert(html)
+        assert "~~struck~~" in md
+
+
 class TestMathConversion:
     def test_katex_annotation(self) -> None:
         html = '<span class="katex"><span class="katex-mathml"><math><semantics><annotation encoding="application/x-tex">E = mc^2</annotation></semantics></math></span></span>'

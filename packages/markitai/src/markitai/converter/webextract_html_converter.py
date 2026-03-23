@@ -111,6 +111,15 @@ class WebExtractMarkdownConverter(_CustomMarkdownify):
                 return f"${latex}$"
         return text
 
+    def convert_mark(self, el: Any, text: str, parent_tags: set) -> str:
+        return f"=={text}==" if text.strip() else ""
+
+    def convert_del(self, el: Any, text: str, parent_tags: set) -> str:
+        return f"~~{text}~~" if text.strip() else ""
+
+    def convert_s(self, el: Any, text: str, parent_tags: set) -> str:
+        return f"~~{text}~~" if text.strip() else ""
+
     def convert_pre(self, el: Any, text: str, parent_tags: set) -> str:
         """Convert <pre> to fenced code block with language detection."""
         code_el = el.find("code") if el.name == "pre" else el
