@@ -13,11 +13,12 @@
 
 | 依赖 | 用途 | 安装方式 |
 |------|------|----------|
-| **Playwright** | `--playwright`（SPA 渲染） | 包随 markitai 安装，浏览器需运行 `uv run playwright install chromium` |
+| **Playwright** | `--playwright`（SPA 渲染） | `uv pip install markitai[browser]`，浏览器需运行 `uv run playwright install chromium` |
 | **FFmpeg** | 音视频处理 | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
 | **Jina API 密钥** | `--jina`（URL 转换） | 设置 `JINA_API_KEY` 环境变量 |
 | **LLM API 密钥** | `--llm`（AI 增强） | 设置 `OPENAI_API_KEY` 或对应提供商的密钥。订阅制提供商（`chatgpt/`、`gemini-cli/`、`claude-agent/`、`copilot/`）使用 CLI/OAuth 认证 |
 | **Cloudflare** | `--cloudflare`（云端渲染与转换） | 设置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 环境变量 |
+| **CairoSVG** | 高质量 SVG 渲染 | `uv pip install markitai[svg]` |
 
 ::: tip 浏览器自动化
 对于 SPA 网站（Twitter、React 应用等），会自动使用 Playwright。首次使用前需安装浏览器：
@@ -54,7 +55,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Yne
 脚本会：
 - 检测 Python 3.11-3.13
 - 安装 [uv](https://docs.astral.sh/uv/) 包管理器（需要确认）
-- 安装 markitai 及所有可选依赖
+- 安装 markitai 及浏览器自动化支持（其他可选依赖需确认后安装）
 
 #### 版本固定
 
@@ -62,13 +63,13 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Yne
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.13.0"
+export MARKITAI_VERSION="0.13.1"
 export UV_VERSION="0.9.27"
 curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.13.0"
+$env:MARKITAI_VERSION = "0.13.1"
 $env:UV_VERSION = "0.9.27"
 powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
 ```
