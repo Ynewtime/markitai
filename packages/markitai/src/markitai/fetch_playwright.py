@@ -436,6 +436,7 @@ class PlaywrightRenderer:
         extra_http_headers: dict[str, str] | None = None,
         user_agent: str | None = None,
         http_credentials: dict[str, str] | None = None,
+        skip_auto_scroll: bool = False,
         # Session persistence
         session_key: str | None = None,
         persist_context: bool = False,
@@ -494,17 +495,20 @@ class PlaywrightRenderer:
                     logger.debug(
                         f"wait_for_selector '{wait_for_selector}' timed out: {e}"
                     )
+                # Short stabilization wait after selector found
+                if extra_wait_ms > 0:
+                    await asyncio.sleep(extra_wait_ms / 1000)
             elif extra_wait_ms > 0:
                 await asyncio.sleep(extra_wait_ms / 1000)
 
             # Auto-scroll to trigger lazy-loaded content
-            # (inspired by baoyu-skills url-to-markdown)
-            try:
-                scroll_script = _build_auto_scroll_script()
-                await page.evaluate(scroll_script)
-                await asyncio.sleep(DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS / 1000)
-            except Exception as e:
-                logger.debug(f"Auto-scroll failed (non-critical): {e}")
+            if not skip_auto_scroll:
+                try:
+                    scroll_script = _build_auto_scroll_script()
+                    await page.evaluate(scroll_script)
+                    await asyncio.sleep(DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS / 1000)
+                except Exception as e:
+                    logger.debug(f"Auto-scroll failed (non-critical): {e}")
 
             # Browser DOM normalize: flatten live shadow roots before extraction
             try:
