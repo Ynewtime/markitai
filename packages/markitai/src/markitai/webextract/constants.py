@@ -143,6 +143,9 @@ EXACT_SELECTORS: list[str] = [
     ".gh-header-sticky",
 ]
 
+# Pre-joined CSS selector for single-query removal (performance optimization).
+EXACT_SELECTORS_JOINED: str = ", ".join(EXACT_SELECTORS)
+
 # Partial selector patterns tested against class/id/data-test* attributes.
 # Case-insensitive substring matches.
 PARTIAL_SELECTOR_PATTERNS: list[str] = [
