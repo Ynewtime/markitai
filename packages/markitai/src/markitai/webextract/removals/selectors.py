@@ -6,6 +6,7 @@ from bs4 import Tag
 
 from markitai.webextract.constants import (
     EXACT_SELECTORS,
+    EXACT_SELECTORS_JOINED,
     PARTIAL_SELECTOR_REGEX,
     TEST_ATTRIBUTES,
 )
@@ -30,20 +31,30 @@ def remove_by_selectors(
     to_remove: list[Tag] = []
     seen_ids: set[int] = set()
 
-    # Phase 1: Exact CSS selectors
-    for selector in EXACT_SELECTORS:
-        try:
-            for el in root.select(selector):
-                eid = id(el)
-                if eid in seen_ids:
-                    continue
-                if _should_protect(el, main_content):
-                    continue
-                to_remove.append(el)
-                seen_ids.add(eid)
-        except Exception:  # noqa: BLE001
-            # Some selectors may not be supported by BeautifulSoup
-            continue
+    # Phase 1: Exact CSS selectors (single joined query for performance)
+    try:
+        for el in root.select(EXACT_SELECTORS_JOINED):
+            eid = id(el)
+            if eid in seen_ids:
+                continue
+            if _should_protect(el, main_content):
+                continue
+            to_remove.append(el)
+            seen_ids.add(eid)
+    except Exception:  # noqa: BLE001
+        # Fallback: query individually if joined selector fails
+        for selector in EXACT_SELECTORS:
+            try:
+                for el in root.select(selector):
+                    eid = id(el)
+                    if eid in seen_ids:
+                        continue
+                    if _should_protect(el, main_content):
+                        continue
+                    to_remove.append(el)
+                    seen_ids.add(eid)
+            except Exception:  # noqa: BLE001
+                continue
 
     # Phase 2: Partial attribute matching
     if use_partial:
