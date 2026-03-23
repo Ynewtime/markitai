@@ -48,22 +48,22 @@ Changelog = "https://github.com/Ynewtime/markitai/blob/main/CHANGELOG.md"
 markitai = "markitai.cli:app"
 
 [project.optional-dependencies]
-claude-agent = ["claude-agent-sdk>=0.1.48,!=0.1.49"]
-copilot = ["github-copilot-sdk>=0.1.32"]
-gemini-cli = ["google-auth>=2.49.0", "google-auth-oauthlib>=1.3.0"]
+claude-agent = ["claude-agent-sdk>=0.1.50"]
+copilot = ["github-copilot-sdk>=0.2.0"]
+gemini-cli = ["google-auth>=2.49.1", "google-auth-oauthlib>=1.3.0"]
 browser = ["playwright>=1.58.0"]
 extra-fetch = ["curl-cffi>=0.14.0"]
-kreuzberg = ["kreuzberg>=4.4.5"]
-svg = ["cairosvg>=2.8.0"]
+kreuzberg = ["kreuzberg>=4.5.3"]
+svg = ["cairosvg>=2.9.0"]
 all = [
-    "claude-agent-sdk>=0.1.48,!=0.1.49",
-    "github-copilot-sdk>=0.1.32",
-    "google-auth>=2.49.0",
+    "claude-agent-sdk>=0.1.50",
+    "github-copilot-sdk>=0.2.0",
+    "google-auth>=2.49.1",
     "google-auth-oauthlib>=1.3.0",
     "playwright>=1.58.0",
     "curl-cffi>=0.14.0",
-    "kreuzberg>=4.4.5",
-    "cairosvg>=2.8.0",
+    "kreuzberg>=4.5.3",
+    "cairosvg>=2.9.0",
 ]
 
 [dependency-groups]
@@ -71,7 +71,7 @@ dev = [
     "pytest>=9.0.0",
     "pytest-xdist>=3.8.0",
     "pytest-asyncio>=1.3.0",
-    "ruff>=0.15.0",
+    "ruff>=0.15.7",
     "pyright>=1.1.408",
     "lxml-stubs>=0.5.1",
 ]
