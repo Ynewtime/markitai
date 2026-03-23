@@ -59,6 +59,17 @@ def test_profile_overrides_propagate_reject_resource_patterns() -> None:
     assert overrides.get("reject_resource_patterns") == ["**/analytics/**", "**/*.mp4"]
 
 
+def test_fetch_method_accepts_skip_auto_scroll() -> None:
+    """PlaywrightRenderer.fetch() must accept skip_auto_scroll parameter."""
+    import inspect
+
+    from markitai.fetch_playwright import PlaywrightRenderer
+
+    sig = inspect.signature(PlaywrightRenderer.fetch)
+    assert "skip_auto_scroll" in sig.parameters
+    assert sig.parameters["skip_auto_scroll"].default is False
+
+
 def test_profile_overrides_no_match_returns_empty() -> None:
     """Non-matching domain returns empty overrides."""
     from markitai.fetch import _resolve_playwright_profile_overrides
