@@ -79,8 +79,9 @@ def test_extract_settings_bool_before_int() -> None:
 def test_extract_settings_optional_str() -> None:
     """Optional[str] fields should still be editable as 'str'."""
     from markitai.cli.config_editor import extract_editable_settings
+    from markitai.config import OutputConfig
 
-    cfg = MarkitaiConfig(output={"dir": "./output"})
+    cfg = MarkitaiConfig(output=OutputConfig(dir="./output"))
     settings = extract_editable_settings(cfg)
     keys = {s["key"] for s in settings}
     assert "output.dir" in keys

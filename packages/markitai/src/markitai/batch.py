@@ -493,6 +493,8 @@ class BatchProcessor:
         self.console = get_console()
         # Collect image analysis results for JSON aggregation
         self.image_analysis_results: list[ImageAnalysisResult] = []
+        # Throttle tracking for periodic state saves
+        self._last_state_save: datetime | None = None
 
         # Optimization: Lock for state saving to prevent IO congestion
         import threading
