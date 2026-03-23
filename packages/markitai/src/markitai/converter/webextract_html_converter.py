@@ -120,6 +120,20 @@ class WebExtractMarkdownConverter(_CustomMarkdownify):
     def convert_s(self, el: Any, text: str, parent_tags: set) -> str:
         return f"~~{text}~~" if text.strip() else ""
 
+    def convert_sup(self, el: Any, text: str, parent_tags: set) -> str:
+        link = el.find("a")
+        if link:
+            href = str(link.get("href", ""))
+            if (
+                href.startswith("#fn")
+                or href.startswith("#note")
+                or href.startswith("#cite")
+            ):
+                ref_text = el.get_text(strip=True)
+                if ref_text.isdigit():
+                    return f"[^{ref_text}]"
+        return text
+
     def convert_pre(self, el: Any, text: str, parent_tags: set) -> str:
         """Convert <pre> to fenced code block with language detection."""
         code_el = el.find("code") if el.name == "pre" else el
