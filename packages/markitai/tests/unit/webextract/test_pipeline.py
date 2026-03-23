@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 # ---- Medium-6: MarkItDown instance reuse tests ----
 
 
@@ -157,3 +159,32 @@ def test_adaptive_retry_not_triggered_on_sufficient_content() -> None:
 
     assert result.word_count > 20
     assert result.diagnostics.get("adaptive_retry_used") is not True
+
+
+def test_extraction_context_output_matches_pre_refactor_snapshot() -> None:
+    """Verify ExtractionContext refactor produces identical output."""
+    from pathlib import Path
+
+    from markitai.webextract.pipeline import extract_web_content
+
+    snapshot_path = Path(__file__).parent / "_extraction_context_snapshot.txt"
+    if not snapshot_path.exists():
+        pytest.skip("Pre-refactor snapshot not found")
+
+    fixture_dir = Path(__file__).parents[2] / "fixtures" / "web"
+    html_path = fixture_dir / "x_status_2030105637204676808.playwright.html"
+    if not html_path.exists():
+        pytest.skip("Fixture not found")
+
+    html = html_path.read_text(encoding="utf-8")
+    url = "https://x.com/ixiaowenz/status/2030105637204676808"
+    result = extract_web_content(html, url)
+
+    snapshot = snapshot_path.read_text(encoding="utf-8")
+    header, expected_md = snapshot.split("\n---\n", 1)
+    expected_wc = int(header.split("=")[1])
+
+    assert result.word_count == expected_wc, (
+        f"Word count changed: {result.word_count} vs {expected_wc}"
+    )
+    assert result.markdown == expected_md, "Markdown output changed after refactor"
