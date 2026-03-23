@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-03-23
+
+### Added
+
+- **Config Editor Redesign**: Replace questionary select with a custom prompt_toolkit UI featuring a visible search box with frame, fuzzy filtering, scrollable list with cursor, and "↑ N more above / ↓ N more below" scroll indicators
+- **Fuzzy Match Search**: Case-insensitive fuzzy matching for config settings (characters in order, not necessarily consecutive) with scoring that rewards consecutive and early matches
+- **Config Field Descriptions**: Add `Field(description=...)` to 66 Pydantic config fields, displayed inline in the config editor
+- **In-Place UI Refresh**: Use ANSI cursor position queries to erase only the lines occupied by each UI component, preserving terminal history
+
+### Fixed
+
+- **Esc Key Support**: Inject Esc key bindings into all questionary prompts (text, select) via prompt_toolkit `merge_key_bindings`; questionary 2.1.1 `select()` only binds Ctrl+C/Ctrl+Q natively
+- **Bool Editor**: Replace `questionary.confirm()` with `questionary.select()` using `Choice(value=True/False)` for consistent Esc support
+- **Search + j/k Conflict**: Disable `use_jk_keys` when `use_search_filter` is enabled (questionary 2.1.1 raises `ValueError` otherwise)
+- **Literal Type Preservation**: Use `Choice(value=original)` to preserve original typed values (int, str) when editing Literal fields, instead of converting to string
+
 ## [0.12.1] - 2026-03-22
 
 ### Added
