@@ -456,14 +456,19 @@ def _candidate_count(soup: BeautifulSoup) -> int:
 
 
 def _create_markitdown() -> object:
-    """Create a MarkItDown instance for HTML-to-Markdown conversion.
+    """Create a MarkItDown instance with WebExtract's custom converter.
 
-    Returns:
-        A MarkItDown instance that can be reused across multiple conversions.
+    Registers ``WebExtractHtmlConverter`` at higher priority than the
+    built-in ``HtmlConverter`` so code-block language detection and
+    other enhanced rules are applied.
     """
     from markitdown import MarkItDown
 
-    return MarkItDown()
+    from markitai.converter.webextract_html_converter import WebExtractHtmlConverter
+
+    md = MarkItDown()
+    md.register_converter(WebExtractHtmlConverter(), priority=-1)
+    return md
 
 
 def _html_fragment_to_markdown(html: str, md: object | None = None) -> str:
