@@ -846,6 +846,10 @@ def _resolve_playwright_profile_overrides(
         out["wait_for"] = profile.wait_for
     if profile.extra_wait_ms is not None:
         out["extra_wait_ms"] = profile.extra_wait_ms
+    if profile.skip_auto_scroll:
+        out["skip_auto_scroll"] = profile.skip_auto_scroll
+    if profile.reject_resource_patterns:
+        out["reject_resource_patterns"] = profile.reject_resource_patterns
     return out
 
 
