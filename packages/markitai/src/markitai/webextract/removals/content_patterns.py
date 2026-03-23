@@ -51,7 +51,8 @@ def _remove_hero_headers(root: Tag) -> int:
             continue
         has_time = child.find("time") is not None
         has_date_class = (
-            child.find(class_=lambda c: c and "date" in str(c).lower()) is not None
+            child.find(class_=lambda c: bool(c and "date" in str(c).lower()))
+            is not None
         )
         if has_time or has_date_class:
             child.decompose()
