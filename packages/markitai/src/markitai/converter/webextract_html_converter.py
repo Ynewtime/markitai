@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from bs4 import NavigableString, Tag
 from markitdown._base_converter import DocumentConverterResult
 from markitdown.converters._html_converter import HtmlConverter
 from markitdown.converters._markdownify import _CustomMarkdownify
@@ -166,8 +167,6 @@ def _mathml_to_latex(el: Any) -> str:
     msubsup, mfrac, msqrt, mover, munder, munderover, mtable, mtr, mtd,
     mtext, mspace, semantics.
     """
-    from bs4 import NavigableString, Tag
-
     if isinstance(el, NavigableString):
         return str(el).strip()
 
@@ -258,18 +257,20 @@ def _mathml_to_latex(el: Any) -> str:
         children = _child_tags(el)
         if len(children) >= 2:
             base = _mathml_to_latex(children[0])
-            over = _mathml_to_latex(children[1])
-            # Common overscripts
-            if over in ("˙", "̇"):
+            # Check the raw text of the overscript *before* recursive conversion
+            # so that e.g. <mo>→</mo> is matched as "→" not "\rightarrow".
+            over_raw = children[1].get_text(strip=True)
+            if over_raw in ("˙", "̇"):
                 return rf"\dot{{{base}}}"
-            if over in ("¯", "‾"):
+            if over_raw in ("¯", "‾"):
                 return rf"\overline{{{base}}}"
-            if over in ("^", "̂"):
+            if over_raw in ("^", "̂"):
                 return rf"\hat{{{base}}}"
-            if over in ("~", "̃", "˜"):
+            if over_raw in ("~", "̃", "˜"):
                 return rf"\tilde{{{base}}}"
-            if over in ("→", "⃗"):
+            if over_raw in ("→", "⃗"):
                 return rf"\vec{{{base}}}"
+            over = _mathml_to_latex(children[1])
             return rf"\overset{{{over}}}{{{base}}}"
         return _convert_children(el)
 
@@ -311,15 +312,11 @@ def _mathml_to_latex(el: Any) -> str:
 
 def _child_tags(el: Any) -> list[Any]:
     """Return direct child Tag elements."""
-    from bs4 import Tag
-
     return [c for c in el.children if isinstance(c, Tag)]
 
 
 def _convert_children(el: Any) -> str:
     """Convert all children and join."""
-    from bs4 import NavigableString, Tag
-
     parts: list[str] = []
     for child in el.children:
         if isinstance(child, Tag):
