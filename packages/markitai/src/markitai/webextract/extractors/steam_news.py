@@ -159,7 +159,10 @@ def _bbcode_to_html(bbcode: str) -> str:
 
     # Bold, italic, underline, strikethrough
     text = re.sub(
-        r"\[b\](.*?)\[/b\]", r"<strong>\1</strong>", text, flags=re.IGNORECASE | re.DOTALL
+        r"\[b\](.*?)\[/b\]",
+        r"<strong>\1</strong>",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
     )
     text = re.sub(
         r"\[i\](.*?)\[/i\]", r"<em>\1</em>", text, flags=re.IGNORECASE | re.DOTALL
@@ -209,7 +212,10 @@ def _bbcode_to_html(bbcode: str) -> str:
 
     # [code]...[/code]
     text = re.sub(
-        r"\[code\](.*?)\[/code\]", r"<code>\1</code>", text, flags=re.IGNORECASE | re.DOTALL
+        r"\[code\](.*?)\[/code\]",
+        r"<code>\1</code>",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
     )
 
     # Clean up remaining BBCode tags we don't handle
