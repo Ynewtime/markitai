@@ -144,6 +144,11 @@ def _bbcode_to_html(bbcode: str) -> str:
     text = text.replace("\\/", "/")
     text = text.replace('\\"', '"')
 
+    # Escape HTML entities in the raw text *before* converting BBCode to
+    # HTML tags.  This neutralises any raw HTML (e.g. <script>) while
+    # preserving BBCode brackets (html.escape does not touch [ ]).
+    text = escape(text)
+
     # [p]...[/p]
     text = re.sub(r"\[p\]", "<p>", text, flags=re.IGNORECASE)
     text = re.sub(r"\[/p\]", "</p>", text, flags=re.IGNORECASE)
@@ -174,17 +179,17 @@ def _bbcode_to_html(bbcode: str) -> str:
         r"\[s\](.*?)\[/s\]", r"<del>\1</del>", text, flags=re.IGNORECASE | re.DOTALL
     )
 
-    # [url=href]text[/url]
+    # [url=href]text[/url]  (content already escaped above)
     text = re.sub(
         r'\[url="?(.*?)"?\](.*?)\[/url\]',
-        lambda m: f'<a href="{escape(m.group(1))}">{m.group(2)}</a>',
+        r'<a href="\1">\2</a>',
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
     # [url]href[/url]
     text = re.sub(
         r"\[url\](.*?)\[/url\]",
-        lambda m: f'<a href="{escape(m.group(1))}">{escape(m.group(1))}</a>',
+        r'<a href="\1">\1</a>',
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -192,7 +197,7 @@ def _bbcode_to_html(bbcode: str) -> str:
     # [img]src[/img]
     text = re.sub(
         r"\[img\](.*?)\[/img\]",
-        lambda m: f'<img src="{escape(m.group(1))}">',
+        r'<img src="\1">',
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -200,7 +205,7 @@ def _bbcode_to_html(bbcode: str) -> str:
     # [previewyoutube=id;opts][/previewyoutube]
     text = re.sub(
         r'\[previewyoutube="?([^;"\]]+)[^"]*"?\]\[/previewyoutube\]',
-        lambda m: f'<img src="https://www.youtube.com/watch?v={escape(m.group(1))}">',
+        r'<img src="https://www.youtube.com/watch?v=\1">',
         text,
         flags=re.IGNORECASE,
     )
