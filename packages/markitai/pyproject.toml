@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     "pymupdf4llm>=1.27.2",
     "markitdown[all]>=0.1.5",
-    "litellm>=1.82.0,<1.83.0",  # pinned: versions >=1.83.0 compromised (supply-chain attack)
+    "litellm>=1.82.0,<1.82.7",  # pinned: versions >=1.82.7 compromised (supply-chain attack)
     "instructor>=1.14.5",
     "rapidocr>=3.7.0",
     "click>=8.3.0",
