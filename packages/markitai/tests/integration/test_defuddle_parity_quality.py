@@ -78,10 +78,25 @@ def _url_from_filename(stem: str) -> str:
     return f"https://example.com/{slug}"
 
 
+def _extract_comment_url(html: str) -> str | None:
+    """Extract URL from a leading HTML comment like <!-- {"url": "..."} -->."""
+    match = re.match(r"\s*<!--\s*(\{.*?\})\s*-->", html)
+    if match:
+        try:
+            data = json.loads(match.group(1))
+            url = data.get("url")
+            if isinstance(url, str) and url:
+                return url
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    return None
+
+
 def _infer_url(html: str, stem: str) -> str:
-    """Infer the real URL: og:url > canonical > filename fallback."""
+    """Infer the real URL: comment > og:url > canonical > filename fallback."""
     return (
-        _extract_og_url(html)
+        _extract_comment_url(html)
+        or _extract_og_url(html)
         or _extract_canonical_url(html)
         or _url_from_filename(stem)
     )
