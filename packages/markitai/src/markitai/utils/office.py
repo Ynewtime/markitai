@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import platform
 import shutil
+import subprocess
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -227,3 +229,50 @@ def find_libreoffice() -> str | None:
 
     logger.debug("LibreOffice not found")
     return None
+
+
+@lru_cache(maxsize=1)
+def is_libreoffice_functional() -> bool:
+    """Check if LibreOffice can actually convert files (cached).
+
+    Simply finding the ``soffice`` binary is not enough — the installation
+    may be incomplete (e.g. missing import filters on minimal CI images).
+    This function creates a tiny test file and attempts a real conversion.
+    """
+    soffice = find_libreoffice()
+    if not soffice:
+        return False
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="lo_check_") as tmpdir:
+            test_file = Path(tmpdir) / "test.txt"
+            test_file.write_text("test", encoding="utf-8")
+            profile_url = Path(tmpdir, "profile").as_uri()
+            Path(tmpdir, "profile").mkdir()
+            result = subprocess.run(
+                [
+                    soffice,
+                    "--headless",
+                    f"-env:UserInstallation={profile_url}",
+                    "--convert-to",
+                    "html",
+                    "--outdir",
+                    tmpdir,
+                    str(test_file),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            converted = Path(tmpdir) / "test.html"
+            ok = result.returncode == 0 and converted.exists()
+            if not ok:
+                logger.debug(
+                    "LibreOffice functional check failed: rc={}, stderr={}",
+                    result.returncode,
+                    result.stderr[:200],
+                )
+            return ok
+    except Exception as exc:
+        logger.debug("LibreOffice functional check error: {}", exc)
+        return False
