@@ -4340,6 +4340,8 @@ def test_domain_profile_applies_wait_for_selector() -> None:
                     "wait_for_selector": '[data-testid="tweetText"]',
                     "wait_for": "domcontentloaded",
                     "extra_wait_ms": 1200,
+                    "skip_auto_scroll": False,
+                    "reject_resource_patterns": None,
                 },
             )()
         },

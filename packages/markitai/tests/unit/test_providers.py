@@ -834,9 +834,20 @@ class TestCopilotProvider:
 class TestCopilotAuthCheck:
     """Tests for Copilot auth fast-check on startup."""
 
+    @staticmethod
+    def _copilot_module_ctx(mock_cls):
+        """Context manager that injects a fake 'copilot' module with CopilotClient."""
+        import sys
+        import types
+        from unittest.mock import patch
+
+        mod = types.ModuleType("copilot")
+        mod.CopilotClient = mock_cls  # type: ignore[attr-defined]
+        return patch.dict(sys.modules, {"copilot": mod})
+
     async def test_get_client_raises_auth_error_when_not_authenticated(self) -> None:
         """_get_client raises AuthenticationError when CLI is not authenticated."""
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock
 
         from markitai.providers.copilot import CopilotProvider
 
@@ -851,7 +862,7 @@ class TestCopilotAuthCheck:
 
         mock_cls = MagicMock(return_value=mock_client)
 
-        with patch("copilot.CopilotClient", mock_cls):
+        with self._copilot_module_ctx(mock_cls):
             import pytest
 
             from markitai.providers.errors import AuthenticationError
@@ -864,7 +875,7 @@ class TestCopilotAuthCheck:
 
     async def test_get_client_succeeds_when_authenticated(self) -> None:
         """_get_client returns client when CLI is authenticated."""
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock
 
         from markitai.providers.copilot import CopilotProvider
 
@@ -878,7 +889,7 @@ class TestCopilotAuthCheck:
 
         mock_cls = MagicMock(return_value=mock_client)
 
-        with patch("copilot.CopilotClient", mock_cls):
+        with self._copilot_module_ctx(mock_cls):
             result = await provider._get_client()
 
         assert result is mock_client
@@ -886,7 +897,7 @@ class TestCopilotAuthCheck:
 
     async def test_get_client_stops_client_on_auth_failure(self) -> None:
         """Client is stopped if auth check fails to prevent process leak."""
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock
 
         from markitai.providers.copilot import CopilotProvider
 
@@ -901,7 +912,7 @@ class TestCopilotAuthCheck:
 
         mock_cls = MagicMock(return_value=mock_client)
 
-        with patch("copilot.CopilotClient", mock_cls):
+        with self._copilot_module_ctx(mock_cls):
             import pytest
 
             from markitai.providers.errors import AuthenticationError
@@ -936,13 +947,18 @@ class TestCopilotAuthCheck:
 
         mock_cls = MagicMock(return_value=mock_client)
 
+        import sys
+        import types
+
+        copilot_mod = types.ModuleType("copilot")
+        copilot_mod.CopilotClient = mock_cls  # type: ignore[attr-defined]
+        copilot_mod.PermissionHandler = MagicMock(approve_all=MagicMock())  # type: ignore[attr-defined]
         with (
             patch(
                 "markitai.providers.copilot._is_copilot_sdk_available",
                 return_value=True,
             ),
-            patch("copilot.CopilotClient", mock_cls),
-            patch("copilot.PermissionHandler", MagicMock(approve_all=MagicMock())),
+            patch.dict(sys.modules, {"copilot": copilot_mod}),
         ):
             messages = [{"role": "user", "content": "Hello"}]
 

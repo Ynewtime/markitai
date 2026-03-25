@@ -1833,12 +1833,11 @@ class TestLLMProcessorRouterCreation:
                 )
             ],
         )
-        processor = LLMProcessor(config, prompts_config)
-
         with (
             patch("markitai.providers.is_local_provider_available", return_value=True),
             patch("markitai.providers.is_local_provider_model", return_value=True),
         ):
+            processor = LLMProcessor(config, prompts_config)
             router = processor.router
             assert isinstance(router, LocalProviderWrapper)
 
