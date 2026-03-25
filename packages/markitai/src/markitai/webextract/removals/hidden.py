@@ -14,6 +14,10 @@ _HIDDEN_STYLE_RE = re.compile(
 
 _HIDDEN_CLASSES = {"hidden", "invisible"}
 
+# CSS Modules / CSS-in-JS frameworks produce hashed class names like
+# "isHidden-vzcyV0", "is-hidden-abc123".  Match the semantic prefix.
+_HIDDEN_CSS_MODULE_RE = re.compile(r"^is[-_]?[Hh]idden[-_]")
+
 # Math elements should never be removed (may use aria-hidden for a11y)
 _MATH_SELECTORS = (
     "math",
@@ -67,6 +71,8 @@ def _is_hidden(el: Tag) -> bool:
         for cls in classes:
             bare = cls.split(":")[-1]  # handle "md:hidden" → "hidden"
             if bare in _HIDDEN_CLASSES:
+                return True
+            if _HIDDEN_CSS_MODULE_RE.match(bare):
                 return True
 
     # hidden attribute
