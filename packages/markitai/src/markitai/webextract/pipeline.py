@@ -257,7 +257,7 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
 
 
 _RETRY_SPARSE_THRESHOLD = 50
-_RETRY_VERY_SPARSE_THRESHOLD = 20
+_RETRY_VERY_SPARSE_THRESHOLD = 50
 
 
 def _extract_once(

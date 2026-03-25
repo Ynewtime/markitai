@@ -17,9 +17,10 @@ import pytest
 from click.testing import CliRunner
 
 from markitai.cli import app
-from markitai.utils.office import find_libreoffice
+from markitai.converter.base import get_converter
+from markitai.utils.office import is_libreoffice_functional
 
-_HAS_LIBREOFFICE = bool(find_libreoffice())
+_HAS_LIBREOFFICE = is_libreoffice_functional()
 
 # =============================================================================
 # Fixtures
@@ -53,14 +54,20 @@ def converted_fixtures(tmp_path_factory) -> dict:
     fixtures_dir = Path(__file__).parent.parent / "fixtures"
     output_dir = tmp_path_factory.mktemp("converted")
 
-    # Create temp input dir excluding .urls files (network-dependent)
+    # Create temp input dir with only files that have registered converters.
+    # Excludes .urls (network-dependent) and formats without converters.
     input_dir = tmp_path_factory.mktemp("fixtures_no_urls")
     for item in fixtures_dir.iterdir():
         if item.suffix == ".urls":
             continue
         if item.is_dir():
-            shutil.copytree(item, input_dir / item.name)
-        else:
+            # Only copy subdirectories containing convertible files
+            has_convertible = any(
+                get_converter(f) for f in item.iterdir() if f.is_file()
+            )
+            if has_convertible:
+                shutil.copytree(item, input_dir / item.name)
+        elif get_converter(item) is not None:
             shutil.copy2(item, input_dir / item.name)
 
     runner = CliRunner()
