@@ -257,7 +257,6 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
 
 
 _RETRY_SPARSE_THRESHOLD = 50
-_RETRY_VERY_SPARSE_THRESHOLD = 50
 
 
 def _extract_once(
@@ -384,8 +383,10 @@ def _extract_with_retry(
         diagnostics["adaptive_retry_used"] = True
         diagnostics["retry_level"] = 4
 
-    # Fallback: broaden to <body> (deep-copy to avoid mutated state)
-    if word_count <= _RETRY_VERY_SPARSE_THRESHOLD:
+    # Fallback: broaden to <body> (deep-copy to avoid mutated state).
+    # Trigger when Levels 2-4 could not push content above the sparse
+    # threshold — the candidate root is likely too narrow.
+    if word_count < _RETRY_SPARSE_THRESHOLD:
         soup_body = copy.deepcopy(ctx.original_soup)
         body = soup_body.body
         if body is not None:
