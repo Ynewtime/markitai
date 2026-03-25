@@ -491,8 +491,7 @@ def app(
             custom = ", ".join(sorted(cfg.presets)) if cfg.presets else ""
             available = builtin + (f", {custom}" if custom else "")
             console.print(
-                f"[red]Error: Unknown preset '{preset}'. "
-                f"Available: {available}[/red]"
+                f"[red]Error: Unknown preset '{preset}'. Available: {available}[/red]"
             )
             raise SystemExit(1)
 
