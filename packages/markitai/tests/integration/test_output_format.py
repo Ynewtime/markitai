@@ -18,9 +18,9 @@ import pytest
 from click.testing import CliRunner
 
 from markitai.cli import app
-from markitai.utils.office import find_libreoffice
+from markitai.utils.office import is_libreoffice_functional
 
-_HAS_LIBREOFFICE = bool(find_libreoffice())
+_HAS_LIBREOFFICE = is_libreoffice_functional()
 
 # =============================================================================
 # T1: Fixture-based integration test framework

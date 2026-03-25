@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from markitai.converter.webextract_html_converter import WebExtractMarkdownConverter
+from markitai.converter.webextract_html_converter import (
+    WebExtractMarkdownConverter,
+    _mathml_to_latex,
+)
 
 
 def _convert(html: str) -> str:
@@ -118,3 +121,171 @@ class TestMathConversion:
         html = '<math display="block" alttext="\\sum_{i=1}^n i"><mi>sum</mi></math>'
         md = _convert(html)
         assert "$$\\sum_{i=1}^n i$$" in md
+
+    def test_mathml_structural_fallback(self) -> None:
+        """MathML without annotation/alttext uses structural conversion."""
+        html = "<math><mi>a</mi><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mi>b</mi></math>"
+        md = _convert(html)
+        assert "x^{2}" in md
+        assert "+" in md
+
+    def test_katex_display(self) -> None:
+        html = (
+            '<span class="katex katex-display">'
+            '<span class="katex-mathml"><math><semantics>'
+            '<annotation encoding="application/x-tex">E = mc^2</annotation>'
+            "</semantics></math></span></span>"
+        )
+        md = _convert(html)
+        assert "$$E = mc^2$$" in md
+
+
+class TestMathMLToLatex:
+    """Unit tests for the MathML → LaTeX structural converter."""
+
+    def _latex(self, mathml_inner: str) -> str:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(f"<math>{mathml_inner}</math>", "html.parser")
+        return _mathml_to_latex(soup.find("math"))
+
+    # --- Leaf elements ---
+
+    def test_mi_single_char(self) -> None:
+        assert self._latex("<mi>x</mi>") == "x"
+
+    def test_mi_multichar_becomes_mathrm(self) -> None:
+        assert self._latex("<mi>sin</mi>") == r"\mathrm{sin}"
+
+    def test_mn(self) -> None:
+        assert self._latex("<mn>42</mn>") == "42"
+
+    def test_mo_plain(self) -> None:
+        assert self._latex("<mo>+</mo>") == "+"
+
+    def test_mo_unicode_replacement(self) -> None:
+        assert self._latex("<mo>≠</mo>") == r"\neq"
+        assert self._latex("<mo>≤</mo>") == r"\leq"
+        assert self._latex("<mo>∞</mo>") == r"\infty"
+
+    def test_mo_greek_letter(self) -> None:
+        assert self._latex("<mi>α</mi>") == r"\alpha"
+        assert self._latex("<mi>Ω</mi>") == r"\Omega"
+
+    def test_mtext(self) -> None:
+        assert self._latex("<mtext>hello</mtext>") == r"\text{hello}"
+
+    def test_mspace(self) -> None:
+        assert self._latex("<mspace/>") == r"\;"
+
+    # --- Structural elements ---
+
+    def test_msup(self) -> None:
+        assert self._latex("<msup><mi>x</mi><mn>2</mn></msup>") == "x^{2}"
+
+    def test_msub(self) -> None:
+        assert self._latex("<msub><mi>a</mi><mi>i</mi></msub>") == "a_{i}"
+
+    def test_msubsup(self) -> None:
+        result = self._latex("<msubsup><mi>x</mi><mn>0</mn><mn>1</mn></msubsup>")
+        assert result == "x_{0}^{1}"
+
+    def test_mfrac(self) -> None:
+        result = self._latex(
+            "<mfrac><mrow><mi>a</mi><mo>+</mo><mi>b</mi></mrow><mi>c</mi></mfrac>"
+        )
+        assert result == r"\frac{a + b}{c}"
+
+    def test_msqrt(self) -> None:
+        assert self._latex("<msqrt><mi>x</mi></msqrt>") == r"\sqrt{x}"
+
+    def test_mroot(self) -> None:
+        result = self._latex("<mroot><mi>x</mi><mn>3</mn></mroot>")
+        assert result == r"\sqrt[3]{x}"
+
+    # --- Overscripts ---
+
+    def test_mover_dot(self) -> None:
+        assert self._latex("<mover><mi>x</mi><mo>˙</mo></mover>") == r"\dot{x}"
+
+    def test_mover_overline(self) -> None:
+        assert self._latex("<mover><mi>x</mi><mo>¯</mo></mover>") == r"\overline{x}"
+
+    def test_mover_hat(self) -> None:
+        assert self._latex("<mover><mi>x</mi><mo>^</mo></mover>") == r"\hat{x}"
+
+    def test_mover_vec_arrow(self) -> None:
+        """Arrow in <mo> must produce \\vec, not \\overset{\\rightarrow}."""
+        assert self._latex("<mover><mi>B</mi><mo>→</mo></mover>") == r"\vec{B}"
+
+    def test_mover_generic(self) -> None:
+        result = self._latex("<mover><mi>x</mi><mo>*</mo></mover>")
+        assert result == r"\overset{*}{x}"
+
+    # --- Underscript / underover ---
+
+    def test_munder(self) -> None:
+        result = self._latex("<munder><mo>∑</mo><mi>i</mi></munder>")
+        assert result == r"\underset{i}{\sum}"
+
+    def test_munderover(self) -> None:
+        result = self._latex("<munderover><mo>∑</mo><mn>0</mn><mi>n</mi></munderover>")
+        assert result == r"\sum_{0}^{n}"
+
+    # --- Table (aligned) ---
+
+    def test_mtable(self) -> None:
+        result = self._latex(
+            "<mtable>"
+            "<mtr><mtd><mi>a</mi></mtd><mtd><mi>b</mi></mtd></mtr>"
+            "<mtr><mtd><mi>c</mi></mtd><mtd><mi>d</mi></mtd></mtr>"
+            "</mtable>"
+        )
+        assert r"\begin{aligned}" in result
+        assert "a & b" in result
+        assert r"\\" in result
+        assert "c & d" in result
+
+    # --- Semantics wrapper ---
+
+    def test_semantics_uses_first_child(self) -> None:
+        result = self._latex(
+            "<semantics><mrow><mi>x</mi></mrow>"
+            '<annotation encoding="application/x-tex">x</annotation>'
+            "</semantics>"
+        )
+        assert result == "x"
+
+    # --- mrow passthrough ---
+
+    def test_mrow_concatenates(self) -> None:
+        result = self._latex("<mrow><mi>a</mi><mo>+</mo><mi>b</mi></mrow>")
+        assert result == "a + b"
+
+    # --- Nested expression ---
+
+    def test_quadratic_formula(self) -> None:
+        mathml = (
+            "<mfrac>"
+            "<mrow><mo>-</mo><mi>b</mi><mo>±</mo>"
+            "<msqrt><mrow><msup><mi>b</mi><mn>2</mn></msup>"
+            "<mo>-</mo><mn>4</mn><mi>a</mi><mi>c</mi></mrow></msqrt>"
+            "</mrow>"
+            "<mrow><mn>2</mn><mi>a</mi></mrow>"
+            "</mfrac>"
+        )
+        result = self._latex(mathml)
+        assert r"\frac" in result
+        assert r"\sqrt" in result
+        assert "b^{2}" in result
+        assert r"\pm" in result
+
+    # --- mfenced ---
+
+    def test_mfenced_default(self) -> None:
+        result = self._latex("<mfenced><mi>a</mi><mi>b</mi></mfenced>")
+        assert result == r"\left(a , b\right)"
+
+    def test_mfenced_custom_delimiters(self) -> None:
+        result = self._latex('<mfenced open="[" close="]"><mi>x</mi></mfenced>')
+        assert result == r"\left[x\right]"
