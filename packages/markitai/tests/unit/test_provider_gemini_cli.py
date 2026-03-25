@@ -1041,6 +1041,7 @@ class TestGetAccessToken:
             patch.object(
                 provider, "_get_credential_payload_candidates", return_value=[]
             ),
+            patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
             pytest.raises(AuthenticationError, match="No valid Gemini credentials"),
         ):
             await provider._get_access_token()
@@ -1082,6 +1083,7 @@ class TestGetAccessToken:
             patch(
                 "markitai.providers.gemini_cli.asyncio.sleep", new_callable=AsyncMock
             ),
+            patch("markitai.providers.gemini_cli._GOOGLE_AUTH_AVAILABLE", True),
         ):
             mock_req.Request.return_value = MagicMock()
             with pytest.raises(

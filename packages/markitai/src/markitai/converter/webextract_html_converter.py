@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from bs4 import NavigableString, Tag
 from markitdown._base_converter import DocumentConverterResult
 from markitdown.converters._html_converter import HtmlConverter
 from markitdown.converters._markdownify import _CustomMarkdownify
@@ -71,11 +72,272 @@ def _detect_language(el: Any) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# MathML → LaTeX conversion
+# ---------------------------------------------------------------------------
+
+# Operator replacements for common MathML entities
+_MO_REPLACEMENTS: dict[str, str] = {
+    "≠": r"\neq",
+    "≤": r"\leq",
+    "≥": r"\geq",
+    "±": r"\pm",
+    "∓": r"\mp",
+    "×": r"\times",
+    "÷": r"\div",
+    "∞": r"\infty",
+    "∑": r"\sum",
+    "∏": r"\prod",
+    "∫": r"\int",
+    "∂": r"\partial",
+    "∇": r"\nabla",
+    "→": r"\rightarrow",
+    "←": r"\leftarrow",
+    "⇒": r"\Rightarrow",
+    "⇐": r"\Leftarrow",
+    "↦": r"\mapsto",
+    "∈": r"\in",
+    "∉": r"\notin",
+    "⊂": r"\subset",
+    "⊃": r"\supset",
+    "⊆": r"\subseteq",
+    "⊇": r"\supseteq",
+    "∪": r"\cup",
+    "∩": r"\cap",
+    "∧": r"\wedge",
+    "∨": r"\vee",
+    "¬": r"\neg",
+    "⟨": r"\langle",
+    "⟩": r"\rangle",
+    "⌊": r"\lfloor",
+    "⌋": r"\rfloor",
+    "⌈": r"\lceil",
+    "⌉": r"\rceil",
+    "∅": r"\emptyset",
+    "∀": r"\forall",
+    "∃": r"\exists",
+    "⟹": r"\implies",
+    "⟸": r"\impliedby",
+    "⟺": r"\iff",
+    "⋯": r"\cdots",
+    "…": r"\ldots",
+    "⋅": r"\cdot",
+    "·": r"\cdot",
+    "α": r"\alpha",
+    "β": r"\beta",
+    "γ": r"\gamma",
+    "δ": r"\delta",
+    "ε": r"\epsilon",
+    "ζ": r"\zeta",
+    "η": r"\eta",
+    "θ": r"\theta",
+    "ι": r"\iota",
+    "κ": r"\kappa",
+    "λ": r"\lambda",
+    "μ": r"\mu",
+    "ν": r"\nu",
+    "ξ": r"\xi",
+    "π": r"\pi",
+    "ρ": r"\rho",
+    "σ": r"\sigma",
+    "τ": r"\tau",
+    "υ": r"\upsilon",
+    "ϕ": r"\phi",
+    "φ": r"\varphi",
+    "χ": r"\chi",
+    "ψ": r"\psi",
+    "ω": r"\omega",
+    "Γ": r"\Gamma",
+    "Δ": r"\Delta",
+    "Θ": r"\Theta",
+    "Λ": r"\Lambda",
+    "Ξ": r"\Xi",
+    "Π": r"\Pi",
+    "Σ": r"\Sigma",
+    "Φ": r"\Phi",
+    "Ψ": r"\Psi",
+    "Ω": r"\Omega",
+}
+
+
+def _mathml_to_latex(el: Any) -> str:
+    """Convert a MathML element tree to LaTeX notation.
+
+    Handles the common MathML elements: mi, mn, mo, mrow, msup, msub,
+    msubsup, mfrac, msqrt, mover, munder, munderover, mtable, mtr, mtd,
+    mtext, mspace, semantics.
+    """
+    if isinstance(el, NavigableString):
+        return str(el).strip()
+
+    if not isinstance(el, Tag):
+        return ""
+
+    tag = el.name
+
+    # Skip semantics wrapper — process children
+    if tag == "semantics":
+        # Prefer annotation if present (already checked by caller)
+        children = [c for c in el.children if isinstance(c, Tag)]
+        if children:
+            return _mathml_to_latex(children[0])
+        return ""
+
+    if tag in ("math", "mrow", "mpadded", "mstyle", "merror", "mphantom"):
+        return _convert_children(el)
+
+    if tag == "mi":
+        text = el.get_text(strip=True)
+        if len(text) > 1 and text.isalpha():
+            return rf"\mathrm{{{text}}}"
+        return _mo_replace(text)
+
+    if tag == "mn":
+        return el.get_text(strip=True)
+
+    if tag == "mo":
+        text = el.get_text(strip=True)
+        return _mo_replace(text)
+
+    if tag == "mtext":
+        text = el.get_text(strip=True)
+        if text:
+            return rf"\text{{{text}}}"
+        return ""
+
+    if tag == "mspace":
+        return r"\;"
+
+    if tag == "msup":
+        children = _child_tags(el)
+        if len(children) >= 2:
+            base = _mathml_to_latex(children[0])
+            sup = _mathml_to_latex(children[1])
+            return f"{base}^{{{sup}}}"
+        return _convert_children(el)
+
+    if tag == "msub":
+        children = _child_tags(el)
+        if len(children) >= 2:
+            base = _mathml_to_latex(children[0])
+            sub = _mathml_to_latex(children[1])
+            return f"{base}_{{{sub}}}"
+        return _convert_children(el)
+
+    if tag == "msubsup":
+        children = _child_tags(el)
+        if len(children) >= 3:
+            base = _mathml_to_latex(children[0])
+            sub = _mathml_to_latex(children[1])
+            sup = _mathml_to_latex(children[2])
+            return f"{base}_{{{sub}}}^{{{sup}}}"
+        return _convert_children(el)
+
+    if tag == "mfrac":
+        children = _child_tags(el)
+        if len(children) >= 2:
+            num = _mathml_to_latex(children[0])
+            den = _mathml_to_latex(children[1])
+            return rf"\frac{{{num}}}{{{den}}}"
+        return _convert_children(el)
+
+    if tag == "msqrt":
+        inner = _convert_children(el)
+        return rf"\sqrt{{{inner}}}"
+
+    if tag == "mroot":
+        children = _child_tags(el)
+        if len(children) >= 2:
+            base = _mathml_to_latex(children[0])
+            index = _mathml_to_latex(children[1])
+            return rf"\sqrt[{index}]{{{base}}}"
+        return _convert_children(el)
+
+    if tag == "mover":
+        children = _child_tags(el)
+        if len(children) >= 2:
+            base = _mathml_to_latex(children[0])
+            # Check the raw text of the overscript *before* recursive conversion
+            # so that e.g. <mo>→</mo> is matched as "→" not "\rightarrow".
+            over_raw = children[1].get_text(strip=True)
+            if over_raw in ("˙", "̇"):
+                return rf"\dot{{{base}}}"
+            if over_raw in ("¯", "‾"):
+                return rf"\overline{{{base}}}"
+            if over_raw in ("^", "̂"):
+                return rf"\hat{{{base}}}"
+            if over_raw in ("~", "̃", "˜"):
+                return rf"\tilde{{{base}}}"
+            if over_raw in ("→", "⃗"):
+                return rf"\vec{{{base}}}"
+            over = _mathml_to_latex(children[1])
+            return rf"\overset{{{over}}}{{{base}}}"
+        return _convert_children(el)
+
+    if tag == "munder":
+        children = _child_tags(el)
+        if len(children) >= 2:
+            base = _mathml_to_latex(children[0])
+            under = _mathml_to_latex(children[1])
+            return rf"\underset{{{under}}}{{{base}}}"
+        return _convert_children(el)
+
+    if tag == "munderover":
+        children = _child_tags(el)
+        if len(children) >= 3:
+            base = _mathml_to_latex(children[0])
+            under = _mathml_to_latex(children[1])
+            over = _mathml_to_latex(children[2])
+            return f"{base}_{{{under}}}^{{{over}}}"
+        return _convert_children(el)
+
+    if tag == "mtable":
+        rows: list[str] = []
+        for tr in el.find_all("mtr", recursive=False):
+            cells = [_mathml_to_latex(td) for td in tr.find_all("mtd", recursive=False)]
+            rows.append(" & ".join(cells))
+        return r"\begin{aligned}" + " \\\\ ".join(rows) + r"\end{aligned}"
+
+    if tag == "mfenced":
+        open_d = el.get("open", "(")
+        close_d = el.get("close", ")")
+        sep = el.get("separators", ",")
+        children = _child_tags(el)
+        inner = f" {sep} ".join(_mathml_to_latex(c) for c in children)
+        return rf"\left{open_d}{inner}\right{close_d}"
+
+    # Fallback: just convert children
+    return _convert_children(el)
+
+
+def _child_tags(el: Any) -> list[Any]:
+    """Return direct child Tag elements."""
+    return [c for c in el.children if isinstance(c, Tag)]
+
+
+def _convert_children(el: Any) -> str:
+    """Convert all children and join."""
+    parts: list[str] = []
+    for child in el.children:
+        if isinstance(child, Tag):
+            parts.append(_mathml_to_latex(child))
+        elif isinstance(child, NavigableString):
+            text = str(child).strip()
+            if text:
+                parts.append(text)
+    return " ".join(parts) if parts else ""
+
+
+def _mo_replace(text: str) -> str:
+    """Replace Unicode math operators with LaTeX commands."""
+    return _MO_REPLACEMENTS.get(text, text)
+
+
 class WebExtractMarkdownConverter(_CustomMarkdownify):
     """Markdownify converter with enhanced rules for web content."""
 
     def convert_math(self, el: Any, text: str, parent_tags: set) -> str:
-        """Convert <math> to LaTeX. Prefers alttext, then KaTeX annotation."""
+        """Convert <math> to LaTeX. Prefers alttext, then annotation, then MathML."""
         alttext = el.get("alttext", "")
         if alttext:
             is_block = el.get("display") == "block"
@@ -83,6 +345,10 @@ class WebExtractMarkdownConverter(_CustomMarkdownify):
         annotation = el.find("annotation", attrs={"encoding": "application/x-tex"})
         if annotation and annotation.string:
             return f"${annotation.string.strip()}$"
+        # Try converting MathML structure to LaTeX
+        latex = _mathml_to_latex(el)
+        if latex:
+            return f"${latex}$"
         math_text = el.get_text(strip=True)
         return f"${math_text}$" if math_text else ""
 

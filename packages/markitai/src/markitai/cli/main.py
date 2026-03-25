@@ -474,6 +474,7 @@ def app(
     from markitai.config import get_preset
 
     if preset:
+        preset = preset.lower()
         preset_config = get_preset(preset, cfg)
         if preset_config:
             # Apply preset values as base
@@ -484,7 +485,15 @@ def app(
             cfg.screenshot.enabled = preset_config.screenshot
             logger.debug(f"Applied preset: {preset}")
         else:
-            console.print(f"[yellow]Warning: Unknown preset '{preset}'[/yellow]")
+            from markitai.config import BUILTIN_PRESETS
+
+            builtin = ", ".join(sorted(BUILTIN_PRESETS))
+            custom = ", ".join(sorted(cfg.presets)) if cfg.presets else ""
+            available = builtin + (f", {custom}" if custom else "")
+            console.print(
+                f"[red]Error: Unknown preset '{preset}'. Available: {available}[/red]"
+            )
+            raise SystemExit(1)
 
     # Override with explicit CLI options (--flag or --no-flag)
     # None means not specified, so we don't override

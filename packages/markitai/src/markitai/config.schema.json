@@ -298,6 +298,28 @@
           "default": null,
           "description": "Custom strategy order for this domain. Overrides global and prefer_strategy.",
           "title": "Strategy Priority"
+        },
+        "skip_auto_scroll": {
+          "default": false,
+          "description": "Skip auto-scrolling for single-content pages (tweets, issues, docs).",
+          "title": "Skip Auto Scroll",
+          "type": "boolean"
+        },
+        "reject_resource_patterns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL patterns to block during Playwright navigation (e.g. '**/analytics/**').",
+          "title": "Reject Resource Patterns"
         }
       },
       "title": "DomainProfileConfig",
