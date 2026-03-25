@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-03-25
+
+### Added
+
+- **Steam News Extractor**: Site-specific extractor for `store.steampowered.com/news/` pages that parses BBCode announcements from JSON data attributes
+- **MathML-to-LaTeX Converter**: Structural MathML conversion for pages without LaTeX annotations (KaTeX/MathJax), handling `msup`, `msub`, `mfrac`, `msqrt`, `mover`, `munder`, `mtable`, and 70+ Unicode math symbol replacements
+- **LibreOffice Functional Check**: `is_libreoffice_functional()` verifies LibreOffice can actually convert files, not just that the binary exists
+- **CSS Modules Hidden Detection**: Detect hashed hidden class names like `isHidden-vzcyV0` from CSS-in-JS frameworks
+
+### Fixed
+
+- **Math Content Extraction**: Body fallback now triggers when all retry levels fail to reach the sparse threshold, fixing KaTeX pages where scoring selected a single math div instead of the full article
+- **Integration Test Reliability**: Batch test fixture filters to files with registered converters; LibreOffice tests skip properly when installation is non-functional
+- **CLI Preset Validation**: Unknown presets now show available options and exit with error instead of silently continuing
+- **BBCode XSS Prevention**: Raw HTML in Steam BBCode content is escaped before conversion to prevent injection
+
+### Security
+
+- **litellm Supply-Chain Pin**: Pin litellm to `<1.82.7` to exclude compromised versions
+
+### Changed
+
+- **CI Resilience**: Windows LibreOffice install retries up to 3 times with backoff to handle transient Chocolatey failures
+
 ## [0.13.1] - 2026-03-23
 
 ### Added
