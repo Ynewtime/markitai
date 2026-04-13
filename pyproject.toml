@@ -30,7 +30,7 @@ dev = [
     "ruff>=0.15.0",
     "pyright>=1.1.408",
     "pre-commit>=4.5.1",
-    "bandit>=1.8.0",
+    "bandit>=1.9.4",
     "lxml-stubs>=0.5.1",
 ]
 
