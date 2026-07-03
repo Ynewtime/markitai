@@ -1,0 +1,425 @@
+{
+  "generated_at": "2026-07-03T02:40:17+00:00",
+  "scorer": "heuristic (rapidfuzz partial-ratio, marker-style)",
+  "fixture_count": 83,
+  "aggregate": {
+    "mean_score": 91.04
+  },
+  "fixtures": {
+    "codeblocks--mintlify": {
+      "score": 98.55,
+      "match_score": 99.32,
+      "order_score": 95.45
+    },
+    "codeblocks--rehype-pretty-code": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "codeblocks--rockthejvm.com-articles-kotlin-101-type-classes": {
+      "score": 99.46,
+      "match_score": 99.33,
+      "order_score": 100.0
+    },
+    "codeblocks--stripe": {
+      "score": 99.67,
+      "match_score": 99.59,
+      "order_score": 100.0
+    },
+    "comments--news.ycombinator.com-item-id=12345678": {
+      "score": 33.9,
+      "match_score": 19.88,
+      "order_score": 90.0
+    },
+    "comments--old.reddit.com-r-test-comments-abc123-test_post": {
+      "score": 16.85,
+      "match_score": 1.06,
+      "order_score": 80.0
+    },
+    "elements--bootstrap-alerts": {
+      "score": 97.92,
+      "match_score": 97.4,
+      "order_score": 100.0
+    },
+    "elements--complex-tables": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "elements--data-table": {
+      "score": 99.07,
+      "match_score": 98.83,
+      "order_score": 100.0
+    },
+    "elements--embedded-videos": {
+      "score": 30.07,
+      "match_score": 20.92,
+      "order_score": 66.67
+    },
+    "elements--empty-p-br": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "elements--farsi-zwnj": {
+      "score": 99.86,
+      "match_score": 99.83,
+      "order_score": 100.0
+    },
+    "elements--figure-content-wrapper": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "elements--javascript-links": {
+      "score": 99.69,
+      "match_score": 99.61,
+      "order_score": 100.0
+    },
+    "elements--lazy-image": {
+      "score": 90.57,
+      "match_score": 88.21,
+      "order_score": 100.0
+    },
+    "elements--nbsp-handling": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "elements--whitespace-newlines": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "extractor--bbcode-data": {
+      "score": 94.99,
+      "match_score": 93.74,
+      "order_score": 100.0
+    },
+    "footnotes--child-anchor-id": {
+      "score": 96.43,
+      "match_score": 95.54,
+      "order_score": 100.0
+    },
+    "footnotes--heading-notes": {
+      "score": 94.74,
+      "match_score": 93.42,
+      "order_score": 100.0
+    },
+    "footnotes--hr-continuation": {
+      "score": 96.8,
+      "match_score": 96.0,
+      "order_score": 100.0
+    },
+    "footnotes--hr-strong-numbered": {
+      "score": 94.61,
+      "match_score": 93.26,
+      "order_score": 100.0
+    },
+    "footnotes--hr-sup-numbered": {
+      "score": 96.06,
+      "match_score": 95.08,
+      "order_score": 100.0
+    },
+    "footnotes--inline-footnote-span": {
+      "score": 92.81,
+      "match_score": 96.02,
+      "order_score": 80.0
+    },
+    "footnotes--maggieappleton.com-xanadu-patterns": {
+      "score": 97.98,
+      "match_score": 98.56,
+      "order_score": 95.63
+    },
+    "footnotes--nested-prose": {
+      "score": 95.65,
+      "match_score": 94.56,
+      "order_score": 100.0
+    },
+    "general--12gramsofcarbon.com-p-ilyas-30-papers-to-carmack-vlaes": {
+      "score": 98.83,
+      "match_score": 98.54,
+      "order_score": 100.0
+    },
+    "general--apnews-link-enhancement": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "general--appendix-heading": {
+      "score": 99.64,
+      "match_score": 100.0,
+      "order_score": 98.18
+    },
+    "general--back-nav-link": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "general--cp4space-jordan-algebra": {
+      "score": 61.97,
+      "match_score": 56.87,
+      "order_score": 82.38
+    },
+    "general--daringfireball.net-2025-02-the_iphone_16e": {
+      "score": 97.33,
+      "match_score": 98.66,
+      "order_score": 92.0
+    },
+    "general--developer.mozilla.org-en-US-docs-Web-JavaScript-Reference-Global_Objects-Array": {
+      "score": 95.94,
+      "match_score": 96.35,
+      "order_score": 94.3
+    },
+    "general--github.com-issue-56": {
+      "score": 93.45,
+      "match_score": 92.29,
+      "order_score": 98.1
+    },
+    "general--github.com-test-owner-test-repo-pull-42": {
+      "score": 74.17,
+      "match_score": 74.15,
+      "order_score": 74.24
+    },
+    "general--inline-comments-and-link-lists": {
+      "score": 99.35,
+      "match_score": 99.18,
+      "order_score": 100.0
+    },
+    "general--lesswrong.com-s-N7nDePaNabJdnbXeE-p-vJFdjigzmcXMhNTsx": {
+      "score": 94.26,
+      "match_score": 95.29,
+      "order_score": 90.11
+    },
+    "general--multi-article-portfolio": {
+      "score": 75.22,
+      "match_score": 78.83,
+      "order_score": 60.8
+    },
+    "general--news.ycombinator.com-item-id=12345678": {
+      "score": 20.0,
+      "match_score": 0.0,
+      "order_score": 100.0
+    },
+    "general--obsidian-publish-cjk": {
+      "score": 97.98,
+      "match_score": 97.48,
+      "order_score": 100.0
+    },
+    "general--obsidian.md-blog-verify-obsidian-sync-encryption": {
+      "score": 99.61,
+      "match_score": 99.51,
+      "order_score": 100.0
+    },
+    "general--react-streaming-ssr": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "general--scp-wiki.wikidot.com-scp-9935": {
+      "score": 82.62,
+      "match_score": 85.85,
+      "order_score": 69.7
+    },
+    "general--stephango.com-buy-wisely": {
+      "score": 96.05,
+      "match_score": 99.15,
+      "order_score": 83.67
+    },
+    "general--substack-app": {
+      "score": 98.49,
+      "match_score": 98.12,
+      "order_score": 100.0
+    },
+    "general--tailwind-hidden-blog-index": {
+      "score": 61.95,
+      "match_score": 59.14,
+      "order_score": 73.16
+    },
+    "general--trailing-cta-newsletter": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "general--wikipedia": {
+      "score": 92.63,
+      "match_score": 92.46,
+      "order_score": 93.33
+    },
+    "general--www.figma.com-blog-introducing-codex-to-figma": {
+      "score": 76.49,
+      "match_score": 70.61,
+      "order_score": 100.0
+    },
+    "general--x.com-article": {
+      "score": 99.1,
+      "match_score": 98.87,
+      "order_score": 100.0
+    },
+    "general--x.com-article-2026-02-13": {
+      "score": 99.2,
+      "match_score": 99.59,
+      "order_score": 97.67
+    },
+    "hidden--nodes": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "hidden--visibility": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--106-menu-id": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--114-leading-hr": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--120-dhammatalks-footnotes": {
+      "score": 97.56,
+      "match_score": 97.88,
+      "order_score": 96.3
+    },
+    "issues--131-category-links": {
+      "score": 89.76,
+      "match_score": 87.2,
+      "order_score": 100.0
+    },
+    "issues--132-hero-class": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--136-time-element": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--141-arxiv-equation-tables": {
+      "score": 99.1,
+      "match_score": 98.87,
+      "order_score": 100.0
+    },
+    "issues--142-arxiv-multi-citations": {
+      "score": 92.44,
+      "match_score": 90.55,
+      "order_score": 100.0
+    },
+    "issues--143-arxiv-cross-references": {
+      "score": 84.5,
+      "match_score": 80.63,
+      "order_score": 100.0
+    },
+    "issues--144-arxiv-footnote-marks": {
+      "score": 73.45,
+      "match_score": 66.81,
+      "order_score": 100.0
+    },
+    "issues--159-lean-heading-permalink-emoji": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--159-lean-verso-code-blocks": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--159-lean-verso-empty-line-preserved": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--159-lean-verso-grouped-blocks": {
+      "score": 97.59,
+      "match_score": 96.99,
+      "order_score": 100.0
+    },
+    "issues--159-lean-verso-missing-section-gap": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--162-aria-hidden-main-content": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--167-partial-selector-inside-code": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--168-links-inside-inline-code": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--169-svg-classname-crash": {
+      "score": 74.21,
+      "match_score": 71.93,
+      "order_score": 83.33
+    },
+    "issues--span-with-block-children-and-schema": {
+      "score": 98.36,
+      "match_score": 99.73,
+      "order_score": 92.86
+    },
+    "math--katex": {
+      "score": 99.0,
+      "match_score": 98.75,
+      "order_score": 100.0
+    },
+    "math--katex-centraliser": {
+      "score": 98.82,
+      "match_score": 98.52,
+      "order_score": 100.0
+    },
+    "math--mathjax": {
+      "score": 50.02,
+      "match_score": 42.92,
+      "order_score": 78.42
+    },
+    "math--mathjax-tex-scripts": {
+      "score": 99.31,
+      "match_score": 99.14,
+      "order_score": 100.0
+    },
+    "math--temml": {
+      "score": 70.58,
+      "match_score": 69.41,
+      "order_score": 75.24
+    },
+    "math--wikipedia-mathml": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "scoring--related-posts-byline": {
+      "score": 99.76,
+      "match_score": 99.7,
+      "order_score": 100.0
+    },
+    "scoring--table-with-links": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "table-layout--paulgraham.com-makersschedule": {
+      "score": 99.56,
+      "match_score": 99.45,
+      "order_score": 100.0
+    },
+    "table-layout--single-column": {
+      "score": 92.7,
+      "match_score": 92.54,
+      "order_score": 93.33
+    }
+  }
+}
