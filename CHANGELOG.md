@@ -38,7 +38,7 @@ fetch/cache, LLM providers, image handling, and configuration.
 - **Subcommand help polish**: all 26 subcommand helps now render rich panels with Examples; empty states got helpful hints (`cache stats` with no cache, silent `init -y`, `config get` unknown key → list hint); action commands print the natural next step
 - **`mkai` alias package**: stub PyPI package (`packages/mkai`) that just depends on markitai, for `pip install mkai` convenience and name-squat protection; publish workflow builds both (skip-existing)
 - **kreuzberg floor raised to >=4.9.6**: picks up the no-OCR-backend PDF fix (4.7.3), image-heavy-PDF hang fixes (4.9.x), PPTX slide-order fix (4.8.0). Note: kreuzberg >=4.8.0 is Elastic License 2.0 (optional extra; accepted)
-- **Cache-hit visibility**: the "Fetched via <strategy>" line notes `(cached)` — a cached defuddle result had masqueraded as the live default strategy (fresh fetches win with `static`)
+- **Cache-hit visibility**: the `Fetched via <strategy>` line notes `(cached)` — a cached defuddle result had masqueraded as the live default strategy (fresh fetches win with `static`)
 - Dependency patches: litellm 1.90.3, rapidocr 3.9.1
 
 #### Hunt round 2 (follow-up fixes)
