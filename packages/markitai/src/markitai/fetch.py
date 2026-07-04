@@ -941,11 +941,19 @@ async def close_shared_clients() -> None:
     global _cf_br_semaphore, _spa_domain_cache
     global _markitdown_instance, _detected_proxy, _detected_proxy_bypass
     if _jina_client is not None:
-        await _jina_client.aclose()
+        try:
+            await _jina_client.aclose()
+        except RuntimeError:
+            # Client bound to a previous (closed) event loop; its
+            # connections died with that loop — just drop it
+            logger.debug("[Fetch] Dropping Jina client bound to a stale loop")
         _jina_client = None
     _jina_client_fingerprint = ""
     if _defuddle_client is not None:
-        await _defuddle_client.aclose()
+        try:
+            await _defuddle_client.aclose()
+        except RuntimeError:
+            logger.debug("[Fetch] Dropping Defuddle client bound to a stale loop")
         _defuddle_client = None
     if _fetch_cache is not None:
         _fetch_cache.close()

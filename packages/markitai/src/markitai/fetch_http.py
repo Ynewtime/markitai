@@ -169,11 +169,28 @@ class HttpxClient:
         )
 
     async def close(self) -> None:
-        """Close the shared client and release resources."""
+        """Close the shared client and release resources.
+
+        A client bound to a different (dead) event loop cannot be aclosed
+        from the current loop — its connections died with that loop, so
+        just drop the reference.
+        """
+        import asyncio
+
         if self._client is not None:
-            await self._client.aclose()
+            try:
+                current = asyncio.get_running_loop()
+            except RuntimeError:
+                current = None
+            if self._client_loop is None or self._client_loop is current:
+                await self._client.aclose()
+            else:
+                logger.debug(
+                    "[HTTP] Dropping httpx client bound to a stale loop (close)"
+                )
             self._client = None
             self._client_proxy = None
+            self._client_loop = None
 
 
 class CurlCffiClient:
@@ -245,11 +262,27 @@ class CurlCffiClient:
         )
 
     async def close(self) -> None:
-        """Close the shared session and release resources."""
+        """Close the shared session and release resources.
+
+        A session bound to a different (dead) event loop cannot be closed
+        from the current loop — drop the reference instead.
+        """
+        import asyncio
+
         if self._session is not None:
-            await self._session.close()
+            try:
+                current = asyncio.get_running_loop()
+            except RuntimeError:
+                current = None
+            if self._session_loop is None or self._session_loop is current:
+                await self._session.close()
+            else:
+                logger.debug(
+                    "[HTTP] Dropping curl session bound to a stale loop (close)"
+                )
             self._session = None
             self._session_proxy = None
+            self._session_loop = None
 
 
 # Global singleton clients (lazily initialized, reused across calls)
