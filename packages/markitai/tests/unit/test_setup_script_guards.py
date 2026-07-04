@@ -38,7 +38,9 @@ _NON_FATAL_CALLS = (
 @pytest.mark.skipif(not _SETUP_SH.exists(), reason="scripts/setup.sh not present")
 def test_setup_sh_runs_under_set_e() -> None:
     """The guards only matter because the script is `set -e`."""
-    assert re.search(r"^set -eu?\b", _SETUP_SH.read_text(), re.MULTILINE), (
+    assert re.search(
+        r"^set -eu?\b", _SETUP_SH.read_text(encoding="utf-8"), re.MULTILINE
+    ), (
         "setup.sh is expected to run under set -e; if that changed, revisit "
         "whether the || true guards are still needed."
     )
@@ -52,7 +54,7 @@ def test_non_fatal_calls_are_guarded(func: str) -> None:
     A bare `    install_optional_libreoffice` line under set -e aborts the
     script when the function returns non-zero (declined/failed).
     """
-    text = _SETUP_SH.read_text()
+    text = _SETUP_SH.read_text(encoding="utf-8")
     # A call site is the function name as a whole indented statement. The
     # definition line ends with `()`, so `\b(?!\()` excludes it.
     bare = re.compile(rf"^[ \t]+{re.escape(func)}[ \t]*$", re.MULTILINE)
