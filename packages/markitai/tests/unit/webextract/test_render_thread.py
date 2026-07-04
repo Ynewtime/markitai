@@ -177,8 +177,112 @@ class TestRenderSemanticContent:
         html = render_semantic_content(SemanticExtraction(thread=thread))
         markdown = render_markdown(html)
 
-        assert "> @child" in markdown
+        assert "> **@child**" in markdown
         assert "> Nested reply" in markdown
+
+
+class TestRenderDefuddleParity:
+    """Rendering features ported from defuddle's Twitter extractor."""
+
+    def test_author_meta_line_combines_name_handle_and_date(self) -> None:
+        main = ConversationItem(
+            id="root",
+            author_name="Baoyu",
+            author_handle="@dotey",
+            text="Hello",
+            timestamp="2025-12-24T10:00:00.000Z",
+        )
+        thread = ConversationThread(title="Post by @dotey", main_item=main)
+        html = render_semantic_content(SemanticExtraction(thread=thread))
+        markdown = render_markdown(html)
+        assert "**Baoyu @dotey** · 2025-12-24" in markdown
+
+    def test_twitter_legacy_timestamp_formatted_as_date(self) -> None:
+        main = ConversationItem(
+            id="root",
+            author_handle="@dotey",
+            text="Hello",
+            timestamp="Wed Dec 24 10:00:00 +0000 2025",
+        )
+        thread = ConversationThread(title="Post by @dotey", main_item=main)
+        html = render_semantic_content(SemanticExtraction(thread=thread))
+        assert "<time>2025-12-24</time>" in html
+
+    def test_text_newlines_become_paragraphs(self) -> None:
+        main = ConversationItem(
+            id="root",
+            author_handle="@u",
+            text="First paragraph.\nSecond paragraph.",
+        )
+        thread = ConversationThread(title="Post by @u", main_item=main)
+        html = render_semantic_content(SemanticExtraction(thread=thread))
+        assert "<p>First paragraph.</p>" in html
+        assert "<p>Second paragraph.</p>" in html
+        markdown = render_markdown(html)
+        assert "First paragraph.\n\nSecond paragraph." in markdown
+
+    def test_video_media_renders_poster_and_link(self) -> None:
+        media = MediaAttachment(
+            url="https://video.twimg.com/vid.mp4",
+            media_type="video",
+            poster="https://pbs.twimg.com/thumb.jpg",
+        )
+        main = ConversationItem(id="root", text="Watch", media=[media])
+        thread = ConversationThread(title="Post by @u", main_item=main)
+        markdown = render_markdown(
+            render_semantic_content(SemanticExtraction(thread=thread))
+        )
+        assert "![](https://pbs.twimg.com/thumb.jpg)" in markdown
+        assert "[Video](https://video.twimg.com/vid.mp4)" in markdown
+
+    def test_card_link_rendered(self) -> None:
+        main = ConversationItem(
+            id="root",
+            text="Check this",
+            card_url="https://t.co/card123",
+            card_title="Example Site",
+        )
+        thread = ConversationThread(title="Post by @u", main_item=main)
+        markdown = render_markdown(
+            render_semantic_content(SemanticExtraction(thread=thread))
+        )
+        assert "[Example Site](https://t.co/card123)" in markdown
+
+    def test_quote_renders_author_media_and_permalink(self) -> None:
+        quote = EmbeddedQuote(
+            author_name="OpenAI",
+            author_handle="@OpenAI",
+            text="Announcement",
+            url="https://x.com/OpenAI/status/111",
+            timestamp="2025-12-23T08:00:00.000Z",
+            media=[MediaAttachment(url="https://pbs.twimg.com/media/Q.jpg", alt="pic")],
+        )
+        main = ConversationItem(id="root", text="Quoting", quoted_item=quote)
+        thread = ConversationThread(title="Post by @u", main_item=main)
+        markdown = render_markdown(
+            render_semantic_content(SemanticExtraction(thread=thread))
+        )
+        assert "> **OpenAI @OpenAI** · 2025-12-23" in markdown
+        assert "![pic](https://pbs.twimg.com/media/Q.jpg)" in markdown
+        assert "https://x.com/OpenAI/status/111" in markdown
+
+    def test_continuation_items_rendered_with_hr_before_comments(self) -> None:
+        continuation = ConversationItem(id="c1", text="Part two of the thread.")
+        reply = ConversationItem(id="r1", text="A comment.")
+        main = ConversationItem(id="root", author_handle="@u", text="Part one.")
+        thread = ConversationThread(
+            title="Post by @u",
+            main_item=main,
+            items=[reply],
+            continuation_items=[continuation],
+        )
+        html = render_semantic_content(SemanticExtraction(thread=thread))
+        assert "<hr>" in html
+        # Continuation appears before the Comments heading
+        assert html.index("Part two of the thread.") < html.index("Comments")
+        markdown = render_markdown(html)
+        assert "Part two of the thread." in markdown
+        assert "A comment." in markdown
 
 
 class TestRenderDepthLimit:

@@ -42,6 +42,32 @@ def _extract_twitter_url_parts(url: str) -> tuple[str, str] | None:
     return m.group(1), m.group(2)
 
 
+def _build_media(tweet_data: dict) -> list[MediaAttachment]:
+    """Convert FxTwitter media JSON to MediaAttachment objects.
+
+    Photos map to images; videos and GIFs carry their ``thumbnail_url`` as
+    the poster frame so renderers can show a preview alongside the link.
+    """
+    media_list: list[MediaAttachment] = []
+    media_data = tweet_data.get("media", {})
+    if not isinstance(media_data, dict):
+        return media_list
+    for item in media_data.get("all", []):
+        media_type = item.get("type", "image")
+        # Normalize fxtwitter types to our types
+        if media_type == "photo":
+            media_type = "image"
+        media_list.append(
+            MediaAttachment(
+                url=item.get("url", ""),
+                alt=item.get("altText", ""),
+                media_type=media_type,
+                poster=item.get("thumbnail_url", "") or "",
+            )
+        )
+    return media_list
+
+
 def _build_conversation_thread(
     tweet_data: dict,
     tweet_id: str,
@@ -52,30 +78,18 @@ def _build_conversation_thread(
     author_name = author.get("name")
     author_handle = f"@{author['screen_name']}" if author.get("screen_name") else None
 
-    # Prefer raw_text.text over text
-    raw_text = tweet_data.get("raw_text", {})
-    text = raw_text.get("text") if isinstance(raw_text, dict) else None
+    # Prefer text over raw_text.text: FxTwitter expands t.co links to their
+    # real URLs in ``text`` (and drops trailing media t.co links), while
+    # ``raw_text`` keeps the opaque t.co form.
+    text = tweet_data.get("text", "")
     if not text:
-        text = tweet_data.get("text", "")
+        raw_text = tweet_data.get("raw_text", {})
+        if isinstance(raw_text, dict):
+            text = raw_text.get("text") or ""
 
     timestamp = tweet_data.get("created_at")
 
-    # Media
-    media_list: list[MediaAttachment] = []
-    media_data = tweet_data.get("media", {})
-    if isinstance(media_data, dict):
-        for item in media_data.get("all", []):
-            media_type = item.get("type", "image")
-            # Normalize fxtwitter types to our types
-            if media_type == "photo":
-                media_type = "image"
-            media_list.append(
-                MediaAttachment(
-                    url=item.get("url", ""),
-                    alt=item.get("altText", ""),
-                    media_type=media_type,
-                )
-            )
+    media_list = _build_media(tweet_data)
 
     # Quoted tweet
     quoted_item: EmbeddedQuote | None = None
@@ -88,6 +102,9 @@ def _build_conversation_thread(
             if q_author.get("screen_name")
             else None,
             text=quote_data.get("text", ""),
+            url=quote_data.get("url"),
+            timestamp=quote_data.get("created_at"),
+            media=_build_media(quote_data),
         )
 
     main_item = ConversationItem(

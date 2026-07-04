@@ -15,12 +15,21 @@ This is the **only** place where threaded extractors may define their
 presentation structure.  Downstream code must not re-implement this logic.
 """
 
+from datetime import datetime
 from html import escape
 
-from markitai.webextract.semantics import ConversationItem, ConversationThread
+from markitai.webextract.semantics import (
+    ConversationItem,
+    ConversationThread,
+    EmbeddedQuote,
+    MediaAttachment,
+)
 from markitai.webextract.types import SemanticExtraction
 
 _MAX_REPLY_DEPTH = 50
+
+# Twitter API legacy format, e.g. "Wed Dec 24 10:00:00 +0000 2025"
+_TWITTER_DATE_FORMAT = "%a %b %d %H:%M:%S %z %Y"
 
 
 def render_semantic_content(extraction: SemanticExtraction) -> str:
@@ -61,6 +70,9 @@ def _render_thread(thread: ConversationThread) -> str:
     parts.append("<article>")
     parts.append(f"<h1>{escape(thread.title)}</h1>")
     parts.append(_render_item(thread.main_item))
+    for continuation in thread.continuation_items:
+        parts.append("<hr>")
+        parts.append(_render_item(continuation, show_meta=False))
     if thread.items:
         parts.append("<h2>Comments</h2>")
         for item in _iter_top_level_items(thread):
@@ -69,11 +81,137 @@ def _render_thread(thread: ConversationThread) -> str:
     return "\n".join(parts)
 
 
-def _render_item(item: ConversationItem) -> str:
+def _format_display_date(timestamp: str) -> str:
+    """Format a timestamp string as a short display date (``YYYY-MM-DD``).
+
+    Accepts ISO-8601 (with a trailing ``Z`` or offset) and the Twitter API
+    legacy format (``"Wed Dec 24 10:00:00 +0000 2025"``).  Falls back to the
+    raw string when the timestamp cannot be parsed.
+
+    Args:
+        timestamp: The raw timestamp string.
+
+    Returns:
+        A ``YYYY-MM-DD`` date string, or the raw input if unparseable.
+    """
+    raw = timestamp.strip()
+    if not raw:
+        return raw
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(raw, _TWITTER_DATE_FORMAT).date().isoformat()
+    except ValueError:
+        return raw
+
+
+def _author_display(name: str | None, handle: str | None) -> str:
+    """Combine display name and @handle into a single author string."""
+    if name and handle:
+        return f"{name} {handle}"
+    return name or handle or ""
+
+
+def _render_meta_line(
+    author: str,
+    timestamp: str | None,
+    css_class: str = "item-meta",
+) -> str | None:
+    """Render the ``**author** · date`` metadata line for an item.
+
+    Args:
+        author: Combined author display string (may be empty).
+        timestamp: Raw timestamp string, if known.
+        css_class: CSS class for the wrapping ``<p>``.
+
+    Returns:
+        An HTML ``<p>`` string, or ``None`` when there is nothing to show.
+    """
+    pieces: list[str] = []
+    if author:
+        pieces.append(f"<strong>{escape(author)}</strong>")
+    if timestamp:
+        pieces.append(f"<time>{escape(_format_display_date(timestamp))}</time>")
+    if not pieces:
+        return None
+    return f'  <p class="{css_class}">{" · ".join(pieces)}</p>'
+
+
+def _render_text_paragraphs(text: str, indent: str = "  ") -> list[str]:
+    """Render plain text as one ``<p>`` element per non-empty line."""
+    return [
+        f"{indent}<p>{escape(line.strip())}</p>"
+        for line in text.split("\n")
+        if line.strip()
+    ]
+
+
+def _render_media(media: MediaAttachment, indent: str = "  ") -> list[str]:
+    """Render a media attachment to HTML.
+
+    Images render as ``<img>``.  Videos and GIFs render as a link to the
+    media resource (labelled by type), preceded by the poster image when
+    one is available.
+
+    Args:
+        media: The media attachment.
+        indent: Leading indentation for emitted lines.
+
+    Returns:
+        List of HTML lines.
+    """
+    alt = escape(media.alt)
+    url = escape(media.url)
+    parts: list[str] = []
+    if media.media_type in ("video", "gif"):
+        label = "GIF" if media.media_type == "gif" else "Video"
+        if media.poster:
+            poster = escape(media.poster)
+            parts.append(
+                f'{indent}<div class="media-attachment">'
+                f'<img src="{poster}" alt="{alt}"></div>'
+            )
+        parts.append(
+            f'{indent}<p class="media-attachment"><a href="{url}">{label}</a></p>'
+        )
+    else:
+        parts.append(
+            f'{indent}<div class="media-attachment"><img src="{url}" alt="{alt}"></div>'
+        )
+    return parts
+
+
+def _render_quote(quote: EmbeddedQuote) -> list[str]:
+    """Render an embedded quote to a blockquote HTML fragment."""
+    parts: list[str] = ['  <blockquote class="quoted-item">']
+    meta = _render_meta_line(
+        _author_display(quote.author_name, quote.author_handle),
+        quote.timestamp,
+        css_class="quote-meta",
+    )
+    if meta:
+        parts.append("  " + meta)
+    if quote.text:
+        parts.extend(_render_text_paragraphs(quote.text, indent="    "))
+    for media in quote.media:
+        parts.extend(_render_media(media, indent="    "))
+    if quote.url:
+        parts.append(
+            f'    <p><a href="{escape(quote.url)}">{escape(quote.url)}</a></p>'
+        )
+    parts.append("  </blockquote>")
+    return parts
+
+
+def _render_item(item: ConversationItem, *, show_meta: bool = True) -> str:
     """Render a single ConversationItem to an HTML div.
 
     Args:
         item: The conversation item to render.
+        show_meta: Whether to emit the author/date metadata line.  Thread
+            continuation posts by the same author suppress it.
 
     Returns:
         HTML string for the item.
@@ -81,36 +219,31 @@ def _render_item(item: ConversationItem) -> str:
     parts: list[str] = []
     parts.append(f'<div class="conversation-item" data-id="{escape(item.id)}">')
 
-    if item.author_handle or item.author_name:
-        author = item.author_handle or item.author_name or ""
-        parts.append(f'  <span class="author">{escape(author)}</span>')
-
-    if item.timestamp:
-        parts.append(f"  <time>{escape(item.timestamp)}</time>")
+    if show_meta:
+        meta = _render_meta_line(
+            _author_display(item.author_name, item.author_handle),
+            item.timestamp,
+        )
+        if meta:
+            parts.append(meta)
 
     if item.html:
         parts.append(f'  <div class="item-body">{item.html}</div>')
     elif item.text:
-        parts.append(f'  <div class="item-body">{escape(item.text)}</div>')
+        parts.extend(_render_text_paragraphs(item.text))
 
     for media in item.media:
-        alt = escape(media.alt)
-        url = escape(media.url)
+        parts.extend(_render_media(media))
+
+    if item.card_url:
+        card_label = item.card_title or item.card_url
         parts.append(
-            f'  <div class="media-attachment"><img src="{url}" alt="{alt}"></div>'
+            f'  <p class="card-link">'
+            f'<a href="{escape(item.card_url)}">{escape(card_label)}</a></p>'
         )
 
     if item.quoted_item is not None:
-        q = item.quoted_item
-        parts.append('  <blockquote class="quoted-item">')
-        if q.author_handle or q.author_name:
-            qauthor = q.author_handle or q.author_name or ""
-            parts.append(f'    <span class="author">{escape(qauthor)}</span>')
-        if q.text:
-            parts.append(f"    <p>{escape(q.text)}</p>")
-        if q.url:
-            parts.append(f'    <a href="{escape(q.url)}">{escape(q.url)}</a>')
-        parts.append("  </blockquote>")
+        parts.extend(_render_quote(item.quoted_item))
 
     parts.append("</div>")
     return "\n".join(parts)
