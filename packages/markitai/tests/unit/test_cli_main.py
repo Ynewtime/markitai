@@ -47,7 +47,15 @@ class TestCLIOptions:
         assert result.exit_code == 0
         lines = [ln.rstrip() for ln in result.output.splitlines()]
         for header in ("Presets:", "Examples:"):
-            idx = next(i for i, ln in enumerate(lines) if ln.strip() == header)
+            # startswith: rich may pad/deviate slightly across platforms;
+            # a hard equality made this raise bare StopIteration in CI
+            idx = next(
+                (i for i, ln in enumerate(lines) if ln.strip().startswith(header)),
+                None,
+            )
+            assert idx is not None, (
+                f"section header {header!r} not found in -h output:\n" + result.output
+            )
             assert lines[idx - 1] == "", f"expected blank line before {header}"
             assert lines[idx - 2] != "", f"expected single blank before {header}"
 
