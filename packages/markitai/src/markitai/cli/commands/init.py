@@ -5,6 +5,7 @@ One-stop setup: checks dependencies, detects LLM providers, generates config.
 
 from __future__ import annotations
 
+import json
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -77,21 +78,106 @@ def _resolve_output_path(output_path: Path | None, use_local: bool) -> Path:
 
 
 def _quick_init(target: Path) -> None:
-    """Quick init - detect providers, generate config, no prompts."""
+    """Quick init - detect providers, generate or update config, no prompts."""
     # Generate .env template if not exists
     _ensure_env_template()
 
+    with ui.ConversionStatus("Detecting LLM providers..."):
+        providers = _detect_providers()
+
     if target.exists():
-        ui.info(f"Config already exists: {target} (unchanged)")
-        console.print(
-            "  [dim]Run [cyan]markitai init[/cyan] without -y to reconfigure, "
-            "or [cyan]markitai config edit[/cyan] to adjust settings.[/dim]"
-        )
+        # Non-destructive: only append newly detected providers.
+        _apply_config_update(target, providers)
         return
-    providers = _detect_providers()
+
     config_data = _build_config(providers)
     _write_config(target, config_data)
     _print_created_summary(target, config_data)
+
+
+def _read_config_dict(target: Path) -> dict | None:
+    """Read an existing config file; None when unreadable or not a JSON object."""
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _merge_new_models(existing: dict, detected: dict) -> list[str]:
+    """Append detected model_list entries missing from *existing* (in place).
+
+    Non-destructive: only appends ``llm.model_list`` entries whose model id
+    is not already configured. Existing model entries and all other settings
+    are preserved untouched.
+
+    Args:
+        existing: Parsed existing config (mutated in place).
+        detected: Freshly generated config from ``_build_config()``.
+
+    Returns:
+        List of added model ids (empty when already up to date).
+    """
+    detected_list = detected.get("llm", {}).get("model_list", [])
+
+    llm_value = existing.get("llm")
+    llm: dict = llm_value if isinstance(llm_value, dict) else {"enabled": False}
+    model_list = llm.get("model_list")
+    if not isinstance(model_list, list):
+        model_list = []
+
+    have = {
+        entry.get("litellm_params", {}).get("model", "")
+        for entry in model_list
+        if isinstance(entry, dict)
+    }
+    new_entries = [
+        entry for entry in detected_list if entry["litellm_params"]["model"] not in have
+    ]
+    if not new_entries:
+        return []
+
+    llm["model_list"] = model_list + new_entries
+    existing["llm"] = llm
+    return [entry["litellm_params"]["model"] for entry in new_entries]
+
+
+def _apply_config_update(target: Path, providers: list[tuple[str, bool]]) -> None:
+    """Non-destructively add newly detected providers to an existing config."""
+    existing = _read_config_dict(target)
+    if existing is None:
+        ui.warning(f"Existing config could not be parsed: {target}")
+        console.print(
+            "  [dim]Fix it manually, or rerun [cyan]markitai init[/cyan] "
+            "and choose Overwrite.[/dim]"
+        )
+        return
+
+    added = _merge_new_models(existing, _build_config(providers))
+    if not added:
+        ui.summary(f"Config already up to date: {target}")
+        console.print("  [dim]No newly detected providers to add.[/dim]")
+        return
+
+    _write_config(target, existing)
+    ui.summary(f"Configuration updated: {target}")
+    console.print("  [dim]Added newly detected providers:[/dim]")
+    for model in added:
+        console.print(f"  {ui.MARK_LINE} {model}")
+
+
+def _prompt_existing_config_action(target: Path) -> str:
+    """Ask what to do with an existing config: update, overwrite, or keep."""
+    console.print(f"  Config already exists: {target}")
+    console.print()
+    console.print(
+        "  [1] Update:    add newly detected providers (keeps everything else)"
+    )
+    console.print("  [2] Overwrite: replace with a freshly generated config")
+    console.print("  [3] Keep:      leave the file unchanged")
+    console.print()
+    choice = click.prompt("  Choose", type=click.IntRange(1, 3), default=1)
+    return {1: "update", 2: "overwrite", 3: "keep"}[choice]
 
 
 def _print_created_summary(target: Path, config_data: dict) -> None:
@@ -208,9 +294,23 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
     """Interactive wizard: check deps, detect providers, generate config."""
     ui.title("Markitai Setup")
 
+    # Run independent checks concurrently (dependency probes and provider
+    # detection don't depend on each other); a transient stderr spinner
+    # gives feedback until the first sections render.
+    spinner = ui.ConversionStatus("Checking dependencies...")
+    spinner.start()
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            deps_future = executor.submit(_check_deps)
+            providers_future = executor.submit(_detect_providers)
+            deps = deps_future.result()
+            spinner.update("Detecting LLM providers...")
+            providers = providers_future.result()
+    finally:
+        spinner.stop()
+
     # Phase 1: Check dependencies
     ui.section("Dependencies")
-    deps = _check_deps()
     for name, detail, available in deps:
         if available:
             ui.success(f"{name}: {detail}")
@@ -218,9 +318,8 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
             ui.warning(f"{name}: {detail}")
     console.print()
 
-    # Phase 2: Detect LLM providers
+    # Phase 2: Detected LLM providers
     ui.section("LLM Providers")
-    providers = _detect_providers()
     available_count = 0
 
     for name, available in providers:
@@ -259,11 +358,14 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
 
     # Check existing config before writing
     if target.exists():
-        if not click.confirm(
-            f"  Config already exists: {target}\n  Overwrite?", default=False
-        ):
+        action = _prompt_existing_config_action(target)
+        if action == "keep":
             console.print(f"  [dim]Kept existing config: {target}[/dim]")
             return
+        if action == "update":
+            _apply_config_update(target, providers)
+            return
+        # "overwrite" falls through to generating a fresh config
 
     # Phase 4: Generate config
     config_data = _build_config(providers)

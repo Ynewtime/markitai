@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from pathlib import Path
 from typing import Any
 
 import rich_click as click
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.config import ConfigManager
 from markitai.providers.auth import (
     AuthManager,
     AuthStatus,
     attempt_login,
-    get_auth_resolution_hint,
 )
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -50,7 +52,158 @@ _USAGE_HINTS: dict[str, str] = {
     "chatgpt": "LLM calls with chatgpt/ models use your ChatGPT subscription.",
 }
 
-_NEXT_INIT = "Next: markitai init   (auto-detects and enables this provider)"
+# provider key -> model id prefix used in config llm.model_list entries
+_PROVIDER_MODEL_PREFIXES: dict[str, str] = {
+    "claude-agent": "claude-agent/",
+    "copilot": "copilot/",
+    "gemini-cli": "gemini-cli/",
+    "chatgpt": "chatgpt/",
+}
+
+
+def _find_active_config() -> Path | None:
+    """Find the config file markitai would load, or None when none exists.
+
+    Mirrors ConfigManager's search order: MARKITAI_CONFIG env var,
+    ./markitai.json, then ~/.markitai/config.json.
+    """
+    env_path = os.environ.get("MARKITAI_CONFIG")
+    if env_path:
+        candidate = Path(env_path).expanduser()
+        if candidate.exists():
+            return candidate
+    local = Path.cwd() / "markitai.json"
+    if local.exists():
+        return local
+    user = ConfigManager.DEFAULT_USER_CONFIG_DIR / "config.json"
+    if user.exists():
+        return user
+    return None
+
+
+def _config_has_provider(config_path: Path, provider: str) -> bool:
+    """Whether the config already routes to this provider's models."""
+    prefix = _PROVIDER_MODEL_PREFIXES.get(provider, f"{provider}/")
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    llm = data.get("llm")
+    if not isinstance(llm, dict):
+        return False
+    model_list = llm.get("model_list")
+    if not isinstance(model_list, list):
+        return False
+    for entry in model_list:
+        if not isinstance(entry, dict):
+            continue
+        params = entry.get("litellm_params")
+        model = params.get("model") if isinstance(params, dict) else None
+        if isinstance(model, str) and model.startswith(prefix):
+            return True
+    return False
+
+
+def _next_step_hint(provider: str) -> str:
+    """Config-aware next-step hint for an authenticated provider."""
+    config_path = _find_active_config()
+    if config_path is None:
+        return "Next: markitai init   (auto-detects and enables this provider)"
+    if _config_has_provider(config_path, provider):
+        return f"Already enabled in {config_path}"
+    return "Next: markitai init   (adds it to your existing config)"
+
+
+def _login_failure_guidance(
+    provider: str,
+) -> tuple[tuple[str, str] | None, list[str]]:
+    """Context-aware hints for a failed `markitai auth <provider> login`.
+
+    Never suggests rerunning the login command itself. When the provider
+    CLI is missing (the usual cause), leads with the install command.
+
+    Returns:
+        Optional (command, explanation) primary action, plus extra info lines.
+    """
+    from markitai.providers.auth import (
+        _get_cli_install_cmd,
+        _resolve_cli_path,
+        can_attempt_login,
+    )
+
+    if provider == "copilot":
+        env_alt = (
+            "Alternative: set GH_TOKEN or GITHUB_TOKEN "
+            "(needs 'Copilot Requests' permission)"
+        )
+        if _resolve_cli_path("copilot") is None:
+            return (
+                (
+                    _get_cli_install_cmd("copilot"),
+                    "Installs the GitHub Copilot CLI (required for login).",
+                ),
+                [env_alt],
+            )
+        return (
+            (
+                "copilot login",
+                "Runs the Copilot CLI directly to show its full error output.",
+            ),
+            [env_alt],
+        )
+
+    if provider == "claude-agent":
+        env_alt = (
+            "Alternative: set CLAUDE_CODE_USE_BEDROCK=1, "
+            "CLAUDE_CODE_USE_VERTEX=1, or CLAUDE_CODE_USE_FOUNDRY=1"
+        )
+        if _resolve_cli_path("claude") is None:
+            return (
+                (
+                    _get_cli_install_cmd("claude"),
+                    "Installs the Claude Code CLI (required for login).",
+                ),
+                [env_alt],
+            )
+        return (
+            (
+                "claude auth login",
+                "Runs the Claude Code CLI directly to show its full error output.",
+            ),
+            [env_alt],
+        )
+
+    if provider == "chatgpt":
+        if not can_attempt_login("chatgpt"):
+            return (
+                (
+                    "uv tool install markitai --upgrade",
+                    "Updates the bundled LiteLLM chatgpt authenticator.",
+                ),
+                [],
+            )
+        return (
+            None,
+            ["Complete the browser login before the device code expires, then retry."],
+        )
+
+    if provider == "gemini-cli":
+        if not can_attempt_login("gemini-cli"):
+            return (
+                (
+                    "uv add 'markitai[gemini-cli]'",
+                    "Installs the Google OAuth dependencies required for login.",
+                ),
+                [],
+            )
+        return (
+            None,
+            ["Check network access to accounts.google.com, then retry."],
+        )
+
+    return (None, [])
 
 
 def _check_status(provider: str) -> AuthStatus:
@@ -139,7 +292,7 @@ def _render_status_card(
     console.print()
     if status.authenticated:
         console.print(f"  {_USAGE_HINTS[status.provider]}")
-        console.print(f"  [dim]{_NEXT_INIT}[/]")
+        console.print(f"  [dim]{_next_step_hint(status.provider)}[/]")
         return
 
     cmd, does = _LOGIN_HINTS[status.provider]
@@ -153,10 +306,16 @@ def _print_login_result(provider_label: str, status: AuthStatus) -> None:
     console = get_console()
     if status.authenticated:
         ui.summary(f"{provider_label} login successful: {_display_user(status)}")
-        console.print(f"  [dim]{_NEXT_INIT}[/]")
+        console.print(f"  [dim]{_next_step_hint(status.provider)}[/]")
     else:
         ui.summary(f"{provider_label} login failed: {status.error}", ok=False)
-        click.echo(get_auth_resolution_hint(status.provider))
+        primary, infos = _login_failure_guidance(status.provider)
+        if primary is not None:
+            cmd, does = primary
+            console.print(f"  Next: [bold]{cmd}[/]")
+            console.print(f"        [dim]{does}[/]")
+        for line in infos:
+            ui.info(line)
         raise SystemExit(1)
 
 
@@ -275,10 +434,32 @@ def gemini_login(mode: str, project_id: str | None) -> None:
         markitai auth gemini login
         markitai auth gemini login --mode code-assist --project-id my-project
     """
+    from markitai.providers.auth import can_attempt_login
+
+    def _fail(error: str) -> None:
+        _print_login_result(
+            "Gemini",
+            AuthStatus(
+                provider="gemini-cli",
+                authenticated=False,
+                user=None,
+                expires_at=None,
+                error=error,
+            ),
+        )
+
+    if not can_attempt_login("gemini-cli"):
+        _fail("google-auth-oauthlib not installed")
+        return
+
     from markitai.providers.gemini_cli import GeminiCLIProvider
 
     provider = GeminiCLIProvider()
-    record = asyncio.run(provider.alogin(mode=mode, project_id=project_id))
+    try:
+        record = asyncio.run(provider.alogin(mode=mode, project_id=project_id))
+    except Exception as e:
+        _fail(str(e))
+        return
     AuthManager().clear_cache("gemini-cli")
 
     console = get_console()
@@ -286,7 +467,7 @@ def gemini_login(mode: str, project_id: str | None) -> None:
     ui.info(f"Project: {record.project_id}")
     ui.info(f"Mode: {record.auth_mode}")
     ui.info(f"Profile: {record.path}")
-    console.print(f"  [dim]{_NEXT_INIT}[/]")
+    console.print(f"  [dim]{_next_step_hint('gemini-cli')}[/]")
 
 
 # ── Copilot ──────────────────────────────────────────────────────────────────
