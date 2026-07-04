@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -371,11 +372,13 @@ class TestCLIWithSubprocess:
             for k, v in os.environ.items()
             if k not in ("GITHUB_ACTIONS", "CI", "FORCE_COLOR")
         }
+        # sys.executable -m markitai: skip uv's Windows .exe trampoline,
+        # which has produced empty captured streams (rc 0) on CI runners
         result = subprocess.run(
-            ["uv", "run", "markitai", "--help"],
+            [sys.executable, "-m", "markitai", "--help"],
             capture_output=True,
             text=True,
-            env=env,
+            env={**env, "COLUMNS": "120", "PYTHONIOENCODING": "utf-8"},
         )
         assert result.returncode == 0
         combined = (result.stdout or "") + (result.stderr or "")
