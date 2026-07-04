@@ -3,6 +3,17 @@
 Kreuzberg is an optional dependency (pure Rust wheel) that can extract
 text/markdown from 75+ file formats. This module registers it only for
 formats that markitai doesn't already handle natively.
+
+Compat note (2026-07): Kreuzberg has been rebranded as Xberg
+(https://github.com/xberg-io/xberg); the ``kreuzberg`` PyPI package is
+frozen on the v4 LTS line (still maintained, latest 4.9.9) and remains
+the canonical Python package. The ``xberg`` name on PyPI is currently a
+placeholder alias that just re-exports ``kreuzberg``. Xberg 1.0 ships an
+async-only API (``await extract(ExtractInput(...), ExtractionConfig(...))``
+returning ``ExtractionResult.results[0].content``) that is incompatible
+with the ``extract_file_sync`` call below — migrate this module (and the
+``kreuzberg`` extra in pyproject.toml) once real ``xberg>=1.0`` wheels are
+published to PyPI.
 """
 
 from __future__ import annotations
@@ -33,8 +44,7 @@ KREUZBERG_FORMATS: list[FileFormat] = [
     FileFormat.RST,
     FileFormat.ORG,
     FileFormat.TEX,
-    # Email (MSG handled by markitdown_ext)
-    FileFormat.EML,
+    # Email: EML has a native converter (eml.py), MSG handled by markitdown_ext
 ]
 
 
@@ -70,7 +80,7 @@ class KreuzbergConverter(BaseConverter):
         except ImportError:
             raise ImportError(
                 "kreuzberg is required for this file format but is not "
-                "installed. Install it with: uv pip install kreuzberg"
+                'installed. Install it with: uv tool install "markitai[kreuzberg]"'
             )
 
         input_path = Path(input_path)

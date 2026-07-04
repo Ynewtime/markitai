@@ -63,7 +63,7 @@ class XTweetExtractor:
             return _wrap_tweets(tweets, soup)
 
         # Strategy 3: Try role="main" as fallback
-        main = soup.find(attrs={"role": "main"})
+        main = soup.find(True, attrs={"role": "main"})
         if isinstance(main, Tag):
             return main
 
@@ -85,7 +85,7 @@ class XTweetExtractor:
         tweet_id = extract_tweet_id_from_url(url)
 
         # Find primaryColumn to scope our search
-        primary_col = soup.find(attrs={"data-testid": "primaryColumn"})
+        primary_col = soup.find(True, attrs={"data-testid": "primaryColumn"})
         if not isinstance(primary_col, Tag):
             # Fallback: search the whole document
             primary_col = soup  # type: ignore[assignment]
@@ -188,7 +188,7 @@ def _clean_tweet_internals(tweet: Tag) -> None:
     and media.
     """
     # Remove action buttons and metadata by data-testid
-    for el in list(tweet.find_all(attrs={"data-testid": True})):
+    for el in list(tweet.find_all(True, attrs={"data-testid": True})):
         if not el.attrs:
             continue
         testid = el.get("data-testid", "")
@@ -196,7 +196,7 @@ def _clean_tweet_internals(tweet: Tag) -> None:
             el.decompose()
 
     # Remove action button groups (role="group")
-    for el in list(tweet.find_all(attrs={"role": "group"})):
+    for el in list(tweet.find_all(True, attrs={"role": "group"})):
         el.decompose()
 
     # Remove timestamp and analytics links
@@ -220,7 +220,7 @@ def _clean_tweet_internals(tweet: Tag) -> None:
             el.parent.decompose()
 
     # Deduplicate User-Name links: keep display name, remove @handle link
-    for user_name_el in list(tweet.find_all(attrs={"data-testid": "User-Name"})):
+    for user_name_el in list(tweet.find_all(True, attrs={"data-testid": "User-Name"})):
         links = user_name_el.find_all("a")
         if len(links) >= 2:
             # Second link is typically the @handle duplicate

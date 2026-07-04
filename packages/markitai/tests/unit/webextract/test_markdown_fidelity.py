@@ -138,6 +138,66 @@ def test_embed_surrounding_text_preserved() -> None:
     assert "More text" in markdown
 
 
+def test_bilibili_iframe_is_reduced_to_canonical_link() -> None:
+    """Bilibili player iframes (protocol-relative src) become video links."""
+    html = """
+    <article>
+      <p>Watch on bilibili.</p>
+      <iframe src="//player.bilibili.com/player.html?aid=22325156&amp;cid=36966181&amp;page=1"
+              frameborder="no" allowfullscreen="true"></iframe>
+    </article>
+    """
+    markdown = render_markdown(html)
+    assert "https://www.bilibili.com/video/av22325156" in markdown
+
+
+def test_bilibili_iframe_prefers_bvid_over_aid() -> None:
+    """When a bvid parameter is present it wins over the numeric aid."""
+    html = """
+    <article>
+      <iframe src="https://player.bilibili.com/player.html?bvid=BV1xx411c7mD&amp;aid=170001"></iframe>
+    </article>
+    """
+    markdown = render_markdown(html)
+    assert "https://www.bilibili.com/video/BV1xx411c7mD" in markdown
+
+
+def test_twitter_widget_iframe_is_reduced_to_status_link() -> None:
+    """platform.twitter.com widget iframes become x.com status links."""
+    html = """
+    <article>
+      <iframe src="https://platform.twitter.com/embed/Tweet.html?id=1675626836821409792"
+              width="550" height="300"></iframe>
+    </article>
+    """
+    markdown = render_markdown(html)
+    assert "https://x.com/i/status/1675626836821409792" in markdown
+
+
+def test_video_embed_survives_full_extraction_pipeline() -> None:
+    """extract_web_content must keep known video embeds as links.
+
+    Regression guard: sanitize_tag_tree strips every <iframe>, so the
+    pipeline must canonicalize embeds before sanitization.
+    """
+    from markitai.webextract import extract_web_content
+
+    html = """
+    <html><head><title>Post</title></head><body>
+    <article>
+      <h1>Post</h1>
+      <p>Intro paragraph with enough words to look like real content for
+      the extraction pipeline to keep this article as the root node.</p>
+      <iframe src="//player.bilibili.com/player.html?aid=22325156&amp;cid=1&amp;page=1"></iframe>
+      <p>Closing paragraph after the embedded video player element.</p>
+    </article>
+    </body></html>
+    """
+    result = extract_web_content(html, "https://example.com/post")
+    assert "https://www.bilibili.com/video/av22325156" in result.markdown
+    assert "<iframe" not in result.markdown
+
+
 # ---------------------------------------------------------------------------
 # Post-processing: blank line collapsing
 # ---------------------------------------------------------------------------

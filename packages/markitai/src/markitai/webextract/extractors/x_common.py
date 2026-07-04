@@ -99,7 +99,7 @@ def _parse_author(article: Tag) -> tuple[str | None, str | None]:
     Returns:
         Tuple of (display_name, handle). Either may be None.
     """
-    user_name = article.find(attrs={"data-testid": "User-Name"})
+    user_name = article.find(True, attrs={"data-testid": "User-Name"})
     if not isinstance(user_name, Tag):
         return None, None
 
@@ -130,7 +130,7 @@ def _parse_text(article: Tag) -> str:
     Returns:
         Plain text content of the tweet.
     """
-    text_el = article.find(attrs={"data-testid": "tweetText"})
+    text_el = article.find(True, attrs={"data-testid": "tweetText"})
     if not isinstance(text_el, Tag):
         return ""
     return text_el.get_text(" ", strip=True)
@@ -182,7 +182,7 @@ def _parse_quoted_item(article: Tag) -> EmbeddedQuote | None:
     Returns:
         An EmbeddedQuote if found, otherwise None.
     """
-    card = article.find(attrs={"data-testid": "card.wrapper"})
+    card = article.find(True, attrs={"data-testid": "card.wrapper"})
     if not isinstance(card, Tag):
         return None
 

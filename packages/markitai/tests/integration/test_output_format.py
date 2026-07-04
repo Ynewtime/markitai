@@ -87,7 +87,7 @@ class TestLanguagePreservation:
 
         assert result.exit_code == 0
 
-        output_file = output_dir / "english.txt.md"
+        output_file = output_dir / "english.md"
         assert output_file.exists()
 
         content = output_file.read_text(encoding="utf-8")
@@ -119,7 +119,7 @@ class TestLanguagePreservation:
 
         assert result.exit_code == 0
 
-        output_file = output_dir / "chinese.txt.md"
+        output_file = output_dir / "chinese.md"
         assert output_file.exists()
 
         content = output_file.read_text(encoding="utf-8")
@@ -150,7 +150,7 @@ class TestLanguagePreservation:
 
         assert result.exit_code == 0
 
-        output_file = output_dir / "mixed.txt.md"
+        output_file = output_dir / "mixed.md"
         assert output_file.exists()
 
         content = output_file.read_text(encoding="utf-8")
@@ -243,7 +243,7 @@ class TestPPTXHeaderFooterCleanup:
         assert result.exit_code == 0
 
         # Check output file exists
-        output_file = output_dir / "sample.pptx.md"
+        output_file = output_dir / "sample.md"
         assert output_file.exists()
 
     @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
@@ -260,7 +260,7 @@ class TestPPTXHeaderFooterCleanup:
 
         assert result.exit_code == 0
 
-        output_file = output_dir / "sample.pptx.md"
+        output_file = output_dir / "sample.md"
         content = output_file.read_text(encoding="utf-8")
 
         # Should not have common header/footer patterns
@@ -307,8 +307,8 @@ class TestSubdirectoryImagesJson:
         )
 
         assert result.exit_code == 0
-        assert (output_dir / "root.txt.md").exists()
-        assert (output_dir / "sub" / "nested.txt.md").exists()
+        assert (output_dir / "root.md").exists()
+        assert (output_dir / "sub" / "nested.md").exists()
 
     @pytest.mark.slow
     @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
@@ -416,13 +416,14 @@ class TestDoctorCommand:
     def test_doctor_runs(self, runner: CliRunner) -> None:
         """Test that doctor command runs successfully."""
         result = runner.invoke(app, ["doctor"])
-        assert result.exit_code == 0
+        # exit 0/1 depending on the host machine's required deps
+        assert result.exit_code in (0, 1)
         assert "Dependency Status" in result.output or "System Check" in result.output
 
     def test_doctor_json(self, runner: CliRunner) -> None:
         """Test that doctor --json outputs valid JSON."""
         result = runner.invoke(app, ["doctor", "--json"], color=False)
-        assert result.exit_code == 0
+        assert result.exit_code in (0, 1)
 
         # Strip any ANSI codes and leading/trailing whitespace
         output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
@@ -438,7 +439,7 @@ class TestDoctorCommand:
     def test_doctor_shows_components(self, runner: CliRunner) -> None:
         """Test that doctor shows all required components."""
         result = runner.invoke(app, ["doctor"])
-        assert result.exit_code == 0
+        assert result.exit_code in (0, 1)
 
         # Should show all major components
         assert "Playwright" in result.output

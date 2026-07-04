@@ -50,11 +50,12 @@ def remove_hidden_elements(root: Tag) -> int:
         # Guard against decomposed elements (parent set to None during iteration)
         if el.parent is None:
             continue
-        if _is_math_context(el):
+        if not _is_hidden(el):
             continue
-        if _is_hidden(el):
-            el.decompose()
-            removed += 1
+        if _is_math_context(el) or _contains_math(el):
+            continue
+        el.decompose()
+        removed += 1
     return removed
 
 
@@ -80,6 +81,21 @@ def _is_hidden(el: Tag) -> bool:
         return True
 
     return False
+
+
+def _contains_math(el: Tag) -> bool:
+    """Check if element contains math descendants.
+
+    Sites like Wikipedia wrap MathML in ``display: none`` spans for
+    accessibility (the visible version is an image/SVG fallback); these
+    must survive hidden-element removal so math extraction can use them.
+    Mirrors defuddle's ``removeHiddenElements`` descendant check.
+    """
+    if el.find("math") is not None:
+        return True
+    if el.find(True, attrs={"data-mathml": True}) is not None:
+        return True
+    return el.find(class_="katex-mathml") is not None
 
 
 def _is_math_context(el: Tag) -> bool:

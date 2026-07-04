@@ -1,7 +1,7 @@
 [project]
 name = "markitai-workspace"
-version = "0.14.0"
-requires-python = ">=3.11,<3.14"
+version = "0.15.0"
+requires-python = ">=3.11,<3.15"
 dependencies = [
     "markitai",
 ]
@@ -32,6 +32,7 @@ dev = [
     "pre-commit>=4.5.1",
     "bandit>=1.8.0",
     "lxml-stubs>=0.5.1",
+    "rapidfuzz>=3.9",
 ]
 
 [tool.pytest.ini_options]
@@ -49,6 +50,7 @@ markers = [
 source = ["packages/markitai/src/markitai"]
 branch = true
 parallel = true
+relative_files = true  # required by py-cov-action/python-coverage-comment-action
 omit = [
     "*/tests/*",
     "*/__pycache__/*",

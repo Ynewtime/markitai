@@ -632,7 +632,11 @@ class TestBatchProcessor:
         report = reports_dir / "quarterly.pdf"
         report.touch()
 
-        monkeypatch.delattr("markitai.batch.glob_module.translate", raising=False)
+        # Replace batch.py's module reference with a stub lacking translate —
+        # deleting glob.translate itself would break pathlib on Python 3.13+
+        import types
+
+        monkeypatch.setattr("markitai.batch.glob_module", types.SimpleNamespace())
 
         config = BatchConfig(scan_max_depth=3)
         processor = BatchProcessor(config, tmp_path / "output", input_path=tmp_path)

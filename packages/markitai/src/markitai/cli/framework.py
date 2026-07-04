@@ -8,8 +8,9 @@ of command modules to minimize startup cost.
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
-import click
+import rich_click as click
 from click import Context
 
 # Mapping of command name -> (module_path, attribute_name, short_help)
@@ -41,7 +42,7 @@ _LAZY_COMMANDS: dict[str, tuple[str, str, str]] = {
 }
 
 
-class MarkitaiGroup(click.Group):
+class MarkitaiGroup(click.RichGroup):
     """Custom Group that supports main command with arguments and subcommands.
 
     Subcommands are lazily loaded: their modules are only imported when
@@ -58,8 +59,11 @@ class MarkitaiGroup(click.Group):
     _OPTIONS_WITH_VALUES = {
         "-o",
         "--output",
+        "-b",
+        "--backend",
         "-c",
         "--config",
+        "--config-json",
         "-p",
         "--preset",
         "--no-cache-for",
@@ -70,6 +74,8 @@ class MarkitaiGroup(click.Group):
         "-g",
         "--glob",
         "--max-depth",
+        "-s",
+        "--strategy",
     }
 
     def list_commands(self, ctx: Context) -> list[str]:
@@ -78,6 +84,21 @@ class MarkitaiGroup(click.Group):
         names = set(_LAZY_COMMANDS.keys())
         names.update(super().list_commands(ctx))
         return sorted(names)
+
+    def format_help(
+        self, ctx: click.RichContext, formatter: click.RichHelpFormatter
+    ) -> None:
+        """Render help with lazy-command stubs so --help stays fast.
+
+        Rich rendering resolves every subcommand for its short help; a flag
+        makes get_command return lightweight stubs instead of importing the
+        real command modules (markitai.cli.commands.cache alone costs ~0.7s).
+        """
+        self._rendering_help = True
+        try:
+            super().format_help(ctx, formatter)
+        finally:
+            self._rendering_help = False
 
     def get_command(self, ctx: Context, cmd_name: str) -> click.Command | None:
         """Lazily import and return the command, or fall back to eager lookup."""
@@ -90,6 +111,14 @@ class MarkitaiGroup(click.Group):
         spec = _LAZY_COMMANDS.get(cmd_name)
         if spec is None:
             return None
+
+        if getattr(self, "_rendering_help", False):
+            # Help rendering only needs the name + short help — return a
+            # stub instead of importing the command module
+            _module, _attr, short_help = spec
+            return click.RichCommand(
+                name=cmd_name, help=short_help, short_help=short_help, params=[]
+            )
 
         module_path, attr_name, _help = spec
         mod = importlib.import_module(module_path)
@@ -104,9 +133,14 @@ class MarkitaiGroup(click.Group):
         # - An option flag (starts with -)
         # - A subcommand
         # - A value for a path option
+        #
+        # After INPUT is found, keep scanning: a later subcommand token means
+        # the invocation is ambiguous (e.g. `markitai note.txt config list`)
+        # and must fail loudly instead of silently dropping INPUT.
         ctx.ensure_object(dict)
         skip_next = False
-        input_idx = None
+        input_idx: int | None = None
+        input_token: str | None = None
 
         # Use the full set of known command names (lazy + eager) for detection.
         # We use _LAZY_COMMANDS keys + self.commands keys to avoid importing
@@ -130,15 +164,36 @@ class MarkitaiGroup(click.Group):
                 # Other options (flags or boolean options)
                 continue
 
-            # First positional argument
+            # Positional argument
             if arg in known_commands:
-                # It's a subcommand - stop looking
+                if input_token is not None and not ctx.resilient_parsing:
+                    # Both an INPUT and a subcommand were given - ambiguous
+                    raise click.UsageError(
+                        "Cannot mix INPUT with a subcommand. "
+                        f"Run 'markitai {input_token}' to convert, "
+                        f"or 'markitai {arg} ...' for the subcommand."
+                    )
+                # It's a subcommand - stop looking. If a file with the same
+                # name exists in cwd, the subcommand still wins; hint on
+                # stderr how to convert the file instead.
+                if not ctx.resilient_parsing and Path(arg).is_file():
+                    click.echo(
+                        f"Note: a file named '{arg}' exists — "
+                        f"to convert it, use './{arg}'.",
+                        err=True,
+                    )
                 break
-            else:
-                # It's a file path - store for later use
+
+            if input_token is None:
+                # It's a file path - store for later use, but keep scanning
+                # so a trailing subcommand token is detected as ambiguous
                 ctx.obj["_input_path"] = arg
+                input_token = arg
                 input_idx = i
-                break
+                continue
+
+            # Second non-command positional: leave it for click to reject
+            break
 
         # Remove INPUT from args so Group doesn't treat it as subcommand
         if input_idx is not None:
@@ -146,59 +201,7 @@ class MarkitaiGroup(click.Group):
 
         return super().parse_args(ctx, args)
 
-    def format_usage(
-        self,
-        ctx: Context,
-        formatter: click.HelpFormatter,
-    ) -> None:
-        """Custom usage line to show INPUT argument."""
-        formatter.write_usage(
-            ctx.command_path,
-            "[OPTIONS] INPUT [COMMAND]",
-        )
-
-    def format_help(self, ctx: Context, formatter: click.HelpFormatter) -> None:
-        """Custom help formatting to show INPUT argument."""
-        # Usage
-        self.format_usage(ctx, formatter)
-
-        # Help text
-        self.format_help_text(ctx, formatter)
-
-        # Arguments section
-        with formatter.section("Arguments"):
-            formatter.write_dl(
-                [
-                    (
-                        "INPUT",
-                        "File, directory, URL, or .urls file to convert",
-                    )
-                ]
-            )
-
-        # Options (not format_options which may include epilog)
-        opts = []
-        for param in self.get_params(ctx):
-            rv = param.get_help_record(ctx)
-            if rv is not None:
-                opts.append(rv)
-        if opts:
-            with formatter.section("Options"):
-                formatter.write_dl(opts)
-
-        # Commands — use stored help text for lazy commands to avoid imports
-        commands = []
-        for name in self.list_commands(ctx):
-            if name in _LAZY_COMMANDS and name not in self.commands:
-                # Lazy command not yet imported — use the stored short help
-                _mod, _attr, short_help = _LAZY_COMMANDS[name]
-                commands.append((name, short_help))
-            else:
-                # Eagerly registered (or already imported) — resolve normally
-                cmd = self.get_command(ctx, name)
-                if cmd is None or cmd.hidden:
-                    continue
-                commands.append((name, cmd.get_short_help_str(limit=formatter.width)))
-        if commands:
-            with formatter.section("Commands"):
-                formatter.write_dl(commands)
+    def collect_usage_pieces(self, ctx: Context) -> list[str]:
+        """Show INPUT in the usage line (it is parsed manually in parse_args,
+        not declared as a click Argument)."""
+        return ["[OPTIONS]", "INPUT", "[COMMAND]"]

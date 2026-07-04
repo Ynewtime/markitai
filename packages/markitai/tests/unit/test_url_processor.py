@@ -651,6 +651,8 @@ class TestProcessUrlSuccessPath:
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
         cfg.cache.enabled = False
+        # Reports are opt-in for single-URL runs
+        cfg.output.report = True
 
         mock_result = MagicMock()
         mock_result.content = "# Test Page\n\nSome content here."

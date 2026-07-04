@@ -111,10 +111,9 @@ class CloudflareConverter(BaseConverter):
         import httpx
 
         if not self.api_token or not self.account_id:
-            raise RuntimeError(
-                "Cloudflare API token and account ID required. "
-                "Set in config: fetch.cloudflare.api_token and fetch.cloudflare.account_id"
-            )
+            from markitai.utils.guidance import cloudflare_credentials_error
+
+            raise RuntimeError(cloudflare_credentials_error())
 
         # Determine MIME type with fallback.
         ext = input_path.suffix.lower()

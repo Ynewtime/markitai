@@ -382,3 +382,97 @@ def test_joined_selector_removes_same_elements_as_individual() -> None:
     assert "Main content" in remaining_text
     assert "nav" not in remaining_text.lower().split()
     assert "sidebar" not in remaining_text
+
+
+class TestPartialSelectorCodeProtection:
+    """Partial selectors must not remove elements that contain code blocks."""
+
+    def test_keeps_element_containing_pre(self):
+        # "dropdown" is a partial selector, but the wrapper holds a <pre>
+        html = (
+            '<div><div class="content-dropdown-select">'
+            "<pre><code>const x = 1;</code></pre></div>"
+            "<p>Body text.</p></div>"
+        )
+        soup = _make_soup(html)
+        root = soup.find("div")
+        assert root is not None
+        remove_by_selectors(root, main_content=None, use_partial=True)
+        assert root.find("pre") is not None
+
+    def test_removes_element_without_code(self):
+        html = (
+            '<div><div class="content-dropdown-select"><span>Pick one</span></div>'
+            "<p>Body text.</p></div>"
+        )
+        soup = _make_soup(html)
+        root = soup.find("div")
+        assert root is not None
+        remove_by_selectors(root, main_content=None, use_partial=True)
+        assert root.find(class_="content-dropdown-select") is None
+
+    def test_keeps_element_inside_syntax_wrapper(self):
+        html = (
+            '<div><div class="language-python"><span class="popular">x</span>'
+            "</div></div>"
+        )
+        soup = _make_soup(html)
+        root = soup.find("div")
+        assert root is not None
+        remove_by_selectors(root, main_content=None, use_partial=True)
+        assert root.find("span", class_="popular") is not None
+
+
+class TestPartialSelectorIdMatching:
+    """Delimiter-less ids are content anchors and need anchored matching."""
+
+    def test_keeps_section_with_delimiterless_anchor_id(self):
+        # "loopsandfeedback" contains the partial token "feedback" but is a
+        # concatenated-heading content anchor, not a feedback widget.
+        html = (
+            '<div><section id="loopsandfeedback"><p>Real content.</p></section></div>'
+        )
+        soup = _make_soup(html)
+        root = soup.find("div")
+        assert root is not None
+        remove_by_selectors(root, main_content=None, use_partial=True)
+        assert root.find("section", id="loopsandfeedback") is not None
+
+    def test_removes_delimited_id_match(self):
+        html = '<div><div id="newsletter-signup"><p>Subscribe!</p></div></div>'
+        soup = _make_soup(html)
+        root = soup.find("div")
+        assert root is not None
+        remove_by_selectors(root, main_content=None, use_partial=True)
+        assert root.find("div", id="newsletter-signup") is None
+
+    def test_heading_id_never_matched(self):
+        # Heading ids are auto-generated slugs; only class is checked.
+        html = '<div><h2 id="dropdown-menus">Dropdown menus</h2><p>text</p></div>'
+        soup = _make_soup(html)
+        root = soup.find("div")
+        assert root is not None
+        remove_by_selectors(root, main_content=None, use_partial=True)
+        assert root.find("h2") is not None
+
+
+class TestHiddenMathDescendantProtection:
+    def test_keeps_hidden_span_containing_mathml(self):
+        # Wikipedia hides MathML in display:none spans for accessibility
+        html = (
+            '<div><span style="display: none;">'
+            '<math alttext="x^2"><mi>x</mi></math></span></div>'
+        )
+        soup = _make_soup(html)
+        root = soup.find("div")
+        assert root is not None
+        remove_hidden_elements(root)
+        assert root.find("math") is not None
+
+    def test_removes_hidden_span_without_math(self):
+        html = '<div><span style="display: none;">tracking</span></div>'
+        soup = _make_soup(html)
+        root = soup.find("div")
+        assert root is not None
+        remove_hidden_elements(root)
+        assert root.find("span") is None

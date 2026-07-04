@@ -2277,3 +2277,95 @@ class TestCallLlmModelLevelRetry:
 
         # Should NOT retry
         assert mock_router.acompletion.await_count == 1
+
+
+# =============================================================================
+# Test _call_llm_with_retry Rate Limit (429) Retry
+# =============================================================================
+
+
+class TestCallLlmRateLimitRetry:
+    """Tests for _call_llm_with_retry retrying rate limits (429)."""
+
+    @pytest.mark.asyncio
+    async def test_retries_rate_limit_with_quota_text(self, llm_config, prompts_config):
+        """A 429 RateLimitError mentioning 'quota' must be retried.
+
+        gemini-cli 429 errors carry text like 'quota will reset after 57s'.
+        The word 'quota' must not trigger the non-retryable billing check
+        for genuine rate limits — the router cooldown routes the retry to
+        another model.
+        """
+        from litellm.exceptions import RateLimitError
+
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        success_response = MagicMock()
+        success_response.choices = [MagicMock()]
+        success_response.choices[0].message.content = "OK"
+        success_response.model = "claude-agent/sonnet"
+        success_response.usage = MagicMock(prompt_tokens=10, completion_tokens=5)
+        success_response._hidden_params = {}
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(
+            side_effect=[
+                RateLimitError(
+                    message=(
+                        "gemini-cli rate limit (429): Your quota will reset after 57s."
+                    ),
+                    llm_provider="gemini-cli",
+                    model="gemini-cli/gemini-3-flash",
+                ),
+                success_response,
+            ]
+        )
+        processor._router = mock_router
+
+        # Mock asyncio.sleep to skip the retry backoff delay
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await processor._call_llm_with_retry(
+                "default",
+                [{"role": "user", "content": "test"}],
+                call_id="test:1",
+                context="test",
+                max_retries=2,
+            )
+
+        assert result.content == "OK"
+        assert mock_router.acompletion.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_rate_limit_with_billing_error(
+        self, llm_config, prompts_config
+    ):
+        """RateLimitError with insufficient_quota (billing) raises immediately."""
+        from litellm.exceptions import RateLimitError
+
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(
+            side_effect=RateLimitError(
+                message="You exceeded your current quota (insufficient_quota)",
+                llm_provider="openai",
+                model="openai/gpt-4o",
+            )
+        )
+        processor._router = mock_router
+
+        with pytest.raises(RateLimitError):
+            await processor._call_llm_with_retry(
+                "default",
+                [{"role": "user", "content": "test"}],
+                call_id="test:1",
+                context="test",
+                max_retries=2,
+            )
+
+        # Should NOT retry
+        assert mock_router.acompletion.await_count == 1

@@ -114,3 +114,40 @@ class TestQuietModeErrorHandler:
             assert "This should be hidden" not in captured.err
         finally:
             logger.remove(handler_id)
+
+
+class TestJsonLogFormat:
+    """Tests for the JSON file log format."""
+
+    def test_json_log_lines_are_valid_json(self, tmp_path, monkeypatch) -> None:
+        """Messages with quotes/newlines/backslashes must stay valid JSON."""
+        import json
+
+        from loguru import logger
+
+        from markitai.cli.logging_config import setup_logging
+
+        monkeypatch.delenv("MARKITAI_LOG_DIR", raising=False)
+        monkeypatch.delenv("MARKITAI_LOG_FORMAT", raising=False)
+
+        handler_id, log_file = setup_logging(
+            verbose=False,
+            log_dir=str(tmp_path),
+            log_format="json",
+            quiet=True,
+        )
+        message = 'nasty "quoted" message with backslash \\ and\nnewline'
+        try:
+            logger.info(message)
+        finally:
+            logger.remove()  # flush and close all handlers
+
+        assert log_file is not None
+        lines = [ln for ln in log_file.read_text().splitlines() if ln.strip()]
+        assert lines, "expected at least one log line"
+
+        entries = [json.loads(ln) for ln in lines]  # must not raise
+        matching = [e for e in entries if e["msg"] == message]
+        assert matching, "logged message should round-trip through JSON intact"
+        assert matching[0]["lvl"] == "INFO"
+        assert "ts" in matching[0] and "src" in matching[0]

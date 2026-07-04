@@ -2281,6 +2281,10 @@ class TestFetchWithFallback:
                 "markitai.fetch_playwright.is_playwright_available", return_value=True
             ),
             patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed",
+                return_value=True,
+            ),
+            patch(
                 "markitai.fetch_playwright.fetch_with_playwright",
                 new_callable=AsyncMock,
                 return_value=mock_pw_result,
@@ -2661,6 +2665,8 @@ class TestScreenshotDecoupled:
             (),
             {
                 "strategy": "auto",
+                # These tests exercise the full auto chain incl. defuddle/jina
+                "remote_consent": "always",
                 "fallback_patterns": [],
                 "policy": type(
                     "Policy",
@@ -2741,26 +2747,26 @@ class TestScreenshotDecoupled:
         )
 
     @pytest.mark.asyncio
-    async def test_screenshot_mode_defuddle_wins_with_separate_screenshot(
+    async def test_screenshot_mode_static_wins_with_separate_screenshot(
         self,
     ) -> None:
-        """When screenshot=True and defuddle wins content, playwright runs
-        separately just for screenshot. Result has defuddle content + screenshot.
+        """When screenshot=True and static (first in the local-first chain)
+        wins content, playwright runs separately just for the screenshot.
 
-        Key behavioral test: fetch_with_static should NOT be called because
-        serial mode stops after defuddle succeeds. In the old parallel mode,
+        Key behavioral test: fetch_with_defuddle should NOT be called because
+        serial mode stops after static succeeds. In the old parallel mode,
         all strategies would run simultaneously via asyncio.gather.
         """
         from markitai.fetch import FetchResult, fetch_url
 
         mock_config = self._make_config()
 
-        defuddle_result = FetchResult(
-            content=self._valid_content("defuddle"),
-            strategy_used="defuddle",
-            title="Defuddle Title",
+        static_result = FetchResult(
+            content=self._valid_content("static"),
+            strategy_used="static",
+            title="Static Title",
             url="https://example.com",
-            metadata={"api": "defuddle"},
+            metadata={},
         )
 
         # Playwright result for screenshot-only call
@@ -2773,17 +2779,17 @@ class TestScreenshotDecoupled:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_defuddle",
-                new_callable=AsyncMock,
-                return_value=defuddle_result,
-            ),
-            patch(
                 "markitai.fetch.fetch_with_static",
                 new_callable=AsyncMock,
+                return_value=static_result,
+            ),
+            patch(
+                "markitai.fetch.fetch_with_defuddle",
+                new_callable=AsyncMock,
                 return_value=MagicMock(
-                    content=self._valid_content("static"),
+                    content=self._valid_content("defuddle"),
                 ),
-            ) as mock_static,
+            ) as mock_defuddle,
             patch(
                 "markitai.fetch_playwright.fetch_with_playwright",
                 new_callable=AsyncMock,
@@ -2794,9 +2800,19 @@ class TestScreenshotDecoupled:
                 return_value=True,
             ),
             patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed",
+                return_value=True,
+            ),
+            patch(
                 "markitai.fetch._get_playwright_renderer",
                 new_callable=AsyncMock,
                 return_value=MagicMock(),
+            ),
+            # Isolate from the process-global SPA cache: other tests may have
+            # recorded example.com as SPA, which would flip the chain order
+            patch(
+                "markitai.fetch.get_spa_domain_cache",
+                return_value=MagicMock(is_known_spa=lambda _url: False),
             ),
         ):
             result = await fetch_url(
@@ -2807,13 +2823,13 @@ class TestScreenshotDecoupled:
                 screenshot_dir=Path("/tmp"),
             )
 
-            # Content should come from defuddle (the winning strategy)
-            assert result.strategy_used == "defuddle"
-            assert "Content from defuddle" in result.content
+            # Content should come from static (the winning strategy)
+            assert result.strategy_used == "static"
+            assert "Content from static" in result.content
             # Screenshot should come from separate playwright call
             assert result.screenshot_path == Path("/tmp/screenshot.jpg")
-            # KEY: Static should NOT be called (serial stops at defuddle)
-            mock_static.assert_not_called()
+            # KEY: defuddle should NOT be called (serial stops at static)
+            mock_defuddle.assert_not_called()
             # Playwright should have been called (for screenshot only)
             mock_pw.assert_called_once()
 
@@ -2859,6 +2875,10 @@ class TestScreenshotDecoupled:
             ) as mock_pw,
             patch(
                 "markitai.fetch_playwright.is_playwright_available",
+                return_value=True,
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed",
                 return_value=True,
             ),
             patch(
@@ -2965,6 +2985,10 @@ class TestScreenshotDecoupled:
             ) as mock_pw,
             patch(
                 "markitai.fetch_playwright.is_playwright_available",
+                return_value=True,
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed",
                 return_value=True,
             ),
             patch(
@@ -3394,6 +3418,10 @@ class TestFetchWithFallbackJsDetection:
             ),
             patch(
                 "markitai.fetch_playwright.is_playwright_available", return_value=True
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed",
+                return_value=True,
             ),
             patch(
                 "markitai.fetch_playwright.fetch_with_playwright",
@@ -5022,10 +5050,10 @@ class TestProxyAutoProxyRespected:
 
 
 class TestSPABrowserFirstOrdering:
-    """Medium-8: known_spa=True should prefer defuddle/jina before playwright."""
+    """Local-first ordering: SPA domains go straight to the browser."""
 
-    def test_known_spa_prefers_defuddle_over_playwright(self) -> None:
-        """When known_spa=True, defuddle should lead (server-side extraction may work)."""
+    def test_known_spa_prefers_playwright(self) -> None:
+        """When known_spa=True, the local browser leads (JS rendering needed)."""
         from markitai.fetch_policy import FetchPolicyEngine
 
         engine = FetchPolicyEngine()
@@ -5037,12 +5065,12 @@ class TestSPABrowserFirstOrdering:
             policy_enabled=True,
         )
 
-        # Defuddle/jina lead; playwright is available as fallback
-        assert decision.order[0] == "defuddle"
-        assert "playwright" in decision.order
+        # Browser leads; consent-gated remote strategies are the fallback
+        assert decision.order[0] == "playwright"
+        assert "defuddle" in decision.order
 
-    def test_fallback_pattern_prefers_defuddle_over_playwright(self) -> None:
-        """When domain matches fallback_patterns, defuddle should lead."""
+    def test_fallback_pattern_prefers_playwright(self) -> None:
+        """When domain matches fallback_patterns, the browser leads."""
         from markitai.fetch_policy import FetchPolicyEngine
 
         engine = FetchPolicyEngine()
@@ -5054,12 +5082,11 @@ class TestSPABrowserFirstOrdering:
             policy_enabled=True,
         )
 
-        # Defuddle/jina lead for fallback-pattern domains too
-        assert decision.order[0] == "defuddle"
-        assert "playwright" in decision.order
+        assert decision.order[0] == "playwright"
+        assert "defuddle" in decision.order
 
-    def test_non_spa_default_order_unchanged(self) -> None:
-        """Non-SPA domains should keep the default defuddle-first order."""
+    def test_non_spa_default_order_static_first(self) -> None:
+        """Non-SPA domains use the local-first default: static leads."""
         from markitai.fetch_policy import FetchPolicyEngine
 
         engine = FetchPolicyEngine()
@@ -5071,5 +5098,119 @@ class TestSPABrowserFirstOrdering:
             policy_enabled=True,
         )
 
-        # Default order: defuddle first
-        assert decision.order[0] == "defuddle"
+        assert decision.order[0] == "static"
+
+
+class TestAutoStrategyCachesValidators:
+    """Regression: AUTO dispatch must store HTTP validators from static fetch.
+
+    Previously fetch_with_static discarded the etag/last_modified returned by
+    fetch_with_static_conditional, so AUTO-cached pages were never revalidated.
+    """
+
+    @pytest.mark.asyncio
+    async def test_auto_static_fetch_stores_validators(self, tmp_path: Path) -> None:
+        from markitai.fetch import (
+            ConditionalFetchResult,
+            FetchCache,
+            FetchResult,
+            fetch_url,
+        )
+
+        helper = TestScreenshotDecoupled()
+        config = helper._make_config()
+        url = "https://validators-regression.example.com/page"
+
+        static_result = FetchResult(
+            content=helper._valid_content("static"),
+            strategy_used="static",
+            title="Static Title",
+            url=url,
+            final_url=url,
+            metadata={"converter": "native-html"},
+        )
+        cond = ConditionalFetchResult(
+            result=static_result,
+            not_modified=False,
+            etag='"v1"',
+            last_modified="Mon, 27 Jan 2026 12:00:00 GMT",
+        )
+
+        cache = FetchCache(tmp_path / "test_cache.db")
+        try:
+            with (
+                patch(
+                    "markitai.fetch.fetch_with_defuddle",
+                    new_callable=AsyncMock,
+                    side_effect=Exception("defuddle down"),
+                ),
+                patch(
+                    "markitai.fetch.fetch_with_jina",
+                    new_callable=AsyncMock,
+                    side_effect=Exception("jina down"),
+                ),
+                patch(
+                    "markitai.fetch.fetch_with_static_conditional",
+                    new_callable=AsyncMock,
+                    return_value=cond,
+                ),
+            ):
+                result = await fetch_url(
+                    url,
+                    FetchStrategy.AUTO,
+                    config,  # type: ignore[arg-type]
+                    cache=cache,
+                )
+
+            assert result.strategy_used == "static"
+            # Validators are stored in cache columns, not leaked into metadata
+            assert "etag" not in result.metadata
+            assert "last_modified" not in result.metadata
+
+            cached, etag, last_modified = await cache.aget_with_validators(url)
+            assert cached is not None
+            assert etag == '"v1"'
+            assert last_modified == "Mon, 27 Jan 2026 12:00:00 GMT"
+        finally:
+            cache.close()
+
+
+class TestScheduleClientClose:
+    """Tests for fetch_http.schedule_client_close (strong task references)."""
+
+    @pytest.mark.asyncio
+    async def test_keeps_strong_reference_until_done(self) -> None:
+        import asyncio
+
+        from markitai import fetch_http
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _close() -> None:
+            started.set()
+            await release.wait()
+
+        before = set(fetch_http._pending_close_tasks)
+        fetch_http.schedule_client_close(_close(), "test")
+        await started.wait()
+        pending = set(fetch_http._pending_close_tasks) - before
+        assert len(pending) == 1
+
+        release.set()
+        for _ in range(10):
+            if not (set(fetch_http._pending_close_tasks) - before):
+                break
+            await asyncio.sleep(0)
+        assert not (set(fetch_http._pending_close_tasks) - before)
+
+    def test_no_running_loop_does_not_raise(self) -> None:
+        from markitai import fetch_http
+
+        async def _close() -> None:  # pragma: no cover - never awaited
+            pass
+
+        before = set(fetch_http._pending_close_tasks)
+        # No running event loop: must not raise, and must not leak a task
+        fetch_http.schedule_client_close(_close(), "test")
+        assert set(fetch_http._pending_close_tasks) == before

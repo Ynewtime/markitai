@@ -181,11 +181,14 @@ class SingleFileWorkflow:
             # Use context-based tracking for accurate per-file usage in concurrent scenarios
             cost = self.processor.get_context_cost(source)
             usage = self.processor.get_context_usage(source)
+            # Clear context so files with the same basename don't accumulate
+            # usage from previous files on the shared batch processor
+            self.processor.clear_context_usage(source)
             return markdown, cost, usage
 
         except Exception as e:
             logger.error(f"LLM processing failed: {format_error_message(e)}")
-            return markdown, 0.0, {}
+            raise
 
     async def process_document_pure(
         self,
@@ -212,11 +215,11 @@ class SingleFileWorkflow:
             logger.info(f"Written LLM version (pure): {llm_output}")
             cost = self.processor.get_context_cost(source)
             usage = self.processor.get_context_usage(source)
+            self.processor.clear_context_usage(source)
             return markdown, cost, usage
         except Exception as e:
             logger.error(f"Pure LLM processing failed: {format_error_message(e)}")
-
-            return markdown, 0.0, {}
+            raise
 
     async def analyze_images(
         self,
@@ -371,17 +374,14 @@ class SingleFileWorkflow:
                 )
 
             # Use context-based tracking for accurate per-file usage in concurrent scenarios
-            return (
-                markdown,
-                self.processor.get_context_cost(context),
-                self.processor.get_context_usage(context),
-                analysis_result,
-            )
+            cost = self.processor.get_context_cost(context)
+            usage = self.processor.get_context_usage(context)
+            self.processor.clear_context_usage(context)
+            return (markdown, cost, usage, analysis_result)
 
         except Exception as e:
             logger.error(f"Image analysis failed: {format_error_message(e)}")
-
-            return markdown, 0.0, {}, None
+            raise
 
     async def enhance_with_vision(
         self,
@@ -427,16 +427,17 @@ class SingleFileWorkflow:
             )
 
             # Use context-based tracking for accurate per-file usage in concurrent scenarios
-            return (
-                cleaned_content,
-                frontmatter,
-                self.processor.get_context_cost(source),
-                self.processor.get_context_usage(source),
-            )
+            cost = self.processor.get_context_cost(source)
+            usage = self.processor.get_context_usage(source)
+            self.processor.clear_context_usage(source)
+            return (cleaned_content, frontmatter, cost, usage)
 
         except Exception as e:
             logger.error(f"Document enhancement failed: {format_error_message(e)}")
 
+            # Drop any partial usage so it isn't attributed to the next
+            # file that reuses this context key
+            self.processor.clear_context_usage(source)
             return (
                 extracted_text,
                 _fallback_frontmatter(source, original_title),
@@ -510,16 +511,17 @@ class SingleFileWorkflow:
             )
             frontmatter = frontmatter_to_yaml(frontmatter_dict).strip()
 
-            return (
-                merged_content,
-                frontmatter,
-                self.processor.get_context_cost(source),
-                self.processor.get_context_usage(source),
-            )
+            cost = self.processor.get_context_cost(source)
+            usage = self.processor.get_context_usage(source)
+            self.processor.clear_context_usage(source)
+            return (merged_content, frontmatter, cost, usage)
 
         except Exception as e:
             logger.error(
                 f"Screenshot-only extraction failed: {format_error_message(e)}"
             )
 
+            # Drop any partial usage so it isn't attributed to the next
+            # file that reuses this context key
+            self.processor.clear_context_usage(source)
             return "", _fallback_frontmatter(source, original_title), 0.0, {}

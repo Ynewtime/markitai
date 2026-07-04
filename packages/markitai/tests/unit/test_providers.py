@@ -724,7 +724,8 @@ class TestCopilotProvider:
             }
         ]
 
-        prompt, attachments = provider._extract_images(messages)
+        temp_files: list[str] = []
+        prompt, attachments = provider._extract_images(messages, temp_files)
 
         assert "What's this?" in prompt
         assert len(attachments) == 1
@@ -732,8 +733,53 @@ class TestCopilotProvider:
         assert os.path.exists(attachments[0]["path"])
 
         # Clean up
-        provider._cleanup_temp_files()
-        assert len(provider._temp_files) == 0
+        provider._cleanup_temp_files(temp_files)
+        assert len(temp_files) == 0
+        assert not os.path.exists(attachments[0]["path"])
+
+    def test_temp_files_are_tracked_per_request(self) -> None:
+        """One request's temp file cleanup must not delete another's files.
+
+        CopilotProvider is a process-wide singleton, so temp files are
+        tracked per-request rather than on the shared instance.
+        """
+        import base64
+        import os
+
+        from markitai.providers.copilot import CopilotProvider
+
+        provider = CopilotProvider()
+
+        test_image_data = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What's this?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{test_image_data}"
+                        },
+                    },
+                ],
+            }
+        ]
+
+        # Simulate two concurrent requests extracting images
+        temp_files_a: list[str] = []
+        temp_files_b: list[str] = []
+        _, attachments_a = provider._extract_images(messages, temp_files_a)
+        _, attachments_b = provider._extract_images(messages, temp_files_b)
+
+        # Request A finishes and cleans up its own files only
+        provider._cleanup_temp_files(temp_files_a)
+        assert not os.path.exists(attachments_a[0]["path"])
+        # Request B's file must still exist
+        assert os.path.exists(attachments_b[0]["path"])
+
+        provider._cleanup_temp_files(temp_files_b)
+        assert not os.path.exists(attachments_b[0]["path"])
 
     def test_sdk_availability_check(self) -> None:
         """Test SDK availability check using module-level function."""

@@ -258,11 +258,14 @@ JS_REQUIRED_PATTERNS: tuple[str, ...] = (
 )
 
 # Fetch strategy categories
+# Order matters: this tuple IS the default auto-chain order (local-first —
+# static's native webextract now matches remote defuddle quality on the
+# ground-truth corpus, and remote strategies are consent-gated)
 ALL_FETCH_STRATEGIES: tuple[str, ...] = (
-    "defuddle",
-    "jina",
     "static",
     "playwright",
+    "defuddle",
+    "jina",
     "cloudflare",
 )
 EXTERNAL_STRATEGIES: tuple[str, ...] = ("defuddle", "jina", "cloudflare")
@@ -336,6 +339,8 @@ MIME_TO_EXTENSION: dict[str, str] = {
 }
 
 # Supported image extensions for standalone image detection
+# HEIC/HEIF/AVIF require the optional pillow-heif dependency (markitai[heif]);
+# they are transcoded to PNG at the converter boundary.
 IMAGE_EXTENSIONS: tuple[str, ...] = (
     ".jpg",
     ".jpeg",
@@ -346,6 +351,9 @@ IMAGE_EXTENSIONS: tuple[str, ...] = (
     ".tiff",
     ".tif",
     ".svg",
+    ".heic",
+    ".heif",
+    ".avif",
 )
 
 # Metadata directory namespace — isolates markitai metadata (assets, screenshots,

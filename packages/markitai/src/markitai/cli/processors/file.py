@@ -16,7 +16,8 @@ from typing import Any
 from loguru import logger
 
 from markitai.cli import ui
-from markitai.cli.console import get_console
+from markitai.cli.console import get_console, get_stderr_console
+from markitai.cli.processors import split_output_file_target
 from markitai.cli.ui import MARK_INFO, MARK_TITLE
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
@@ -24,6 +25,7 @@ from markitai.converter import FileFormat, detect_format
 from markitai.json_order import order_report
 from markitai.security import atomic_write_json, validate_file_size
 from markitai.utils.cli_helpers import compute_task_hash, get_report_file_path
+from markitai.utils.paths import plan_output_names
 from markitai.utils.progress import ProgressReporter
 from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import write_images_json
@@ -36,6 +38,42 @@ console = get_console()
 _ASSET_REF_PATTERN = re.compile(
     r"!\[([^\]]*)\]\(\.markitai[/\\](assets|screenshots)[/\\]([^)]+)\)"
 )
+
+
+def _warn_ephemeral_links() -> None:
+    """Warn on stderr that stdout image links will not outlive the process.
+
+    Used when ``image.stdout_persist`` is explicitly disabled. Writes to
+    stderr directly because the stdout-mode console handler only shows
+    ERROR+, and stdout itself must stay clean for the markdown content.
+    """
+    message = (
+        "Warning: image.stdout_persist is disabled — extracted images are "
+        "deleted at exit, so image links in the output are ephemeral"
+    )
+    print(message, file=sys.stderr)
+    logger.warning(message)
+
+
+def normalize_temp_asset_refs(markdown: str, temp_dir: Path) -> str:
+    """Rewrite absolute temp-dir asset refs to relative ``.markitai/`` refs.
+
+    Some converters emit image refs with absolute paths into the stdout-mode
+    temp directory (e.g. pymupdf4llm canonicalizes macOS ``/var/...`` temp
+    paths to ``/private/var/...``, defeating the converter's own relative
+    rewrite). Normalizing here lets ``resolve_asset_references`` handle them
+    instead of leaking dead temp links to stdout.
+
+    Args:
+        markdown: Markdown content possibly containing absolute asset refs.
+        temp_dir: The stdout-mode temp directory used for conversion.
+
+    Returns:
+        Markdown with absolute temp-dir asset refs rewritten to relative form.
+    """
+    for base in {temp_dir.as_posix(), temp_dir.resolve().as_posix()}:
+        markdown = markdown.replace(f"]({base}/.markitai/", "](.markitai/")
+    return markdown
 
 
 def resolve_asset_references(
@@ -142,19 +180,33 @@ async def process_single_file(
     """
     from markitai.workflow.core import ConversionContext, convert_document_core
 
+    # `-o out.md` (single-file mode) targets an output FILE, not a directory:
+    # the parent becomes the output dir and the name overrides derived naming
+    output_file_name: str | None = None
+    if output_dir is not None:
+        output_dir, output_file_name = split_output_file_target(output_dir)
+
+    # Determine output mode early so diagnostics can be routed:
+    # in stdout mode the markdown content owns stdout, so warnings/errors
+    # must go to stderr to keep piped output clean
+    stdout_mode = output_dir is None
+    diag_console = get_stderr_console() if stdout_mode else console
+
     # Validate file size to prevent DoS
     try:
         validate_file_size(input_path, MAX_DOCUMENT_SIZE)
     except ValueError as e:
         if not quiet:
-            ui.error(str(e))
+            ui.error(str(e), console=diag_console)
         raise SystemExit(1)
 
     # Detect file format for dry-run display
     fmt = detect_format(input_path)
     if fmt == FileFormat.UNKNOWN:
         if not quiet:
-            ui.error(f"Unsupported file format: {input_path.suffix}")
+            ui.error(
+                f"Unsupported file format: {input_path.suffix}", console=diag_console
+            )
         raise SystemExit(1)
 
     # Handle dry-run
@@ -163,8 +215,12 @@ async def process_single_file(
         cache_status = "enabled" if cfg.cache.enabled else "disabled"
 
         # Determine output location for display
-        if output_dir:
-            output_display = str(output_dir / (input_path.name + ".md"))
+        if output_dir is not None:
+            planned_name = (
+                output_file_name
+                or plan_output_names([(input_path, output_dir)])[input_path]
+            )
+            output_display = str(output_dir / planned_name)
         else:
             output_display = "stdout"
 
@@ -184,10 +240,9 @@ async def process_single_file(
     start_time = time.time()
     error_msg = None
 
-    # Determine output mode
+    # Output mode (stdout_mode computed above):
     # - No output_dir: stdout mode (output content)
     # - With output_dir: file mode (save and show path)
-    stdout_mode = output_dir is None
 
     # For stdout mode, use a temporary directory for conversion
     if stdout_mode:
@@ -209,11 +264,13 @@ async def process_single_file(
 
         progress.start_spinner(f"Converting {input_path.name}...")
 
-        # Create conversion context
+        # Create conversion context (explicit -o file target overrides the
+        # derived output name)
         ctx = ConversionContext(
             input_path=input_path,
             output_dir=effective_output_dir,
             config=cfg,
+            output_name=output_file_name,
         )
 
         # Run core conversion pipeline
@@ -229,7 +286,11 @@ async def process_single_file(
             progress.stop_spinner()
             if not quiet and not stdout_mode:
                 assert output_dir is not None
-                base_output_file = output_dir / f"{input_path.name}.md"
+                planned_name = (
+                    output_file_name
+                    or plan_output_names([(input_path, output_dir)])[input_path]
+                )
+                base_output_file = output_dir / planned_name
                 console.print(f"[yellow]Skipped (exists):[/yellow] {base_output_file}")
             return
 
@@ -239,7 +300,8 @@ async def process_single_file(
             if not quiet:
                 ui.warning(
                     f"Skipped {input_path.name} (image file, no text to extract). "
-                    f"Use --llm or --ocr for content extraction."
+                    f"Use --llm or --ocr for content extraction.",
+                    console=diag_console,
                 )
             return
 
@@ -254,8 +316,9 @@ async def process_single_file(
         duration = time.time() - start_time
         finished_at = datetime.now()
 
-        # Generate report (only when saving to file)
-        if not stdout_mode:
+        # Generate report only when explicitly enabled (output.report=true);
+        # single-file conversions skip reports by default
+        if not stdout_mode and cfg.output.report is True:
             assert output_dir is not None
             input_tokens = sum(u.get("input_tokens", 0) for u in ctx.llm_usage.values())
             output_tokens = sum(
@@ -330,6 +393,18 @@ async def process_single_file(
             if not final_output_file.exists() and cfg.llm.enabled:
                 final_output_file = ctx.output_file
 
+            # Explicit -o file target: the final content must land exactly at
+            # the requested path. In LLM mode (without --keep-base) the final
+            # file is `<name>.llm.md`; move it onto the requested `.md` path.
+            if (
+                output_file_name is not None
+                and final_output_file != ctx.output_file
+                and final_output_file.exists()
+                and not ctx.output_file.exists()
+            ):
+                final_output_file.replace(ctx.output_file)
+                final_output_file = ctx.output_file
+
         # Output based on mode
         if quiet:
             # Quiet mode: no output
@@ -339,12 +414,17 @@ async def process_single_file(
             if final_output_file and final_output_file.exists():
                 final_content = final_output_file.read_text(encoding="utf-8")
 
+                # Rewrite absolute temp-dir refs so they resolve below
+                final_content = normalize_temp_asset_refs(final_content, temp_dir)
+
                 # Detect terminal image protocol (only if stdout is a TTY)
                 from markitai.utils.terminal_image import detect_protocol
 
                 protocol = detect_protocol()
 
-                # Set up asset store if persistence is configured
+                # Set up asset store for image persistence (default on so
+                # stdout links outlive the temp dir; opt out via
+                # image.stdout_persist=false)
                 store = None
                 if cfg.image.stdout_persist:
                     from markitai.utils.asset_store import AssetStore
@@ -353,6 +433,10 @@ async def process_single_file(
                         store = AssetStore(Path(cfg.image.stdout_persist_dir))
                     except Exception as e:
                         logger.warning(f"Asset store init failed: {e}")
+                elif _ASSET_REF_PATTERN.search(final_content):
+                    # Console handler drops WARNING in stdout mode, so write
+                    # to stderr directly (stdout stays clean for the content)
+                    _warn_ephemeral_links()
 
                 # Resolve image references (protocol > persist > placeholder)
                 final_content = resolve_asset_references(
@@ -363,12 +447,12 @@ async def process_single_file(
                     source_name=input_path.name,
                 )
 
-                # Bypass Rich when escape sequences are present (terminal protocol)
-                if protocol is not None:
-                    sys.stdout.write(final_content)
-                    sys.stdout.flush()
-                else:
-                    console.print(final_content, markup=False, highlight=False)
+                # Always write content raw: Rich's console.print hard-wraps
+                # at terminal width, breaking long URLs/lines mid-token
+                sys.stdout.write(final_content)
+                if not final_content.endswith("\n"):
+                    sys.stdout.write("\n")
+                sys.stdout.flush()
         else:
             # File mode: show output path
             if verbose:
@@ -395,7 +479,7 @@ async def process_single_file(
         error_msg = format_error_message(e)
         progress.stop_spinner()
         if not quiet:
-            ui.error(error_msg)
+            ui.error(error_msg, console=diag_console)
         sys.exit(1)
 
     finally:

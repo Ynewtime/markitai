@@ -126,3 +126,79 @@ class TestFlattenWrapperDivs:
         assert root is not None
         _flatten_wrapper_divs(root)
         assert root.find("pre") is not None
+
+
+class TestUnwrapSpecialLinks:
+    def test_anchor_link_wrapping_heading_unwrapped(self):
+        from markitai.webextract.standardize import _unwrap_special_links
+
+        soup = parse_html(
+            '<div><a href="#create-endpoint"><div>'
+            '<h2 id="create-endpoint">Create your endpoint</h2>'
+            "</div></a></div>"
+        )
+        root = soup.find("div")
+        assert root is not None
+        _unwrap_special_links(root)
+        heading = root.find("h2")
+        assert heading is not None
+        assert heading.find_parent("a") is None
+        assert heading.find("a") is None
+
+    def test_card_link_href_moved_into_heading(self):
+        from markitai.webextract.standardize import _unwrap_special_links
+
+        soup = parse_html('<div><a href="/post"><h2>Title</h2><p>desc</p></a></div>')
+        root = soup.find("div")
+        assert root is not None
+        _unwrap_special_links(root)
+        heading = root.find("h2")
+        assert heading is not None
+        assert heading.find_parent("a") is None
+        inner = heading.find("a")
+        assert inner is not None
+        assert inner.get("href") == "/post"
+        assert inner.get_text(strip=True) == "Title"
+        # Sibling content survives outside the link
+        p = root.find("p")
+        assert p is not None
+        assert p.find_parent("a") is None
+
+    def test_link_inside_code_unwrapped(self):
+        from markitai.webextract.standardize import _unwrap_special_links
+
+        soup = parse_html('<div><code>see <a href="/doc">urljoin</a></code></div>')
+        root = soup.find("div")
+        assert root is not None
+        _unwrap_special_links(root)
+        code = root.find("code")
+        assert code is not None
+        assert code.find("a") is None
+        assert "urljoin" in code.get_text()
+
+    def test_plain_links_untouched(self):
+        from markitai.webextract.standardize import _unwrap_special_links
+
+        soup = parse_html('<div><p><a href="/x">link</a></p></div>')
+        root = soup.find("div")
+        assert root is not None
+        _unwrap_special_links(root)
+        link = root.find("a")
+        assert link is not None
+        assert link.get("href") == "/x"
+
+
+class TestRemoveEmptyElementsPreservesCode:
+    def test_whitespace_token_spans_inside_pre_kept(self):
+        from markitai.webextract.standardize import _remove_empty_elements
+
+        soup = parse_html(
+            "<div><pre><code><span>import</span><span> </span>"
+            "<span>{ x }</span></code></pre></div>"
+        )
+        root = soup.find("div")
+        assert root is not None
+        _remove_empty_elements(root)
+        code = root.find("code")
+        assert code is not None
+        assert code.get_text() == "import { x }"

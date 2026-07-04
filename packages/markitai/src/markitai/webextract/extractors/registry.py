@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from markitai.webextract.extractors.base import BaseSiteExtractor
+from markitai.webextract.extractors.github_repo import GitHubRepoExtractor
 from markitai.webextract.extractors.github_thread import GitHubThreadExtractor
 from markitai.webextract.extractors.hackernews_thread import HackerNewsThreadExtractor
 from markitai.webextract.extractors.reddit_post import RedditPostExtractor
@@ -11,6 +12,7 @@ from markitai.webextract.extractors.youtube_page import YouTubePageExtractor
 
 _EXTRACTORS: tuple[BaseSiteExtractor, ...] = (
     GitHubThreadExtractor(),
+    GitHubRepoExtractor(),  # github.com/<owner>/<repo> (rendered README)
     RedditPostExtractor(),
     HackerNewsThreadExtractor(),
     SteamNewsExtractor(),  # store.steampowered.com/news (BBCode announcements)

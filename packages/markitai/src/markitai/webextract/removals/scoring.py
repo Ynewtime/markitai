@@ -9,6 +9,7 @@ from bs4 import Tag
 from markitai.webextract.constants import (
     CONTENT_INDICATOR_TOKENS,
     CONTENT_PROTECTION_SELECTORS,
+    FOOTNOTE_LIST_SELECTORS,
     NAVIGATION_INDICATORS,
     NON_CONTENT_CLASS_PATTERNS,
 )
@@ -31,6 +32,8 @@ def score_and_remove(root: Tag) -> int:
         if not isinstance(child, Tag):
             continue
         if child.name not in _BLOCK_TAGS:
+            continue
+        if _is_footnote_context(child):
             continue
         if _is_likely_content(child):
             continue
@@ -58,6 +61,22 @@ _BLOCK_TAGS = frozenset(
         "details",
     }
 )
+
+
+def _is_footnote_context(el: Tag) -> bool:
+    """Skip footnote list elements and their ancestors/descendants.
+
+    Mirrors defuddle removals/scoring.ts: elements matching, containing, or
+    inside a footnote list container are never scored for removal.
+    """
+    try:
+        if el.css.match(FOOTNOTE_LIST_SELECTORS):
+            return True
+        if el.select_one(FOOTNOTE_LIST_SELECTORS) is not None:
+            return True
+        return el.css.closest(FOOTNOTE_LIST_SELECTORS) is not None
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _is_likely_content(el: Tag) -> bool:

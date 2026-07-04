@@ -91,7 +91,12 @@ def converted_fixtures(tmp_path_factory) -> dict:
 
 @pytest.mark.slow
 class TestBatchConversionResults:
-    """Tests that verify batch conversion results using shared fixture."""
+    """Tests that verify batch conversion results using shared fixture.
+
+    Note: all fixture files share the stem "sample", so their derived
+    output names collide (sample.md) and the batch planner falls back to
+    the legacy ``<name>.md`` scheme (sample.pdf -> sample.pdf.md).
+    """
 
     @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_batch_conversion_succeeds(self, converted_fixtures: dict):
@@ -199,7 +204,8 @@ class TestSingleFileScenarios:
         )
 
         assert result.exit_code == 0
-        assert (output_dir / "sample.pdf.md").exists()
+        # Single-file conversion uses extension replacement (sample.pdf -> sample.md)
+        assert (output_dir / "sample.md").exists()
 
     def test_pdf_with_screenshot(
         self, runner: CliRunner, fixtures_dir: Path, tmp_path: Path
@@ -237,7 +243,8 @@ class TestPresetScenarios:
         )
 
         assert result.exit_code == 0
-        assert (output_dir / "sample.pdf.md").exists()
+        # Single-file conversion uses extension replacement (sample.pdf -> sample.md)
+        assert (output_dir / "sample.md").exists()
 
     def test_rich_preset_dry_run(
         self, runner: CliRunner, fixtures_dir: Path, tmp_path: Path
@@ -354,8 +361,8 @@ class TestErrorRecovery:
         )
 
         assert result.exit_code in (0, 1)
-        assert (output_dir / "valid.txt.md").exists()
-        assert (output_dir / "also_valid.md.md").exists()
+        assert (output_dir / "valid.md").exists()
+        assert (output_dir / "also_valid.md").exists()
 
 
 # =============================================================================

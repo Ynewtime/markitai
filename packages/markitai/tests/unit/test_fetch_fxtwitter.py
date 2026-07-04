@@ -121,6 +121,30 @@ class TestFetchWithFxtwitter:
             result = await fetch_with_fxtwitter("https://x.com/testuser/status/123")
             assert result is None
 
+    async def test_api_failure_logs_url_and_traceback(self) -> None:
+        """Regression: failure log must include the URL and the exception."""
+        from loguru import logger
+
+        messages: list[str] = []
+        sink_id = logger.add(
+            lambda m: messages.append(str(m)), level="DEBUG", format="{message}"
+        )
+        try:
+            with patch("markitai.fetch_fxtwitter.httpx.AsyncClient") as MockClient:
+                client_instance = AsyncMock()
+                client_instance.get.side_effect = Exception("timeout")
+                client_instance.__aenter__ = AsyncMock(return_value=client_instance)
+                client_instance.__aexit__ = AsyncMock(return_value=False)
+                MockClient.return_value = client_instance
+                result = await fetch_with_fxtwitter("https://x.com/testuser/status/123")
+                assert result is None
+        finally:
+            logger.remove(sink_id)
+
+        combined = "\n".join(messages)
+        assert "https://x.com/testuser/status/123" in combined
+        assert "timeout" in combined
+
 
 @pytest.mark.asyncio
 async def test_dispatch_strategy_tries_fxtwitter_before_playwright() -> None:

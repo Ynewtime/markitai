@@ -390,9 +390,14 @@ class BatchState:
             else:
                 abs_path = path
 
+            file_status = FileStatus(file_data.get("status", "pending"))
+            if file_status == FileStatus.IN_PROGRESS:
+                # Interrupted mid-processing; treat as FAILED so it is
+                # re-processed on resume (see FileStatus docstring)
+                file_status = FileStatus.FAILED
             state.files[abs_path] = FileState(
                 path=abs_path,
-                status=FileStatus(file_data.get("status", "pending")),
+                status=file_status,
                 output=file_data.get("output"),
                 error=file_data.get("error"),
                 started_at=file_data.get("started_at"),
@@ -407,10 +412,13 @@ class BatchState:
 
         # Reconstruct URL states
         for url, url_data in data.get("urls", {}).items():
+            url_status = FileStatus(url_data.get("status", "pending"))
+            if url_status == FileStatus.IN_PROGRESS:
+                url_status = FileStatus.FAILED
             state.urls[url] = UrlState(
                 url=url,
                 source_file=url_data.get("source_file", ""),
-                status=FileStatus(url_data.get("status", "pending")),
+                status=url_status,
                 output=url_data.get("output"),
                 error=url_data.get("error"),
                 fetch_strategy=url_data.get("fetch_strategy"),
@@ -966,6 +974,15 @@ class BatchProcessor:
             except Exception as e:
                 logger.warning(f"Failed to replay .jsonl sidecar, ignoring: {e}")
 
+        # JSONL replay may reintroduce IN_PROGRESS entries (interrupted run);
+        # treat them as FAILED so they are re-processed on resume
+        for fs in state.files.values():
+            if fs.status == FileStatus.IN_PROGRESS:
+                fs.status = FileStatus.FAILED
+        for us in state.urls.values():
+            if us.status == FileStatus.IN_PROGRESS:
+                us.status = FileStatus.FAILED
+
         return state
 
     def save_state(self, force: bool = False, log: bool = False) -> None:
@@ -1367,7 +1384,7 @@ class BatchProcessor:
             file_state.started_at = datetime.now().astimezone().isoformat()
             self._dirty_keys.add(file_key)
 
-            start_time = asyncio.get_event_loop().time()
+            start_time = asyncio.get_running_loop().time()
 
             try:
                 # Show current file being processed
@@ -1404,7 +1421,7 @@ class BatchProcessor:
                 )
 
             finally:
-                end_time = asyncio.get_event_loop().time()
+                end_time = asyncio.get_running_loop().time()
                 file_state.completed_at = datetime.now().astimezone().isoformat()
                 file_state.duration = end_time - start_time
 

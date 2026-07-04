@@ -16,7 +16,7 @@ it only pre/post-processes around MarkItDown.
 """
 
 import re
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 from bs4 import BeautifulSoup, Tag
 
@@ -135,16 +135,26 @@ def _pick_best_srcset_url(srcset: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 # Patterns: (compiled regex matching iframe src, canonical URL builder)
+# Embed srcs are frequently protocol-relative ("//player.bilibili.com/…"),
+# so every pattern accepts an optional scheme.
 _YOUTUBE_EMBED_RE = re.compile(
-    r"^https?://(?:www\.)?youtube(?:-nocookie)?\.com/embed/([A-Za-z0-9_-]+)",
+    r"^(?:https?:)?//(?:www\.)?youtube(?:-nocookie)?\.com/embed/([A-Za-z0-9_-]+)",
     re.IGNORECASE,
 )
 _VIMEO_EMBED_RE = re.compile(
-    r"^https?://player\.vimeo\.com/video/(\d+)",
+    r"^(?:https?:)?//player\.vimeo\.com/video/(\d+)",
     re.IGNORECASE,
 )
 _TWITTER_EMBED_RE = re.compile(
-    r"^https?://(?:twitter|x)\.com/",
+    r"^(?:https?:)?//(?:twitter|x)\.com/",
+    re.IGNORECASE,
+)
+_TWITTER_WIDGET_EMBED_RE = re.compile(
+    r"^(?:https?:)?//platform\.twitter\.com/embed/Tweet\.html",
+    re.IGNORECASE,
+)
+_BILIBILI_EMBED_RE = re.compile(
+    r"^(?:https?:)?//player\.bilibili\.com/player\.html",
     re.IGNORECASE,
 )
 
@@ -195,6 +205,25 @@ def _embed_src_to_canonical(src: str) -> str | None:
     if vm_match:
         video_id = vm_match.group(1)
         return f"https://vimeo.com/{video_id}"
+
+    # Bilibili player (player.bilibili.com/player.html?aid=…&bvid=…)
+    if _BILIBILI_EMBED_RE.match(src):
+        params = parse_qs(urlparse(src).query)
+        bvid = next(iter(params.get("bvid", [])), None)
+        if bvid:
+            return f"https://www.bilibili.com/video/{bvid}"
+        aid = next(iter(params.get("aid", [])), None)
+        if aid and aid.isdigit():
+            return f"https://www.bilibili.com/video/av{aid}"
+        return None
+
+    # Twitter widget iframe (platform.twitter.com/embed/Tweet.html?id=NNN)
+    if _TWITTER_WIDGET_EMBED_RE.match(src):
+        params = parse_qs(urlparse(src).query)
+        tweet_id = next(iter(params.get("id", [])), None)
+        if tweet_id and tweet_id.isdigit():
+            return f"https://x.com/i/status/{tweet_id}"
+        return None
 
     # Twitter / X  — keep the URL as-is (already canonical)
     if _TWITTER_EMBED_RE.match(src):

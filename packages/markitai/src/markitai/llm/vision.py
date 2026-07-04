@@ -24,12 +24,14 @@ from markitai.constants import (
     DEFAULT_INSTRUCTOR_MAX_RETRIES,
     DEFAULT_MAX_IMAGES_PER_BATCH,
 )
+from markitai.llm.degeneration import truncate_degenerate_tail
 from markitai.llm.document import _try_repair_instructor_response
 from markitai.llm.models import context_display_name, get_response_cost
 from markitai.llm.types import (
     BatchImageAnalysisResult,
     ImageAnalysis,
     ImageAnalysisResult,
+    SingleImageResult,
 )
 from markitai.utils.mime import (
     get_llm_effective_mime,
@@ -97,6 +99,45 @@ def _text_matches_language(text: str, language: str) -> bool:
     return True
 
 
+def _align_batch_results(
+    images: list[SingleImageResult], expected_count: int
+) -> tuple[list[SingleImageResult | None], bool]:
+    """Align batch results to input positions using image_index.
+
+    The batch prompt asks the model to echo a 1-based image_index for each
+    result. When those indices are valid (in range, unique), use them to
+    align results even if the model skipped or reordered images. Otherwise
+    fall back to positional alignment.
+
+    Args:
+        images: Results returned by the model.
+        expected_count: Number of images sent in the batch.
+
+    Returns:
+        Tuple of (aligned, cache_safe). ``aligned[pos]`` is the result for
+        input position ``pos`` (0-based) or None when missing. ``cache_safe``
+        is False when alignment is ambiguous (invalid indices AND count
+        mismatch), in which case results must not be persisted to cache.
+    """
+    indices = [img.image_index for img in images]
+    indices_valid = (
+        len(images) > 0
+        and all(1 <= i <= expected_count for i in indices)
+        and len(set(indices)) == len(indices)
+    )
+
+    aligned: list[SingleImageResult | None] = [None] * expected_count
+    if indices_valid:
+        for img in images:
+            aligned[img.image_index - 1] = img
+        return aligned, True
+
+    # Positional fallback: only trustworthy when counts match exactly
+    for pos, img in enumerate(images[:expected_count]):
+        aligned[pos] = img
+    return aligned, len(images) == expected_count
+
+
 def _should_retry_for_language(result: ImageAnalysis, language: str) -> bool:
     """Retry when a no-text image ignores the requested document language."""
     if result.extracted_text and str(result.extracted_text).strip():
@@ -137,6 +178,22 @@ def _merge_llm_usage(
         )
 
     return merged  # type: ignore[return-value]
+
+
+def _guard_degenerate_extracted_text(analysis: ImageAnalysis, context: str) -> bool:
+    """Truncate a degenerate repetition tail in extracted_text in place.
+
+    Returns:
+        True if truncation happened (callers should skip cache persist).
+    """
+    if not analysis.extracted_text:
+        return False
+    truncated, degenerated = truncate_degenerate_tail(
+        analysis.extracted_text, context=context, stage="image_analysis"
+    )
+    if degenerated:
+        analysis.extracted_text = truncated
+    return degenerated
 
 
 class VisionMixin:
@@ -294,15 +351,19 @@ class VisionMixin:
                 document_context=document_context,
             )
 
+        # Guard against VLM degeneration; skip cache persist when truncated
+        degenerated = _guard_degenerate_extracted_text(result, image_path.name)
+
         # Store in persistent cache
-        cache_value = {
-            "caption": result.caption,
-            "description": result.description,
-            "extracted_text": result.extracted_text,
-        }
-        self._persistent_cache.set(  # type: ignore[attr-defined]
-            cache_key, cache_content_key, cache_value, model="vision"
-        )
+        if not degenerated:
+            cache_value = {
+                "caption": result.caption,
+                "description": result.description,
+                "extracted_text": result.extracted_text,
+            }
+            self._persistent_cache.set(  # type: ignore[attr-defined]
+                cache_key, cache_content_key, cache_value, model="vision"
+            )
 
         return result
 
@@ -617,39 +678,26 @@ class VisionMixin:
                     )
                 }
 
-                # Convert to ImageAnalysis list and store in cache
-                new_results: list[ImageAnalysis] = []
-                for idx, img_result in enumerate(response.images):
-                    analysis = ImageAnalysis(
-                        caption=img_result.caption,
-                        description=img_result.description,
-                        extracted_text=img_result.extracted_text,
-                        llm_usage=per_image_llm_usage,
-                    )
-                    if _should_retry_for_language(analysis, language):
-                        analysis = await self._rewrite_analysis_language(
-                            analysis,
-                            language=language,
-                            context=context or display_name,
-                            document_context=document_context,
-                        )
-                    new_results.append(analysis)
+            # Semaphore released above. Language rewrites go through
+            # _call_llm which re-acquires the same semaphore, so doing them
+            # while holding it would deadlock (e.g. with concurrency=1).
 
-                    # Store in persistent cache using original index
-                    if idx < len(uncached_indices):
-                        original_idx = uncached_indices[idx]
-                        content_key = image_cache_content_keys[original_idx]
-                        cache_value = {
-                            "caption": analysis.caption,
-                            "description": analysis.description,
-                            "extracted_text": analysis.extracted_text,
-                        }
-                        self._persistent_cache.set(  # type: ignore[attr-defined]
-                            cache_key, content_key, cache_value, model="vision"
-                        )
+            # Align results to input positions using image_index
+            aligned, cache_safe = _align_batch_results(
+                list(response.images), len(uncached_paths)
+            )
+            if not cache_safe:
+                logger.warning(
+                    f"[{display_name}] Batch result alignment ambiguous "
+                    f"({len(response.images)} results for "
+                    f"{len(uncached_paths)} images); skipping cache persist"
+                )
 
-                # Ensure we have results for all uncached images
-                while len(new_results) < len(uncached_paths):
+            # Convert to ImageAnalysis list and store in cache
+            new_results: list[ImageAnalysis] = []
+            for pos in range(len(uncached_paths)):
+                img_result = aligned[pos]
+                if img_result is None:
                     new_results.append(
                         ImageAnalysis(
                             caption="Image",
@@ -658,19 +706,52 @@ class VisionMixin:
                             llm_usage=per_image_llm_usage,
                         )
                     )
+                    continue
 
-                # Merge unsupported, cached and new results in original order
-                final_results: list[ImageAnalysis] = []
-                new_result_iter = iter(new_results)
-                for i in range(len(image_paths)):
-                    if i in unsupported_results:
-                        final_results.append(unsupported_results[i])
-                    elif i in cached_results:
-                        final_results.append(cached_results[i])
-                    else:
-                        final_results.append(next(new_result_iter))
+                analysis = ImageAnalysis(
+                    caption=img_result.caption,
+                    description=img_result.description,
+                    extracted_text=img_result.extracted_text,
+                    llm_usage=per_image_llm_usage,
+                )
+                if _should_retry_for_language(analysis, language):
+                    analysis = await self._rewrite_analysis_language(
+                        analysis,
+                        language=language,
+                        context=context or display_name,
+                        document_context=document_context,
+                    )
+                # Guard against VLM degeneration; skip cache persist when truncated
+                degenerated = _guard_degenerate_extracted_text(
+                    analysis, uncached_paths[pos].name
+                )
+                new_results.append(analysis)
 
-                return final_results
+                # Store in persistent cache using original index
+                if cache_safe and not degenerated:
+                    original_idx = uncached_indices[pos]
+                    content_key = image_cache_content_keys[original_idx]
+                    cache_value = {
+                        "caption": analysis.caption,
+                        "description": analysis.description,
+                        "extracted_text": analysis.extracted_text,
+                    }
+                    self._persistent_cache.set(  # type: ignore[attr-defined]
+                        cache_key, content_key, cache_value, model="vision"
+                    )
+
+            # Merge unsupported, cached and new results in original order
+            final_results: list[ImageAnalysis] = []
+            new_result_iter = iter(new_results)
+            for i in range(len(image_paths)):
+                if i in unsupported_results:
+                    final_results.append(unsupported_results[i])
+                elif i in cached_results:
+                    final_results.append(cached_results[i])
+                else:
+                    final_results.append(next(new_result_iter))
+
+            return final_results
 
         except Exception as e:
             logger.error(
@@ -1176,4 +1257,8 @@ class VisionMixin:
             context=call_context,
         )
 
-        return response.content
+        # Guard against VLM degeneration (repetition loops) in page text
+        content, _ = truncate_degenerate_tail(
+            response.content, context=call_context, stage="page_content_extract"
+        )
+        return content

@@ -1,0 +1,265 @@
+{
+  "generated_at": "2026-07-04T09:01:22+00:00",
+  "threshold_factor": 0.9,
+  "mean_floor": 83.02,
+  "fixtures": {
+    "codeblocks--mintlify": {
+      "min_score": 88.69
+    },
+    "codeblocks--rehype-pretty-code": {
+      "min_score": 90.0
+    },
+    "codeblocks--rockthejvm.com-articles-kotlin-101-type-classes": {
+      "min_score": 89.51
+    },
+    "codeblocks--stripe": {
+      "min_score": 89.7
+    },
+    "comments--news.ycombinator.com-item-id=12345678": {
+      "min_score": 30.51
+    },
+    "comments--old.reddit.com-r-test-comments-abc123-test_post": {
+      "min_score": 15.17
+    },
+    "elements--bootstrap-alerts": {
+      "min_score": 88.13
+    },
+    "elements--complex-tables": {
+      "min_score": 90.0
+    },
+    "elements--data-table": {
+      "min_score": 89.16
+    },
+    "elements--embedded-videos": {
+      "min_score": 55.12
+    },
+    "elements--empty-p-br": {
+      "min_score": 90.0
+    },
+    "elements--farsi-zwnj": {
+      "min_score": 89.87
+    },
+    "elements--figure-content-wrapper": {
+      "min_score": 90.0
+    },
+    "elements--javascript-links": {
+      "min_score": 89.72
+    },
+    "elements--lazy-image": {
+      "min_score": 81.51
+    },
+    "elements--nbsp-handling": {
+      "min_score": 90.0
+    },
+    "elements--whitespace-newlines": {
+      "min_score": 90.0
+    },
+    "extractor--bbcode-data": {
+      "min_score": 85.49
+    },
+    "footnotes--child-anchor-id": {
+      "min_score": 90.0
+    },
+    "footnotes--heading-notes": {
+      "min_score": 90.0
+    },
+    "footnotes--hr-continuation": {
+      "min_score": 89.5
+    },
+    "footnotes--hr-strong-numbered": {
+      "min_score": 89.04
+    },
+    "footnotes--hr-sup-numbered": {
+      "min_score": 90.0
+    },
+    "footnotes--inline-footnote-span": {
+      "min_score": 90.0
+    },
+    "footnotes--maggieappleton.com-xanadu-patterns": {
+      "min_score": 89.24
+    },
+    "footnotes--nested-prose": {
+      "min_score": 90.0
+    },
+    "general--12gramsofcarbon.com-p-ilyas-30-papers-to-carmack-vlaes": {
+      "min_score": 89.05
+    },
+    "general--apnews-link-enhancement": {
+      "min_score": 90.0
+    },
+    "general--appendix-heading": {
+      "min_score": 89.68
+    },
+    "general--back-nav-link": {
+      "min_score": 90.0
+    },
+    "general--cp4space-jordan-algebra": {
+      "min_score": 55.77
+    },
+    "general--daringfireball.net-2025-02-the_iphone_16e": {
+      "min_score": 89.74
+    },
+    "general--developer.mozilla.org-en-US-docs-Web-JavaScript-Reference-Global_Objects-Array": {
+      "min_score": 86.35
+    },
+    "general--github.com-issue-56": {
+      "min_score": 84.11
+    },
+    "general--github.com-test-owner-test-repo-pull-42": {
+      "min_score": 66.75
+    },
+    "general--inline-comments-and-link-lists": {
+      "min_score": 89.41
+    },
+    "general--lesswrong.com-s-N7nDePaNabJdnbXeE-p-vJFdjigzmcXMhNTsx": {
+      "min_score": 89.58
+    },
+    "general--multi-article-portfolio": {
+      "min_score": 67.7
+    },
+    "general--news.ycombinator.com-item-id=12345678": {
+      "min_score": 18.0
+    },
+    "general--obsidian-publish-cjk": {
+      "min_score": 88.18
+    },
+    "general--obsidian.md-blog-verify-obsidian-sync-encryption": {
+      "min_score": 89.65
+    },
+    "general--react-streaming-ssr": {
+      "min_score": 90.0
+    },
+    "general--scp-wiki.wikidot.com-scp-9935": {
+      "min_score": 88.61
+    },
+    "general--stephango.com-buy-wisely": {
+      "min_score": 86.44
+    },
+    "general--substack-app": {
+      "min_score": 88.64
+    },
+    "general--tailwind-hidden-blog-index": {
+      "min_score": 55.76
+    },
+    "general--trailing-cta-newsletter": {
+      "min_score": 90.0
+    },
+    "general--wikipedia": {
+      "min_score": 86.17
+    },
+    "general--www.figma.com-blog-introducing-codex-to-figma": {
+      "min_score": 68.84
+    },
+    "general--x.com-article": {
+      "min_score": 89.19
+    },
+    "general--x.com-article-2026-02-13": {
+      "min_score": 89.28
+    },
+    "hidden--nodes": {
+      "min_score": 90.0
+    },
+    "hidden--visibility": {
+      "min_score": 90.0
+    },
+    "issues--106-menu-id": {
+      "min_score": 90.0
+    },
+    "issues--114-leading-hr": {
+      "min_score": 90.0
+    },
+    "issues--120-dhammatalks-footnotes": {
+      "min_score": 88.67
+    },
+    "issues--131-category-links": {
+      "min_score": 80.78
+    },
+    "issues--132-hero-class": {
+      "min_score": 90.0
+    },
+    "issues--136-time-element": {
+      "min_score": 90.0
+    },
+    "issues--141-arxiv-equation-tables": {
+      "min_score": 89.19
+    },
+    "issues--142-arxiv-multi-citations": {
+      "min_score": 90.0
+    },
+    "issues--143-arxiv-cross-references": {
+      "min_score": 76.05
+    },
+    "issues--144-arxiv-footnote-marks": {
+      "min_score": 66.11
+    },
+    "issues--159-lean-heading-permalink-emoji": {
+      "min_score": 90.0
+    },
+    "issues--159-lean-verso-code-blocks": {
+      "min_score": 90.0
+    },
+    "issues--159-lean-verso-empty-line-preserved": {
+      "min_score": 90.0
+    },
+    "issues--159-lean-verso-grouped-blocks": {
+      "min_score": 87.83
+    },
+    "issues--159-lean-verso-missing-section-gap": {
+      "min_score": 90.0
+    },
+    "issues--162-aria-hidden-main-content": {
+      "min_score": 90.0
+    },
+    "issues--167-partial-selector-inside-code": {
+      "min_score": 90.0
+    },
+    "issues--168-links-inside-inline-code": {
+      "min_score": 90.0
+    },
+    "issues--169-svg-classname-crash": {
+      "min_score": 66.79
+    },
+    "issues--span-with-block-children-and-schema": {
+      "min_score": 88.52
+    },
+    "math--katex": {
+      "min_score": 89.1
+    },
+    "math--katex-centraliser": {
+      "min_score": 88.94
+    },
+    "math--mathjax": {
+      "min_score": 45.02
+    },
+    "math--mathjax-tex-scripts": {
+      "min_score": 89.38
+    },
+    "math--temml": {
+      "min_score": 63.52
+    },
+    "math--wikipedia-mathml": {
+      "min_score": 90.0
+    },
+    "scoring--related-posts-byline": {
+      "min_score": 89.78
+    },
+    "scoring--table-with-links": {
+      "min_score": 90.0
+    },
+    "table-layout--paulgraham.com-makersschedule": {
+      "min_score": 89.6
+    },
+    "table-layout--single-column": {
+      "min_score": 83.43
+    }
+  },
+  "local_mean_floor": 89.52,
+  "local_fixtures": {
+    "blog--jekyll.ynewtime.com-japanese-learning": {
+      "min_score": 90.0
+    },
+    "github-repo--panniantong-agent-reach": {
+      "min_score": 89.05
+    }
+  }
+}

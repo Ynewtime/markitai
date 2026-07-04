@@ -120,8 +120,16 @@ def _check_chromium_paths() -> bool:
         # Look for chromium-* directories
         chromium_dirs = list(base.glob("chromium-*"))
         if chromium_dirs:
-            # Check if chrome executable exists
             for chromium_dir in chromium_dirs:
+                # Primary check: Playwright writes this marker after a
+                # successful install. It is bundle-name and version agnostic
+                # (newer Playwright ships "Google Chrome for Testing.app"
+                # instead of "Chromium.app", which broke path-only checks)
+                if (chromium_dir / "INSTALLATION_COMPLETE").exists():
+                    logger.debug(f"Found Chromium install marker in: {chromium_dir}")
+                    return True
+
+                # Fallback: check known executable layouts
                 if sys.platform == "win32":
                     # Try both old (chrome-win) and new (chrome-win64) paths
                     exe_paths = [
@@ -129,20 +137,24 @@ def _check_chromium_paths() -> bool:
                         chromium_dir / "chrome-win" / "chrome.exe",
                     ]
                 elif sys.platform == "darwin":
-                    exe_paths = [
-                        chromium_dir
-                        / "chrome-mac"
-                        / "Chromium.app"
-                        / "Contents"
-                        / "MacOS"
-                        / "Chromium",
-                        chromium_dir
-                        / "chrome-mac-arm64"
-                        / "Chromium.app"
-                        / "Contents"
-                        / "MacOS"
-                        / "Chromium",
-                    ]
+                    exe_paths = []
+                    for arch_dir in ("chrome-mac", "chrome-mac-arm64"):
+                        exe_paths.extend(
+                            [
+                                chromium_dir
+                                / arch_dir
+                                / "Chromium.app"
+                                / "Contents"
+                                / "MacOS"
+                                / "Chromium",
+                                chromium_dir
+                                / arch_dir
+                                / "Google Chrome for Testing.app"
+                                / "Contents"
+                                / "MacOS"
+                                / "Google Chrome for Testing",
+                            ]
+                        )
                 else:
                     # Try both old (chrome-linux) and new (chrome-linux64) paths
                     exe_paths = [
@@ -342,6 +354,7 @@ class PlaywrightRenderer:
 
         # Session cache (domain-persistent mode)
         self._context_cache: dict[str, CachedContext] = {}
+        self._context_cache_lock = asyncio.Lock()
         self._session_cache_enabled = False
         self._session_ttl_seconds = 600
         self._max_contexts = 8
@@ -388,10 +401,13 @@ class PlaywrightRenderer:
             except Exception as e:
                 await self._playwright.stop()
                 self._playwright = None
+                from markitai.utils.guidance import (
+                    playwright_browser_missing_error,
+                )
+
                 raise RuntimeError(
-                    f"Failed to launch Chromium browser: {e}. "
-                    "Install browser with: uv run playwright install chromium "
-                    "(Linux: also run 'uv run playwright install-deps chromium')"
+                    f"Failed to launch Chromium browser: {e}\n"
+                    + playwright_browser_missing_error()
                 )
             return self._browser
 
@@ -401,44 +417,52 @@ class PlaywrightRenderer:
         """Get an existing cached context or create a new one."""
         import time
 
-        now = time.time()
+        # Serialize lookup/create/expire so concurrent same-key fetches
+        # don't create duplicate contexts or double-delete expired entries.
+        async with self._context_cache_lock:
+            now = time.time()
 
-        # 1. Check for existing context
-        if session_key in self._context_cache:
-            cached = self._context_cache[session_key]
-            # Check for expiration
-            if now - cached.last_used_at < self._session_ttl_seconds:
-                cached.last_used_at = now
-                logger.debug(f"Reusing cached Playwright context for: {session_key}")
-                return cached.context
-            else:
-                # Expired
-                logger.debug(f"Cached Playwright context expired for: {session_key}")
-                await cached.context.close()
-                del self._context_cache[session_key]
+            # 1. Check for existing context
+            if session_key in self._context_cache:
+                cached = self._context_cache[session_key]
+                # Check for expiration
+                if now - cached.last_used_at < self._session_ttl_seconds:
+                    cached.last_used_at = now
+                    logger.debug(
+                        f"Reusing cached Playwright context for: {session_key}"
+                    )
+                    return cached.context
+                else:
+                    # Expired
+                    logger.debug(
+                        f"Cached Playwright context expired for: {session_key}"
+                    )
+                    self._context_cache.pop(session_key, None)
+                    await cached.context.close()
 
-        # 2. Enforce max contexts (LRU-ish)
-        if len(self._context_cache) >= self._max_contexts:
-            # Remove oldest (based on last_used_at)
-            oldest_key = min(
-                self._context_cache.keys(),
-                key=lambda k: self._context_cache[k].last_used_at,
+            # 2. Enforce max contexts (LRU-ish)
+            if len(self._context_cache) >= self._max_contexts:
+                # Remove oldest (based on last_used_at)
+                oldest_key = min(
+                    self._context_cache.keys(),
+                    key=lambda k: self._context_cache[k].last_used_at,
+                )
+                logger.debug(f"Evicting Playwright context cache for: {oldest_key}")
+                oldest = self._context_cache.pop(oldest_key, None)
+                if oldest is not None:
+                    await oldest.context.close()
+
+            # 3. Create new context
+            browser = await self._ensure_browser()
+            context = await browser.new_context(**ctx_options)
+            self._context_cache[session_key] = CachedContext(
+                context=context,
+                created_at=now,
+                last_used_at=now,
+                session_key=session_key,
             )
-            logger.debug(f"Evicting Playwright context cache for: {oldest_key}")
-            await self._context_cache[oldest_key].context.close()
-            del self._context_cache[oldest_key]
-
-        # 3. Create new context
-        browser = await self._ensure_browser()
-        context = await browser.new_context(**ctx_options)
-        self._context_cache[session_key] = CachedContext(
-            context=context,
-            created_at=now,
-            last_used_at=now,
-            session_key=session_key,
-        )
-        logger.debug(f"Created new cached Playwright context for: {session_key}")
-        return context
+            logger.debug(f"Created new cached Playwright context for: {session_key}")
+            return context
 
     async def fetch(
         self,
@@ -478,11 +502,12 @@ class PlaywrightRenderer:
             context = await browser.new_context(**ctx_options)
             should_close_context = True
 
-        # Inject cookies before navigation
-        if cookies:
-            await context.add_cookies(cookies)
-
+        page = None
         try:
+            # Inject cookies before navigation
+            if cookies:
+                await context.add_cookies(cookies)
+
             page = await context.new_page()
 
             # Set up resource filtering before navigation
@@ -558,7 +583,11 @@ class PlaywrightRenderer:
                 assert is_native_extraction_acceptable is not None
                 assert coerce_source_frontmatter is not None
                 try:
-                    extracted = extract_web_content(html_content, url)
+                    # CPU-bound (BeautifulSoup parsing + deepcopies); run in a
+                    # thread to avoid blocking the event loop
+                    extracted = await asyncio.to_thread(
+                        extract_web_content, html_content, url
+                    )
                 except Exception as e:
                     logger.debug(f"Native webextract failed, using fallback: {e}")
                 else:
@@ -622,7 +651,7 @@ class PlaywrightRenderer:
         finally:
             if should_close_context:
                 await context.close()
-            else:
+            elif page is not None:
                 # In persistent mode, close the page but keep the context
                 await page.close()
 

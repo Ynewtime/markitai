@@ -41,6 +41,16 @@ class TestCLIOptions:
         assert result.exit_code == 0
         assert "Markitai" in result.output
 
+    def test_help_sections_single_blank_line(self, cli_runner: CliRunner) -> None:
+        """Docstring sections are separated by exactly one blank line each."""
+        result = cli_runner.invoke(app, ["-h"])
+        assert result.exit_code == 0
+        lines = [ln.rstrip() for ln in result.output.splitlines()]
+        for header in ("Presets:", "Examples:"):
+            idx = next(i for i, ln in enumerate(lines) if ln.strip() == header)
+            assert lines[idx - 1] == "", f"expected blank line before {header}"
+            assert lines[idx - 2] != "", f"expected single blank before {header}"
+
     def test_no_input_shows_help(self, cli_runner: CliRunner) -> None:
         """Test that invoking without input shows help."""
         result = cli_runner.invoke(app, [])
@@ -822,6 +832,130 @@ class TestFetchStrategy:
         result = cli_runner.invoke(
             app,
             ["https://example.com", "-o", str(output_dir), "--cloudflare", "--jina"],
+        )
+        assert result.exit_code == 1
+        assert "exclusive" in result.output
+
+    def test_strategy_option_static(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Test unified -s/--strategy option."""
+        output_dir = tmp_path / "out"
+        result = cli_runner.invoke(
+            app,
+            ["https://example.com", "-o", str(output_dir), "-s", "static", "--dry-run"],
+        )
+        assert result.exit_code == 0
+
+    def test_strategy_option_long_form(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Test --strategy long form."""
+        output_dir = tmp_path / "out"
+        result = cli_runner.invoke(
+            app,
+            [
+                "https://example.com",
+                "-o",
+                str(output_dir),
+                "--strategy",
+                "playwright",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 0
+
+    def test_strategy_option_rejects_unknown_value(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Test -s validates against the strategy choices."""
+        output_dir = tmp_path / "out"
+        result = cli_runner.invoke(
+            app,
+            ["https://example.com", "-o", str(output_dir), "-s", "bogus", "--dry-run"],
+        )
+        assert result.exit_code != 0
+
+    def test_strategy_conflicts_with_deprecated_flag(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Test -s and a deprecated backend flag are mutually exclusive."""
+        output_dir = tmp_path / "out"
+        result = cli_runner.invoke(
+            app,
+            [
+                "https://example.com",
+                "-o",
+                str(output_dir),
+                "-s",
+                "static",
+                "--playwright",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "exclusive" in result.output
+
+    def test_deprecated_flag_prints_notice(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Test deprecated --playwright still works and warns on stderr."""
+        output_dir = tmp_path / "out"
+        result = cli_runner.invoke(
+            app,
+            ["https://example.com", "-o", str(output_dir), "--playwright", "--dry-run"],
+        )
+        assert result.exit_code == 0
+        assert "deprecated" in result.output
+        assert "-s playwright" in result.output
+
+    def test_strategy_option_shown_in_help(self, cli_runner: CliRunner) -> None:
+        """Test -s/--strategy appears in --help."""
+        result = cli_runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "--strategy" in result.output
+
+    def test_backend_option_shown_in_help(self, cli_runner: CliRunner) -> None:
+        """Test -b/--backend appears in --help."""
+        result = cli_runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "--backend" in result.output
+
+    def test_kreuzberg_flag_deprecated_maps_to_backend(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """--kreuzberg still works but warns and maps to -b kreuzberg."""
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+        output_dir = tmp_path / "out"
+        result = cli_runner.invoke(
+            app,
+            [str(sample), "-o", str(output_dir), "--kreuzberg", "--dry-run"],
+        )
+        assert result.exit_code == 0
+        assert "deprecated" in result.output
+        assert "-b kreuzberg" in result.output
+
+    def test_backend_and_kreuzberg_flag_mutually_exclusive(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+        result = cli_runner.invoke(
+            app,
+            [str(sample), "-b", "native", "--kreuzberg", "--dry-run"],
+        )
+        assert result.exit_code == 1
+        assert "exclusive" in result.output
+
+    def test_backend_kreuzberg_conflicts_with_cloudflare_strategy(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+        result = cli_runner.invoke(
+            app,
+            [str(sample), "-b", "kreuzberg", "-s", "cloudflare", "--dry-run"],
         )
         assert result.exit_code == 1
         assert "exclusive" in result.output

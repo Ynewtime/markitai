@@ -1396,10 +1396,21 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         last_exception: Exception | None = None
 
         # Calculate dynamic max_tokens based on input size and target model
+        # Pass router so the limit is the minimum across the model pool
         target_model_id = self._get_router_primary_model(active_router)
-        max_tokens = self._calculate_dynamic_max_tokens(messages, target_model_id)
+        max_tokens = self._calculate_dynamic_max_tokens(
+            messages, target_model_id, router=active_router
+        )
+
+        # Backoff sleeps happen at the top of the next iteration, OUTSIDE the
+        # semaphore: sleeping while holding a slot would freeze the whole pool
+        # during a rate-limit burst instead of letting other requests proceed
+        retry_delay = 0.0
 
         for attempt in range(max_retries + 1):
+            if retry_delay > 0:
+                await asyncio.sleep(retry_delay)
+                retry_delay = 0.0
             start_time = time.perf_counter()
 
             async with self.semaphore:
@@ -1461,11 +1472,9 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                                 f"retrying with different model..."
                             )
                             # Treat as retryable error
-                            await asyncio.sleep(
-                                min(
-                                    DEFAULT_RETRY_BASE_DELAY * (2**attempt),
-                                    DEFAULT_RETRY_MAX_DELAY,
-                                )
+                            retry_delay = min(
+                                DEFAULT_RETRY_BASE_DELAY * (2**attempt),
+                                DEFAULT_RETRY_MAX_DELAY,
                             )
                             continue
                         else:
@@ -1488,17 +1497,30 @@ class LLMProcessor(VisionMixin, DocumentMixin):
 
                     # Check for quota/billing errors that should NOT be retried
                     # These errors are wrapped by LiteLLM as APIConnectionError but
-                    # are actually non-recoverable without user action
+                    # are actually non-recoverable without user action.
+                    # Genuine rate limits (RateLimitError) often mention "quota"
+                    # in provider text (e.g. "quota will reset after 30s") but ARE
+                    # retryable: the router cooldown recorded for the failing
+                    # model routes the retry to another model.
                     error_msg_lower = str(e).lower()
-                    non_retryable_patterns = (
-                        "quota",
-                        "billing",
-                        "payment",
-                        "subscription",
-                        "402",
-                        "insufficient_quota",
-                        "exceeded your current quota",
-                    )
+                    if isinstance(e, RateLimitError):
+                        non_retryable_patterns = (
+                            "billing",
+                            "payment",
+                            "402",
+                            "insufficient_quota",
+                            "exceeded your current quota",
+                        )
+                    else:
+                        non_retryable_patterns = (
+                            "quota",
+                            "billing",
+                            "payment",
+                            "subscription",
+                            "402",
+                            "insufficient_quota",
+                            "exceeded your current quota",
+                        )
                     if any(
                         pattern in error_msg_lower for pattern in non_retryable_patterns
                     ):
@@ -1523,10 +1545,9 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                         raise
 
                     # Calculate exponential backoff delay
-                    delay = min(
+                    retry_delay = min(
                         DEFAULT_RETRY_BASE_DELAY * (2**attempt), DEFAULT_RETRY_MAX_DELAY
                     )
-                    await asyncio.sleep(delay)
 
                 except Exception as e:
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -1547,11 +1568,10 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                                 f"{format_error_message(e)} "
                                 f"time={elapsed_ms:.0f}ms"
                             )
-                            delay = min(
+                            retry_delay = min(
                                 DEFAULT_RETRY_BASE_DELAY * (2**attempt),
                                 DEFAULT_RETRY_MAX_DELAY,
                             )
-                            await asyncio.sleep(delay)
                             continue
                         else:
                             logger.error(

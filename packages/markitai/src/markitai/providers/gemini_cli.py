@@ -53,7 +53,6 @@ from markitai.providers.common import sync_completion
 from markitai.providers.errors import (
     AuthenticationError,
     ProviderError,
-    QuotaError,
     SDKNotAvailableError,
 )
 from markitai.providers.oauth_display import (
@@ -68,6 +67,7 @@ if TYPE_CHECKING:
 
 try:
     import litellm
+    from litellm.exceptions import RateLimitError
     from litellm.llms.custom_llm import CustomLLM
     from litellm.types.utils import Usage
 
@@ -75,6 +75,7 @@ try:
 except ImportError:
     LITELLM_AVAILABLE = False
     CustomLLM = object  # type: ignore[misc, assignment]
+    RateLimitError = Exception  # type: ignore[misc, assignment]
 
 # Optional: google-auth for credential management
 try:
@@ -142,8 +143,8 @@ CODE_ASSIST_METADATA = {
 }
 
 # Code Assist rate limits are very low for some models (e.g., flash-lite ~1 RPM).
-# Do NOT retry 429s internally — let the Router see the QuotaError immediately
-# so it can set a cooldown and route subsequent requests to other models.
+# Do NOT retry 429s internally — let the Router see the RateLimitError
+# immediately so it can set a cooldown and route retries to other models.
 MAX_429_RETRIES = 0
 TOKEN_CACHE_SAFETY_MARGIN_SECONDS = 60
 DEFAULT_TOKEN_CACHE_SECONDS = 3000
@@ -665,7 +666,10 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
             for attempt in range(1 + max_retries):
                 try:
                     request = _google_auth_requests.Request()  # type: ignore[union-attr]
-                    creds.refresh(request)
+                    # creds.refresh performs blocking HTTP; run in a thread
+                    # so the event loop is not frozen while _token_lock
+                    # (asyncio.Lock) is held.
+                    await asyncio.to_thread(creds.refresh, request)
                     metadata: dict[str, Any] | None = None
                     if record.source == "markitai":
                         metadata = {
@@ -1349,9 +1353,14 @@ class GeminiCLIProvider(CustomLLM):  # type: ignore[misc]
             )
 
         if resp.status_code == 429:
-            raise QuotaError(
-                f"Code Assist rate limit exceeded: {resp.text}",
-                provider="gemini-cli",
+            # Raise litellm RateLimitError (retryable) so the processor's
+            # retry loop can route the retry to another model. The router
+            # records a cooldown for this model from the error text
+            # (parses "429"/"rate limit" and the reset-after seconds).
+            raise RateLimitError(
+                f"gemini-cli rate limit (429): {resp.text}",
+                "gemini-cli",
+                model,
             )
 
         if resp.status_code != 200:

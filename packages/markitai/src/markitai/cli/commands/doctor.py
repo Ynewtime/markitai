@@ -14,7 +14,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-import click
+import rich_click as click
 
 # Cross-platform installation hints
 INSTALL_HINTS: dict[str, dict[str, str]] = {
@@ -438,14 +438,23 @@ def _check_rapidocr(cfg: Any) -> dict[str, Any]:
         Result dict with name, description, status, message, install_hint.
     """
     try:
+        import importlib.util
         from importlib.metadata import version as get_version
 
-        import rapidocr
+        # Probe via metadata only — importing rapidocr pulls in cv2, whose
+        # 119MB dylib pays a one-time ~25s dyld signature validation on a
+        # fresh install (the "first doctor run is slow" root cause).
+        # sys.modules check first: tests inject a mock module there
+        if (
+            "rapidocr" not in sys.modules
+            and importlib.util.find_spec("rapidocr") is None
+        ):
+            raise ImportError("rapidocr not installed")
 
         try:
             rapidocr_version = get_version("rapidocr")
         except Exception:
-            rapidocr_version = getattr(rapidocr, "__version__", "unknown")
+            rapidocr_version = "unknown"
 
         # Get configured language
         configured_lang = cfg.ocr.lang if cfg.ocr else "en"
@@ -566,12 +575,22 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "install_hint": "",
         }
     else:
+        # Point at the actually-loaded config file (matches the header line),
+        # not a hardcoded generic filename.
+        if manager.config_path is not None:
+            llm_hint = f"Configure llm.model_list in {manager.config_path}"
+        else:
+            llm_hint = (
+                "Configure llm.model_list (no config file found; run "
+                "'markitai init' to create ~/.markitai/config.json "
+                "or ./markitai.json)"
+            )
         results["llm-api"] = {
             "name": "LLM API",
             "description": "Content enhancement and image analysis",
             "status": "missing",
             "message": "No models configured in llm.model_list",
-            "install_hint": "Configure llm.model_list in markitai.json",
+            "install_hint": llm_hint,
         }
 
     # 5a. Check local provider SDKs if configured
@@ -691,8 +710,6 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         results["gemini-cli-auth"] = _check_gemini_cli_auth_status()
 
     # 6. Check vision model configuration (auto-detect from litellm or config override)
-    from markitai.llm import get_model_info_cached
-
     def is_vision_model(model_config: Any) -> bool:
         """Check if model supports vision (config override, local providers, or auto-detect)."""
         # Config override takes priority
@@ -708,7 +725,9 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         if is_local_provider_model(model_config.litellm_params.model):
             return True
 
-        # Auto-detect from litellm
+        # Auto-detect from litellm (deferred import: pulls litellm, ~0.5s)
+        from markitai.llm import get_model_info_cached
+
         info = get_model_info_cached(model_config.litellm_params.model)
         return info.get("supports_vision", False)
 
@@ -736,90 +755,90 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "install_hint": "Use vision-capable models like gemini-*, gpt-5.4, claude-*",
         }
 
+    # Define dependency groups
+    required_deps = ["playwright", "libreoffice", "rapidocr"]
+
+    def _required_failed_count() -> int:
+        return sum(
+            1
+            for key in required_deps
+            if key in results and results[key]["status"] in ("missing", "error")
+        )
+
     # Output results
     if as_json:
         # Use click.echo for raw JSON (avoid Rich formatting which breaks JSON)
         click.echo(json.dumps(results, indent=2))
+        if _required_failed_count():
+            raise SystemExit(1)
         return
 
     # Unified UI output
     ui.title(t("doctor.title"))
-
-    # Define dependency groups
-    required_deps = ["playwright", "libreoffice", "rapidocr"]
     optional_deps = ["ffmpeg"]
     llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
     auth_keys = ["claude-agent-auth", "copilot-auth", "chatgpt-auth", "gemini-cli-auth"]
 
-    # Required dependencies
-    ui.section(t("doctor.required"))
-    passed = 0
-    for key in required_deps:
-        if key not in results:
-            continue
-        info = results[key]
+    # Config source (which config file was actually loaded)
+    if manager.config_path is not None:
+        ui.info(t("doctor.config_source", path=str(manager.config_path)))
+    else:
+        ui.info(t("doctor.config_source", path=t("doctor.config_defaults")))
+
+    def render_item(info: dict[str, Any]) -> None:
+        """Render one check result inline: '<glyph> Name: message'."""
+        line = f"{info['name']}: {info['message']}"
         if info["status"] == "ok":
-            ui.success(f"{info['name']}: {info['message']}")
-            passed += 1
+            ui.success(line)
         elif info["status"] == "warning":
-            ui.warning(info["name"], detail=info["message"])
+            ui.warning(line)
         else:
-            ui.error(info["name"], detail=info["message"])
-    console.print()
+            ui.error(line)
+
+    def render_section(header: str, keys: list[str]) -> None:
+        """Render a section preceded by exactly one blank line."""
+        console.print()
+        ui.section(header)
+        for key in keys:
+            if key in results:
+                render_item(results[key])
+
+    # Required dependencies
+    passed = sum(
+        1 for key in required_deps if results.get(key, {}).get("status") == "ok"
+    )
+    required_failed = _required_failed_count()
+    render_section(t("doctor.required"), required_deps)
 
     # Optional dependencies
-    optional_missing = 0
-    has_optional = any(k in results for k in optional_deps)
-    if has_optional:
-        ui.section(t("doctor.optional"))
-        for key in optional_deps:
-            if key not in results:
-                continue
-            info = results[key]
-            if info["status"] == "ok":
-                ui.success(f"{info['name']}: {info['message']}")
-            else:
-                ui.warning(
-                    f"{info['name']}（{t('missing')}）",
-                    detail=info.get("install_hint", ""),
-                )
-                optional_missing += 1
-        console.print()
+    optional_missing = sum(
+        1 for key in optional_deps if key in results and results[key]["status"] != "ok"
+    )
+    if any(k in results for k in optional_deps):
+        render_section(t("doctor.optional"), optional_deps)
 
     # LLM status
-    has_llm = any(k in results for k in llm_keys)
-    if has_llm:
-        ui.section("LLM")
-        for key in llm_keys:
-            if key not in results:
-                continue
-            info = results[key]
-            if info["status"] == "ok":
-                ui.success(f"{info['name']}: {info['message']}")
-            elif info["status"] == "warning":
-                ui.warning(f"{info['name']}: {info['message']}")
-            else:
-                ui.error(f"{info['name']}: {info['message']}")
-        console.print()
+    if any(k in results for k in llm_keys):
+        render_section("LLM", llm_keys)
 
     # Authentication status
-    has_auth = any(k in results for k in auth_keys)
-    if has_auth:
-        ui.section(t("doctor.auth"))
-        for key in auth_keys:
-            if key not in results:
-                continue
-            info = results[key]
-            if info["status"] == "ok":
-                ui.success(f"{info['name']}: {info['message']}")
-            else:
-                ui.error(f"{info['name']}: {info['message']}")
-        console.print()
+    if any(k in results for k in auth_keys):
+        render_section(t("doctor.auth"), auth_keys)
 
     # Summary — consider ALL check categories, not just required deps
     has_any_error = _has_errors(results)
     if not has_any_error and optional_missing == 0:
         ui.summary(t("doctor.all_good"))
+    elif required_failed:
+        ui.summary(
+            t(
+                "doctor.summary_failed",
+                failed=required_failed,
+                passed=passed,
+                optional=optional_missing,
+            ),
+            ok=False,
+        )
     else:
         ui.summary(t("doctor.summary", passed=passed, optional=optional_missing))
 
@@ -856,6 +875,11 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 )
                 _install_component(component, package_missing=pkg_missing)
 
+    # Scripts rely on the exit code: fail when required deps are missing.
+    # After --fix we don't re-verify, so don't guess — keep exit 0 there.
+    if required_failed and not fix:
+        raise SystemExit(1)
+
 
 def suggest_extras() -> list[str]:
     """Return recommended pip extras for installation.
@@ -880,6 +904,7 @@ def suggest_extras() -> list[str]:
     extras.add("extra-fetch")  # curl-cffi
     extras.add("kreuzberg")  # kreuzberg
     extras.add("svg")  # cairosvg (pip install succeeds; runtime detects missing lib)
+    extras.add("heif")  # pillow-heif (HEIC/HEIF/AVIF input decoding)
 
     # --- Conditional extras (SDK may not be on PyPI) ---
     # claude-agent — requires claude-agent-sdk
@@ -915,11 +940,20 @@ def doctor(as_json: bool, fix: bool, suggest: bool) -> None:
     """Check system health, dependencies, and authentication status.
 
     This command helps diagnose setup issues by verifying:
-    - Playwright (for dynamic URL fetching)
-    - LibreOffice (for Office document conversion)
-    - RapidOCR (for scanned document processing)
-    - LLM API configuration (for content enhancement)
-    - Authentication status for local providers (Claude Agent, Copilot, Gemini CLI)
+
+        - Playwright (for dynamic URL fetching)
+        - LibreOffice (for Office document conversion)
+        - RapidOCR (for scanned document processing)
+        - LLM API configuration (for content enhancement)
+        - Auth status for local providers (Claude, Copilot, Gemini CLI)
+
+    Exits non-zero when a required dependency is missing, so it can be
+    used in scripts and CI.
+
+    Examples:
+        markitai doctor                 # Full health report
+        markitai doctor --fix           # Try to install what's missing
+        markitai doctor --json          # Machine-readable report
     """
     if suggest:
         click.echo(",".join(suggest_extras()))

@@ -7,6 +7,7 @@ to reduce file size and improve maintainability.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 import time
 from collections.abc import Awaitable
@@ -44,6 +45,7 @@ from markitai.llm.content import (
 from markitai.llm.content import (
     restore_image_positions as _shared_restore_image_positions,
 )
+from markitai.llm.degeneration import truncate_degenerate_tail
 from markitai.llm.models import get_response_cost
 from markitai.llm.types import (
     DocumentProcessResult,
@@ -675,9 +677,15 @@ class DocumentMixin:
         """
         start_time = time.perf_counter()
 
+        # Load screenshot early so the cache key includes a content fingerprint.
+        # A re-fetch of the same URL produces the same filename, so keying by
+        # filename alone would return stale results when content changed.
+        _, base64_image = self._get_cached_image(screenshot_path)  # type: ignore[attr-defined]
+        image_fingerprint = hashlib.sha256(base64_image.encode()).hexdigest()
+
         # Check persistent cache
         cache_key = f"screenshot_extract:{context}"
-        cache_content = f"{screenshot_path.name}"
+        cache_content = f"{screenshot_path.name}|{image_fingerprint}"
         cached = self._persistent_cache.get(cache_key, cache_content, context=context)
         if cached is not None:
             from markitai.utils.frontmatter import (
@@ -708,8 +716,7 @@ class DocumentMixin:
             {"type": "text", "text": user_prompt},
         ]
 
-        # Add screenshot
-        _, base64_image = self._get_cached_image(screenshot_path)  # type: ignore[attr-defined]
+        # Add screenshot (base64_image was loaded above for the cache key)
         mime_type = get_mime_type(screenshot_path.suffix)
         content_parts.append({"type": "text", "text": "\n__MARKITAI_SCREENSHOT__"})
         content_parts.append(
@@ -778,6 +785,11 @@ class DocumentMixin:
                 f"time={int(elapsed * 1000)}ms cost=${cost:.6f}"
             )
 
+        # Guard against VLM degeneration (repetition loops) in extracted text
+        cleaned_markdown, degenerated = truncate_degenerate_tail(
+            response.cleaned_markdown, context=context, stage="screenshot_extract"
+        )
+
         # Build frontmatter using utility function
         from markitai.utils.frontmatter import (
             build_frontmatter_dict,
@@ -789,21 +801,23 @@ class DocumentMixin:
             description=response.frontmatter.description,
             tags=response.frontmatter.tags,
             title=original_title,  # Preserve original title if provided
-            content=response.cleaned_markdown,
+            content=cleaned_markdown,
         )
         frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
 
         # Cache result (store description+tags, not frontmatter_yaml which contains timestamp)
-        cache_value = {
-            "cleaned_markdown": response.cleaned_markdown,
-            "description": response.frontmatter.description,
-            "tags": response.frontmatter.tags,
-        }
-        self._persistent_cache.set(
-            cache_key, cache_content, cache_value, model="vision"
-        )
+        # Skip persisting degenerate responses so a clean retry isn't poisoned
+        if not degenerated:
+            cache_value = {
+                "cleaned_markdown": cleaned_markdown,
+                "description": response.frontmatter.description,
+                "tags": response.frontmatter.tags,
+            }
+            self._persistent_cache.set(
+                cache_key, cache_content, cache_value, model="vision"
+            )
 
-        return response.cleaned_markdown, frontmatter_yaml
+        return cleaned_markdown, frontmatter_yaml
 
     async def enhance_url_with_vision(
         self,
@@ -1117,8 +1131,15 @@ class DocumentMixin:
         result = self.fix_malformed_image_refs(result)
         result = self._stabilize_paged_markdown(extracted_text, result, context)
 
+        # Guard against VLM degeneration (repetition loops) in enhanced text
+        result, degenerated = truncate_degenerate_tail(
+            result, context=context, stage="document_vision_enhance"
+        )
+
         # Store in persistent cache
-        self._persistent_cache.set(cache_key, cache_content, result, model="vision")
+        # Skip persisting degenerate responses so a clean retry isn't poisoned
+        if not degenerated:
+            self._persistent_cache.set(cache_key, cache_content, result, model="vision")
 
         return result
 

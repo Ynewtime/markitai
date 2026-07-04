@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+import click
+from loguru import logger
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from markitai.constants import (
     ALL_FETCH_STRATEGIES,
@@ -167,6 +170,10 @@ class OutputConfig(BaseModel):
     allow_symlinks: bool = Field(
         default=False, description="Follow symlinks when processing files"
     )
+    report: bool | None = Field(
+        default=None,
+        description="Write JSON report (default: batch/URL-batch runs only)",
+    )
 
 
 class LiteLLMParams(BaseModel):
@@ -244,10 +251,14 @@ class RouterSettings(BaseModel):
         description="LLM router load balancing strategy",
     )
     num_retries: int = Field(
-        default=DEFAULT_ROUTER_NUM_RETRIES, description="Max retries on LLM failure"
+        default=DEFAULT_ROUTER_NUM_RETRIES,
+        ge=0,
+        description="Max retries on LLM failure",
     )
     timeout: int = Field(
-        default=DEFAULT_ROUTER_TIMEOUT, description="LLM request timeout in seconds"
+        default=DEFAULT_ROUTER_TIMEOUT,
+        ge=1,
+        description="LLM request timeout in seconds",
     )
     fallbacks: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -267,7 +278,7 @@ class LLMConfig(BaseModel):
     model_list: list[ModelConfig] = Field(default_factory=list)
     router_settings: RouterSettings = Field(default_factory=RouterSettings)
     concurrency: int = Field(
-        default=DEFAULT_LLM_CONCURRENCY, description="Max parallel LLM requests"
+        default=DEFAULT_LLM_CONCURRENCY, ge=1, description="Max parallel LLM requests"
     )
 
 
@@ -317,7 +328,7 @@ class ImageConfig(BaseModel):
         description="Downscale images taller than this (px)",
     )
     filter: ImageFilterConfig = Field(default_factory=ImageFilterConfig)
-    stdout_persist: bool = Field(default=False, description="Save piped images to disk")
+    stdout_persist: bool = Field(default=True, description="Save piped images to disk")
     stdout_persist_dir: str = Field(
         default="~/.markitai/assets", description="Directory for persisted piped images"
     )
@@ -331,6 +342,14 @@ class OCRConfig(BaseModel):
 
     enabled: bool = False
     lang: str = Field(default=DEFAULT_OCR_LANG, description="OCR language code")
+    per_page_routing: bool = Field(
+        default=True,
+        description=(
+            "With --ocr, keep the native text layer for pages that do not "
+            "look scanned/garbled and OCR only the remaining pages. "
+            "Disable to OCR every page."
+        ),
+    )
 
 
 class ScreenshotConfig(BaseModel):
@@ -683,6 +702,16 @@ class FetchConfig(BaseModel):
     strategy: Literal[
         "auto", "static", "defuddle", "playwright", "jina", "cloudflare"
     ] = Field(default=DEFAULT_FETCH_STRATEGY, description="Default URL fetch strategy")
+    remote_consent: Literal["ask", "always", "never"] = Field(
+        default="ask",
+        description=(
+            "Consent for sending URLs to remote extraction services "
+            "(defuddle.md, Jina, Cloudflare) in the auto strategy chain. "
+            "ask: prompt once per run on an interactive TTY, otherwise skip "
+            "remote services; always: use them without asking; never: local "
+            "strategies only. Overridden by the MARKITAI_NO_REMOTE_FETCH env var."
+        ),
+    )
     defuddle: DefuddleConfig = Field(default_factory=DefuddleConfig)
     playwright: PlaywrightConfig = Field(default_factory=PlaywrightConfig)
     jina: JinaConfig = Field(default_factory=JinaConfig)
@@ -695,6 +724,20 @@ class FetchConfig(BaseModel):
     domain_profiles: dict[str, DomainProfileConfig] = Field(default_factory=dict)
     fallback_patterns: list[str] = Field(
         default_factory=lambda: list(DEFAULT_FETCH_FALLBACK_PATTERNS)
+    )
+
+
+class SecurityConfig(BaseModel):
+    """Security-related conversion safeguards."""
+
+    pdf_sanitize: Literal["off", "warn", "remove"] = Field(
+        default="warn",
+        description=(
+            "Hidden-text handling for PDFs: 'warn' logs invisible text "
+            "(white-on-white, zero-opacity, <2pt, off-page) that would end "
+            "up in the markdown, 'remove' also strips verbatim matches "
+            "from the output, 'off' disables detection."
+        ),
     )
 
 
@@ -729,21 +772,69 @@ class MarkitaiConfig(BaseModel):
     log: LogConfig = Field(default_factory=LogConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     fetch: FetchConfig = Field(default_factory=FetchConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
     presets: dict[str, PresetConfig] = Field(default_factory=dict)
+
+
+# Matches array index notation in key paths, e.g. "model_list[0]"
+_ARRAY_KEY_RE = re.compile(r"^([^\[]+)\[(\d+)\]$")
 
 
 def _set_nested_value(data: dict[str, Any], key_path: str, value: Any) -> None:
     """Set a nested value in a dict using dot-separated key path.
 
-    Creates intermediate dicts if they don't exist.
+    Supports array index notation (e.g. "llm.model_list[0].model_name").
+    Creates intermediate dicts/list entries if they don't exist.
     """
     parts = key_path.split(".")
-    current = data
-    for part in parts[:-1]:
-        if part not in current or not isinstance(current[part], dict):
-            current[part] = {}
-        current = current[part]
-    current[parts[-1]] = value
+    current: Any = data
+    for i, part in enumerate(parts):
+        is_last = i == len(parts) - 1
+        array_match = _ARRAY_KEY_RE.match(part)
+        if array_match:
+            field_name = array_match.group(1)
+            index = int(array_match.group(2))
+            if field_name not in current or not isinstance(current[field_name], list):
+                current[field_name] = []
+            items = current[field_name]
+            while len(items) <= index:
+                items.append({})
+            if is_last:
+                items[index] = value
+            else:
+                if not isinstance(items[index], dict):
+                    items[index] = {}
+                current = items[index]
+        else:
+            if is_last:
+                current[part] = value
+            else:
+                if part not in current or not isinstance(current[part], dict):
+                    current[part] = {}
+                current = current[part]
+
+
+class ConfigFileError(click.ClickException):
+    """Raised when a config file contains invalid values.
+
+    Subclasses ClickException so the CLI prints the actionable message
+    instead of a raw ValidationError traceback.
+    """
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Return a new dict with ``override`` deep-merged over ``base``.
+
+    Nested dicts are merged key by key; any other value (including lists)
+    in ``override`` replaces the ``base`` value. Neither input is mutated.
+    """
+    merged = dict(base)
+    for key, value in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 class ConfigManager:
@@ -770,10 +861,15 @@ class ConfigManager:
         """Get the path of the loaded configuration file."""
         return self._config_path
 
+    def restore(self, config: MarkitaiConfig) -> None:
+        """Replace the in-memory configuration (e.g. to roll back a bad set())."""
+        self._config = config
+
     def load(
         self,
         config_path: Path | str | None = None,
         env_override: bool = True,
+        overrides: dict[str, Any] | None = None,
     ) -> MarkitaiConfig:
         """
         Load configuration from file with fallback chain.
@@ -784,6 +880,10 @@ class ConfigManager:
         3. ./markitai.json (current directory)
         4. ~/.markitai/config.json (user directory)
         5. Default values (applied by caller when no config file is found)
+
+        ``overrides`` (e.g. from ``--config-json``) is a partial config dict
+        deep-merged over the file data before validation. It is ephemeral:
+        never written back on save().
         """
         config_data: dict[str, Any] = {}
 
@@ -795,10 +895,28 @@ class ConfigManager:
             self._config_path = resolved_path
 
         # Preserve original JSON structure for minimal-diff saves
+        # (deliberately WITHOUT the ephemeral overrides)
         self._raw_data = config_data.copy()
         self._modified_keys.clear()
 
-        self._config = MarkitaiConfig.model_validate(config_data)
+        if overrides:
+            config_data = _deep_merge(config_data, overrides)
+
+        try:
+            self._config = MarkitaiConfig.model_validate(config_data)
+        except ValidationError as e:
+            source = str(self._config_path or "config")
+            if overrides:
+                source += " (with --config-json overrides)"
+            lines = [f"Invalid configuration in {source}:"]
+            for err in e.errors():
+                loc = ".".join(str(x) for x in err["loc"])
+                lines.append(f"  {loc}: {err['msg']}")
+            lines.append(
+                "Fix the value(s) in that file, or remove the field(s) "
+                "to fall back to defaults."
+            )
+            raise ConfigFileError("\n".join(lines)) from e
         return self._config
 
     def _resolve_config_path(
@@ -809,13 +927,24 @@ class ConfigManager:
         """Resolve configuration file path based on priority."""
         # 1. Explicit path
         if config_path:
-            return Path(config_path)
+            explicit_path = Path(config_path)
+            if not explicit_path.exists():
+                logger.warning(
+                    f"Config file not found: {explicit_path} (using defaults)"
+                )
+            return explicit_path
 
         # 2. Environment variable
         if env_override:
             env_path = os.environ.get("MARKITAI_CONFIG")
             if env_path:
-                return Path(env_path)
+                env_config = Path(env_path).expanduser()
+                if not env_config.exists():
+                    logger.warning(
+                        f"Config file from MARKITAI_CONFIG not found: {env_config} "
+                        "(using defaults)"
+                    )
+                return env_config
 
         # 3. Current directory
         cwd_config = Path.cwd() / self.CONFIG_FILENAME
@@ -913,8 +1042,6 @@ class ConfigManager:
             config_manager.get("llm.model_list[0]")
             config_manager.get("llm.model_list[0].litellm_params.model")
         """
-        import re
-
         # Split by dots, but preserve array indices
         # e.g., "llm.model_list[0].name" -> ["llm", "model_list[0]", "name"]
         parts = key.split(".")
@@ -922,7 +1049,7 @@ class ConfigManager:
 
         for part in parts:
             # Check for array index notation: "field[N]"
-            array_match = re.match(r"^([^\[]+)\[(\d+)\]$", part)
+            array_match = _ARRAY_KEY_RE.match(part)
             if array_match:
                 field_name = array_match.group(1)
                 index = int(array_match.group(2))
@@ -947,15 +1074,18 @@ class ConfigManager:
                 else:
                     return default
             else:
-                # Regular field access
+                # Regular field access. Missing keys return the default;
+                # existing keys holding None return None (so callers can
+                # distinguish "missing" from "set to null").
                 if isinstance(value, BaseModel):
-                    value = getattr(value, part, None)
+                    if not hasattr(value, part):
+                        return default
+                    value = getattr(value, part)
                 elif isinstance(value, dict):
-                    value = value.get(part)
+                    if part not in value:
+                        return default
+                    value = value[part]
                 else:
-                    return default
-
-                if value is None:
                     return default
 
         return value
@@ -964,27 +1094,50 @@ class ConfigManager:
         """
         Set a configuration value by dot-separated key path.
 
+        Supports array index notation: llm.model_list[0].litellm_params.weight
+
         Example: config_manager.set("llm.enabled", True)
         """
         # Track modified key for minimal-diff save
         self._modified_keys.add(key)
 
+        def resolve_child(obj: Any, part: str) -> Any:
+            """Resolve one dot-path component (with optional [N] index)."""
+            array_match = _ARRAY_KEY_RE.match(part)
+            field_name = array_match.group(1) if array_match else part
+            if isinstance(obj, BaseModel):
+                child = getattr(obj, field_name)
+            else:
+                child = obj[field_name]
+            if array_match:
+                index = int(array_match.group(2))
+                if not isinstance(child, list) or not 0 <= index < len(child):
+                    raise KeyError(f"Index out of range in '{part}'")
+                return child[index]
+            return child
+
         parts = key.split(".")
-        if len(parts) == 1:
-            setattr(self.config, key, value)
-            return
 
         # Navigate to parent
         parent: Any = self.config
         for part in parts[:-1]:
-            if isinstance(parent, BaseModel):
-                parent = getattr(parent, part)
-            elif isinstance(parent, dict):
-                parent = parent[part]
+            parent = resolve_child(parent, part)
 
         # Set the value
         final_key = parts[-1]
-        if isinstance(parent, BaseModel):
+        array_match = _ARRAY_KEY_RE.match(final_key)
+        if array_match:
+            field_name = array_match.group(1)
+            index = int(array_match.group(2))
+            container = (
+                getattr(parent, field_name)
+                if isinstance(parent, BaseModel)
+                else parent[field_name]
+            )
+            if not isinstance(container, list) or not 0 <= index < len(container):
+                raise KeyError(f"Index out of range in '{final_key}'")
+            container[index] = value
+        elif isinstance(parent, BaseModel):
             setattr(parent, final_key, value)
         elif isinstance(parent, dict):
             parent[final_key] = value

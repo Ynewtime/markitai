@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
-import click
+import rich_click as click
 from rich.syntax import Syntax
 
 from markitai.cli import ui
@@ -23,11 +24,106 @@ from markitai.config import ConfigManager, MarkitaiConfig
 
 console = get_console()
 
+# Sentinel to distinguish "key not found" from "key exists but is null"
+_MISSING = object()
+
+
+def _resolve_field_type(key: str) -> Any:
+    """Resolve the declared type for a config key from the Pydantic schema.
+
+    Returns None when the key cannot be resolved (unknown field, dict/list
+    containers, non-list indexing, etc.).
+    """
+    import re
+    import types
+    from typing import Union, get_args, get_origin
+
+    from pydantic import BaseModel
+
+    def unwrap_optional(annotation: Any) -> Any:
+        origin = get_origin(annotation)
+        if origin is Union or origin is types.UnionType:
+            args = [a for a in get_args(annotation) if a is not type(None)]
+            if len(args) == 1:
+                return args[0]
+        return annotation
+
+    current: Any = MarkitaiConfig
+    for part in key.split("."):
+        match = re.match(r"^([^\[]+)\[(\d+)\]$", part)
+        field_name = match.group(1) if match else part
+
+        if not (isinstance(current, type) and issubclass(current, BaseModel)):
+            return None
+        field = current.model_fields.get(field_name)
+        if field is None:
+            return None
+        annotation = unwrap_optional(field.annotation)
+        if match:
+            if get_origin(annotation) is not list:
+                return None
+            annotation = unwrap_optional(get_args(annotation)[0])
+        current = annotation
+
+    return current
+
+
+def _coerce_value(value: str, key: str) -> bool | int | float | str:
+    """Coerce a CLI string value based on the target field's declared type.
+
+    String fields keep the raw string (e.g. api_key "0123456789" stays a
+    string); bool fields accept 1/0/true/false; numeric fields parse numbers.
+    Falls back to blind bool/int/float inference for unresolvable keys.
+    """
+    from typing import Literal, get_origin
+
+    target = _resolve_field_type(key)
+
+    if target is str or (target is not None and get_origin(target) is Literal):
+        return value
+    if target is bool:
+        lowered = value.lower()
+        if lowered in ("true", "1", "yes", "on"):
+            return True
+        if lowered in ("false", "0", "no", "off"):
+            return False
+        return value  # let Pydantic validation report the error
+    if target is int:
+        try:
+            return int(value)
+        except ValueError:
+            return value
+    if target is float:
+        try:
+            return float(value)
+        except ValueError:
+            return value
+
+    # Fallback for unresolvable keys: blind bool/int/float/str inference
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    try:
+        return int(value)
+    except ValueError:
+        try:
+            return float(value)
+        except ValueError:
+            return value
+
 
 @click.group()
 def config() -> None:
-    """Configuration management commands."""
-    pass
+    """Configuration management commands.
+
+    View and edit Markitai settings (~/.markitai/config.json or
+    ./markitai.json). Keys use dot notation, e.g. llm.enabled.
+
+    Examples:
+        markitai config list            # Show effective configuration
+        markitai config get llm.enabled # Read a single value
+        markitai config set llm.enabled true
+        markitai config edit            # Interactive editor
+    """
 
 
 @config.command("list")
@@ -40,7 +136,16 @@ def config() -> None:
     help="Output format (json, yaml, or table).",
 )
 def config_list(output_format: str) -> None:
-    """Show current effective configuration."""
+    """Show current effective configuration.
+
+    Merges defaults, config file, environment variables — what markitai
+    actually uses at runtime.
+
+    Examples:
+        markitai config list            # JSON (default)
+        markitai config list -f table   # Compact two-column table
+        markitai config list -f yaml    # YAML (requires PyYAML)
+    """
     manager = ConfigManager()
     cfg = manager.load()
 
@@ -87,7 +192,14 @@ def config_list(output_format: str) -> None:
 
 @config.command("path")
 def config_path_cmd() -> None:
-    """Show configuration file paths."""
+    """Show configuration file paths and precedence.
+
+    Lists all config sources from highest to lowest priority and marks
+    the one currently in use.
+
+    Examples:
+        markitai config path            # Which config file is in use?
+    """
     manager = ConfigManager()
     manager.load()
 
@@ -141,7 +253,14 @@ def config_path_cmd() -> None:
     required=False,
 )
 def config_validate(config_file: Path | None) -> None:
-    """Validate a configuration file."""
+    """Validate a configuration file.
+
+    Without an argument, validates the currently loaded configuration.
+
+    Examples:
+        markitai config validate                # Validate active config
+        markitai config validate ./markitai.json
+    """
     manager = ConfigManager()
 
     try:
@@ -160,14 +279,27 @@ def config_validate(config_file: Path | None) -> None:
 @config.command("get")
 @click.argument("key")
 def config_get(key: str) -> None:
-    """Get a configuration value."""
+    """Get a configuration value.
+
+    KEY uses dot notation; nested sections print as JSON.
+
+    Examples:
+        markitai config get llm.enabled        # Single value
+        markitai config get llm.model_list     # Whole section as JSON
+        markitai config get cache.global_dir
+    """
     manager = ConfigManager()
     manager.load()
 
-    value = manager.get(key)
-    if value is None:
+    value = manager.get(key, _MISSING)
+    if value is _MISSING:
         console.print(f"[yellow]Key not found:[/yellow] {key}")
+        console.print("[dim]Run 'markitai config list' to see all keys[/dim]")
         raise SystemExit(1)
+    if value is None:
+        # Key exists but is null (e.g. an unset optional field)
+        console.print("null")
+        return
 
     # Serialize Pydantic models to dicts for consistent JSON output
     from pydantic import BaseModel
@@ -190,24 +322,23 @@ def config_get(key: str) -> None:
 @click.argument("key")
 @click.argument("value")
 def config_set(key: str, value: str) -> None:
-    """Set a configuration value."""
+    """Set a configuration value.
+
+    Values are validated against the config schema before saving;
+    invalid values are rejected and nothing is written.
+
+    Examples:
+        markitai config set llm.enabled true
+        markitai config set output.dir ./converted
+        markitai config set cache.max_size_bytes 104857600
+    """
     from pydantic import ValidationError
 
     manager = ConfigManager()
     manager.load()
 
-    # Parse value
-    parsed_value: bool | int | float | str
-    if value.lower() in ("true", "false"):
-        parsed_value = value.lower() == "true"
-    else:
-        try:
-            parsed_value = int(value)
-        except ValueError:
-            try:
-                parsed_value = float(value)
-            except ValueError:
-                parsed_value = value
+    # Parse value based on the target field's declared type
+    parsed_value = _coerce_value(value, key)
 
     # Store old config for rollback on validation failure
     old_config_dict = manager.config.model_dump()
@@ -232,8 +363,9 @@ def config_set(key: str, value: str) -> None:
                 console.print(f"[red]{error}[/red]")
             raise SystemExit(1)
 
-        manager.save()
+        saved_path = manager.save()
         console.print(f"[green]Set {key} = {parsed_value}[/green]")
+        console.print(f"[dim]Saved to {saved_path}[/dim]")
 
     except SystemExit:
         raise
@@ -244,7 +376,14 @@ def config_set(key: str, value: str) -> None:
 
 @config.command("edit")
 def config_edit() -> None:
-    """Interactively edit configuration settings."""
+    """Interactively edit configuration settings.
+
+    Opens a guided editor with arrow-key navigation — no need to
+    remember key names.
+
+    Examples:
+        markitai config edit
+    """
     from markitai.cli.config_editor import run_config_editor
 
     run_config_editor()

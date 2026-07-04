@@ -643,6 +643,15 @@ PARTIAL_SELECTOR_REGEX: re.Pattern[str] = re.compile(
     re.IGNORECASE,
 )
 
+# Anchored variant: the whole value must equal one selector token outright.
+# Used for delimiter-less ids, which are usually content anchors made of
+# concatenated heading words (e.g. "loopsandfeedback") — substring matching
+# would wrongly strip them (hitting "feedback").
+PARTIAL_SELECTOR_ANCHORED_REGEX: re.Pattern[str] = re.compile(
+    "^(?:" + "|".join(re.escape(p) for p in PARTIAL_SELECTOR_PATTERNS) + ")$",
+    re.IGNORECASE,
+)
+
 # Attributes to check for partial selector matches
 TEST_ATTRIBUTES: tuple[str, ...] = (
     "class",
@@ -773,6 +782,141 @@ ALLOWED_EMPTY_ELEMENTS: frozenset[str] = frozenset(
     }
 )
 
+# Known code-block languages (ported from defuddle elements/code.ts).
+# Language detection patterns are fuzzy (e.g. "(\\w+)-code" matches
+# "CodeBlock-code"); a detected token only counts when it names a real
+# language.
+CODE_LANGUAGES: frozenset[str] = frozenset(
+    {
+        "abap",
+        "actionscript",
+        "ada",
+        "adoc",
+        "agda",
+        "antlr4",
+        "applescript",
+        "arduino",
+        "armasm",
+        "asciidoc",
+        "aspnet",
+        "atom",
+        "bash",
+        "batch",
+        "c",
+        "clojure",
+        "cmake",
+        "cobol",
+        "coffeescript",
+        "cpp",
+        "c++",
+        "crystal",
+        "csharp",
+        "cs",
+        "css",
+        "dart",
+        "django",
+        "dockerfile",
+        "dotnet",
+        "elixir",
+        "elm",
+        "erlang",
+        "fish",
+        "fortran",
+        "fsharp",
+        "gdscript",
+        "gitignore",
+        "glsl",
+        "go",
+        "golang",
+        "gradle",
+        "graphql",
+        "groovy",
+        "haskell",
+        "hs",
+        "haxe",
+        "hlsl",
+        "html",
+        "idris",
+        "ini",
+        "java",
+        "javascript",
+        "js",
+        "jsx",
+        "jsdoc",
+        "json",
+        "jsonp",
+        "julia",
+        "kotlin",
+        "latex",
+        "lean",
+        "lean4",
+        "lisp",
+        "elisp",
+        "livescript",
+        "lua",
+        "makefile",
+        "markdown",
+        "md",
+        "markup",
+        "masm",
+        "mathml",
+        "matlab",
+        "mongodb",
+        "mysql",
+        "nasm",
+        "nginx",
+        "nim",
+        "nix",
+        "objc",
+        "ocaml",
+        "pascal",
+        "perl",
+        "php",
+        "plaintext",
+        "postgresql",
+        "powershell",
+        "prolog",
+        "puppet",
+        "python",
+        "r",
+        "regex",
+        "rss",
+        "ruby",
+        "rb",
+        "rust",
+        "scala",
+        "scheme",
+        "scss",
+        "shell",
+        "sh",
+        "solidity",
+        "sparql",
+        "sql",
+        "ssml",
+        "svg",
+        "swift",
+        "tcl",
+        "terraform",
+        "tex",
+        "text",
+        "toml",
+        "typescript",
+        "ts",
+        "tsx",
+        "unrealscript",
+        "verilog",
+        "vhdl",
+        "vue",
+        "webassembly",
+        "wasm",
+        "xml",
+        "yaml",
+        "yml",
+        "zig",
+        "zsh",
+    }
+)
+
 # Content indicator tokens in class/id for isLikelyContent
 CONTENT_INDICATOR_TOKENS: frozenset[str] = frozenset(
     {
@@ -790,4 +934,68 @@ CONTENT_INDICATOR_TOKENS: frozenset[str] = frozenset(
         "story",
         "table",
     }
+)
+
+# Inline footnote/citation reference selectors (ported from defuddle
+# constants.ts FOOTNOTE_INLINE_REFERENCES).
+FOOTNOTE_INLINE_REFERENCES: str = ", ".join(
+    [
+        "sup.reference",
+        "cite.ltx_cite",
+        'sup[id^="fnr"]',
+        'span[id^="fnr"]',
+        'span[class*="footnote_ref"]',
+        'span[class*="footnote-ref"]',
+        "span.footnote-link",
+        "a.citation",
+        'a[id^="ref-link"]',
+        'a[href^="#fn"]',
+        'a[href^="#cite"]',
+        'a[href^="#reference"]',
+        'a[href^="#footnote"]',
+        'a[href^="#r"]',  # Common in academic papers
+        'a[href^="#b"]',  # Common for bibliography references
+        'a[href*="cite_note"]',
+        'a[href*="cite_ref"]',
+        "a.footnote-anchor",  # Substack
+        "span.footnote-hovercard-target a",  # Substack
+        'a[role="doc-biblioref"]',  # Science.org
+        'a[id^="fnref"]',
+        "sup.footnoteref",  # Wikidot
+        "sup.footnote-reference",  # pulldown-cmark / mdBook / zola
+        'sup[data-fn] > a[href^="#"]',  # WordPress block editor footnotes
+        'sup[id^="ftnt_ref"] a[href^="#ftnt"]',  # Google Docs/Sites
+        'span.easy-footnote > a[href^="#easy-footnote-bottom-"]',  # Easy Footnotes WP
+        'a.footnote[href^="#"]',  # GNU Texinfo / makeinfo inline markers
+        'a[data-type="noteref"]',  # O'Reilly / HTMLBook
+    ]
+)
+
+# Footnote definition list selectors (ported from defuddle constants.ts
+# FOOTNOTE_LIST_SELECTORS).
+FOOTNOTE_LIST_SELECTORS: str = ", ".join(
+    [
+        "div.footnote ol",
+        "div.footnotes ol",
+        'div[role="doc-endnotes"]',
+        'div[role="doc-footnotes"]',
+        "ol.footnotes-list",
+        "ol.footnotes",
+        "ol.references",
+        'ol[class*="article-references"]',
+        "section.footnotes ol",
+        'section[role="doc-endnotes"]',
+        'section[role="doc-footnotes"]',
+        'section[role="doc-bibliography"]',
+        "ul.footnotes-list",
+        "ul.ltx_biblist",
+        'div.footnote[data-component-name="FootnoteToDOM"]',  # Substack
+        "div.footnotes-footer",  # Wikidot
+        "div.footnote-definitions",
+        "div.footnote-definition",  # pulldown-cmark / mdBook / zola (unwrapped)
+        "ol.wp-block-footnotes",  # WordPress block editor footnotes
+        "ol.easy-footnotes-wrapper",  # Easy Footnotes WP plugin
+        "div.footnotes-segment",  # GNU Texinfo / makeinfo
+        "#footnotes",  # standardize_footnotes output container
+    ]
 )

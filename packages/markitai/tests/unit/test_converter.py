@@ -125,12 +125,12 @@ class TestGetConverter:
 class TestImageOnlyFormats:
     """Tests for IMAGE_ONLY_FORMATS constant."""
 
-    def test_contains_eight_image_formats(self) -> None:
-        """IMAGE_ONLY_FORMATS should contain exactly 8 image formats."""
-        assert len(IMAGE_ONLY_FORMATS) == 8
+    def test_contains_eleven_image_formats(self) -> None:
+        """IMAGE_ONLY_FORMATS should contain exactly 11 image formats."""
+        assert len(IMAGE_ONLY_FORMATS) == 11
 
     def test_contains_expected_image_formats(self) -> None:
-        """IMAGE_ONLY_FORMATS should contain JPEG, JPG, PNG, WEBP, GIF, BMP, TIFF, SVG."""
+        """IMAGE_ONLY_FORMATS should contain all raster/vector image formats."""
         assert FileFormat.JPEG in IMAGE_ONLY_FORMATS
         assert FileFormat.JPG in IMAGE_ONLY_FORMATS
         assert FileFormat.PNG in IMAGE_ONLY_FORMATS
@@ -139,6 +139,9 @@ class TestImageOnlyFormats:
         assert FileFormat.BMP in IMAGE_ONLY_FORMATS
         assert FileFormat.TIFF in IMAGE_ONLY_FORMATS
         assert FileFormat.SVG in IMAGE_ONLY_FORMATS
+        assert FileFormat.HEIC in IMAGE_ONLY_FORMATS
+        assert FileFormat.HEIF in IMAGE_ONLY_FORMATS
+        assert FileFormat.AVIF in IMAGE_ONLY_FORMATS
 
     def test_excludes_document_formats(self) -> None:
         """Document formats should not be in IMAGE_ONLY_FORMATS."""

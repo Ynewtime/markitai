@@ -289,3 +289,39 @@ class TestMathMLToLatex:
     def test_mfenced_custom_delimiters(self) -> None:
         result = self._latex('<mfenced open="[" close="]"><mi>x</mi></mfenced>')
         assert result == r"\left[x\right]"
+
+
+class TestDataLatexAttribute:
+    def test_data_latex_preferred(self) -> None:
+        html = '<math data-latex="a+b" alttext="ignored">a+b</math>'
+        md = _convert(html)
+        assert "$a+b$" in md
+
+    def test_data_latex_display_block(self) -> None:
+        html = '<math display="block" data-latex="\\sum_i x_i">\\sum_i x_i</math>'
+        md = _convert(html)
+        assert "$$\\sum_i x_i$$" in md
+
+    def test_annotation_display_block(self) -> None:
+        html = (
+            '<math display="block"><semantics>'
+            '<annotation encoding="application/x-tex">E = mc^2</annotation>'
+            "</semantics></math>"
+        )
+        md = _convert(html)
+        assert "$$E = mc^2$$" in md
+
+
+class TestLanguageAllowlist:
+    def test_bogus_language_token_rejected(self) -> None:
+        # "CodeBlock-code" matches the (\w+)-code pattern but "codeblock"
+        # is not a real language
+        html = '<pre><code class="CodeBlock-code">const x = 1;</code></pre>'
+        md = _convert(html)
+        assert "```codeblock" not in md
+        assert "const x = 1;" in md
+
+    def test_real_language_token_accepted(self) -> None:
+        html = '<pre><code class="python-code">print(1)</code></pre>'
+        md = _convert(html)
+        assert "```python" in md

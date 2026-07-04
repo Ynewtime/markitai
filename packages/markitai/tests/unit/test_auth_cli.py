@@ -248,10 +248,81 @@ class TestClaudeAuthCLI:
         """auth claude status exits 1 when not authenticated."""
         runner = CliRunner()
 
-        with patch("pathlib.Path.home", return_value=tmp_path):
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch("markitai.providers.auth._claude_cli_auth_status", return_value=None),
+        ):
             result = runner.invoke(app, ["auth", "claude", "status"])
 
         assert result.exit_code == 1
+
+    def test_claude_status_via_cli_keychain_fallback(self, tmp_path: Path) -> None:
+        """auth claude status works without a credentials file (macOS Keychain)."""
+        runner = CliRunner()
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "markitai.providers.auth._claude_cli_auth_status",
+                return_value={
+                    "loggedIn": True,
+                    "authMethod": "claude.ai",
+                    "email": "user@example.com",
+                    "subscriptionType": "max",
+                },
+            ),
+        ):
+            result = runner.invoke(app, ["auth", "claude", "status"])
+
+        assert result.exit_code == 0
+        assert "user@example.com (max plan)" in result.output
+
+    def test_claude_status_shows_subscription_usage_hint(self, tmp_path: Path) -> None:
+        """auth claude status explains how to use the Claude subscription."""
+        runner = CliRunner()
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "markitai.providers.auth._claude_cli_auth_status",
+                return_value={
+                    "loggedIn": True,
+                    "email": "user@example.com",
+                    "subscriptionType": "max",
+                },
+            ),
+        ):
+            result = runner.invoke(app, ["auth", "claude", "status"])
+
+        assert result.exit_code == 0
+        assert "CLI:" in result.output
+        assert "SDK:" in result.output
+        assert "claude-agent/sonnet" in result.output
+        assert "subscription" in result.output.lower()
+
+    def test_claude_status_json_includes_cli_and_sdk_info(self, tmp_path: Path) -> None:
+        """auth claude status --json includes cli_path and sdk_installed."""
+        runner = CliRunner()
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "markitai.providers.auth._claude_cli_auth_status",
+                return_value={
+                    "loggedIn": True,
+                    "email": "user@example.com",
+                    "subscriptionType": "max",
+                },
+            ),
+        ):
+            result = runner.invoke(app, ["auth", "claude", "status", "--json"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["authenticated"] is True
+        assert "cli_path" in payload
+        assert "sdk_installed" in payload
+        assert payload["details"]["source"] == "cli"
 
     def test_claude_login_invokes_attempt_login(self) -> None:
         """auth claude login calls attempt_login."""

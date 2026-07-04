@@ -512,3 +512,141 @@ class TestPlaywrightInstallFix:
             assert "install" in cmd
             assert "chromium" in cmd
             assert result is True
+
+
+class TestDoctorOutputFormat:
+    """Tests for unified doctor output formatting (glyphs, layout, spacing)."""
+
+    def _invoke_doctor_failing(
+        self, cli_runner: CliRunner, mock_config: object, *, config_path: object = None
+    ):
+        """Invoke doctor with LibreOffice missing (required dep failure)."""
+        with (
+            patch("markitai.cli.commands.doctor.ConfigManager") as mock_cm,
+            patch(
+                "markitai.cli.commands.doctor.shutil.which",
+                return_value="/usr/bin/ffmpeg",
+            ),
+            patch("markitai.utils.office.find_libreoffice", return_value=None),
+            patch("markitai.fetch_playwright.clear_browser_cache"),
+            patch(
+                "markitai.fetch_playwright.is_playwright_available",
+                return_value=True,
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed",
+                return_value=True,
+            ),
+            patch(
+                "markitai.cli.commands.doctor.subprocess.run",
+                return_value=MagicMock(returncode=0, stdout="ffmpeg version 7.0.0"),
+            ),
+        ):
+            mock_cm.return_value.load.return_value = mock_config
+            mock_cm.return_value.config_path = config_path
+            return cli_runner.invoke(doctor)
+
+    def test_failure_summary_uses_cross_glyph(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Failed check summary must use a red cross, never a checkmark."""
+        result = self._invoke_doctor_failing(cli_runner, mock_config)
+
+        assert result.exit_code == 1
+        summary_lines = [
+            line
+            for line in result.output.splitlines()
+            if "Check failed" in line or "检查未通过" in line
+        ]
+        assert summary_lines, result.output
+        for line in summary_lines:
+            assert "✗" in line  # cross
+            assert "✓" not in line  # no checkmark on a failure line
+
+    def test_failing_items_render_inline(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Failing dependency items render 'Name: detail' on a single line."""
+        result = self._invoke_doctor_failing(cli_runner, mock_config)
+
+        assert "✗ LibreOffice: soffice/libreoffice command not found" in result.output
+        # No continuation-line format in dependency sections
+        assert "│ soffice" not in result.output
+
+    def test_single_blank_line_between_sections(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Output never contains two consecutive blank lines."""
+        result = self._invoke_doctor_failing(cli_runner, mock_config)
+
+        assert "\n\n\n" not in result.output
+
+    def test_config_source_shown_with_path(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Doctor shows the loaded config file path near the top."""
+        from pathlib import Path
+
+        result = self._invoke_doctor_failing(
+            cli_runner, mock_config, config_path=Path("/home/user/markitai.json")
+        )
+
+        assert "/home/user/markitai.json" in result.output
+
+    def test_config_source_defaults_when_no_file(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Doctor points to 'markitai init' when no config file was loaded."""
+        result = self._invoke_doctor_failing(cli_runner, mock_config, config_path=None)
+
+        assert "markitai init" in result.output
+
+    def test_llm_hint_names_loaded_config_path(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """llm.model_list fix hint names the actually-loaded config file."""
+        from pathlib import Path
+
+        result = self._invoke_doctor_failing(
+            cli_runner, mock_config, config_path=Path("/cfg/config.json")
+        )
+
+        flat = " ".join(result.output.split())
+        assert "Configure llm.model_list in /cfg/config.json" in flat
+        assert "Configure llm.model_list in markitai.json" not in flat
+
+    def test_llm_hint_suggests_init_when_no_config(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Without a loaded config, llm hint points at 'markitai init'."""
+        result = self._invoke_doctor_failing(cli_runner, mock_config, config_path=None)
+
+        flat = " ".join(result.output.split())
+        assert "Configure llm.model_list (no config file found" in flat
+
+
+class TestDoctorPerformance:
+    """Regression tests for doctor startup cost."""
+
+    def test_doctor_does_not_import_litellm_without_models(self, tmp_path) -> None:
+        """With no models configured, doctor must not import litellm (~0.5s)."""
+        import subprocess
+        import sys
+
+        config_file = tmp_path / "markitai.json"
+        config_file.write_text("{}", encoding="utf-8")
+        code = (
+            "import sys\n"
+            "from click.testing import CliRunner\n"
+            "from markitai.cli.commands.doctor import doctor\n"
+            "CliRunner().invoke(doctor, ['--json'])\n"
+            "assert 'litellm' not in sys.modules, 'litellm eagerly imported'\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env={**__import__("os").environ, "MARKITAI_CONFIG": str(config_file)},
+            timeout=120,
+        )
+        assert proc.returncode == 0, proc.stderr

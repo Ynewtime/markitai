@@ -212,10 +212,9 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         self.timeout = timeout
         self._client: Any = None
         self._fatal_error: ProviderError | None = None
-        self._temp_files: list[str] = []
         self._json_handler = StructuredOutputHandler()
 
-    def _resize_image_if_needed(self, image_path: str) -> str:
+    def _resize_image_if_needed(self, image_path: str, temp_files: list[str]) -> str:
         """Resize image if it exceeds Copilot's dimension limit.
 
         Copilot's view tool has a ~2000x2000 pixel limit. Images larger
@@ -223,6 +222,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
 
         Args:
             image_path: Path to the image file
+            temp_files: Per-request list that created temp files are added to
 
         Returns:
             Path to the (possibly resized) image file
@@ -261,7 +261,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                 fd, resized_path = tempfile.mkstemp(
                     suffix=ext, prefix="copilot_resized_"
                 )
-                self._temp_files.append(resized_path)
+                temp_files.append(resized_path)
                 os.close(fd)
 
                 # Save with appropriate format
@@ -277,12 +277,17 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
             return image_path
 
     def _extract_images(
-        self, messages: list[dict[str, Any]]
+        self, messages: list[dict[str, Any]], temp_files: list[str]
     ) -> tuple[str, list[dict[str, Any]]]:
         """Extract text prompt and image attachments from messages.
 
+        Temp files are tracked per-request (not on the shared provider
+        instance) so one request's cleanup cannot delete another in-flight
+        request's image files.
+
         Args:
             messages: OpenAI-style message list with potential image content
+            temp_files: Per-request list that created temp files are added to
 
         Returns:
             Tuple of (text_prompt, attachments_list)
@@ -331,7 +336,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                                     )
                                     # Add to cleanup list immediately to prevent leaks
                                     # even if base64 decode fails
-                                    self._temp_files.append(temp_path)
+                                    temp_files.append(temp_path)
                                     try:
                                         os.write(fd, base64.b64decode(data))
                                     finally:
@@ -339,7 +344,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
 
                                     # Resize image if needed (Copilot has ~2000px limit)
                                     resized_path = self._resize_image_if_needed(
-                                        temp_path
+                                        temp_path, temp_files
                                     )
                                     attachments.append(
                                         {"type": "file", "path": resized_path}
@@ -363,15 +368,15 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
 
         return "\n\n".join(text_parts), attachments
 
-    def _cleanup_temp_files(self) -> None:
-        """Clean up temporary image files."""
-        for path in self._temp_files:
+    def _cleanup_temp_files(self, temp_files: list[str]) -> None:
+        """Clean up the given request's temporary image files."""
+        for path in temp_files:
             try:
                 if os.path.exists(path):
                     os.unlink(path)
             except OSError as e:
                 logger.warning(f"[Copilot] Failed to delete temp file {path}: {e}")
-        self._temp_files.clear()
+        temp_files.clear()
 
     def _build_json_prompt_suffix(
         self, response_format: dict[str, Any] | None
@@ -589,10 +594,14 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         # Check if messages contain images
         contains_images = has_images(messages)
 
-        # Extract prompt and attachments (temp files created here)
+        # Extract prompt and attachments (temp files created here).
+        # Track temp files per-request: the provider instance is shared
+        # across concurrent requests, so instance-level tracking would let
+        # one request's cleanup delete another's in-flight files.
+        temp_files: list[str] = []
         try:
             if contains_images:
-                prompt, attachments = self._extract_images(messages)
+                prompt, attachments = self._extract_images(messages, temp_files)
                 logger.debug(
                     f"[Copilot] Calling model={model_name} with {len(attachments)} image(s)"
                 )
@@ -611,7 +620,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                 )
         except Exception as e:
             # Clean up temp files if extraction fails
-            self._cleanup_temp_files()
+            self._cleanup_temp_files(temp_files)
             raise RuntimeError(f"Message preprocessing failed: {e}")
 
         start_time = time.time()
@@ -702,8 +711,8 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
                 except Exception as e:
                     logger.debug(f"[Copilot] Session disconnect warning: {e}")
 
-            # Clean up temporary files
-            self._cleanup_temp_files()
+            # Clean up this request's temporary files
+            self._cleanup_temp_files(temp_files)
 
         elapsed = time.time() - start_time
 
@@ -797,9 +806,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
 
     async def close(self) -> None:
         """Close the Copilot client connection."""
-        # Clean up any remaining temp files
-        self._cleanup_temp_files()
-
+        # Temp files are tracked per-request and cleaned up in acompletion
         if self._client is not None:
             try:
                 await self._client.stop()

@@ -206,7 +206,6 @@ class TestKreuzbergConverter:
             FileFormat.RST,
             FileFormat.ORG,
             FileFormat.TEX,
-            FileFormat.EML,
         }
         assert set(KreuzbergConverter.supported_formats) == expected
 

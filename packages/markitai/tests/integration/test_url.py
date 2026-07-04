@@ -97,6 +97,15 @@ https://foo.bar
         assert entries[1].url == "https://d.com"
         assert entries[1].output_name is None
 
+    def test_parse_json_objects_skips_null_and_non_string_url(self, tmp_path: Path):
+        """Entries with url: null or a non-string url are skipped (no crash)."""
+        url_file = tmp_path / "urls.urls"
+        url_file.write_text('[{"url": null}, {"url": 123}, {"url": "https://ok.com"}]')
+
+        entries = parse_url_list(url_file)
+        assert len(entries) == 1
+        assert entries[0].url == "https://ok.com"
+
     def test_parse_empty_file(self, tmp_path: Path):
         """Test parsing empty URL list."""
         url_file = tmp_path / "empty.urls"

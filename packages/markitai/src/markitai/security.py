@@ -337,12 +337,21 @@ def validate_path_within_base(path: Path, base_dir: Path) -> Path:
     return resolved
 
 
+# System-level symlinks that are safe to traverse (e.g. on macOS:
+# /tmp -> private/tmp, /var -> private/var, /etc -> private/etc;
+# /home -> var/home on some Linux distros).
+_SYSTEM_SYMLINK_PATHS = frozenset({"/tmp", "/var", "/etc", "/home"})  # nosec B108 - allowlist of OS symlink roots, not temp file usage
+
+
 def check_symlink_safety(path: Path, allow_symlinks: bool = False) -> None:
     """Check if a path involves symlinks at any level.
 
-    This function checks the path itself for symlinks. Parent directories are
-    checked via the resolved path to avoid false positives on system-level
-    symlinks (e.g. /tmp -> /private/tmp on macOS).
+    This function checks the path itself and its parent directories for
+    symlinks, using the ORIGINAL (unresolved) path — a resolved path never
+    contains symlinks, so checking it would miss writes through a symlinked
+    parent (e.g. `linkdir/sub`). Known system-level symlinks
+    (e.g. /tmp -> /private/tmp on macOS) are still allowed to avoid
+    false positives.
 
     Args:
         path: Path to check
@@ -360,26 +369,34 @@ def check_symlink_safety(path: Path, allow_symlinks: bool = False) -> None:
             logger.warning(f"Symlink detected: {path} -> {path.readlink()}")
             return  # If symlinks allowed, no need to check further
 
-    # Check parent directories for nested symlinks using the resolved path.
-    # This avoids false positives on system-level symlinks like /tmp -> /private/tmp
-    # on macOS, while still catching user-created symlinks in the resolved tree.
+    # Check ancestors of the original path for symlinked directories.
+    # absolute() (not resolve()) keeps symlinks visible for relative paths.
     if not allow_symlinks:
-        resolved = path.resolve()
-        checked_parts: list[Path] = []
-        for part in resolved.parts:
-            checked_parts.append(
-                Path(part) if not checked_parts else checked_parts[-1] / part
-            )
-            current_path = checked_parts[-1]
-            if (
-                len(checked_parts) > 1
-                and current_path.exists()
-                and current_path.is_symlink()
-            ):
-                target = current_path.readlink()
+        for ancestor in path.absolute().parents:
+            if str(ancestor) in _SYSTEM_SYMLINK_PATHS:
+                continue
+            if ancestor.is_symlink():
+                if _is_system_symlink(ancestor):
+                    continue
+                target = ancestor.readlink()
                 raise ValueError(
-                    f"Nested symlink not allowed: {current_path} -> {target} (in path {path})"
+                    f"Nested symlink not allowed: {ancestor} -> {target} (in path {path})"
                 )
+
+
+def _is_system_symlink(link: Path) -> bool:
+    """Return True for OS-managed symlinks that are safe to traverse.
+
+    On POSIX, root-owned symlinks (e.g. /var/run -> /run, /etc/alternatives/*)
+    are OS artifacts an unprivileged attacker cannot plant, so they don't
+    represent the symlink-swap threat this check defends against.
+    """
+    if os.name != "posix":
+        return False
+    try:
+        return link.lstat().st_uid == 0
+    except OSError:
+        return False
 
 
 def validate_file_size(path: Path, max_size_bytes: int) -> None:

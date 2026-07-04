@@ -14,6 +14,7 @@ from markitai.converter.base import (
     detect_format,
     get_converter,
 )
+from markitai.converter.eml import EmlConverter
 from markitai.converter.image import ImageConverter
 from markitai.converter.kreuzberg import register_kreuzberg_converters
 from markitai.converter.legacy import DocConverter, PptConverter, XlsConverter
@@ -64,6 +65,7 @@ __all__ = [
     "HtmConverter",
     "XhtmlConverter",
     "CsvConverter",
+    "EmlConverter",
     "EpubConverter",
     "MsgConverter",
     "IpynbConverter",

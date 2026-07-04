@@ -742,14 +742,16 @@ class TestACompletion:
         assert result.usage.completion_tokens == 25  # type: ignore[reportAttributeAccessIssue]
         assert result.usage.total_tokens == 40  # type: ignore[reportAttributeAccessIssue]
 
-    async def test_429_raises_quota_error_immediately(self) -> None:
-        """GeminiCLI should raise QuotaError on first 429 (no internal retries).
+    async def test_429_raises_rate_limit_error_immediately(self) -> None:
+        """GeminiCLI should raise litellm RateLimitError on first 429.
 
         With MAX_429_RETRIES=0, the provider does not retry internally.
-        The QuotaError is raised immediately so the Router can set a cooldown
-        and route subsequent requests to other models.
+        The RateLimitError is retryable: the processor's retry loop can
+        route the retry to another model while the Router records a
+        cooldown for this one (unlike QuotaError, which aborts hard).
         """
-        from markitai.providers.errors import QuotaError
+        from litellm.exceptions import RateLimitError
+
         from markitai.providers.gemini_cli import GeminiCLIProvider
 
         provider = GeminiCLIProvider()
@@ -769,7 +771,7 @@ class TestACompletion:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_httpx.AsyncClient.return_value = mock_client
 
-            with pytest.raises(QuotaError) as exc_info:
+            with pytest.raises(RateLimitError) as exc_info:
                 await provider.acompletion(
                     "gemini-cli/gemini-3.1-flash-lite-preview",
                     [{"role": "user", "content": "Hello"}],
