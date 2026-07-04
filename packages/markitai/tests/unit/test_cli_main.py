@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -45,10 +46,11 @@ class TestCLIOptions:
         """Docstring sections are separated by exactly one blank line each."""
         result = cli_runner.invoke(app, ["-h"])
         assert result.exit_code == 0
-        lines = [ln.rstrip() for ln in result.output.splitlines()]
+        # rich force-enables color when GITHUB_ACTIONS is set, so CI output
+        # carries ANSI codes (\x1b[2mPresets:\x1b[0m) — strip before matching
+        ansi = re.compile(r"\x1b\[[0-9;]*m")
+        lines = [ansi.sub("", ln).rstrip() for ln in result.output.splitlines()]
         for header in ("Presets:", "Examples:"):
-            # startswith: rich may pad/deviate slightly across platforms;
-            # a hard equality made this raise bare StopIteration in CI
             idx = next(
                 (i for i, ln in enumerate(lines) if ln.strip().startswith(header)),
                 None,
