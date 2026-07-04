@@ -235,7 +235,10 @@ class TestOutputFileTarget:
         result = runner.invoke(app, [str(input_dir), "-o", str(tmp_path / "out.md")])
 
         assert result.exit_code == 2
-        assert "pass an output directory" in result.output
+        # rich wraps the usage panel at console width (narrow on Windows CI):
+        # normalize whitespace/borders before matching the phrase
+        flat = " ".join(result.output.replace("\u2502", " ").split())
+        assert "pass an output directory" in flat
         assert not (tmp_path / "out.md").exists()
 
     def test_url_list_md_target_is_usage_error(self, runner: CliRunner, tmp_path: Path):
@@ -246,7 +249,8 @@ class TestOutputFileTarget:
         result = runner.invoke(app, [str(urls_file), "-o", str(tmp_path / "out.md")])
 
         assert result.exit_code == 2
-        assert "pass an output directory" in result.output
+        flat = " ".join(result.output.replace("\u2502", " ").split())
+        assert "pass an output directory" in flat
         assert not (tmp_path / "out.md").exists()
 
 
@@ -364,7 +368,10 @@ class TestCLIWithSubprocess:
             text=True,
         )
         assert result.returncode == 0
-        assert "Opinionated Markdown converter" in result.stdout
+        # Windows CI has produced stdout=None here despite capture_output;
+        # accept either stream and never TypeError on None
+        combined = (result.stdout or "") + (result.stderr or "")
+        assert "Opinionated Markdown converter" in combined
 
     def test_version_command(self):
         """Test version command via subprocess."""

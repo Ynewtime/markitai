@@ -326,8 +326,8 @@ class TestSubdirectoryImagesJson:
 
         assert result.exit_code == 0
 
-        # Check output structure
-        output_file = output_dir / "sample.doc.md"
+        # Check output structure (extension-replacement naming: sample.doc -> sample.md)
+        output_file = output_dir / "sample.md"
         assert output_file.exists()
 
         # If document has images, assets folder should be created
