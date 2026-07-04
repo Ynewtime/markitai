@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.7
+    rev: v0.15.20
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -15,6 +15,9 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+        # Full-project type check takes tens of seconds — run before push
+        # (and in CI) instead of on every commit
+        stages: [pre-push]
 
       - id: pytest
         name: pytest

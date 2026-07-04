@@ -1,16 +1,14 @@
 # Dependabot configuration for automated dependency updates
 # https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
 #
-# Note: This project uses uv for Python package management and pnpm for website.
-# Dependabot uses pip/npm ecosystems but works correctly with pyproject.toml and package.json.
+# Python uses the native "uv" ecosystem (GA since 2025) so Dependabot updates
+# pyproject.toml AND uv.lock together — PRs pass `uv sync --frozen` in CI.
 
 version: 2
 updates:
-  # Python dependencies - root pyproject.toml
-  # Note: This project uses uv with uv.lock. Dependabot's pip ecosystem cannot
-  # update uv.lock, so PRs that modify pyproject.toml will fail `uv sync --frozen`
-  # in CI. Manually run `uv lock` on those PRs before merging.
-  - package-ecosystem: "pip"
+  # Python dependencies - single entry covers the whole uv workspace
+  # (root and packages/markitai share one uv.lock)
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -29,32 +27,6 @@ updates:
         update-types: ["version-update:semver-major"]
     groups:
       python-minor:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
-
-  # Python dependencies - markitai package
-  - package-ecosystem: "pip"
-    directory: "/packages/markitai"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Asia/Shanghai"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "python"
-      - "markitai"
-    commit-message:
-      prefix: "chore(deps)"
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    groups:
-      markitai-minor:
         patterns:
           - "*"
         update-types:

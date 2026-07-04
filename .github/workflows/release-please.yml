@@ -1,0 +1,50 @@
+# Automated releases via release-please (conventional commits drive versioning).
+#
+# On every push to main, release-please opens/refreshes a release PR that bumps
+# __version__ in packages/markitai/src/markitai/__init__.py (the single source
+# of truth, via the `x-release-please-version` annotation) and updates
+# CHANGELOG.md. Merging that PR creates the vX.Y.Z tag + GitHub release.
+#
+# Releases created with the default GITHUB_TOKEN do NOT fire `on: release`
+# in other workflows (GitHub recursion guard), so this workflow explicitly
+# dispatches publish.yml on the release tag (workflow_dispatch is exempt
+# from that restriction).
+
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push release branch, create tag + GitHub release
+      pull-requests: write   # open/refresh the release PR
+      actions: write         # dispatch publish.yml after a release is created
+    steps:
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@v4.4.1
+        with:
+          config-file: .github/release-please-config.json
+          manifest-file: .github/release-please-manifest.json
+
+      # If release-please is ever switched to a PAT (token input), remove this
+      # step — the `release: published` event will then trigger publish.yml
+      # natively and dispatching too would double-publish.
+      - name: Trigger PyPI publish
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh workflow run publish.yml
+          --repo "${{ github.repository }}"
+          --ref "${{ steps.release.outputs.tag_name }}"
