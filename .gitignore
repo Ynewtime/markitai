@@ -31,6 +31,10 @@ wheels/
 venv/
 ENV/
 
+# AI agent local state (session memory, task locks — never commit upstream)
+.claude/
+AGENTS.local.md
+
 # IDE
 .idea/
 .vscode/
@@ -74,8 +78,14 @@ logs_*/
 .DS_Store
 Thumbs.db
 
+# Benchmark results (baseline.json IS committed; latest.json is per-run)
+packages/markitai/benchmarks/results/latest.json
+
 # Markitai cache directory
 .markitai/
+
+# Local scratch/test outputs
+temp/
 
 # Kreuzberg extraction cache
 .kreuzberg/
