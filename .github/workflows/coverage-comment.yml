@@ -1,0 +1,34 @@
+# Companion to the coverage-comment job in ci.yml: fork PRs run CI with a
+# read-only GITHUB_TOKEN, so the coverage comment is stored as an artifact
+# there and posted here with write permissions. This workflow never checks
+# out or executes PR code — it only downloads the pre-rendered comment.
+# https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
+
+name: Post coverage comment
+
+on:
+  workflow_run:
+    workflows: ["Python CI"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  post-comment:
+    name: Post coverage comment
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+    permissions:
+      # Post/update the coverage comment on the PR.
+      pull-requests: write
+      # Required by the action to edit its existing comments.
+      contents: write
+      # Look up the triggering CI run and download the comment artifact.
+      actions: read
+    steps:
+      # DO NOT add actions/checkout here (untrusted PR code, write token).
+      - name: Post comment
+        uses: py-cov-action/python-coverage-comment-action@v3.41
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_PR_RUN_ID: ${{ github.event.workflow_run.id }}
