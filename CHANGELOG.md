@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1](https://github.com/Ynewtime/markitai/compare/v0.15.0...v0.15.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **setup.sh:** don't abort install when an optional component is declined ([dd704ab](https://github.com/Ynewtime/markitai/commit/dd704ab72daa9f14b4ca2749b3670a169a0734d3))
+* **tests:** read setup.sh as UTF-8 in the guard test (Windows cp1252 default) ([5770708](https://github.com/Ynewtime/markitai/commit/5770708582ab7f5a9848b66902c5293c16aa487d))
+
 ## [0.15.0] - 2026-07-04
 
 Maintenance overhaul: full dependency refresh, Python 3.14 support, and a
