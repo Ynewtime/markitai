@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -362,14 +363,21 @@ class TestCLIWithSubprocess:
 
     def test_help_command(self):
         """Test help command via subprocess."""
+        # Scrub CI markers: GITHUB_ACTIONS makes rich force terminal mode,
+        # and on Windows the legacy-console path then writes via Win32
+        # handles, bypassing the captured pipe entirely (empty output, rc 0)
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("GITHUB_ACTIONS", "CI", "FORCE_COLOR")
+        }
         result = subprocess.run(
             ["uv", "run", "markitai", "--help"],
             capture_output=True,
             text=True,
+            env=env,
         )
         assert result.returncode == 0
-        # Windows CI has produced stdout=None here despite capture_output;
-        # accept either stream and never TypeError on None
         combined = (result.stdout or "") + (result.stderr or "")
         assert "Opinionated Markdown converter" in combined
 
