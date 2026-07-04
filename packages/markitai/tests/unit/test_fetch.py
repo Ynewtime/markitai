@@ -1752,6 +1752,27 @@ class TestFetchWithStaticConditional:
     """Tests for fetch_with_static_conditional function."""
 
     @pytest.mark.asyncio
+    async def test_error_message_never_empty(self) -> None:
+        """Exceptions with empty str() (e.g. httpx.ConnectError('')) must
+        still yield an informative FetchError, not a trailing blank."""
+        import httpx
+
+        from markitai.fetch import FetchError, fetch_with_static_conditional
+
+        with (
+            patch(
+                "markitai.fetch.get_static_http_client",
+                side_effect=httpx.ConnectError(""),
+            ),
+            pytest.raises(FetchError) as exc_info,
+        ):
+            await fetch_with_static_conditional("https://example.com")
+
+        message = str(exc_info.value)
+        assert message.rstrip() != "Failed to fetch URL with conditional request:"
+        assert "ConnectError" in message
+
+    @pytest.mark.asyncio
     async def test_conditional_fetch_304_not_modified(self) -> None:
         """Test conditional fetch returns 304 Not Modified."""
         from markitai.fetch import fetch_with_static_conditional

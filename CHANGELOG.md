@@ -29,6 +29,13 @@ fetch/cache, LLM providers, image handling, and configuration.
 - **Conversion-quality benchmark harness**: dev-only `packages/markitai/benchmarks/` scores the HTML pipeline against the Defuddle ground-truth corpus (rapidfuzz block alignment + order score, marker-style); committed baseline: mean 91.04 over 83 fixtures
 - **Release automation**: release-please drives versioning/changelog from conventional commits (release = merge the release PR; publishing chains via workflow dispatch); PR coverage comments via py-cov-action, no external service. Operational note: tag the 0.15.0 release manually first (or set `bootstrap-sha`) so release-please anchors correctly
 
+#### Hunt round 4 (UX & quality polish)
+
+- **Tweet conversion at defuddle parity**: the FxTwitter path (which serves default x.com fetches, with playwright as fallback) and the DOM extractor were both reworked — bold `**Name @handle** · date` author line, paragraphs preserved, t.co links expanded, video rendered as poster + link (was a broken mp4 embed), quoted tweets as blockquotes with author/date/media/permalink, author threads joined into the post body, card previews. Corpus mean 91.04 → 92.26
+- **Live progress feedback**: long single-input conversions show a pure-ASCII stage-aware spinner on stderr (`Fetching (static)…` → `Rendering (playwright)…` → `Enhancing with LLM…`, bridged from fetch-stage logs); suppressed for pipes/--quiet/-v; stdout stays pure. Root cause of the "looks stuck" complaint: the old spinner machinery was constructed disabled in file-output mode
+- **`markitai auth` status cards**: all four providers render a unified glyph card (✓/✗ login state, CLI/SDK presence, usage + next-step); bare `markitai auth` shows an all-provider overview; ChatGPT guidance now points at `markitai auth chatgpt login` (device-code flow verified live) instead of "pip install litellm"
+- **Fetch errors are never blank**: exceptions with empty messages (e.g. httpx.ConnectError) now render their type via format_error_message across all fetch strategies
+
 #### Hunt round 3 (release prep)
 
 - **`.eml` email support (native, zero deps)**: headers/body/attachments via stdlib `email`; HTML bodies go through the standard HTML pipeline, image attachments flow into the assets/vision pipeline, nested messages render quoted (depth 1); header values sanitized against injection. EML no longer delegates to kreuzberg
