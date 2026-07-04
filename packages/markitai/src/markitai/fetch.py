@@ -78,6 +78,7 @@ from markitai.fetch_types import FetchResult as FetchResult  # noqa: F401
 from markitai.fetch_types import FetchStrategy as FetchStrategy  # noqa: F401
 from markitai.fetch_types import JinaAPIError as JinaAPIError  # noqa: F401
 from markitai.fetch_types import JinaRateLimitError as JinaRateLimitError  # noqa: F401
+from markitai.utils.text import format_error_message
 
 # Global SPA domain cache instance (initialized lazily)
 _spa_domain_cache: SPADomainCache | None = None
@@ -840,7 +841,7 @@ async def fetch_with_defuddle(
     except httpx.TimeoutException:
         raise FetchError(f"Defuddle request timed out after {timeout}s: {url}")
     except Exception as e:
-        raise FetchError(f"Defuddle fetch failed: {e}")
+        raise FetchError(f"Defuddle fetch failed: {format_error_message(e)}")
 
 
 def _extract_jina_error_message(response: Any) -> str:
@@ -1620,7 +1621,9 @@ async def fetch_with_static_conditional(
     except Exception as e:
         if isinstance(e, FetchError):
             raise
-        raise FetchError(f"Failed to fetch URL with conditional request: {e}")
+        raise FetchError(
+            f"Failed to fetch URL with conditional request: {format_error_message(e)}"
+        )
 
 
 async def fetch_with_cloudflare(
@@ -1781,7 +1784,9 @@ async def fetch_with_cloudflare(
     except FetchError:
         raise
     except Exception as e:
-        raise FetchError(f"Cloudflare BR fetch failed: {e}") from e
+        raise FetchError(
+            f"Cloudflare BR fetch failed: {format_error_message(e)}"
+        ) from e
 
 
 async def fetch_with_jina(
@@ -1851,7 +1856,9 @@ async def fetch_with_jina(
             json_data = response.json()
         except json.JSONDecodeError as e:
             logger.warning(f"Jina API returned invalid JSON: {e}")
-            raise FetchError(f"Jina Reader returned invalid JSON response: {e}")
+            raise FetchError(
+                f"Jina Reader returned invalid JSON response: {format_error_message(e)}"
+            )
 
         # Extract data from JSON structure
         # Expected format: {"code": 200, "status": 20000, "data": {...}}
@@ -1901,7 +1908,7 @@ async def fetch_with_jina(
     except FetchError:
         raise
     except Exception as e:
-        raise FetchError(f"Jina Reader fetch failed: {e}")
+        raise FetchError(f"Jina Reader fetch failed: {format_error_message(e)}")
 
 
 def _ensure_external_strategy_allowed(url: str, strategy_name: str) -> None:
