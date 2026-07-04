@@ -1497,16 +1497,16 @@ run_user_setup() {
     install_markitai || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
 
     clack_section "$(i18n section_optional)"
-    install_optional_playwright
-    install_optional_libreoffice
-    install_optional_ffmpeg
+    install_optional_playwright || true
+    install_optional_libreoffice || true
+    install_optional_ffmpeg || true
 
     clack_section "$(i18n section_llm_cli)"
-    install_optional_claude_cli
-    install_optional_copilot_cli
-    detect_gemini_cli
+    install_optional_claude_cli || true
+    install_optional_copilot_cli || true
+    detect_gemini_cli || true
 
-    finalize_markitai_extras
+    finalize_markitai_extras || true
 
     init_config >/dev/null 2>&1
 
@@ -1528,17 +1528,17 @@ run_dev_setup() {
 
     clack_section "$(i18n section_dev_env)"
     sync_dependencies || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
-    install_precommit
+    install_precommit || true
 
     clack_section "$(i18n section_optional)"
-    install_optional_playwright
-    install_optional_libreoffice
-    install_optional_ffmpeg
+    install_optional_playwright || true
+    install_optional_libreoffice || true
+    install_optional_ffmpeg || true
 
     clack_section "$(i18n section_llm_cli)"
-    install_optional_claude_cli
-    install_optional_copilot_cli
-    detect_gemini_cli
+    install_optional_claude_cli || true
+    install_optional_copilot_cli || true
+    detect_gemini_cli || true
 
     print_summary
     print_dev_completion
