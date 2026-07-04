@@ -587,11 +587,13 @@ class TestDoctorOutputFormat:
         """Doctor shows the loaded config file path near the top."""
         from pathlib import Path
 
+        config_path = Path("/home/user/markitai.json")
         result = self._invoke_doctor_failing(
-            cli_runner, mock_config, config_path=Path("/home/user/markitai.json")
+            cli_runner, mock_config, config_path=config_path
         )
 
-        assert "/home/user/markitai.json" in result.output
+        # str(Path) differs across platforms (backslashes on Windows)
+        assert str(config_path) in result.output
 
     def test_config_source_defaults_when_no_file(
         self, cli_runner: CliRunner, mock_config: object
@@ -607,12 +609,14 @@ class TestDoctorOutputFormat:
         """llm.model_list fix hint names the actually-loaded config file."""
         from pathlib import Path
 
+        config_path = Path("/cfg/config.json")
         result = self._invoke_doctor_failing(
-            cli_runner, mock_config, config_path=Path("/cfg/config.json")
+            cli_runner, mock_config, config_path=config_path
         )
 
         flat = " ".join(result.output.split())
-        assert "Configure llm.model_list in /cfg/config.json" in flat
+        # str(Path) differs across platforms (backslashes on Windows)
+        assert f"Configure llm.model_list in {config_path}" in flat
         assert "Configure llm.model_list in markitai.json" not in flat
 
     def test_llm_hint_suggests_init_when_no_config(

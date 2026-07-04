@@ -893,7 +893,14 @@ def _get_jina_client(timeout: int = 30, proxy: str = "") -> Any:
         httpx.AsyncClient instance
     """
     global _jina_client, _jina_client_fingerprint
-    fingerprint = f"{timeout}:{proxy}"
+    # Loop identity is part of the fingerprint: each CLI invocation runs its
+    # own asyncio.run loop, and a client bound to a closed loop raises
+    # "Event loop is closed" when reused
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:  # sync/test context
+        loop_id = 0
+    fingerprint = f"{timeout}:{proxy}:{loop_id}"
     if _jina_client is None or _jina_client_fingerprint != fingerprint:
         import httpx
 

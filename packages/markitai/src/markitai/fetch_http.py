@@ -103,20 +103,38 @@ class HttpxClient:
     def __init__(self) -> None:
         self._client: Any = None
         self._client_proxy: str | None = None  # Track proxy for rebuild
+        self._client_loop: Any = None  # Event loop the client is bound to
 
     def _get_or_create_client(self, timeout_s: float, proxy: str | None) -> Any:
         """Get or create a shared httpx.AsyncClient.
 
-        Rebuilds the client if proxy configuration changes.
+        Rebuilds the client if the proxy configuration changes or the
+        running event loop differs from the one the client was created on
+        (each CLI invocation runs its own asyncio.run loop; reusing a
+        client bound to a closed loop raises "Event loop is closed").
         """
-        if self._client is not None and self._client_proxy == proxy:
+        import asyncio
+
+        try:
+            loop: Any = asyncio.get_running_loop()
+        except RuntimeError:  # sync/test context: skip the loop check
+            loop = None
+        if (
+            self._client is not None
+            and self._client_proxy == proxy
+            and (loop is None or self._client_loop is loop)
+        ):
             return self._client
 
         import httpx
 
-        # Close old client if proxy changed
+        # Close old client if proxy or loop changed
         if self._client is not None:
-            schedule_client_close(self._client.aclose(), self.name)
+            if loop is None or self._client_loop is loop:
+                schedule_client_close(self._client.aclose(), self.name)
+            else:
+                # The old loop is gone; its connections died with it
+                logger.debug("[HTTP] Dropping httpx client bound to a stale loop")
 
         client_kwargs: dict[str, Any] = {
             "follow_redirects": True,
@@ -128,6 +146,7 @@ class HttpxClient:
 
         self._client = httpx.AsyncClient(**client_kwargs)
         self._client_proxy = proxy
+        self._client_loop = loop
         return self._client
 
     async def get(
@@ -169,17 +188,35 @@ class CurlCffiClient:
     def __init__(self) -> None:
         self._session: Any = None
         self._session_proxy: str | None = None
+        self._session_loop: Any = None  # Event loop the session is bound to
 
     def _get_or_create_session(self, proxy: str | None) -> Any:
-        """Get or create a shared curl-cffi AsyncSession."""
-        if self._session is not None and self._session_proxy == proxy:
+        """Get or create a shared curl-cffi AsyncSession.
+
+        Rebuilds when the proxy or the running event loop changes (a
+        session bound to a closed loop raises "Event loop is closed").
+        """
+        import asyncio
+
+        try:
+            loop: Any = asyncio.get_running_loop()
+        except RuntimeError:  # sync/test context: skip the loop check
+            loop = None
+        if (
+            self._session is not None
+            and self._session_proxy == proxy
+            and (loop is None or self._session_loop is loop)
+        ):
             return self._session
 
         from curl_cffi.requests import AsyncSession  # type: ignore[import-not-found]
 
-        # Close old session if proxy changed
+        # Close old session if proxy or loop changed
         if self._session is not None:
-            schedule_client_close(self._session.close(), self.name)
+            if loop is None or self._session_loop is loop:
+                schedule_client_close(self._session.close(), self.name)
+            else:
+                logger.debug("[HTTP] Dropping curl session bound to a stale loop")
 
         proxies = {"http": proxy, "https": proxy} if proxy else None
         self._session = AsyncSession(
@@ -187,6 +224,7 @@ class CurlCffiClient:
             proxies=proxies,  # type: ignore[arg-type]  # ProxySpec TypedDict accepts str values
         )
         self._session_proxy = proxy
+        self._session_loop = loop
         return self._session
 
     async def get(
