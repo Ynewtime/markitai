@@ -7,8 +7,13 @@ from dataclasses import asdict
 from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.dom import parse_html
+from markitai.webextract.elements.footnotes import (
+    adopt_external_footnotes,
+    standardize_footnotes,
+)
 from markitai.webextract.extractors.registry import find_extractor
 from markitai.webextract.markdown import (
+    canonicalize_embeds,
     html_to_markdown,
     postprocess_markdown,
     preserve_figure_captions,
@@ -111,6 +116,8 @@ def _build_from_resolved(
     # Apply the same standardization and sanitization as the generic path
     # so that clean_html is truly canonical (no unsanitized tags, resolved links)
     content_soup = BeautifulSoup(content_html, "html.parser")
+    standardize_footnotes(content_soup)
+    canonicalize_embeds(content_soup)
     standardize_content(content_soup, title=metadata.title, base_url=url)
     sanitize_tag_tree(content_soup)
     content_html = str(content_soup)
@@ -273,6 +280,16 @@ def _extract_once(
     title = getattr(metadata, "title", None)
     removal_stats: dict[str, int] = {}
     if isinstance(root, Tag):
+        # Standardize footnotes before removals (mirrors defuddle: CSS
+        # sidenotes use display:none and would be lost to hidden removal;
+        # footnote sections would be stripped by selector/scoring removal).
+        adopt_external_footnotes(root)
+        standardize_footnotes(root)
+    # Canonicalize known video/social embed iframes to plain links BEFORE
+    # removals and sanitization — sanitize_tag_tree strips every remaining
+    # <iframe>, so this is the only chance to preserve the video URL.
+    canonicalize_embeds(root)
+    if isinstance(root, Tag):
         removal_stats = apply_removals(
             root,
             use_partial_selectors=use_partial_selectors,
@@ -286,8 +303,6 @@ def _extract_once(
     # Apply markdown preprocessing directly on the parsed Tag to avoid
     # the redundant BeautifulSoup re-parse that render_markdown() performs.
     resolve_srcset(root)
-    # canonicalize_embeds is a no-op here: sanitize_tag_tree already
-    # stripped all <iframe> elements.
     preserve_figure_captions(root)
 
     clean_html = str(root)
@@ -311,7 +326,9 @@ def _extract_with_retry(
     Level 4: Disable all removals (listing page)
     Fallback: Broaden to <body>
     """
-    url = getattr(ctx.metadata, "canonical_url", "") or ""
+    # canonical_url may legitimately be None (no page-specific canonical);
+    # fall back to the source URL for base-URL link resolution.
+    url = getattr(ctx.metadata, "canonical_url", None) or ctx.url
     use_scoring = extractor is None
 
     # Level 1: Full pipeline

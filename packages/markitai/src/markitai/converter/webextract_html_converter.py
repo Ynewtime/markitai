@@ -7,12 +7,15 @@ defuddle's ``elements/code.ts``.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, cast
 
-from bs4 import NavigableString, Tag
+from bs4 import Tag
+from bs4.element import NavigableString
 from markitdown._base_converter import DocumentConverterResult
 from markitdown.converters._html_converter import HtmlConverter
 from markitdown.converters._markdownify import _CustomMarkdownify
+
+from markitai.webextract.constants import CODE_LANGUAGES
 
 # ---------------------------------------------------------------------------
 # Language detection patterns (ported from defuddle elements/code.ts)
@@ -61,7 +64,7 @@ def _detect_language(el: Any) -> str | None:
         for cls in classes:
             for pattern in _LANG_PATTERNS:
                 m = pattern.match(cls)
-                if m:
+                if m and m.group(1).lower() in CODE_LANGUAGES:
                     return m.group(1).lower()
 
         class_str = " ".join(classes) if isinstance(classes, list) else str(classes)
@@ -333,24 +336,43 @@ def _mo_replace(text: str) -> str:
     return _MO_REPLACEMENTS.get(text, text)
 
 
+def _is_footnote_list(el: Any) -> bool:
+    """Check whether an <ol> is the standardized footnotes list.
+
+    Keyed on the ``li.footnote`` items with ``id="fn:N"`` (robust even if
+    the ``div#footnotes`` wrapper was flattened away).
+    """
+    items = [c for c in el.children if isinstance(c, Tag) and c.name == "li"]
+    if not items:
+        return False
+    return all(str(li.get("id") or "").startswith("fn:") for li in items)
+
+
 class WebExtractMarkdownConverter(_CustomMarkdownify):
     """Markdownify converter with enhanced rules for web content."""
 
     def convert_math(self, el: Any, text: str, parent_tags: set) -> str:
-        """Convert <math> to LaTeX. Prefers alttext, then annotation, then MathML."""
-        alttext = el.get("alttext", "")
-        if alttext:
-            is_block = el.get("display") == "block"
-            return f"\n\n$${alttext}$$\n\n" if is_block else f"${alttext}$"
-        annotation = el.find("annotation", attrs={"encoding": "application/x-tex"})
-        if annotation and annotation.string:
-            return f"${annotation.string.strip()}$"
-        # Try converting MathML structure to LaTeX
-        latex = _mathml_to_latex(el)
-        if latex:
-            return f"${latex}$"
-        math_text = el.get_text(strip=True)
-        return f"${math_text}$" if math_text else ""
+        """Convert <math> to LaTeX.
+
+        Prefers data-latex (set by webextract math standardization), then
+        alttext, annotation, and finally structural MathML conversion.
+        """
+        is_block = el.get("display") == "block"
+        latex = str(el.get("data-latex") or "").strip()
+        if not latex:
+            latex = str(el.get("alttext") or "").strip()
+        if not latex:
+            annotation = el.find("annotation", attrs={"encoding": "application/x-tex"})
+            if annotation and annotation.string:
+                latex = annotation.string.strip()
+        if not latex:
+            # Try converting MathML structure to LaTeX
+            latex = _mathml_to_latex(el)
+        if not latex:
+            latex = el.get_text(strip=True)
+        if not latex:
+            return ""
+        return f"\n\n$${latex}$$\n\n" if is_block else f"${latex}$"
 
     def convert_script(self, el: Any, text: str, parent_tags: set) -> str:
         """Convert math/tex script elements to LaTeX."""
@@ -387,6 +409,13 @@ class WebExtractMarkdownConverter(_CustomMarkdownify):
         return f"~~{text}~~" if text.strip() else ""
 
     def convert_sup(self, el: Any, text: str, parent_tags: set) -> str:
+        # Standardized footnote reference: <sup id="fnref:N"><a href="#fn:N">
+        # (duplicate refs use id="fnref:N-2" — emit the primary number).
+        sup_id = str(el.get("id") or "")
+        if sup_id.startswith("fnref:"):
+            primary = sup_id[len("fnref:") :].split("-")[0]
+            if primary:
+                return f"[^{primary}]"
         link = el.find("a")
         if link:
             href = str(link.get("href", ""))
@@ -399,6 +428,39 @@ class WebExtractMarkdownConverter(_CustomMarkdownify):
                 if ref_text.isdigit():
                     return f"[^{ref_text}]"
         return text
+
+    def convert_a(self, el: Any, text: str, parent_tags: set) -> str:
+        """Drop footnote back-reference links; defer to the base rule."""
+        classes = el.get("class") or []
+        if isinstance(classes, str):
+            classes = classes.split()
+        href = str(el.get("href") or "")
+        if "footnote-backref" in classes or href.startswith("#fnref"):
+            return ""
+        return super().convert_a(el, text, parent_tags=parent_tags)
+
+    def convert_ol(self, el: Any, text: str, parent_tags: set) -> str:
+        """Emit the standardized footnotes list as [^N]: definition blocks."""
+        if _is_footnote_list(el):
+            body = text.strip()
+            return f"\n\n{body}\n\n" if body else ""
+        # markdownify's list rules are untyped (convert_ol = convert_list)
+        base = cast(Any, super())
+        return base.convert_ol(el, text, parent_tags)
+
+    def convert_li(self, el: Any, text: str, parent_tags: set) -> str:
+        """Emit footnote definition items as ``[^N]: content``.
+
+        Multi-paragraph definitions keep paragraphs separated by blank
+        lines (unindented continuation, matching defuddle's output).
+        """
+        li_id = str(el.get("id") or "")
+        if li_id.startswith("fn:"):
+            number = li_id[len("fn:") :]
+            content = re.sub(r"\n{3,}", "\n\n", (text or "").strip())
+            return f"[^{number}]: {content}\n\n"
+        base = cast(Any, super())
+        return base.convert_li(el, text, parent_tags)
 
     def convert_pre(self, el: Any, text: str, parent_tags: set) -> str:
         """Convert <pre> to fenced code block with language detection."""

@@ -130,12 +130,12 @@ async def fetch_with_fxtwitter(url: str) -> FetchResult | None:
             response.raise_for_status()
             data = response.json()
     except Exception:
-        logger.debug("FxTwitter API request failed for %s", url, exc_info=True)
+        logger.opt(exception=True).debug(f"FxTwitter API request failed for {url}")
         return None
 
     tweet_data = data.get("tweet")
     if not tweet_data:
-        logger.debug("FxTwitter response missing tweet data for %s", url)
+        logger.debug(f"FxTwitter response missing tweet data for {url}")
         return None
 
     thread = _build_conversation_thread(tweet_data, tweet_id)

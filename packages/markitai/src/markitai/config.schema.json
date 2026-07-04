@@ -341,6 +341,17 @@
           "title": "Strategy",
           "type": "string"
         },
+        "remote_consent": {
+          "default": "ask",
+          "description": "Consent for sending URLs to remote extraction services (defuddle.md, Jina, Cloudflare) in the auto strategy chain. ask: prompt once per run on an interactive TTY, otherwise skip remote services; always: use them without asking; never: local strategies only. Overridden by the MARKITAI_NO_REMOTE_FETCH env var.",
+          "enum": [
+            "ask",
+            "always",
+            "never"
+          ],
+          "title": "Remote Consent",
+          "type": "string"
+        },
         "defuddle": {
           "$ref": "#/$defs/DefuddleConfig"
         },
@@ -478,7 +489,7 @@
           "$ref": "#/$defs/ImageFilterConfig"
         },
         "stdout_persist": {
-          "default": false,
+          "default": true,
           "title": "Stdout Persist",
           "type": "boolean"
         },
@@ -813,6 +824,12 @@
           "default": "en",
           "title": "Lang",
           "type": "string"
+        },
+        "per_page_routing": {
+          "default": true,
+          "description": "With --ocr, keep the native text layer for pages that do not look scanned/garbled and OCR only the remaining pages. Disable to OCR every page.",
+          "title": "Per Page Routing",
+          "type": "boolean"
         }
       },
       "title": "OCRConfig",
@@ -847,6 +864,18 @@
           "default": false,
           "title": "Allow Symlinks",
           "type": "boolean"
+        },
+        "report": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Report"
         }
       },
       "title": "OutputConfig",
@@ -1292,6 +1321,24 @@
       },
       "title": "ScreenshotConfig",
       "type": "object"
+    },
+    "SecurityConfig": {
+      "description": "Security-related conversion safeguards.",
+      "properties": {
+        "pdf_sanitize": {
+          "default": "warn",
+          "description": "Hidden-text handling for PDFs: 'warn' logs invisible text (white-on-white, zero-opacity, <2pt, off-page) that would end up in the markdown, 'remove' also strips verbatim matches from the output, 'off' disables detection.",
+          "enum": [
+            "off",
+            "warn",
+            "remove"
+          ],
+          "title": "Pdf Sanitize",
+          "type": "string"
+        }
+      },
+      "title": "SecurityConfig",
+      "type": "object"
     }
   },
   "description": "Main configuration model.",
@@ -1325,6 +1372,9 @@
     },
     "fetch": {
       "$ref": "#/$defs/FetchConfig"
+    },
+    "security": {
+      "$ref": "#/$defs/SecurityConfig"
     },
     "presets": {
       "additionalProperties": {

@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import click
 from loguru import logger
 
 from markitai.cli import ui
@@ -19,7 +20,7 @@ from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
 from markitai.converter.base import EXTENSION_MAP
 from markitai.security import atomic_write_text
-from markitai.utils.cli_helpers import url_to_filename
+from markitai.utils.cli_helpers import sanitize_filename, url_to_filename
 from markitai.utils.output import resolve_output_path
 from markitai.utils.paths import ensure_dir, ensure_screenshots_dir
 from markitai.utils.text import format_error_message
@@ -44,12 +45,22 @@ console = get_console()
 from markitai.cli.processors import run_parallel_llm_tasks as _run_parallel_llm_tasks
 
 
+def _file_output_dir(file_path: Path, input_dir: Path, output_dir: Path) -> Path:
+    """Compute per-file output directory, preserving relative structure."""
+    try:
+        rel_path = file_path.parent.relative_to(input_dir)
+        return output_dir / rel_path
+    except ValueError:
+        return output_dir
+
+
 def create_process_file(
     cfg: MarkitaiConfig,
     input_dir: Path,
     output_dir: Path,
     preconverted_map: dict[Path, Path],
     shared_processor: LLMProcessor | None,
+    output_names: dict[Path, str] | None = None,
 ) -> Callable:
     """Create a process_file function using workflow/core pipeline.
 
@@ -62,11 +73,15 @@ def create_process_file(
         output_dir: Output directory
         preconverted_map: Map of pre-converted legacy Office files
         shared_processor: Shared LLM processor for batch mode
+        output_names: Pre-planned output filenames per input path
+            (from ``plan_output_names``); unplanned files derive their
+            name in the core pipeline
 
     Returns:
         An async function that processes a single file and returns ProcessResult
     """
     from markitai.batch import ProcessResult
+    from markitai.utils.paths import plan_output_names
     from markitai.workflow.core import ConversionContext, convert_document_core
 
     async def process_file(file_path: Path) -> ProcessResult:
@@ -78,11 +93,10 @@ def create_process_file(
 
         try:
             # Calculate relative path to preserve directory structure
-            try:
-                rel_path = file_path.parent.relative_to(input_dir)
-                file_output_dir = output_dir / rel_path
-            except ValueError:
-                file_output_dir = output_dir
+            file_output_dir = _file_output_dir(file_path, input_dir, output_dir)
+            output_name = (output_names or {}).get(file_path) or plan_output_names(
+                [(file_path, file_output_dir)]
+            )[file_path]
 
             # Create conversion context
             ctx = ConversionContext(
@@ -91,6 +105,7 @@ def create_process_file(
                 config=cfg,
                 actual_file=preconverted_map.get(file_path),
                 shared_processor=shared_processor,
+                output_name=output_name,
                 use_multiprocess_images=True,
                 input_base_dir=input_dir,
             )
@@ -107,12 +122,10 @@ def create_process_file(
                 return ProcessResult(success=False, error=result.error)
 
             if result.skip_reason == "exists":
-                logger.debug(
-                    f"[SKIP] Output exists: {file_output_dir / f'{file_path.name}.md'}"
-                )
+                logger.debug(f"[SKIP] Output exists: {file_output_dir / output_name}")
                 return ProcessResult(
                     success=True,
-                    output_path=str(file_output_dir / f"{file_path.name}.md"),
+                    output_path=str(file_output_dir / output_name),
                     error="skipped (exists)",
                 )
 
@@ -234,9 +247,9 @@ def create_url_processor(
         }
 
         try:
-            # Generate filename
+            # Generate filename (sanitize custom names to prevent path traversal)
             if custom_name:
-                filename = f"{custom_name}.md"
+                filename = f"{sanitize_filename(custom_name)}.md"
             else:
                 filename = url_to_filename(url)
 
@@ -558,6 +571,13 @@ async def process_batch(
     glob_patterns: tuple[str, ...] = (),
 ) -> None:
     """Process directory in batch mode."""
+    # Batch output must be a directory; reject file-like -o values early
+    if output_dir.suffix == ".md" and not output_dir.is_dir():
+        raise click.UsageError(
+            "-o looks like a file path but input is a directory; "
+            "pass an output directory"
+        )
+
     from datetime import datetime
 
     from markitai.batch import BatchProcessor, FileStatus, UrlState
@@ -729,6 +749,14 @@ async def process_batch(
         shared_renderer = await _get_playwright_renderer(proxy=proxy)
         logger.debug("Created shared PlaywrightRenderer for batch URL processing")
 
+    # Plan output names up front over the full discovered file list so that
+    # collisions (a.pdf + a.docx -> a.md) fall back to legacy naming
+    from markitai.utils.paths import plan_output_names
+
+    output_names = plan_output_names(
+        [(f, _file_output_dir(f, input_dir, output_dir)) for f in files]
+    )
+
     # Create process_file using workflow/core implementation
     process_file = create_process_file(
         cfg=cfg,
@@ -736,6 +764,7 @@ async def process_batch(
         output_dir=output_dir,
         preconverted_map=preconverted_map,
         shared_processor=shared_processor,
+        output_names=output_names,
     )
     logger.debug("Using workflow/core implementation for batch processing")
 
@@ -799,7 +828,7 @@ async def process_batch(
         url_state.started_at = datetime.now().astimezone().isoformat()
         batch._dirty_keys.add(url)
 
-        start_time = asyncio.get_event_loop().time()
+        start_time = asyncio.get_running_loop().time()
 
         try:
             async with url_semaphore:
@@ -831,7 +860,7 @@ async def process_batch(
             logger.error(f"[URL] Failed {url}: {err_msg}")
 
         finally:
-            end_time = asyncio.get_event_loop().time()
+            end_time = asyncio.get_running_loop().time()
             url_state.completed_at = datetime.now().astimezone().isoformat()
             url_state.duration = end_time - start_time
 
@@ -856,7 +885,7 @@ async def process_batch(
         file_state.started_at = datetime.now().astimezone().isoformat()
         batch._dirty_keys.add(file_key)
 
-        start_time = asyncio.get_event_loop().time()
+        start_time = asyncio.get_running_loop().time()
 
         try:
             async with file_semaphore:
@@ -899,7 +928,7 @@ async def process_batch(
             logger.error(f"[FAIL] {file_path.name}: {err_msg}")
 
         finally:
-            end_time = asyncio.get_event_loop().time()
+            end_time = asyncio.get_running_loop().time()
             file_state.completed_at = datetime.now().astimezone().isoformat()
             file_state.duration = end_time - start_time
 
@@ -987,8 +1016,13 @@ async def process_batch(
         if batch.image_analysis_results and cfg.image.desc_enabled:
             write_images_json(output_dir, batch.image_analysis_results)
 
-        # Save report (logging is done inside save_report)
-        batch.save_report()
+        # Save report (default ON for batch runs; output.report=false opts out)
+        if cfg.output.report is not False:
+            batch.save_report()
+        else:
+            # Still persist state for resume capability
+            batch.save_state(force=True, log=True)
+            logger.debug("Report generation disabled (output.report=false)")
 
     # Exit with appropriate code
     total_failed = (state.failed_count if state else 0) + (

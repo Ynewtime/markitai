@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from markitai.config import (
     BUILTIN_PRESETS,
+    ConfigFileError,
     ConfigManager,
     DomainProfileConfig,
     EnvVarNotFoundError,
@@ -490,3 +491,188 @@ class TestDomainProfileStrategyPriority:
     def test_duplicate_rejected(self) -> None:
         with pytest.raises(ValidationError, match="duplicate"):
             DomainProfileConfig(strategy_priority=["static", "static"])
+
+
+class TestNumericBounds:
+    """Regression tests for numeric lower bounds (llm.concurrency, router)."""
+
+    def test_concurrency_zero_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="concurrency"):
+            MarkitaiConfig.model_validate({"llm": {"concurrency": 0}})
+
+    def test_concurrency_negative_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="concurrency"):
+            MarkitaiConfig.model_validate({"llm": {"concurrency": -3}})
+
+    def test_concurrency_one_accepted(self) -> None:
+        cfg = MarkitaiConfig.model_validate({"llm": {"concurrency": 1}})
+        assert cfg.llm.concurrency == 1
+
+    def test_router_num_retries_negative_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="num_retries"):
+            MarkitaiConfig.model_validate(
+                {"llm": {"router_settings": {"num_retries": -1}}}
+            )
+
+    def test_router_num_retries_zero_accepted(self) -> None:
+        cfg = MarkitaiConfig.model_validate(
+            {"llm": {"router_settings": {"num_retries": 0}}}
+        )
+        assert cfg.llm.router_settings.num_retries == 0
+
+    def test_router_timeout_zero_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="timeout"):
+            MarkitaiConfig.model_validate({"llm": {"router_settings": {"timeout": 0}}})
+
+
+class TestConfigFileError:
+    """Regression tests for resilient loading of invalid config files."""
+
+    def test_invalid_file_raises_actionable_error(self, tmp_path: Path) -> None:
+        """An invalid saved value must not surface as a raw ValidationError."""
+        config_file = tmp_path / "markitai.json"
+        config_file.write_text(json.dumps({"image": {"quality": 500}}))
+
+        manager = ConfigManager()
+        with pytest.raises(ConfigFileError) as exc_info:
+            manager.load(config_path=config_file)
+
+        message = str(exc_info.value)
+        assert str(config_file) in message  # which file
+        assert "image.quality" in message  # which field
+        assert "Fix the value" in message  # how to fix
+
+    def test_invalid_file_is_not_deleted(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "markitai.json"
+        config_file.write_text(json.dumps({"image": {"quality": 500}}))
+
+        manager = ConfigManager()
+        with pytest.raises(ConfigFileError):
+            manager.load(config_path=config_file)
+
+        assert config_file.exists()
+        assert json.loads(config_file.read_text()) == {"image": {"quality": 500}}
+
+    def test_error_is_click_exception(self, tmp_path: Path) -> None:
+        """ClickException means the CLI prints the message, not a traceback."""
+        import click
+
+        config_file = tmp_path / "markitai.json"
+        config_file.write_text(json.dumps({"llm": {"concurrency": 0}}))
+
+        with pytest.raises(click.ClickException):
+            ConfigManager().load(config_path=config_file)
+
+
+class TestExplicitConfigPathWarnings:
+    """Tests for warnings on nonexistent explicit config paths."""
+
+    def _capture_warnings(self) -> tuple[int, list[str]]:
+        from loguru import logger
+
+        messages: list[str] = []
+        handler_id = logger.add(
+            lambda m: messages.append(str(m)), level="WARNING", format="{message}"
+        )
+        return handler_id, messages
+
+    def test_missing_explicit_path_warns(self, tmp_path: Path) -> None:
+        from loguru import logger
+
+        handler_id, messages = self._capture_warnings()
+        try:
+            cfg = ConfigManager().load(config_path=tmp_path / "nope.json")
+        finally:
+            logger.remove(handler_id)
+
+        assert isinstance(cfg, MarkitaiConfig)  # falls back to defaults
+        assert any("Config file not found" in m for m in messages)
+
+    def test_missing_env_path_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from loguru import logger
+
+        monkeypatch.setenv("MARKITAI_CONFIG", str(tmp_path / "missing.json"))
+        handler_id, messages = self._capture_warnings()
+        try:
+            cfg = ConfigManager().load()
+        finally:
+            logger.remove(handler_id)
+
+        assert isinstance(cfg, MarkitaiConfig)
+        assert any("MARKITAI_CONFIG" in m for m in messages)
+
+    def test_env_path_expanduser(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """MARKITAI_CONFIG with ~ must be expanded."""
+        home = tmp_path / "home"
+        home.mkdir()
+        config_file = home / "cfg.json"
+        config_file.write_text(json.dumps({"output": {"dir": "./from-env"}}))
+
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))  # Windows
+        monkeypatch.setenv("MARKITAI_CONFIG", "~/cfg.json")
+
+        cfg = ConfigManager().load()
+        assert cfg.output.dir == "./from-env"
+
+
+class TestBracketNotationSetAndNullGet:
+    """Tests for set() with field[N] notation and get() null handling."""
+
+    @pytest.fixture
+    def manager_with_models(self, tmp_path: Path) -> ConfigManager:
+        config_file = tmp_path / "markitai.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "llm": {
+                        "model_list": [
+                            {
+                                "model_name": "default",
+                                "litellm_params": {
+                                    "model": "gemini/flash",
+                                    "weight": 2,
+                                },
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        manager = ConfigManager()
+        manager.load(config_path=config_file)
+        return manager
+
+    def test_set_indexed_key(self, manager_with_models: ConfigManager) -> None:
+        manager_with_models.set("llm.model_list[0].litellm_params.weight", 0)
+        assert manager_with_models.config.llm.model_list[0].litellm_params.weight == 0
+
+    def test_set_indexed_key_persists(
+        self, manager_with_models: ConfigManager, tmp_path: Path
+    ) -> None:
+        manager_with_models.set("llm.model_list[0].litellm_params.weight", 0)
+        save_path = manager_with_models.save()
+
+        saved = json.loads(Path(save_path).read_text())
+        assert saved["llm"]["model_list"][0]["litellm_params"]["weight"] == 0
+        # Untouched sibling keys survive the minimal-diff save
+        assert saved["llm"]["model_list"][0]["model_name"] == "default"
+
+    def test_set_index_out_of_range(self, manager_with_models: ConfigManager) -> None:
+        with pytest.raises(KeyError, match="Index out of range"):
+            manager_with_models.set("llm.model_list[5].model_name", "x")
+
+    def test_get_null_returns_none_not_default(self, tmp_path: Path) -> None:
+        """An existing-but-null field returns None, not the default."""
+        manager = ConfigManager()
+        manager.load(config_path=tmp_path / "none.json")  # defaults
+
+        sentinel = object()
+        # fetch.jina.api_key defaults to None but the key exists
+        assert manager.get("fetch.jina.api_key", sentinel) is None
+        # A truly missing key returns the default
+        assert manager.get("fetch.jina.nope", sentinel) is sentinel

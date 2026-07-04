@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -22,11 +23,297 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.image import ImageProcessor
+from markitai.ocr import is_likely_garbled
 from markitai.utils.mime import get_mime_type, normalize_image_extension
-from markitai.utils.paths import ensure_assets_dir, ensure_screenshots_dir
+from markitai.utils.paths import (
+    create_tracked_temp_dir,
+    ensure_assets_dir,
+    ensure_screenshots_dir,
+)
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
+
+# --- Repeated header/footer suppression --------------------------------------
+
+# Documents with fewer pages are exempt: too few samples to call a line
+# "running" chrome with confidence.
+_HEADER_FOOTER_MIN_DOC_PAGES = 4
+# A normalized boundary line must appear on >= this fraction of pages...
+_HEADER_FOOTER_MIN_FRACTION = 0.6
+# ...and on >= this many pages in absolute terms.
+_HEADER_FOOTER_MIN_PAGES = 3
+# Number of leading/trailing non-empty lines per page examined as candidates.
+_BOUNDARY_LINE_COUNT = 2
+
+_DIGIT_RUN_RE = re.compile(r"\d+")
+_WS_RUN_RE = re.compile(r"\s+")
+
+
+def normalize_boundary_line(line: str) -> str:
+    """Normalize a line for cross-page header/footer matching.
+
+    Lowercases, collapses whitespace, and replaces every digit run with
+    ``#`` so ``Page 1 of 6`` and ``Page 2 of 6`` collapse to the same key.
+
+    Args:
+        line: Raw line text from a page boundary
+
+    Returns:
+        Normalized key used to match repeated lines across pages
+    """
+    collapsed = _WS_RUN_RE.sub(" ", line).strip().lower()
+    return _DIGIT_RUN_RE.sub("#", collapsed)
+
+
+def _boundary_line_indices(lines: list[str]) -> list[int]:
+    """Indices of the first/last ``_BOUNDARY_LINE_COUNT`` non-empty lines."""
+    non_empty = [i for i, line in enumerate(lines) if line.strip()]
+    head = non_empty[:_BOUNDARY_LINE_COUNT]
+    tail = non_empty[-_BOUNDARY_LINE_COUNT:]
+    return sorted(set(head + tail))
+
+
+def _is_protected_line(line: str) -> bool:
+    """Markdown headings and table rows are never stripped as chrome."""
+    stripped = line.lstrip()
+    return stripped.startswith(("#", "|"))
+
+
+def strip_repeated_page_lines(
+    page_texts: list[str],
+) -> tuple[list[str], set[str]]:
+    """Strip running headers/footers repeated across page boundaries.
+
+    For each page the first/last two non-empty lines are candidates. A
+    candidate whose normalized form (see :func:`normalize_boundary_line`)
+    appears on >=60% of pages and on at least 3 pages is a running
+    header/footer and is removed from every page's boundary. Markdown
+    headings (``#``) and table rows (``|``) are never removed, and
+    documents with fewer than 4 pages are exempt entirely.
+
+    Args:
+        page_texts: Per-page markdown text, in page order
+
+    Returns:
+        Tuple of (page texts with repeated lines removed, set of
+        normalized lines that were stripped)
+    """
+    if len(page_texts) < _HEADER_FOOTER_MIN_DOC_PAGES:
+        return page_texts, set()
+
+    pages_lines = [text.splitlines() for text in page_texts]
+
+    counts: dict[str, int] = {}
+    for lines in pages_lines:
+        seen: set[str] = set()
+        for idx in _boundary_line_indices(lines):
+            if _is_protected_line(lines[idx]):
+                continue
+            norm = normalize_boundary_line(lines[idx])
+            if norm:
+                seen.add(norm)
+        for norm in seen:
+            counts[norm] = counts.get(norm, 0) + 1
+
+    threshold = max(
+        _HEADER_FOOTER_MIN_PAGES,
+        math.ceil(len(page_texts) * _HEADER_FOOTER_MIN_FRACTION),
+    )
+    repeated = {norm for norm, count in counts.items() if count >= threshold}
+    if not repeated:
+        return page_texts, set()
+
+    result: list[str] = []
+    stripped: set[str] = set()
+    for page_index, lines in enumerate(pages_lines):
+        drop: set[int] = set()
+        for idx in _boundary_line_indices(lines):
+            if _is_protected_line(lines[idx]):
+                continue
+            norm = normalize_boundary_line(lines[idx])
+            if norm in repeated:
+                drop.add(idx)
+                stripped.add(norm)
+        if drop:
+            result.append(
+                "\n".join(line for i, line in enumerate(lines) if i not in drop)
+            )
+        else:
+            result.append(page_texts[page_index])
+    return result, stripped
+
+
+# --- Scanned/garbled page advisory --------------------------------------------
+
+# A page with less than this much extracted text is "near-zero text".
+_SCANNED_MAX_TEXT_CHARS = 50
+# Minimum summed image coverage for a near-textless page to look scanned.
+_SCANNED_MIN_IMAGE_COVERAGE = 0.5
+
+
+def _page_image_coverage(page: Any) -> float:
+    """Summed image-bbox area over page area, clamped to 1.0.
+
+    Uses ``page.get_images``/``page.get_image_rects`` only (no rendering),
+    so overlapping images can inflate the raw sum -- read it as "summed
+    image-bbox area", not unique covered area.
+    """
+    page_area = page.rect.get_area()
+    if page_area <= 0:
+        return 0.0
+    total = 0.0
+    for xref in {img[0] for img in page.get_images(full=True)}:
+        try:
+            rects = page.get_image_rects(xref)
+        except Exception:
+            continue
+        total += sum(rect.get_area() for rect in rects)
+    return min(total / page_area, 1.0)
+
+
+def collect_page_advisories(doc: Any) -> tuple[list[int], list[int]]:
+    """Compute cheap per-page scan/garbled signals for an open PDF document.
+
+    A page with near-zero extracted text but significant image coverage
+    looks scanned; a page whose text fails the vowel-ratio check (see
+    :func:`markitai.ocr.is_likely_garbled`) is garbled. No rendering is
+    performed, so this is cheap even for large documents.
+
+    Args:
+        doc: An open pymupdf Document
+
+    Returns:
+        Tuple of (scanned-looking page numbers, garbled page numbers),
+        both 1-based
+    """
+    scanned: list[int] = []
+    garbled: list[int] = []
+    for i, page in enumerate(doc):
+        text = page.get_text().strip()
+        if len(text) < _SCANNED_MAX_TEXT_CHARS:
+            if _page_image_coverage(page) >= _SCANNED_MIN_IMAGE_COVERAGE:
+                scanned.append(i + 1)
+        elif is_likely_garbled(text):
+            garbled.append(i + 1)
+    return scanned, garbled
+
+
+def _collect_native_text_pages(doc: Any) -> dict[int, str]:
+    """Native text for pages that do not look scanned or garbled.
+
+    Mirrors the signals of :func:`collect_page_advisories`: a page
+    qualifies for native extraction when it carries a meaningful text
+    layer (>= ``_SCANNED_MAX_TEXT_CHARS``) that passes the garble check.
+    Everything else (near-textless / scanned / garbled pages) is left
+    for OCR.
+
+    Args:
+        doc: An open pymupdf Document
+
+    Returns:
+        Mapping of 0-based page number -> stripped native page text
+    """
+    native: dict[int, str] = {}
+    for i, page in enumerate(doc):
+        text = page.get_text().strip()
+        if len(text) >= _SCANNED_MAX_TEXT_CHARS and not is_likely_garbled(text):
+            native[i] = text
+    return native
+
+
+# --- Hidden-text / prompt-injection sanitization -------------------------------
+
+# Spans below this font size (pt) are effectively invisible when rendered.
+_HIDDEN_MAX_FONT_SIZE = 2.0
+# Fill luminance above this is a white-on-white candidate. Background
+# sampling is deliberately not performed: the page background is assumed
+# to be the default white.
+_HIDDEN_MIN_LUMINANCE = 0.95
+# Max characters of hidden text quoted in the consolidated warning.
+_HIDDEN_EXCERPT_MAX_CHARS = 80
+
+
+def _color_luminance(color: int) -> float:
+    """Rec. 601 luminance of a packed sRGB int color, in [0, 1]."""
+    r = (color >> 16) & 0xFF
+    g = (color >> 8) & 0xFF
+    b = color & 0xFF
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+
+
+def _bbox_fully_outside(
+    bbox: tuple[float, float, float, float],
+    page_rect: tuple[float, float, float, float],
+) -> bool:
+    """True when ``bbox`` does not intersect ``page_rect`` (the CropBox)."""
+    x0, y0, x1, y1 = bbox
+    px0, py0, px1, py1 = page_rect
+    return x1 <= px0 or x0 >= px1 or y1 <= py0 or y0 >= py1
+
+
+def _is_hidden_span(
+    span: dict[str, Any], page_rect: tuple[float, float, float, float]
+) -> bool:
+    """Classify a pymupdf text span as hidden (invisible to a human reader).
+
+    A span is hidden when it is drawn at zero opacity (pymupdf maps text
+    render mode 3 to ``alpha == 0``), its font size is below 2pt, its
+    fill color is near-white on the assumed-white page background, or
+    its bbox lies fully outside the page CropBox.
+    """
+    text = span.get("text", "")
+    if not isinstance(text, str) or not text.strip():
+        return False
+    if span.get("alpha", 255) == 0:
+        return True
+    size = span.get("size")
+    if isinstance(size, (int, float)) and size < _HIDDEN_MAX_FONT_SIZE:
+        return True
+    color = span.get("color")
+    if isinstance(color, int) and _color_luminance(color) > _HIDDEN_MIN_LUMINANCE:
+        return True
+    bbox = span.get("bbox")
+    if (
+        isinstance(bbox, (tuple, list))
+        and len(bbox) == 4
+        and _bbox_fully_outside(tuple(bbox), page_rect)
+    ):
+        return True
+    return False
+
+
+def collect_hidden_text(doc: Any) -> dict[int, list[str]]:
+    """Detect hidden text spans (prompt-injection vector) in an open PDF.
+
+    Scans ``page.get_text("dict")`` spans using a textpage clipped to the
+    MediaBox so text placed outside the CropBox is also examined. See
+    :func:`_is_hidden_span` for the detection criteria.
+
+    Args:
+        doc: An open pymupdf Document
+
+    Returns:
+        Mapping of 1-based page number -> list of hidden span texts
+    """
+    hidden: dict[int, list[str]] = {}
+    for i, page in enumerate(doc):
+        try:
+            page_rect = tuple(page.rect)
+            textpage = page.get_textpage(clip=page.mediabox)
+            data = page.get_text("dict", textpage=textpage)
+        except Exception as e:
+            logger.debug("[PDF] Hidden-text scan failed for page {}: {}", i + 1, e)
+            continue
+        texts: list[str] = []
+        for block in data.get("blocks", []):
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    if _is_hidden_span(span, page_rect):
+                        texts.append(span["text"].strip())
+        if texts:
+            hidden[i + 1] = texts
+    return hidden
 
 
 @register_converter(FileFormat.PDF)
@@ -214,7 +501,8 @@ class PdfConverter(BaseConverter):
             # Merge page chunks and add page markers for proper splitting
             # Format: <!-- Page number: N --> (consistent with Slide number format)
             # Ensure blank line after marker for proper markdown formatting
-            markdown_parts = []
+            page_numbers: list[int] = []
+            page_texts: list[str] = []
             reference_images: list[dict[str, Any]] = []
             for i, chunk in enumerate(page_results):
                 page_num = i + 1
@@ -229,10 +517,33 @@ class PdfConverter(BaseConverter):
                         chunk, page_num
                     )
                     reference_images.extend(page_references)
-                page_marker = f"<!-- Page number: {page_num} -->"
-                markdown_parts.append(f"{page_marker}\n\n{page_text}")
+                page_numbers.append(page_num)
+                page_texts.append(page_text)
+
+            # Strip running headers/footers repeated across page boundaries
+            page_texts, stripped_lines = strip_repeated_page_lines(page_texts)
+            if stripped_lines:
+                logger.debug(
+                    "[PDF] Stripped {} repeated header/footer line(s): {}",
+                    len(stripped_lines),
+                    sorted(stripped_lines),
+                )
+
+            # Hidden-text / prompt-injection sanitization (warn or remove)
+            page_texts = self._sanitize_hidden_text(
+                input_path, page_numbers, page_texts
+            )
+
+            markdown_parts = [
+                f"<!-- Page number: {page_num} -->\n\n{page_text}"
+                for page_num, page_text in zip(page_numbers, page_texts)
+            ]
 
             markdown = "\n\n".join(markdown_parts)
+
+            # Advisory only: warn when pages look scanned or garbled so the
+            # user can re-run with --ocr (behavior is never changed here)
+            self._warn_scanned_or_garbled(input_path)
 
             # Fix image paths in markdown: pymupdf4llm uses absolute/full paths,
             # we need relative paths (assets/xxx.jpg)
@@ -358,6 +669,120 @@ class PdfConverter(BaseConverter):
         finally:
             if temp_dir and temp_dir.exists():
                 shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _sanitize_hidden_text(
+        self,
+        input_path: Path,
+        page_numbers: list[int],
+        page_texts: list[str],
+    ) -> list[str]:
+        """Warn about (or remove) hidden text in the composed page texts.
+
+        Behavior is controlled by ``security.pdf_sanitize``:
+
+        - ``"off"``: no detection, texts returned unchanged.
+        - ``"warn"`` (default): one consolidated warning naming the pages
+          and a short excerpt of the hidden text; texts unchanged.
+        - ``"remove"``: additionally strips hidden span texts from the
+          matching page's text. Limitation: pymupdf4llm may reflow or
+          style the text (bold markers, hyphenation, line wrapping), so
+          only *verbatim* occurrences of a hidden span are removed; text
+          outside the CropBox never appears in the output to begin with.
+
+        Detection failures are debug-logged and never break a conversion.
+
+        Args:
+            input_path: Path to the PDF file being converted
+            page_numbers: 1-based page number for each entry in page_texts
+            page_texts: Per-page markdown text, parallel to page_numbers
+
+        Returns:
+            Page texts, possibly with hidden text removed
+        """
+        mode = self.config.security.pdf_sanitize if self.config else "warn"
+        if mode == "off":
+            return page_texts
+
+        try:
+            import pymupdf
+
+            doc = pymupdf.open(input_path)
+            try:
+                hidden = collect_hidden_text(doc)
+            finally:
+                doc.close()
+        except Exception as e:
+            logger.debug(
+                "[PDF] Hidden-text detection failed for {}: {}", input_path.name, e
+            )
+            return page_texts
+
+        if not hidden:
+            return page_texts
+
+        total_spans = sum(len(texts) for texts in hidden.values())
+        excerpt = "; ".join(t for texts in hidden.values() for t in texts)
+        if len(excerpt) > _HIDDEN_EXCERPT_MAX_CHARS:
+            excerpt = excerpt[:_HIDDEN_EXCERPT_MAX_CHARS] + "..."
+        logger.warning(
+            "[PDF] {} hidden text span(s) detected on page(s) {} "
+            "(possible prompt injection; excerpt: {!r}){}",
+            total_spans,
+            ", ".join(str(p) for p in sorted(hidden)),
+            excerpt,
+            "; removing verbatim matches from output"
+            if mode == "remove"
+            else "; set security.pdf_sanitize to 'remove' to strip it",
+        )
+
+        if mode != "remove":
+            return page_texts
+
+        index_by_page = {page_num: i for i, page_num in enumerate(page_numbers)}
+        result = list(page_texts)
+        for page_num, texts in hidden.items():
+            idx = index_by_page.get(page_num)
+            if idx is None:
+                continue
+            for text in texts:
+                result[idx] = result[idx].replace(text, "")
+        return result
+
+    def _warn_scanned_or_garbled(self, input_path: Path) -> None:
+        """Emit one consolidated warning when pages look scanned or garbled.
+
+        Advisory only: conversion behavior is unchanged and OCR is never
+        auto-enabled. Failures are swallowed (debug-logged) so the check
+        can never break a conversion.
+
+        Args:
+            input_path: Path to the PDF file being converted
+        """
+        try:
+            import pymupdf
+
+            doc = pymupdf.open(input_path)
+            try:
+                scanned_pages, garbled_pages = collect_page_advisories(doc)
+            finally:
+                doc.close()
+        except Exception as e:
+            logger.debug(
+                "[PDF] Scan/garbled advisory check failed for {}: {}",
+                input_path.name,
+                e,
+            )
+            return
+
+        flagged = sorted(set(scanned_pages) | set(garbled_pages))
+        if not flagged:
+            return
+        logger.warning(
+            "[PDF] {} page(s) look scanned/garbled (pages {}); "
+            "consider re-running with --ocr",
+            len(flagged),
+            ", ".join(str(p) for p in flagged),
+        )
 
     def _render_pages_parallel(
         self,
@@ -566,7 +991,7 @@ class PdfConverter(BaseConverter):
         if output_dir:
             screenshots_dir = ensure_screenshots_dir(output_dir)
         else:
-            screenshots_dir = Path(tempfile.mkdtemp())
+            screenshots_dir = create_tracked_temp_dir()
 
         # Get image format from config
         image_format = "jpg"
@@ -583,9 +1008,25 @@ class PdfConverter(BaseConverter):
 
         # Step 2: Render each page as image (only if screenshot enabled)
         # Use parallel processing for better performance
+        # Per-page OCR routing: pages with a healthy native text layer keep
+        # that text; only scanned/garbled pages go through OCR.
+        per_page_routing = ocr_config.per_page_routing if ocr_config else True
+        native_texts: dict[int, str] = {}
         doc = pymupdf.open(input_path)
         total_pages = len(doc)
+        if per_page_routing:
+            try:
+                native_texts = _collect_native_text_pages(doc)
+            except Exception as e:
+                logger.debug("[PDF] OCR routing check failed: {}", e)
+                native_texts = {}
         doc.close()
+        if per_page_routing:
+            logger.debug(
+                "OCR routing: {} pages native, {} pages OCR",
+                len(native_texts),
+                total_pages - len(native_texts),
+            )
 
         max_workers = self._get_worker_count(input_path, total_pages)
 
@@ -622,19 +1063,23 @@ class PdfConverter(BaseConverter):
                         actual_path.suffix, default=f"image/{image_format}"
                     )
 
-                    # OCR - reuse already rendered pixmap to avoid re-rendering
-                    try:
-                        result = ocr.recognize_pixmap(
-                            pix.samples, pix.width, pix.height, pix.n
-                        )
-                        text_content = (
-                            result.text.strip()
-                            if result.text.strip()
-                            else "*(No text detected)*"
-                        )
-                    except Exception as e:
-                        logger.warning(f"OCR failed for page {page_num + 1}: {e}")
-                        text_content = f"*(OCR failed: {e})*"
+                    if page_num in native_texts:
+                        # Routed native: page has a healthy text layer, skip OCR
+                        text_content = native_texts[page_num]
+                    else:
+                        # OCR - reuse already rendered pixmap to avoid re-rendering
+                        try:
+                            result = ocr.recognize_pixmap(
+                                pix.samples, pix.width, pix.height, pix.n
+                            )
+                            text_content = (
+                                result.text.strip()
+                                if result.text.strip()
+                                else "*(No text detected)*"
+                            )
+                        except Exception as e:
+                            logger.warning(f"OCR failed for page {page_num + 1}: {e}")
+                            text_content = f"*(OCR failed: {e})*"
 
                     page_content = f"{text_content}\n\n<!-- ![Page {page_num + 1}]({SCREENSHOTS_REL_PATH}/{actual_name}) -->"
 
@@ -692,6 +1137,9 @@ class PdfConverter(BaseConverter):
 
             def process_page_ocr_only(page_num: int) -> dict:
                 """Process a single page: OCR only (thread-safe)."""
+                if page_num in native_texts:
+                    # Routed native: page has a healthy text layer, skip OCR
+                    return {"page_num": page_num, "markdown": native_texts[page_num]}
                 try:
                     result = ocr.recognize_pdf_page(input_path, page_num, dpi=dpi)
                     text_content = (

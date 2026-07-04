@@ -11,10 +11,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+import click
 from loguru import logger
 
 from markitai.cli import ui
-from markitai.cli.console import get_console
+from markitai.cli.console import get_console, get_stderr_console
+from markitai.cli.processors import split_output_file_target
 from markitai.config import MarkitaiConfig
 from markitai.constants import SCREENSHOTS_REL_PATH
 from markitai.json_order import order_report
@@ -22,6 +24,7 @@ from markitai.security import atomic_write_json, atomic_write_text
 from markitai.utils.cli_helpers import (
     compute_task_hash,
     get_report_file_path,
+    sanitize_filename,
     url_to_filename,
 )
 from markitai.utils.output import resolve_output_path
@@ -48,6 +51,21 @@ console = get_console()
 
 # Re-export from package for backwards compatibility
 from markitai.cli.processors import run_parallel_llm_tasks as _run_parallel_llm_tasks
+
+
+def _print_multiline_error(message: str, console: Any) -> None:
+    """Print a (possibly multi-line, actionable) error without rich markup.
+
+    Actionable error blocks contain literal brackets (e.g. 'markitai[all]')
+    that rich would swallow as markup tags, so continuation lines are printed
+    with markup disabled.
+    """
+    from rich.markup import escape
+
+    first, *rest = message.splitlines() or [""]
+    ui.error(escape(first), console=console)
+    for line in rest:
+        console.print(f"    {line}", markup=False, highlight=False)
 
 
 async def process_url(
@@ -110,11 +128,20 @@ async def process_url(
     if cfg.ocr.enabled:
         logger.warning("[URL] --ocr is not supported for URL conversion, ignored")
 
-    # Generate output filename from URL
-    filename = url_to_filename(url)
+    # `-o out.md` (single-URL mode) targets an output FILE, not a directory:
+    # the parent becomes the output dir and the name overrides derived naming
+    explicit_file_name: str | None = None
+    if output_dir is not None:
+        output_dir, explicit_file_name = split_output_file_target(output_dir)
 
-    # Determine stdout mode (no output_dir means print to stdout)
+    # Generate output filename from URL (explicit -o file target wins)
+    filename = explicit_file_name or url_to_filename(url)
+
+    # Determine stdout mode (no output_dir means print to stdout).
+    # In stdout mode the markdown content owns stdout, so diagnostics
+    # must go to stderr to keep piped output clean.
     stdout_mode = output_dir is None
+    diag_console = get_stderr_console() if stdout_mode else console
 
     if dry_run:
         feature_str = ui.build_feature_str(cfg)
@@ -206,20 +233,28 @@ async def process_url(
             screenshot_path = fetch_result.screenshot_path
             # Extract source frontmatter from external strategies (defuddle, etc.)
             source_extra_meta = fetch_result.metadata.get("source_frontmatter")
-            logger.info(f"Fetched via {used_strategy}: {url}")
+            cache_note = " (cached)" if fetch_cache_hit else ""
+            logger.info(f"Fetched via {used_strategy}{cache_note}: {url}")
         except JinaRateLimitError:
-            ui.error("Jina Reader rate limit exceeded (free tier: 20 RPM)")
-            ui.step("Try again later or use --playwright for local rendering")
+            ui.error(
+                "Jina Reader rate limit exceeded (free tier: 20 RPM)",
+                console=diag_console,
+            )
+            ui.step(
+                "Try again later or use --playwright for local rendering",
+                console=diag_console,
+            )
             raise SystemExit(1)
         except FetchError as e:
-            ui.error(str(e))
+            _print_multiline_error(str(e), diag_console)
             raise SystemExit(1)
 
         if not original_markdown.strip():
-            ui.error(f"No content extracted from URL: {url}")
+            ui.error(f"No content extracted from URL: {url}", console=diag_console)
             ui.step(
                 "The page may be empty, require JavaScript, "
-                "or use an unsupported format."
+                "or use an unsupported format.",
+                console=diag_console,
             )
             raise SystemExit(1)
 
@@ -280,7 +315,7 @@ async def process_url(
                 progress.log(f"Screenshot saved: {screenshot_path.name}")
                 console.print(f"[green]Screenshot saved:[/green] {screenshot_path}")
             else:
-                console.print(
+                diag_console.print(
                     "[yellow]Warning: --screenshot-only but no screenshot captured[/yellow]"
                 )
             return
@@ -519,7 +554,10 @@ async def process_url(
         progress.clear_and_finish()
 
         if stdout_mode:
-            from markitai.cli.processors.file import resolve_asset_references
+            from markitai.cli.processors.file import (
+                normalize_temp_asset_refs,
+                resolve_asset_references,
+            )
 
             assert temp_dir is not None  # guaranteed when stdout_mode is True
             stdout_content = final_content
@@ -527,6 +565,9 @@ async def process_url(
                 llm_file = output_file.with_suffix(".llm.md")
                 if llm_file.exists():
                     stdout_content = llm_file.read_text(encoding="utf-8")
+
+            # Rewrite absolute temp-dir refs so they resolve below
+            stdout_content = normalize_temp_asset_refs(stdout_content, temp_dir)
 
             # Detect terminal image protocol (only if stdout is a TTY)
             from markitai.utils.terminal_image import detect_protocol
@@ -548,7 +589,9 @@ async def process_url(
                 except Exception as e:
                     logger.warning(f"External image download failed: {e}")
 
-            # Set up asset store if persistence is configured
+            # Set up asset store for image persistence (default on so
+            # stdout links outlive the temp dir; opt out via
+            # image.stdout_persist=false)
             store = None
             if cfg.image.stdout_persist:
                 from markitai.utils.asset_store import AssetStore
@@ -557,6 +600,14 @@ async def process_url(
                     store = AssetStore(Path(cfg.image.stdout_persist_dir))
                 except Exception as e:
                     logger.warning(f"Asset store init failed: {e}")
+            else:
+                from markitai.cli.processors.file import (
+                    _ASSET_REF_PATTERN,
+                    _warn_ephemeral_links,
+                )
+
+                if _ASSET_REF_PATTERN.search(stdout_content):
+                    _warn_ephemeral_links()
 
             stdout_content = resolve_asset_references(
                 stdout_content,
@@ -566,90 +617,108 @@ async def process_url(
                 source_name=url,
             )
 
-            if protocol is not None:
-                sys.stdout.write(stdout_content)
-                sys.stdout.flush()
-            else:
-                console.print(stdout_content, markup=False, highlight=False)
+            # Always write content raw: Rich's console.print hard-wraps at
+            # terminal width, breaking long URLs/lines mid-token
+            sys.stdout.write(stdout_content)
+            if not stdout_content.endswith("\n"):
+                sys.stdout.write("\n")
+            sys.stdout.flush()
         else:
-            # File mode: generate report and show concise result
+            # File mode: show concise result (report only if explicitly enabled)
             finished_at = datetime.now()
             duration = (finished_at - started_at).total_seconds()
 
-            input_tokens = sum(u.get("input_tokens", 0) for u in llm_usage.values())
-            output_tokens = sum(u.get("output_tokens", 0) for u in llm_usage.values())
-            requests = sum(u.get("requests", 0) for u in llm_usage.values())
+            # Generate report only when explicitly enabled (output.report=true);
+            # single-URL conversions skip reports by default
+            if cfg.output.report is True:
+                input_tokens = sum(u.get("input_tokens", 0) for u in llm_usage.values())
+                output_tokens = sum(
+                    u.get("output_tokens", 0) for u in llm_usage.values()
+                )
+                requests = sum(u.get("requests", 0) for u in llm_usage.values())
 
-            task_options = {
-                "llm": cfg.llm.enabled,
-                "url": url,
-            }
-            task_hash = compute_task_hash(
-                effective_output_dir, effective_output_dir, task_options
-            )
-            report_path = get_report_file_path(
-                effective_output_dir, task_hash, cfg.output.on_conflict
-            )
-            report_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Determine cache hit status (LLM was enabled but no tokens used)
-            llm_cache_hit = cfg.llm.enabled and requests == 0
-
-            report = {
-                "version": "1.0",
-                "generated_at": datetime.now().astimezone().isoformat(),
-                "log_file": str(log_file_path) if log_file_path else None,
-                "options": {
+                task_options = {
                     "llm": cfg.llm.enabled,
-                    "cache": cfg.cache.enabled,
-                    "fetch_strategy": used_strategy,
-                    "alt": cfg.image.alt_enabled,
-                    "desc": cfg.image.desc_enabled,
-                },
-                "summary": {
-                    "total_documents": 0,
-                    "completed_documents": 0,
-                    "failed_documents": 0,
-                    "total_urls": 1,
-                    "completed_urls": 1,
-                    "failed_urls": 0,
-                    "duration": duration,
-                },
-                "llm_usage": {
-                    "models": llm_usage,
-                    "requests": requests,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "cost_usd": llm_cost,
-                },
-                "urls": {
-                    url: {
-                        "status": "completed",
-                        "source_file": "cli",
-                        "error": None,
-                        "output": str(
-                            output_file.with_suffix(".llm.md")
-                            if cfg.llm.enabled
-                            else output_file
-                        ),
-                        "fetch_strategy": used_strategy,
-                        "fetch_cache_hit": fetch_cache_hit,
-                        "llm_cache_hit": llm_cache_hit,
-                        "images": images_count,
-                        "screenshots": screenshots_count,
-                        "duration": duration,
-                        "llm_usage": llm_usage,
-                    }
-                },
-            }
+                    "url": url,
+                }
+                task_hash = compute_task_hash(
+                    effective_output_dir, effective_output_dir, task_options
+                )
+                report_path = get_report_file_path(
+                    effective_output_dir, task_hash, cfg.output.on_conflict
+                )
+                report_path.parent.mkdir(parents=True, exist_ok=True)
 
-            atomic_write_json(report_path, report, order_func=order_report)
-            logger.debug(f"Report saved: {report_path}")
+                # Determine cache hit status (LLM was enabled but no tokens used)
+                llm_cache_hit = cfg.llm.enabled and requests == 0
+
+                report = {
+                    "version": "1.0",
+                    "generated_at": datetime.now().astimezone().isoformat(),
+                    "log_file": str(log_file_path) if log_file_path else None,
+                    "options": {
+                        "llm": cfg.llm.enabled,
+                        "cache": cfg.cache.enabled,
+                        "fetch_strategy": used_strategy,
+                        "alt": cfg.image.alt_enabled,
+                        "desc": cfg.image.desc_enabled,
+                    },
+                    "summary": {
+                        "total_documents": 0,
+                        "completed_documents": 0,
+                        "failed_documents": 0,
+                        "total_urls": 1,
+                        "completed_urls": 1,
+                        "failed_urls": 0,
+                        "duration": duration,
+                    },
+                    "llm_usage": {
+                        "models": llm_usage,
+                        "requests": requests,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cost_usd": llm_cost,
+                    },
+                    "urls": {
+                        url: {
+                            "status": "completed",
+                            "source_file": "cli",
+                            "error": None,
+                            "output": str(
+                                output_file.with_suffix(".llm.md")
+                                if cfg.llm.enabled
+                                else output_file
+                            ),
+                            "fetch_strategy": used_strategy,
+                            "fetch_cache_hit": fetch_cache_hit,
+                            "llm_cache_hit": llm_cache_hit,
+                            "images": images_count,
+                            "screenshots": screenshots_count,
+                            "duration": duration,
+                            "llm_usage": llm_usage,
+                        }
+                    },
+                }
+
+                atomic_write_json(report_path, report, order_func=order_report)
+                logger.debug(f"Report saved: {report_path}")
 
             final_output_file = (
                 output_file.with_suffix(".llm.md") if cfg.llm.enabled else output_file
             )
             if not final_output_file.exists() and cfg.llm.enabled:
+                final_output_file = output_file
+
+            # Explicit -o file target: the final content must land exactly at
+            # the requested path. In LLM mode (without --keep-base) the final
+            # file is `<name>.llm.md`; move it onto the requested `.md` path.
+            if (
+                explicit_file_name is not None
+                and final_output_file != output_file
+                and final_output_file.exists()
+                and not output_file.exists()
+            ):
+                final_output_file.replace(output_file)
                 final_output_file = output_file
 
             if verbose:
@@ -670,7 +739,7 @@ async def process_url(
     except SystemExit:
         raise
     except Exception as e:
-        ui.error(str(e))
+        _print_multiline_error(str(e), diag_console)
         raise SystemExit(1)
     finally:
         # Cleanup temp directory for stdout mode
@@ -709,6 +778,13 @@ async def process_url_batch(
         fetch_strategy: Strategy to use for fetching URL content
         explicit_fetch_strategy: If True, strategy was explicitly set via CLI flag
     """
+    # Batch output must be a directory; reject file-like -o values early
+    if output_dir.suffix == ".md" and not output_dir.is_dir():
+        raise click.UsageError(
+            "-o looks like a file path but input is a URL list; "
+            "pass an output directory"
+        )
+
     from datetime import datetime
 
     from rich.progress import (
@@ -819,9 +895,9 @@ async def process_url_batch(
 
         async with semaphore:
             try:
-                # Generate filename
+                # Generate filename (sanitize custom names to prevent path traversal)
                 if custom_name:
-                    filename = f"{custom_name}.md"
+                    filename = f"{sanitize_filename(custom_name)}.md"
                 else:
                     filename = url_to_filename(url)
 
@@ -861,7 +937,9 @@ async def process_url_batch(
                     failed += 1
                     return
                 except FetchError as e:
-                    err_msg = format_error_message(e)
+                    # Actionable fetch errors are multi-line blocks; keep them
+                    # intact in logs/report instead of truncating at 200 chars.
+                    err_msg = format_error_message(e, max_length=800)
                     logger.error(f"Failed to fetch {url}: {err_msg}")
                     results[url] = {"status": "failed", "error": err_msg}
                     failed += 1
@@ -1029,48 +1107,53 @@ async def process_url_batch(
         tasks = [process_single_url(entry, task, progress) for entry in url_entries]
         await asyncio.gather(*tasks)
 
-    # Generate report
+    # Generate report (default ON for URL-batch runs; output.report=false opts out)
     finished_at = datetime.now()
     duration = (finished_at - started_at).total_seconds()
 
-    input_tokens = sum(u.get("input_tokens", 0) for u in total_llm_usage.values())
-    output_tokens = sum(u.get("output_tokens", 0) for u in total_llm_usage.values())
-    requests = sum(u.get("requests", 0) for u in total_llm_usage.values())
+    if cfg.output.report is not False:
+        input_tokens = sum(u.get("input_tokens", 0) for u in total_llm_usage.values())
+        output_tokens = sum(u.get("output_tokens", 0) for u in total_llm_usage.values())
+        requests = sum(u.get("requests", 0) for u in total_llm_usage.values())
 
-    task_options = {
-        "llm": cfg.llm.enabled,
-        "alt": cfg.image.alt_enabled,
-        "desc": cfg.image.desc_enabled,
-    }
-    task_hash = compute_task_hash(output_dir, output_dir, task_options)
-    report_path = get_report_file_path(output_dir, task_hash, cfg.output.on_conflict)
-    report_path.parent.mkdir(parents=True, exist_ok=True)
+        task_options = {
+            "llm": cfg.llm.enabled,
+            "alt": cfg.image.alt_enabled,
+            "desc": cfg.image.desc_enabled,
+        }
+        task_hash = compute_task_hash(output_dir, output_dir, task_options)
+        report_path = get_report_file_path(
+            output_dir, task_hash, cfg.output.on_conflict
+        )
+        report_path.parent.mkdir(parents=True, exist_ok=True)
 
-    report = {
-        "version": "1.0",
-        "generated_at": datetime.now().astimezone().isoformat(),
-        "log_file": str(log_file_path) if log_file_path else None,
-        "summary": {
-            "total_documents": 0,
-            "completed_documents": 0,
-            "failed_documents": 0,
-            "total_urls": len(url_entries),
-            "completed_urls": completed,
-            "failed_urls": failed,
-            "duration": duration,
-        },
-        "llm_usage": {
-            "models": total_llm_usage,
-            "requests": requests,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "cost_usd": total_llm_cost,
-        },
-        "urls": results,
-    }
+        report = {
+            "version": "1.0",
+            "generated_at": datetime.now().astimezone().isoformat(),
+            "log_file": str(log_file_path) if log_file_path else None,
+            "summary": {
+                "total_documents": 0,
+                "completed_documents": 0,
+                "failed_documents": 0,
+                "total_urls": len(url_entries),
+                "completed_urls": completed,
+                "failed_urls": failed,
+                "duration": duration,
+            },
+            "llm_usage": {
+                "models": total_llm_usage,
+                "requests": requests,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost_usd": total_llm_cost,
+            },
+            "urls": results,
+        }
 
-    atomic_write_json(report_path, report, order_func=order_report)
-    logger.debug(f"Report saved: {report_path}")
+        atomic_write_json(report_path, report, order_func=order_report)
+        logger.debug(f"Report saved: {report_path}")
+    else:
+        logger.debug("Report generation disabled (output.report=false)")
 
     # Print summary
     ui.summary(f"Done: {completed} URLs ({duration:.1f}s)")

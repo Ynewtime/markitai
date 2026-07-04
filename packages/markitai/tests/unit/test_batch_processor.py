@@ -224,6 +224,44 @@ class TestCreateProcessFile:
         assert result.error is not None
 
     @pytest.mark.asyncio
+    async def test_llm_failure_returns_failed_result_not_cache_hit(
+        self,
+        default_config: MarkitaiConfig,
+        sample_input_dir: Path,
+        sample_output_dir: Path,
+    ) -> None:
+        """Regression: LLM errors were swallowed with empty usage, so the file
+        was reported success=True with cache_hit=True and marked COMPLETED
+        pointing at a nonexistent .llm.md file."""
+        from markitai.cli.processors.batch import create_process_file
+
+        default_config.llm.enabled = True
+
+        txt_file = sample_input_dir / "test.txt"
+        txt_file.write_text("# Test Document\n\nSome content here.")
+
+        failing_processor = MagicMock()
+        failing_processor.process_document = AsyncMock(
+            side_effect=RuntimeError("LLM API down")
+        )
+
+        process_file = create_process_file(
+            cfg=default_config,
+            input_dir=sample_input_dir,
+            output_dir=sample_output_dir,
+            preconverted_map={},
+            shared_processor=failing_processor,
+        )
+
+        result = await process_file(txt_file)
+
+        assert result.success is False
+        assert result.error is not None
+        assert result.cache_hit is False
+        # No .llm.md output should exist
+        assert not (sample_output_dir / "test.txt.llm.md").exists()
+
+    @pytest.mark.asyncio
     async def test_process_file_skips_existing_when_configured(
         self,
         default_config: MarkitaiConfig,
@@ -239,8 +277,8 @@ class TestCreateProcessFile:
         txt_file = sample_input_dir / "test.txt"
         txt_file.write_text("# Test")
 
-        # Create existing output file
-        existing_output = sample_output_dir / "test.txt.md"
+        # Create existing output file (extension-replacement naming)
+        existing_output = sample_output_dir / "test.md"
         existing_output.write_text("existing content")
 
         process_file = create_process_file(
@@ -503,6 +541,53 @@ class TestCreateUrlProcessor:
 
             assert result.success is True
             assert "my_custom_name.md" in str(result.output_path)
+
+    @pytest.mark.asyncio
+    async def test_url_processor_sanitizes_custom_name_path_traversal(
+        self,
+        default_config: MarkitaiConfig,
+        sample_output_dir: Path,
+        sample_input_dir: Path,
+    ) -> None:
+        """Regression: a custom output name like ../../x escaped output_dir."""
+        from markitai.cli.processors.batch import create_url_processor
+
+        process_url = create_url_processor(
+            cfg=default_config,
+            output_dir=sample_output_dir,
+            fetch_strategy=None,
+            explicit_fetch_strategy=False,
+            shared_processor=None,
+            renderer=None,
+        )
+
+        # Mock successful fetch
+        mock_fetch_result = MagicMock()
+        mock_fetch_result.content = "# Test Content"
+        mock_fetch_result.strategy_used = "static"
+        mock_fetch_result.cache_hit = False
+        mock_fetch_result.static_content = None
+        mock_fetch_result.browser_content = None
+        mock_fetch_result.screenshot_path = None
+        mock_fetch_result.title = "Test"
+
+        with patch(
+            "markitai.fetch.fetch_url",
+            new=AsyncMock(return_value=mock_fetch_result),
+        ):
+            result, _extra_info = await process_url(
+                "https://example.com",
+                sample_input_dir / "urls.txt",
+                "../../escaped",
+            )
+
+        assert result.success is True
+        assert result.output_path is not None
+        # Output must stay inside the output directory
+        output_path = Path(result.output_path).resolve()
+        assert output_path.is_relative_to(sample_output_dir.resolve())
+        # Nothing may be written outside the output directory
+        assert not (sample_output_dir.parent.parent / "escaped.md").exists()
 
     @pytest.mark.asyncio
     async def test_url_processor_tracks_cache_hit(
@@ -1197,6 +1282,47 @@ class TestResumeFunctionality:
         # IN_PROGRESS is not in pending list (it's a crash case)
         assert len(pending) == 0
 
+    def test_load_state_converts_in_progress_to_failed(
+        self,
+        batch_config: BatchConfig,
+        tmp_path: Path,
+    ) -> None:
+        """Regression: IN_PROGRESS entries were loaded verbatim on resume,
+        so interrupted files were never re-processed (get_pending_files only
+        selects PENDING and FAILED)."""
+        from markitai.batch import UrlState
+
+        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        input_dir = tmp_path / "input"
+        input_dir.mkdir(exist_ok=True)
+        files = [input_dir / "a.txt", input_dir / "b.txt"]
+        for f in files:
+            f.touch()
+        processor.state = processor.init_state(
+            input_dir=input_dir, files=files, options={}
+        )
+        # Simulate a crash while a.txt and a URL were processing
+        processor.state.files[str(files[0])].status = FileStatus.IN_PROGRESS
+        processor.state.files[str(files[1])].status = FileStatus.COMPLETED
+        processor.state.urls["https://example.com"] = UrlState(
+            url="https://example.com",
+            source_file="urls.txt",
+            status=FileStatus.IN_PROGRESS,
+        )
+        processor.save_state(force=True)
+
+        # Load state in a fresh processor (resume)
+        processor2 = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        processor2.state_file = processor.state_file
+        loaded = processor2.load_state()
+
+        assert loaded is not None
+        assert loaded.files[str(files[0])].status == FileStatus.FAILED
+        assert loaded.files[str(files[1])].status == FileStatus.COMPLETED
+        assert loaded.urls["https://example.com"].status == FileStatus.FAILED
+        # Interrupted file must be re-processed on resume
+        assert Path(str(files[0])) in loaded.get_pending_files()
+
 
 # =============================================================================
 # Error Handling Tests
@@ -1829,6 +1955,37 @@ class TestIncrementalStateSave:
         for i in range(5, 10):
             key = str(files[i])
             assert loaded.files[key].status == FileStatus.PENDING
+
+    def test_load_state_converts_in_progress_from_jsonl_replay(
+        self, batch_config: BatchConfig, tmp_path: Path
+    ) -> None:
+        """IN_PROGRESS entries replayed from .jsonl are treated as FAILED."""
+        processor = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        input_dir = tmp_path / "input"
+        input_dir.mkdir(exist_ok=True)
+        files = [input_dir / "a.txt"]
+        for f in files:
+            f.touch()
+        processor.state = processor.init_state(
+            input_dir=input_dir, files=files, options={}
+        )
+        processor.save_state(force=True)
+
+        # Incremental save records the file as in_progress, then crash
+        key = str(files[0])
+        processor.state.files[key].status = FileStatus.IN_PROGRESS
+        processor._dirty_keys.add(key)
+        processor._last_state_save = None
+        processor.save_state(force=False)
+        assert processor.state_file.with_suffix(".jsonl").exists()
+
+        processor2 = BatchProcessor(config=batch_config, output_dir=tmp_path)
+        processor2.state_file = processor.state_file
+        loaded = processor2.load_state()
+
+        assert loaded is not None
+        assert loaded.files[key].status == FileStatus.FAILED
+        assert Path(key) in loaded.get_pending_files()
 
     def test_compact_merges_jsonl_into_base(
         self, batch_config: BatchConfig, tmp_path: Path

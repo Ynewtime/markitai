@@ -1,16 +1,20 @@
 """Fetch policy engine for determining URL fetch strategies.
 
-Strategy priority rationale (v0.9.0):
-  defuddle → jina → static → playwright → cloudflare
+Strategy priority rationale (v0.15.0, local-first):
+  static → playwright → defuddle → jina → cloudflare
 
-- defuddle: Free, no auth, best content cleaning (article extraction + frontmatter).
-- jina: Free tier (20 RPM), good JS rendering, structured JSON output.
-- static: Fastest but no content cleaning or JS rendering.
-- playwright: Full JS rendering but heavy dependency, slow.
-- cloudflare: Requires CF account, rate-limited.
+- static: Fast local fetch + native webextract pipeline (full defuddle port:
+  scoring, math, footnotes, code protection) — matches remote defuddle
+  quality on the ground-truth corpus, no data leaves the machine.
+- playwright: Full JS rendering for SPA/JS-heavy pages, local.
+- defuddle: Remote extraction API (free, no auth). Consent-gated
+  (fetch.remote_consent) since it receives the user's URLs.
+- jina: Remote Reader API, free tier (20 RPM), consent-gated; anonymous
+  access is blocked for some domains (e.g. github.com → 451).
+- cloudflare: Requires CF account credentials, rate-limited, consent-gated.
 
-NOTE: defuddle's rate limit is undocumented. If it turns out to be restrictive,
-consider swapping defuddle and static in the default order.
+Tweet URLs are intercepted by the FxTwitter path in fetch.py before the
+chain runs.
 """
 
 from __future__ import annotations
@@ -213,13 +217,14 @@ class FetchPolicyEngine:
                 reason="disabled",
             )
 
-        # 7. SPA/JS-heavy: defuddle & jina still lead
-        # Known SPAs and fallback-pattern domains often need JS rendering,
-        # but defuddle and jina may have server-side extraction that works
-        # without a browser. Try them first (fast), fall back to playwright.
+        # 7. SPA/JS-heavy: browser first
+        # Known SPAs and fallback-pattern domains need JS rendering — go
+        # straight to the local browser; consent-gated remote services are
+        # the fallback, and static (which already failed to produce content
+        # for such domains) goes last.
         if known_spa or is_fallback_domain:
             return FetchDecision(
-                order=["defuddle", "jina", "playwright", "cloudflare", "static"],
+                order=["playwright", "defuddle", "jina", "cloudflare", "static"],
                 reason="spa_or_pattern",
             )
 

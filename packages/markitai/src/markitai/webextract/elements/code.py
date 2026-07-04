@@ -4,6 +4,8 @@ import re
 
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.constants import CODE_LANGUAGES
+
 # Language extraction patterns (ported from defuddle elements/code.ts)
 _LANG_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"language-(\w+)", re.IGNORECASE),
@@ -46,7 +48,11 @@ def normalize_code_blocks(root: Tag) -> None:
 
 
 def _detect_language(el: Tag) -> str | None:
-    """Extract language from element's class or data attributes."""
+    """Extract language from element's class or data attributes.
+
+    Fuzzy pattern hits (e.g. ``CodeBlock-code``) only count when the
+    detected token is a known language (defuddle's CODE_LANGUAGES check).
+    """
     # Check data attributes first
     for attr in ("data-lang", "data-language", "language"):
         val = el.get(attr)
@@ -59,7 +65,7 @@ def _detect_language(el: Tag) -> str | None:
         for cls in raw_classes:
             for pattern in _LANG_PATTERNS:
                 match = pattern.search(cls)
-                if match:
+                if match and match.group(1).lower() in CODE_LANGUAGES:
                     return match.group(1).lower()
     return None
 

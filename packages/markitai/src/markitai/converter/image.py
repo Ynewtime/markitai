@@ -15,6 +15,7 @@ from markitai.converter.base import (
     FileFormat,
     register_converter,
 )
+from markitai.converter.heif import HEIF_SUFFIXES, decode_to_png, ensure_heif_ready
 from markitai.utils.paths import ensure_assets_dir
 
 
@@ -34,8 +35,11 @@ class ImageConverter(BaseConverter):
         FileFormat.BMP,
         FileFormat.TIFF,
         FileFormat.SVG,
+        FileFormat.HEIC,
+        FileFormat.HEIF,
+        FileFormat.AVIF,
     ]
-    _preview_transcode_suffixes = {".bmp", ".tif", ".tiff"}
+    _preview_transcode_suffixes = {".bmp", ".tif", ".tiff"} | HEIF_SUFFIXES
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
@@ -55,6 +59,12 @@ class ImageConverter(BaseConverter):
             ConvertResult containing markdown with OCR text or placeholder
         """
         input_path = Path(input_path)
+
+        # HEIC/HEIF/AVIF need pillow-heif to decode — fail early with an
+        # actionable error naming the extra (skipped for mislabeled files
+        # whose content is not actually a HEIF container).
+        if input_path.suffix.lower() in HEIF_SUFFIXES:
+            ensure_heif_ready(input_path)
 
         # Check if OCR and LLM are enabled in config
         use_ocr = self.config and self.config.ocr.enabled
@@ -78,7 +88,11 @@ class ImageConverter(BaseConverter):
             )
         elif use_ocr:
             # --ocr only: Use RapidOCR
-            markdown = self._convert_with_ocr(input_path, image_ref_path)
+            markdown = self._convert_with_ocr(
+                input_path,
+                image_ref_path,
+                ocr_source=self._ocr_source(input_path, output_dir),
+            )
         else:
             # Just return a placeholder with image reference
             markdown = self._create_image_placeholder(input_path, image_ref_path)
@@ -127,10 +141,41 @@ class ImageConverter(BaseConverter):
 
     def _transcode_to_png(self, input_path: Path, dest_path: Path) -> None:
         """Transcode less-compatible image formats to PNG for markdown previews."""
+        if input_path.suffix.lower() in HEIF_SUFFIXES:
+            # Decode once at the boundary (registers pillow-heif lazily,
+            # applies EXIF orientation) — downstream sees a plain PNG.
+            decode_to_png(input_path, dest_path)
+            return
+
         from PIL import Image
 
         with Image.open(input_path) as image:
             image.save(dest_path, format="PNG")
+
+    def _ocr_source(self, input_path: Path, output_dir: Path | None) -> Path:
+        """Return the path OCR should read (HEIF is decoded to PNG first).
+
+        RapidOCR cannot read HEIF-family containers, so those are decoded to
+        PNG once and OCR runs on the PNG. Reuses the transcoded asset when
+        available; otherwise decodes into a temporary file.
+        """
+        if input_path.suffix.lower() not in HEIF_SUFFIXES:
+            return input_path
+
+        if output_dir is not None:
+            transcoded = ensure_assets_dir(output_dir) / self._transcoded_asset_name(
+                input_path
+            )
+            if transcoded.exists():
+                return transcoded
+
+        import tempfile
+
+        tmp_path = Path(tempfile.mkdtemp(prefix="markitai-heif-")) / (
+            input_path.stem + ".png"
+        )
+        decode_to_png(input_path, tmp_path)
+        return tmp_path
 
     def _transcoded_asset_name(self, input_path: Path) -> str:
         """Build a stable, unique preview asset name for transcoded images."""
@@ -139,12 +184,19 @@ class ImageConverter(BaseConverter):
         ).hexdigest()[:12]
         return f"{input_path.stem}-{source_id}.png"
 
-    def _convert_with_ocr(self, input_path: Path, image_ref_path: str) -> str:
+    def _convert_with_ocr(
+        self,
+        input_path: Path,
+        image_ref_path: str,
+        ocr_source: Path | None = None,
+    ) -> str:
         """Convert image using OCR.
 
         Args:
             input_path: Path to the image file
             image_ref_path: Relative path for image reference in markdown
+            ocr_source: Optional decoded stand-in to run OCR on (e.g. the
+                PNG transcoded from a HEIF file); defaults to input_path
 
         Returns:
             Markdown with OCR extracted text
@@ -153,7 +205,7 @@ class ImageConverter(BaseConverter):
             from markitai.ocr import OCRProcessor
 
             processor = OCRProcessor(self.config.ocr if self.config else None)
-            result = processor.recognize_to_markdown(input_path)
+            result = processor.recognize_to_markdown(ocr_source or input_path)
 
             if result.strip():
                 logger.debug(f"OCR extracted text from {input_path.name}")
@@ -192,5 +244,8 @@ for _fmt in (
     FileFormat.BMP,
     FileFormat.TIFF,
     FileFormat.SVG,
+    FileFormat.HEIC,
+    FileFormat.HEIF,
+    FileFormat.AVIF,
 ):
     register_converter(_fmt)(ImageConverter)

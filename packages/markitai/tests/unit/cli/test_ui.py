@@ -259,6 +259,18 @@ class TestSummaryFunction:
         # Should start with empty line (newline character)
         assert output.startswith("\n")
 
+    def test_summary_failure_uses_cross_symbol(self) -> None:
+        """Test summary with ok=False uses cross symbol, not checkmark."""
+        buffer = io.StringIO()
+        console = Console(file=buffer, force_terminal=True, width=80)
+
+        ui.summary("Check failed", ok=False, console=console)
+
+        output = buffer.getvalue()
+        assert ui.MARK_ERROR in output
+        assert ui.MARK_SUCCESS not in output
+        assert "Check failed" in output
+
 
 class TestDefaultConsole:
     """Tests for default console behavior."""

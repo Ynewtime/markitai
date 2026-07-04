@@ -110,7 +110,7 @@ class TestConvertCommand:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "sample.txt.md").exists()
+        assert (output_dir / "sample.md").exists()
 
     def test_convert_md(self, runner: CliRunner, sample_md: Path, tmp_path: Path):
         """Test converting a markdown file (passthrough)."""
@@ -124,7 +124,7 @@ class TestConvertCommand:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "sample.md.md").exists()
+        assert (output_dir / "sample.md").exists()
 
     def test_convert_dry_run(self, runner: CliRunner, sample_txt: Path, tmp_path: Path):
         """Test dry run mode."""
@@ -141,7 +141,7 @@ class TestConvertCommand:
         assert result.exit_code == 0
         assert "Would convert" in result.output or "Dry Run" in result.output
         # File should not be created in dry run
-        assert not (output_dir / "sample.txt.md").exists()
+        assert not (output_dir / "sample.md").exists()
 
     def test_convert_verbose(self, runner: CliRunner, sample_txt: Path, tmp_path: Path):
         """Test verbose mode."""
@@ -187,6 +187,108 @@ class TestConvertCommand:
         assert result.exit_code != 0
 
 
+class TestOutputFileTarget:
+    """Tests for `-o <name>.md` targeting an output FILE (not a directory)."""
+
+    def test_single_file_md_target_writes_file(
+        self, runner: CliRunner, sample_txt: Path, tmp_path: Path
+    ):
+        """`-o out.md` writes the markdown exactly to out.md."""
+        target = tmp_path / "out.md"
+        result = runner.invoke(app, [str(sample_txt), "-o", str(target)])
+
+        assert result.exit_code == 0
+        assert target.is_file(), "-o out.md must create a file, not a directory"
+        content = target.read_text()
+        assert "---" in content
+
+    def test_single_file_md_target_nested_parent(
+        self, runner: CliRunner, sample_txt: Path, tmp_path: Path
+    ):
+        """`-o sub/out.md` writes to sub/out.md (parent is the output dir)."""
+        target = tmp_path / "sub" / "out.md"
+        result = runner.invoke(app, [str(sample_txt), "-o", str(target)])
+
+        assert result.exit_code == 0
+        assert target.is_file()
+        # No directory named out.md anywhere
+        assert not (tmp_path / "sub" / "out.md" / "sample.md").exists()
+
+    def test_existing_md_directory_keeps_directory_behavior(
+        self, runner: CliRunner, sample_txt: Path, tmp_path: Path
+    ):
+        """A pre-existing directory named out.md is still used as a directory."""
+        md_dir = tmp_path / "out.md"
+        md_dir.mkdir()
+        result = runner.invoke(app, [str(sample_txt), "-o", str(md_dir)])
+
+        assert result.exit_code == 0
+        assert md_dir.is_dir()
+        assert (md_dir / "sample.md").is_file()
+
+    def test_batch_md_target_is_usage_error(self, runner: CliRunner, tmp_path: Path):
+        """Directory input with `-o out.md` must fail with a clear error."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "file1.txt").write_text("Content 1")
+
+        result = runner.invoke(app, [str(input_dir), "-o", str(tmp_path / "out.md")])
+
+        assert result.exit_code == 2
+        assert "pass an output directory" in result.output
+        assert not (tmp_path / "out.md").exists()
+
+    def test_url_list_md_target_is_usage_error(self, runner: CliRunner, tmp_path: Path):
+        """URL list input with `-o out.md` must fail with a clear error."""
+        urls_file = tmp_path / "links.urls"
+        urls_file.write_text("https://example.com/\n")
+
+        result = runner.invoke(app, [str(urls_file), "-o", str(tmp_path / "out.md")])
+
+        assert result.exit_code == 2
+        assert "pass an output directory" in result.output
+        assert not (tmp_path / "out.md").exists()
+
+
+class TestStdoutPipePurity:
+    """In stdout mode (no -o), diagnostics must go to stderr, not stdout."""
+
+    def test_alt_warning_goes_to_stderr(self, runner: CliRunner, sample_txt: Path):
+        """`--alt` without LLM warns on stderr; stdout stays pure markdown."""
+        result = runner.invoke(app, [str(sample_txt), "--alt", "--no-llm"])
+
+        assert result.exit_code == 0
+        assert "Image analysis" not in result.stdout
+        assert "Image analysis" in result.stderr
+        # stdout is pure markdown content (starts with frontmatter)
+        assert result.stdout.lstrip().startswith("---")
+
+    def test_pipe_purity_subprocess(self, sample_txt: Path):
+        """End-to-end: `markitai <file> --alt 2>/dev/null` yields pure markdown."""
+        result = subprocess.run(
+            ["uv", "run", "markitai", str(sample_txt), "--alt", "--no-llm"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "Image analysis" not in result.stdout
+        assert result.stdout.lstrip().startswith("---")
+        # The diagnostic still reaches the user via stderr
+        assert "Image analysis" in result.stderr
+
+    def test_long_lines_not_hard_wrapped(self, runner: CliRunner, tmp_path: Path):
+        """stdout content bypasses Rich: long URLs must never be wrapped
+        at terminal width (Rich's default 80 cols would break them)."""
+        long_url = "https://example.com/" + "a" * 300
+        source = tmp_path / "long.md"
+        source.write_text(f"See [link]({long_url}) for details.\n")
+
+        result = runner.invoke(app, [str(source)])
+
+        assert result.exit_code == 0
+        assert long_url in result.stdout
+
+
 class TestBatchConvert:
     """Tests for batch conversion."""
 
@@ -230,8 +332,8 @@ class TestBatchConvert:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "file1.txt.md").exists()
-        assert (output_dir / "file2.txt.md").exists()
+        assert (output_dir / "file1.md").exists()
+        assert (output_dir / "file2.md").exists()
 
     def test_batch_empty_directory(self, runner: CliRunner, tmp_path: Path):
         """Test batch mode with empty directory."""
@@ -354,10 +456,10 @@ class TestWorkflowCoreV2:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "sample.txt.md").exists()
+        assert (output_dir / "sample.md").exists()
 
         # Verify content has frontmatter
-        content = (output_dir / "sample.txt.md").read_text()
+        content = (output_dir / "sample.md").read_text()
         assert "---" in content
         assert "title:" in content or "source:" in content
 
@@ -376,7 +478,7 @@ class TestWorkflowCoreV2:
         )
         assert result.exit_code == 0
         assert "Would convert" in result.output or "Dry Run" in result.output
-        assert not (output_dir / "sample.txt.md").exists()
+        assert not (output_dir / "sample.md").exists()
 
     def test_unsupported_format(self, runner: CliRunner, tmp_path: Path):
         """Test with unsupported file format."""
@@ -401,7 +503,7 @@ class TestWorkflowCoreV2:
         output_dir.mkdir(parents=True)
 
         # Create existing output file
-        existing = output_dir / "sample.txt.md"
+        existing = output_dir / "sample.md"
         existing.write_text("existing content")
 
         # Create config with skip mode
@@ -423,10 +525,10 @@ class TestWorkflowCoreV2:
         # Content should not change
         assert existing.read_text() == "existing content"
 
-    def test_generates_report(
+    def test_no_report_by_default(
         self, runner: CliRunner, sample_txt: Path, tmp_path: Path
     ):
-        """Test generates report file."""
+        """Test single-file conversion does not generate a report by default."""
         output_dir = tmp_path / "output"
 
         result = runner.invoke(
@@ -435,6 +537,30 @@ class TestWorkflowCoreV2:
                 str(sample_txt),
                 "-o",
                 str(output_dir),
+            ],
+        )
+        assert result.exit_code == 0
+
+        # No report for single-file conversions unless output.report=true
+        reports_dir = output_dir / ".markitai" / "reports"
+        assert not reports_dir.exists()
+
+    def test_generates_report_when_enabled(
+        self, runner: CliRunner, sample_txt: Path, tmp_path: Path
+    ):
+        """Test generates report file when output.report=true."""
+        output_dir = tmp_path / "output"
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"output": {"report": true}}')
+
+        result = runner.invoke(
+            app,
+            [
+                str(sample_txt),
+                "-o",
+                str(output_dir),
+                "-c",
+                str(config_path),
             ],
         )
         assert result.exit_code == 0
@@ -488,8 +614,8 @@ class TestWorkflowCoreV2:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "file1.txt.md").exists()
-        assert (output_dir / "file2.txt.md").exists()
+        assert (output_dir / "file1.md").exists()
+        assert (output_dir / "file2.md").exists()
 
     def test_batch_preserves_subdirs(self, runner: CliRunner, tmp_path: Path):
         """Test batch preserves subdirectory structure."""
@@ -512,8 +638,82 @@ class TestWorkflowCoreV2:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "root.txt.md").exists()
-        assert (output_dir / "subdir" / "nested.txt.md").exists()
+        assert (output_dir / "root.md").exists()
+        assert (output_dir / "subdir" / "nested.md").exists()
+
+    def test_batch_report_opt_out(self, runner: CliRunner, tmp_path: Path):
+        """output.report=false disables batch report generation."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "file1.txt").write_text("Content 1")
+
+        output_dir = tmp_path / "output"
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"output": {"report": false}}')
+
+        result = runner.invoke(
+            app,
+            [
+                str(input_dir),
+                "-o",
+                str(output_dir),
+                "-c",
+                str(config_path),
+            ],
+        )
+        assert result.exit_code == 0
+        assert (output_dir / "file1.md").exists()
+        reports_dir = output_dir / ".markitai" / "reports"
+        report_files = list(reports_dir.glob("*.json")) if reports_dir.exists() else []
+        assert report_files == []
+
+    def test_batch_colliding_stems_use_legacy_names(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        """Inputs mapping to the same output name fall back to legacy naming."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "a.txt").write_text("Text content")
+        (input_dir / "a.html").write_text("<h1>HTML content</h1>")
+        (input_dir / "b.txt").write_text("Other content")
+
+        output_dir = tmp_path / "output"
+
+        result = runner.invoke(
+            app,
+            [
+                str(input_dir),
+                "-o",
+                str(output_dir),
+            ],
+        )
+        assert result.exit_code == 0
+        # Colliding inputs (a.txt + a.html -> a.md) use legacy names
+        assert (output_dir / "a.txt.md").exists()
+        assert (output_dir / "a.html.md").exists()
+        assert not (output_dir / "a.md").exists()
+        # Non-colliding input keeps extension replacement
+        assert (output_dir / "b.md").exists()
+
+    def test_md_input_into_own_dir_keeps_source(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        """Converting note.md into its own directory must not overwrite it."""
+        note = tmp_path / "note.md"
+        note.write_text("# Original note")
+
+        result = runner.invoke(
+            app,
+            [
+                str(note),
+                "-o",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 0
+        # Source untouched, output uses legacy fallback name
+        assert note.read_text() == "# Original note"
+        assert (tmp_path / "note.md.md").exists()
 
     def test_batch_generates_report(self, runner: CliRunner, tmp_path: Path):
         """Test batch generates report file."""
@@ -600,7 +800,7 @@ class TestConfigOutputDir:
 
         assert result.exit_code == 0
         assert output_dir.exists()
-        assert (output_dir / "test.txt.md").exists()
+        assert (output_dir / "test.md").exists()
 
     def test_cli_output_overrides_config(
         self, runner: CliRunner, sample_txt: Path, tmp_path: Path
@@ -630,7 +830,7 @@ class TestConfigOutputDir:
 
         assert result.exit_code == 0
         assert cli_output.exists(), "CLI -o should be used"
-        assert (cli_output / "test.txt.md").exists(), "Output should be in CLI -o dir"
+        assert (cli_output / "test.md").exists(), "Output should be in CLI -o dir"
         assert not config_output.exists(), (
             "Config output.dir should NOT be used when -o specified"
         )
@@ -685,5 +885,5 @@ class TestConfigOutputDir:
 
         assert result.exit_code == 0
         assert output_dir.exists(), "Batch mode should use config output.dir"
-        assert (output_dir / "file1.txt.md").exists(), "Batch output file1 should exist"
-        assert (output_dir / "file2.txt.md").exists(), "Batch output file2 should exist"
+        assert (output_dir / "file1.md").exists(), "Batch output file1 should exist"
+        assert (output_dir / "file2.md").exists(), "Batch output file2 should exist"

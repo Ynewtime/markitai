@@ -791,6 +791,296 @@ class TestAnalyzeBatch:
                 # Should fall back due to truncation
                 mock_single.assert_called_once()
 
+    @staticmethod
+    def _patch_instructor_batch(
+        mock_instructor: MagicMock, images: list[SingleImageResult]
+    ) -> None:
+        """Configure a patched instructor module to return the given results."""
+        mock_client = MagicMock()
+        mock_instructor.from_litellm.return_value = mock_client
+        mock_instructor.Mode.MD_JSON = "MD_JSON"
+
+        mock_response = BatchImageAnalysisResult(images=images)
+        mock_raw = MagicMock()
+        mock_raw.model = "test/model"
+        mock_raw.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+        mock_raw.choices = [MagicMock(finish_reason="stop")]
+
+        async def mock_create(*args: Any, **kwargs: Any):
+            return mock_response, mock_raw
+
+        mock_client.chat.completions.create_with_completion = mock_create
+
+    @staticmethod
+    def _make_distinct_pngs(tmp_path: Path, count: int) -> list[Path]:
+        """Create PNG files with distinct content (distinct fingerprints)."""
+        files = []
+        for i in range(count):
+            img_path = tmp_path / f"distinct_{i}.png"
+            img_path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes([i]))
+            files.append(img_path)
+        return files
+
+    @staticmethod
+    def _expected_content_key(image_path: Path) -> str:
+        """Compute the cache content key for an image file."""
+        fingerprint = hashlib.sha256(
+            base64.b64encode(image_path.read_bytes()).decode().encode()
+        ).hexdigest()
+        return _vision_cache_content_key(fingerprint)
+
+    @pytest.mark.asyncio
+    async def test_reordered_results_aligned_by_image_index(
+        self, mock_processor: MockVisionProcessor, tmp_path: Path
+    ):
+        """Results are aligned by image_index, not position, when reordered."""
+        files = self._make_distinct_pngs(tmp_path, 2)
+
+        with patch("markitai.llm.vision.instructor") as mock_instructor:
+            # Model returns results out of order
+            self._patch_instructor_batch(
+                mock_instructor,
+                [
+                    SingleImageResult(
+                        image_index=2,
+                        caption="Second image",
+                        description="Description of the second image",
+                        extracted_text=None,
+                    ),
+                    SingleImageResult(
+                        image_index=1,
+                        caption="First image",
+                        description="Description of the first image",
+                        extracted_text=None,
+                    ),
+                ],
+            )
+
+            result = await mock_processor.analyze_batch(files, context="test")
+
+        assert result[0].caption == "First image"
+        assert result[1].caption == "Second image"
+
+        # Cache entries must be persisted under the correct fingerprints
+        set_calls = {
+            call.args[1]: call.args[2]
+            for call in mock_processor._persistent_cache.set.call_args_list
+        }
+        assert set_calls[self._expected_content_key(files[0])]["caption"] == (
+            "First image"
+        )
+        assert set_calls[self._expected_content_key(files[1])]["caption"] == (
+            "Second image"
+        )
+
+    @pytest.mark.asyncio
+    async def test_skipped_result_gets_placeholder_and_is_not_cached(
+        self, mock_processor: MockVisionProcessor, tmp_path: Path
+    ):
+        """A skipped image gets a placeholder and no poisoned cache entry."""
+        files = self._make_distinct_pngs(tmp_path, 3)
+
+        with patch("markitai.llm.vision.instructor") as mock_instructor:
+            # Model skipped image 2 but echoed valid indices for the rest
+            self._patch_instructor_batch(
+                mock_instructor,
+                [
+                    SingleImageResult(
+                        image_index=1,
+                        caption="First image",
+                        description="Description of the first image",
+                        extracted_text=None,
+                    ),
+                    SingleImageResult(
+                        image_index=3,
+                        caption="Third image",
+                        description="Description of the third image",
+                        extracted_text=None,
+                    ),
+                ],
+            )
+
+            result = await mock_processor.analyze_batch(files, context="test")
+
+        assert result[0].caption == "First image"
+        assert result[1].description == "Image analysis failed"
+        assert result[2].caption == "Third image"
+
+        # The skipped image must not get a cache entry
+        set_keys = {
+            call.args[1] for call in mock_processor._persistent_cache.set.call_args_list
+        }
+        assert self._expected_content_key(files[1]) not in set_keys
+        assert self._expected_content_key(files[0]) in set_keys
+        assert self._expected_content_key(files[2]) in set_keys
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_alignment_skips_cache_persist(
+        self, mock_processor: MockVisionProcessor, tmp_path: Path
+    ):
+        """Invalid indices + count mismatch: results kept, cache skipped."""
+        files = self._make_distinct_pngs(tmp_path, 3)
+
+        with patch("markitai.llm.vision.instructor") as mock_instructor:
+            # Two results for three images, with useless indices
+            self._patch_instructor_batch(
+                mock_instructor,
+                [
+                    SingleImageResult(
+                        image_index=0,
+                        caption="Some image",
+                        description="Description of some image",
+                        extracted_text=None,
+                    ),
+                    SingleImageResult(
+                        image_index=0,
+                        caption="Other image",
+                        description="Description of other image",
+                        extracted_text=None,
+                    ),
+                ],
+            )
+
+            result = await mock_processor.analyze_batch(files, context="test")
+
+        # Positional fallback for available results, placeholder for the rest
+        assert len(result) == 3
+        assert result[0].caption == "Some image"
+        assert result[1].caption == "Other image"
+        assert result[2].description == "Image analysis failed"
+
+        # Nothing may be persisted to cache when alignment is ambiguous
+        mock_processor._persistent_cache.set.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_language_rewrite_does_not_deadlock_with_concurrency_1(
+        self, tmp_path: Path
+    ):
+        """Regression: batch language rewrite must not hold the LLM semaphore.
+
+        The rewrite goes through _call_llm which acquires the same semaphore;
+        doing it inside the batch's semaphore block deadlocks at concurrency=1.
+        """
+        processor = MockVisionProcessor(concurrency=1)
+        img_path = tmp_path / "deadlock_test.png"
+        img_path.write_bytes(b"\x89PNG\r\n\x1a\n\x42")
+
+        # Simulate the real processor: _call_llm acquires the shared semaphore
+        async def semaphore_call_llm(
+            model: str, messages: list[dict[str, Any]], context: str = ""
+        ) -> LLMResponse:
+            async with processor.semaphore:
+                return LLMResponse(
+                    content="中文说明",
+                    model="test/model",
+                    input_tokens=10,
+                    output_tokens=5,
+                    cost_usd=0.0001,
+                )
+
+        processor._call_llm = semaphore_call_llm  # type: ignore[method-assign]
+
+        with patch("markitai.llm.vision.instructor") as mock_instructor:
+            # English-only result for a Chinese document triggers the rewrite
+            TestAnalyzeBatch._patch_instructor_batch(
+                mock_instructor,
+                [
+                    SingleImageResult(
+                        image_index=1,
+                        caption="English caption only",
+                        description="An English description without CJK",
+                        extracted_text=None,
+                    ),
+                ],
+            )
+
+            result = await asyncio.wait_for(
+                processor.analyze_batch(
+                    [img_path],
+                    context="test",
+                    document_context="这是一个中文文档的上下文内容",
+                ),
+                timeout=10.0,
+            )
+
+        assert len(result) == 1
+        # The rewrite went through _call_llm and produced Chinese text
+        assert result[0].caption == "中文说明"
+
+
+# =============================================================================
+# Test _align_batch_results
+# =============================================================================
+
+
+class TestAlignBatchResults:
+    """Tests for the _align_batch_results helper."""
+
+    @staticmethod
+    def _result(index: int, caption: str = "cap") -> SingleImageResult:
+        return SingleImageResult(
+            image_index=index,
+            caption=caption,
+            description="desc",
+            extracted_text=None,
+        )
+
+    def test_in_order_indices(self):
+        """Valid in-order indices align positionally and are cache safe."""
+        from markitai.llm.vision import _align_batch_results
+
+        images = [self._result(1, "a"), self._result(2, "b")]
+        aligned, cache_safe = _align_batch_results(images, 2)
+        assert cache_safe is True
+        assert [r.caption for r in aligned if r] == ["a", "b"]
+
+    def test_reordered_indices(self):
+        """Reordered results are placed at the echoed index."""
+        from markitai.llm.vision import _align_batch_results
+
+        images = [self._result(2, "b"), self._result(1, "a")]
+        aligned, cache_safe = _align_batch_results(images, 2)
+        assert cache_safe is True
+        assert aligned[0] is not None and aligned[0].caption == "a"
+        assert aligned[1] is not None and aligned[1].caption == "b"
+
+    def test_missing_index_leaves_gap(self):
+        """A skipped image leaves a None slot but remains cache safe."""
+        from markitai.llm.vision import _align_batch_results
+
+        images = [self._result(1, "a"), self._result(3, "c")]
+        aligned, cache_safe = _align_batch_results(images, 3)
+        assert cache_safe is True
+        assert aligned[1] is None
+
+    def test_duplicate_indices_fall_back_positional(self):
+        """Duplicate indices with matching count fall back positionally."""
+        from markitai.llm.vision import _align_batch_results
+
+        images = [self._result(1, "a"), self._result(1, "b")]
+        aligned, cache_safe = _align_batch_results(images, 2)
+        assert cache_safe is True
+        assert aligned[0] is not None and aligned[0].caption == "a"
+        assert aligned[1] is not None and aligned[1].caption == "b"
+
+    def test_out_of_range_indices_with_count_mismatch_not_cache_safe(self):
+        """Invalid indices plus count mismatch is ambiguous: no caching."""
+        from markitai.llm.vision import _align_batch_results
+
+        images = [self._result(0, "a"), self._result(7, "b")]
+        aligned, cache_safe = _align_batch_results(images, 3)
+        assert cache_safe is False
+        assert aligned[0] is not None and aligned[0].caption == "a"
+        assert aligned[2] is None
+
+    def test_empty_results_not_cache_safe(self):
+        """No results for a non-empty batch is ambiguous."""
+        from markitai.llm.vision import _align_batch_results
+
+        aligned, cache_safe = _align_batch_results([], 2)
+        assert cache_safe is False
+        assert aligned == [None, None]
+
 
 # =============================================================================
 # Test _analyze_image_with_fallback

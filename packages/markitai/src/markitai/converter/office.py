@@ -19,7 +19,7 @@ from markitai.converter.base import (
 from markitai.image import ImageProcessor
 from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.office import find_libreoffice, has_ms_office
-from markitai.utils.paths import ensure_screenshots_dir
+from markitai.utils.paths import create_tracked_temp_dir, ensure_screenshots_dir
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -173,7 +173,7 @@ class PptxConverter(OfficeConverter):
         if output_dir:
             screenshots_dir = ensure_screenshots_dir(output_dir)
         else:
-            screenshots_dir = Path(tempfile.mkdtemp())
+            screenshots_dir = create_tracked_temp_dir()
 
         # Get image format from config
         image_format = "jpg"
@@ -495,7 +495,7 @@ class PptxConverter(OfficeConverter):
         if output_dir:
             screenshots_dir = ensure_screenshots_dir(output_dir)
         else:
-            screenshots_dir = Path(tempfile.mkdtemp())
+            screenshots_dir = create_tracked_temp_dir()
 
         # Get image format from config
         image_format = "jpg"

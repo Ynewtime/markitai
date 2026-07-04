@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from urllib.parse import urljoin
 
-from bs4 import Comment, Tag
+from bs4 import BeautifulSoup, Comment, Tag
 from bs4.element import NavigableString
 
 from markitai.webextract.constants import ALLOWED_EMPTY_ELEMENTS
 from markitai.webextract.elements.callouts import normalize_callouts
 from markitai.webextract.elements.code import normalize_code_blocks
-from markitai.webextract.elements.footnotes import normalize_footnotes
 from markitai.webextract.elements.headings import normalize_headings
 from markitai.webextract.elements.images import normalize_images
+from markitai.webextract.elements.math import normalize_math
 
 _PRESERVE_ELEMENTS = frozenset(
     {
@@ -95,8 +95,9 @@ def standardize_content(root: Tag, title: str | None, base_url: str) -> None:
     _dedupe_title_headings(root, title)
     _resolve_relative_urls(root, base_url)
     _remove_javascript_links(root)
+    _unwrap_special_links(root)
+    normalize_math(root)
     normalize_code_blocks(root)
-    normalize_footnotes(root)
     normalize_images(root, base_url)
     normalize_headings(root)
     normalize_callouts(root)
@@ -148,6 +149,55 @@ def _remove_javascript_links(root: Tag) -> None:
             del link["href"]
 
 
+_HEADING_NAMES = ("h1", "h2", "h3", "h4", "h5", "h6")
+
+
+def _unwrap_special_links(root: Tag) -> None:
+    """Unwrap links that Markdown cannot represent well.
+
+    Ported from defuddle's ``unwrapSpecialLinks`` step (standardize.ts):
+
+    - Links inside inline code — Markdown can't render links in backticks.
+    - Card links wrapping block content with a direct-child heading:
+      ``<a href="/x"><h2>T</h2><p>d</p></a>`` becomes
+      ``<h2><a href="/x">T</a></h2><p>d</p>``.
+    - Same-page anchor links (``href="#..."``) wrapping a heading (e.g.
+      clickable section headers) — unwrapped entirely.
+    """
+    for link in list(root.find_all("a")):
+        if link.find_parent("code") is not None:
+            link.unwrap()
+
+    for link in list(root.find_all("a")):
+        if link.parent is None:
+            continue
+        href = str(link.get("href") or "")
+        if not href or href.startswith("#"):
+            continue
+        heading = next(
+            (
+                c
+                for c in link.children
+                if isinstance(c, Tag) and c.name in _HEADING_NAMES
+            ),
+            None,
+        )
+        if heading is None:
+            continue
+        # Move the href into the heading by wrapping its children
+        inner = BeautifulSoup("", "html.parser").new_tag("a", href=href)
+        for child in list(heading.children):
+            inner.append(child.extract())
+        heading.append(inner)
+        link.unwrap()
+
+    for link in list(root.find_all("a", href=True)):
+        if link.parent is None:
+            continue
+        if str(link["href"]).startswith("#") and link.find(_HEADING_NAMES):
+            link.unwrap()
+
+
 def _convert_h1_to_h2(root: Tag) -> None:
     """Convert H1 tags to H2 when there are multiple H1s."""
     h1s = root.find_all("h1")
@@ -167,12 +217,16 @@ def _unwrap_bare_spans(root: Tag) -> None:
 def _remove_empty_elements(root: Tag) -> None:
     """Remove elements with no text content or children.
 
-    Preserves void elements (img, br, hr, etc.) and the root itself.
+    Preserves void elements (img, br, hr, etc.), whitespace-significant
+    content inside ``<pre>``/``<code>`` (syntax highlighters emit
+    whitespace-only token spans), and the root itself.
     """
     for el in root.find_all(True):
         if el is root:
             continue
         if el.name in ALLOWED_EMPTY_ELEMENTS:
+            continue
+        if el.find_parent(("pre", "code")) is not None:
             continue
         if not el.get_text(strip=True) and not el.find(list(ALLOWED_EMPTY_ELEMENTS)):
             el.decompose()
@@ -212,6 +266,9 @@ def _flatten_wrapper_divs(root: Tag) -> None:
             if not div.attrs:
                 continue
             if div.get("role"):
+                continue
+            # Preserve the standardized footnotes container
+            if div.get("id") == "footnotes":
                 continue
             classes = div.get("class")
             if isinstance(classes, list) and any(

@@ -260,7 +260,10 @@ class TestAuthManagerCheckAuth:
             )
         )
 
-        with patch("pathlib.Path.home", return_value=tmp_path):
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch("markitai.providers.auth._claude_cli_auth_status", return_value=None),
+        ):
             status = await manager.check_auth("claude-agent")
 
         assert status.authenticated is False
@@ -360,7 +363,10 @@ class TestAuthManagerNoConfigFile:
 
         manager = AuthManager()
 
-        with patch("pathlib.Path.home", return_value=tmp_path):
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch("markitai.providers.auth._claude_cli_auth_status", return_value=None),
+        ):
             status = await manager.check_auth("claude-agent")
 
         assert status.authenticated is False
@@ -667,6 +673,69 @@ class TestConfigFileAuth:
         assert status.authenticated is True
         assert status.user == "user@example.com"
 
+    def test_claude_auth_falls_back_to_cli_when_no_credentials_file(
+        self, tmp_path: Path
+    ) -> None:
+        """Claude auth falls back to `claude auth status` (macOS Keychain).
+
+        On macOS the Claude Code CLI stores OAuth tokens in the system
+        Keychain, so no ~/.claude/.credentials.json exists even when the
+        user is logged in and the subscription is usable.
+        """
+        from markitai.providers.auth import _check_claude_credentials_auth
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "markitai.providers.auth._claude_cli_auth_status",
+                return_value={
+                    "loggedIn": True,
+                    "authMethod": "claude.ai",
+                    "email": "user@example.com",
+                    "subscriptionType": "max",
+                },
+            ),
+        ):
+            status = _check_claude_credentials_auth()
+
+        assert status.authenticated is True
+        assert status.user == "user@example.com"
+        details = status.details or {}
+        assert details.get("source") == "cli"
+        assert details.get("subscription") == "max"
+
+    def test_claude_auth_cli_fallback_not_logged_in(self, tmp_path: Path) -> None:
+        """CLI fallback keeps file-based error when CLI reports logged out."""
+        from markitai.providers.auth import _check_claude_credentials_auth
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "markitai.providers.auth._claude_cli_auth_status",
+                return_value={"loggedIn": False},
+            ),
+        ):
+            status = _check_claude_credentials_auth()
+
+        assert status.authenticated is False
+        assert "not found" in (status.error or "").lower()
+
+    def test_claude_auth_cli_fallback_without_email(self, tmp_path: Path) -> None:
+        """CLI fallback shows subscription when no email is reported."""
+        from markitai.providers.auth import _check_claude_credentials_auth
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "markitai.providers.auth._claude_cli_auth_status",
+                return_value={"loggedIn": True, "subscriptionType": "pro"},
+            ),
+        ):
+            status = _check_claude_credentials_auth()
+
+        assert status.authenticated is True
+        assert status.user == "subscription: pro"
+
     def test_claude_auth_falls_back_to_subscription_when_cli_fails(
         self, tmp_path: Path
     ) -> None:
@@ -707,7 +776,10 @@ class TestConfigFileAuth:
         creds_file = claude_dir / ".credentials.json"
         creds_file.write_text(json.dumps({"claudeAiOauth": {}}))
 
-        with patch("pathlib.Path.home", return_value=tmp_path):
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch("markitai.providers.auth._claude_cli_auth_status", return_value=None),
+        ):
             status = _check_claude_credentials_auth()
 
         assert status.authenticated is False

@@ -39,7 +39,9 @@ from markitai.constants import (
     DEFAULT_DEFUDDLE_RPM,
     DEFAULT_JINA_BASE_URL,
     DEFAULT_JINA_RPM,
+    EXTERNAL_STRATEGIES,
     JS_REQUIRED_PATTERNS,
+    LOCAL_STRATEGIES,
 )
 from markitai.fetch_http import get_static_http_client
 
@@ -95,6 +97,177 @@ def get_cf_semaphore() -> asyncio.Semaphore:
     if _cf_br_semaphore is None:
         _cf_br_semaphore = asyncio.Semaphore(2)
     return _cf_br_semaphore
+
+
+# Remote-fetch consent (privacy): whether the auto strategy chain may send
+# URLs to remote extraction services (defuddle.md, Jina, Cloudflare BR).
+# Resolved once per process and cached.
+_remote_consent_decision: bool | None = None
+_remote_consent_prompt_allowed: bool = True
+
+
+def reset_remote_consent() -> None:
+    """Reset the cached remote-fetch consent decision (mainly for tests)."""
+    global _remote_consent_decision, _remote_consent_prompt_allowed
+    _remote_consent_decision = None
+    _remote_consent_prompt_allowed = True
+
+
+def set_remote_consent(allowed: bool) -> None:
+    """Seed the process-wide remote-fetch consent decision.
+
+    Used when the user explicitly selects a remote strategy
+    (e.g. ``-s jina``), which counts as consent for the run.
+    """
+    global _remote_consent_decision
+    _remote_consent_decision = allowed
+
+
+def set_remote_consent_prompt_allowed(allowed: bool) -> None:
+    """Allow or disallow the interactive consent prompt (disabled by --quiet)."""
+    global _remote_consent_prompt_allowed
+    _remote_consent_prompt_allowed = allowed
+
+
+# Fallback decision when an explicitly-selected remote strategy (jina,
+# defuddle, cloudflare) is refused server-side (4xx / auth-required).
+# Cached for the whole process so batch runs prompt at most once,
+# never once per URL.
+_explicit_fallback_decision: bool | None = None
+
+
+def reset_explicit_fallback_decision() -> None:
+    """Reset the cached explicit-strategy fallback decision (mainly for tests)."""
+    global _explicit_fallback_decision
+    _explicit_fallback_decision = None
+
+
+def _should_fallback_after_refusal(strategy_name: str, reason: str) -> bool:
+    """Decide whether to fall back to the auto chain after a service refusal.
+
+    Interactive TTY: prompt once per run (the answer is cached). Otherwise:
+    fall back automatically (the caller logs a clear warning to stderr).
+    """
+    global _explicit_fallback_decision
+    if _explicit_fallback_decision is not None:
+        return _explicit_fallback_decision
+
+    import sys
+
+    if _remote_consent_prompt_allowed and sys.stdin.isatty():
+        import click
+
+        decision = bool(
+            click.confirm(
+                f"{strategy_name} cannot fetch this URL ({reason}). "
+                "Fall back to the auto strategy chain?",
+                default=True,
+                err=True,
+            )
+        )
+        _explicit_fallback_decision = decision
+        return decision
+
+    # Non-interactive: fall back automatically (warned at the call site).
+    _explicit_fallback_decision = True
+    return True
+
+
+def _env_no_remote_fetch() -> bool:
+    """Return True when MARKITAI_NO_REMOTE_FETCH is set to a truthy value."""
+    import os
+
+    value = os.environ.get("MARKITAI_NO_REMOTE_FETCH", "").strip().lower()
+    return value not in ("", "0", "false", "no")
+
+
+def peek_remote_consent(config: FetchConfig) -> bool | None:
+    """Non-prompting view of the remote-consent state.
+
+    Returns True/False when the answer is already determined (cached
+    decision, env override, config "always"/"never", or "ask" in a
+    non-interactive session, which auto-denies). Returns None when an
+    interactive prompt would be needed — callers defer that prompt until
+    a remote strategy is actually about to run (lazy consent), so users
+    whose URLs are satisfied by local strategies are never asked.
+    """
+    import sys
+
+    if _remote_consent_decision is not None:
+        return _remote_consent_decision
+    if _env_no_remote_fetch():
+        return False
+    consent = getattr(config, "remote_consent", "ask")
+    if consent == "always":
+        return True
+    if consent == "never":
+        return False
+    if _remote_consent_prompt_allowed and sys.stdin.isatty():
+        return None  # would need to prompt
+    return False
+
+
+def resolve_remote_consent(config: FetchConfig) -> bool:
+    """Return True if remote extraction services may receive URLs.
+
+    Precedence: MARKITAI_NO_REMOTE_FETCH env var (truthy behaves as "never")
+    > ``fetch.remote_consent`` config ("always" / "never" / "ask"). With
+    "ask", prompts once on an interactive TTY (unless prompting is disabled,
+    e.g. --quiet); otherwise remote services are skipped (privacy-safe
+    default). The decision is cached for the whole process.
+    """
+    global _remote_consent_decision
+    if _remote_consent_decision is not None:
+        return _remote_consent_decision
+
+    import sys
+
+    if _env_no_remote_fetch():
+        logger.info(
+            "[Fetch] Remote extraction services disabled by MARKITAI_NO_REMOTE_FETCH; "
+            "using local strategies only"
+        )
+        _remote_consent_decision = False
+        return False
+
+    consent = getattr(config, "remote_consent", "ask")
+    if consent == "always":
+        _remote_consent_decision = True
+        return True
+    if consent == "never":
+        logger.info(
+            "[Fetch] Remote extraction services disabled "
+            "(fetch.remote_consent=never); using local strategies only"
+        )
+        _remote_consent_decision = False
+        return False
+
+    # "ask": prompt once when interactive, otherwise skip (privacy-safe)
+    if _remote_consent_prompt_allowed and sys.stdin.isatty():
+        import click
+
+        allowed = bool(
+            click.confirm(
+                "Allow sending URLs to remote extraction services (defuddle.md, Jina)?",
+                default=False,
+                err=True,
+            )
+        )
+        if not allowed:
+            logger.info(
+                "[Fetch] Remote extraction services declined; "
+                "using local strategies only"
+            )
+        _remote_consent_decision = allowed
+        return allowed
+
+    logger.info(
+        "[Fetch] Skipping remote extraction services (defuddle.md, Jina, Cloudflare): "
+        "no consent (fetch.remote_consent=ask, non-interactive). "
+        "Use -s <strategy> or set fetch.remote_consent=always to enable them."
+    )
+    _remote_consent_decision = False
+    return False
 
 
 def _extract_markdown_title(content: str) -> str | None:
@@ -219,18 +392,18 @@ _playwright_renderer: Any = None
 # Cached proxy URL (None = not checked, "" = no proxy, "http://..." = proxy URL)
 _detected_proxy: str | None = None
 
-# Common proxy ports used by popular proxy software
+# Common proxy ports used by popular proxy software.
+# Only HTTP proxy ports are listed: the detected proxy is labeled http://,
+# and SOCKS-only ports (1080 SOCKS5, 10808 V2Ray SOCKS, 9050 Tor) would
+# produce a broken proxy URL (httpx lacks the socks extra).
 _COMMON_PROXY_PORTS = [
     7897,  # Clash Verge default
     7890,  # Clash default
     7891,  # Clash mixed
     1082,  # Shadowrocket
-    10808,  # V2Ray default
     10809,  # V2Ray HTTP
-    1080,  # SOCKS5 common
     8080,  # HTTP proxy common
     8118,  # Privoxy
-    9050,  # Tor
 ]
 
 
@@ -419,7 +592,7 @@ def _detect_proxy(force_recheck: bool = False) -> str:
             sock.close()
             if result == 0:
                 proxy_url = f"http://127.0.0.1:{port}"
-                logger.info(f"[Proxy] Auto-detected local proxy at port {port}")
+                logger.warning(f"[Proxy] Auto-detected local proxy at port {port}")
                 _detected_proxy = proxy_url
                 _detected_proxy_bypass = ""
                 return proxy_url
@@ -670,6 +843,26 @@ async def fetch_with_defuddle(
         raise FetchError(f"Defuddle fetch failed: {e}")
 
 
+def _extract_jina_error_message(response: Any) -> str:
+    """Extract a human-readable message from a Jina Reader error response.
+
+    Jina returns JSON error envelopes (e.g. HTTP 451 with
+    ``{"code": 451, "message": "Anonymous access to domain ... blocked"}``);
+    surface the message instead of dumping truncated raw JSON.
+    """
+    text = str(getattr(response, "text", "") or "")
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return text[:200]
+    if isinstance(data, dict):
+        for key in ("readableMessage", "message", "error"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:300]
+    return text[:200]
+
+
 _jina_rate_limiter: _SlidingWindowRateLimiter | None = None
 
 
@@ -709,11 +902,9 @@ def _get_jina_client(timeout: int = 30, proxy: str = "") -> Any:
                 "[Jina] Rebuilding client: config changed "
                 f"(was {_jina_client_fingerprint!r}, now {fingerprint!r})"
             )
-            _old = _jina_client
-            try:
-                asyncio.get_running_loop().create_task(_old.aclose())
-            except RuntimeError:
-                pass  # no event loop; old client will be GC'd
+            from markitai.fetch_http import schedule_client_close
+
+            schedule_client_close(_jina_client.aclose(), "Jina")
 
         # Use detected proxy if not explicitly provided
         effective_proxy = proxy or _detect_proxy()
@@ -1082,7 +1273,15 @@ async def fetch_with_static(url: str) -> FetchResult:
     cond_result = await fetch_with_static_conditional(url)
     if cond_result.result is None:
         raise FetchError(f"No content from conditional fetch: {url}")
-    return cond_result.result
+    result = cond_result.result
+    # Stash HTTP validators in metadata so AUTO dispatch can store them
+    # in the cache for future conditional revalidation (popped by
+    # _dispatch_strategy before caching).
+    if cond_result.etag:
+        result.metadata["_markitai_etag"] = cond_result.etag
+    if cond_result.last_modified:
+        result.metadata["_markitai_last_modified"] = cond_result.last_modified
+    return result
 
 
 def _get_header_value(
@@ -1149,7 +1348,7 @@ def _get_response_text(response: Any) -> str:
     return str(content)
 
 
-def _build_native_fetch_result(
+async def _build_native_fetch_result(
     *,
     html: str,
     url: str,
@@ -1165,7 +1364,9 @@ def _build_native_fetch_result(
     assert coerce_source_frontmatter is not None
 
     try:
-        extracted = extract_web_content(html, url)
+        # CPU-bound (BeautifulSoup parsing + deepcopies); run in a thread
+        # to avoid blocking the event loop
+        extracted = await asyncio.to_thread(extract_web_content, html, url)
     except Exception as exc:
         logger.debug(f"Native webextract failed, falling back to markitdown: {exc}")
         return None
@@ -1350,7 +1551,7 @@ async def fetch_with_static_conditional(
         )
         response_text = _get_response_text(response)
         if content_type and "text/html" in content_type:
-            native_result = _build_native_fetch_result(
+            native_result = await _build_native_fetch_result(
                 html=response_text,
                 url=url,
                 final_url=str(response.url),
@@ -1459,10 +1660,9 @@ async def fetch_with_cloudflare(
     import httpx
 
     if not api_token or not account_id:
-        raise FetchError(
-            "Cloudflare API token and account ID required. "
-            "Set in config: fetch.cloudflare.api_token and fetch.cloudflare.account_id"
-        )
+        from markitai.utils.guidance import cloudflare_credentials_error
+
+        raise FetchError(cloudflare_credentials_error())
 
     endpoint = (
         f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
@@ -1642,7 +1842,9 @@ async def fetch_with_jina(
         if response.status_code == 429:
             raise JinaRateLimitError()
         elif response.status_code >= 400:
-            raise JinaAPIError(response.status_code, response.text[:200])
+            raise JinaAPIError(
+                response.status_code, _extract_jina_error_message(response)
+            )
 
         # Parse JSON response
         try:
@@ -1753,14 +1955,17 @@ async def _dispatch_strategy(
         from markitai.fetch_playwright import (
             fetch_with_playwright,
             is_playwright_available,
+            is_playwright_browser_installed,
+        )
+        from markitai.utils.guidance import (
+            playwright_browser_missing_error,
+            playwright_package_missing_error,
         )
 
         if not is_playwright_available():
-            raise FetchError(
-                "playwright is not installed. "
-                "Install with: uv add playwright && uv run playwright install chromium "
-                "(Linux: also run 'uv run playwright install-deps chromium')"
-            )
+            raise FetchError(playwright_package_missing_error())
+        if not is_playwright_browser_installed():
+            raise FetchError(playwright_browser_missing_error())
 
         pw_result = await fetch_with_playwright(
             url,
@@ -1787,6 +1992,8 @@ async def _dispatch_strategy(
         cf = config.cloudflare
         token = cf.get_resolved_api_token(strict=True)
         acct = cf.get_resolved_account_id(strict=True)
+        # Missing credentials are reported by fetch_with_cloudflare with an
+        # actionable error (see markitai.utils.guidance).
         result = await fetch_with_cloudflare(
             url=url,
             api_token=token,
@@ -1843,10 +2050,140 @@ async def _dispatch_strategy(
         result = await _fetch_with_fallback(
             url, config, start_with_browser=use_browser_first, **screenshot_kwargs
         )
+        # Propagate HTTP validators captured by the static path so AUTO
+        # caching stores them for future conditional revalidation.
+        etag = result.metadata.pop("_markitai_etag", None)
+        last_modified = result.metadata.pop("_markitai_last_modified", None)
+        if etag or last_modified:
+            validators_to_write = (etag, last_modified)
     else:
         raise ValueError(f"Unknown fetch strategy: {strategy}")
 
     return result, validators_to_write
+
+
+# Remote strategies that can refuse a request server-side (4xx / auth).
+_REMOTE_EXPLICIT_STRATEGIES = {
+    FetchStrategy.JINA,
+    FetchStrategy.DEFUDDLE,
+    FetchStrategy.CLOUDFLARE,
+}
+
+
+def _classify_service_refusal(strategy: FetchStrategy, error: Exception) -> str | None:
+    """Return a short reason when a remote service refused the request.
+
+    Covers service-side 4xx refusals: blocked domain, rate limit, auth
+    required. Returns None for everything else (network failures, local
+    misconfiguration, 5xx, ...), which should propagate unchanged.
+    """
+    if isinstance(error, JinaRateLimitError):
+        return "rate limited (free tier: 20 RPM)"
+    if isinstance(error, JinaAPIError):
+        if 400 <= error.status_code < 500:
+            reason = re.sub(r"^Jina Reader API error \(\d+\): ", "", str(error))
+            return f"HTTP {error.status_code}: {reason}"
+        return None
+    if not isinstance(error, FetchError):
+        return None
+    msg = str(error)
+    if "Cloudflare API token and account ID required" in msg:
+        # Local misconfiguration, not a service refusal — the actionable
+        # credentials error (see utils.guidance) must surface as-is.
+        return None
+    if strategy == FetchStrategy.DEFUDDLE:
+        if "rate limit" in msg.lower():
+            return "rate limited"
+        if re.search(r"HTTP 4\d\d", msg):
+            return msg
+        return None
+    if strategy == FetchStrategy.CLOUDFLARE:
+        if "rate limit" in msg.lower():
+            return "rate limited"
+        if re.search(r"\b(401|402|403|429|451)\b", msg) or "CF BR API error" in msg:
+            return msg
+        return None
+    return None
+
+
+def _jina_refusal_needs_key(error: Exception) -> bool:
+    """True when a Jina refusal would be lifted by configuring an API key."""
+    if isinstance(error, JinaRateLimitError):
+        return True
+    if isinstance(error, JinaAPIError):
+        return error.status_code in (401, 402, 451) or (
+            "anonymous" in str(error).lower()
+        )
+    return False
+
+
+async def _fallback_after_refusal(
+    *,
+    url: str,
+    strategy: FetchStrategy,
+    refusal: str,
+    original_error: Exception,
+    config: FetchConfig,
+    cache: FetchCache | None,
+    skip_read_cache: bool,
+    screenshot: bool,
+    screenshot_dir: Path | None,
+    screenshot_config: ScreenshotConfig | None,
+    renderer: Any | None,
+) -> FetchResult:
+    """Handle a service-side refusal of an explicitly-selected remote strategy.
+
+    Instead of dumping the raw service error, offer (interactive TTY) or
+    apply (non-interactive, with a warning) a graceful fallback to the auto
+    strategy chain. If the fallback also fails, report both failures compactly.
+    """
+    from markitai.utils.guidance import format_actionable_error, jina_api_key_hint
+
+    name = strategy.value
+    include_key_hint = strategy == FetchStrategy.JINA and _jina_refusal_needs_key(
+        original_error
+    )
+
+    if not _should_fallback_after_refusal(name, refusal):
+        steps: list[str] = []
+        if include_key_hint:
+            steps.append(jina_api_key_hint())
+        steps.append(f"Or retry without '-s {name}' to use the auto strategy chain.")
+        raise FetchError(
+            format_actionable_error(
+                f"{name} cannot fetch this URL ({refusal}): {url}", steps
+            )
+        ) from original_error
+
+    logger.warning(
+        "[Fetch] {} refused the request ({}); falling back to the auto "
+        "strategy chain: {}",
+        name,
+        refusal,
+        url,
+    )
+    try:
+        return await fetch_url(
+            url,
+            FetchStrategy.AUTO,
+            config,
+            explicit_strategy=False,
+            cache=cache,
+            skip_read_cache=skip_read_cache,
+            screenshot=screenshot,
+            screenshot_dir=screenshot_dir,
+            screenshot_config=screenshot_config,
+            renderer=renderer,
+        )
+    except Exception as fallback_error:
+        summary = [
+            f"Failed to fetch {url}:",
+            f"  - {name}: {refusal}",
+            f"  - auto fallback: {fallback_error}",
+        ]
+        if include_key_hint:
+            summary.extend(["", jina_api_key_hint()])
+        raise FetchError("\n".join(summary)) from fallback_error
 
 
 async def _resolve_cache_and_check(
@@ -1978,16 +2315,40 @@ async def fetch_url(
 
     # Fetch the content if not served from cache
     if result is None:
-        result, new_validators = await _dispatch_strategy(
-            url=url,
-            strategy=strategy,
-            config=config,
-            explicit_strategy=explicit_strategy,
-            screenshot_kwargs=screenshot_kwargs,
-            screenshot_config=screenshot_config,
-            screenshot_dir=screenshot_dir,
-            renderer=_renderer,
-        )
+        try:
+            result, new_validators = await _dispatch_strategy(
+                url=url,
+                strategy=strategy,
+                config=config,
+                explicit_strategy=explicit_strategy,
+                screenshot_kwargs=screenshot_kwargs,
+                screenshot_config=screenshot_config,
+                screenshot_dir=screenshot_dir,
+                renderer=_renderer,
+            )
+        except Exception as dispatch_error:
+            refusal = (
+                _classify_service_refusal(strategy, dispatch_error)
+                if explicit_strategy and strategy in _REMOTE_EXPLICIT_STRATEGIES
+                else None
+            )
+            if refusal is None:
+                raise
+            # Graceful fallback: the explicitly-selected remote service
+            # refused the request (blocked domain / rate limit / auth).
+            return await _fallback_after_refusal(
+                url=url,
+                strategy=strategy,
+                refusal=refusal,
+                original_error=dispatch_error,
+                config=config,
+                cache=cache,
+                skip_read_cache=skip_read_cache,
+                screenshot=screenshot,
+                screenshot_dir=screenshot_dir,
+                screenshot_config=screenshot_config,
+                renderer=_renderer,
+            )
         if new_validators is not None:
             cache_validators_to_write = new_validators
 
@@ -2151,10 +2512,33 @@ async def _fetch_with_fallback(
     if is_private_or_local_domain(domain):
         strategies = [s for s in strategies if s in {"static", "playwright"}]
 
+    # Remote-fetch consent gate: defuddle/jina/cloudflare send the URL to
+    # third-party services. When the answer is already known (config/env/
+    # cached), filter up front; when it would need an interactive prompt,
+    # DEFER it — the chain is local-first, so most fetches succeed via
+    # static/playwright and the user is never asked (lazy consent).
+    _consent_gated = not decision.reason.startswith("explicit_")
+    if _consent_gated and any(s in EXTERNAL_STRATEGIES for s in strategies):
+        _peeked = peek_remote_consent(config)
+        if _peeked is False:
+            strategies = [s for s in strategies if s not in EXTERNAL_STRATEGIES]
+            if not strategies:
+                strategies = list(LOCAL_STRATEGIES)
+
     # Resolve domain profile for telemetry
     domain_profile_applied = decision.reason == "spa_or_pattern"
 
     for strat in strategies:
+        # Lazy consent: only when the chain actually reaches a remote
+        # strategy (local ones failed) do we resolve — and possibly
+        # prompt for — remote-fetch consent
+        if (
+            _consent_gated
+            and strat in EXTERNAL_STRATEGIES
+            and not resolve_remote_consent(config)
+        ):
+            logger.debug(f"[Fetch] Skipping {strat}: no remote-fetch consent")
+            continue
         try:
             if strat == "static":
                 result = await fetch_with_static(url)
@@ -2208,10 +2592,18 @@ async def _fetch_with_fallback(
                 from markitai.fetch_playwright import (
                     fetch_with_playwright,
                     is_playwright_available,
+                    is_playwright_browser_installed,
                 )
 
                 if not is_playwright_available():
                     logger.debug("playwright not available, trying next strategy")
+                    continue
+                if not is_playwright_browser_installed():
+                    logger.debug(
+                        "[Fetch] playwright installed but Chromium browser missing; "
+                        "skipping playwright in auto chain "
+                        "(run 'markitai doctor --fix' to install it)"
+                    )
                     continue
 
                 pw_result = await fetch_with_playwright(

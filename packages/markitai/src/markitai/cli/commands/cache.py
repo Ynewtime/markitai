@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-import click
+import rich_click as click
 from rich.console import Console
 
 from markitai.cli import ui
@@ -75,8 +75,17 @@ def _print_verbose(cache_data: dict[str, Any], con: Console) -> None:
 
 @click.group()
 def cache() -> None:
-    """Cache management commands."""
-    pass
+    """Cache management commands.
+
+    Markitai caches LLM responses so repeated conversions are fast and
+    cheap, and remembers domains that need browser rendering (SPA).
+
+    Examples:
+        markitai cache stats            # How much is cached?
+        markitai cache stats -v         # Per-model breakdown + entries
+        markitai cache clear            # Clear LLM response cache
+        markitai cache spa-domains      # Show learned SPA domains
+    """
 
 
 @cache.command("stats")
@@ -99,7 +108,15 @@ def cache() -> None:
     help="Number of entries to show in verbose mode (default: 20).",
 )
 def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
-    """Show cache statistics."""
+    """Show cache statistics.
+
+    Reports how many LLM responses are cached and how much disk they use.
+
+    Examples:
+        markitai cache stats                # Summary (entries + size)
+        markitai cache stats -v --limit 10  # Recent entries per model
+        markitai cache stats --json         # Machine-readable output
+    """
     manager = ConfigManager()
     cfg = manager.load()
 
@@ -154,8 +171,11 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
                     f"{t('cache.llm')}: {c['count']} {t('cache.entries')} "
                     f"({c['size_mb']} MB)"
                 )
+                if c["count"] == 0:
+                    console.print(f"  [dim]{t('cache.empty_hint')}[/dim]")
         else:
             ui.info(f"{t('cache.llm')}: 0 {t('cache.entries')}")
+            console.print(f"  [dim]{t('cache.empty_hint')}[/dim]")
 
         # Print verbose details after summary
         if verbose and stats_data.get("cache") and "error" not in stats_data["cache"]:
@@ -175,13 +195,23 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
     help="Skip confirmation prompt.",
 )
 def cache_clear(include_spa_domains: bool, yes: bool) -> None:
-    """Clear cache entries."""
+    """Clear cache entries.
+
+    Asks for confirmation unless --yes is given.
+
+    Examples:
+        markitai cache clear                      # Clear LLM cache (asks first)
+        markitai cache clear -y                   # No confirmation prompt
+        markitai cache clear --include-spa-domains  # Also forget SPA domains
+    """
     manager = ConfigManager()
     cfg = manager.load()
 
+    cache_dir = Path(cfg.cache.global_dir).expanduser()
+
     # Confirm if not --yes
     if not yes:
-        desc = "global cache (~/.markitai)"
+        desc = f"global cache ({cache_dir})"
         if include_spa_domains:
             desc += " + learned SPA domains"
         if not click.confirm(f"Clear {desc}?"):
@@ -191,9 +221,7 @@ def cache_clear(include_spa_domains: bool, yes: bool) -> None:
     result = {"cache": 0, "spa_domains": 0}
 
     # Clear global cache
-    global_cache_path = (
-        Path(cfg.cache.global_dir).expanduser() / DEFAULT_CACHE_DB_FILENAME
-    )
+    global_cache_path = cache_dir / DEFAULT_CACHE_DB_FILENAME
     if global_cache_path.exists():
         try:
             global_cache = SQLiteCache(global_cache_path, cfg.cache.max_size_bytes)
@@ -239,6 +267,10 @@ def cache_spa_domains(as_json: bool, clear: bool) -> None:
     Shows domains that were automatically detected as requiring browser
     rendering (JavaScript-heavy sites). These domains will use browser
     strategy directly on future requests, avoiding wasted static fetch attempts.
+
+    Examples:
+        markitai cache spa-domains          # List learned domains
+        markitai cache spa-domains --clear  # Forget all learned domains
     """
     from markitai.fetch import get_spa_domain_cache
 
@@ -248,8 +280,10 @@ def cache_spa_domains(as_json: bool, clear: bool) -> None:
         count = spa_cache.clear()
         if as_json:
             click.echo(json.dumps({"cleared": count}))
-        else:
+        elif count > 0:
             console.print(f"[green]Cleared {count} learned SPA domains[/green]")
+        else:
+            console.print("[dim]No learned SPA domains to clear[/dim]")
         return
 
     domains = spa_cache.list_domains()

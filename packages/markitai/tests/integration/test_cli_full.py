@@ -203,7 +203,7 @@ class TestPresetConfiguration:
             [str(sample_txt), "-o", str(output_dir), "--preset", "minimal"],
         )
         assert result.exit_code == 0
-        assert (output_dir / "sample.txt.md").exists()
+        assert (output_dir / "sample.md").exists()
 
     def test_preset_short_flag(
         self, runner: CliRunner, sample_txt: Path, tmp_path: Path
@@ -481,7 +481,7 @@ class TestOutputControlOptions:
             [str(sample_txt), "-o", str(output_dir)],
         )
         assert result.exit_code == 0
-        assert (output_dir / "sample.txt.md").exists()
+        assert (output_dir / "sample.md").exists()
 
     def test_output_directory_created(
         self, runner: CliRunner, sample_txt: Path, tmp_path: Path
@@ -521,7 +521,7 @@ class TestOutputControlOptions:
             [str(sample_txt), "-o", str(output_dir), "--dry-run"],
         )
         assert result.exit_code == 0
-        assert not (output_dir / "sample.txt.md").exists()
+        assert not (output_dir / "sample.md").exists()
 
 
 # =============================================================================
@@ -634,12 +634,14 @@ class TestDoctorSubcommand:
     def test_doctor_table_output(self, runner: CliRunner):
         """Test doctor shows table output."""
         result = runner.invoke(app, ["doctor"])
-        assert result.exit_code == 0
+        # Exit code reflects required-dependency state of the host machine:
+        # 0 when all present, 1 when some are missing — both are valid runs
+        assert result.exit_code in (0, 1)
 
     def test_doctor_json_output(self, runner: CliRunner):
         """Test doctor --json output."""
         result = runner.invoke(app, ["doctor", "--json"])
-        assert result.exit_code == 0
+        assert result.exit_code in (0, 1)
         data = json.loads(result.output)
         assert any(
             key in data for key in ["playwright", "libreoffice", "rapidocr", "llm-api"]
@@ -662,9 +664,9 @@ class TestSingleFileConversion:
             [str(sample_txt), "-o", str(output_dir)],
         )
         assert result.exit_code == 0
-        assert (output_dir / "sample.txt.md").exists()
+        assert (output_dir / "sample.md").exists()
 
-        content = (output_dir / "sample.txt.md").read_text()
+        content = (output_dir / "sample.md").read_text()
         assert "---" in content  # Has frontmatter
 
     def test_convert_md_passthrough(
@@ -677,7 +679,7 @@ class TestSingleFileConversion:
             [str(sample_md), "-o", str(output_dir)],
         )
         assert result.exit_code == 0
-        assert (output_dir / "sample.md.md").exists()
+        assert (output_dir / "sample.md").exists()
 
     def test_convert_nonexistent_file(self, runner: CliRunner, tmp_path: Path):
         """Test converting non-existent file shows error."""
@@ -714,9 +716,9 @@ class TestBatchConversion:
             [str(batch_dir), "-o", str(output_dir)],
         )
         assert result.exit_code == 0
-        assert (output_dir / "file1.txt.md").exists()
-        assert (output_dir / "file2.txt.md").exists()
-        assert (output_dir / "subdir" / "nested.txt.md").exists()
+        assert (output_dir / "file1.md").exists()
+        assert (output_dir / "file2.md").exists()
+        assert (output_dir / "subdir" / "nested.md").exists()
 
     def test_batch_dry_run(self, runner: CliRunner, batch_dir: Path, tmp_path: Path):
         """Test batch dry run shows files without converting."""
@@ -726,7 +728,7 @@ class TestBatchConversion:
             [str(batch_dir), "-o", str(output_dir), "--dry-run"],
         )
         assert result.exit_code == 0
-        assert not (output_dir / "file1.txt.md").exists()
+        assert not (output_dir / "file1.md").exists()
 
     def test_batch_empty_directory(self, runner: CliRunner, tmp_path: Path):
         """Test batch conversion of empty directory."""
@@ -804,7 +806,7 @@ class TestConflictHandling:
         """Test skip mode keeps existing files."""
         output_dir = tmp_path / "output"
         output_dir.mkdir()
-        existing = output_dir / "sample.txt.md"
+        existing = output_dir / "sample.md"
         existing.write_text("existing content")
 
         config = tmp_path / "config.json"
@@ -823,7 +825,7 @@ class TestConflictHandling:
         """Test overwrite mode replaces existing files."""
         output_dir = tmp_path / "output"
         output_dir.mkdir()
-        existing = output_dir / "sample.txt.md"
+        existing = output_dir / "sample.md"
         existing.write_text("existing content")
 
         config = tmp_path / "config.json"

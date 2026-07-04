@@ -60,6 +60,7 @@ class ConversionContext:
     # Optional inputs
     actual_file: Path | None = None  # For pre-converted files (batch COM)
     shared_processor: LLMProcessor | None = None
+    output_name: str | None = None  # Pre-planned output filename (batch collision)
 
     # Processing flags
     use_multiprocess_images: bool = False
@@ -168,7 +169,7 @@ def validate_and_detect_format(
             return ConversionStepResult(
                 success=False,
                 error="--kreuzberg requires kreuzberg to be installed. "
-                "Install with: uv pip install markitai[kreuzberg]",
+                'Install with: uv tool install "markitai[kreuzberg]"',
             )
         from markitai.converter.kreuzberg import KreuzbergConverter
 
@@ -213,11 +214,11 @@ def validate_and_detect_format(
                 )
                 logger.debug(f"Using CF toMarkdown for {fmt.value} (explicit)")
             else:
+                from markitai.utils.guidance import cloudflare_credentials_error
+
                 return ConversionStepResult(
                     success=False,
-                    error="--cloudflare requires CLOUDFLARE_API_TOKEN and "
-                    "CLOUDFLARE_ACCOUNT_ID. Set them as environment variables "
-                    "or in markitai.json under fetch.cloudflare.",
+                    error=cloudflare_credentials_error(),
                 )
 
     # Fall back to local converter if CF not used
@@ -323,6 +324,13 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
 def resolve_output_file(ctx: ConversionContext) -> ConversionStepResult:
     """Resolve output file path with conflict handling.
 
+    Output naming replaces the input extension (``sample.pdf`` ->
+    ``sample.md``). Batch callers pre-plan names via
+    ``markitai.utils.paths.plan_output_names`` and pass them through
+    ``ctx.output_name``; single-file conversions derive the name here
+    (falling back to legacy ``<name>.md`` if it would overwrite the
+    source file).
+
     Args:
         ctx: Conversion context
 
@@ -330,8 +338,15 @@ def resolve_output_file(ctx: ConversionContext) -> ConversionStepResult:
         ConversionStepResult - may have skip_reason if file exists
     """
     from markitai.utils.output import resolve_output_path
+    from markitai.utils.paths import plan_output_names
 
-    base_output_file = ctx.output_dir / f"{ctx.input_path.name}.md"
+    output_name = ctx.output_name
+    if output_name is None:
+        output_name = plan_output_names([(ctx.input_path, ctx.output_dir)])[
+            ctx.input_path
+        ]
+
+    base_output_file = ctx.output_dir / output_name
     ctx.output_file = resolve_output_path(
         base_output_file, ctx.config.output.on_conflict
     )
@@ -945,16 +960,34 @@ async def process_with_standard_llm(
                 ctx.input_path,
             )
 
-            # Execute in parallel
-            doc_result, img_result = await asyncio.gather(doc_task, img_task)
+            # Execute in parallel. return_exceptions=True so a failure in one
+            # task doesn't leave the sibling running detached — an orphaned
+            # doc task could still write .llm.md after the fallback path runs
+            doc_result, img_result = await asyncio.gather(
+                doc_task, img_task, return_exceptions=True
+            )
+
+            # Document processing failure is fatal: the caller writes the
+            # base-markdown fallback and marks the file failed
+            if isinstance(doc_result, BaseException):
+                raise doc_result
 
             # Unpack results
             ctx.conversion_result.markdown, doc_cost, doc_usage = doc_result
-            _, image_cost, image_usage, ctx.image_analysis = img_result
-
-            ctx.llm_cost += doc_cost + image_cost
+            ctx.llm_cost += doc_cost
             merge_llm_usage(ctx.llm_usage, doc_usage)
-            merge_llm_usage(ctx.llm_usage, image_usage)
+
+            # Image-analysis failure degrades gracefully (same policy as
+            # analyze_embedded_images): keep .llm.md without alt text
+            if isinstance(img_result, BaseException):
+                logger.warning(
+                    f"Image analysis failed (continuing without alt text): {img_result}"
+                )
+                ctx.image_analysis = None
+            else:
+                _, image_cost, image_usage, ctx.image_analysis = img_result
+                ctx.llm_cost += image_cost
+                merge_llm_usage(ctx.llm_usage, image_usage)
 
             # Apply alt text updates to .llm.md after document processing completes
             # This ensures no race condition - .llm.md is guaranteed to exist
@@ -1194,8 +1227,8 @@ async def convert_document_core(
                         f"Embedded image analysis failed: {format_error_message(e)}"
                     )
 
-                ctx.paged_stabilized = True
                 stabilize_written_llm_output(ctx, ctx.shared_processor)
+                ctx.paged_stabilized = True
 
                 # Apply alt text updates AFTER stabilization — stabilize may rewrite
                 # .llm.md from the baseline .md (which has no alt text), so alt text
@@ -1209,7 +1242,14 @@ async def convert_document_core(
                     apply_alt_text_updates(llm_output, ctx.image_analysis)
             else:
                 # Standard LLM mode
-                result = await process_with_standard_llm(ctx)
+                try:
+                    result = await process_with_standard_llm(ctx)
+                except Exception as e:
+                    _write_base_md_fallback(ctx)
+                    return ConversionStepResult(
+                        success=False,
+                        error=f"LLM processing failed: {format_error_message(e)}",
+                    )
                 if not result.success:
                     _write_base_md_fallback(ctx)
                     return result

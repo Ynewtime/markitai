@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -23,8 +24,87 @@ os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
 # Avoid LiteLLM startup network fetches and fallback warnings in normal CLI use.
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
-import click
+import rich_click as click
 from dotenv import load_dotenv
+
+# Grouped --help output (rendered by rich-click)
+click.rich_click.STYLE_OPTIONS_PANEL_BORDER = "dim"
+# Uniform helptext spacing: exactly one blank line between paragraphs.
+# rich-click's default ("\n") renders plain paragraphs with NO blank line
+# between them while \b blocks get TWO trailing blank lines, so section
+# gaps look inconsistent. With "\n\n" every paragraph gets one blank line;
+# indented blocks (4+ spaces) keep their line breaks without needing \b.
+click.rich_click.TEXT_PARAGRAPH_LINEBREAKS = "\n\n"
+# One blank line after the summary line too (default is flush).
+click.rich_click.PADDING_HELPTEXT_FIRST_LINE = (0, 0, 1, 0)
+# Uniform two-column layout: append metavars to help text instead of a
+# separate column (a wide choice-list metavar otherwise makes column
+# widths differ between panels).
+click.rich_click.SHOW_METAVARS_COLUMN = False
+click.rich_click.APPEND_METAVARS_HELP = True
+click.rich_click.OPTION_GROUPS = {
+    "markitai": [
+        {
+            "name": "Output & Configuration",
+            "options": [
+                "--output",
+                "--config",
+                "--config-json",
+                "--preset",
+                "--interactive",
+                "--dry-run",
+            ],
+        },
+        {
+            "name": "LLM Enhancement",
+            "options": [
+                "--llm",
+                "--alt",
+                "--desc",
+                "--screenshot",
+                "--screenshot-only",
+                "--pure",
+                "--keep-base",
+                "--llm-concurrency",
+            ],
+        },
+        {
+            "name": "OCR",
+            "options": ["--ocr"],
+        },
+        {
+            "name": "Fetch & Conversion Backends",
+            "options": [
+                "--strategy",
+                "--backend",
+                "--playwright",
+                "--defuddle",
+                "--static",
+                "--jina",
+                "--cloudflare",
+                "--kreuzberg",
+            ],
+        },
+        {
+            "name": "Batch Processing",
+            "options": [
+                "--resume",
+                "--batch-concurrency",
+                "--url-concurrency",
+                "--glob",
+                "--max-depth",
+            ],
+        },
+        {
+            "name": "Cache & Images",
+            "options": ["--no-cache", "--no-cache-for", "--no-compress"],
+        },
+        {
+            "name": "Logging & Info",
+            "options": ["--verbose", "--quiet", "--version", "--help"],
+        },
+    ]
+}
 
 # Load .env: cwd first (project-level), then ~/.markitai/ (global fallback).
 # override=False (default) means first-loaded values win → cwd takes priority.
@@ -112,6 +192,14 @@ def run_interactive_mode(ctx: click.Context) -> None:
     type=click.Path(exists=True, path_type=Path),
     default=None,
     help="Path to configuration file.",
+)
+@click.option(
+    "--config-json",
+    "config_json",
+    type=str,
+    default=None,
+    help='Inline JSON config overrides, e.g. \'{"llm": {"enabled": false}}\'. '
+    "Deep-merged over the config file; explicit CLI flags still win.",
 )
 @click.option(
     "--preset",
@@ -206,42 +294,62 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Override recursive directory scan depth for batch discovery. 0 = only the input directory.",
 )
 @click.option(
+    "-s",
+    "--strategy",
+    "fetch_strategy_name",
+    type=click.Choice(
+        ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"]
+    ),
+    default=None,
+    help="URL fetch strategy. auto (default) tries a fallback chain; "
+    "static/playwright fetch locally; defuddle/jina/cloudflare use remote "
+    "extraction services.",
+)
+@click.option(
+    "-b",
+    "--backend",
+    "file_backend",
+    type=click.Choice(["native", "kreuzberg", "cloudflare"]),
+    default=None,
+    help="File conversion backend. native (default) uses the built-in "
+    "converters; kreuzberg needs 'markitai[kreuzberg]'; cloudflare needs "
+    "CF credentials.",
+)
+@click.option(
     "--playwright",
     "use_playwright",
     is_flag=True,
-    help="Force browser rendering for URLs via Playwright.",
+    help="Deprecated alias for '-s playwright'.",
 )
 @click.option(
     "--defuddle",
     "use_defuddle",
     is_flag=True,
-    help="Force Defuddle API for URL fetching (free, no auth, best content cleaning).",
+    help="Deprecated alias for '-s defuddle'.",
 )
 @click.option(
     "--static",
     "use_static",
     is_flag=True,
-    help="Force static HTTP fetch with native webextract (no external API).",
+    help="Deprecated alias for '-s static'.",
 )
 @click.option(
     "--jina",
     "use_jina",
     is_flag=True,
-    help="Force Jina Reader API for URL fetching.",
+    help="Deprecated alias for '-s jina'.",
 )
 @click.option(
     "--cloudflare",
     "use_cloudflare",
     is_flag=True,
-    help="Use Cloudflare cloud backend (BR for URLs, toMarkdown for files). "
-    "Requires CF API token and account ID in config. Available on CF Free plan.",
+    help="Deprecated alias for '-s cloudflare'.",
 )
 @click.option(
     "--kreuzberg",
     "use_kreuzberg",
     is_flag=True,
-    help="Force kreuzberg converter for all file formats (overrides native converters). "
-    "Requires kreuzberg installed: uv pip install markitai[kreuzberg].",
+    help="Deprecated alias for '-b kreuzberg'.",
 )
 @click.option(
     "-v",
@@ -293,6 +401,7 @@ def app(
     ctx: Context,
     output: Path | None,
     config_path: Path | None,
+    config_json: str | None,
     preset: str | None,
     llm: bool | None,
     alt: bool | None,
@@ -309,11 +418,13 @@ def app(
     llm_concurrency: int | None,
     glob_patterns: tuple[str, ...],
     max_depth: int | None,
+    fetch_strategy_name: str | None,
     use_defuddle: bool,
     use_playwright: bool,
     use_static: bool,
     use_jina: bool,
     use_cloudflare: bool,
+    file_backend: str | None,
     use_kreuzberg: bool,
     verbose: bool,
     quiet: bool,
@@ -326,13 +437,11 @@ def app(
     Convert various document formats and URLs to Markdown with optional
     LLM-powered enhancement for format optimization and image analysis.
 
-    \b
     Presets:
         rich     - LLM + alt + desc + screenshot (complex documents)
         standard - LLM + alt + desc (normal documents)
         minimal  - No enhancement (just convert)
 
-    \b
     Examples:
         markitai document.docx                      # Convert single file
         markitai https://example.com/page           # Convert web page
@@ -389,9 +498,28 @@ def app(
             is_url_list_mode = True
             input_path = None  # Clear input_path for URL list mode
 
+    # Parse --config-json overrides (merged over the file config below,
+    # but still under explicit CLI flags, which are applied later)
+    config_overrides: dict | None = None
+    if config_json:
+        try:
+            parsed_overrides = json.loads(config_json)
+        except json.JSONDecodeError as e:
+            raise click.BadParameter(
+                f"invalid JSON at line {e.lineno} column {e.colno}: {e.msg}",
+                param_hint="'--config-json'",
+            ) from e
+        if not isinstance(parsed_overrides, dict):
+            raise click.BadParameter(
+                "expected a JSON object of config overrides, "
+                f"got {type(parsed_overrides).__name__}",
+                param_hint="'--config-json'",
+            )
+        config_overrides = parsed_overrides
+
     # Load configuration first
     config_manager = ConfigManager()
-    cfg = config_manager.load(config_path=config_path)
+    cfg = config_manager.load(config_path=config_path, overrides=config_overrides)
 
     # Determine if we're in single file/URL mode (not batch)
     # Single file/URL mode: quiet console unless --verbose is specified
@@ -552,7 +680,7 @@ def app(
             ignored_flags.append("--screenshot")
         if ignored_flags:
             flags_str = ", ".join(ignored_flags)
-            console.print(
+            stderr_console.print(
                 f"[yellow]Warning: --pure mode ignores {flags_str} "
                 f"(pure mode only does text cleaning)[/yellow]"
             )
@@ -573,53 +701,87 @@ def app(
         all_warnings = dep_warnings + deprecation_warnings
         if all_warnings:
             for warning in all_warnings:
-                console.print(f"[yellow]{warning}[/yellow]")
-            console.print()
+                stderr_console.print(f"[yellow]{warning}[/yellow]")
+            stderr_console.print()
 
-    # Validate fetch strategy flags (mutually exclusive)
-    strategy_flags = sum(
-        [use_defuddle, use_playwright, use_static, use_jina, use_cloudflare]
-    )
-    if strategy_flags > 1:
+    # Resolve fetch strategy: -s/--strategy plus deprecated per-backend flags
+    deprecated_strategy_flags = {
+        "defuddle": use_defuddle,
+        "static": use_static,
+        "playwright": use_playwright,
+        "jina": use_jina,
+        "cloudflare": use_cloudflare,
+    }
+    deprecated_selected = [
+        name for name, used in deprecated_strategy_flags.items() if used
+    ]
+    if len(deprecated_selected) > 1:
         console.print(
             "[red]Error: --defuddle, --playwright, --static, --jina, and --cloudflare are mutually exclusive.[/red]"
         )
         ctx.exit(1)
+    if fetch_strategy_name is not None and deprecated_selected:
+        console.print(
+            f"[red]Error: -s/--strategy and --{deprecated_selected[0]} are "
+            "mutually exclusive.[/red]"
+        )
+        ctx.exit(1)
+    if deprecated_selected:
+        stderr_console.print(
+            f"[yellow]--{deprecated_selected[0]} is deprecated, "
+            f"use -s {deprecated_selected[0]}[/yellow]"
+        )
+        fetch_strategy_name = deprecated_selected[0]
 
     # Determine fetch strategy
-    from markitai.fetch import FetchStrategy
+    from markitai.fetch import (
+        FetchStrategy,
+        set_remote_consent,
+        set_remote_consent_prompt_allowed,
+    )
 
-    if use_defuddle:
-        fetch_strategy = FetchStrategy.DEFUDDLE
-        explicit_fetch_strategy = True
-    elif use_static:
-        fetch_strategy = FetchStrategy.STATIC
-        explicit_fetch_strategy = True
-    elif use_playwright:
-        fetch_strategy = FetchStrategy.PLAYWRIGHT
-        explicit_fetch_strategy = True
-    elif use_jina:
-        fetch_strategy = FetchStrategy.JINA
-        explicit_fetch_strategy = True
-    elif use_cloudflare:
-        fetch_strategy = FetchStrategy.CLOUDFLARE
-        explicit_fetch_strategy = True
-        # Also enable CF Workers AI toMarkdown for file conversion
-        cfg.fetch.cloudflare.convert_enabled = True
+    # --quiet suppresses the interactive remote-fetch consent prompt
+    set_remote_consent_prompt_allowed(not quiet)
+
+    if fetch_strategy_name is not None:
+        fetch_strategy = FetchStrategy(fetch_strategy_name)
+        explicit_fetch_strategy = fetch_strategy != FetchStrategy.AUTO
+        if fetch_strategy == FetchStrategy.CLOUDFLARE:
+            # Also enable CF Workers AI toMarkdown for file conversion
+            cfg.fetch.cloudflare.convert_enabled = True
+        if fetch_strategy_name in ("defuddle", "jina", "cloudflare"):
+            # Explicitly choosing a remote service counts as consent this run
+            set_remote_consent(True)
     else:
         # Use config default or auto
         fetch_strategy = FetchStrategy(cfg.fetch.strategy)
         explicit_fetch_strategy = False
 
-    # --kreuzberg overrides file conversion (orthogonal to fetch strategy)
+    # Resolve file conversion backend: -b/--backend (orthogonal to -s, which
+    # picks the URL fetch strategy) plus the deprecated --kreuzberg alias
     if use_kreuzberg:
-        if use_cloudflare:
+        if file_backend is not None:
             console.print(
-                "[red]Error: --kreuzberg and --cloudflare are mutually exclusive "
-                "(both override file conversion).[/red]"
+                "[red]Error: -b/--backend and --kreuzberg are mutually exclusive.[/red]"
+            )
+            ctx.exit(1)
+        stderr_console.print(
+            "[yellow]--kreuzberg is deprecated, use -b kreuzberg[/yellow]"
+        )
+        file_backend = "kreuzberg"
+
+    if file_backend == "kreuzberg":
+        if fetch_strategy_name == "cloudflare":
+            console.print(
+                "[red]Error: '-b kreuzberg' and '-s cloudflare' are mutually "
+                "exclusive (both override file conversion).[/red]"
             )
             ctx.exit(1)
         cfg.fetch.kreuzberg_convert_enabled = True
+    elif file_backend == "cloudflare":
+        # CF Workers AI toMarkdown for file conversion (credentials checked
+        # with actionable guidance at conversion time)
+        cfg.fetch.cloudflare.convert_enabled = True
 
     # Log input info
     if is_url_list_mode:

@@ -84,7 +84,9 @@ class TestImageProcessor:
         # The image is extracted (even if conversion may fail later)
         # The regex should match x-emf MIME type
         assert len(images) == 1
-        assert images[0][1] == "image/png"  # Converted to PNG
+        # Conversion of fake data fails, so the original type is kept rather
+        # than mislabeling unconverted EMF bytes as PNG
+        assert images[0][1] == "image/x-emf"
 
     def test_extract_various_mime_types(self) -> None:
         """Test extracting images with various MIME type formats."""
@@ -452,8 +454,73 @@ class TestIndexMappingReplacement:
         )
 
         assert "![original](.markitai/assets/test.0001.jpg)" in result
-        assert "![duplicate]" not in result  # Duplicate removed
+        assert "![duplicate]" not in result
         assert "![unique](.markitai/assets/test.0003.jpg)" in result
+
+    def test_replace_with_index_mapping_undecodable_uri(self, tmp_path: Path) -> None:
+        """An undecodable data URI must not shift the index of later images.
+
+        extract_base64_images skips URIs whose base64 payload fails to decode,
+        so the index mapping is keyed by *extracted* position. Replacement must
+        apply the same skip rule or every image after the bad URI is off by one.
+        """
+        from markitai.converter.base import ExtractedImage
+        from markitai.image import ProcessedImage
+
+        processor = ImageProcessor()
+
+        img1 = create_test_image(100, 100, "red")
+        img2 = create_test_image(100, 100, "blue")
+        # "AAAAA" matches the data URI regex but fails base64 decoding (bad length)
+        bad_uri = "![broken](data:image/png;base64,AAAAA)"
+        markdown = (
+            f"{bad_uri}\n"
+            f"{create_base64_markdown(img1, 'img1')}\n"
+            f"{create_base64_markdown(img2, 'img2')}"
+        )
+
+        extracted = processor.extract_base64_images(markdown)
+        assert len(extracted) == 2  # bad URI skipped
+
+        saved_images = [
+            ExtractedImage(
+                path=tmp_path / "test.0001.jpg",
+                index=1,
+                original_name="test.0001.jpg",
+                mime_type="image/jpeg",
+                width=100,
+                height=100,
+            ),
+            ExtractedImage(
+                path=tmp_path / "test.0002.jpg",
+                index=2,
+                original_name="test.0002.jpg",
+                mime_type="image/jpeg",
+                width=100,
+                height=100,
+            ),
+        ]
+        index_mapping = {
+            1: ProcessedImage(
+                original_index=1,
+                saved_path=tmp_path / "test.0001.jpg",
+                skip_reason=None,
+            ),
+            2: ProcessedImage(
+                original_index=2,
+                saved_path=tmp_path / "test.0002.jpg",
+                skip_reason=None,
+            ),
+        }
+
+        result = processor.replace_base64_with_paths(
+            markdown, saved_images, index_mapping=index_mapping
+        )
+
+        # The undecodable URI stays untouched; img1/img2 map to their own files
+        assert bad_uri in result
+        assert "![img1](.markitai/assets/test.0001.jpg)" in result
+        assert "![img2](.markitai/assets/test.0002.jpg)" in result
 
     def test_process_and_save_returns_index_mapping(self, tmp_path: Path) -> None:
         """Test that process_and_save returns correct index mapping."""
@@ -575,6 +642,61 @@ class TestSaveScreenshot:
         # Result should be within configured max dimensions
         assert final_size[0] <= 800
         assert final_size[1] <= 600
+
+
+def create_exif_rotated_jpeg(width: int = 100, height: int = 50) -> bytes:
+    """Create a JPEG with EXIF orientation 6 (rotate 90° CW to display)."""
+    from PIL import Image
+
+    img = Image.new("RGB", (width, height), "red")
+    exif = img.getexif()
+    exif[0x0112] = 6  # Orientation tag
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", exif=exif)
+    return buf.getvalue()
+
+
+class TestExifOrientation:
+    """EXIF orientation must be baked in when re-encoding drops the tag."""
+
+    def test_pillow_path_applies_exif_orientation(self) -> None:
+        result = _compress_image_pillow(
+            image_data=create_exif_rotated_jpeg(100, 50),
+            quality=85,
+            max_size=(1000, 1000),
+            output_format="JPEG",
+            min_width=1,
+            min_height=1,
+            min_area=1,
+        )
+        assert result is not None
+        _, width, height = result
+        assert (width, height) == (50, 100)
+
+    def test_cv2_path_applies_exif_orientation(self) -> None:
+        pytest.importorskip("cv2")
+        from markitai.image import _compress_image_cv2
+
+        result = _compress_image_cv2(
+            image_data=create_exif_rotated_jpeg(100, 50),
+            quality=85,
+            max_size=(1000, 1000),
+            output_format="JPEG",
+            min_width=1,
+            min_height=1,
+            min_area=1,
+        )
+        assert result is not None
+        _, width, height = result
+        assert (width, height) == (50, 100)
+
+    def test_compress_method_applies_exif_orientation(self) -> None:
+        from PIL import Image
+
+        processor = ImageProcessor()
+        with Image.open(io.BytesIO(create_exif_rotated_jpeg(100, 50))) as img:
+            compressed_img, _ = processor.compress(img)
+            assert compressed_img.size == (50, 100)
 
 
 class TestCompressImageWorkerFunctions:

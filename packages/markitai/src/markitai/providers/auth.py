@@ -128,7 +128,8 @@ def _build_resolution_hint(provider: str) -> str:
     """Build platform-aware resolution hint for a provider."""
     if provider == "claude-agent":
         return (
-            "Run 'claude auth login' to authenticate with Claude Code CLI.\n"
+            "Run 'markitai auth claude login' (or 'claude auth login') to "
+            "authenticate with Claude Code CLI.\n"
             "Alternatively, set a cloud provider env var:\n"
             "  CLAUDE_CODE_USE_BEDROCK=1, CLAUDE_CODE_USE_VERTEX=1, "
             "or CLAUDE_CODE_USE_FOUNDRY=1\n"
@@ -280,11 +281,12 @@ def _resolve_cli_path(command: str) -> str | None:
     return cli_path
 
 
-def _claude_cli_email() -> str | None:
-    """Try to extract email from `claude auth status` JSON output.
+def _claude_cli_auth_status() -> dict[str, Any] | None:
+    """Query `claude auth status` and return the parsed JSON payload.
 
-    Runs `claude auth status` with a short timeout.  Returns the email
-    string on success, or ``None`` if the CLI is unavailable / fails.
+    Runs `claude auth status` with a short timeout.  Returns the parsed
+    dict on success, or ``None`` if the CLI is unavailable / fails /
+    emits invalid JSON.
     """
     import subprocess
 
@@ -296,24 +298,75 @@ def _claude_cli_email() -> str | None:
             [cli_path, "auth", "status"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
         )
         if proc.returncode != 0:
             return None
-        data: dict[str, Any] = json.loads(proc.stdout)
-        email = data.get("email")
-        return email if isinstance(email, str) and email else None
+        data: Any = json.loads(proc.stdout)
+        return data if isinstance(data, dict) else None
     except Exception:
         return None
 
 
+def _claude_cli_email() -> str | None:
+    """Try to extract email from `claude auth status` JSON output.
+
+    Returns the email string on success, or ``None`` if the CLI is
+    unavailable / fails.
+    """
+    data = _claude_cli_auth_status()
+    if not data:
+        return None
+    email = data.get("email")
+    return email if isinstance(email, str) and email else None
+
+
+def _check_claude_cli_login() -> AuthStatus | None:
+    """Check Claude authentication via `claude auth status`.
+
+    On macOS the Claude Code CLI stores OAuth tokens in the system
+    Keychain rather than ``~/.claude/.credentials.json``, so the CLI
+    itself is the source of truth when the credentials file is absent.
+
+    Returns:
+        Authenticated AuthStatus if the CLI reports a logged-in session,
+        or ``None`` if the CLI is unavailable or not logged in.
+    """
+    data = _claude_cli_auth_status()
+    if not data or not data.get("loggedIn"):
+        return None
+
+    email = data.get("email")
+    subscription = data.get("subscriptionType")
+    if not isinstance(subscription, str) or not subscription:
+        subscription = "unknown"
+    user = (
+        email if isinstance(email, str) and email else f"subscription: {subscription}"
+    )
+    auth_method = data.get("authMethod")
+    return AuthStatus(
+        provider="claude-agent",
+        authenticated=True,
+        user=user,
+        expires_at=None,
+        error=None,
+        details={
+            "source": "cli",
+            "subscription": subscription,
+            "auth_method": auth_method if isinstance(auth_method, str) else None,
+        },
+    )
+
+
 def _check_claude_credentials_auth() -> AuthStatus:
-    """Check Claude authentication by reading credentials file or env vars.
+    """Check Claude authentication via env vars, credentials file, or CLI.
 
     Checks (in order):
     1. CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX / CLAUDE_CODE_USE_FOUNDRY
        environment variables (cloud provider auth)
     2. ~/.claude/.credentials.json for OAuth tokens
+    3. `claude auth status` CLI fallback (covers macOS Keychain storage,
+       where no credentials file exists even when logged in)
 
     Returns:
         AuthStatus with authentication result
@@ -334,8 +387,29 @@ def _check_claude_credentials_auth() -> AuthStatus:
                 user=f"cloud: {cloud_name}",
                 expires_at=None,
                 error=None,
+                details={"source": "env"},
             )
 
+    file_status = _check_claude_credentials_file()
+    if file_status.authenticated:
+        return file_status
+
+    # Credentials file missing or unusable — ask the CLI directly.
+    # On macOS, Claude Code stores OAuth tokens in the Keychain, so a
+    # logged-in user may have no ~/.claude/.credentials.json at all.
+    cli_status = _check_claude_cli_login()
+    if cli_status is not None:
+        return cli_status
+
+    return file_status
+
+
+def _check_claude_credentials_file() -> AuthStatus:
+    """Check Claude authentication by reading ~/.claude/.credentials.json.
+
+    Returns:
+        AuthStatus with authentication result
+    """
     credentials_path = Path.home() / ".claude" / ".credentials.json"
 
     if not credentials_path.exists():
@@ -385,6 +459,12 @@ def _check_claude_credentials_auth() -> AuthStatus:
                 user=user,
                 expires_at=expires_at,
                 error=None,
+                details={
+                    "source": "credentials-file",
+                    "subscription": (
+                        subscription if isinstance(subscription, str) else None
+                    ),
+                },
             )
         else:
             return AuthStatus(

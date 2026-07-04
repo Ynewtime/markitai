@@ -14,6 +14,62 @@ from markitai.constants import DEFAULT_OCR_SAMPLE_PAGES, DEFAULT_RENDER_DPI
 if TYPE_CHECKING:
     from markitai.config import OCRConfig
 
+# Minimum Latin letters before the vowel-ratio test is meaningful; short
+# labels and non-Latin text below this floor are never flagged.
+_GARBLED_MIN_LATIN_LETTERS = 30
+
+# CJK character ranges (Han, Kana, Hangul). A page dominated by CJK text
+# needs no vowel check -- the vowel-ratio heuristic only applies to Latin.
+_CJK_RANGES = (
+    (0x3040, 0x30FF),  # Hiragana + Katakana
+    (0x3400, 0x4DBF),  # CJK Extension A
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0xAC00, 0xD7AF),  # Hangul Syllables
+    (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
+)
+
+
+def _is_cjk_char(ch: str) -> bool:
+    """Return True if the character falls in a CJK Unicode range."""
+    code = ord(ch)
+    return any(lo <= code <= hi for lo, hi in _CJK_RANGES)
+
+
+def is_likely_garbled(text: str) -> bool:
+    """Detect substitution-cipher / broken-cmap garbling in extracted text.
+
+    Real Latin-script text has a vowel ratio of roughly 30-45%, but a
+    broken ToUnicode cmap (a real pymupdf failure mode) almost always maps
+    the original A/E/I/O/U onto non-vowel letters, driving the apparent
+    vowel ratio to near zero. Only Latin (ASCII alphabetic) characters are
+    tested: text without enough Latin letters to judge, or dominated by
+    CJK characters, is treated as fine.
+
+    Args:
+        text: Extracted text (typically a full page) to check
+
+    Returns:
+        True if the text looks garbled (unreadable despite being present)
+    """
+    letters = 0
+    vowels = 0
+    cjk = 0
+    for ch in text:
+        if ch.isascii() and ch.isalpha():
+            letters += 1
+            if ch.lower() in "aeiou":
+                vowels += 1
+        elif _is_cjk_char(ch):
+            cjk += 1
+    if letters < _GARBLED_MIN_LATIN_LETTERS:
+        return False
+    if cjk >= letters:
+        # Mostly-CJK page: the Latin letters are a minority (codes,
+        # abbreviations) and the vowel test would be meaningless.
+        return False
+    # Vowel ratio < 20% is well outside any natural Latin-script language.
+    return vowels * 5 < letters
+
 
 @dataclass
 class OCRResult:
@@ -85,8 +141,11 @@ class OCRProcessor:
                     or cls._config_fingerprint(cls._global_config) != new_fp
                 ):
                     logger.debug("Creating global shared OCR engine")
-                    cls._global_config = config
+                    # Create first, assign after: if creation raises, the old
+                    # engine/config pair stays consistent instead of serving a
+                    # stale engine under the new config's fingerprint
                     cls._global_engine = cls._create_engine_impl(config)
+                    cls._global_config = config
         return cls._global_engine
 
     @classmethod
@@ -378,6 +437,9 @@ class OCRProcessor:
         try:
             total_text_length = 0
             pages_to_check = min(sample_pages, len(doc))
+            if pages_to_check == 0:
+                # Zero-page PDF: nothing to scan, avoid division by zero
+                return False
 
             for i in range(pages_to_check):
                 page = doc[i]

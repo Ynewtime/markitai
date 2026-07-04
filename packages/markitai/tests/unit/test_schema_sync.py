@@ -96,6 +96,18 @@ class TestSchemaSync:
         """Verify presets property is in root schema."""
         assert "presets" in schema["properties"]
 
+    def test_security_property_in_root_schema(self, schema: dict) -> None:
+        """Verify security property is in root schema."""
+        assert "security" in schema["properties"]
+
+    def test_security_config_pdf_sanitize_default(self, schema: dict) -> None:
+        """Verify SecurityConfig.pdf_sanitize default matches config.py."""
+        from markitai.config import SecurityConfig
+
+        schema_props = schema["$defs"]["SecurityConfig"]["properties"]
+        assert schema_props["pdf_sanitize"]["default"] == SecurityConfig().pdf_sanitize
+        assert schema_props["pdf_sanitize"]["enum"] == ["off", "warn", "remove"]
+
     def test_log_config_default_level(self, schema: dict) -> None:
         """Verify LogConfig.level default matches config.py."""
         log_config = schema["$defs"]["LogConfig"]["properties"]
@@ -259,6 +271,15 @@ class TestModelFieldSync:
         """Verify all DomainProfileConfig fields are in schema."""
         model_fields = set(DomainProfileConfig.model_fields.keys())
         schema_fields = set(schema["$defs"]["DomainProfileConfig"]["properties"].keys())
+        missing = model_fields - schema_fields
+        assert not missing, f"Fields missing from schema: {missing}"
+
+    def test_security_config_fields_match(self, schema: dict) -> None:
+        """Verify all SecurityConfig fields are in schema."""
+        from markitai.config import SecurityConfig
+
+        model_fields = set(SecurityConfig.model_fields.keys())
+        schema_fields = set(schema["$defs"]["SecurityConfig"]["properties"].keys())
         missing = model_fields - schema_fields
         assert not missing, f"Fields missing from schema: {missing}"
 

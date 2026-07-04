@@ -12,7 +12,7 @@ import types as _types
 import typing
 from typing import Any, get_args, get_origin
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic.fields import FieldInfo
 
 from markitai.config import MarkitaiConfig
@@ -559,12 +559,25 @@ def run_config_editor() -> None:
         if new_value is _CANCEL:
             continue
 
+        old_config_dict = manager.config.model_dump()
         try:
             manager.set(selected_key, new_value)
-            manager.save()
-            console.print(
-                f"  [green]✓[/] {selected_key} = {format_display_value(new_value)}"
-            )
-            cfg = manager.config
+            # Validate before saving so invalid values (e.g. image.quality=500)
+            # never reach disk, where they would break every subsequent load.
+            try:
+                MarkitaiConfig.model_validate(manager.config.model_dump())
+            except ValidationError as ve:
+                manager.restore(MarkitaiConfig.model_validate(old_config_dict))
+                errors = "; ".join(
+                    f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}"
+                    for err in ve.errors()
+                )
+                console.print(f"  [red]✗[/] Invalid value: {errors}")
+            else:
+                manager.save()
+                console.print(
+                    f"  [green]✓[/] {selected_key} = {format_display_value(new_value)}"
+                )
         except Exception as e:
             console.print(f"  [red]✗[/] Error: {e}")
+        cfg = manager.config

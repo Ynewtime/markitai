@@ -9,7 +9,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import click
+import rich_click as click
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
@@ -48,6 +48,12 @@ def init(yes: bool, output_path: Path | None, use_local: bool) -> None:
 
     Checks dependencies, detects LLM providers, and generates config.
     Use -y for quick setup without prompts.
+
+    Examples:
+        markitai init                   # Interactive setup wizard
+        markitai init -y                # Quick setup, no prompts
+        markitai init --local           # Write ./markitai.json (project)
+        markitai init -o ./cfg.json     # Write to a custom path
     """
     target = _resolve_output_path(output_path, use_local)
     # When no explicit path flags given, let wizard ask the user
@@ -76,10 +82,30 @@ def _quick_init(target: Path) -> None:
     _ensure_env_template()
 
     if target.exists():
+        ui.info(f"Config already exists: {target} (unchanged)")
+        console.print(
+            "  [dim]Run [cyan]markitai init[/cyan] without -y to reconfigure, "
+            "or [cyan]markitai config edit[/cyan] to adjust settings.[/dim]"
+        )
         return
     providers = _detect_providers()
     config_data = _build_config(providers)
     _write_config(target, config_data)
+    _print_created_summary(target, config_data)
+
+
+def _print_created_summary(target: Path, config_data: dict) -> None:
+    """Print the created-config summary with detected models and next steps."""
+    ui.summary(f"Configuration created: {target}")
+    model_list = config_data.get("llm", {}).get("model_list", [])
+    for m in model_list:
+        model = m.get("litellm_params", {}).get("model", "")
+        console.print(f"  {ui.MARK_LINE} {model}")
+
+    console.print()
+    console.print("  [bold]Next steps:[/bold]")
+    console.print("  [dim]•[/dim] Convert a file:  [cyan]markitai <file> --llm[/cyan]")
+    console.print("  [dim]•[/dim] Full diagnostics: [cyan]markitai doctor[/cyan]")
 
 
 def _check_playwright_dep() -> tuple[str, str, bool]:
@@ -236,6 +262,7 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
         if not click.confirm(
             f"  Config already exists: {target}\n  Overwrite?", default=False
         ):
+            console.print(f"  [dim]Kept existing config: {target}[/dim]")
             return
 
     # Phase 4: Generate config
@@ -243,17 +270,7 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
 
     _write_config(target, config_data)
 
-    ui.summary(f"Configuration created: {target}")
-    model_list = config_data.get("llm", {}).get("model_list", [])
-    for m in model_list:
-        model = m.get("litellm_params", {}).get("model", "")
-        console.print(f"  {ui.MARK_LINE} {model}")
-
-    # Next steps hint
-    console.print()
-    console.print("  [bold]Next steps:[/bold]")
-    console.print("  [dim]•[/dim] Convert a file:  [cyan]markitai <file> --llm[/cyan]")
-    console.print("  [dim]•[/dim] Full diagnostics: [cyan]markitai doctor[/cyan]")
+    _print_created_summary(target, config_data)
 
 
 def _detect_providers() -> list[tuple[str, bool]]:

@@ -94,6 +94,7 @@ async def process_with_llm(
             logger.info(f"Written LLM version (pure): {llm_output}")
             cost = processor.get_context_cost(source)
             usage = processor.get_context_usage(source)
+            processor.clear_context_usage(source)
             return markdown, cost, usage
 
         cleaned, frontmatter = await processor.process_document(
@@ -162,11 +163,12 @@ async def process_with_llm(
         # Get usage for THIS file only, not global cumulative usage
         cost = processor.get_context_cost(source)
         usage = processor.get_context_usage(source)
+        processor.clear_context_usage(source)
         return markdown, cost, usage  # Return original for base .md file
 
     except Exception as e:
         logger.error(f"LLM processing failed: {format_error_message(e)}")
-        return markdown, 0.0, {}
+        raise
 
 
 def format_standalone_image_markdown(
@@ -364,6 +366,7 @@ async def analyze_images_with_llm(
         # This is concurrency-safe: only includes LLM calls tagged with this context
         incremental_usage = processor.get_context_usage(context)
         incremental_cost = processor.get_context_cost(context)
+        processor.clear_context_usage(context)
 
         return (
             markdown,
@@ -374,7 +377,7 @@ async def analyze_images_with_llm(
 
     except Exception as e:
         logger.error(f"Image analysis failed: {format_error_message(e)}")
-        return markdown, 0.0, {}, None
+        raise
 
 
 async def enhance_document_with_vision(
@@ -430,15 +433,17 @@ async def enhance_document_with_vision(
         )
 
         # Get usage for THIS file only, not global cumulative usage
-        return (
-            cleaned_content,
-            frontmatter,
-            processor.get_context_cost(source),
-            processor.get_context_usage(source),
-        )
+        cost = processor.get_context_cost(source)
+        usage = processor.get_context_usage(source)
+        processor.clear_context_usage(source)
+        return (cleaned_content, frontmatter, cost, usage)
 
     except Exception as e:
         logger.error(f"Document enhancement failed: {format_error_message(e)}")
+        # Drop any partial usage so it isn't attributed to the next file
+        # that reuses this context key
+        if processor is not None:
+            processor.clear_context_usage(source)
         # Return original text with basic frontmatter as fallback
         from markitai.utils.frontmatter import (
             build_frontmatter_dict,

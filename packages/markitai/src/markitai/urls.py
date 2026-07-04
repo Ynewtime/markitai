@@ -117,7 +117,13 @@ def _parse_json_url_list(content: str, file_path: Path) -> list[UrlEntry]:
 
         elif isinstance(item, dict):
             # Object with url and optional output_name
-            url = item.get("url", "").strip()
+            raw_url = item.get("url")
+            if not isinstance(raw_url, str):
+                logger.warning(
+                    f"Skipping entry at index {i}: missing or non-string 'url' field"
+                )
+                continue
+            url = raw_url.strip()
             if not url:
                 logger.warning(f"Skipping entry at index {i}: missing 'url' field")
                 continue

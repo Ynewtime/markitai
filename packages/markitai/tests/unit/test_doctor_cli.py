@@ -48,7 +48,7 @@ class TestDoctorCommand:
 
             result = runner.invoke(doctor)
 
-            assert result.exit_code == 0
+            assert result.exit_code in (0, 1)  # exit reflects host dep state
             # Support both English and Chinese output (i18n) and unified UI
             assert (
                 "Dependency Status" in result.output
@@ -78,7 +78,7 @@ class TestDoctorCommand:
 
             result = runner.invoke(doctor, ["--json"])
 
-            assert result.exit_code == 0
+            assert result.exit_code in (0, 1)  # exit reflects host dep state
             data = json.loads(result.output)
             # Should have standard dependency keys
             assert "playwright" in data
@@ -166,7 +166,7 @@ class TestAuthenticationChecks:
 
             result = runner.invoke(doctor, ["--json"])
 
-            assert result.exit_code == 0
+            assert result.exit_code in (0, 1)  # exit reflects host dep state
             data = json.loads(result.output)
             assert "copilot-auth" in data
             assert data["copilot-auth"]["status"] == "ok"
@@ -218,7 +218,7 @@ class TestAuthenticationChecks:
 
             result = runner.invoke(doctor, ["--json"])
 
-            assert result.exit_code == 0
+            assert result.exit_code in (0, 1)  # exit reflects host dep state
             data = json.loads(result.output)
             assert "copilot-auth" in data
             assert data["copilot-auth"]["status"] == "error"
@@ -278,7 +278,7 @@ class TestAuthenticationChecks:
 
             result = runner.invoke(doctor, ["--json"])
 
-        assert result.exit_code == 0
+        assert result.exit_code in (0, 1)  # exit reflects host dep state
         data = json.loads(result.output)
         assert "gemini-cli-auth" in data
         assert data["gemini-cli-auth"]["status"] == "ok"
@@ -333,7 +333,7 @@ class TestAuthenticationChecks:
 
             result = runner.invoke(doctor, ["--json"])
 
-            assert result.exit_code == 0
+            assert result.exit_code in (0, 1)  # exit reflects host dep state
             data = json.loads(result.output)
             assert "claude-agent-auth" in data
             assert data["claude-agent-auth"]["status"] == "ok"
@@ -371,7 +371,7 @@ class TestAuthenticationChecks:
 
             result = runner.invoke(doctor, ["--json"])
 
-            assert result.exit_code == 0
+            assert result.exit_code in (0, 1)  # exit reflects host dep state
             data = json.loads(result.output)
             assert "copilot-sdk" not in data
             assert "copilot-auth" not in data
@@ -482,10 +482,89 @@ class TestDoctorFromMainCLI:
 
             result = runner.invoke(app, ["doctor"])
 
-            assert result.exit_code == 0
+            assert result.exit_code in (0, 1)  # exit reflects host dep state
             # Support both English and Chinese output (i18n) and unified UI
             assert (
                 "Dependency Status" in result.output
                 or "System Check" in result.output
                 or "系统检查" in result.output
             )
+
+
+class TestDoctorExitCode:
+    """Exit-code contract: 1 when required deps are missing, 0 when all ok."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        return CliRunner()
+
+    @pytest.fixture
+    def mock_config(self) -> MagicMock:
+        config = MagicMock()
+        config.llm.model_list = []
+        config.ocr = MagicMock()
+        config.ocr.lang = "en"
+        return config
+
+    def _invoke(
+        self,
+        runner: CliRunner,
+        mock_config: MagicMock,
+        *,
+        playwright_ok: bool,
+        libreoffice_ok: bool,
+        as_json: bool = False,
+    ):
+        from markitai.cli.commands.doctor import doctor
+
+        with (
+            patch("markitai.cli.commands.doctor.ConfigManager") as MockConfigManager,
+            patch("markitai.fetch_playwright.is_playwright_available") as mock_pw,
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed"
+            ) as mock_browser,
+            patch("markitai.fetch_playwright.clear_browser_cache"),
+            patch(
+                "markitai.utils.office.find_libreoffice",
+                return_value="/usr/bin/soffice" if libreoffice_ok else None,
+            ),
+            patch(
+                "markitai.utils.office.is_libreoffice_functional",
+                return_value=libreoffice_ok,
+            ),
+        ):
+            MockConfigManager.return_value.load.return_value = mock_config
+            mock_pw.return_value = playwright_ok
+            mock_browser.return_value = playwright_ok
+            args = ["--json"] if as_json else []
+            return runner.invoke(doctor, args)
+
+    def test_missing_required_exits_nonzero(
+        self, runner: CliRunner, mock_config: MagicMock
+    ) -> None:
+        result = self._invoke(
+            runner, mock_config, playwright_ok=False, libreoffice_ok=False
+        )
+        assert result.exit_code == 1
+
+    def test_missing_required_exits_nonzero_json(
+        self, runner: CliRunner, mock_config: MagicMock
+    ) -> None:
+        result = self._invoke(
+            runner,
+            mock_config,
+            playwright_ok=False,
+            libreoffice_ok=False,
+            as_json=True,
+        )
+        assert result.exit_code == 1
+        # JSON payload must still be valid on failure
+        assert "playwright" in json.loads(result.output)
+
+    def test_failure_summary_mentions_missing_count(
+        self, runner: CliRunner, mock_config: MagicMock
+    ) -> None:
+        result = self._invoke(
+            runner, mock_config, playwright_ok=False, libreoffice_ok=False
+        )
+        assert "required missing" in result.output or "必需缺失" in result.output

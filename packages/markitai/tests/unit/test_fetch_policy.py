@@ -13,7 +13,7 @@ from markitai.fetch_policy import (
 )
 
 
-def test_policy_prefers_defuddle_for_known_spa_domain() -> None:
+def test_policy_prefers_playwright_for_known_spa_domain() -> None:
     engine = FetchPolicyEngine()
     decision = engine.decide(
         domain="x.com",
@@ -22,12 +22,12 @@ def test_policy_prefers_defuddle_for_known_spa_domain() -> None:
         fallback_patterns=["x.com"],
         policy_enabled=True,
     )
-    # defuddle and jina lead even for SPA (they may have server-side rendering)
-    assert decision.order[:2] == ["defuddle", "jina"]
-    assert "playwright" in decision.order
+    # SPA pages need JS rendering: local browser first, remote fallbacks after
+    assert decision.order[0] == "playwright"
+    assert decision.order[-1] == "static"
 
 
-def test_policy_prefers_defuddle_for_normal_domain() -> None:
+def test_policy_prefers_static_for_normal_domain() -> None:
     engine = FetchPolicyEngine()
     decision = engine.decide(
         domain="example.com",
@@ -36,7 +36,8 @@ def test_policy_prefers_defuddle_for_normal_domain() -> None:
         fallback_patterns=["x.com"],
         policy_enabled=True,
     )
-    assert decision.order[0] == "defuddle"
+    # Local-first default: static leads, remote strategies are the tail
+    assert decision.order[0] == "static"
 
 
 def test_policy_prefers_local_strategies_for_localhost() -> None:
@@ -59,33 +60,33 @@ class TestFetchPolicyEngine:
     def test_default_order(self) -> None:
         decision = self.engine.decide("example.com", False, None, [], True)
         assert decision.order == [
-            "defuddle",
-            "jina",
             "static",
             "playwright",
+            "defuddle",
+            "jina",
             "cloudflare",
         ]
         assert decision.reason == "default"
 
     def test_default_order_ignores_jina_key(self) -> None:
-        """has_jina_key no longer changes ordering (defuddle+jina always first)."""
+        """has_jina_key no longer changes ordering (local-first order is fixed)."""
         decision = self.engine.decide(
             "example.com", False, None, [], True, has_jina_key=True
         )
         assert decision.order == [
-            "defuddle",
-            "jina",
             "static",
             "playwright",
+            "defuddle",
+            "jina",
             "cloudflare",
         ]
 
     def test_spa_order(self) -> None:
         decision = self.engine.decide("twitter.com", True, None, ["twitter.com"], True)
         assert decision.order == [
+            "playwright",
             "defuddle",
             "jina",
-            "playwright",
             "cloudflare",
             "static",
         ]
@@ -100,10 +101,10 @@ class TestFetchPolicyEngine:
     def test_disabled_policy(self) -> None:
         decision = self.engine.decide("example.com", False, None, [], False)
         assert decision.order == [
-            "defuddle",
-            "jina",
             "static",
             "playwright",
+            "defuddle",
+            "jina",
             "cloudflare",
         ]
         assert decision.reason == "disabled"
@@ -173,10 +174,10 @@ class TestDomainPreferStrategy:
             "example.com", False, None, [], True, domain_prefer_strategy=None
         )
         assert decision.order == [
-            "defuddle",
-            "jina",
             "static",
             "playwright",
+            "defuddle",
+            "jina",
             "cloudflare",
         ]
         assert decision.reason == "default"
@@ -360,7 +361,7 @@ class TestLocalOnlyExemption:
             True,
             local_only_patterns=[".internal.com"],
         )
-        assert decision.order[0] == "defuddle"
+        assert decision.order[0] == "static"
 
     def test_local_only_overrides_global_priority(self) -> None:
         decision = self.engine.decide(

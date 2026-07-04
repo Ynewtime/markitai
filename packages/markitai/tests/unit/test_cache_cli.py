@@ -171,6 +171,19 @@ class TestCacheClearCommand:
             assert result.exit_code == 0
             assert "Aborted" in result.output
 
+    def test_clear_prompt_shows_actual_cache_dir(
+        self, runner: CliRunner, mock_config: MagicMock, tmp_path: Path
+    ) -> None:
+        """The confirmation prompt shows the configured dir, not ~/.markitai."""
+        with patch("markitai.cli.commands.cache.ConfigManager") as MockConfigManager:
+            MockConfigManager.return_value.load.return_value = mock_config
+
+            result = runner.invoke(cache_clear, input="n\n")
+
+            assert result.exit_code == 0
+            assert str(tmp_path) in result.output  # configured cache.global_dir
+            assert "~/.markitai" not in result.output
+
     def test_clear_with_yes_flag(
         self, runner: CliRunner, mock_config: MagicMock, tmp_path: Path
     ) -> None:

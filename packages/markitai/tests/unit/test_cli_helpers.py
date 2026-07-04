@@ -124,6 +124,8 @@ class TestReportGeneration:
         test_file.write_text("Test content")
 
         output_dir = tmp_path / "output"
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"output": {"report": true}}')
 
         runner = CliRunner()
         result = runner.invoke(
@@ -132,6 +134,8 @@ class TestReportGeneration:
                 str(test_file),
                 "-o",
                 str(output_dir),
+                "-c",
+                str(config_path),
             ],
         )
 
@@ -139,6 +143,29 @@ class TestReportGeneration:
         # Report file is now named markitai.<hash>.report.json
         reports = find_report_files(output_dir / ".markitai" / "reports")
         assert len(reports) == 1
+
+    def test_no_report_by_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Single-file conversion writes no report unless output.report=true."""
+        from click.testing import CliRunner
+
+        import markitai.fetch as fetch_module
+        from markitai.cli import app
+
+        monkeypatch.setattr(fetch_module, "_jina_client", None)
+        monkeypatch.setattr(fetch_module, "_fetch_cache", None)
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("Test content")
+
+        output_dir = tmp_path / "output"
+
+        runner = CliRunner()
+        result = runner.invoke(app, [str(test_file), "-o", str(output_dir)])
+
+        assert result.exit_code == 0, f"CLI failed: {result.output}"
+        assert find_report_files(output_dir / ".markitai" / "reports") == []
 
     def test_report_structure(self, tmp_path: Path) -> None:
         """Test report structure."""
@@ -151,6 +178,8 @@ class TestReportGeneration:
         test_file.write_text("Test content")
 
         output_dir = tmp_path / "output"
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"output": {"report": true}}')
 
         runner = CliRunner()
         runner.invoke(
@@ -159,6 +188,8 @@ class TestReportGeneration:
                 str(test_file),
                 "-o",
                 str(output_dir),
+                "-c",
+                str(config_path),
             ],
         )
 
@@ -194,6 +225,8 @@ class TestReportGeneration:
         test_file.write_text("Test content")
 
         output_dir = tmp_path / "output"
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"output": {"report": true}}')
 
         runner = CliRunner()
         runner.invoke(
@@ -202,6 +235,8 @@ class TestReportGeneration:
                 str(test_file),
                 "-o",
                 str(output_dir),
+                "-c",
+                str(config_path),
             ],
         )
 
@@ -232,21 +267,24 @@ class TestReportGeneration:
         test_file.write_text("Test content")
 
         output_dir = tmp_path / "output"
+        config_path = tmp_path / "config.json"
+        config_path.write_text('{"output": {"report": true}}')
 
         runner = CliRunner()
+        args = [str(test_file), "-o", str(output_dir), "-c", str(config_path)]
 
         # First run
-        runner.invoke(app, [str(test_file), "-o", str(output_dir)])
+        runner.invoke(app, args)
         reports = find_report_files(output_dir / ".markitai" / "reports")
         assert len(reports) == 1
 
         # Second run - should create a new report with .2. in name
-        runner.invoke(app, [str(test_file), "-o", str(output_dir)])
+        runner.invoke(app, args)
         reports = find_report_files(output_dir / ".markitai" / "reports")
         assert len(reports) == 2
 
         # Third run - should create another report with .3. in name
-        runner.invoke(app, [str(test_file), "-o", str(output_dir)])
+        runner.invoke(app, args)
         reports = find_report_files(output_dir / ".markitai" / "reports")
         assert len(reports) == 3
 

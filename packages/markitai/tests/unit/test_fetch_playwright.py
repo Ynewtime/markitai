@@ -1579,3 +1579,86 @@ def test_fetch_builds_session_key_from_domain() -> None:
     assert _url_to_session_key("https://x.com/a") == "x.com"
     assert _url_to_session_key("https://x.com/b") == "x.com"
     assert _url_to_session_key("https://example.com/test") == "example.com"
+
+
+@pytest.mark.asyncio
+async def test_fetch_closes_context_when_add_cookies_fails() -> None:
+    """Regression: cookie validation errors must not leak the new context."""
+    from markitai.fetch_playwright import PlaywrightRenderer
+
+    mock_context = AsyncMock()
+    mock_context.add_cookies = AsyncMock(side_effect=Exception("bad cookie"))
+    mock_context.close = AsyncMock()
+
+    mock_browser = AsyncMock()
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
+
+    renderer = PlaywrightRenderer()
+    renderer._browser = mock_browser
+
+    with pytest.raises(Exception, match="bad cookie"):
+        await renderer.fetch(
+            "https://example.com",
+            extra_wait_ms=0,
+            cookies=[{"name": "a", "value": "b"}],
+        )
+
+    mock_context.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_fetch_persistent_mode_new_page_failure_keeps_context() -> None:
+    """Regression: new_page failure in persistent mode must not raise
+    UnboundLocalError from the finally block; the cached context is kept."""
+    from markitai.fetch_playwright import PlaywrightRenderer
+
+    mock_context = AsyncMock()
+    mock_context.new_page = AsyncMock(side_effect=Exception("no page"))
+    mock_context.close = AsyncMock()
+
+    mock_browser = AsyncMock()
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
+
+    renderer = PlaywrightRenderer()
+    renderer._browser = mock_browser
+    renderer.enable_domain_session_cache(ttl_seconds=600, max_contexts=8)
+
+    with pytest.raises(Exception, match="no page"):
+        await renderer.fetch(
+            "https://example.com",
+            session_key="example.com",
+            persist_context=True,
+            extra_wait_ms=0,
+        )
+
+    # Cached context stays open for reuse
+    mock_context.close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_cached_context_concurrent_single_creation() -> None:
+    """Regression: concurrent same-key lookups must create only one context."""
+    import asyncio
+
+    from markitai.fetch_playwright import PlaywrightRenderer
+
+    mock_context = AsyncMock()
+
+    async def _slow_new_context(**_kwargs: object) -> AsyncMock:
+        await asyncio.sleep(0.01)
+        return mock_context
+
+    mock_browser = AsyncMock()
+    mock_browser.new_context = AsyncMock(side_effect=_slow_new_context)
+
+    renderer = PlaywrightRenderer()
+    renderer._browser = mock_browser
+    renderer.enable_domain_session_cache(ttl_seconds=600, max_contexts=8)
+
+    ctx1, ctx2 = await asyncio.gather(
+        renderer._get_or_create_cached_context("example.com", {}),
+        renderer._get_or_create_cached_context("example.com", {}),
+    )
+
+    assert ctx1 is ctx2
+    assert mock_browser.new_context.call_count == 1

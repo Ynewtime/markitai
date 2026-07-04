@@ -370,9 +370,9 @@ class TestResolveOutputFile:
         sample_context.output_dir.mkdir(parents=True)
         sample_context.config.output.on_conflict = "skip"
 
-        # Create existing output file
+        # Create existing output file (extension-replacement naming)
         expected_output = (
-            sample_context.output_dir / f"{sample_context.input_path.name}.md"
+            sample_context.output_dir / f"{sample_context.input_path.stem}.md"
         )
         expected_output.touch()
 
@@ -387,9 +387,9 @@ class TestResolveOutputFile:
         sample_context.output_dir.mkdir(parents=True)
         sample_context.config.output.on_conflict = "overwrite"
 
-        # Create existing output file
+        # Create existing output file (extension-replacement naming)
         expected_output = (
-            sample_context.output_dir / f"{sample_context.input_path.name}.md"
+            sample_context.output_dir / f"{sample_context.input_path.stem}.md"
         )
         expected_output.touch()
 
@@ -400,14 +400,57 @@ class TestResolveOutputFile:
         assert sample_context.output_file is not None
         assert sample_context.output_file == expected_output
 
+    def test_replaces_input_extension(self, sample_context: ConversionContext) -> None:
+        """Output name replaces the input extension (test.txt -> test.md)."""
+        sample_context.output_dir.mkdir(parents=True)
+
+        result = resolve_output_file(sample_context)
+
+        assert result.success is True
+        assert sample_context.output_file is not None
+        expected = f"{sample_context.input_path.stem}.md"
+        assert sample_context.output_file.name == expected
+
+    def test_honors_preplanned_output_name(
+        self, sample_context: ConversionContext
+    ) -> None:
+        """ctx.output_name (batch collision planning) takes precedence."""
+        sample_context.output_dir.mkdir(parents=True)
+        sample_context.output_name = f"{sample_context.input_path.name}.md"
+
+        result = resolve_output_file(sample_context)
+
+        assert result.success is True
+        assert sample_context.output_file is not None
+        assert sample_context.output_file.name == f"{sample_context.input_path.name}.md"
+
+    def test_md_input_same_dir_uses_legacy_name(
+        self, tmp_path: Path, default_config: MarkitaiConfig
+    ) -> None:
+        """A .md input converted into its own directory must not overwrite itself."""
+        note = tmp_path / "note.md"
+        note.write_text("# note")
+
+        ctx = ConversionContext(
+            input_path=note,
+            output_dir=tmp_path,
+            config=default_config,
+        )
+
+        result = resolve_output_file(ctx)
+
+        assert result.success is True
+        assert ctx.output_file is not None
+        assert ctx.output_file.name == "note.md.md"
+
     def test_rename_when_exists(self, sample_context: ConversionContext) -> None:
         """Test rename when output file exists and on_conflict=rename."""
         sample_context.output_dir.mkdir(parents=True)
         sample_context.config.output.on_conflict = "rename"
 
-        # Create existing output file
+        # Create existing output file (extension-replacement naming)
         expected_output = (
-            sample_context.output_dir / f"{sample_context.input_path.name}.md"
+            sample_context.output_dir / f"{sample_context.input_path.stem}.md"
         )
         expected_output.touch()
 
@@ -2058,8 +2101,8 @@ class TestConvertDocumentCore:
         output_dir.mkdir(parents=True)
         default_config.output.on_conflict = "skip"
 
-        # Create existing output file
-        existing_file = output_dir / f"{sample_txt_path.name}.md"
+        # Create existing output file (extension-replacement naming)
+        existing_file = output_dir / f"{sample_txt_path.stem}.md"
         existing_file.write_text("existing content")
 
         ctx = ConversionContext(
@@ -2241,6 +2284,115 @@ class TestConvertDocumentCore:
             result = await convert_document_core(ctx, max_size)
 
             assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_marks_file_failed_with_base_fallback(
+        self, sample_txt_path: Path, tmp_path: Path
+    ) -> None:
+        """LLM failure must fail the conversion and write base .md fallback.
+
+        Regression: LLM errors were swallowed and reported as success with
+        empty usage, so batch marked files COMPLETED (with cache_hit=True)
+        pointing at nonexistent .llm.md files.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
+        from markitai.config import MarkitaiConfig
+        from markitai.workflow.core import ConversionContext, convert_document_core
+
+        config = MarkitaiConfig()
+        config.llm.enabled = True
+
+        mock_processor = MagicMock()
+        mock_processor.process_document = AsyncMock(
+            side_effect=RuntimeError("LLM API down")
+        )
+
+        output_dir = tmp_path / "output"
+        ctx = ConversionContext(
+            input_path=sample_txt_path,
+            output_dir=output_dir,
+            config=config,
+            shared_processor=mock_processor,
+        )
+
+        result = await convert_document_core(ctx, 100 * 1024 * 1024)
+
+        assert result.success is False
+        assert result.error is not None
+        assert "LLM" in result.error
+        # Base .md fallback should be written; no .llm.md should exist
+        base_output = output_dir / f"{sample_txt_path.stem}.md"
+        assert base_output.exists()
+        assert not base_output.with_suffix(".llm.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_vision_path_stabilizes_before_setting_flag(
+        self, sample_txt_path: Path, tmp_path: Path
+    ) -> None:
+        """Regression: paged_stabilized was set BEFORE calling
+        stabilize_written_llm_output, which returns immediately when the
+        flag is set — making the stabilization call dead code."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from markitai.config import MarkitaiConfig
+        from markitai.converter.base import ConvertResult
+        from markitai.workflow.core import (
+            ConversionContext,
+            ConversionStepResult,
+            convert_document_core,
+        )
+
+        config = MarkitaiConfig()
+        config.llm.enabled = True
+
+        output_dir = tmp_path / "output"
+        ctx = ConversionContext(
+            input_path=sample_txt_path,
+            output_dir=output_dir,
+            config=config,
+            shared_processor=MagicMock(),
+        )
+
+        async def fake_convert(ctx_arg: ConversionContext) -> ConversionStepResult:
+            ctx_arg.conversion_result = ConvertResult(
+                markdown="# X",
+                metadata={
+                    "page_images": [{"path": "p1.png", "page": 1, "name": "p1.png"}]
+                },
+            )
+            return ConversionStepResult(success=True)
+
+        flag_at_call: list[bool] = []
+
+        def fake_stabilize(ctx_arg: ConversionContext, processor: object) -> bool:
+            flag_at_call.append(ctx_arg.paged_stabilized)
+            return False
+
+        with (
+            patch(
+                "markitai.workflow.core.convert_document",
+                new=AsyncMock(side_effect=fake_convert),
+            ),
+            patch(
+                "markitai.workflow.core.process_with_vision_llm",
+                new=AsyncMock(return_value=ConversionStepResult(success=True)),
+            ),
+            patch(
+                "markitai.workflow.core.analyze_embedded_images",
+                new=AsyncMock(return_value=ConversionStepResult(success=True)),
+            ),
+            patch(
+                "markitai.workflow.core.stabilize_written_llm_output",
+                side_effect=fake_stabilize,
+            ),
+        ):
+            result = await convert_document_core(ctx, 100 * 1024 * 1024)
+
+        assert result.success is True
+        # Stabilize must be called while the flag is still False
+        assert flag_at_call == [False]
+        assert ctx.paged_stabilized is True
 
     @pytest.mark.asyncio
     async def test_image_conversion(self, tmp_path: Path) -> None:
@@ -2518,7 +2670,7 @@ class TestOnConflictSkipBeforeConversion:
         output_dir.mkdir(parents=True)
 
         # Create existing output file (the one that should cause a skip)
-        existing_output = output_dir / "test.txt.md"
+        existing_output = output_dir / "test.md"
         existing_output.write_text("already exists")
 
         ctx = ConversionContext(
@@ -2563,7 +2715,7 @@ class TestOnConflictSkipBeforeConversion:
         output_dir.mkdir(parents=True)
 
         # Existing output file
-        existing_output = output_dir / "test.txt.md"
+        existing_output = output_dir / "test.md"
         existing_output.write_text("old content")
 
         ctx = ConversionContext(

@@ -244,3 +244,126 @@ class TestFinalOutputFileDetermination:
             final = output_file
 
         assert final == output_file
+
+
+class TestStdoutPersistDefault:
+    """stdout image persistence defaults and opt-out behavior."""
+
+    def test_stdout_persist_defaults_to_true(self) -> None:
+        """image.stdout_persist defaults to true so stdout links outlive temp dir."""
+        from markitai.config import ImageConfig
+
+        assert ImageConfig().stdout_persist is True
+
+    @pytest.mark.asyncio
+    async def test_opt_out_warns_links_ephemeral(self, tmp_path: Path) -> None:
+        """stdout_persist=false emits a warning when output has asset refs."""
+        from loguru import logger
+
+        from markitai.cli.processors.file import process_single_file
+
+        cfg = MarkitaiConfig()
+        cfg.image.stdout_persist = False
+
+        doc = tmp_path / "doc.md"
+        doc.write_text("# Doc\n\n![img](.markitai/assets/doc.png)\n")
+
+        messages: list[str] = []
+        handler_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            await process_single_file(
+                input_path=doc,
+                output_dir=None,
+                cfg=cfg,
+                dry_run=False,
+                quiet=False,
+            )
+        finally:
+            logger.remove(handler_id)
+
+        assert any("ephemeral" in m for m in messages), messages
+
+    @pytest.mark.asyncio
+    async def test_opt_out_warning_reaches_stderr(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The ephemeral warning is written to stderr directly (stdout-mode
+        console handlers drop WARNING-level logs)."""
+        from markitai.cli.processors.file import process_single_file
+
+        cfg = MarkitaiConfig()
+        cfg.image.stdout_persist = False
+
+        doc = tmp_path / "doc.md"
+        doc.write_text("# Doc\n\n![img](.markitai/assets/doc.png)\n")
+
+        await process_single_file(
+            input_path=doc,
+            output_dir=None,
+            cfg=cfg,
+            dry_run=False,
+            quiet=False,
+        )
+
+        assert "ephemeral" in capsys.readouterr().err
+
+    @pytest.mark.asyncio
+    async def test_default_persist_no_ephemeral_warning(self, tmp_path: Path) -> None:
+        """With persistence on (default), no ephemeral-links warning is emitted."""
+        from loguru import logger
+
+        from markitai.cli.processors.file import process_single_file
+
+        cfg = MarkitaiConfig()
+        # Redirect the asset store away from the user's home directory
+        cfg.image.stdout_persist_dir = str(tmp_path / "store")
+
+        doc = tmp_path / "doc.md"
+        doc.write_text("# Doc\n\n![img](.markitai/assets/doc.png)\n")
+
+        messages: list[str] = []
+        handler_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            await process_single_file(
+                input_path=doc,
+                output_dir=None,
+                cfg=cfg,
+                dry_run=False,
+                quiet=False,
+            )
+        finally:
+            logger.remove(handler_id)
+
+        assert not any("ephemeral" in m for m in messages), messages
+
+
+class TestNormalizeTempAssetRefs:
+    """normalize_temp_asset_refs rewrites absolute temp refs to relative."""
+
+    def test_rewrites_absolute_temp_ref(self, tmp_path: Path) -> None:
+        """Absolute refs into temp_dir become relative .markitai refs."""
+        from markitai.cli.processors.file import normalize_temp_asset_refs
+
+        markdown = f"![img]({tmp_path.as_posix()}/.markitai/assets/a.jpg)"
+        result = normalize_temp_asset_refs(markdown, tmp_path)
+        assert result == "![img](.markitai/assets/a.jpg)"
+
+    def test_rewrites_resolved_symlink_form(self, tmp_path: Path) -> None:
+        """Refs using the canonicalized (resolved) temp path are rewritten too.
+
+        On macOS, tempfile returns /var/... while converters may canonicalize
+        to /private/var/...; both spellings must normalize.
+        """
+        from markitai.cli.processors.file import normalize_temp_asset_refs
+
+        resolved = tmp_path.resolve()
+        markdown = f"![img]({resolved.as_posix()}/.markitai/assets/a.jpg)"
+        result = normalize_temp_asset_refs(markdown, tmp_path)
+        assert result == "![img](.markitai/assets/a.jpg)"
+
+    def test_leaves_other_paths_alone(self, tmp_path: Path) -> None:
+        """Unrelated absolute or relative refs are untouched."""
+        from markitai.cli.processors.file import normalize_temp_asset_refs
+
+        markdown = "![a](.markitai/assets/a.jpg) ![b](/elsewhere/b.jpg)"
+        assert normalize_temp_asset_refs(markdown, tmp_path) == markdown

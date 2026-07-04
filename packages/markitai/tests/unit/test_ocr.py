@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from markitai.config import OCRConfig
-from markitai.ocr import OCRProcessor, OCRResult
+from markitai.ocr import OCRProcessor, OCRResult, is_likely_garbled
 
 
 @pytest.fixture
@@ -303,6 +303,72 @@ class TestOCRPDFMethods:
             result = processor.is_scanned_pdf(test_pdf)
 
             assert result is True  # Is scanned, no text
+
+
+class TestIsLikelyGarbled:
+    """Tests for the is_likely_garbled heuristic."""
+
+    def test_garbled_english_consonant_soup(self):
+        """All-consonant text (vowel ratio 0%) is flagged as garbled."""
+        text = "bcdfghjklm npqrstvwxz " * 3  # 60 letters, 0 vowels
+        assert is_likely_garbled(text) is True
+
+    def test_garbled_english_caesar_shifted(self):
+        """Caesar-shifted text with collapsed vowel ratio is garbled."""
+        # "+3" shift of "The quick brown fox jumps over the lazy dog"
+        text = "Wkh txlfn eurzq ira mxpsv ryhu wkh odcb grj"
+        assert is_likely_garbled(text) is True
+
+    def test_normal_english_not_garbled(self):
+        """Natural English has ~35-40% vowels and is never flagged."""
+        text = "The quick brown fox jumps over the lazy dog"
+        assert is_likely_garbled(text) is False
+
+    def test_cjk_only_not_garbled(self):
+        """Pure CJK text has no Latin letters to judge -- never garbled."""
+        text = "这是一份完全由中文组成的测试文档，不包含任何拉丁字母内容。" * 3
+        assert is_likely_garbled(text) is False
+
+    def test_mostly_cjk_with_garbled_latin_not_garbled(self):
+        """A mostly-CJK page is exempt even if its few Latin runs look off."""
+        cjk = "中文内容占据页面绝大部分，拉丁字母只是少数点缀而已。" * 2
+        latin = "bcdfghjklm npqrstvwxz bcdfghjklm"  # 30 letters, 0 vowels
+        assert is_likely_garbled(cjk + latin) is False
+
+    def test_latin_dominant_garbled_with_some_cjk(self):
+        """Garbled Latin-dominant text stays flagged despite a few CJK chars."""
+        text = "bcdfghjklm npqrstvwxz " * 3 + "图表"
+        assert is_likely_garbled(text) is True
+
+    def test_short_text_not_flagged(self):
+        """Below 30 Latin letters the ratio is meaningless -- never flagged."""
+        assert is_likely_garbled("xyz qrst") is False
+        assert is_likely_garbled("") is False
+
+    def test_mixed_normal_english_and_cjk_not_garbled(self):
+        """Normal bilingual text is not flagged."""
+        text = "The annual report 年度报告 shows revenue growth 收入增长 this year."
+        assert is_likely_garbled(text) is False
+
+
+class TestIsScannedPdfZeroPages:
+    """Tests for the zero-page guard in is_scanned_pdf."""
+
+    def test_zero_page_pdf_returns_false(self, ocr_config: OCRConfig, tmp_path: Path):
+        """A zero-page PDF must not divide by zero and is not scanned."""
+        processor = OCRProcessor(ocr_config)
+
+        test_pdf = tmp_path / "empty.pdf"
+        test_pdf.write_bytes(b"fake pdf data")
+
+        mock_fitz = MagicMock()
+        mock_doc = MagicMock()
+        mock_doc.__len__ = MagicMock(return_value=0)
+        mock_doc.close = MagicMock()
+        mock_fitz.open.return_value = mock_doc
+
+        with patch.dict(sys.modules, {"fitz": mock_fitz}):
+            assert processor.is_scanned_pdf(test_pdf) is False
 
 
 class TestOCRRecognizeToMarkdown:

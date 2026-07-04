@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from markitai.cli import ui
-from markitai.cli.console import get_console
+from markitai.cli.console import get_console, get_stderr_console
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -27,9 +27,13 @@ def check_vision_model_config(
 
     Args:
         cfg: Configuration object
-        console: Rich console for output
+        console: Rich console for output (unused for warnings; diagnostics
+            always go to stderr so piped stdout content stays clean)
         verbose: Whether to show extra details
     """
+    # Diagnostic notices must not pollute stdout (piped content in stdout
+    # mode), so always emit them on the stderr console.
+    console = get_stderr_console()
     # Always check for unsupported Copilot models (GPT-5 series, o1/o3)
     # This applies to all LLM scenarios, not just vision
     if cfg.llm.enabled and cfg.llm.model_list:
@@ -114,8 +118,10 @@ def _check_copilot_unsupported_models(model_list: list[Any], console: Console) -
 
     Args:
         model_list: List of model configurations
-        console: Rich console for output
+        console: Rich console for output (unused; diagnostics go to stderr)
     """
+    console = get_stderr_console()
+
     # Unsupported model patterns for Copilot (only o1/o3 reasoning models)
     # Note: GPT-5 series is now fully supported by Copilot (2026+)
     unsupported_patterns = (
@@ -159,8 +165,12 @@ def check_playwright_for_urls(cfg: Any, console: Console) -> None:
 
     Args:
         cfg: Configuration object
-        console: Rich console for output
+        console: Rich console for output (unused; diagnostics go to stderr)
     """
+    console = get_stderr_console()
+
+    from rich.markup import escape
+
     from markitai.fetch import FetchStrategy
 
     # Only check if strategy might use browser
@@ -189,7 +199,16 @@ def check_playwright_for_urls(cfg: Any, console: Console) -> None:
     )
     ui.step("To install:", console=console)
     ui.step(
-        "  uv add playwright && uv run playwright install chromium", console=console
+        "  markitai doctor --fix   (installs Chromium automatically)", console=console
+    )
+    ui.step(
+        "  or: uv add playwright && uv run playwright install chromium", console=console
+    )
+    ui.step(
+        escape(
+            "  (uv tool installs: uv tool run --from 'markitai[all]' playwright install chromium)"
+        ),
+        console=console,
     )
     ui.step(
         "  Linux: also run 'uv run playwright install-deps chromium' for system deps",

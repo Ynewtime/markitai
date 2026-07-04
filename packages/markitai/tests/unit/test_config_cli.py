@@ -189,13 +189,27 @@ class TestConfigGetCommand:
         """Test getting a nonexistent key."""
         with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
             mock_manager = MagicMock()
-            mock_manager.get.return_value = None
+            # Missing key: get() returns the caller-provided default (sentinel)
+            mock_manager.get.side_effect = lambda _key, default=None: default
             MockManager.return_value = mock_manager
 
             result = runner.invoke(config_get, ["nonexistent.key"])
 
             assert result.exit_code == 1
             assert "not found" in result.output.lower()
+
+    def test_get_null_value_prints_null(self, runner: CliRunner) -> None:
+        """An existing-but-null key prints 'null' and exits 0 (not an error)."""
+        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = None  # key exists, value is null
+            MockManager.return_value = mock_manager
+
+            result = runner.invoke(config_get, ["fetch.jina.api_key"])
+
+            assert result.exit_code == 0
+            assert "null" in result.output
+            assert "not found" not in result.output.lower()
 
 
 class TestConfigSetCommand:
@@ -249,3 +263,86 @@ class TestConfigSetCommand:
             mock_manager.set.assert_called_once()
             call_args = mock_manager.set.call_args
             assert call_args[0][1] == 4096  # Should be int, not string
+
+    def test_set_string_field_keeps_leading_zero(self, runner: CliRunner) -> None:
+        """A str field like api_key must not be coerced to int."""
+        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
+            mock_manager = MagicMock()
+            mock_manager.config = MagicMock()
+            mock_manager.config.model_dump.return_value = {}
+            MockManager.return_value = mock_manager
+
+            result = runner.invoke(config_set, ["fetch.jina.api_key", "0123456789"])
+
+            assert result.exit_code == 0
+            call_args = mock_manager.set.call_args
+            assert call_args[0][1] == "0123456789"
+            assert isinstance(call_args[0][1], str)
+
+    def test_set_bool_field_accepts_numeric_one(self, runner: CliRunner) -> None:
+        """A bool field like llm.enabled must persist True for '1', not int 1."""
+        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
+            mock_manager = MagicMock()
+            mock_manager.config = MagicMock()
+            mock_manager.config.model_dump.return_value = {}
+            MockManager.return_value = mock_manager
+
+            result = runner.invoke(config_set, ["llm.enabled", "1"])
+
+            assert result.exit_code == 0
+            call_args = mock_manager.set.call_args
+            assert call_args[0][1] is True
+
+    def test_set_indexed_key(self, runner: CliRunner, tmp_path: Path) -> None:
+        """`config set llm.model_list[0].litellm_params.weight 0` works."""
+        import json
+
+        config_file = tmp_path / "markitai.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "llm": {
+                        "model_list": [
+                            {
+                                "model_name": "default",
+                                "litellm_params": {"model": "gemini/flash"},
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+
+        result = runner.invoke(
+            config_set,
+            ["llm.model_list[0].litellm_params.weight", "0"],
+            env={"MARKITAI_CONFIG": str(config_file)},
+        )
+
+        assert result.exit_code == 0, result.output
+        saved = json.loads(config_file.read_text())
+        assert saved["llm"]["model_list"][0]["litellm_params"]["weight"] == 0
+
+
+class TestResolveFieldType:
+    """Tests for schema-based type resolution used by config set."""
+
+    def test_resolves_str_field(self) -> None:
+        from markitai.cli.commands.config import _resolve_field_type
+
+        assert _resolve_field_type("fetch.jina.api_key") is str
+
+    def test_resolves_bool_field(self) -> None:
+        from markitai.cli.commands.config import _resolve_field_type
+
+        assert _resolve_field_type("llm.enabled") is bool
+
+    def test_resolves_indexed_field(self) -> None:
+        from markitai.cli.commands.config import _resolve_field_type
+
+        assert _resolve_field_type("llm.model_list[0].litellm_params.weight") is int
+
+    def test_unknown_key_returns_none(self) -> None:
+        from markitai.cli.commands.config import _resolve_field_type
+
+        assert _resolve_field_type("nope.nothing") is None

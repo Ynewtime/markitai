@@ -10,6 +10,29 @@ from typing import Any, Protocol, runtime_checkable
 
 from loguru import logger
 
+# Strong references to pending close tasks so they are not garbage
+# collected before completing (create_task only keeps a weak reference).
+_pending_close_tasks: set[Any] = set()
+
+
+def schedule_client_close(coro: Any, name: str) -> None:
+    """Schedule an async client close on the running loop (best-effort).
+
+    Keeps a strong reference to the task until it completes. If no event
+    loop is running, the close is skipped (logged) and the coroutine is
+    closed to avoid a "never awaited" warning.
+    """
+    import asyncio
+
+    try:
+        task = asyncio.get_running_loop().create_task(coro)
+    except RuntimeError:
+        coro.close()
+        logger.debug(f"[{name}] No running event loop; old client left to GC")
+        return
+    _pending_close_tasks.add(task)
+    task.add_done_callback(_pending_close_tasks.discard)
+
 
 @dataclass
 class StaticHttpResponse:
@@ -93,12 +116,7 @@ class HttpxClient:
 
         # Close old client if proxy changed
         if self._client is not None:
-            import asyncio
-
-            try:
-                asyncio.get_running_loop().create_task(self._client.aclose())
-            except RuntimeError:
-                pass
+            schedule_client_close(self._client.aclose(), self.name)
 
         client_kwargs: dict[str, Any] = {
             "follow_redirects": True,
@@ -161,12 +179,7 @@ class CurlCffiClient:
 
         # Close old session if proxy changed
         if self._session is not None:
-            import asyncio
-
-            try:
-                asyncio.get_running_loop().create_task(self._session.close())
-            except RuntimeError:
-                pass
+            schedule_client_close(self._session.close(), self.name)
 
         proxies = {"http": proxy, "https": proxy} if proxy else None
         self._session = AsyncSession(

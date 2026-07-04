@@ -151,11 +151,11 @@ class TestSingleFileWorkflowProcessDocument:
     def mock_processor(self):
         """Create a mock LLM processor."""
         processor = MagicMock()
-        processor.process_document = AsyncMock()
-        processor.process_document.return_value = MagicMock(
-            frontmatter="title: Test\nsource: doc.pdf",
-            markdown="# Processed Content",
-            llm_usage={"gpt-4": {"requests": 1}},
+        processor.process_document = AsyncMock(
+            return_value=("# Processed Content", "title: Test\nsource: doc.pdf")
+        )
+        processor.format_llm_output = MagicMock(
+            return_value="---\ntitle: Test\nsource: doc.pdf\n---\n\n# Processed Content"
         )
         processor.get_context_cost = MagicMock(return_value=0.05)
         processor.get_context_usage = MagicMock(return_value={})
@@ -1172,15 +1172,16 @@ class TestLLMFailureErrorLogging:
     async def test_process_document_pure_logs_error_on_failure(
         self, mock_config, mock_processor
     ) -> None:
-        """process_document_pure should log error on exception."""
+        """process_document_pure should log error and re-raise on exception."""
         mock_processor.clean_document_pure = AsyncMock(
             side_effect=RuntimeError("API error")
         )
         workflow = SingleFileWorkflow(mock_config, mock_processor)
         with patch("markitai.workflow.single.logger") as mock_logger:
-            await workflow.process_document_pure(
-                "# test", "test.md", Path("/tmp/test.md")
-            )
+            with pytest.raises(RuntimeError, match="API error"):
+                await workflow.process_document_pure(
+                    "# test", "test.md", Path("/tmp/test.md")
+                )
             mock_logger.error.assert_called_once()
             assert "failed" in mock_logger.error.call_args[0][0].lower()
 
@@ -1188,7 +1189,7 @@ class TestLLMFailureErrorLogging:
     async def test_analyze_images_outer_except_logs_error(
         self, mock_config, mock_processor
     ) -> None:
-        """analyze_images outer except should log error."""
+        """analyze_images outer except should log error and re-raise."""
         # Make get_context_cost raise to trigger the outer except block.
         # Note: per-image failures are caught inside analyze_single_image and
         # returned as None — they don't reach this outer handler.
@@ -1198,9 +1199,10 @@ class TestLLMFailureErrorLogging:
         )
         workflow = SingleFileWorkflow(mock_config, mock_processor)
         with patch("markitai.workflow.single.logger") as mock_logger:
-            await workflow.analyze_images(
-                [Path("/tmp/img.png")], "# test", Path("/tmp/test.md")
-            )
+            with pytest.raises(RuntimeError, match="cost lookup error"):
+                await workflow.analyze_images(
+                    [Path("/tmp/img.png")], "# test", Path("/tmp/test.md")
+                )
             mock_logger.error.assert_called_once()
             assert "failed" in mock_logger.error.call_args[0][0].lower()
 
@@ -1221,3 +1223,71 @@ class TestLLMFailureErrorLogging:
             )
             mock_logger.error.assert_called_once()
             assert "failed" in mock_logger.error.call_args[0][0].lower()
+
+
+class TestContextUsageCleared:
+    """Per-file LLM usage contexts must be cleared after being read.
+
+    Regression: contexts were keyed by basename and never cleared on the
+    shared batch processor, so two files with the same basename in different
+    subdirectories shared a bucket and double-counted cost.
+    """
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.llm.concurrency = 5
+        config.image.alt_enabled = False
+        config.image.desc_enabled = False
+        config.cache.no_cache = False
+        config.cache.no_cache_patterns = []
+        return config
+
+    @pytest.fixture
+    def mock_processor(self):
+        processor = MagicMock()
+        processor.get_context_cost = MagicMock(return_value=0.05)
+        processor.get_context_usage = MagicMock(
+            return_value={"gpt-4": {"requests": 1, "input_tokens": 100}}
+        )
+        return processor
+
+    @pytest.mark.asyncio
+    async def test_process_document_with_llm_clears_context(
+        self, mock_config, mock_processor, tmp_path: Path
+    ) -> None:
+        mock_processor.process_document = AsyncMock(
+            return_value=("cleaned", "title: T")
+        )
+        mock_processor.format_llm_output = MagicMock(
+            return_value="---\ntitle: T\n---\n\ncleaned"
+        )
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        _, cost, usage = await workflow.process_document_with_llm(
+            "# md", "doc.txt", tmp_path / "doc.md"
+        )
+
+        assert cost == 0.05
+        assert usage == {"gpt-4": {"requests": 1, "input_tokens": 100}}
+        mock_processor.clear_context_usage.assert_called_once_with("doc.txt")
+
+    @pytest.mark.asyncio
+    async def test_enhance_with_vision_clears_context(
+        self, mock_config, mock_processor, tmp_path: Path
+    ) -> None:
+        mock_processor.enhance_document_complete = AsyncMock(
+            return_value=("enhanced", "title: T")
+        )
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        img = tmp_path / "page1.png"
+        img.write_bytes(b"fake image")
+
+        await workflow.enhance_with_vision(
+            extracted_text="text",
+            page_images=[{"path": str(img), "page": 1}],
+            source="doc.pdf",
+        )
+
+        mock_processor.clear_context_usage.assert_called_once_with("doc.pdf")

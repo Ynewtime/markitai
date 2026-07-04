@@ -205,7 +205,7 @@ class TestProcessWithLLM:
     async def test_process_with_llm_error_handling(
         self, tmp_path: Path, markitai_config: MarkitaiConfig
     ):
-        """Test error handling in process_with_llm."""
+        """LLM failures must propagate so callers mark the file as failed."""
         from markitai.cli.processors.llm import process_with_llm
 
         output_file = tmp_path / "output.md"
@@ -217,18 +217,17 @@ class TestProcessWithLLM:
             side_effect=Exception("LLM API Error")
         )
 
-        result_md, cost, usage = await process_with_llm(
-            markdown=markdown,
-            source="test.md",
-            cfg=markitai_config,
-            output_file=output_file,
-            processor=failing_processor,
-        )
+        with pytest.raises(Exception, match="LLM API Error"):
+            await process_with_llm(
+                markdown=markdown,
+                source="test.md",
+                cfg=markitai_config,
+                output_file=output_file,
+                processor=failing_processor,
+            )
 
-        # Should return original markdown on error
-        assert result_md == markdown
-        assert cost == 0.0
-        assert usage == {}
+        # No .llm.md file should be written on failure
+        assert not output_file.with_suffix(".llm.md").exists()
 
     async def test_process_with_llm_removes_nonexistent_images(
         self, tmp_path: Path, markitai_config: MarkitaiConfig, mock_llm_processor
@@ -654,7 +653,7 @@ class TestAnalyzeImagesWithLLM:
     async def test_analyze_images_error_handling(
         self, tmp_path: Path, markitai_config: MarkitaiConfig
     ):
-        """Test error handling in image analysis."""
+        """Image analysis failures must propagate to the caller."""
         from markitai.cli.processors.llm import analyze_images_with_llm
 
         image_path = tmp_path / ".markitai" / "assets" / "test.jpg"
@@ -669,18 +668,14 @@ class TestAnalyzeImagesWithLLM:
             side_effect=Exception("Vision API Error")
         )
 
-        markdown, cost, _usage, analysis_result = await analyze_images_with_llm(
-            image_paths=[image_path],
-            markdown="# Test\n\n![](.markitai/assets/test.jpg)",
-            output_file=output_file,
-            cfg=markitai_config,
-            processor=failing_processor,
-        )
-
-        # Should return original markdown on error
-        assert markdown == "# Test\n\n![](.markitai/assets/test.jpg)"
-        assert cost == 0.0
-        assert analysis_result is None
+        with pytest.raises(Exception, match="Vision API Error"):
+            await analyze_images_with_llm(
+                image_paths=[image_path],
+                markdown="# Test\n\n![](.markitai/assets/test.jpg)",
+                output_file=output_file,
+                cfg=markitai_config,
+                processor=failing_processor,
+            )
 
     async def test_analyze_images_alt_disabled(
         self,

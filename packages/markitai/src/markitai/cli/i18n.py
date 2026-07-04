@@ -42,11 +42,20 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "Check complete ({passed} required passed, {optional} optional missing)",
         "zh": "检查完成（{passed} 必需通过，{optional} 可选缺失）",
     },
+    "doctor.summary_failed": {
+        "en": "Check failed ({failed} required missing, {passed} passed, {optional} optional missing)",
+        "zh": "检查未通过（{failed} 必需缺失，{passed} 通过，{optional} 可选缺失）",
+    },
     "doctor.all_good": {
         "en": "All dependencies configured correctly",
         "zh": "所有依赖配置正确",
     },
     "doctor.fix_hint": {"en": "To fix missing dependencies:", "zh": "修复缺失依赖："},
+    "doctor.config_source": {"en": "Config: {path}", "zh": "配置文件：{path}"},
+    "doctor.config_defaults": {
+        "en": "defaults (no config file found; create one with 'markitai init' at ~/.markitai/config.json or ./markitai.json)",
+        "zh": "默认配置（未找到配置文件；可运行 'markitai init' 在 ~/.markitai/config.json 或 ./markitai.json 创建）",
+    },
     # Cache command
     "cache.title": {"en": "Cache Statistics", "zh": "缓存统计"},
     "cache.llm": {"en": "LLM responses", "zh": "LLM 响应"},
@@ -58,6 +67,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "zh": "已清理 {count} 条缓存",
     },
     "cache.no_entries": {"en": "No cache entries to clear", "zh": "无缓存可清理"},
+    "cache.empty_hint": {
+        "en": "No cache yet — it fills up as you convert with --llm",
+        "zh": "暂无缓存——使用 --llm 转换时会自动累积",
+    },
     # Config command
     "config.title": {"en": "Configuration Sources", "zh": "配置来源"},
     "config.cli_args": {"en": "CLI arguments", "zh": "命令行参数"},

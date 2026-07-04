@@ -318,12 +318,11 @@ class TestCheckSymlinkSafety:
         sys.platform == "win32",
         reason="Symlink creation requires admin privileges on Windows",
     )
-    def test_file_through_symlink_dir_resolved(self, tmp_path: Path) -> None:
-        """Test that file accessed through symlink dir is safe after resolution.
+    def test_file_through_symlink_dir_blocked(self, tmp_path: Path) -> None:
+        """Regression: writing through a symlinked parent dir is blocked.
 
-        System-level symlinks (e.g. /tmp -> /private/tmp on macOS) and
-        user symlinks that resolve to real paths are handled by resolving
-        the path before checking parent components.
+        The old implementation walked path.resolve() (which never contains
+        symlinks), so `linkdir/sub` slipped through with allow_symlinks=False.
         """
         real_dir = tmp_path / "real_dir"
         real_dir.mkdir()
@@ -333,10 +332,29 @@ class TestCheckSymlinkSafety:
         link_dir = tmp_path / "link_dir"
         link_dir.symlink_to(real_dir)
 
-        # Accessing file through symlink dir: after resolution it's just
-        # real_dir/file.txt, so no symlink detected in parents
         nested_path = link_dir / "file.txt"
-        check_symlink_safety(nested_path, allow_symlinks=False)  # Should not raise
+        with pytest.raises(ValueError, match="Nested symlink not allowed"):
+            check_symlink_safety(nested_path, allow_symlinks=False)
+
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Symlink creation requires admin privileges on Windows",
+    )
+    def test_file_through_symlink_dir_allowed_with_flag(self, tmp_path: Path) -> None:
+        """allow_symlinks=True permits paths through a symlinked parent."""
+        real_dir = tmp_path / "real_dir"
+        real_dir.mkdir()
+        link_dir = tmp_path / "link_dir"
+        link_dir.symlink_to(real_dir)
+
+        # Should not raise
+        check_symlink_safety(link_dir / "file.txt", allow_symlinks=True)
+
+    def test_system_symlink_parent_allowed(self) -> None:
+        """System-level symlinks (e.g. /tmp -> /private/tmp on macOS) pass."""
+        # On macOS /tmp is a symlink; on Linux it is a real dir. Either way
+        # this must not raise.
+        check_symlink_safety(Path("/tmp/markitai-test/output.md"))
 
     def test_regular_nested_path(self, tmp_path: Path) -> None:
         """Test deeply nested regular paths pass check."""

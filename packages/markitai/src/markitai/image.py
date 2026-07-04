@@ -30,7 +30,7 @@ from markitai.constants import (
     DEFAULT_SCREENSHOT_MAX_BYTES,
     DEFAULT_SUBPROCESS_TIMEOUT,
 )
-from markitai.utils.mime import get_extension_from_mime
+from markitai.utils.mime import get_extension_from_mime, normalize_image_extension
 from markitai.utils.paths import ensure_assets_dir
 
 if TYPE_CHECKING:
@@ -72,9 +72,13 @@ def _compress_image_cv2(
     import numpy as np
 
     try:
-        # Decode image from bytes
+        # Decode image from bytes. JPEG has no alpha channel, so decode it
+        # with IMREAD_COLOR, which (unlike IMREAD_UNCHANGED) applies the EXIF
+        # orientation — phone photos would otherwise come out rotated
         nparr = np.frombuffer(image_data, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+        is_jpeg = image_data[:2] == b"\xff\xd8"
+        flags = cv2.IMREAD_COLOR if is_jpeg else cv2.IMREAD_UNCHANGED
+        img = cv2.imdecode(nparr, flags)
         if img is None:
             return None
 
@@ -158,12 +162,15 @@ def _compress_image_pillow(
     Returns:
         Tuple of (compressed_data, final_width, final_height) or None if filtered
     """
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     try:
         with io.BytesIO(image_data) as buffer:
             img = Image.open(buffer)
             img.load()
+            # Apply EXIF orientation before measuring/resizing (re-encoding
+            # drops the EXIF tag, so the rotation must be baked in)
+            img = ImageOps.exif_transpose(img)
             width, height = img.size
 
             # Apply filter
@@ -395,7 +402,17 @@ class ImageProcessor:
                 # Handle EMF/WMF conversion
                 if image_type.lower() in ("x-emf", "emf", "x-wmf", "wmf"):
                     image_data = self._convert_to_png(image_data, image_type)
-                    image_type = "png"
+                    if image_data[:8] == b"\x89PNG\r\n\x1a\n":
+                        image_type = "png"
+                    else:
+                        # Conversion unavailable (no Pillow EMF support or
+                        # LibreOffice): keep the original type so the failure
+                        # is visible instead of a mislabeled "png"
+                        logger.warning(
+                            "[Image] Could not convert {} image to PNG; "
+                            "it will be dropped unless it can be decoded as-is",
+                            image_type,
+                        )
 
                 mime_type = f"image/{image_type}"
                 images.append((alt_text, mime_type, image_data))
@@ -435,6 +452,12 @@ class ImageProcessor:
 
             def replace_match_indexed(match: re.Match) -> str:
                 nonlocal current_index
+                try:
+                    base64.b64decode(match.group(3))
+                except Exception:
+                    # Mirror extract_base64_images: undecodable URIs were never
+                    # extracted, so they must not consume an index
+                    return match.group(0)
                 current_index += 1  # 1-indexed
                 processed = index_mapping.get(current_index)
                 if processed is None:
@@ -451,6 +474,11 @@ class ImageProcessor:
         image_iter = iter(images)
 
         def replace_match(match: re.Match) -> str:
+            try:
+                base64.b64decode(match.group(3))
+            except Exception:
+                # Undecodable URIs were never extracted; keep them as-is
+                return match.group(0)
             try:
                 img = next(image_iter)
                 return f"![{match.group(1)}]({assets_path}/{img.path.name})"
@@ -603,7 +631,11 @@ class ImageProcessor:
         Returns:
             Tuple of (compressed image, compressed data)
         """
-        from PIL import Image
+        from PIL import Image, ImageOps
+
+        # Apply EXIF orientation before resizing (re-encoding drops the EXIF
+        # tag, so the rotation must be baked into the pixels)
+        image = ImageOps.exif_transpose(image)
 
         # Resize if needed
         image.thumbnail(max_size, Image.Resampling.LANCZOS)
@@ -614,9 +646,10 @@ class ImageProcessor:
             background = Image.new("RGB", image.size, (255, 255, 255))
             if image.mode == "P":
                 image = image.convert("RGBA")
-            background.paste(
-                image, mask=image.split()[-1] if image.mode == "RGBA" else None
-            )
+            if image.mode in ("RGBA", "LA"):
+                background.paste(image, mask=image.split()[-1])
+            else:
+                background.paste(image)
             image = background
 
         # Compress to bytes
@@ -910,15 +943,23 @@ class ImageProcessor:
                         final_width, final_height = compressed_img.size
                         # Release the compressed image
                         compressed_img.close()
+                        file_ext = extension
                     else:
+                        # Original bytes are written unchanged: name them by
+                        # their actual format, not the configured output format
                         compressed_data = image_data
                         final_width, final_height = width, height
+                        file_ext = (
+                            normalize_image_extension(img.format)
+                            if img.format
+                            else extension
+                        )
 
                     # Close original image to release memory
                     img.close()
 
                     # Generate filename
-                    filename = f"{base_name}.{idx:04d}.{extension}"
+                    filename = f"{base_name}.{idx:04d}.{file_ext}"
                     output_path = assets_dir / filename
 
                     # Save
@@ -931,7 +972,7 @@ class ImageProcessor:
                         path=output_path,
                         index=idx,
                         original_name=filename,
-                        mime_type=f"image/{extension}",
+                        mime_type=f"image/{file_ext}",
                         width=final_width,
                         height=final_height,
                     )
@@ -998,7 +1039,7 @@ class ImageProcessor:
         filtered_count = 0
 
         # First pass: process images (CPU-bound, sequential)
-        processed_images: list[tuple[int, bytes, int, int]] = []
+        processed_images: list[tuple[int, bytes, int, int, str]] = []
         for idx, image_data in work_items:
             # Load and process image
             try:
@@ -1022,12 +1063,20 @@ class ImageProcessor:
                         )
                         final_width, final_height = compressed_img.size
                         compressed_img.close()
+                        file_ext = extension
                     else:
+                        # Original bytes are written unchanged: name them by
+                        # their actual format, not the configured output format
                         compressed_data = image_data
                         final_width, final_height = width, height
+                        file_ext = (
+                            normalize_image_extension(img.format)
+                            if img.format
+                            else extension
+                        )
 
                     processed_images.append(
-                        (idx, compressed_data, final_width, final_height)
+                        (idx, compressed_data, final_width, final_height, file_ext)
                     )
 
             except Exception:
@@ -1041,9 +1090,9 @@ class ImageProcessor:
         semaphore = asyncio.Semaphore(max_concurrency)
 
         async def save_image(
-            idx: int, data: bytes, width: int, height: int
+            idx: int, data: bytes, width: int, height: int, file_ext: str
         ) -> tuple[int, ExtractedImage | None, Path | None]:
-            filename = f"{base_name}.{idx:04d}.{extension}"
+            filename = f"{base_name}.{idx:04d}.{file_ext}"
             output_path = assets_dir / filename
 
             async with semaphore:
@@ -1055,7 +1104,7 @@ class ImageProcessor:
                             path=output_path,
                             index=idx,
                             original_name=filename,
-                            mime_type=f"image/{extension}",
+                            mime_type=f"image/{file_ext}",
                             width=width,
                             height=height,
                         ),
@@ -1066,8 +1115,8 @@ class ImageProcessor:
 
         # Run all saves concurrently
         tasks = [
-            save_image(idx, data, width, height)
-            for idx, data, width, height in processed_images
+            save_image(idx, data, width, height, file_ext)
+            for idx, data, width, height, file_ext in processed_images
         ]
         results = await asyncio.gather(*tasks)
 
@@ -1151,7 +1200,7 @@ class ImageProcessor:
 
         # Process images in parallel using ProcessPoolExecutor
         loop = asyncio.get_running_loop()
-        processed_results: list[tuple[int, bytes, int, int]] = []
+        processed_results: list[tuple[int, bytes, int, int, str]] = []
         filtered_count = 0
 
         # Use ProcessPoolExecutor with 'spawn' context for CPU-bound compression
@@ -1184,7 +1233,16 @@ class ImageProcessor:
                             img = Image.open(buffer)
                             w, h = img.size
                             if w >= min_width and h >= min_height and w * h >= min_area:
-                                processed_results.append((idx, image_data, w, h))
+                                # Original bytes are written unchanged: name
+                                # them by their actual format
+                                file_ext = (
+                                    normalize_image_extension(img.format)
+                                    if img.format
+                                    else extension
+                                )
+                                processed_results.append(
+                                    (idx, image_data, w, h, file_ext)
+                                )
                             else:
                                 filtered_count += 1
                                 index_mapping[idx] = ProcessedImage(
@@ -1209,7 +1267,7 @@ class ImageProcessor:
                     else:
                         compressed_data, final_w, final_h = result
                         processed_results.append(
-                            (idx, compressed_data, final_w, final_h)
+                            (idx, compressed_data, final_w, final_h, extension)
                         )
                 except Exception:
                     filtered_count += 1
@@ -1222,9 +1280,9 @@ class ImageProcessor:
         saved_images: list[ExtractedImage] = []
 
         async def save_image(
-            idx: int, data: bytes, width: int, height: int
+            idx: int, data: bytes, width: int, height: int, file_ext: str
         ) -> tuple[int, ExtractedImage | None, Path | None]:
-            filename = f"{base_name}.{idx:04d}.{extension}"
+            filename = f"{base_name}.{idx:04d}.{file_ext}"
             output_path = assets_dir / filename
 
             async with semaphore:
@@ -1236,7 +1294,7 @@ class ImageProcessor:
                             path=output_path,
                             index=idx,
                             original_name=filename,
-                            mime_type=f"image/{extension}",
+                            mime_type=f"image/{file_ext}",
                             width=width,
                             height=height,
                         ),
@@ -1247,8 +1305,8 @@ class ImageProcessor:
 
         # Run all saves concurrently
         tasks = [
-            save_image(idx, data, width, height)
-            for idx, data, width, height in processed_results
+            save_image(idx, data, width, height, file_ext)
+            for idx, data, width, height, file_ext in processed_results
         ]
         results = await asyncio.gather(*tasks)
 

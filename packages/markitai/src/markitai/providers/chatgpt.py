@@ -31,6 +31,7 @@ Limitations:
 
 from __future__ import annotations
 
+import asyncio
 import platform
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -339,7 +340,9 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
 
         try:
             authenticator = self._get_authenticator()
-            access_token = authenticator.get_access_token()
+            # get_access_token may perform a blocking HTTP token refresh;
+            # run it in a thread so the event loop is not frozen.
+            access_token = await asyncio.to_thread(authenticator.get_access_token)
         except AuthenticationError:
             raise
         except Exception as e:

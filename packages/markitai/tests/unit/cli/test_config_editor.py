@@ -247,3 +247,47 @@ class TestFuzzyMatch:
 
         matched, _ = fuzzy_match("very long query", "short")
         assert matched is False
+
+
+class TestEditorValidatesBeforeSave:
+    """Regression: invalid values must never be persisted by the editor."""
+
+    def _run_editor(self, monkeypatch, config_file, key, new_value) -> None:
+        import markitai.cli.config_editor as ce
+
+        monkeypatch.setenv("MARKITAI_CONFIG", str(config_file))
+
+        selections = iter([key, None])
+        monkeypatch.setattr(ce, "_select_setting", lambda *_args: next(selections))
+        monkeypatch.setattr(ce, "_prompt_new_value", lambda *_args: new_value)
+        monkeypatch.setattr(ce, "_get_cursor_row", lambda: 0)
+
+        ce.run_config_editor()
+
+    def test_invalid_value_not_saved(self, tmp_path, monkeypatch) -> None:
+        """image.quality=500 must be rejected, not written to disk."""
+        import json
+
+        from markitai.config import ConfigManager
+
+        config_file = tmp_path / "markitai.json"
+        config_file.write_text(json.dumps({"image": {"quality": 80}}))
+
+        self._run_editor(monkeypatch, config_file, "image.quality", 500)
+
+        saved = json.loads(config_file.read_text())
+        assert saved["image"]["quality"] == 80
+        # The file must still load cleanly afterwards
+        cfg = ConfigManager().load(config_path=config_file)
+        assert cfg.image.quality == 80
+
+    def test_valid_value_saved(self, tmp_path, monkeypatch) -> None:
+        import json
+
+        config_file = tmp_path / "markitai.json"
+        config_file.write_text(json.dumps({"image": {"quality": 80}}))
+
+        self._run_editor(monkeypatch, config_file, "image.quality", 60)
+
+        saved = json.loads(config_file.read_text())
+        assert saved["image"]["quality"] == 60

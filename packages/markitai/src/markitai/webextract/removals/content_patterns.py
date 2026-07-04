@@ -79,6 +79,10 @@ def _remove_trailing_thin_sections(root: Tag) -> int:
     removed = 0
     children = [c for c in root.children if isinstance(c, Tag)]
     for child in reversed(children):
+        # Skip the standardized footnotes container (appended at the end
+        # by standardize_footnotes)
+        if child.get("id") == "footnotes":
+            continue
         text = child.get_text(strip=True)
         word_count = len(text.split())
         if word_count > 25:

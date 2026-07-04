@@ -12,6 +12,7 @@ Key features:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -197,6 +198,25 @@ class InterceptHandler(logging.Handler):
         ).opt(exception=record.exc_info).log(level, record.getMessage())
 
 
+def _format_json_log(record: Any) -> str:
+    """Loguru format callable producing one JSON object per line.
+
+    json.dumps handles escaping (quotes, backslashes, newlines) in the
+    message.  The serialized payload is stashed in record["extra"] because
+    the returned string is still treated as a loguru format template.
+    """
+    record["extra"]["_json"] = json.dumps(
+        {
+            "ts": record["time"].strftime("%Y-%m-%dT%H:%M:%S"),
+            "lvl": record["level"].name,
+            "src": f"{record['module']}:{record['line']}",
+            "msg": record["message"],
+        },
+        ensure_ascii=False,
+    )
+    return "{extra[_json]}\n"
+
+
 def setup_logging(
     verbose: bool,
     log_dir: str | None = None,
@@ -280,13 +300,13 @@ def setup_logging(
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         log_file_path = log_path / f"markitai_{timestamp}.log"
         if log_format == "json":
-            # Compact JSON format
+            # Compact JSON format (one JSON object per line)
             logger.add(
                 log_file_path,
                 level=log_level,
                 rotation=rotation,
                 retention=retention,
-                format='{{"ts":"{time:YYYY-MM-DDTHH:mm:ss}","lvl":"{level.name}","src":"{module}:{line}","msg":"{message}"}}',
+                format=_format_json_log,
             )
         else:
             # Human-readable format (default)

@@ -41,6 +41,9 @@ class FileFormat(Enum):
     GIF = "gif"
     BMP = "bmp"
     TIFF = "tiff"
+    HEIC = "heic"
+    HEIF = "heif"
+    AVIF = "avif"
 
     # Structured data
     CSV = "csv"
@@ -92,6 +95,9 @@ IMAGE_ONLY_FORMATS: frozenset[FileFormat] = frozenset(
         FileFormat.BMP,
         FileFormat.TIFF,
         FileFormat.SVG,
+        FileFormat.HEIC,
+        FileFormat.HEIF,
+        FileFormat.AVIF,
     }
 )
 
@@ -122,6 +128,9 @@ EXTENSION_MAP: dict[str, FileFormat] = {
     ".bmp": FileFormat.BMP,
     ".tiff": FileFormat.TIFF,
     ".tif": FileFormat.TIFF,
+    ".heic": FileFormat.HEIC,
+    ".heif": FileFormat.HEIF,
+    ".avif": FileFormat.AVIF,
     ".tsv": FileFormat.TSV,
     ".epub": FileFormat.EPUB,
     ".rtf": FileFormat.RTF,

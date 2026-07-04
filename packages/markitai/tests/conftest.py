@@ -79,6 +79,24 @@ def sample_config_dict() -> dict:
 
 
 # =============================================================================
+# Fetch Fixtures
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _reset_remote_fetch_consent(monkeypatch: pytest.MonkeyPatch):
+    """Isolate the process-wide remote-fetch consent cache between tests."""
+    from markitai import fetch
+
+    monkeypatch.delenv("MARKITAI_NO_REMOTE_FETCH", raising=False)
+    fetch.reset_remote_consent()
+    fetch.reset_explicit_fallback_decision()
+    yield
+    fetch.reset_remote_consent()
+    fetch.reset_explicit_fallback_decision()
+
+
+# =============================================================================
 # CLI Fixtures
 # =============================================================================
 
