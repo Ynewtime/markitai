@@ -352,8 +352,8 @@ class TestEstimateModelCost:
         model = "gpt-4o"
         try:
             info = litellm.get_model_info(model)
-            input_cost = info.get("input_cost_per_token", 0)
-            output_cost = info.get("output_cost_per_token", 0)
+            input_cost = info.get("input_cost_per_token") or 0.0
+            output_cost = info.get("output_cost_per_token") or 0.0
         except Exception:
             pytest.skip("LiteLLM model info not available")
 
