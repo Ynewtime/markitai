@@ -64,10 +64,28 @@ jobs:
       - name: Build package
         run: uv build --package markitai --out-dir dist --clear
 
+      - name: Build mkai alias package
+        # Stub package that just depends on markitai (name-squat protection +
+        # `pip install mkai` convenience). Version is bumped rarely; PyPI
+        # rejects re-uploads of an existing version, hence skip-existing below.
+        run: uv build --package mkai --out-dir dist
+
       - name: Verify build artifacts
         run: ls -la dist/
+
+      - name: Verify tag matches built version
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+        run: |
+          built_version=$(ls dist/markitai-*.tar.gz | sed -E 's|.*/markitai-(.+)\.tar\.gz|\1|')
+          tag="${{ github.event.release.tag_name || github.ref_name }}"
+          expected="v${built_version}"
+          if [ "$tag" != "$expected" ]; then
+            echo "::error::Release tag '$tag' does not match built version '$built_version' (expected tag '$expected'). Did you forget to bump src/markitai/__init__.py?"
+            exit 1
+          fi
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@v1.13.0
         with:
           packages-dir: dist/
+          skip-existing: true
