@@ -104,8 +104,12 @@ class XTweetExtractor:
         display_name = main_item.author_name or ""
         title = f"Post by {handle}" if handle else f"Post by {display_name}"
 
-        # Collect replies governed by thread policy
+        # Collect replies governed by thread policy. Mirrors defuddle's
+        # classification: consecutive self-replies by the main author at the
+        # top of the reply timeline continue the post (thread); everything
+        # after the first third-party reply is a comment.
         policy = get_thread_policy(url)
+        continuation_items: list[ConversationItem] = []
         reply_items: list[ConversationItem] = []
         if policy is not None:
             reply_section = primary_col.find("section")  # type: ignore[union-attr]
@@ -113,25 +117,28 @@ class XTweetExtractor:
                 reply_articles = reply_section.find_all(
                     "article", attrs={"data-testid": "tweet"}
                 )
-                for reply_art in reply_articles:
+                thread_ended = False
+                for i, reply_art in enumerate(reply_articles):
                     if not isinstance(reply_art, Tag):
                         continue
-                    item = parse_tweet_article(reply_art)
-                    item_is_author = (
-                        item.author_handle == handle or item.author_name == display_name
+                    item = parse_tweet_article(reply_art, tweet_id=f"reply-{i}")
+                    item_is_author = bool(
+                        (handle and item.author_handle == handle)
+                        or (display_name and item.author_name == display_name)
                     )
-                    if (
-                        item_is_author
-                        and policy.include_author_thread
-                        or not item_is_author
-                        and policy.include_third_party_replies
-                    ):
+                    if not item_is_author:
+                        thread_ended = True
+                    if item_is_author and not thread_ended:
+                        if policy.include_author_thread:
+                            continuation_items.append(item)
+                    elif policy.include_third_party_replies:
                         reply_items.append(item)
 
         thread = ConversationThread(
             title=title,
             main_item=main_item,
             items=reply_items,
+            continuation_items=continuation_items,
         )
 
         semantic = SemanticExtraction(thread=thread)

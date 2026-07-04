@@ -71,6 +71,29 @@ class TestBuildConversationThread:
         assert "test tweet" in thread.main_item.text
         assert len(thread.main_item.media) == 1
 
+    def test_prefers_expanded_text_over_raw_text(self) -> None:
+        """``text`` has t.co links expanded; ``raw_text`` keeps the t.co form."""
+        data = {
+            **MOCK_FXTWITTER_RESPONSE["tweet"],
+            "text": "See https://github.com/user/repo",
+            "raw_text": {"text": "See https://t.co/abc123"},
+        }
+        thread = _build_conversation_thread(
+            data, tweet_id="123", url="https://x.com/testuser/status/123"
+        )
+        assert thread.main_item.text == "See https://github.com/user/repo"
+
+    def test_falls_back_to_raw_text_when_text_missing(self) -> None:
+        data = {
+            **MOCK_FXTWITTER_RESPONSE["tweet"],
+            "text": "",
+            "raw_text": {"text": "Raw fallback"},
+        }
+        thread = _build_conversation_thread(
+            data, tweet_id="123", url="https://x.com/testuser/status/123"
+        )
+        assert thread.main_item.text == "Raw fallback"
+
     def test_tweet_with_quoted_tweet(self) -> None:
         data = {
             **MOCK_FXTWITTER_RESPONSE["tweet"],
@@ -84,6 +107,51 @@ class TestBuildConversationThread:
         )
         assert thread.main_item.quoted_item is not None
         assert thread.main_item.quoted_item.author_handle == "@quser"
+
+    def test_quoted_tweet_carries_permalink_date_and_media(self) -> None:
+        data = {
+            **MOCK_FXTWITTER_RESPONSE["tweet"],
+            "quote": {
+                "text": "Quoted tweet.",
+                "author": {"name": "Q", "screen_name": "quser"},
+                "url": "https://x.com/quser/status/999",
+                "created_at": "Tue Dec 23 08:00:00 +0000 2025",
+                "media": {
+                    "all": [
+                        {"type": "photo", "url": "https://pbs.twimg.com/media/Q.jpg"}
+                    ]
+                },
+            },
+        }
+        thread = _build_conversation_thread(
+            data, tweet_id="456", url="https://x.com/testuser/status/456"
+        )
+        quote = thread.main_item.quoted_item
+        assert quote is not None
+        assert quote.url == "https://x.com/quser/status/999"
+        assert quote.timestamp == "Tue Dec 23 08:00:00 +0000 2025"
+        assert [m.url for m in quote.media] == ["https://pbs.twimg.com/media/Q.jpg"]
+
+    def test_video_media_carries_thumbnail_as_poster(self) -> None:
+        data = {
+            **MOCK_FXTWITTER_RESPONSE["tweet"],
+            "media": {
+                "all": [
+                    {
+                        "type": "video",
+                        "url": "https://video.twimg.com/vid.mp4",
+                        "thumbnail_url": "https://pbs.twimg.com/thumb.jpg",
+                    }
+                ]
+            },
+        }
+        thread = _build_conversation_thread(
+            data, tweet_id="789", url="https://x.com/testuser/status/789"
+        )
+        media = thread.main_item.media
+        assert len(media) == 1
+        assert media[0].media_type == "video"
+        assert media[0].poster == "https://pbs.twimg.com/thumb.jpg"
 
 
 @pytest.mark.asyncio
