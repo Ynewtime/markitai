@@ -4,7 +4,7 @@
 
 ### Required
 
-- **Python 3.11-3.13** - Required runtime (3.14 not yet supported due to onnxruntime)
+- **Python 3.11-3.14** - Required runtime
 - **[uv](https://docs.astral.sh/uv/)** - Package manager (recommended)
 
 ### Optional Dependencies
@@ -53,7 +53,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Yne
 :::
 
 The script will:
-- Check for Python 3.11-3.13
+- Check for Python 3.11-3.14
 - Install [uv](https://docs.astral.sh/uv/) package manager (requires confirmation)
 - Install markitai with browser automation support (other optional extras installed on confirmation)
 
