@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from markitai.cli.main import app
@@ -131,7 +132,7 @@ class TestCopilotAuthCLI:
 
         assert result.exit_code == 0
         assert "ghuser" in result.output
-        assert "authenticated" in result.output.lower()
+        assert "logged in" in result.output.lower()
 
     def test_copilot_status_not_authenticated(self, tmp_path: Path) -> None:
         """auth copilot status exits 1 when not authenticated."""
@@ -297,8 +298,9 @@ class TestClaudeAuthCLI:
         assert result.exit_code == 0
         assert "CLI:" in result.output
         assert "SDK:" in result.output
-        assert "claude-agent/sonnet" in result.output
+        assert "claude-agent/" in result.output
         assert "subscription" in result.output.lower()
+        assert "markitai init" in result.output
 
     def test_claude_status_json_includes_cli_and_sdk_info(self, tmp_path: Path) -> None:
         """auth claude status --json includes cli_path and sdk_installed."""
@@ -387,8 +389,30 @@ class TestChatGPTAuthCLI:
         payload = json.loads(result.output)
         assert payload["authenticated"] is True
 
-    def test_chatgpt_login_shows_auto_login_message(self) -> None:
-        """auth chatgpt login shows auto-login info."""
+    def test_chatgpt_login_invokes_attempt_login(self) -> None:
+        """auth chatgpt login triggers the device-code flow via attempt_login."""
+        runner = CliRunner()
+
+        with patch(
+            "markitai.cli.commands.auth.attempt_login",
+            new_callable=AsyncMock,
+            return_value=AuthStatus(
+                provider="chatgpt",
+                authenticated=True,
+                user="user@example.com",
+                expires_at=None,
+                error=None,
+            ),
+        ) as mock_login:
+            result = runner.invoke(app, ["auth", "chatgpt", "login"])
+
+        assert result.exit_code == 0
+        mock_login.assert_called_once_with("chatgpt")
+        assert "login successful" in result.output.lower()
+        assert "user@example.com" in result.output
+
+    def test_chatgpt_login_failure_exits_nonzero(self) -> None:
+        """auth chatgpt login exits 1 and shows the error on failure."""
         runner = CliRunner()
 
         with patch(
@@ -399,11 +423,99 @@ class TestChatGPTAuthCLI:
                 authenticated=False,
                 user=None,
                 expires_at=None,
-                error=None,
-                details={"auto_login": True},
+                error="Device code expired",
             ),
         ):
             result = runner.invoke(app, ["auth", "chatgpt", "login"])
 
+        assert result.exit_code == 1
+        assert "login failed" in result.output.lower()
+        assert "Device code expired" in result.output
+
+
+class TestAuthOverview:
+    """Tests for the bare `markitai auth` all-providers overview."""
+
+    def test_bare_auth_shows_all_providers_overview(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`markitai auth` renders a glyph overview of all four providers."""
+        runner = CliRunner()
+        for var in (
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "markitai.providers.auth._claude_cli_auth_status",
+                return_value=None,
+            ),
+        ):
+            result = runner.invoke(app, ["auth"])
+
         assert result.exit_code == 0
-        assert "device code flow" in result.output.lower()
+        for name in ("claude", "chatgpt", "copilot", "gemini"):
+            assert name in result.output
+        assert "not logged in" in result.output
+        assert "✗" in result.output  # cross glyph for unauthenticated
+        assert "markitai auth <provider> login" in result.output
+
+
+class TestStatusCardUnified:
+    """Tests for the unified status card rendering."""
+
+    def test_chatgpt_status_failure_points_at_markitai_login(
+        self, tmp_path: Path
+    ) -> None:
+        """Failure card must reference the markitai login command, not litellm."""
+        runner = CliRunner()
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            result = runner.invoke(app, ["auth", "chatgpt", "status"])
+
+        assert result.exit_code == 1
+        assert "markitai auth chatgpt login" in result.output
+        assert "pip install litellm" not in result.output
+        assert "✗" in result.output
+
+    def test_claude_status_success_card_has_glyphs(self, tmp_path: Path) -> None:
+        """Success card shows title and check glyphs."""
+        runner = CliRunner()
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "markitai.providers.auth._claude_cli_auth_status",
+                return_value={
+                    "loggedIn": True,
+                    "email": "user@example.com",
+                    "subscriptionType": "max",
+                },
+            ),
+        ):
+            result = runner.invoke(app, ["auth", "claude", "status"])
+
+        assert result.exit_code == 0
+        assert "Claude Authentication" in result.output
+        assert "✓" in result.output  # checkmark glyph
+        assert "Logged in: user@example.com (max plan)" in result.output
+
+    def test_copilot_status_failure_points_at_markitai_login(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Copilot failure card ends with the markitai login command."""
+        runner = CliRunner()
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            result = runner.invoke(app, ["auth", "copilot", "status"])
+
+        assert result.exit_code == 1
+        assert "markitai auth copilot login" in result.output

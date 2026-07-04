@@ -6,6 +6,8 @@ from typing import Any
 
 import rich_click as click
 
+from markitai.cli import ui
+from markitai.cli.console import get_console
 from markitai.providers.auth import (
     AuthManager,
     AuthStatus,
@@ -14,6 +16,41 @@ from markitai.providers.auth import (
 )
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+# provider key -> (exact login command, what it does)
+_LOGIN_HINTS: dict[str, tuple[str, str]] = {
+    "claude-agent": (
+        "markitai auth claude login",
+        "Runs 'claude auth login' to sign in with your Claude account.",
+    ),
+    "copilot": (
+        "markitai auth copilot login",
+        "Runs the GitHub Copilot CLI login flow.",
+    ),
+    "gemini-cli": (
+        "markitai auth gemini login",
+        "Opens a browser for Google OAuth login.",
+    ),
+    "chatgpt": (
+        "markitai auth chatgpt login",
+        "Starts the OAuth Device Code Flow (visit the URL, enter the code).",
+    ),
+}
+
+# provider key -> what an authenticated provider enables
+_USAGE_HINTS: dict[str, str] = {
+    "claude-agent": (
+        "LLM calls with claude-agent/ models use your Claude subscription quota."
+    ),
+    "copilot": ("LLM calls with copilot/ models use your GitHub Copilot subscription."),
+    "gemini-cli": (
+        "LLM calls with gemini-cli/ models use your Google account "
+        "(free tier available)."
+    ),
+    "chatgpt": "LLM calls with chatgpt/ models use your ChatGPT subscription.",
+}
+
+_NEXT_INIT = "Next: markitai init   (auto-detects and enables this provider)"
 
 
 def _check_status(provider: str) -> AuthStatus:
@@ -68,26 +105,57 @@ def _display_user(status: AuthStatus) -> str:
     return user
 
 
-def _print_status(provider_label: str, status: AuthStatus) -> None:
-    """Print status check result, raise SystemExit(1) if unauthenticated."""
+def _render_status_card(
+    provider_label: str,
+    status: AuthStatus,
+    *,
+    checks: list[tuple[str, str]] | None = None,
+    infos: list[str] | None = None,
+) -> None:
+    """Render the unified status card; raise SystemExit(1) if unauthenticated.
+
+    Args:
+        provider_label: Human-readable label ("Claude", "ChatGPT", ...).
+        status: Authentication status to render.
+        checks: Extra check lines as (kind, text) with kind "ok" or "warn".
+        infos: Extra dim detail lines (bullet, no pass/fail meaning).
+    """
+    console = get_console()
+    ui.title(f"{provider_label} Authentication")
+
     if status.authenticated:
-        click.echo(f"{provider_label} authenticated: {_display_user(status)}")
+        ui.success(f"Logged in: {_display_user(status)}")
     else:
-        click.echo(f"{provider_label} not authenticated: {status.error}")
-        click.echo(get_auth_resolution_hint(status.provider))
-        raise SystemExit(1)
+        ui.error("Not logged in", detail=status.error)
+
+    for kind, text in checks or []:
+        if kind == "ok":
+            ui.success(text)
+        else:
+            ui.warning(text)
+    for line in infos or []:
+        ui.info(line)
+
+    console.print()
+    if status.authenticated:
+        console.print(f"  {_USAGE_HINTS[status.provider]}")
+        console.print(f"  [dim]{_NEXT_INIT}[/]")
+        return
+
+    cmd, does = _LOGIN_HINTS[status.provider]
+    console.print(f"  Next: [bold]{cmd}[/]")
+    console.print(f"        [dim]{does}[/]")
+    raise SystemExit(1)
 
 
 def _print_login_result(provider_label: str, status: AuthStatus) -> None:
     """Print login attempt result, raise SystemExit(1) on failure."""
+    console = get_console()
     if status.authenticated:
-        click.echo(f"{provider_label} authenticated: {_display_user(status)}")
-        click.echo(
-            "Next: run 'markitai init' to add this provider to your config, "
-            "then convert with --llm."
-        )
+        ui.summary(f"{provider_label} login successful: {_display_user(status)}")
+        console.print(f"  [dim]{_NEXT_INIT}[/]")
     else:
-        click.echo(f"{provider_label} login failed: {status.error}")
+        ui.summary(f"{provider_label} login failed: {status.error}", ok=False)
         click.echo(get_auth_resolution_hint(status.provider))
         raise SystemExit(1)
 
@@ -95,20 +163,46 @@ def _print_login_result(provider_label: str, status: AuthStatus) -> None:
 # ── Main group ───────────────────────────────────────────────────────────────
 
 
-@click.group()
-def auth() -> None:
+# CLI subcommand name -> provider key, in overview display order
+_OVERVIEW_PROVIDERS: list[tuple[str, str]] = [
+    ("claude", "claude-agent"),
+    ("chatgpt", "chatgpt"),
+    ("copilot", "copilot"),
+    ("gemini", "gemini-cli"),
+]
+
+
+@click.group(invoke_without_command=True)
+@click.pass_context
+def auth(ctx: click.Context) -> None:
     """Authentication helpers for local providers.
 
     Check or set up login for Claude Code, GitHub Copilot, Gemini CLI,
     and ChatGPT so markitai can use them for LLM processing (--llm)
-    without API keys.
+    without API keys. Run without a subcommand to see an overview of
+    all providers.
 
     Examples:
+        markitai auth                   # Overview of all providers
         markitai auth claude status     # Is Claude Code logged in?
         markitai auth claude login      # Log in via Claude Code CLI
         markitai auth gemini login      # Google OAuth login for Gemini
         markitai doctor                 # Check all providers at once
     """
+    if ctx.invoked_subcommand is not None:
+        return
+
+    console = get_console()
+    ui.title("Provider Authentication")
+    for name, provider in _OVERVIEW_PROVIDERS:
+        status = _check_status(provider)
+        if status.authenticated:
+            ui.success(f"{name:<8} {_display_user(status)}")
+        else:
+            ui.error(f"{name:<8} not logged in")
+    console.print()
+    console.print("  [dim]Details: markitai auth <provider> status[/]")
+    console.print("  [dim]Login:   markitai auth <provider> login[/]")
 
 
 # ── Gemini ───────────────────────────────────────────────────────────────────
@@ -144,25 +238,17 @@ def gemini_status(as_json: bool) -> None:
         click.echo(json.dumps(_status_to_payload(status), indent=2, ensure_ascii=False))
         return
 
-    if status.authenticated:
-        click.echo(f"Gemini authenticated: {_display_user(status)}")
-        details = status.details or {}
-        # Only show extra details for managed profiles (markitai-managed)
-        if details.get("source") == "markitai":
-            project_id = details.get("project_id")
-            auth_mode = details.get("auth_mode")
-            credential_path = details.get("credential_path")
-            if project_id:
-                click.echo(f"Project: {project_id}")
-            if auth_mode:
-                click.echo(f"Mode: {auth_mode}")
-            if credential_path:
-                click.echo(f"Profile: {credential_path}")
-        return
-
-    click.echo(f"Gemini not authenticated: {status.error}")
-    click.echo(get_auth_resolution_hint("gemini-cli"))
-    raise SystemExit(1)
+    infos: list[str] = []
+    details = status.details or {}
+    # Only show extra details for managed profiles (markitai-managed)
+    if status.authenticated and details.get("source") == "markitai":
+        if details.get("project_id"):
+            infos.append(f"Project: {details['project_id']}")
+        if details.get("auth_mode"):
+            infos.append(f"Mode: {details['auth_mode']}")
+        if details.get("credential_path"):
+            infos.append(f"Profile: {details['credential_path']}")
+    _render_status_card("Gemini", status, infos=infos)
 
 
 @gemini.command("login")
@@ -195,14 +281,12 @@ def gemini_login(mode: str, project_id: str | None) -> None:
     record = asyncio.run(provider.alogin(mode=mode, project_id=project_id))
     AuthManager().clear_cache("gemini-cli")
 
-    click.echo(f"Gemini authenticated: {record.email}")
-    click.echo(f"Project: {record.project_id}")
-    click.echo(f"Mode: {record.auth_mode}")
-    click.echo(f"Profile: {record.path}")
-    click.echo(
-        "Next: run 'markitai init' to add this provider to your config, "
-        "then convert with --llm."
-    )
+    console = get_console()
+    ui.summary(f"Gemini login successful: {record.email}")
+    ui.info(f"Project: {record.project_id}")
+    ui.info(f"Mode: {record.auth_mode}")
+    ui.info(f"Profile: {record.path}")
+    console.print(f"  [dim]{_NEXT_INIT}[/]")
 
 
 # ── Copilot ──────────────────────────────────────────────────────────────────
@@ -232,11 +316,35 @@ def copilot_status(as_json: bool) -> None:
         markitai auth copilot status         # Human-readable status
         markitai auth copilot status --json  # Machine-readable status
     """
+    from markitai.providers.auth import _get_cli_install_cmd, _resolve_cli_path
+
     status = _check_status("copilot")
     if as_json:
         click.echo(json.dumps(_status_to_payload(status), indent=2, ensure_ascii=False))
         return
-    _print_status("Copilot", status)
+
+    checks: list[tuple[str, str]] = []
+    infos: list[str] = []
+    if status.authenticated:
+        source = (status.details or {}).get("source")
+        if source == "env":
+            infos.append("Source: GH_TOKEN/GITHUB_TOKEN environment variable")
+        elif source == "config":
+            infos.append("Source: copilot CLI config (~/.copilot/config.json)")
+    else:
+        if _resolve_cli_path("copilot") is None:
+            checks.append(
+                (
+                    "warn",
+                    "copilot CLI not found — install: "
+                    f"{_get_cli_install_cmd('copilot')}",
+                )
+            )
+        infos.append(
+            "Alternative: set GH_TOKEN or GITHUB_TOKEN "
+            "(needs 'Copilot Requests' permission)"
+        )
+    _render_status_card("Copilot", status, checks=checks, infos=infos)
 
 
 @copilot.command("login")
@@ -276,6 +384,7 @@ def claude_status(as_json: bool) -> None:
         markitai auth claude status --json  # Machine-readable status
     """
     from markitai.providers.auth import (
+        _get_cli_install_cmd,
         _is_claude_agent_sdk_available,
         _resolve_cli_path,
     )
@@ -291,26 +400,29 @@ def claude_status(as_json: bool) -> None:
         click.echo(json.dumps(payload, indent=2, ensure_ascii=False))
         return
 
-    if not status.authenticated:
-        _print_status("Claude", status)
-        return
-
-    click.echo(f"Claude authenticated: {_display_user(status)}")
-    click.echo(f"CLI: {cli_path or 'not found in PATH (SDK bundles its own)'}")
-    if sdk_installed:
-        click.echo("SDK: claude-agent-sdk installed")
+    checks: list[tuple[str, str]] = []
+    if cli_path:
+        checks.append(("ok", f"CLI: {cli_path}"))
+    elif status.authenticated:
+        checks.append(("warn", "CLI: not found in PATH (SDK bundles its own)"))
     else:
-        click.echo(
-            "SDK: claude-agent-sdk not installed — run: "
-            "uv tool install 'markitai[claude-agent]' --upgrade"
+        checks.append(
+            (
+                "warn",
+                f"CLI: claude not found — install: {_get_cli_install_cmd('claude')}",
+            )
         )
-    click.echo(
-        "\nLLM calls with claude-agent/ models use your Claude subscription "
-        "quota.\nEnable via 'markitai init' (auto-detected), or add a model "
-        "manually:\n"
-        '  {"model_name": "default", '
-        '"litellm_params": {"model": "claude-agent/sonnet"}}'
-    )
+    if sdk_installed:
+        checks.append(("ok", "SDK: claude-agent-sdk installed"))
+    else:
+        checks.append(
+            (
+                "warn",
+                "SDK: claude-agent-sdk not installed — run: "
+                "uv tool install 'markitai\\[claude-agent]' --upgrade",
+            )
+        )
+    _render_status_card("Claude", status, checks=checks)
 
 
 @claude.command("login")
@@ -347,21 +459,28 @@ def chatgpt_status(as_json: bool) -> None:
         markitai auth chatgpt status         # Human-readable status
         markitai auth chatgpt status --json  # Machine-readable status
     """
+    from markitai.providers.auth import can_attempt_login
+
     status = _check_status("chatgpt")
     if as_json:
         click.echo(json.dumps(_status_to_payload(status), indent=2, ensure_ascii=False))
         return
-    _print_status("ChatGPT", status)
+
+    checks: list[tuple[str, str]] = []
+    if not status.authenticated and not can_attempt_login("chatgpt"):
+        checks.append(
+            ("warn", "LiteLLM chatgpt authenticator not available (update litellm)")
+        )
+    _render_status_card("ChatGPT", status, checks=checks)
 
 
 @chatgpt.command("login")
 def chatgpt_login() -> None:
-    """Trigger ChatGPT Device Code Flow login."""
+    """Trigger ChatGPT OAuth Device Code Flow login.
+
+    Requests a device code, shows the verification URL and code, then
+    waits for you to finish the login in a browser. Tokens are saved
+    to ~/.config/litellm/chatgpt/auth.json.
+    """
     result = asyncio.run(attempt_login("chatgpt"))
-    if result.details and result.details.get("auto_login"):
-        click.echo(
-            "ChatGPT uses OAuth Device Code Flow.\n"
-            "Login will be triggered automatically on first API call."
-        )
-    else:
-        _print_login_result("ChatGPT", result)
+    _print_login_result("ChatGPT", result)

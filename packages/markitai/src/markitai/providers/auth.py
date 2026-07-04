@@ -138,7 +138,8 @@ def _build_resolution_hint(provider: str) -> str:
         )
     elif provider == "copilot":
         return (
-            "Run 'copilot login' to authenticate with GitHub Copilot.\n"
+            "Run 'markitai auth copilot login' (or 'copilot login') to "
+            "authenticate with GitHub Copilot.\n"
             "Alternatively, set GH_TOKEN or GITHUB_TOKEN env var "
             "(requires 'Copilot Requests' permission).\n"
             "If Copilot CLI is not installed, install it with:\n"
@@ -146,9 +147,10 @@ def _build_resolution_hint(provider: str) -> str:
         )
     elif provider == "chatgpt":
         return (
-            "ChatGPT provider uses OAuth Device Code Flow.\n"
-            "Run any chatgpt/ model to trigger automatic login,\n"
-            "or install and authenticate via: pip install litellm && litellm --model chatgpt/gpt-5.4"
+            "Run 'markitai auth chatgpt login' to authenticate via the "
+            "OAuth Device Code Flow (visit the URL, enter the code).\n"
+            "Login is also triggered automatically on the first chatgpt/ "
+            "model call."
         )
     elif provider == "gemini-cli":
         return (
