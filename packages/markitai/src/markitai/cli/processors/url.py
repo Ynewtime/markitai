@@ -78,6 +78,7 @@ async def process_url(
     fetch_strategy: FetchStrategy | None = None,
     explicit_fetch_strategy: bool = False,
     output_manager: Any = None,
+    quiet: bool = False,
 ) -> None:
     """Process a URL and convert to Markdown.
 
@@ -102,6 +103,7 @@ async def process_url(
         log_file_path: Path to log file (for report)
         fetch_strategy: Strategy to use for fetching URL content
         explicit_fetch_strategy: If True, strategy was explicitly set via CLI flag
+        quiet: If True, suppress the live status spinner
     """
     from markitai.cli.processors.llm import (
         analyze_images_with_llm,
@@ -192,6 +194,15 @@ async def process_url(
         enabled=not stdout_mode and not verbose, output_manager=output_manager
     )
 
+    # Live status spinner (stderr, transient) for the long fetch/convert/LLM
+    # phases. Suppressed for --quiet, verbose (-v streams logs; a spinner
+    # would interleave badly) and stdout mode (the OutputManager owns stderr
+    # there); ConversionStatus itself no-ops when stderr is not a TTY.
+    status = ui.ConversionStatus(
+        f"Fetching {ui.truncate(url, 60)}...",
+        enabled=not stdout_mode and not quiet and not verbose,
+    )
+
     # Track cache hit for reporting
     fetch_cache_hit = False
 
@@ -206,6 +217,7 @@ async def process_url(
     try:
         logger.info(f"Fetching URL: {url} (strategy: {fetch_strategy.value})")
         progress.start_spinner(f"Fetching {url}...")
+        status.start()
 
         # Fetch URL using the configured strategy
         # Prepare screenshot options if enabled
@@ -236,6 +248,7 @@ async def process_url(
             cache_note = " (cached)" if fetch_cache_hit else ""
             logger.info(f"Fetched via {used_strategy}{cache_note}: {url}")
         except JinaRateLimitError:
+            status.stop()
             ui.error(
                 "Jina Reader rate limit exceeded (free tier: 20 RPM)",
                 console=diag_console,
@@ -246,10 +259,12 @@ async def process_url(
             )
             raise SystemExit(1)
         except FetchError as e:
+            status.stop()
             _print_multiline_error(str(e), diag_console)
             raise SystemExit(1)
 
         if not original_markdown.strip():
+            status.stop()
             ui.error(f"No content extracted from URL: {url}", console=diag_console)
             ui.step(
                 "The page may be empty, require JavaScript, "
@@ -263,6 +278,7 @@ async def process_url(
         output_file = resolve_output_path(base_output_file, cfg.output.on_conflict)
 
         if output_file is None:
+            status.stop()
             logger.info(f"[SKIP] Output exists: {base_output_file}")
             console.print(f"[yellow]Skipped (exists):[/yellow] {base_output_file}")
             return
@@ -285,6 +301,7 @@ async def process_url(
 
         if cfg.image.alt_enabled or cfg.image.desc_enabled:
             progress.start_spinner("Downloading images...")
+            status.update("Downloading images...")
             download_result = await download_url_images(
                 markdown=original_markdown,
                 output_dir=effective_output_dir,
@@ -311,6 +328,7 @@ async def process_url(
         # --screenshot-only without --llm: just save screenshot, no .md output
         has_screenshot = screenshot_path is not None and screenshot_path.exists()
         if cfg.screenshot.screenshot_only and not cfg.llm.enabled:
+            status.stop()
             if has_screenshot and screenshot_path is not None:
                 progress.log(f"Screenshot saved: {screenshot_path.name}")
                 console.print(f"[green]Screenshot saved:[/green] {screenshot_path}")
@@ -366,6 +384,7 @@ async def process_url(
             base_content = original_markdown
         final_content = base_content
         if cfg.llm.enabled:
+            status.update("Enhancing with LLM...")
             logger.info(f"[LLM] Processing URL content: {url}")
 
             # Check if image analysis should run
@@ -550,7 +569,9 @@ async def process_url(
         if img_analysis and cfg.image.desc_enabled:
             write_images_json(effective_output_dir, [img_analysis])
 
-        # Clear progress output before printing final result
+        # Stop the live status and clear progress output before printing
+        # the final result (status is transient; rich erases its frame)
+        status.stop()
         progress.clear_and_finish()
 
         if stdout_mode:
@@ -739,9 +760,12 @@ async def process_url(
     except SystemExit:
         raise
     except Exception as e:
+        status.stop()
         _print_multiline_error(str(e), diag_console)
         raise SystemExit(1)
     finally:
+        # Safety net: ensure spinner is gone on every exit path
+        status.stop()
         # Cleanup temp directory for stdout mode
         if stdout_mode and temp_dir is not None:
             import shutil

@@ -257,12 +257,22 @@ async def process_single_file(
     show_spinner = not stdout_mode and not quiet and not verbose
     progress = ProgressReporter(enabled=show_spinner, output_manager=output_manager)
 
+    # Live status spinner (stderr, transient) for the long conversion/LLM
+    # phases. Same gating as ProgressReporter (file mode, not quiet, not
+    # verbose — -v streams logs and a spinner would interleave badly);
+    # ConversionStatus itself no-ops when stderr is not a TTY. Stage text
+    # follows conversion logs via a temporary loguru bridge (see cli.ui).
+    status = ui.ConversionStatus(
+        f"Converting {input_path.name}...", enabled=show_spinner
+    )
+
     try:
         # Show verbose title
         if verbose and not quiet and not stdout_mode:
             ui.title(f"Converting {input_path.name}")
 
         progress.start_spinner(f"Converting {input_path.name}...")
+        status.start()
 
         # Create conversion context (explicit -o file target overrides the
         # derived output name)
@@ -283,6 +293,7 @@ async def process_single_file(
 
         # Handle skipped files (already exists)
         if result.skip_reason == "exists":
+            status.stop()
             progress.stop_spinner()
             if not quiet and not stdout_mode:
                 assert output_dir is not None
@@ -296,6 +307,7 @@ async def process_single_file(
 
         # Handle skipped files (image-only format, no LLM/OCR)
         if result.skip_reason == "image_only":
+            status.stop()
             progress.stop_spinner()
             if not quiet:
                 ui.warning(
@@ -305,7 +317,8 @@ async def process_single_file(
                 )
             return
 
-        # Stop spinner before output
+        # Stop spinner before output (status is transient; frame is erased)
+        status.stop()
         progress.stop_spinner()
 
         # Write image descriptions (single file)
@@ -477,12 +490,15 @@ async def process_single_file(
 
     except Exception as e:
         error_msg = format_error_message(e)
+        status.stop()
         progress.stop_spinner()
         if not quiet:
             ui.error(error_msg, console=diag_console)
         sys.exit(1)
 
     finally:
+        # Safety net: ensure spinner is gone on every exit path
+        status.stop()
         if error_msg:
             logger.warning(f"Failed to process {input_path.name}: {error_msg}")
         # Cleanup temp directory for stdout mode
