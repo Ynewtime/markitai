@@ -1,0 +1,48 @@
+{
+  "metadata": {
+    "title": "Post by @dotey"
+  },
+  "info": {
+    "content_profile": "social_post"
+  },
+  "semantic": {
+    "thread": {
+      "main_item": {
+        "author_handle": "@dotey",
+        "author_name": "宝玉",
+        "text_contains": "baoyu-design skill 更新： 支持 PPT 动画了",
+        "timestamp": "2026-07-04T06:02:00",
+        "media": [
+          {
+            "media_type": "video",
+            "url": "",
+            "poster": "https://pbs.twimg.com/amplify_video_thumb/2073283886402981888/img/iLBiXgibPtjFs1tt.jpg"
+          }
+        ],
+        "quoted_item": {
+          "author_handle": "@dotey",
+          "url": "https://x.com/dotey/status/2067876611873964284",
+          "timestamp": "Jun 19"
+        }
+      },
+      "author_replies": [],
+      "third_party_replies": []
+    }
+  },
+  "markdown_must_not_contain": [
+    "user avatar",
+    "profile_images",
+    "blob:",
+    "00:00",
+    "Views",
+    "cookies",
+    "Read 28 replies",
+    "Show more"
+  ],
+  "markdown_must_contain": [
+    "**宝玉 @dotey** · 2026-07-04",
+    "https://github.com/jimliu/baoyu-design",
+    "![](https://pbs.twimg.com/amplify_video_thumb/2073283886402981888/img/iLBiXgibPtjFs1tt.jpg)",
+    "> **宝玉 @dotey** · Jun 19"
+  ]
+}

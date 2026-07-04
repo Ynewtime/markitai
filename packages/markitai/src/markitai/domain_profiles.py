@@ -10,7 +10,7 @@ from __future__ import annotations
 from markitai.config import DomainProfileConfig
 
 _X_COM_PROFILE = DomainProfileConfig(
-    wait_for_selector='[data-testid="tweet"]',
+    wait_for_selector='article[data-tweet-id], [data-testid="tweet"]',
     wait_for="domcontentloaded",
     extra_wait_ms=500,
     skip_auto_scroll=True,

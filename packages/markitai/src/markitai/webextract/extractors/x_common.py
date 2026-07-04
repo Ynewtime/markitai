@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import re
+from datetime import datetime
 
 from bs4 import Tag
 from bs4.element import NavigableString
@@ -27,6 +28,11 @@ _HANDLE_RE = re.compile(r"(@\w+)")
 # Upgrade X image CDN size parameter, e.g. "...&name=small" -> "...&name=large"
 _IMG_NAME_PARAM_RE = re.compile(r"([?&]name=)\w+")
 
+# 2026 X.com DOM: permalink text like "6:02 AM · Jul 4, 2026"
+_NEW_FULL_TIME_FORMAT = "%I:%M %p · %b %d, %Y"
+# 2026 X.com DOM: quoted-tweet date text like "Jun 19" or "Jun 19, 2025"
+_NEW_SHORT_DATE_RE = re.compile(r"^[A-Z][a-z]{2} \d{1,2}(?:, \d{4})?$")
+
 
 def parse_tweet_article(article: Tag, *, tweet_id: str = "") -> ConversationItem:
     """Parse a single ``<article data-testid="tweet">`` into a ConversationItem.
@@ -38,6 +44,9 @@ def parse_tweet_article(article: Tag, *, tweet_id: str = "") -> ConversationItem
     Returns:
         A populated ``ConversationItem``.
     """
+    if is_new_dom_article(article):
+        return _parse_tweet_article_new(article, tweet_id=tweet_id)
+
     author_name, author_handle = _parse_author(article)
     quoted_el = _find_quoted_element(article)
     text = _parse_text(article, exclude=quoted_el)
@@ -62,23 +71,48 @@ def parse_tweet_article(article: Tag, *, tweet_id: str = "") -> ConversationItem
 def find_primary_tweet(primary_column: Tag) -> Tag | None:
     """Find the main tweet article, excluding quotes and reply sections.
 
-    The primary tweet is the first ``<article data-testid="tweet">`` that is
-    NOT inside a ``data-testid="card.wrapper"`` (quote) or a ``<section>``
-    (replies).
+    Supports both DOM generations:
+
+    - Legacy DOM: ``<article data-testid="tweet">``
+    - 2026 DOM: ``<article data-tweet-id="...">``
+
+    The primary tweet is the first matching ``<article>`` that is NOT inside
+    a ``data-testid="card.wrapper"`` (quote) or a ``<section>`` (replies).
 
     Args:
-        primary_column: The ``data-testid="primaryColumn"`` container.
+        primary_column: The tweet page content container.
 
     Returns:
         The main tweet ``<article>`` tag, or ``None`` if not found.
     """
-    for article in primary_column.find_all("article", attrs={"data-testid": "tweet"}):
+    for article in primary_column.find_all("article"):
+        if not isinstance(article, Tag):
+            continue
+        if article.get("data-testid") != "tweet" and not article.has_attr(
+            "data-tweet-id"
+        ):
+            continue
         if _is_inside_quote_card(article):
             continue
         if _is_inside_reply_section(article):
             continue
-        return article  # type: ignore[return-value]
+        return article
     return None
+
+
+def is_new_dom_article(article: Tag) -> bool:
+    """Check whether a tweet article uses the 2026 X.com DOM shape.
+
+    The 2026 redesign dropped all ``data-testid`` attributes; tweet articles
+    carry a ``data-tweet-id`` attribute instead.
+
+    Args:
+        article: A tweet ``<article>`` tag.
+
+    Returns:
+        True for 2026-DOM articles.
+    """
+    return article.has_attr("data-tweet-id")
 
 
 def is_recommendation_section(tag: Tag) -> bool:
@@ -240,6 +274,31 @@ def _parse_media(article: Tag, *, exclude: Tag | None = None) -> list[MediaAttac
             return False
         return el is exclude or any(p is exclude for p in el.parents)
 
+    # Collect videos first so their poster URLs can be used to skip the
+    # poster-overlay <img> duplicates the 2026 DOM renders next to <video>.
+    videos: list[MediaAttachment] = []
+    posters: set[str] = set()
+    for video in article.find_all("video"):
+        if not isinstance(video, Tag) or _excluded(video):
+            continue
+        poster = str(video.get("poster", "") or "")
+        src = str(video.get("src", "") or "")
+        if not src:
+            source = video.find("source", src=True)
+            if isinstance(source, Tag):
+                src = str(source.get("src", ""))
+        # blob: URLs are session-local MediaSource handles — useless outside
+        # the browser. Keep the poster and drop the unusable video URL.
+        if src.startswith("blob:"):
+            src = ""
+        if poster:
+            posters.add(poster)
+        key = src or poster
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        videos.append(MediaAttachment(url=src, media_type="video", poster=poster))
+
     for img in article.find_all("img", src=True):
         if _excluded(img):
             continue
@@ -252,8 +311,10 @@ def _parse_media(article: Tag, *, exclude: Tag | None = None) -> list[MediaAttac
         # Skip card thumbnails; the card is rendered as a link instead.
         if _is_inside_card(img):
             continue
-        # Skip video poster frames; videos are collected separately below.
+        # Skip video poster frames; videos are collected separately.
         if img.find_parent("video") is not None:
+            continue
+        if src in posters:
             continue
         src = _upgrade_image_url(src)
         if src in seen:
@@ -261,21 +322,7 @@ def _parse_media(article: Tag, *, exclude: Tag | None = None) -> list[MediaAttac
         seen.add(src)
         media.append(MediaAttachment(url=src, alt=alt))
 
-    for video in article.find_all("video"):
-        if not isinstance(video, Tag) or _excluded(video):
-            continue
-        poster = str(video.get("poster", "") or "")
-        src = str(video.get("src", "") or "")
-        if not src:
-            source = video.find("source", src=True)
-            if isinstance(source, Tag):
-                src = str(source.get("src", ""))
-        url = src or poster
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        media.append(MediaAttachment(url=url, media_type="video", poster=poster))
-
+    media.extend(videos)
     return media
 
 
@@ -337,6 +384,223 @@ def _parse_quoted_item(quoted_el: Tag) -> EmbeddedQuote | None:
         author_name=q_name,
         author_handle=q_handle,
         text=q_text,
+        timestamp=q_timestamp,
+        media=q_media,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2026 X.com DOM (no data-testid attributes)
+# ---------------------------------------------------------------------------
+
+
+def _parse_tweet_article_new(article: Tag, *, tweet_id: str = "") -> ConversationItem:
+    """Parse a 2026-DOM ``<article data-tweet-id>`` into a ConversationItem.
+
+    Args:
+        article: The ``<article>`` tag to parse.
+        tweet_id: Stable ID for the item; defaults to the article's
+            ``data-tweet-id`` when empty.
+
+    Returns:
+        A populated ``ConversationItem``.
+    """
+    if not tweet_id:
+        tweet_id = str(article.get("data-tweet-id", "") or "")
+
+    quoted_el = _find_quoted_element_new(article)
+    author_name, author_handle = _parse_author_new(article, exclude=quoted_el)
+    text = _parse_text_new(article, exclude=quoted_el)
+    timestamp = _parse_timestamp_new(article, exclude=quoted_el)
+    media = _parse_media(article, exclude=quoted_el)
+    quoted = _parse_quoted_item_new(quoted_el) if quoted_el is not None else None
+
+    return ConversationItem(
+        id=tweet_id,
+        author_name=author_name,
+        author_handle=author_handle,
+        text=text,
+        timestamp=timestamp,
+        quoted_item=quoted,
+        media=media,
+    )
+
+
+def _new_excluded(el: Tag, exclude: Tag | None) -> bool:
+    """Check whether ``el`` is (inside) the excluded subtree."""
+    if exclude is None:
+        return False
+    return el is exclude or any(p is exclude for p in el.parents)
+
+
+def _parse_author_new(
+    scope: Tag, *, exclude: Tag | None = None
+) -> tuple[str | None, str | None]:
+    """Extract display name and @handle from a 2026-DOM author block.
+
+    The author header is a ``<div data-slot="hover-card-trigger">`` holding
+    the display-name link and the ``@handle`` link. (The avatar is a separate
+    ``<a data-slot="hover-card-trigger">`` and is skipped by requiring a
+    ``div``.)
+
+    Args:
+        scope: Tweet article or quoted-tweet container.
+        exclude: Subtree (e.g. the quoted tweet) to ignore.
+
+    Returns:
+        Tuple of (display_name, handle). Either may be None.
+    """
+    for block in scope.find_all("div", attrs={"data-slot": "hover-card-trigger"}):
+        if not isinstance(block, Tag) or _new_excluded(block, exclude):
+            continue
+        display_name: str | None = None
+        handle: str | None = None
+        for link in block.find_all("a"):
+            text = link.get_text(strip=True)
+            if not text:
+                continue
+            if text.startswith("@"):
+                if handle is None:
+                    handle = text
+            elif display_name is None:
+                display_name = text
+        if display_name or handle:
+            return display_name, handle
+    return None, None
+
+
+def _parse_text_new(scope: Tag, *, exclude: Tag | None = None) -> str:
+    """Extract tweet text from a 2026-DOM tweet.
+
+    The tweet body is the first ``<div dir="auto">`` in the scope. Line
+    breaks are literal ``\\n`` characters inside text nodes (the element is
+    styled ``whitespace-pre-wrap``). Truncated external links (anchor text
+    ending in ``…``) are expanded to their full ``href``; "Show more"
+    affordances are dropped.
+
+    Args:
+        scope: Tweet article or quoted-tweet container.
+        exclude: Subtree (e.g. the quoted tweet) to ignore.
+
+    Returns:
+        Plain text content with ``\\n`` paragraph breaks.
+    """
+    text_el: Tag | None = None
+    for div in scope.find_all("div", dir="auto"):
+        if not isinstance(div, Tag) or _new_excluded(div, exclude):
+            continue
+        text_el = div
+        break
+    if text_el is None:
+        return ""
+
+    clone = copy.copy(text_el)
+    for el in clone.find_all(["a", "button", "span"]):
+        if el.get_text(strip=True) == "Show more":
+            el.decompose()
+    for img in clone.find_all("img"):
+        alt = img.get("alt", "")
+        img.replace_with(str(alt) if alt else "")
+    # Expand truncated display URLs to the full target URL.
+    for link in clone.find_all("a", href=True):
+        display = link.get_text(strip=True)
+        href = str(link.get("href", ""))
+        if display.endswith("…") and href.startswith("http"):
+            link.replace_with(href)
+    # Whitespace-only text nodes are HTML formatting, not tweet line breaks.
+    for node in clone.find_all(string=True):
+        if isinstance(node, NavigableString) and not node.strip() and "\n" in node:
+            node.replace_with(" ")
+
+    text = clone.get_text("")
+    lines = [line.strip() for line in text.split("\n")]
+    return "\n".join(line for line in lines if line)
+
+
+def _parse_timestamp_new(scope: Tag, *, exclude: Tag | None = None) -> str | None:
+    """Extract the timestamp from a 2026-DOM tweet's permalink text.
+
+    The 2026 DOM has no ``<time>`` element; the timestamp is the visible
+    text of the status permalink, e.g. ``"6:02 AM · Jul 4, 2026"`` on the
+    main tweet or ``"Jun 19"`` on a quoted tweet. Parseable values are
+    normalized to ISO-8601; short quote dates are returned verbatim.
+
+    Args:
+        scope: Tweet article or quoted-tweet container.
+        exclude: Subtree (e.g. the quoted tweet) to ignore.
+
+    Returns:
+        Timestamp string, or None if not found.
+    """
+    for link in scope.find_all("a", href=True):
+        if not isinstance(link, Tag) or _new_excluded(link, exclude):
+            continue
+        if "/status/" not in str(link.get("href", "")):
+            continue
+        text = link.get_text(" ", strip=True)
+        if not text:
+            continue
+        try:
+            return datetime.strptime(text, _NEW_FULL_TIME_FORMAT).isoformat()
+        except ValueError:
+            pass
+        if _NEW_SHORT_DATE_RE.match(text):
+            try:
+                return datetime.strptime(text, "%b %d, %Y").date().isoformat()
+            except ValueError:
+                return text
+    return None
+
+
+def _find_quoted_element_new(article: Tag) -> Tag | None:
+    """Locate the quoted-tweet container in a 2026-DOM tweet article.
+
+    Quoted tweets render as ``<div role="link" data-href="/user/status/id">``
+    embedded cards.
+
+    Args:
+        article: Tweet article tag.
+
+    Returns:
+        The quoted-tweet container tag, or None.
+    """
+    for el in article.find_all("div", attrs={"role": "link", "data-href": True}):
+        if not isinstance(el, Tag):
+            continue
+        if "/status/" in str(el.get("data-href", "")):
+            return el
+    return None
+
+
+def _parse_quoted_item_new(quoted_el: Tag) -> EmbeddedQuote | None:
+    """Parse a 2026-DOM quoted-tweet container into an EmbeddedQuote.
+
+    Args:
+        quoted_el: The ``div[role="link"][data-href]`` container.
+
+    Returns:
+        An EmbeddedQuote, or None if the container has no usable content.
+    """
+    q_name, q_handle = _parse_author_new(quoted_el)
+    q_text = _parse_text_new(quoted_el)
+    q_timestamp = _parse_timestamp_new(quoted_el)
+    q_media = _parse_media(quoted_el)
+
+    if not (q_name or q_handle or q_text or q_media):
+        return None
+
+    href = str(quoted_el.get("data-href", "") or "")
+    url: str | None = None
+    if href.startswith("http"):
+        url = href
+    elif href.startswith("/"):
+        url = f"https://x.com{href}"
+
+    return EmbeddedQuote(
+        author_name=q_name,
+        author_handle=q_handle,
+        text=q_text,
+        url=url,
         timestamp=q_timestamp,
         media=q_media,
     )

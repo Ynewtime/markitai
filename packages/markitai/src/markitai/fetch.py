@@ -2545,6 +2545,7 @@ async def _fetch_with_fallback(
             and not resolve_remote_consent(config)
         ):
             logger.debug(f"[Fetch] Skipping {strat}: no remote-fetch consent")
+            errors.append(f"{strat}: skipped (no remote-fetch consent)")
             continue
         try:
             if strat == "static":
@@ -2554,6 +2555,7 @@ async def _fetch_with_fallback(
                     # Learn this domain for future requests
                     spa_cache = get_spa_domain_cache()
                     spa_cache.record_spa_domain(url)
+                    errors.append(f"{strat}: page requires JavaScript rendering")
                     continue
                 # Validate content quality before accepting
                 is_invalid, reason = _is_invalid_content(result.content)
@@ -2624,12 +2626,17 @@ async def _fetch_with_fallback(
 
                 if not is_playwright_available():
                     logger.debug("playwright not available, trying next strategy")
+                    errors.append(f"{strat}: playwright package not installed")
                     continue
                 if not is_playwright_browser_installed():
                     logger.debug(
                         "[Fetch] playwright installed but Chromium browser missing; "
                         "skipping playwright in auto chain "
                         "(run 'markitai doctor --fix' to install it)"
+                    )
+                    errors.append(
+                        f"{strat}: Chromium browser missing "
+                        "(run 'markitai doctor --fix')"
                     )
                     continue
 
@@ -2686,6 +2693,7 @@ async def _fetch_with_fallback(
                 )
                 if not token or not acct:
                     logger.debug("Cloudflare credentials not configured, skipping")
+                    errors.append(f"{strat}: credentials not configured")
                     continue
                 result = await fetch_with_cloudflare(
                     url=url,
@@ -2759,7 +2767,7 @@ async def _fetch_with_fallback(
             continue
 
     # All strategies failed
-    raise FetchError(
-        f"All fetch strategies failed for {url}:\n"
-        + "\n".join(f"  - {e}" for e in errors)
+    detail = "\n".join(f"  - {e}" for e in errors) or (
+        "  - no strategy was applicable (all were skipped)"
     )
+    raise FetchError(f"All fetch strategies failed for {url}:\n{detail}")

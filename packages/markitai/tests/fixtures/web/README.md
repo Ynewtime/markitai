@@ -9,8 +9,10 @@ native extraction parity and benchmark tests.
 
 | File | Description |
 |------|-------------|
-| `x_status_2030105637204676808.playwright.html` | Minimized Playwright capture of an X/Twitter status page |
+| `x_status_2030105637204676808.playwright.html` | Minimized Playwright capture of an X/Twitter status page (legacy `data-testid` DOM) |
 | `x_status_2030105637204676808.expected.json` | Semantic contract for the X status fixture |
+| `x_status_2073286406558949828.playwright.html` | Faithful Playwright capture of an X/Twitter status page (2026 redesign DOM: `article[data-tweet-id]`, no `data-testid`; captured live 2026-07-04, script/style bodies stripped) |
+| `x_status_2073286406558949828.expected.json` | Semantic contract for the 2026-DOM X status fixture (exercised by `tests/unit/webextract/test_x_tweet_real_dom.py`) |
 | `generic_article.playwright.html` | Synthetic generic blog article with sidebar noise |
 | `generic_article.expected.json` | Semantic contract for the generic article fixture |
 | `github_issue_thread.playwright.html` | Minimized GitHub issue thread page |

@@ -356,6 +356,89 @@ class TestPlaywrightActionableErrors:
         pw_mock.assert_not_awaited()
 
 
+class TestAutoChainFxTwitterIntercept:
+    """AUTO chain must serve tweet URLs via FxTwitter before any browser."""
+
+    @pytest.mark.asyncio
+    async def test_tweet_url_served_by_fxtwitter_without_browser_launch(
+        self, monkeypatch
+    ) -> None:
+        import markitai.fetch_fxtwitter as fx
+        import markitai.fetch_playwright as fp
+        from markitai.fetch import _fetch_with_fallback
+
+        url = "https://x.com/dotey/status/2073286406558949828"
+        config = FetchConfig(remote_consent="never")
+
+        fx_result = FetchResult(
+            content="**tweet body**",
+            strategy_used="fxtwitter",
+            title="Post by @dotey",
+            url=url,
+            final_url=url,
+        )
+        fx_mock = AsyncMock(return_value=fx_result)
+        monkeypatch.setattr(fx, "fetch_with_fxtwitter", fx_mock)
+
+        # Playwright is fully available but must never be touched.
+        monkeypatch.setattr(fp, "is_playwright_available", lambda: True)
+        monkeypatch.setattr(
+            fp, "is_playwright_browser_installed", lambda *_a, **_k: True
+        )
+        pw_mock = AsyncMock()
+        monkeypatch.setattr(fp, "fetch_with_playwright", pw_mock)
+
+        # Static fails so the chain advances to the playwright branch.
+        monkeypatch.setattr(
+            fetch,
+            "fetch_with_static",
+            AsyncMock(side_effect=FetchError("HTTP 403 fetching URL")),
+        )
+
+        result = await _fetch_with_fallback(url, config)
+
+        assert result.strategy_used == "fxtwitter"
+        assert result.content == "**tweet body**"
+        fx_mock.assert_awaited_once_with(url)
+        pw_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fxtwitter_miss_falls_back_to_playwright_dom_path(
+        self, monkeypatch
+    ) -> None:
+        import markitai.fetch_fxtwitter as fx
+        import markitai.fetch_playwright as fp
+        from markitai.fetch import _fetch_with_fallback
+
+        url = "https://x.com/dotey/status/2073286406558949828"
+        config = FetchConfig(remote_consent="never")
+
+        # FxTwitter down/rate-limited -> returns None (never raises).
+        monkeypatch.setattr(fx, "fetch_with_fxtwitter", AsyncMock(return_value=None))
+        monkeypatch.setattr(fp, "is_playwright_available", lambda: True)
+        monkeypatch.setattr(
+            fp, "is_playwright_browser_installed", lambda *_a, **_k: True
+        )
+        pw_result = MagicMock()
+        pw_result.content = "# Post by @dotey\n\nDOM-extracted tweet body text."
+        pw_result.title = "Post by @dotey"
+        pw_result.final_url = url
+        pw_result.metadata = {}
+        pw_result.screenshot_path = None
+        pw_mock = AsyncMock(return_value=pw_result)
+        monkeypatch.setattr(fp, "fetch_with_playwright", pw_mock)
+        monkeypatch.setattr(
+            fetch,
+            "fetch_with_static",
+            AsyncMock(side_effect=FetchError("HTTP 403 fetching URL")),
+        )
+
+        result = await _fetch_with_fallback(url, config)
+
+        assert result.strategy_used == "playwright"
+        pw_mock.assert_awaited_once()
+
+
 class TestCloudflareActionableErrors:
     @pytest.mark.asyncio
     async def test_explicit_cloudflare_without_credentials(self) -> None:

@@ -57,8 +57,10 @@ class XTweetExtractor:
         if isinstance(timeline, Tag):
             return _extract_from_timeline(timeline, soup)
 
-        # Strategy 2: Find individual tweet articles
+        # Strategy 2: Find individual tweet articles (legacy or 2026 DOM)
         tweets = soup.find_all("article", attrs={"data-testid": "tweet"})
+        if not tweets:
+            tweets = soup.find_all("article", attrs={"data-tweet-id": True})
         if tweets:
             return _wrap_tweets(tweets, soup)
 
@@ -84,8 +86,11 @@ class XTweetExtractor:
         """
         tweet_id = extract_tweet_id_from_url(url)
 
-        # Find primaryColumn to scope our search
+        # Scope the search: legacy DOM uses data-testid="primaryColumn";
+        # the 2026 DOM has a plain <main> content column.
         primary_col = soup.find(True, attrs={"data-testid": "primaryColumn"})
+        if not isinstance(primary_col, Tag):
+            primary_col = soup.find("main")
         if not isinstance(primary_col, Tag):
             # Fallback: search the whole document
             primary_col = soup  # type: ignore[assignment]

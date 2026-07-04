@@ -153,7 +153,9 @@ def _render_media(media: MediaAttachment, indent: str = "  ") -> list[str]:
 
     Images render as ``<img>``.  Videos and GIFs render as a link to the
     media resource (labelled by type), preceded by the poster image when
-    one is available.
+    one is available.  When no real ``https`` media URL is known (e.g. the
+    DOM only exposes a session-local ``blob:`` handle), only the poster is
+    rendered and the useless link is omitted.
 
     Args:
         media: The media attachment.
@@ -173,9 +175,10 @@ def _render_media(media: MediaAttachment, indent: str = "  ") -> list[str]:
                 f'{indent}<div class="media-attachment">'
                 f'<img src="{poster}" alt="{alt}"></div>'
             )
-        parts.append(
-            f'{indent}<p class="media-attachment"><a href="{url}">{label}</a></p>'
-        )
+        if media.url.startswith("http"):
+            parts.append(
+                f'{indent}<p class="media-attachment"><a href="{url}">{label}</a></p>'
+            )
     else:
         parts.append(
             f'{indent}<div class="media-attachment"><img src="{url}" alt="{alt}"></div>'
