@@ -7,7 +7,8 @@
 #   curl -fsSL https://markitai.ynewtime.com/setup.sh | sh    # User install
 #   ./scripts/setup.sh                                         # Dev setup (in repo)
 
-set -e
+# -e: exit on error; -u: error on unset variables (pipefail is not POSIX sh)
+set -eu
 
 # ============================================================
 # Internationalization (i18n) System
@@ -98,8 +99,15 @@ i18n() {
 
             # Error messages
             error_uv_required)          echo "需要安装 uv 包管理器" ;;
-            error_python_required)      echo "需要安装 Python 3.11+" ;;
+            error_python_required)      echo "需要安装 Python 3.11-3.14" ;;
             error_setup_failed)         echo "安装失败" ;;
+
+            # Install source (repo detection)
+            repo_detected)              echo "检测到 markitai 源码仓库" ;;
+            confirm_local_install)      echo "从本地源码安装 markitai? (默认使用 PyPI 发布版)" ;;
+            source_local)               echo "安装来源: 本地源码" ;;
+            source_pypi)                echo "安装来源: PyPI" ;;
+            info_repo_noninteractive)   echo "非交互模式: 已检测到源码仓库, 将使用 PyPI 发布版" ;;
 
             # Network / Mirrors
             section_network)            echo "网络环境" ;;
@@ -204,8 +212,15 @@ i18n() {
 
             # Error messages
             error_uv_required)          echo "uv package manager is required" ;;
-            error_python_required)      echo "Python 3.11+ is required" ;;
+            error_python_required)      echo "Python 3.11-3.14 is required" ;;
             error_setup_failed)         echo "Setup failed" ;;
+
+            # Install source (repo detection)
+            repo_detected)              echo "markitai source repo detected" ;;
+            confirm_local_install)      echo "Install markitai from the local repo? (default: PyPI release)" ;;
+            source_local)               echo "Install source: local repo" ;;
+            source_pypi)                echo "Install source: PyPI" ;;
+            info_repo_noninteractive)   echo "Non-interactive mode: source repo detected, using PyPI release" ;;
 
             # Network / Mirrors
             section_network)            echo "Network Environment" ;;
@@ -350,7 +365,8 @@ clack_spinner() {
 
     # Spinner frames (ASCII compatible)
     _cs_pid=""
-    _cs_errfile=$(mktemp 2>/dev/null || echo "/tmp/clack_spinner_$$")
+    # No predictable /tmp fallback (avoids symlink attacks); discard stderr instead
+    _cs_errfile=$(mktemp 2>/dev/null) || _cs_errfile="/dev/null"
 
     # Start spinner in background
     (
@@ -381,7 +397,9 @@ clack_spinner() {
         done
     fi
 
-    rm -f "$_cs_errfile" 2>/dev/null
+    if [ "$_cs_errfile" != "/dev/null" ]; then
+        rm -f "$_cs_errfile" 2>/dev/null
+    fi
     return $_cs_status
 }
 
@@ -401,11 +419,15 @@ clack_confirm() {
     printf "${GRAY}│${NC}\n"
     printf "${CYAN}◇${NC}  %s ${GRAY}[%b]${NC} " "$_cc_prompt" "$_cc_hint"
 
-    # Read from /dev/tty for piped execution support
+    # Read from /dev/tty for piped execution support;
+    # fall back to the default answer when no TTY is available (CI, cron)
+    _cc_answer=""
     if [ -t 0 ]; then
         read -r _cc_answer
+    elif read -r _cc_answer < /dev/tty 2>/dev/null; then
+        printf "\n"
     else
-        read -r _cc_answer < /dev/tty
+        _cc_answer="$_cc_default"
         printf "\n"
     fi
 
@@ -555,10 +577,13 @@ configure_mirrors() {
     printf "${GRAY}│${NC}  ${GRAY}4.${NC} %s\n" "$(i18n mirror_huawei)"
     printf "${GRAY}│${NC}  > "
 
+    # Fall back to the default choice when no TTY is available (CI, cron)
+    _mirror_choice=""
     if [ -t 0 ]; then
         read -r _mirror_choice
+    elif read -r _mirror_choice < /dev/tty 2>/dev/null; then
+        printf "\n"
     else
-        read -r _mirror_choice < /dev/tty
         printf "\n"
     fi
 
@@ -607,6 +632,82 @@ is_dev_mode() {
         fi
     fi
     return 1
+}
+
+# ============================================================
+# Install Source Selection (PyPI vs local repo)
+# ============================================================
+
+# Install source: "pypi" (default) or "local" (from source repo)
+MARKITAI_SOURCE="pypi"
+MARKITAI_LOCAL_PATH=""
+MARKITAI_REPO_ROOT=""
+
+# Detect the markitai source repo (for the local install option)
+# Checks the script location first, then cwd (curl | sh case)
+# Sets: MARKITAI_REPO_ROOT
+# Returns: 0 if repo detected, 1 if not
+detect_markitai_repo() {
+    MARKITAI_REPO_ROOT=""
+
+    # 1) Via script location ($0 is not a file under curl | sh)
+    if [ -f "$0" ]; then
+        _dmr_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || _dmr_dir=""
+        if [ -n "$_dmr_dir" ]; then
+            _dmr_root=$(dirname -- "$_dmr_dir")
+            if [ -f "$_dmr_root/packages/markitai/pyproject.toml" ] && \
+               grep -q '^name = "markitai"' "$_dmr_root/packages/markitai/pyproject.toml" 2>/dev/null; then
+                MARKITAI_REPO_ROOT="$_dmr_root"
+                return 0
+            fi
+        fi
+    fi
+
+    # 2) Via current directory (curl | sh run from inside a checkout)
+    if [ -f "$PWD/packages/markitai/pyproject.toml" ] && \
+       grep -q '^name = "markitai"' "$PWD/packages/markitai/pyproject.toml" 2>/dev/null; then
+        MARKITAI_REPO_ROOT="$PWD"
+        return 0
+    fi
+
+    return 1
+}
+
+# Ask whether to install markitai from the local repo or PyPI
+# Default (enter / non-interactive / not in repo) = PyPI
+# Sets: MARKITAI_SOURCE, MARKITAI_LOCAL_PATH
+choose_install_source() {
+    if ! detect_markitai_repo; then
+        return 0
+    fi
+
+    # Non-interactive (stdin not a TTY, e.g. curl | sh): never prompt
+    if [ ! -t 0 ]; then
+        clack_info "$(i18n info_repo_noninteractive)"
+        return 0
+    fi
+
+    clack_info "$(i18n repo_detected): $MARKITAI_REPO_ROOT"
+    if clack_confirm "$(i18n confirm_local_install)" "n"; then
+        MARKITAI_SOURCE="local"
+        MARKITAI_LOCAL_PATH="$MARKITAI_REPO_ROOT/packages/markitai"
+        clack_info "$(i18n source_local)"
+    else
+        clack_info "$(i18n source_pypi)"
+    fi
+    return 0
+}
+
+# Build the markitai package spec honoring install source and extras
+# Usage: markitai_pkg_spec "extra1,extra2"
+markitai_pkg_spec() {
+    if [ "$MARKITAI_SOURCE" = "local" ]; then
+        echo "markitai[$1] @ $MARKITAI_LOCAL_PATH"
+    elif [ -n "$MARKITAI_VERSION" ]; then
+        echo "markitai[$1]==$MARKITAI_VERSION"
+    else
+        echo "markitai[$1]"
+    fi
 }
 
 # ============================================================
@@ -666,8 +767,23 @@ install_uv() {
         _uv_url="https://astral.sh/uv/install.sh"
     fi
 
-    # Install uv
-    if clack_spinner "$(i18n installing) $(i18n uv)..." curl -LsSf "$_uv_url" | sh >/dev/null 2>&1; then
+    # Install uv: download the installer to a temp file first, so a partial
+    # download is never executed (piping curl into sh would also conflict
+    # with clack_spinner, which redirects the command's stdout)
+    _uv_installer=$(mktemp) || {
+        clack_error "$(i18n uv) $(i18n failed)"
+        track_install "uv" "failed"
+        return 1
+    }
+    _uv_ok=false
+    # shellcheck disable=SC2016 # $1/$2 expand in the child sh, not here
+    if clack_spinner "$(i18n installing) $(i18n uv)..." \
+        sh -c 'curl -LsSf -o "$1" "$2" && sh "$1"' sh "$_uv_installer" "$_uv_url"; then
+        _uv_ok=true
+    fi
+    rm -f "$_uv_installer"
+
+    if [ "$_uv_ok" = true ]; then
         export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
         if command -v uv >/dev/null 2>&1; then
             _uv_version=$(uv --version 2>/dev/null | head -n1 | tr -d '\r')
@@ -691,8 +807,8 @@ detect_python() {
         return 1
     fi
 
-    # Try to find Python 3.13
-    _py_path=$(uv python find 3.13 2>/dev/null)
+    # Try to find any supported Python (3.11-3.14)
+    _py_path=$(uv python find '>=3.11,<3.15' 2>/dev/null) || _py_path=""
     if [ -n "$_py_path" ] && [ -x "$_py_path" ]; then
         PYTHON_CMD="$_py_path"
         _py_ver=$("$_py_path" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
@@ -700,10 +816,10 @@ detect_python() {
         return 0
     fi
 
-    # Not found, auto-install
+    # Not found, auto-install (3.13 as default)
     clack_info "$(i18n installing) $(i18n python) 3.13..."
     if uv python install 3.13 >/dev/null 2>&1; then
-        _py_path=$(uv python find 3.13 2>/dev/null)
+        _py_path=$(uv python find 3.13 2>/dev/null) || _py_path=""
         if [ -n "$_py_path" ] && [ -x "$_py_path" ]; then
             PYTHON_CMD="$_py_path"
             _py_ver=$("$_py_path" -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>/dev/null)
@@ -737,11 +853,7 @@ install_markitai() {
     fi
 
     # Build package spec with all tracked extras
-    if [ -n "$MARKITAI_VERSION" ]; then
-        _mi_pkg="markitai[$MARKITAI_EXTRAS]==$MARKITAI_VERSION"
-    else
-        _mi_pkg="markitai[$MARKITAI_EXTRAS]"
-    fi
+    _mi_pkg=$(markitai_pkg_spec "$MARKITAI_EXTRAS")
 
     if ! command -v uv >/dev/null 2>&1; then
         clack_error "$(i18n markitai) $(i18n failed)"
@@ -752,14 +864,17 @@ install_markitai() {
     # Upgrade existing installation, or fresh install
     if [ -d "$_uv_tools_dir/markitai" ]; then
         # Already installed as uv tool — upgrade to latest version
-        if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool upgrade markitai; then
-            export PATH="$HOME/.local/bin:$PATH"
-            _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
-            clack_success "$(i18n markitai) $_mi_version"
-            track_install "markitai" "installed"
-            return 0
+        # (skip upgrade for local source: always force reinstall from the repo)
+        if [ "$MARKITAI_SOURCE" != "local" ]; then
+            if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool upgrade markitai; then
+                export PATH="$HOME/.local/bin:$PATH"
+                _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
+                clack_success "$(i18n markitai) $_mi_version"
+                track_install "markitai" "installed"
+                return 0
+            fi
         fi
-        # Upgrade failed, try force reinstall
+        # Upgrade failed (or local source), try force reinstall
         if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
             export PATH="$HOME/.local/bin:$PATH"
             _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
@@ -832,11 +947,7 @@ finalize_markitai_extras() {
     [ "$_needs_update" = "false" ] && return 0
 
     # Reinstall with all extras (progressive fallback on failure)
-    if [ -n "$MARKITAI_VERSION" ]; then
-        _mi_pkg="markitai[$MARKITAI_EXTRAS]==$MARKITAI_VERSION"
-    else
-        _mi_pkg="markitai[$MARKITAI_EXTRAS]"
-    fi
+    _mi_pkg=$(markitai_pkg_spec "$MARKITAI_EXTRAS")
     _uv_err=""
     if ! _uv_err=$(uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force 2>&1); then
         # Full install failed — retry without SDK-dependent extras
@@ -852,11 +963,7 @@ finalize_markitai_extras() {
         IFS="$_old_ifs"
 
         if [ -n "$_safe_extras" ]; then
-            if [ -n "$MARKITAI_VERSION" ]; then
-                _mi_pkg="markitai[$_safe_extras]==$MARKITAI_VERSION"
-            else
-                _mi_pkg="markitai[$_safe_extras]"
-            fi
+            _mi_pkg=$(markitai_pkg_spec "$_safe_extras")
             if uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force >/dev/null 2>&1; then
                 [ -n "$_skipped" ] && clack_warn "$(i18n skipped) extras: $_skipped (SDK $(i18n not_found))"
             else
@@ -1382,6 +1489,7 @@ run_user_setup() {
     clack_info "$(i18n mode_user)"
     warn_if_root
     configure_mirrors
+    choose_install_source
 
     clack_section "$(i18n section_core)"
     install_uv || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
@@ -1446,4 +1554,6 @@ main() {
     fi
 }
 
-main "$@"
+# ${1+"$@"} instead of "$@": with `set -u` and no arguments, old shells
+# (e.g. macOS bash 3.2) would abort on "$@"
+main ${1+"$@"}

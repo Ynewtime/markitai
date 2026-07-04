@@ -5,6 +5,150 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-07-04
+
+Maintenance overhaul: full dependency refresh, Python 3.14 support, and a
+multi-dimension audit that fixed 30+ verified bugs across batch processing,
+fetch/cache, LLM providers, image handling, and configuration.
+
+### Added
+
+- **Python 3.14 Support**: `requires-python` relaxed to `<3.15`; full test suite passes on 3.14 (the previous onnxruntime blocker is resolved). CI matrix and classifiers updated
+- **MIT License**: LICENSE file added and declared in package metadata (`License-Expression: MIT`)
+- **Grouped `--help`**: options are organized into panels (Output & Configuration / LLM Enhancement / OCR / Fetch & Conversion Backends / Batch Processing / Cache & Images / Logging & Info) via rich-click; lazy subcommand loading preserved so `--help` stays ~100ms
+- **Garbled-text detection**: PDFs whose extracted text is unreadable (broken cmap/substitution ciphers) are detected via a CJK-safe vowel-ratio heuristic
+- **Scan/garbled advisory**: converting a PDF with scanned-looking or garbled pages without `--ocr` now emits one consolidated warning naming the affected pages and suggesting `--ocr`
+- **Repeated header/footer suppression**: running headers/footers (incl. "Page N of M" patterns) repeated across ≥60% of pages are stripped from PDF output — cleaner Markdown, fewer wasted LLM tokens; headings and tables are never touched, <4-page documents exempt
+- **VLM degeneration guard**: vision/screenshot extraction results are checked for repetition loops (a known VLM-OCR failure mode); degenerate tails are truncated with a warning and never persisted to cache, so retries aren't poisoned
+- **HTML extraction quality (ported from Defuddle upstream)**: MathJax `script[type="math/tex"]` equations preserved as LaTeX; Wikipedia/MediaWiki MathML survives hidden-element removal; partial-selector clutter removal no longer deletes code blocks (`<pre>`-protection); anchor-wrapped headings unwrap cleanly; code-block language tags validated against an allowlist (no more ```codeblock); whitespace inside `<pre>` preserved
+- **Footnote engine (full Defuddle port)**: footnotes/citations across Wikipedia, arXiv, Substack, WordPress, Word/Google Docs exports, Tufte sidenotes and more are standardized and emitted as real Markdown footnotes (`[^1]` / `[^1]: ...`) with renumbering, duplicate-reference handling, multi-paragraph definitions, and back-link stripping — 15 ground-truth fixtures now match Defuddle's expected output
+- **Unified fetch strategy flag**: new `-s/--strategy auto|static|playwright|defuddle|jina|cloudflare`; the five per-backend flags (`--playwright`, `--defuddle`, `--static`, `--jina`, `--cloudflare`) remain as deprecated aliases that print a migration notice
+- **Remote-fetch consent**: URLs are no longer sent to third-party extraction services (defuddle.md, Jina, Cloudflare) without consent — `fetch.remote_consent: ask|always|never` (default `ask`: interactive runs prompt once per process; non-interactive/quiet runs skip remote and crawl locally); `MARKITAI_NO_REMOTE_FETCH=1` forces `never`; explicit `-s defuddle`/`-s jina` counts as consent
+- **PDF hidden-text sanitization**: invisible text (white-on-white, <2pt, zero-opacity, off-page) — a prompt-injection vector for LLM pipelines — is detected; `security.pdf_sanitize: off|warn|remove` (default `warn` logs a consolidated advisory naming pages)
+- **Per-page OCR routing**: `--ocr` on mixed digital/scanned documents keeps the native text layer for digital pages and only OCRs scanned/garbled ones (`ocr.per_page_routing`, default on)
+- **Conversion-quality benchmark harness**: dev-only `packages/markitai/benchmarks/` scores the HTML pipeline against the Defuddle ground-truth corpus (rapidfuzz block alignment + order score, marker-style); committed baseline: mean 91.04 over 83 fixtures
+- **Release automation**: release-please drives versioning/changelog from conventional commits (release = merge the release PR; publishing chains via workflow dispatch); PR coverage comments via py-cov-action, no external service. Operational note: tag the 0.15.0 release manually first (or set `bootstrap-sha`) so release-please anchors correctly
+
+#### Hunt round 3 (release prep)
+
+- **`.eml` email support (native, zero deps)**: headers/body/attachments via stdlib `email`; HTML bodies go through the standard HTML pipeline, image attachments flow into the assets/vision pipeline, nested messages render quoted (depth 1); header values sanitized against injection. EML no longer delegates to kreuzberg
+- **HEIC/HEIF/AVIF input**: new `markitai[heif]` extra (pillow-heif); 12-byte ftyp sniff, decode-to-PNG at the boundary with EXIF orientation applied, then the normal OCR/vision/compression pipeline — iPhone photos just work
+- **Quality guardrails gate**: `benchmarks/guardrails.json` pins a per-fixture minimum score (0.9 × current) plus corpus/local mean floors; `--check` fails CI (new ~1min job) when extraction quality regresses; `--update-guardrails` regenerates deliberately
+- **`--config-json '<json>'`**: inline config overrides for agents/CI — merged over the config file, under explicit CLI flags
+- **Subcommand help polish**: all 26 subcommand helps now render rich panels with Examples; empty states got helpful hints (`cache stats` with no cache, silent `init -y`, `config get` unknown key → list hint); action commands print the natural next step
+- **`mkai` alias package**: stub PyPI package (`packages/mkai`) that just depends on markitai, for `pip install mkai` convenience and name-squat protection; publish workflow builds both (skip-existing)
+- **kreuzberg floor raised to >=4.9.6**: picks up the no-OCR-backend PDF fix (4.7.3), image-heavy-PDF hang fixes (4.9.x), PPTX slide-order fix (4.8.0). Note: kreuzberg >=4.8.0 is Elastic License 2.0 (optional extra; accepted)
+- **Cache-hit visibility**: the "Fetched via <strategy>" line notes `(cached)` — a cached defuddle result had masqueraded as the live default strategy (fresh fetches win with `static`)
+- Dependency patches: litellm 1.90.3, rapidocr 3.9.1
+
+#### Hunt round 2 (follow-up fixes)
+
+- **Playwright browser detection fixed**: newer Playwright ships `Google Chrome for Testing.app` instead of `Chromium.app`, so the path-only check reported "browser not found" even after a successful install; detection now uses Playwright's own `INSTALLATION_COMPLETE` marker (bundle-name/version agnostic) with executable paths as fallback. The `uv tool run --from 'markitai[all]'` install hint was dropped (triggers a uv warning and resolves an ephemeral env whose Playwright version can mismatch)
+- **Remote-fetch consent is now lazy**: the consent prompt fired before the chain ran, so even URLs satisfied by the local-first chain asked "Allow sending URLs to remote services?"; consent is now resolved only when a remote strategy is actually about to run — local successes never prompt
+- **Config filename unified in all messages**: hints/errors that said "in markitai.json" (doctor's LLM hint, the Cloudflare workflow error) now show the actually-loaded config path, matching the doctor header
+- **`-h` paragraph spacing normalized**: rich-click renders `\b` blocks with two trailing blank lines but plain paragraphs with none; docstring now renders with exactly one blank line between all sections (`TEXT_PARAGRAPH_LINEBREAKS`)
+- **Dependency patch bumps**: litellm 1.90.3, rapidocr 3.9.1
+
+#### CLI & fetch polish (post-release hunt round)
+
+- **`mkai` short alias**: installed alongside `markitai` (verified conflict-free on PyPI/homebrew/system)
+- **`-b/--backend native|kreuzberg|cloudflare`**: file conversion backend is now its own orthogonal flag; `--kreuzberg` remains as a deprecated alias. `-s` is purely the URL fetch strategy
+- **Local-first auto chain**: default order is now `static → playwright → defuddle → jina → cloudflare` (static's native extraction matches remote defuddle on the ground-truth corpus and beats it on CJK spacing); SPA/JS-heavy domains go straight to the browser
+- **`markitai doctor` first run 36s → ~5s, warm 1.0s → 0.33s**: two root causes — (a) the RapidOCR check imported the real module, pulling in opencv's 119MB dylib whose one-time macOS dyld signature validation cost ~25s on a fresh install (now probed via package metadata only, no import); (b) an unconditional litellm import cost 0.55s even with no models configured (now deferred). Output normalized (consistent inline item format, single-blank-line sections, failure summary uses ✗ not ✓) and now shows the loaded config file path
+- **Actionable configuration errors**: Cloudflare credentials, Playwright missing-browser, and Jina auth errors now include the concrete config file path, copy-pasteable `markitai config set`/env commands, and credential acquisition steps (token URL + required permissions)
+- **Jina refusal fallback**: service refusals (e.g. github.com 451 anonymous block) no longer dump raw JSON — interactive runs are asked once per run whether to fall back to the auto chain (default yes); non-interactive runs fall back automatically with a warning
+- **Claude subscription detection fixed on macOS**: Claude Code stores OAuth tokens in the Keychain, not `~/.claude/.credentials.json` — markitai reported "not authenticated" on logged-in machines and `init` silently skipped claude-agent. `claude-agent/` models use the Claude subscription quota via the local CLI (no API key needed); `markitai auth claude status` now shows identity, plan, CLI/SDK state and a config snippet
+- **stdout no longer hard-wraps content**: Rich's console.print wrapped output at terminal width, breaking long URLs mid-token in piped output; content is now written raw
+- **Help panels aligned**: metavar column removed (appended to help text instead); deprecated aliases use terse uniform descriptions
+- **HTML extraction**: GitHub repo pages now extract just the README (was: file-tree tables, About sidebar, star counts — ~950 junk words); frontmatter gains `published` date, full untruncated titles without site suffixes, and no longer emits homepage canonical_url on article pages; bilibili/Twitter-widget iframes survive as links (root cause: embed canonicalization ran after sanitize stripped iframes). Benchmark mean 91.86 → 92.24, embedded-videos fixture +31 points, zero regressions; local self-baseline fixtures (GitHub repo + CJK blog) added to the benchmark
+- **Xberg (kreuzberg successor)**: evaluated — PyPI `xberg` is currently a placeholder aliasing kreuzberg and real 1.0 wheels aren't published; kreuzberg v4 stays (LTS, maintained), with a documented migration checklist in the converter for when Xberg 1.0 ships
+
+### Changed (behavior)
+
+- **Mixing INPUT with a subcommand is now an error**: `markitai note.txt config list` previously dropped note.txt silently; it now fails with guidance. A file named like a subcommand (`config`, `doctor`, ...) gets a stderr hint to use `./config`
+- **`-o out.md` with a single file/URL writes that file**: previously it silently created a directory named `out.md`; batch/directory input with a file-looking `-o` now errors clearly
+- **Diagnostics go to stderr**: warnings/notices no longer pollute piped stdout output (`markitai x --alt | pandoc` receives pure markdown)
+- **Output naming replaces the extension**: `sample.pdf` → `sample.md` (was `sample.pdf.md`). Colliding batch inputs (`a.pdf` + `a.docx`) and outputs that would overwrite the source keep the legacy `<name>.<ext>.md` scheme, per file. Re-running an old batch re-converts once under the new names
+- **stdout image links now survive the process**: `image.stdout_persist` defaults to on (assets persisted under `~/.markitai/assets`); absolute temp-dir links from the PDF pipeline are normalized; opting out prints an ephemeral-links warning to stderr
+- **Reports are batch-only by default**: single-file/single-URL conversions no longer write `.markitai/reports/` unless `output.report = true` (tri-state; `false` disables even for batches)
+- **Repo hygiene**: AI-session artifacts (`.claude/` memory, `docs/superpowers/` working plans containing local dev paths) removed from the repository and gitignored
+
+### Fixed
+
+#### Batch & Workflow (correctness of success/failure reporting)
+
+- **LLM failures no longer masquerade as success**: LLM API failures previously returned success-shaped results — batch marked files COMPLETED with `cache_hit=true` pointing at `.llm.md` files that were never written, and `--resume` skipped them. Failures now propagate, the file is marked FAILED, and the base-markdown fallback path actually runs
+- **Resume re-processes interrupted files**: files that were IN_PROGRESS at crash time were silently dropped on `--resume` (never re-queued, counted in no summary bucket); they are now converted to FAILED on state load and re-processed
+- **Per-file LLM cost attribution**: usage contexts are cleared after each file, fixing double-counted costs for same-basename files in different directories
+- **Base64 image index desync**: an undecodable data URI shifted every subsequent image reference one position, attaching wrong images to wrong locations; extraction and replacement now apply the same skip rule
+- **Path traversal via custom output names**: a `.urls` entry with a crafted output name (`../../x` or absolute path) could write converted output outside the output directory; custom names are now sanitized like auto-derived ones
+
+#### Fetch & Cache
+
+- **AUTO-strategy cache revalidation**: HTTP validators (ETag/Last-Modified) were discarded on the default fetch path, so cached pages were served stale forever; validators are now stored and conditional revalidation works as designed
+- **Playwright context leaks**: cookie-validation errors leaked browser contexts; a `new_page()` failure in persistent mode raised `UnboundLocalError` masking the real error; concurrent same-domain fetches could double-create or double-close cached contexts (now lock-protected)
+- **HTTP client cleanup**: old clients are no longer closed via unreferenced fire-and-forget tasks that asyncio could garbage-collect before running
+- **URL list robustness**: a `null` or non-string `url` in a JSON URL list crashed the whole batch; it is now skipped with a warning
+- **Proxy auto-detection**: SOCKS-only ports (Tor 9050, SOCKS5 1080, V2Ray 10808) were mislabeled as HTTP proxies and are removed from detection; detected proxies now log at WARNING
+
+#### LLM & Providers
+
+- **Batch vision deadlock**: language rewrites re-acquired the already-held concurrency semaphore — with `llm.concurrency=1` a single rewrite hung the whole pipeline; rewrites now run after the semaphore is released
+- **Vision cache poisoning**: batch results were zipped positionally with requested images; a skipped/reordered model response persisted the wrong analysis under the wrong image's content hash across sessions. Results are now aligned by the echoed `image_index`, and ambiguous batches skip cache persistence
+- **Copilot concurrent temp-file races**: the singleton provider's shared temp-file list let one request's cleanup delete another in-flight request's image attachments; tracking is now per-request
+- **gemini-cli rate-limit failover**: a 429 raised a non-retryable error that aborted the request instead of retrying on another pool model; it now raises litellm's retryable `RateLimitError` (cooldown still recorded)
+- **Event-loop stalls**: blocking token refreshes (ChatGPT/gemini-cli auth) and CPU-heavy native HTML extraction now run in worker threads instead of freezing all concurrent tasks
+- **Retry backoff released**: exponential-backoff sleeps no longer hold a concurrency-semaphore slot, so a rate-limit burst can't collapse throughput of healthy models
+- **Dynamic max_tokens**: the retry path now takes the minimum output limit across the model pool (matching instructor call sites) instead of the top-weight model only
+- **Screenshot extraction cache**: keyed by content fingerprint instead of filename, so re-fetches of changed pages aren't served stale extractions
+
+#### Images & Conversion
+
+- **EXIF orientation**: rotation is baked in before re-encoding on all compression paths (OpenCV and Pillow); phone photos no longer come out sideways
+- **LA-mode transparency**: grayscale+alpha images composite onto white when converting to JPEG instead of dropping the alpha channel
+- **Uncompressed image naming**: with `image.compress = false`, original bytes are now saved under their actual format's extension/MIME instead of the configured output format's
+- **EMF/WMF conversion failures**: unconverted EMF bytes are no longer mislabeled as PNG; failures now log a visible warning
+- **OCR engine consistency**: a failed engine rebuild no longer leaves the old engine permanently served under the new config's fingerprint
+- **Temp directory leaks**: converter paths that render page/slide images without an output directory now clean up their temp directories at process exit
+
+#### Configuration & CLI
+
+- **Config editor validation**: `markitai config edit` validated nothing before saving — an out-of-range value bricked every subsequent CLI invocation (including the editor itself). The editor now validates before save, and config loading reports a clear actionable error instead of a raw traceback
+- **Symlink safety check**: the nested-symlink branch inspected the resolved path (which by definition has no symlinks) and never fired; it now walks the original path's ancestors
+- **Config bounds**: `llm.concurrency` requires `>=1` (a persisted `0` hung every LLM task forever); router retry/timeout fields gained sane lower bounds
+- **`config set` type coercion**: values are coerced by the target field's declared type — string fields keep leading zeros (API keys), bool fields accept `1`/`0`
+- **`config set` bracket notation**: `llm.model_list[0].litellm_params.weight` now works for set (previously only get)
+- **JSON log format**: log lines are built with proper JSON serialization; messages containing quotes/newlines no longer produce invalid JSON
+- **`cache clear` prompt**: shows the actual configured cache directory instead of a hardcoded path
+- **`config get` null handling**: existing-but-null fields print `null` and exit 0 instead of "Key not found" exit 1
+- **Missing config path visibility**: a nonexistent `MARKITAI_CONFIG`/explicit config path now warns (and `~` is expanded) instead of silently running with defaults
+- **Loguru misuse**: printf-style logging calls that silently dropped the URL and traceback now use loguru idioms
+
+#### Post-review hardening
+
+- **Parallel LLM task isolation**: a document-processing failure no longer leaves the sibling image-analysis task running detached (and vice versa); image-analysis failure now degrades gracefully (`.llm.md` kept without alt text) instead of failing the whole file
+- **Usage cleanup on vision fallback paths**: partial LLM usage is cleared when vision enhancement fails, so it isn't attributed to the next file
+- **`markitai doctor` exit code**: exits 1 when required dependencies are missing (previously always 0, and the summary claimed success); failure summary now reports the missing count
+- **Symlink check refinement**: root-owned symlinks on POSIX (e.g. `/var/run -> /run`) are treated as OS artifacts instead of raising false positives
+
+### Changed
+
+- **Dependency refresh**: all dependencies upgraded ~4 months forward, including litellm 1.82.6 → 1.90.x, opencv-python 4.x → 5.x, starlette → 1.x, claude-agent-sdk 0.1 → 0.2, github-copilot-sdk 0.2 → 1.x, instructor 1.15, playwright 1.61, pymupdf 1.28. Test suite fully green on the new set. (markitdown stays at 0.1.5 — 0.1.6 requires a pre-release azure dependency; rich stays at 14.x — capped by instructor `<15`)
+- **Version single-sourcing**: the package version is now read from `src/markitai/__init__.py` at build time (`dynamic = ["version"]`); no more triple-bump
+- **Release guard**: `publish.yml` verifies the release tag matches the built version before publishing
+- **Dependabot on uv ecosystem**: lockfile-aware dependency PRs (previously the pip ecosystem produced PRs that always failed `uv sync --frozen`)
+- **README**: rewritten with install instructions (uv tool/pipx), extras table, and quick start — this is also the PyPI long description
+- **CONTRIBUTING.md**: new contributor guide (dev setup, commands, conventions, release steps)
+- **pre-commit**: pyright moved from per-commit to pre-push (full-project check was tens of seconds per commit)
+- **`.env.example`**: bilingual (EN/zh) comments
+- **bs4 4.15 compatibility**: attrs-only `find`/`find_all` calls pass an explicit tag matcher; `NavigableString` imported from `bs4.element` (upstream `__all__` regression)
+- **Ruff target aligned to floor**: `target-version = "py311"` (was py313, which could suggest syntax breaking 3.11 support)
+- **Modernized asyncio idioms**: `asyncio.get_event_loop()` → `asyncio.get_running_loop()` in async code
+
+### Security
+
+- **litellm supply-chain pin lifted**: `litellm>=1.83.0` replaces the `<1.82.7` emergency pin — the March 2026 compromise affected only 1.82.7/1.82.8, upstream audited 1.78.0–1.82.6 clean, and releases are signed since 1.83.0
+
 ## [0.14.0] - 2026-03-25
 
 ### Added

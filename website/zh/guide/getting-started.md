@@ -4,7 +4,7 @@
 
 ### 必需依赖
 
-- **Python 3.11-3.13** - 运行时环境（由于 onnxruntime 限制，暂不支持 3.14）
+- **Python 3.11-3.14** - 运行时环境
 - **[uv](https://docs.astral.sh/uv/)** - 包管理器（推荐）
 
 ### 可选依赖
@@ -53,7 +53,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Yne
 :::
 
 脚本会：
-- 检测 Python 3.11-3.13
+- 检测 Python 3.11-3.14
 - 安装 [uv](https://docs.astral.sh/uv/) 包管理器（需要确认）
 - 安装 markitai 及浏览器自动化支持（其他可选依赖需确认后安装）
 

@@ -94,8 +94,15 @@ function i18n {
 
             # Error messages
             "error_uv_required"         { return "需要安装 uv 包管理器" }
-            "error_python_required"     { return "需要安装 Python 3.11+" }
+            "error_python_required"     { return "需要安装 Python 3.11-3.14" }
             "error_setup_failed"        { return "安装失败" }
+
+            # Install source (repo detection)
+            "repo_detected"             { return "检测到 markitai 源码仓库" }
+            "confirm_local_install"     { return "从本地源码安装 markitai? (默认使用 PyPI 发布版)" }
+            "source_local"              { return "安装来源: 本地源码" }
+            "source_pypi"               { return "安装来源: PyPI" }
+            "info_repo_noninteractive"  { return "非交互模式: 已检测到源码仓库, 将使用 PyPI 发布版" }
 
             # Network / Mirrors
             "section_network"           { return "网络环境" }
@@ -202,8 +209,15 @@ function i18n {
 
             # Error messages
             "error_uv_required"         { return "uv package manager is required" }
-            "error_python_required"     { return "Python 3.11+ is required" }
+            "error_python_required"     { return "Python 3.11-3.14 is required" }
             "error_setup_failed"        { return "Setup failed" }
+
+            # Install source (repo detection)
+            "repo_detected"             { return "markitai source repo detected" }
+            "confirm_local_install"     { return "Install markitai from the local repo? (default: PyPI release)" }
+            "source_local"              { return "Install source: local repo" }
+            "source_pypi"               { return "Install source: PyPI" }
+            "info_repo_noninteractive"  { return "Non-interactive mode: source repo detected, using PyPI release" }
 
             # Network / Mirrors
             "section_network"           { return "Network Environment" }
@@ -571,6 +585,79 @@ function Test-DevMode {
 }
 
 # ============================================================
+# Install Source Selection (PyPI vs local repo)
+# ============================================================
+
+# Install source: "pypi" (default) or "local" (from source repo)
+$script:MARKITAI_SOURCE = "pypi"
+$script:MarkitaiLocalPath = $null
+
+# Detect the markitai source repo (for the local install option)
+# Checks the script location first, then cwd (irm | iex case)
+# Returns: repo root path if detected, $null otherwise
+function Get-MarkitaiRepoRoot {
+    # 1) Via script location ($PSCommandPath is empty under irm | iex)
+    if ($PSCommandPath) {
+        $scriptDir = Split-Path -Parent $PSCommandPath
+        $repoRoot = Split-Path -Parent $scriptDir
+        $pyproject = Join-Path $repoRoot "packages/markitai/pyproject.toml"
+        if (Test-Path $pyproject) {
+            $content = Get-Content $pyproject -Raw -ErrorAction SilentlyContinue
+            if ($content -match 'name\s*=\s*"markitai"') {
+                return $repoRoot
+            }
+        }
+    }
+
+    # 2) Via current directory (irm | iex run from inside a checkout)
+    $pyproject = Join-Path $PWD.Path "packages/markitai/pyproject.toml"
+    if (Test-Path $pyproject) {
+        $content = Get-Content $pyproject -Raw -ErrorAction SilentlyContinue
+        if ($content -match 'name\s*=\s*"markitai"') {
+            return $PWD.Path
+        }
+    }
+
+    return $null
+}
+
+# Ask whether to install markitai from the local repo or PyPI
+# Default (enter / non-interactive / not in repo) = PyPI
+# Sets: $script:MARKITAI_SOURCE, $script:MarkitaiLocalPath
+function Select-InstallSource {
+    $repoRoot = Get-MarkitaiRepoRoot
+    if (-not $repoRoot) { return }
+
+    # Non-interactive (stdin redirected): never prompt, keep PyPI
+    if ([Console]::IsInputRedirected) {
+        Clack-Info (i18n "info_repo_noninteractive")
+        return
+    }
+
+    Clack-Info "$(i18n 'repo_detected'): $repoRoot"
+    if (Clack-Confirm (i18n "confirm_local_install") "n") {
+        $script:MARKITAI_SOURCE = "local"
+        $script:MarkitaiLocalPath = Join-Path $repoRoot "packages/markitai"
+        Clack-Info (i18n "source_local")
+    } else {
+        Clack-Info (i18n "source_pypi")
+    }
+}
+
+# Build the markitai package spec honoring install source and extras
+function Get-MarkitaiPkgSpec {
+    param([string]$Extras)
+
+    if ($script:MARKITAI_SOURCE -eq "local") {
+        return "markitai[$Extras] @ $($script:MarkitaiLocalPath)"
+    }
+    if ($script:MarkitaiVersion) {
+        return "markitai[$Extras]==$($script:MarkitaiVersion)"
+    }
+    return "markitai[$Extras]"
+}
+
+# ============================================================
 # Installation Functions
 # ============================================================
 
@@ -621,7 +708,7 @@ function Install-UV {
         $null = Invoke-RestMethod $uvUrl | Invoke-Expression 2>$null
 
         # Refresh PATH (User paths take precedence)
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + $env:Path
 
         # Check if uv command exists after PATH refresh
         $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
@@ -649,7 +736,8 @@ function Install-Python {
         return $false
     }
 
-    $uvPython = & uv python find 3.13 2>$null
+    # Try to find any supported Python (3.11-3.14)
+    $uvPython = & uv python find ">=3.11,<3.15" 2>$null
     if ($uvPython -and (Test-Path $uvPython)) {
         $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
         if ($version) {
@@ -659,7 +747,7 @@ function Install-Python {
         }
     }
 
-    # Not found, auto-install
+    # Not found, auto-install (3.13 as default)
     Clack-Info "$(i18n 'installing') $(i18n 'python') 3.13..."
     $null = & uv python install 3.13 2>&1
     if ($LASTEXITCODE -eq 0) {
@@ -704,11 +792,7 @@ function Install-Markitai {
     }
 
     # Build package spec with all tracked extras
-    if ($script:MarkitaiVersion) {
-        $pkg = "markitai[$($script:MARKITAI_EXTRAS)]==$($script:MarkitaiVersion)"
-    } else {
-        $pkg = "markitai[$($script:MARKITAI_EXTRAS)]"
-    }
+    $pkg = Get-MarkitaiPkgSpec -Extras $script:MARKITAI_EXTRAS
 
     # Build Python command for --python argument
     $pythonArg = $script:PYTHON_CMD
@@ -727,12 +811,15 @@ function Install-Markitai {
 
     if (Test-Path $markitaiToolDir) {
         # Already installed as uv tool — upgrade to latest version
-        try {
-            $null = & uv tool upgrade markitai 2>&1
-            $exitCode = $LASTEXITCODE
-        } catch {}
+        # (skip upgrade for local source: always force reinstall from the repo)
+        if ($script:MARKITAI_SOURCE -ne "local") {
+            try {
+                $null = & uv tool upgrade markitai 2>&1
+                $exitCode = $LASTEXITCODE
+            } catch {}
+        }
 
-        # Upgrade failed, try force reinstall
+        # Upgrade failed (or local source), try force reinstall
         if ($exitCode -ne 0) {
             try {
                 $null = & uv tool install $pkg --python $pythonArg --force 2>&1
@@ -752,7 +839,7 @@ function Install-Markitai {
 
     if ($exitCode -eq 0) {
         # Refresh PATH
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + $env:Path
 
         $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
         $version = if ($markitaiCmd) { (& markitai --version 2>&1 | Select-Object -First 1).Split(' ')[-1] } else { (i18n "installed") }
@@ -825,11 +912,7 @@ function Finalize-MarkitaiExtras {
     if (-not $needsUpdate) { return }
 
     # Reinstall with all extras (progressive fallback on failure)
-    if ($script:MarkitaiVersion) {
-        $pkg = "markitai[$($script:MARKITAI_EXTRAS)]==$($script:MarkitaiVersion)"
-    } else {
-        $pkg = "markitai[$($script:MARKITAI_EXTRAS)]"
-    }
+    $pkg = Get-MarkitaiPkgSpec -Extras $script:MARKITAI_EXTRAS
 
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -851,11 +934,7 @@ function Finalize-MarkitaiExtras {
         }
         if ($safeExtras.Count -gt 0) {
             $safeList = $safeExtras -join ","
-            if ($script:MarkitaiVersion) {
-                $pkg = "markitai[$safeList]==$($script:MarkitaiVersion)"
-            } else {
-                $pkg = "markitai[$safeList]"
-            }
+            $pkg = Get-MarkitaiPkgSpec -Extras $safeList
             try {
                 $null = & uv tool install $pkg --python $script:PYTHON_CMD --force 2>&1
                 if ($LASTEXITCODE -eq 0) {
@@ -1429,6 +1508,7 @@ function Run-UserSetup {
     Test-AdminWarning
     Test-WSLWarning
     Configure-Mirrors
+    Select-InstallSource
 
     Clack-Section (i18n "section_core")
     if (-not (Install-UV)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
