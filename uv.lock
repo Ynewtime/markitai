@@ -16,7 +16,6 @@ resolution-markers = [
 members = [
     "markitai",
     "markitai-workspace",
-    "mkai",
 ]
 
 [[package]]
@@ -2027,58 +2026,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec9
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
 ]
-
-[[package]]
-name = "mkai"
-version = "0.15.0"
-source = { editable = "packages/mkai" }
-dependencies = [
-    { name = "markitai" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "markitai", extra = ["all"] },
-]
-browser = [
-    { name = "markitai", extra = ["browser"] },
-]
-claude-agent = [
-    { name = "markitai", extra = ["claude-agent"] },
-]
-copilot = [
-    { name = "markitai", extra = ["copilot"] },
-]
-extra-fetch = [
-    { name = "markitai", extra = ["extra-fetch"] },
-]
-gemini-cli = [
-    { name = "markitai", extra = ["gemini-cli"] },
-]
-heif = [
-    { name = "markitai", extra = ["heif"] },
-]
-kreuzberg = [
-    { name = "markitai", extra = ["kreuzberg"] },
-]
-svg = [
-    { name = "markitai", extra = ["svg"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "markitai", editable = "packages/markitai" },
-    { name = "markitai", extras = ["all"], marker = "extra == 'all'", editable = "packages/markitai" },
-    { name = "markitai", extras = ["browser"], marker = "extra == 'browser'", editable = "packages/markitai" },
-    { name = "markitai", extras = ["claude-agent"], marker = "extra == 'claude-agent'", editable = "packages/markitai" },
-    { name = "markitai", extras = ["copilot"], marker = "extra == 'copilot'", editable = "packages/markitai" },
-    { name = "markitai", extras = ["extra-fetch"], marker = "extra == 'extra-fetch'", editable = "packages/markitai" },
-    { name = "markitai", extras = ["gemini-cli"], marker = "extra == 'gemini-cli'", editable = "packages/markitai" },
-    { name = "markitai", extras = ["heif"], marker = "extra == 'heif'", editable = "packages/markitai" },
-    { name = "markitai", extras = ["kreuzberg"], marker = "extra == 'kreuzberg'", editable = "packages/markitai" },
-    { name = "markitai", extras = ["svg"], marker = "extra == 'svg'", editable = "packages/markitai" },
-]
-provides-extras = ["claude-agent", "copilot", "gemini-cli", "browser", "extra-fetch", "kreuzberg", "svg", "heif", "all"]
 
 [[package]]
 name = "mpmath"

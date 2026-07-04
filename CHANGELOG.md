@@ -43,7 +43,7 @@ fetch/cache, LLM providers, image handling, and configuration.
 - **Quality guardrails gate**: `benchmarks/guardrails.json` pins a per-fixture minimum score (0.9 × current) plus corpus/local mean floors; `--check` fails CI (new ~1min job) when extraction quality regresses; `--update-guardrails` regenerates deliberately
 - **`--config-json '<json>'`**: inline config overrides for agents/CI — merged over the config file, under explicit CLI flags
 - **Subcommand help polish**: all 26 subcommand helps now render rich panels with Examples; empty states got helpful hints (`cache stats` with no cache, silent `init -y`, `config get` unknown key → list hint); action commands print the natural next step
-- **`mkai` alias package**: stub PyPI package (`packages/mkai`) that just depends on markitai, for `pip install mkai` convenience and name-squat protection; publish workflow builds both (skip-existing)
+- **`mkai` short command**: ships with markitai as a second console script. (A separate PyPI alias package was evaluated and dropped: PyPI's name-similarity guard rejects `mkai` because `mk-ai` exists — the same guard equally prevents anyone else from squatting the name)
 - **kreuzberg floor raised to >=4.9.6**: picks up the no-OCR-backend PDF fix (4.7.3), image-heavy-PDF hang fixes (4.9.x), PPTX slide-order fix (4.8.0). Note: kreuzberg >=4.8.0 is Elastic License 2.0 (optional extra; accepted)
 - **Cache-hit visibility**: the `Fetched via <strategy>` line notes `(cached)` — a cached defuddle result had masqueraded as the live default strategy (fresh fetches win with `static`)
 - Dependency patches: litellm 1.90.3, rapidocr 3.9.1

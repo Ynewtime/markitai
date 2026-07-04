@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setu
 powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"  # Windows
 ```
 
-Requires Python 3.11–3.14.
+Requires Python 3.11–3.14. Both `markitai` and the shorter `mkai` command are installed.
 
 ### Extras
 
