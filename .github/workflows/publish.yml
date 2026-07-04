@@ -64,12 +64,6 @@ jobs:
       - name: Build package
         run: uv build --package markitai --out-dir dist --clear
 
-      - name: Build mkai alias package
-        # Stub package that just depends on markitai (name-squat protection +
-        # `pip install mkai` convenience). Version is bumped rarely; PyPI
-        # rejects re-uploads of an existing version, hence skip-existing below.
-        run: uv build --package mkai --out-dir dist
-
       - name: Verify build artifacts
         run: ls -la dist/
 

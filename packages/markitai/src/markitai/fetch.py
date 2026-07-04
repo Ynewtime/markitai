@@ -2596,6 +2596,26 @@ async def _fetch_with_fallback(
                 return result
 
             elif strat == "playwright":
+                # FxTwitter enrichment: for tweet URLs, the structured API
+                # beats DOM extraction — try it before launching a browser.
+                # (The same intercept exists in _dispatch_strategy for the
+                # top-level PLAYWRIGHT strategy; the auto chain reaches
+                # playwright through this loop instead, which previously
+                # skipped FxTwitter entirely.)
+                from markitai.fetch_fxtwitter import fetch_with_fxtwitter
+
+                fxtwitter_result = await fetch_with_fxtwitter(url)
+                if fxtwitter_result is not None:
+                    logger.debug("[Fetch] FxTwitter succeeded for {}", url)
+                    fxtwitter_result.metadata.update(
+                        {
+                            "policy_reason": decision.reason,
+                            "policy_order": strategies,
+                            "profile_applied": domain_profile_applied,
+                        }
+                    )
+                    return fxtwitter_result
+
                 from markitai.fetch_playwright import (
                     fetch_with_playwright,
                     is_playwright_available,
