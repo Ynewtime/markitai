@@ -77,13 +77,27 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Yne
 
 ### 手动安装
 
-```bash
-# 使用 uv（推荐）
-uv tool install markitai
+如果你已有 Python 3.11–3.14，只想要最小安装：
 
-# 或使用 uv pip（用于虚拟环境）
-uv pip install markitai
+```bash
+# 使用 uv（推荐，隔离环境）
+uv tool install "markitai[all]"
+
+# 或使用 uv pip（安装到虚拟环境）
+uv pip install "markitai[all]"
 ```
+
+与一键安装不同，手动安装**不会**帮你配置可选组件和配置文件，剩余步骤需自行完成：
+
+```bash
+markitai doctor           # 查看已装 / 缺失的组件
+markitai doctor --fix     # 安装 Playwright Chromium 浏览器（用于 --playwright）
+markitai init             # 创建配置并设置 LLM 提供方
+```
+
+::: tip markitai 和 mkai 都可用
+每次安装都会同时提供 `markitai` 命令**和更短的 `mkai` 别名**——两者是完全相同的命令（`mkai --help` 等同 `markitai --help`）。若你的 `PATH` 上已存在别的 `mkai`，请使用完整的 `markitai` 以避免歧义。
+:::
 
 ## 快速上手
 
