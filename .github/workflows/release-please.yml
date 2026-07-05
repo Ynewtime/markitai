@@ -15,6 +15,15 @@ name: Release Please
 on:
   push:
     branches: [main]
+    # Only manage a release PR when the published package actually changes.
+    # Installer scripts, docs/website, CI, and tests are not shipped in the
+    # wheel/sdist, so changes there must not open or churn a release PR.
+    # (Belt-and-suspenders with commit-type discipline in CONTRIBUTING.md:
+    # non-package changes use chore/docs/ci/test, which don't bump versions.)
+    paths:
+      - 'packages/markitai/src/**'
+      - 'packages/markitai/pyproject.toml'
+  workflow_dispatch:  # escape hatch: force a release-PR refresh manually
 
 permissions: {}
 

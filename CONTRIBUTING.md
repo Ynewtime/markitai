@@ -67,6 +67,14 @@ Releases are automated with
    they drive versioning and the changelog: `fix:` bumps patch, `feat:` bumps
    minor, `feat!:`/`BREAKING CHANGE:` bumps major; `chore:`, `docs:`, `ci:`
    etc. don't trigger a release.
+
+   **Reserve `feat:`/`fix:` for the published package** (`packages/markitai/src`
+   or its `pyproject.toml` deps) — that is the only code shipped in the wheel.
+   Changes to the installer scripts (`scripts/`), docs/website, CI, or tests are
+   **not** in the package, so type them `chore:`/`docs:`/`ci:`/`test:` so they
+   don't bump the package version. As a safety net, `release-please.yml` only
+   runs on `packages/markitai/src/**` and `pyproject.toml` changes, so a docs- or
+   installer-only push won't open or churn a release PR even if mis-typed.
 2. `release-please.yml` keeps a release PR open that bumps `__version__` in
    `packages/markitai/src/markitai/__init__.py` — still the **single source
    of truth** (hatch reads it at build time; keep the
