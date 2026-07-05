@@ -1,12 +1,24 @@
-name: Publish to PyPI
+name: Release
 
+# Manual release flow (no release-please). To cut a release:
+#   1. bump __version__ in packages/markitai/src/markitai/__init__.py
+#   2. add a `## [X.Y.Z]` section to CHANGELOG.md
+#   3. commit + push to main
+#   4. git tag vX.Y.Z && git push origin vX.Y.Z
+# Pushing the tag runs this workflow: tests -> build -> tag/version check ->
+# publish to PyPI -> create the GitHub Release (notes from the CHANGELOG section).
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing vX.Y.Z tag to (re)publish'
+        required: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -14,10 +26,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.3
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7.6.0
@@ -47,12 +60,15 @@ jobs:
     needs: [test]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write  # Required for trusted publishing
-
+      contents: write  # create the GitHub Release
+      id-token: write  # PyPI trusted publishing
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.3
+        with:
+          ref: ${{ env.TAG }}
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v7.6.0
@@ -64,17 +80,12 @@ jobs:
       - name: Build package
         run: uv build --package markitai --out-dir dist --clear
 
-      - name: Verify build artifacts
-        run: ls -la dist/
-
       - name: Verify tag matches built version
-        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
         run: |
           built_version=$(ls dist/markitai-*.tar.gz | sed -E 's|.*/markitai-(.+)\.tar\.gz|\1|')
-          tag="${{ github.event.release.tag_name || github.ref_name }}"
           expected="v${built_version}"
-          if [ "$tag" != "$expected" ]; then
-            echo "::error::Release tag '$tag' does not match built version '$built_version' (expected tag '$expected'). Did you forget to bump src/markitai/__init__.py?"
+          if [ "$TAG" != "$expected" ]; then
+            echo "::error::Tag '$TAG' does not match built version '$built_version' (expected tag '$expected'). Bump packages/markitai/src/markitai/__init__.py before tagging."
             exit 1
           fi
 
@@ -83,3 +94,24 @@ jobs:
         with:
           packages-dir: dist/
           skip-existing: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${TAG#v}"
+          notes_file="$(mktemp)"
+          # Pull the matching "## [X.Y.Z]" section out of the changelog for notes.
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" {f=1; print; next}
+            f && /^## \[/ {exit}
+            f {print}
+          ' CHANGELOG.md > "$notes_file"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — skipping creation."
+          elif [ -s "$notes_file" ]; then
+            gh release create "$TAG" --title "$TAG" --notes-file "$notes_file"
+          else
+            echo "No CHANGELOG section for $version — generating notes."
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
