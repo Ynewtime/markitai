@@ -139,6 +139,8 @@ i18n() {
             configure_env)              echo "配置环境变量" ;;
             convert_file)               echo "转换文件" ;;
             show_help)                  echo "显示帮助" ;;
+            short_alias)                echo "提示：mkai 是 markitai 的简写，两个命令等价" ;;
+            mkai_conflict)              echo "系统已有 mkai 命令，会遮蔽 markitai 的别名；请使用完整命令 markitai" ;;
 
             # Summary
             summary_installed)          echo "已安装" ;;
@@ -252,6 +254,8 @@ i18n() {
             configure_env)              echo "Configure environment" ;;
             convert_file)               echo "Convert a file" ;;
             show_help)                  echo "Show help" ;;
+            short_alias)                echo "Tip: mkai is a short alias for markitai (both work)" ;;
+            mkai_conflict)              echo "An existing 'mkai' command shadows markitai's alias; use the full 'markitai' command" ;;
 
             # Summary
             summary_installed)          echo "Installed" ;;
@@ -1437,8 +1441,24 @@ print_summary() {
 
 # Print user mode completion message
 # Usage: print_user_completion
+# Determine whether the `mkai` short alias is usable (resolves to markitai)
+# or shadowed by a pre-existing command of the same name. Sets MKAI_USABLE
+# and warns on a shadowing conflict. `markitai` (the full name) always works.
+check_mkai_alias() {
+    MKAI_USABLE=false
+    command -v mkai >/dev/null 2>&1 || return 0   # not on PATH yet — don't advertise
+    if mkai --version 2>/dev/null | grep -qi "markitai"; then
+        MKAI_USABLE=true
+    else
+        # A different `mkai` (user's own tool/alias) shadows markitai's.
+        clack_warn "$(i18n mkai_conflict): $(command -v mkai 2>/dev/null)"
+    fi
+}
+
 print_user_completion() {
-    clack_note "$(i18n getting_started)" \
+    check_mkai_alias
+
+    set -- \
         "$(i18n interactive_mode):" \
         "  ${CYAN}markitai -I${NC}" \
         "" \
@@ -1450,6 +1470,13 @@ print_user_completion() {
         "" \
         "$(i18n show_help):" \
         "  ${CYAN}markitai --help${NC}"
+
+    # Only advertise the short alias when it actually resolves to markitai.
+    if [ "${MKAI_USABLE:-false}" = "true" ]; then
+        set -- "$@" "" "$(i18n short_alias)"
+    fi
+
+    clack_note "$(i18n getting_started)" "$@"
 }
 
 # Print dev mode completion message

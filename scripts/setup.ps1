@@ -136,6 +136,8 @@ function i18n {
             "configure_env"             { return "配置环境变量" }
             "convert_file"              { return "转换文件" }
             "show_help"                 { return "显示帮助" }
+            "short_alias"               { return "提示：mkai 是 markitai 的简写，两个命令等价" }
+            "mkai_conflict"             { return "系统已有 mkai 命令，会遮蔽 markitai 的别名；请使用完整命令 markitai" }
 
             # Summary
             "summary_installed"         { return "已安装" }
@@ -251,6 +253,8 @@ function i18n {
             "configure_env"             { return "Configure environment" }
             "convert_file"              { return "Convert a file" }
             "show_help"                 { return "Show help" }
+            "short_alias"               { return "Tip: mkai is a short alias for markitai (both work)" }
+            "mkai_conflict"             { return "An existing 'mkai' command shadows markitai's alias; use the full 'markitai' command" }
 
             # Summary
             "summary_installed"         { return "Installed" }
@@ -1454,19 +1458,37 @@ function Print-Summary {
 }
 
 # Print user mode completion message
+# Returns $true when the `mkai` short alias resolves to markitai, $false when
+# it is absent or shadowed by a different command (which is warned about).
+# The full `markitai` command always works.
+function Test-MkaiAlias {
+    if (-not (Get-Command mkai -ErrorAction SilentlyContinue)) { return $false }
+    $ver = (& mkai --version 2>$null) -join ' '
+    if ($ver -match 'markitai') { return $true }
+    $path = (Get-Command mkai -ErrorAction SilentlyContinue).Source
+    Clack-Warn "$(i18n 'mkai_conflict'): $path"
+    return $false
+}
+
 function Print-UserCompletion {
-    Clack-Note (i18n "getting_started") `
-        "$(i18n 'interactive_mode'):" `
-        "  markitai -I" `
-        "" `
-        "$(i18n 'configure_llm'):" `
-        "  markitai init" `
-        "" `
-        "$(i18n 'convert_file'):" `
-        "  markitai file.pdf" `
-        "" `
-        "$(i18n 'show_help'):" `
+    $lines = @(
+        "$(i18n 'interactive_mode'):",
+        "  markitai -I",
+        "",
+        "$(i18n 'configure_llm'):",
+        "  markitai init",
+        "",
+        "$(i18n 'convert_file'):",
+        "  markitai file.pdf",
+        "",
+        "$(i18n 'show_help'):",
         "  markitai --help"
+    )
+    # Only advertise the short alias when it actually resolves to markitai.
+    if (Test-MkaiAlias) {
+        $lines += @("", (i18n 'short_alias'))
+    }
+    Clack-Note (i18n "getting_started") @lines
 }
 
 # Print dev mode completion message
