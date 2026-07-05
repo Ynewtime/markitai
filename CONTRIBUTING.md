@@ -59,28 +59,27 @@ The full-corpus run is manual/CI-cron only — a fast smoke test
 
 ## Releasing
 
-Releases are automated with
-[release-please](https://github.com/googleapis/release-please)
-(config in `.github/release-please-config.json`):
+Releases are **manual** and driven by pushing a version tag. There is no
+auto-generated release PR — you cut a release only when you intend to.
 
-1. Use [Conventional Commits](https://www.conventionalcommits.org/) on `main` —
-   they drive versioning and the changelog: `fix:` bumps patch, `feat:` bumps
-   minor, `feat!:`/`BREAKING CHANGE:` bumps major; `chore:`, `docs:`, `ci:`
-   etc. don't trigger a release.
+1. Bump `__version__` in `packages/markitai/src/markitai/__init__.py`. This is
+   the **single source of truth** — hatch reads it at build time.
+2. Add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` (this becomes the
+   GitHub Release notes verbatim).
+3. Commit and push to `main` (e.g. `chore(release): v X.Y.Z`).
+4. Tag and push:
 
-   **Reserve `feat:`/`fix:` for the published package** (`packages/markitai/src`
-   or its `pyproject.toml` deps) — that is the only code shipped in the wheel.
-   Changes to the installer scripts (`scripts/`), docs/website, CI, or tests are
-   **not** in the package, so type them `chore:`/`docs:`/`ci:`/`test:` so they
-   don't bump the package version. As a safety net, `release-please.yml` only
-   runs on `packages/markitai/src/**` and `pyproject.toml` changes, so a docs- or
-   installer-only push won't open or churn a release PR even if mis-typed.
-2. `release-please.yml` keeps a release PR open that bumps `__version__` in
-   `packages/markitai/src/markitai/__init__.py` — still the **single source
-   of truth** (hatch reads it at build time; keep the
-   `# x-release-please-version` annotation on that line) — and prepends the
-   generated section to `CHANGELOG.md`.
-3. To release, merge the release PR. release-please creates the `vX.Y.Z` tag
-   and GitHub release, then dispatches `publish.yml` on that tag, which runs
-   tests, verifies the tag matches the built version, and publishes to PyPI
-   via trusted publishing.
+   ```bash
+   git tag vX.Y.Z && git push origin vX.Y.Z
+   ```
+
+Pushing the `vX.Y.Z` tag runs `.github/workflows/publish.yml`, which: runs the
+test suite, builds the package, verifies the tag matches `__version__` (fails
+loudly if you forgot to bump), publishes to PyPI via trusted publishing, and
+creates the GitHub Release with the matching `CHANGELOG.md` section as notes.
+
+To re-publish an existing tag (e.g. after a transient failure), run the
+**Release** workflow manually from the Actions tab with the tag as input.
+Commit-type discipline no longer affects releases, but keep using
+[Conventional Commits](https://www.conventionalcommits.org/) — they keep the
+history readable and make writing the changelog easier.
