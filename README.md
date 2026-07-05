@@ -17,19 +17,35 @@ Docs: <https://markitai.ynewtime.com>
 
 ## Install
 
+**Recommended — guided installer.** Checks/installs Python and uv, lets you
+pick extras, installs optional components (Playwright browser, LibreOffice,
+FFmpeg), offers China-mainland mirror acceleration, and is bilingual (EN/中文):
+
 ```bash
-# Recommended: uv tool (isolated environment)
-uv tool install "markitai[all]"
-
-# Or with pipx
-pipx install "markitai[all]"
-
-# Or the guided installer (checks Python, installs uv, picks extras)
-curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh          # Linux/macOS
-powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"  # Windows
+# Linux/macOS
+curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
 ```
 
-Requires Python 3.11–3.14. Both `markitai` and the shorter `mkai` command are installed.
+**Minimal — uv / pip**, if you already have Python 3.11–3.14 and just want the package:
+
+```bash
+uv tool install "markitai[all]"     # isolated environment (recommended)
+pipx install "markitai[all]"        # or pipx
+```
+
+After a uv/pip install, do the setup steps the guided installer would have done for you:
+
+```bash
+markitai doctor           # check what's installed / missing
+markitai doctor --fix     # install the Playwright Chromium browser if you use --playwright
+markitai init             # create a config and set up an LLM provider
+```
+
+Both installs provide the `markitai` command **and the shorter `mkai` alias** —
+they are the same command (`mkai --help` == `markitai --help`). If you already
+have a different `mkai` on your PATH, use the full `markitai` to avoid ambiguity.
 
 ### Extras
 

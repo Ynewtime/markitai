@@ -77,13 +77,31 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Yne
 
 ### Manual Installation
 
-```bash
-# Using uv (recommended)
-uv tool install markitai
+If you already have Python 3.11–3.14 and prefer a minimal install:
 
-# Or using uv pip (for virtual environment)
-uv pip install markitai
+```bash
+# Using uv (recommended, isolated environment)
+uv tool install "markitai[all]"
+
+# Or using uv pip (into a virtual environment)
+uv pip install "markitai[all]"
 ```
+
+Unlike the one-click setup, a manual install does **not** set up optional
+components or config for you. Do the remaining steps yourself:
+
+```bash
+markitai doctor           # see what's installed / missing
+markitai doctor --fix     # install the Playwright Chromium browser (for --playwright)
+markitai init             # create a config and set up an LLM provider
+```
+
+::: tip Both `markitai` and `mkai` work
+Every install provides the `markitai` command **and the shorter `mkai` alias** —
+they are the exact same command (`mkai --help` == `markitai --help`). If a
+different `mkai` already exists on your `PATH`, use the full `markitai` to avoid
+ambiguity.
+:::
 
 ## Quick Start
 
