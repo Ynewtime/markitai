@@ -487,7 +487,7 @@ def _build_config(
 _ENV_TEMPLATE = """\
 # Markitai — LLM API Keys
 # Uncomment and fill in at least one key to enable LLM features.
-# Docs: https://markitai.ynewtime.com/guide/configuration
+# Docs: https://markitai.dev/guide/configuration
 
 # DEEPSEEK_API_KEY=
 # GEMINI_API_KEY=

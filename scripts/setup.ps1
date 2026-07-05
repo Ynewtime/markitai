@@ -3,7 +3,7 @@
 # Auto-detects: language (en/zh), mode (user/dev)
 #
 # Usage:
-#   powershell -ExecutionPolicy ByPass -c "irm https://markitai.ynewtime.com/setup.ps1 | iex"   # User install
+#   powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"   # User install
 #   .\scripts\setup.ps1                                                                         # Dev setup (in repo)
 
 $ErrorActionPreference = "Stop"
@@ -1453,7 +1453,7 @@ function Print-Summary {
 
     # Empty line before docs link
     Clack-Log ""
-    Clack-Info "$(i18n 'info_docs'): https://markitai.ynewtime.com"
+    Clack-Info "$(i18n 'info_docs'): https://markitai.dev"
     Clack-Info "$(i18n 'info_issues'): https://github.com/Ynewtime/markitai/issues"
 }
 
