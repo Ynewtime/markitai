@@ -13,7 +13,7 @@ Opinionated Markdown converter with native LLM enhancement support.
 - **OCR**: scanned PDFs and images via RapidOCR
 - **Web fetching**: static HTTP with cache revalidation, or Playwright rendering for JS-heavy pages
 
-Docs: <https://markitai.ynewtime.com>
+Docs: <https://markitai.dev>
 
 ## Install
 
@@ -71,7 +71,7 @@ markitai doctor                          # check dependencies and configuration
 markitai init                            # interactive configuration setup
 ```
 
-See the [Getting Started guide](https://markitai.ynewtime.com/guide/getting-started) for LLM configuration, presets, caching, and batch options.
+See the [Getting Started guide](https://markitai.dev/guide/getting-started) for LLM configuration, presets, caching, and batch options.
 
 ## License
 

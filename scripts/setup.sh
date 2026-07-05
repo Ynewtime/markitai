@@ -4,7 +4,7 @@
 # Auto-detects: language (en/zh), mode (user/dev)
 #
 # Usage:
-#   curl -fsSL https://markitai.ynewtime.com/setup.sh | sh    # User install
+#   curl -fsSL https://markitai.dev/setup.sh | sh    # User install
 #   ./scripts/setup.sh                                         # Dev setup (in repo)
 
 # -e: exit on error; -u: error on unset variables (pipefail is not POSIX sh)
@@ -1435,7 +1435,7 @@ print_summary() {
 
     # Empty line before docs link
     clack_log ""
-    clack_info "$(i18n info_docs): https://markitai.ynewtime.com"
+    clack_info "$(i18n info_docs): https://markitai.dev"
     clack_info "$(i18n info_issues): https://github.com/Ynewtime/markitai/issues"
 }
 

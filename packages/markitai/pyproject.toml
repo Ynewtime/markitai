@@ -44,8 +44,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://markitai.ynewtime.com"
-Documentation = "https://markitai.ynewtime.com/guide/getting-started"
+Homepage = "https://markitai.dev"
+Documentation = "https://markitai.dev/guide/getting-started"
 Repository = "https://github.com/Ynewtime/markitai"
 Changelog = "https://github.com/Ynewtime/markitai/blob/main/CHANGELOG.md"
 
