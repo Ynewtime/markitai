@@ -26,7 +26,7 @@ classifiers = [
 dependencies = [
     "pymupdf4llm>=1.27.2",
     "markitdown[all]>=0.1.5",
-    "litellm>=1.83.0",  # >=1.83.0 excludes compromised 1.82.7/1.82.8 (March 2026 supply-chain attack); releases signed since 1.83.0
+    "litellm>=1.91.0",  # >=1.83.0 excludes compromised 1.82.7/1.82.8 (March 2026 supply-chain attack); releases signed since 1.83.0
     "instructor>=1.14.5",
     "rapidocr>=3.7.0",
     "click>=8.3.0",
