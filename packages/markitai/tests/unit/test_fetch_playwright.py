@@ -270,7 +270,11 @@ class TestArticleUrlSkipsBrowser:
                 PlaywrightRenderer,
                 "_try_enricher_fallback_async",
                 new_callable=AsyncMock,
-                return_value=("Enriched article body", {"title": "My Article"}, "fxtwitter_article"),
+                return_value=(
+                    "Enriched article body",
+                    {"title": "My Article"},
+                    "fxtwitter_article",
+                ),
             ) as mock_enrich,
         ):
             result = await renderer.fetch(
@@ -278,9 +282,7 @@ class TestArticleUrlSkipsBrowser:
             )
 
         mock_ensure_browser.assert_not_awaited()
-        mock_enrich.assert_awaited_once_with(
-            "https://x.com/user/article/123", "ask"
-        )
+        mock_enrich.assert_awaited_once_with("https://x.com/user/article/123", "ask")
         assert result.content == "Enriched article body"
         assert result.title == "My Article"
         assert result.final_url == "https://x.com/user/article/123"
@@ -301,9 +303,7 @@ class TestArticleUrlSkipsBrowser:
 
         renderer = PlaywrightRenderer()
         with (
-            patch.object(
-                PlaywrightRenderer, "_ensure_browser", new_callable=AsyncMock
-            ),
+            patch.object(PlaywrightRenderer, "_ensure_browser", new_callable=AsyncMock),
             patch.object(
                 PlaywrightRenderer,
                 "_try_enricher_fallback_async",
@@ -343,9 +343,7 @@ class TestArticleUrlSkipsBrowser:
 
         renderer = PlaywrightRenderer()
         with (
-            patch.object(
-                PlaywrightRenderer, "_ensure_browser", new_callable=AsyncMock
-            ),
+            patch.object(PlaywrightRenderer, "_ensure_browser", new_callable=AsyncMock),
             patch.object(
                 PlaywrightRenderer,
                 "_try_enricher_fallback_async",

@@ -122,7 +122,10 @@ class TestTryFxtwitter:
             result = await enricher._try_fxtwitter(TWEET_URL)
 
         assert result is not None
-        assert result.diagnostics == {"enricher_name": "x_oembed", "source": "fxtwitter"}
+        assert result.diagnostics == {
+            "enricher_name": "x_oembed",
+            "source": "fxtwitter",
+        }
         assert result.metadata_overrides["author"] == "@testuser"
         assert result.metadata_overrides["title"] == "Post by @testuser"
         assert "Hello from FxTwitter" in (result.content_html or "")
@@ -137,9 +140,7 @@ class TestTryFxtwitter:
 
     async def test_retries_on_transient_failure_then_succeeds(self) -> None:
         enricher = XOEmbedEnricher()
-        client = _mock_client(
-            [ConnectionError("boom"), _http_response(MOCK_TWEET)]
-        )
+        client = _mock_client([ConnectionError("boom"), _http_response(MOCK_TWEET)])
         with (
             patch("httpx.AsyncClient", return_value=client),
             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
@@ -361,7 +362,9 @@ class TestToDateString:
     """XOEmbedEnricher._to_date_string."""
 
     def test_converts_iso_z_suffix_to_date(self) -> None:
-        assert XOEmbedEnricher._to_date_string("2026-05-01T12:00:00.000Z") == "2026-05-01"
+        assert (
+            XOEmbedEnricher._to_date_string("2026-05-01T12:00:00.000Z") == "2026-05-01"
+        )
 
     def test_none_input_returns_none(self) -> None:
         assert XOEmbedEnricher._to_date_string(None) is None
@@ -492,15 +495,15 @@ class TestBuildArticleResult:
         enricher = XOEmbedEnricher()
         article = self._article_data(
             [],
-            cover_media={
-                "media_info": {"original_img_url": "https://x/cover.jpg"}
-            },
+            cover_media={"media_info": {"original_img_url": "https://x/cover.jpg"}},
         )
         result = enricher._build_article_result({"author": {}}, article)
 
         assert result is not None
         assert result.content_html is not None
-        assert '<img src="https://x/cover.jpg" alt="Cover image">' in result.content_html
+        assert (
+            '<img src="https://x/cover.jpg" alt="Cover image">' in result.content_html
+        )
 
     def test_renders_atomic_image_media(self) -> None:
         enricher = XOEmbedEnricher()
@@ -597,8 +600,9 @@ class TestBuildArticleResult:
 
         assert result is not None
         assert result.content_html is not None
-        assert '<pre><code class="language-python" data-lang="python">print(1)</code></pre>' in (
-            result.content_html
+        assert (
+            '<pre><code class="language-python" data-lang="python">print(1)</code></pre>'
+            in (result.content_html)
         )
 
     def test_metadata_overrides_include_title_author_published(self) -> None:
@@ -670,8 +674,7 @@ class TestRenderInline:
             ],
         }
         assert (
-            enricher._render_inline(block, {})
-            == "<strong>a</strong><strong>b</strong>"
+            enricher._render_inline(block, {}) == "<strong>a</strong><strong>b</strong>"
         )
 
 

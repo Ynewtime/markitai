@@ -2284,9 +2284,7 @@ class TestFetchWithFallback:
                 return_value=captcha_result,
             ),
             patch.object(fp, "is_playwright_available", lambda: True),
-            patch.object(
-                fp, "is_playwright_browser_installed", lambda *_a, **_k: True
-            ),
+            patch.object(fp, "is_playwright_browser_installed", lambda *_a, **_k: True),
             patch.object(
                 fp, "fetch_with_playwright", AsyncMock(return_value=pw_result)
             ),

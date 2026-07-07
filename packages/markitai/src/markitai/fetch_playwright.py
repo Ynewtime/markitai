@@ -512,9 +512,11 @@ class PlaywrightRenderer:
             screenshot_config and getattr(screenshot_config, "enabled", True)
         )
         if _is_x_article_url(url) and not needs_screenshot:
-            enriched_md, overrides, enricher_source = (
-                await self._try_enricher_fallback_async(url, remote_consent)
-            )
+            (
+                enriched_md,
+                overrides,
+                enricher_source,
+            ) = await self._try_enricher_fallback_async(url, remote_consent)
             if enriched_md:
                 # Build source_frontmatter directly from the enriched
                 # content — cli/processors/url.py reads this specific key
@@ -682,9 +684,11 @@ class PlaywrightRenderer:
             #    try the oEmbed enricher (handles Articles via FxTwitter API)
             # 2. Use _html_to_markdown as last resort
             if not markdown_content:
-                enriched_md, overrides, enricher_source = await self._try_enricher_fallback_async(
-                    url, remote_consent
-                )
+                (
+                    enriched_md,
+                    overrides,
+                    enricher_source,
+                ) = await self._try_enricher_fallback_async(url, remote_consent)
                 if enriched_md:
                     markdown_content = enriched_md
                     metadata["_enricher_source"] = enricher_source
@@ -706,11 +710,9 @@ class PlaywrightRenderer:
                 resolver_diag = diag.get("resolver_diagnostics", {})
                 x_resolve = resolver_diag.get("x_resolve", "")
                 is_article = resolver_diag.get("is_article", False)
-                is_x_url = ("x.com/" in url or "twitter.com/" in url)
+                is_x_url = "x.com/" in url or "twitter.com/" in url
                 # Login wall: only needed for /article/ where no resolver runs
-                is_login_wall = (
-                    "Continue with" in html_content and "/article/" in url
-                )
+                is_login_wall = "Continue with" in html_content and "/article/" in url
 
                 needs_enricher = (
                     x_resolve == "no_primary_tweet_found"
@@ -718,9 +720,11 @@ class PlaywrightRenderer:
                     or is_login_wall
                 )
                 if needs_enricher and is_x_url and "/" in url:
-                    enriched_md, overrides, enricher_source = await self._try_enricher_fallback_async(
-                        url, remote_consent
-                    )
+                    (
+                        enriched_md,
+                        overrides,
+                        enricher_source,
+                    ) = await self._try_enricher_fallback_async(url, remote_consent)
                     if enriched_md:
                         markdown_content = enriched_md
                         used_native_webextract = False  # mark as enricher output
@@ -827,11 +831,10 @@ class PlaywrightRenderer:
         from markitai.webextract.pipeline import _create_markitdown
 
         md_instance = _create_markitdown()
-        enriched_md = render_markdown(
-            resolved.content_html, md_instance=md_instance
-        )
+        enriched_md = render_markdown(resolved.content_html, md_instance=md_instance)
         source = str(resolved.diagnostics.get("source", ""))
         return enriched_md, resolved.metadata_overrides or None, source
+
 
 async def fetch_with_playwright(
     url: str,

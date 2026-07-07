@@ -116,8 +116,7 @@ class XTweetExtractor:
             title = article_title
         else:
             title = (
-                f"Post by {handle} on X" if handle
-                else f"Post by {display_name} on X"
+                f"Post by {handle} on X" if handle else f"Post by {display_name} on X"
             )
 
         # Collect replies governed by thread policy. Mirrors defuddle's
@@ -175,13 +174,13 @@ class XTweetExtractor:
         if main_item.timestamp:
             try:
                 from datetime import datetime as dt
-                parsed = dt.fromisoformat(
-                    main_item.timestamp.replace("Z", "+00:00")
-                )
+
+                parsed = dt.fromisoformat(main_item.timestamp.replace("Z", "+00:00"))
                 metadata_overrides["published"] = parsed.date().isoformat()
             except (ValueError, TypeError):
                 pass
         from urllib.parse import urlparse
+
         domain = urlparse(url).netloc.lower()
         if domain:
             metadata_overrides["domain"] = domain
@@ -190,7 +189,11 @@ class XTweetExtractor:
             content_html=content_html,
             metadata_overrides=metadata_overrides,
             semantic=semantic,
-            diagnostics={"x_resolve": "success", "tweet_id": tweet_id, "is_article": is_article},
+            diagnostics={
+                "x_resolve": "success",
+                "tweet_id": tweet_id,
+                "is_article": is_article,
+            },
         )
 
 

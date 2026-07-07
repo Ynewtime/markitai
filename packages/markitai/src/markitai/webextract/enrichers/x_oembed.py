@@ -117,7 +117,9 @@ class XOEmbedEnricher:
                     logger.debug(
                         "[XOEmbedEnricher] FxTwitter attempt {} failed, "
                         "retrying in {:.1f}s: {}",
-                        attempt + 1, wait_s, exc,
+                        attempt + 1,
+                        wait_s,
+                        exc,
                     )
                     await _asyncio.sleep(wait_s)
                     continue
@@ -149,9 +151,7 @@ class XOEmbedEnricher:
         markdown = html_to_markdown(html, md_instance)
         markdown = postprocess_markdown(markdown)
 
-        return self._build_resolved_from_html(
-            html, thread.title, markdown, tweet_data
-        )
+        return self._build_resolved_from_html(html, thread.title, markdown, tweet_data)
 
     async def _try_oembed(self, url: str) -> ResolvedPage | None:
         """Fetch via X oEmbed API and build a ResolvedPage."""
@@ -268,9 +268,7 @@ class XOEmbedEnricher:
         - Cover image
         """
         author = tweet_data.get("author", {})
-        handle = (
-            f"@{author['screen_name']}" if author.get("screen_name") else ""
-        )
+        handle = f"@{author['screen_name']}" if author.get("screen_name") else ""
         title = article_data.get("title", "")
         published = self._to_date_string(
             article_data.get("created_at") or tweet_data.get("created_at")
@@ -298,7 +296,9 @@ class XOEmbedEnricher:
             block = blocks[i]
             if block.get("type") == "unordered-list-item":
                 items: list[str] = []
-                while i < len(blocks) and blocks[i].get("type") == "unordered-list-item":
+                while (
+                    i < len(blocks) and blocks[i].get("type") == "unordered-list-item"
+                ):
                     items.append(
                         f"<li>{self._render_inline(blocks[i], entity_map)}</li>"
                     )
@@ -335,7 +335,12 @@ class XOEmbedEnricher:
     @staticmethod
     def _escape(text: str) -> str:
         """Minimal HTML escape."""
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+        return (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
 
     @staticmethod
     def _to_date_string(date_str: str | None) -> str | None:
@@ -344,6 +349,7 @@ class XOEmbedEnricher:
             return None
         try:
             from datetime import datetime as dt
+
             return dt.fromisoformat(date_str.replace("Z", "+00:00")).date().isoformat()
         except (ValueError, TypeError):
             return None
@@ -399,9 +405,7 @@ class XOEmbedEnricher:
                 return ""
             return f"<p>{self._render_inline(block, entity_map)}</p>"
 
-    def _render_inline(
-        self, block: dict, entity_map: dict[str, dict]
-    ) -> str:
+    def _render_inline(self, block: dict, entity_map: dict[str, dict]) -> str:
         """Render inline content with bold, links, and mentions."""
         text = block.get("text", "")
         if not text:
@@ -423,19 +427,13 @@ class XOEmbedEnricher:
                 url = entity.get("data", {}).get("url", "")
                 if url:
                     escaped_url = self._escape(url)
-                    markers.append(
-                        (rng["offset"], "open", f'<a href="{escaped_url}">')
-                    )
-                    markers.append(
-                        (rng["offset"] + rng["length"], "close", "</a>")
-                    )
+                    markers.append((rng["offset"], "open", f'<a href="{escaped_url}">'))
+                    markers.append((rng["offset"] + rng["length"], "close", "</a>"))
 
         # Mentions in data
         for mention in block.get("data", {}).get("mentions", []):
             mention_url = f"https://x.com/{self._escape(mention.get('text', ''))}"
-            markers.append(
-                (mention["fromIndex"], "open", f'<a href="{mention_url}">')
-            )
+            markers.append((mention["fromIndex"], "open", f'<a href="{mention_url}">'))
             markers.append((mention["toIndex"], "close", "</a>"))
 
         if not markers:
@@ -502,7 +500,8 @@ class XOEmbedEnricher:
                         [
                             v
                             for v in info.get("variants", [])
-                            if v.get("content_type") == "video/mp4" and v.get("bit_rate")
+                            if v.get("content_type") == "video/mp4"
+                            and v.get("bit_rate")
                         ],
                         key=lambda v: v.get("bit_rate", 0),
                         reverse=True,
@@ -525,19 +524,23 @@ class XOEmbedEnricher:
                     return f"<figure>{''.join(images)}<figcaption>{self._escape(caption)}</figcaption></figure>"
                 return "\n".join(f"<figure>{img}</figure>" for img in images)
             elif caption:
-                return f"<figure><figcaption>{self._escape(caption)}</figcaption></figure>"
+                return (
+                    f"<figure><figcaption>{self._escape(caption)}</figcaption></figure>"
+                )
             return ""
 
         elif etype == "MARKDOWN":
             md = data.get("markdown", "")
             import re as _re
+
             code_match = _re.match(r"^```(\w*)\n([\s\S]*?)\n?```$", md)
             if code_match:
                 lang = code_match.group(1)
                 code = code_match.group(2)
                 lang_attr = (
                     f' class="language-{self._escape(lang)}" data-lang="{self._escape(lang)}"'
-                    if lang else ""
+                    if lang
+                    else ""
                 )
                 return f"<pre><code{lang_attr}>{self._escape(code)}</code></pre>"
             return f"<pre><code>{self._escape(md)}</code></pre>"
@@ -564,12 +567,13 @@ class XOEmbedEnricher:
         if author_name:
             metadata_overrides["author"] = author_name
         elif tweet_data and tweet_data.get("author", {}).get("screen_name"):
-            metadata_overrides["author"] = (
-                f"@{tweet_data['author']['screen_name']}"
-            )
+            metadata_overrides["author"] = f"@{tweet_data['author']['screen_name']}"
 
         return ResolvedPage(
             content_html=html,
             metadata_overrides=metadata_overrides,
-            diagnostics={"enricher_name": self.name, "source": "fxtwitter" if tweet_data else "oembed"},
+            diagnostics={
+                "enricher_name": self.name,
+                "source": "fxtwitter" if tweet_data else "oembed",
+            },
         )

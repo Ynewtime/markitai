@@ -195,8 +195,10 @@ class TestRenderDefuddleParity:
             timestamp="2025-12-24T10:00:00.000Z",
         )
         thread = ConversationThread(
-            title="Post by @dotey", main_item=main,
-            show_title_in_body=False, show_author_meta=False,
+            title="Post by @dotey",
+            main_item=main,
+            show_title_in_body=False,
+            show_author_meta=False,
         )
         html = render_semantic_content(SemanticExtraction(thread=thread))
         markdown = render_markdown(html)
@@ -216,7 +218,9 @@ class TestRenderDefuddleParity:
             text="Nice!",
             timestamp="2025-12-25T10:00:00.000Z",
         )
-        thread = ConversationThread(title="Post by @author", main_item=main, items=[reply])
+        thread = ConversationThread(
+            title="Post by @author", main_item=main, items=[reply]
+        )
         html = render_semantic_content(SemanticExtraction(thread=thread))
         markdown = render_markdown(html)
         assert "**@commenter** · 2025-12-25" in markdown
