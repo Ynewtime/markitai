@@ -243,7 +243,7 @@ _STAGE_MESSAGE_PREFIXES: tuple[tuple[str, str], ...] = (
     # Static content turned out to need JS: the auto chain moves on to a
     # browser render next.
     ("JS required", "Rendering (playwright)"),
-    ("[Fetch] FxTwitter", "Fetching (fxtwitter)"),
+    ("[Fetch] Enriching", "Fetching (fxtwitter)"),
     ("[Defuddle] Fetching", "Fetching (defuddle)"),
     ("Fetching URL with Jina Reader", "Fetching (jina)"),
     ("Fetching URL with CF Browser Rendering", "Rendering (cloudflare)"),
@@ -254,7 +254,6 @@ _STAGE_MESSAGE_PREFIXES: tuple[tuple[str, str], ...] = (
 # Any log record emitted from these modules implies the given stage.
 _STAGE_MODULES: dict[str, str] = {
     "fetch_playwright": "Rendering (playwright)",
-    "fetch_fxtwitter": "Fetching (fxtwitter)",
 }
 
 

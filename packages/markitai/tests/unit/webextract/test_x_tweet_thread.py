@@ -81,6 +81,7 @@ def test_author_reply_after_thread_end_is_not_continuation() -> None:
     assert "Author reply after thread ended." not in result.markdown
 
 
-def test_main_author_meta_line_present() -> None:
+def test_main_author_meta_not_in_body_for_tweets() -> None:
+    """Main item author meta is not rendered for tweets — in frontmatter only."""
     result = extract_web_content(_THREAD_HTML, _URL)
-    assert "**Baoyu @dotey** · 2025-12-24" in result.markdown
+    assert "**Baoyu @dotey** · 2025-12-24" not in result.markdown

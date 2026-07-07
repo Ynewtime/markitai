@@ -131,17 +131,18 @@ class TestRenderSemanticContent:
         html = render_semantic_content(SemanticExtraction())
         assert html == ""
 
-    def test_render_includes_author_handle(self) -> None:
-        """Author handle is present in the rendered output."""
+    def test_main_shows_author_meta_by_default(self) -> None:
+        """Main item author meta is rendered by default (backward compat)."""
         thread = _make_thread(main_handle="@testuser")
         html = render_semantic_content(SemanticExtraction(thread=thread))
-        assert "@testuser" in html
+        # Author/date meta line SHOULD be in main item body by default
+        assert "@testuser</strong>" in html
 
-    def test_render_includes_thread_title(self) -> None:
-        """Thread title appears somewhere in the rendered HTML."""
+    def test_main_shows_title_by_default(self) -> None:
+        """Thread title H1 is rendered by default (backward compat)."""
         thread = _make_thread(title="Post by @alice")
         html = render_semantic_content(SemanticExtraction(thread=thread))
-        assert "Post by @alice" in html
+        assert "<h1>" in html
 
     def test_multiple_media_attachments_all_rendered(self) -> None:
         """All media attachments in a single item are rendered."""
@@ -184,7 +185,8 @@ class TestRenderSemanticContent:
 class TestRenderDefuddleParity:
     """Rendering features ported from defuddle's Twitter extractor."""
 
-    def test_author_meta_line_combines_name_handle_and_date(self) -> None:
+    def test_main_omits_author_meta_when_disabled(self) -> None:
+        """Main item author meta is omitted when show_author_meta=False."""
         main = ConversationItem(
             id="root",
             author_name="Baoyu",
@@ -192,17 +194,45 @@ class TestRenderDefuddleParity:
             text="Hello",
             timestamp="2025-12-24T10:00:00.000Z",
         )
-        thread = ConversationThread(title="Post by @dotey", main_item=main)
+        thread = ConversationThread(
+            title="Post by @dotey", main_item=main,
+            show_title_in_body=False, show_author_meta=False,
+        )
         html = render_semantic_content(SemanticExtraction(thread=thread))
         markdown = render_markdown(html)
-        assert "**Baoyu @dotey** · 2025-12-24" in markdown
+        assert "**Baoyu @dotey** · 2025-12-24" not in markdown
 
-    def test_twitter_legacy_timestamp_formatted_as_date(self) -> None:
+    def test_comment_items_still_show_author_meta(self) -> None:
+        """Comment/reply items should still show author/date meta."""
+        main = ConversationItem(
+            id="root",
+            author_handle="@author",
+            text="Main post",
+        )
+        reply = ConversationItem(
+            id="r1",
+            parent_id="root",
+            author_handle="@commenter",
+            text="Nice!",
+            timestamp="2025-12-25T10:00:00.000Z",
+        )
+        thread = ConversationThread(title="Post by @author", main_item=main, items=[reply])
+        html = render_semantic_content(SemanticExtraction(thread=thread))
+        markdown = render_markdown(html)
+        assert "**@commenter** · 2025-12-25" in markdown
+
+    def test_quote_items_still_show_author_meta(self) -> None:
+        """Quoted tweets should still show author/date meta."""
+        quote = EmbeddedQuote(
+            author_handle="@quser",
+            text="Quoted",
+            timestamp="2025-12-24T10:00:00+00:00",
+        )
         main = ConversationItem(
             id="root",
             author_handle="@dotey",
             text="Hello",
-            timestamp="Wed Dec 24 10:00:00 +0000 2025",
+            quoted_item=quote,
         )
         thread = ConversationThread(title="Post by @dotey", main_item=main)
         html = render_semantic_content(SemanticExtraction(thread=thread))

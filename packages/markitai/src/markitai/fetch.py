@@ -9,10 +9,14 @@ strategies:
 - cloudflare: Cloudflare Browser Rendering API (cloud browser)
 - auto: Policy engine orders strategies and falls back through them
 
+For X/Twitter URLs, the playwright strategy includes an oEmbed enricher
+fallback (FxTwitter API → X oEmbed) that activates when DOM parsing fails
+and remote_consent is allowed.
+
 Example usage:
     from markitai.fetch import fetch_url, FetchStrategy
 
-    # Auto-detect strategy (defuddle → jina → static → playwright → cloudflare)
+    # Auto-detect strategy (static → playwright → defuddle → jina → cloudflare)
     result = await fetch_url("https://example.com", FetchStrategy.AUTO, config.fetch)
 
     # Force Defuddle
@@ -1947,6 +1951,18 @@ def _ensure_external_strategy_allowed(url: str, strategy_name: str) -> None:
         )
 
 
+def _playwright_strategy_label(metadata: dict[str, Any]) -> str:
+    """Build ``strategy_used`` label for playwright, including enricher source.
+
+    Returns ``"playwright(fxtwitter)"``, ``"playwright(oembed)"``, or
+    plain ``"playwright"`` when no enricher was used.
+    """
+    source = metadata.get("_enricher_source", "")
+    if source:
+        return f"playwright({source})"
+    return "playwright"
+
+
 async def _dispatch_strategy(
     url: str,
     strategy: FetchStrategy,
@@ -1965,15 +1981,6 @@ async def _dispatch_strategy(
     validators_to_write: tuple[str | None, str | None] | None = None
 
     if strategy == FetchStrategy.PLAYWRIGHT:
-        # FxTwitter enrichment: try API before launching browser for tweet URLs
-        if not explicit_strategy:
-            from markitai.fetch_fxtwitter import fetch_with_fxtwitter
-
-            fxtwitter_result = await fetch_with_fxtwitter(url)
-            if fxtwitter_result is not None:
-                logger.debug("[Fetch] FxTwitter succeeded for {}", url)
-                return fxtwitter_result, None
-
         from markitai.fetch_playwright import (
             fetch_with_playwright,
             is_playwright_available,
@@ -1998,11 +2005,12 @@ async def _dispatch_strategy(
                 output_dir=screenshot_dir,
                 renderer=renderer,
             ),
+            remote_consent=config.remote_consent,
         )
 
         result = FetchResult(
             content=pw_result.content,
-            strategy_used="playwright",
+            strategy_used=_playwright_strategy_label(pw_result.metadata),
             title=pw_result.title,
             url=url,
             final_url=pw_result.final_url,
@@ -2080,6 +2088,23 @@ async def _dispatch_strategy(
             validators_to_write = (etag, last_modified)
     else:
         raise ValueError(f"Unknown fetch strategy: {strategy}")
+
+    # AUTO already rejects anti-bot/CAPTCHA challenge pages internally and
+    # tries the next strategy (_fetch_with_fallback calls _is_invalid_content
+    # per strategy); an explicitly-chosen strategy has no next strategy to
+    # fall back to and previously returned such a page as if it were the
+    # real content. Only captcha_* reasons raise here — other
+    # _is_invalid_content reasons (too_short, login_required, ...) are not
+    # new information for an explicit choice and stay non-fatal to avoid
+    # changing existing behavior for legitimately short/edge-case pages.
+    is_invalid, reason = _is_invalid_content(result.content)
+    if is_invalid and reason.startswith("captcha_"):
+        raise FetchError(
+            f"{strategy.value}: page returned an anti-bot/CAPTCHA challenge "
+            f"({reason}) instead of real content. Automated fetching cannot "
+            "solve this — try again later, from a different network, or "
+            "open the URL in a browser."
+        )
 
     return result, validators_to_write
 
@@ -2417,13 +2442,18 @@ async def fetch_url(
 
 
 def _is_invalid_content(content: str) -> tuple[bool, str]:
-    """Check if fetched content is invalid (JS error page, login prompt, etc.).
+    """Check if fetched content is invalid (JS error page, login prompt,
+    anti-bot/CAPTCHA challenge, etc.).
 
     Args:
         content: Fetched content to check
 
     Returns:
-        Tuple of (is_invalid, reason)
+        Tuple of (is_invalid, reason). CAPTCHA/anti-bot reasons are
+        prefixed ``captcha_`` — callers may treat these as harder failures
+        than the others (e.g. raise instead of silently falling back),
+        since a solved challenge is definitionally unavailable to an
+        automated fetch.
     """
     if not content or not content.strip():
         return True, "empty"
@@ -2436,6 +2466,17 @@ def _is_invalid_content(content: str) -> tuple[bool, str]:
         (r"Something went wrong.*let's give it another shot", "error_page"),
         (r"Log in.*Sign up.*to continue", "login_required"),
         (r"You must be logged in", "login_required"),
+        # Geetest (极验) — confirmed against a real bilibili.com challenge
+        # page returned during rate-limit-triggered testing (2026-07-07).
+        (r"智能验证检测中", "captcha_geetest"),
+        (r"由极验提供技术支持", "captcha_geetest"),
+        # Widely-documented anti-bot vendor signatures (Cloudflare browser
+        # check, reCAPTCHA, hCaptcha) — stable, well-known markers, not
+        # captured against a live challenge this session.
+        (r"Checking your browser before accessing", "captcha_cloudflare"),
+        (r"cf-browser-verification|cf_chl_", "captcha_cloudflare"),
+        (r"g-recaptcha|google\.com/recaptcha", "captcha_recaptcha"),
+        (r"hcaptcha\.com|h-captcha", "captcha_hcaptcha"),
     ]
 
     for pattern, reason in invalid_patterns:
@@ -2613,26 +2654,6 @@ async def _fetch_with_fallback(
                 return result
 
             elif strat == "playwright":
-                # FxTwitter enrichment: for tweet URLs, the structured API
-                # beats DOM extraction — try it before launching a browser.
-                # (The same intercept exists in _dispatch_strategy for the
-                # top-level PLAYWRIGHT strategy; the auto chain reaches
-                # playwright through this loop instead, which previously
-                # skipped FxTwitter entirely.)
-                from markitai.fetch_fxtwitter import fetch_with_fxtwitter
-
-                fxtwitter_result = await fetch_with_fxtwitter(url)
-                if fxtwitter_result is not None:
-                    logger.debug("[Fetch] FxTwitter succeeded for {}", url)
-                    fxtwitter_result.metadata.update(
-                        {
-                            "policy_reason": decision.reason,
-                            "policy_order": strategies,
-                            "profile_applied": domain_profile_applied,
-                        }
-                    )
-                    return fxtwitter_result
-
                 from markitai.fetch_playwright import (
                     fetch_with_playwright,
                     is_playwright_available,
@@ -2664,11 +2685,12 @@ async def _fetch_with_fallback(
                         output_dir=screenshot_kwargs.get("screenshot_dir"),
                         renderer=renderer,
                     ),
+                    remote_consent=config.remote_consent,
                 )
 
                 result = FetchResult(
                     content=pw_result.content,
-                    strategy_used="playwright",
+                    strategy_used=_playwright_strategy_label(pw_result.metadata),
                     title=pw_result.title,
                     url=url,
                     final_url=pw_result.final_url,

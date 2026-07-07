@@ -60,6 +60,12 @@ def render_semantic_content(extraction: SemanticExtraction) -> str:
 def _render_thread(thread: ConversationThread) -> str:
     """Render a full ConversationThread to an HTML article.
 
+    By default, the H1 title and main item author meta are rendered.  For
+    social posts (tweets), callers may set ``show_title_in_body=False``
+    and ``show_author_meta=False`` on the thread — the title and author
+    are already in the source frontmatter, and removing them from the body
+    saves tokens for LLM consumption (matching defuddle's approach).
+
     Args:
         thread: The conversation thread to render.
 
@@ -68,8 +74,9 @@ def _render_thread(thread: ConversationThread) -> str:
     """
     parts: list[str] = []
     parts.append("<article>")
-    parts.append(f"<h1>{escape(thread.title)}</h1>")
-    parts.append(_render_item(thread.main_item))
+    if thread.show_title_in_body:
+        parts.append(f"<h1>{escape(thread.title)}</h1>")
+    parts.append(_render_item(thread.main_item, show_meta=thread.show_author_meta))
     for continuation in thread.continuation_items:
         parts.append("<hr>")
         parts.append(_render_item(continuation, show_meta=False))
@@ -140,12 +147,21 @@ def _render_meta_line(
 
 
 def _render_text_paragraphs(text: str, indent: str = "  ") -> list[str]:
-    """Render plain text as one ``<p>`` element per non-empty line."""
-    return [
-        f"{indent}<p>{escape(line.strip())}</p>"
-        for line in text.split("\n")
-        if line.strip()
-    ]
+    """Render plain text as one ``<p>`` element per non-empty line.
+
+    Lines starting with ``- `` are escaped to ``\\- `` so that MarkItDown
+    does not interpret them as Markdown list items (tweet text).
+    """
+    result: list[str] = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Escape leading "- " to prevent Markdown list parsing
+        if stripped.startswith("- "):
+            stripped = "\\- " + stripped[2:]
+        result.append(f"{indent}<p>{escape(stripped)}</p>")
+    return result
 
 
 def _render_media(media: MediaAttachment, indent: str = "  ") -> list[str]:

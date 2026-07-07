@@ -6,15 +6,13 @@ Strategy priority rationale (v0.15.0, local-first):
 - static: Fast local fetch + native webextract pipeline (full defuddle port:
   scoring, math, footnotes, code protection) — matches remote defuddle
   quality on the ground-truth corpus, no data leaves the machine.
-- playwright: Full JS rendering for SPA/JS-heavy pages, local.
+- playwright: Full JS rendering for SPA/JS-heavy pages, local. Includes
+  oEmbed enricher fallback for X/Twitter URLs when DOM parsing fails.
 - defuddle: Remote extraction API (free, no auth). Consent-gated
   (fetch.remote_consent) since it receives the user's URLs.
 - jina: Remote Reader API, free tier (20 RPM), consent-gated; anonymous
   access is blocked for some domains (e.g. github.com → 451).
 - cloudflare: Requires CF account credentials, rate-limited, consent-gated.
-
-Tweet URLs are intercepted by the FxTwitter path in fetch.py before the
-chain runs.
 """
 
 from __future__ import annotations

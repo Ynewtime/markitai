@@ -31,6 +31,7 @@ class WebMetadata:
     published: str | None = None
     description: str | None = None
     canonical_url: str | None = None
+    domain: str | None = None
 
 
 @dataclass(slots=True)

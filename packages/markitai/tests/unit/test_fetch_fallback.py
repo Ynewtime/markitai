@@ -356,81 +356,191 @@ class TestPlaywrightActionableErrors:
         pw_mock.assert_not_awaited()
 
 
-class TestAutoChainFxTwitterIntercept:
-    """AUTO chain must serve tweet URLs via FxTwitter before any browser."""
+class TestExplicitStrategyCaptchaDetection:
+    """Explicitly-chosen strategies (unlike AUTO) never validated content
+    before returning it, so an anti-bot/CAPTCHA challenge page came back
+    looking like a successful fetch. Regression: reported after a bilibili
+    opus fetch returned a Geetest challenge page (title "验证码_...") as if
+    it were the article — `fetch_strategy: playwright` with no indication
+    anything was wrong."""
 
     @pytest.mark.asyncio
-    async def test_tweet_url_served_by_fxtwitter_without_browser_launch(
+    async def test_explicit_playwright_raises_on_captcha_content(
         self, monkeypatch
     ) -> None:
-        import markitai.fetch_fxtwitter as fx
         import markitai.fetch_playwright as fp
-        from markitai.fetch import _fetch_with_fallback
 
-        url = "https://x.com/dotey/status/2073286406558949828"
-        config = FetchConfig(remote_consent="never")
-
-        fx_result = FetchResult(
-            content="**tweet body**",
-            strategy_used="fxtwitter",
-            title="Post by @dotey",
-            url=url,
-            final_url=url,
-        )
-        fx_mock = AsyncMock(return_value=fx_result)
-        monkeypatch.setattr(fx, "fetch_with_fxtwitter", fx_mock)
-
-        # Playwright is fully available but must never be touched.
+        config = FetchConfig()
         monkeypatch.setattr(fp, "is_playwright_available", lambda: True)
         monkeypatch.setattr(
             fp, "is_playwright_browser_installed", lambda *_a, **_k: True
         )
-        pw_mock = AsyncMock()
-        monkeypatch.setattr(fp, "fetch_with_playwright", pw_mock)
+        pw_result = MagicMock()
+        pw_result.content = "智能验证检测中\n\n由极验提供技术支持\n\n请在下图依次点击："
+        pw_result.title = "验证码_哔哩哔哩"
+        pw_result.final_url = "https://example.com"
+        pw_result.metadata = {}
+        pw_result.screenshot_path = None
+        monkeypatch.setattr(fp, "fetch_with_playwright", AsyncMock(return_value=pw_result))
 
-        # Static fails so the chain advances to the playwright branch.
+        with pytest.raises(FetchError) as exc_info:
+            await fetch_url(
+                "https://example.com",
+                FetchStrategy.PLAYWRIGHT,
+                config,
+                explicit_strategy=True,
+                renderer=object(),
+            )
+
+        message = str(exc_info.value)
+        assert "captcha_geetest" in message
+        assert "anti-bot" in message.lower() or "captcha" in message.lower()
+
+    @pytest.mark.asyncio
+    async def test_explicit_playwright_returns_normally_for_real_content(
+        self, monkeypatch
+    ) -> None:
+        """Regression guard: the new check must not false-positive on
+        ordinary content."""
+        import markitai.fetch_playwright as fp
+
+        config = FetchConfig()
+        monkeypatch.setattr(fp, "is_playwright_available", lambda: True)
+        monkeypatch.setattr(
+            fp, "is_playwright_browser_installed", lambda *_a, **_k: True
+        )
+        pw_result = MagicMock()
+        pw_result.content = (
+            "# Real Article\n\nThis is a perfectly normal article with "
+            "plenty of real content to read and enjoy."
+        )
+        pw_result.title = "Real Article"
+        pw_result.final_url = "https://example.com"
+        pw_result.metadata = {}
+        pw_result.screenshot_path = None
+        monkeypatch.setattr(fp, "fetch_with_playwright", AsyncMock(return_value=pw_result))
+
+        result = await fetch_url(
+            "https://example.com",
+            FetchStrategy.PLAYWRIGHT,
+            config,
+            explicit_strategy=True,
+            renderer=object(),
+        )
+
+        assert "Real Article" in result.content
+
+    @pytest.mark.asyncio
+    async def test_explicit_playwright_does_not_raise_for_non_captcha_reasons(
+        self, monkeypatch
+    ) -> None:
+        """Non-CAPTCHA _is_invalid_content reasons (too_short, login_required,
+        ...) stay non-fatal for explicit strategies — this check is scoped
+        to anti-bot detection specifically, not a general content-quality
+        gate for explicitly-chosen strategies (that would be a larger,
+        separate behavior change with its own regression risk for
+        legitimately short/edge-case pages)."""
+        import markitai.fetch_playwright as fp
+
+        config = FetchConfig()
+        monkeypatch.setattr(fp, "is_playwright_available", lambda: True)
+        monkeypatch.setattr(
+            fp, "is_playwright_browser_installed", lambda *_a, **_k: True
+        )
+        pw_result = MagicMock()
+        pw_result.content = "You must be logged in to view this page."
+        pw_result.title = "Login required"
+        pw_result.final_url = "https://example.com"
+        pw_result.metadata = {}
+        pw_result.screenshot_path = None
+        monkeypatch.setattr(fp, "fetch_with_playwright", AsyncMock(return_value=pw_result))
+
+        result = await fetch_url(
+            "https://example.com",
+            FetchStrategy.PLAYWRIGHT,
+            config,
+            explicit_strategy=True,
+            renderer=object(),
+        )
+
+        assert "logged in" in result.content
+
+
+class TestAutoChainFxTwitterIntercept:
+    """AUTO chain uses playwright with oEmbed enricher for tweet URLs.
+
+    The enricher attempts FxTwitter API first, falling back to X oEmbed.
+    When remote_consent is 'never', the enricher is skipped and DOM parsing
+    is used directly.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tweet_url_uses_enricher_when_consent_allowed(
+        self, monkeypatch
+    ) -> None:
+        """When consent is allowed, playwright uses oEmbed enricher."""
+        import markitai.fetch_playwright as fp
+        from markitai.fetch import _fetch_with_fallback
+
+        url = "https://x.com/dotey/status/2073286406558949828"
+        config = FetchConfig(remote_consent="always")
+
+        # Static fails so the chain advances to playwright.
         monkeypatch.setattr(
             fetch,
             "fetch_with_static",
             AsyncMock(side_effect=FetchError("HTTP 403 fetching URL")),
         )
 
+        # Mock playwright to succeed with enricher
+        pw_result = MagicMock()
+        pw_result.content = "Enriched content from oEmbed enricher. This is a tweet body text with sufficient length to pass content quality validation checks in the extraction pipeline."
+        pw_result.title = "Post by @dotey"
+        pw_result.final_url = url
+        pw_result.metadata = {"source_frontmatter": {"title": "Post by @dotey"}}
+        pw_result.screenshot_path = None
+
+        monkeypatch.setattr(fp, "is_playwright_available", lambda: True)
+        monkeypatch.setattr(
+            fp, "is_playwright_browser_installed", lambda *_a, **_k: True
+        )
+        pw_mock = AsyncMock(return_value=pw_result)
+        monkeypatch.setattr(fp, "fetch_with_playwright", pw_mock)
+
         result = await _fetch_with_fallback(url, config)
 
-        assert result.strategy_used == "fxtwitter"
-        assert result.content == "**tweet body**"
-        fx_mock.assert_awaited_once_with(url)
-        pw_mock.assert_not_awaited()
+        assert result.strategy_used == "playwright"
+        pw_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_fxtwitter_miss_falls_back_to_playwright_dom_path(
+    async def test_tweet_url_falls_back_to_dom_when_consent_denied(
         self, monkeypatch
     ) -> None:
-        import markitai.fetch_fxtwitter as fx
+        """When consent is 'never', playwright DOM parsing is used directly."""
         import markitai.fetch_playwright as fp
         from markitai.fetch import _fetch_with_fallback
 
         url = "https://x.com/dotey/status/2073286406558949828"
         config = FetchConfig(remote_consent="never")
 
-        # FxTwitter down/rate-limited -> returns None (never raises).
-        monkeypatch.setattr(fx, "fetch_with_fxtwitter", AsyncMock(return_value=None))
-        monkeypatch.setattr(fp, "is_playwright_available", lambda: True)
+        # Static fails so the chain advances to playwright.
         monkeypatch.setattr(
-            fp, "is_playwright_browser_installed", lambda *_a, **_k: True
+            fetch,
+            "fetch_with_static",
+            AsyncMock(side_effect=FetchError("HTTP 403 fetching URL")),
         )
+
         pw_result = MagicMock()
-        pw_result.content = "# Post by @dotey\n\nDOM-extracted tweet body text."
+        pw_result.content = "This is a DOM-extracted tweet body text with enough content to pass the quality validation threshold. The tweet discusses interesting topics."
         pw_result.title = "Post by @dotey"
         pw_result.final_url = url
         pw_result.metadata = {}
         pw_result.screenshot_path = None
         pw_mock = AsyncMock(return_value=pw_result)
         monkeypatch.setattr(fp, "fetch_with_playwright", pw_mock)
+        monkeypatch.setattr(fp, "is_playwright_available", lambda: True)
         monkeypatch.setattr(
-            fetch,
-            "fetch_with_static",
-            AsyncMock(side_effect=FetchError("HTTP 403 fetching URL")),
+            fp, "is_playwright_browser_installed", lambda *_a, **_k: True
         )
 
         result = await _fetch_with_fallback(url, config)

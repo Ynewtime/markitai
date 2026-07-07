@@ -159,16 +159,20 @@ class TestResolvePageAsync:
         """When policy allows async and enricher finds better data, enricher wins."""
         policy = EnrichmentPolicy(allow_network=True, allow_async=True)
 
-        # Mock the oEmbed HTTP call at the system boundary
-        mock_oembed_data = {
-            "author_name": "@ixiaowenz",
-            "title": "Post by @ixiaowenz",
-            "html": "<blockquote>tweet content</blockquote>",
-        }
+        # Build a ResolvedPage that mimics what _try_fxtwitter produces
+        mock_resolved = ResolvedPage(
+            content_html="<article><p>tweet content from fxtwitter</p></article>",
+            metadata_overrides={
+                "title": "Post by @ixiaowenz",
+                "author": "Xiaowen @ixiaowenz",
+                "site": "X (Twitter)",
+            },
+            diagnostics={"source": "fxtwitter", "enricher_name": "x_oembed"},
+        )
 
         with patch(
-            "markitai.webextract.enrichers.x_oembed.XOEmbedEnricher._fetch_oembed",
-            new=AsyncMock(return_value=mock_oembed_data),
+            "markitai.webextract.enrichers.x_oembed.XOEmbedEnricher._try_fxtwitter",
+            new=AsyncMock(return_value=mock_resolved),
         ):
             result = await resolve_page_async(_X_HTML_MINIMAL, _X_URL, policy=policy)
 
@@ -182,13 +186,11 @@ class TestResolvePageAsync:
         """When policy forbids network, enrichers are not invoked."""
         local_only_policy = EnrichmentPolicy(allow_network=False)
 
-        with patch(
-            "markitai.webextract.enrichers.x_oembed.XOEmbedEnricher._fetch_oembed",
-            new=AsyncMock(side_effect=AssertionError("should not be called")),
-        ):
-            result = await resolve_page_async(
-                _X_HTML_MINIMAL, _X_URL, policy=local_only_policy
-            )
+        # Enricher should_run returns False when network is disallowed,
+        # so _try_fxtwitter is never called.
+        result = await resolve_page_async(
+            _X_HTML_MINIMAL, _X_URL, policy=local_only_policy
+        )
 
         # Result is whatever the sync resolver produced (no enricher tag)
         if result is not None:
@@ -199,7 +201,7 @@ class TestResolvePageAsync:
         policy = EnrichmentPolicy(allow_network=True, allow_async=True)
 
         with patch(
-            "markitai.webextract.enrichers.x_oembed.XOEmbedEnricher._fetch_oembed",
+            "markitai.webextract.enrichers.x_oembed.XOEmbedEnricher._try_fxtwitter",
             new=AsyncMock(side_effect=RuntimeError("network error")),
         ):
             # Should NOT raise
@@ -214,7 +216,7 @@ class TestResolvePageAsync:
         policy = EnrichmentPolicy(allow_network=True, allow_async=True)
 
         with patch(
-            "markitai.webextract.enrichers.x_oembed.XOEmbedEnricher._fetch_oembed",
+            "markitai.webextract.enrichers.x_oembed.XOEmbedEnricher._try_fxtwitter",
             new=AsyncMock(return_value=None),
         ):
             result = await resolve_page_async(_X_HTML_MINIMAL, _X_URL, policy=policy)

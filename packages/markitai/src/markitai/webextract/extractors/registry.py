@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from markitai.webextract.extractors.base import BaseSiteExtractor
+from markitai.webextract.extractors.bilibili_opus import BilibiliOpusExtractor
 from markitai.webextract.extractors.github_repo import GitHubRepoExtractor
 from markitai.webextract.extractors.github_thread import GitHubThreadExtractor
 from markitai.webextract.extractors.hackernews_thread import HackerNewsThreadExtractor
@@ -19,6 +20,7 @@ _EXTRACTORS: tuple[BaseSiteExtractor, ...] = (
     XArticleExtractor(),  # x.com/i/articles/ (long-form articles)
     XTweetExtractor(),  # x.com/user/status/ (regular tweets)
     YouTubePageExtractor(),  # youtube.com/watch and youtu.be (video pages)
+    BilibiliOpusExtractor(),  # bilibili.com/opus/<id> (专栏/动态 posts)
 )
 
 

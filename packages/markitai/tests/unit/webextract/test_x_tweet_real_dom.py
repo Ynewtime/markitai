@@ -50,7 +50,7 @@ class TestClassification:
     def test_profile_and_metadata(self, result: ExtractedWebContent) -> None:
         assert result.info is not None
         assert result.info.content_profile == ContentProfile.SOCIAL_POST
-        assert result.metadata.title == "Post by @dotey"
+        assert result.metadata.title == "Post by @dotey on X"
 
     def test_semantic_thread_populated(self, result: ExtractedWebContent) -> None:
         assert result.semantic is not None
@@ -66,10 +66,10 @@ class TestMainTweetBody:
     def test_single_bold_author_line_with_date(
         self, result: ExtractedWebContent
     ) -> None:
-        assert "**宝玉 @dotey** · 2026-07-04" in result.markdown
-        # Author must appear once as a meta line, not as separate
-        # avatar/name/handle paragraphs.
-        assert result.markdown.count("**宝玉 @dotey**") == 2  # main + quote header
+        # Author meta line is NOT rendered for tweets (in frontmatter only)
+        assert "**宝玉 @dotey** · 2026-07-04" not in result.markdown
+        # But quoted tweet still has author meta
+        assert result.markdown.count("**宝玉 @dotey**") == 1  # only in quote
         assert "[宝玉](https://x.com/dotey)" not in result.markdown
         assert "[@dotey](https://x.com/dotey)" not in result.markdown
 
@@ -118,7 +118,7 @@ class TestQuotedTweet:
     ) -> None:
         assert QUOTE_URL in result.markdown
         assert (
-            "https://pbs.twimg.com/media/HLKRt-AXgAAFSGw?format=webp&name=large"
+            "https://pbs.twimg.com/media/HLKRt-AXgAAFSGw.jpg?name=orig"
             in result.markdown
         )
         assert "name=medium" not in result.markdown

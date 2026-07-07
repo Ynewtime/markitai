@@ -25,7 +25,7 @@ _STOP_LABELS = frozenset({"Discover more", "Timeline: Trending now"})
 
 _HANDLE_RE = re.compile(r"(@\w+)")
 
-# Upgrade X image CDN size parameter, e.g. "...&name=small" -> "...&name=large"
+# Upgrade X image CDN size parameter, e.g. "...&name=small" -> "...&name=orig"
 _IMG_NAME_PARAM_RE = re.compile(r"([?&]name=)\w+")
 
 # 2026 X.com DOM: permalink text like "6:02 AM · Jul 4, 2026"
@@ -246,14 +246,28 @@ def _parse_timestamp(article: Tag, *, exclude: Tag | None = None) -> str | None:
 
 
 def _upgrade_image_url(src: str) -> str:
-    """Request the large variant of an X image CDN URL."""
-    return _IMG_NAME_PARAM_RE.sub(r"\g<1>large", src)
+    """Request the original-quality variant of an X image CDN URL.
+
+    Upgrades ``name=medium`` → ``name=orig``, strips ``format=webp``,
+    and ensures a ``.jpg`` extension is present so the CDN returns a
+    loadable Content-Type (matching defuddle's fxtwitter URL format).
+    """
+    # Upgrade name=small|medium|large → name=orig
+    src = _IMG_NAME_PARAM_RE.sub(r"\g<1>orig", src)
+    # Strip format=webp while preserving query-string structure
+    src = re.sub(r"&format=webp", "", src)
+    src = re.sub(r"\?format=webp&", "?", src)
+    src = re.sub(r"\?format=webp$", "", src)
+    # Ensure .jpg extension for correct CDN Content-Type
+    if not re.search(r"\.(jpg|jpeg|png|gif|webp)(\?|$)", src):
+        src = re.sub(r"(\?(.+))", r".jpg\1", src) if "?" in src else src + ".jpg"
+    return src
 
 
 def _parse_media(article: Tag, *, exclude: Tag | None = None) -> list[MediaAttachment]:
     """Extract media attachments from a tweet.
 
-    Collects tweet photos (upgraded to the ``name=large`` CDN variant) and
+    Collects tweet photos (upgraded to the ``name=orig`` CDN variant) and
     videos (as poster + video URL). Profile avatars, emoji images, card
     thumbnails, and media belonging to an excluded element (e.g. a quoted
     tweet) are skipped.
@@ -438,10 +452,16 @@ def _parse_author_new(
 ) -> tuple[str | None, str | None]:
     """Extract display name and @handle from a 2026-DOM author block.
 
-    The author header is a ``<div data-slot="hover-card-trigger">`` holding
-    the display-name link and the ``@handle`` link. (The avatar is a separate
-    ``<a data-slot="hover-card-trigger">`` and is skipped by requiring a
-    ``div``.)
+    The 2026 DOM has two variants:
+
+    1. Slot-based (older 2026): ``<div data-slot="hover-card-trigger">``
+       containing ``<a>`` links for name and handle.
+
+    2. Link-only (current): plain ``<a href="https://x.com/user">`` links
+       scattered in the article — the display name (no @) and the @handle.
+       Both point to the same user profile URL (no ``/status/`` in href).
+
+    Strategy: first try slot-based, then fall back to link-based.
 
     Args:
         scope: Tweet article or quoted-tweet container.
@@ -450,6 +470,7 @@ def _parse_author_new(
     Returns:
         Tuple of (display_name, handle). Either may be None.
     """
+    # Strategy 1: slot-based (data-slot="hover-card-trigger")
     for block in scope.find_all("div", attrs={"data-slot": "hover-card-trigger"}):
         if not isinstance(block, Tag) or _new_excluded(block, exclude):
             continue
@@ -466,17 +487,41 @@ def _parse_author_new(
                 display_name = text
         if display_name or handle:
             return display_name, handle
-    return None, None
+
+    # Strategy 2: link-based — find profile links (no /status/ in href)
+    display_name: str | None = None
+    handle: str | None = None
+    for link in scope.find_all("a", href=True):
+        if isinstance(link, Tag) and _new_excluded(link, exclude):
+            continue
+        href = str(link.get("href", ""))
+        # Profile links point to user page, not status page
+        if "/status/" in href:
+            continue
+        text = link.get_text(strip=True)
+        if not text:
+            continue
+        if text.startswith("@"):
+            if handle is None:
+                handle = text
+        else:
+            if display_name is None:
+                display_name = text
+    return display_name, handle
 
 
 def _parse_text_new(scope: Tag, *, exclude: Tag | None = None) -> str:
     """Extract tweet text from a 2026-DOM tweet.
 
-    The tweet body is the first ``<div dir="auto">`` in the scope. Line
-    breaks are literal ``\\n`` characters inside text nodes (the element is
-    styled ``whitespace-pre-wrap``). Truncated external links (anchor text
-    ending in ``…``) are expanded to their full ``href``; "Show more"
-    affordances are dropped.
+    The tweet body is the first ``<div dir="auto">`` in the scope.  For
+    X *Articles* (long-form posts), the first div is empty (the repurposed
+    tweet-text slot) and the real article body lives in the *last*
+    ``<div dir="auto">``.  We detect this case and fall back accordingly.
+
+    Line breaks are literal ``\\n`` characters inside text nodes (the
+    element is styled ``whitespace-pre-wrap``).  Truncated external links
+    (anchor text ending in ``\u2026``) are expanded to their full ``href``;
+    "Show more" affordances are dropped.
 
     Args:
         scope: Tweet article or quoted-tweet container.
@@ -485,14 +530,20 @@ def _parse_text_new(scope: Tag, *, exclude: Tag | None = None) -> str:
     Returns:
         Plain text content with ``\\n`` paragraph breaks.
     """
-    text_el: Tag | None = None
+    text_els: list[Tag] = []
     for div in scope.find_all("div", dir="auto"):
         if not isinstance(div, Tag) or _new_excluded(div, exclude):
             continue
-        text_el = div
-        break
-    if text_el is None:
+        text_els.append(div)
+
+    if not text_els:
         return ""
+
+    # Article detection: first div empty AND 3+ divs → use the last one
+    if len(text_els) >= 3 and not text_els[0].get_text(strip=True):
+        text_el = text_els[-1]
+    else:
+        text_el = text_els[0]
 
     clone = copy.copy(text_el)
     for el in clone.find_all(["a", "button", "span"]):
@@ -676,3 +727,29 @@ def extract_tweet_id_from_url(url: str) -> str:
     """
     match = re.search(r"/status/(\d+)", url)
     return match.group(1) if match else ""
+
+
+def _extract_article_title(article: Tag) -> str | None:
+    """Extract the article title from a 2026-DOM tweet article.
+
+    For X Articles, the second ``<div dir="auto">`` holds the article title
+    (the first is always empty — it's the repurposed tweet-text slot).
+    Returns ``None`` when the article doesn't match this pattern.
+
+    Args:
+        article: The tweet article tag.
+
+    Returns:
+        Article title string, or ``None`` if not an article.
+    """
+    divs = [
+        d
+        for d in article.find_all("div", dir="auto")
+        if isinstance(d, Tag)
+    ]
+    # Article pattern: first div empty, second div has the title
+    if len(divs) >= 3 and not divs[0].get_text(strip=True):
+        title = divs[1].get_text(strip=True)
+        if title:
+            return title
+    return None

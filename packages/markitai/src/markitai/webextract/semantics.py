@@ -105,3 +105,5 @@ class ConversationThread:
     main_item: ConversationItem
     items: list[ConversationItem] = field(default_factory=list)
     continuation_items: list[ConversationItem] = field(default_factory=list)
+    show_title_in_body: bool = True
+    show_author_meta: bool = True

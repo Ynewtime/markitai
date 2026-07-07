@@ -995,6 +995,52 @@ class TestIsInvalidContent:
         assert is_invalid is False
         assert reason == ""
 
+    def test_geetest_captcha_pattern(self) -> None:
+        """Geetest (极验) anti-bot challenge page should be detected.
+
+        Confirmed against a real bilibili.com challenge page returned
+        during rate-limit-triggered testing (2026-07-07)."""
+        from markitai.fetch import _is_invalid_content
+
+        content = """智能验证检测中
+
+        通过验证
+
+        由极验提供技术支持
+
+        请在下图依次点击：
+        """
+        is_invalid, reason = _is_invalid_content(content)
+        assert is_invalid is True
+        assert reason == "captcha_geetest"
+
+    def test_cloudflare_challenge_pattern(self) -> None:
+        """Cloudflare's browser-check challenge page should be detected."""
+        from markitai.fetch import _is_invalid_content
+
+        content = "Checking your browser before accessing example.com. This process is automatic."
+        is_invalid, reason = _is_invalid_content(content)
+        assert is_invalid is True
+        assert reason == "captcha_cloudflare"
+
+    def test_recaptcha_marker_pattern(self) -> None:
+        """A page embedding Google reCAPTCHA should be detected."""
+        from markitai.fetch import _is_invalid_content
+
+        content = "Please verify you are human. g-recaptcha challenge below."
+        is_invalid, reason = _is_invalid_content(content)
+        assert is_invalid is True
+        assert reason == "captcha_recaptcha"
+
+    def test_hcaptcha_marker_pattern(self) -> None:
+        """A page embedding hCaptcha should be detected."""
+        from markitai.fetch import _is_invalid_content
+
+        content = "Complete the h-captcha challenge to continue."
+        is_invalid, reason = _is_invalid_content(content)
+        assert is_invalid is True
+        assert reason == "captcha_hcaptcha"
+
     def test_content_with_only_links_and_images(self) -> None:
         """Content with only links and images should be too short."""
         from markitai.fetch import _is_invalid_content
@@ -2160,6 +2206,101 @@ class TestFetchWithFallback:
             mock_static.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_fetch_with_fallback_skips_captcha_and_tries_next_strategy(
+        self,
+    ) -> None:
+        """A CAPTCHA/anti-bot challenge page from one strategy must not be
+        accepted as a successful fetch — the chain should reject it (same
+        as any other _is_invalid_content reason) and continue to the next
+        strategy."""
+        import markitai.fetch_playwright as fp
+        from markitai.fetch import FetchResult, _fetch_with_fallback
+
+        mock_config = type(
+            "MockConfig",
+            (),
+            {
+                "strategy": "auto",
+                "fallback_patterns": [],
+                "policy": type(
+                    "Policy",
+                    (),
+                    {
+                        "enabled": True,
+                        "max_strategy_hops": 4,
+                        "strategy_priority": None,
+                        "local_only_patterns": [],
+                        "inherit_no_proxy": False,
+                    },
+                )(),
+                "domain_profiles": {},
+                "jina": type(
+                    "JinaConfig",
+                    (),
+                    {"get_resolved_api_key": lambda *_, **__: None, "timeout": 30},
+                )(),
+                "playwright": type(
+                    "PlaywrightConfig",
+                    (),
+                    {
+                        "timeout": 30000,
+                        "wait_for": "load",
+                        "extra_wait_ms": 0,
+                        "wait_for_selector": None,
+                        "cookies": None,
+                        "reject_resource_patterns": None,
+                        "extra_http_headers": None,
+                        "user_agent": None,
+                        "http_credentials": None,
+                        "session_mode": "isolated",
+                        "session_ttl_seconds": 600,
+                    },
+                )(),
+                "auto_proxy": False,
+                "remote_consent": "always",
+            },
+        )()
+
+        captcha_result = FetchResult(
+            content="智能验证检测中\n\n由极验提供技术支持\n\n请在下图依次点击：",
+            strategy_used="static",
+            url="https://example.com",
+        )
+
+        pw_result = MagicMock()
+        pw_result.content = (
+            "# Real Article\n\nThis is a perfectly normal article with "
+            "plenty of real content to read and enjoy on this page."
+        )
+        pw_result.title = "Real Article"
+        pw_result.final_url = "https://example.com"
+        pw_result.metadata = {}
+        pw_result.screenshot_path = None
+
+        with (
+            patch(
+                "markitai.fetch.fetch_with_static",
+                new_callable=AsyncMock,
+                return_value=captcha_result,
+            ),
+            patch.object(fp, "is_playwright_available", lambda: True),
+            patch.object(
+                fp, "is_playwright_browser_installed", lambda *_a, **_k: True
+            ),
+            patch.object(
+                fp, "fetch_with_playwright", AsyncMock(return_value=pw_result)
+            ),
+        ):
+            result = await _fetch_with_fallback(
+                "https://example.com",
+                mock_config,  # type: ignore[reportArgumentType]
+                start_with_browser=False,
+            )
+
+        assert result.strategy_used == "playwright"
+        assert "Real Article" in result.content
+
+    @pytest.mark.asyncio
     async def test_fetch_with_fallback_all_fail(self) -> None:
         """Test fallback raises error when all strategies fail."""
         from markitai.fetch import FetchError, _fetch_with_fallback
@@ -2241,6 +2382,7 @@ class TestFetchWithFallback:
             (),
             {
                 "strategy": "auto",
+                "remote_consent": "always",
                 "fallback_patterns": [],
                 "policy": type(
                     "Policy",
@@ -3366,6 +3508,7 @@ class TestFetchWithFallbackJsDetection:
             (),
             {
                 "strategy": "auto",
+                "remote_consent": "always",
                 "fallback_patterns": [],
                 "policy": type(
                     "Policy",

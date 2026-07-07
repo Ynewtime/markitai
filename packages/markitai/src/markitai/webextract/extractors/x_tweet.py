@@ -5,6 +5,7 @@ from __future__ import annotations
 from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.extractors.x_common import (
+    _extract_article_title,
     extract_tweet_id_from_url,
     find_primary_tweet,
     parse_tweet_article,
@@ -104,10 +105,20 @@ class XTweetExtractor:
 
         main_item = parse_tweet_article(main_article, tweet_id=tweet_id)
 
+        # For X Articles, extract the real title from the DOM and mark as article
+        article_title = _extract_article_title(main_article)
+        is_article = article_title is not None
+
         # Build title from handle or name
         handle = main_item.author_handle or ""
         display_name = main_item.author_name or ""
-        title = f"Post by {handle}" if handle else f"Post by {display_name}"
+        if article_title:
+            title = article_title
+        else:
+            title = (
+                f"Post by {handle} on X" if handle
+                else f"Post by {display_name} on X"
+            )
 
         # Collect replies governed by thread policy. Mirrors defuddle's
         # classification: consecutive self-replies by the main author at the
@@ -144,6 +155,8 @@ class XTweetExtractor:
             main_item=main_item,
             items=reply_items,
             continuation_items=continuation_items,
+            show_title_in_body=False,
+            show_author_meta=False,
         )
 
         semantic = SemanticExtraction(thread=thread)
@@ -153,17 +166,31 @@ class XTweetExtractor:
         description = main_item.text[:200] if main_item.text else ""
         metadata_overrides: dict[str, object] = {
             "title": title,
-            "author": display_name or handle,
+            "author": handle or display_name,
             "site": "X (Twitter)",
         }
         if description:
             metadata_overrides["description"] = description
+        # Extract published date and domain from the timestamp and URL
+        if main_item.timestamp:
+            try:
+                from datetime import datetime as dt
+                parsed = dt.fromisoformat(
+                    main_item.timestamp.replace("Z", "+00:00")
+                )
+                metadata_overrides["published"] = parsed.date().isoformat()
+            except (ValueError, TypeError):
+                pass
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc.lower()
+        if domain:
+            metadata_overrides["domain"] = domain
 
         return ResolvedPage(
             content_html=content_html,
             metadata_overrides=metadata_overrides,
             semantic=semantic,
-            diagnostics={"x_resolve": "success", "tweet_id": tweet_id},
+            diagnostics={"x_resolve": "success", "tweet_id": tweet_id, "is_article": is_article},
         )
 
 
