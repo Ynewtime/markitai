@@ -1,6 +1,9 @@
 {
   "metadata": {
-    "title": "Post by @ixiaowenz"
+    "title": "Post by @ixiaowenz on X",
+    "author": "@ixiaowenz",
+    "published": "2025-03-15",
+    "domain": "x.com"
   },
   "info": {
     "content_profile": "social_post"
@@ -23,7 +26,6 @@
     "Trends for you"
   ],
   "markdown_must_contain": [
-    "ixiaowenz",
     "AI agents"
   ]
 }

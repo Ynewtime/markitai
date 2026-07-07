@@ -226,6 +226,227 @@ class TestPlaywrightFetchResult:
         assert result.metadata == {"key": "value"}
 
 
+class TestIsXArticleUrl:
+    """Tests for _is_x_article_url."""
+
+    def test_matches_x_com_article_url(self):
+        from markitai.fetch_playwright import _is_x_article_url
+
+        assert _is_x_article_url("https://x.com/user/article/123") is True
+
+    def test_matches_twitter_com_article_url(self):
+        from markitai.fetch_playwright import _is_x_article_url
+
+        assert _is_x_article_url("https://twitter.com/user/article/123") is True
+
+    def test_does_not_match_status_url(self):
+        from markitai.fetch_playwright import _is_x_article_url
+
+        assert _is_x_article_url("https://x.com/user/status/123") is False
+
+    def test_does_not_match_non_x_url(self):
+        from markitai.fetch_playwright import _is_x_article_url
+
+        assert _is_x_article_url("https://example.com/article/123") is False
+
+
+class TestArticleUrlSkipsBrowser:
+    """PlaywrightRenderer.fetch() short-circuits X Article URLs straight to
+    the enricher, never launching a browser — X Articles are login-walled
+    for anonymous visitors, so the browser render is guaranteed wasted work
+    (see defuddle's canExtractAsync()+prefersAsync() early exit for the
+    same URL shape)."""
+
+    @pytest.mark.asyncio
+    async def test_skips_browser_and_uses_enricher_directly(self):
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        renderer = PlaywrightRenderer()
+        with (
+            patch.object(
+                PlaywrightRenderer, "_ensure_browser", new_callable=AsyncMock
+            ) as mock_ensure_browser,
+            patch.object(
+                PlaywrightRenderer,
+                "_try_enricher_fallback_async",
+                new_callable=AsyncMock,
+                return_value=("Enriched article body", {"title": "My Article"}, "fxtwitter_article"),
+            ) as mock_enrich,
+        ):
+            result = await renderer.fetch(
+                "https://x.com/user/article/123", extra_wait_ms=0
+            )
+
+        mock_ensure_browser.assert_not_awaited()
+        mock_enrich.assert_awaited_once_with(
+            "https://x.com/user/article/123", "ask"
+        )
+        assert result.content == "Enriched article body"
+        assert result.title == "My Article"
+        assert result.final_url == "https://x.com/user/article/123"
+        assert result.metadata["_enricher_source"] == "fxtwitter_article"
+
+    @pytest.mark.asyncio
+    async def test_populates_source_frontmatter_for_downstream_yaml(self):
+        """The CLI's output frontmatter reads metadata["source_frontmatter"]
+        specifically (cli/processors/url.py), not flat metadata keys — the
+        shortcut must populate it with the enricher's overrides plus a real
+        word_count/content_profile computed from the enriched content
+        itself. Regression: without this, the shortcut silently dropped
+        site/word_count/content_profile entirely (the slow path used to
+        populate them, but from the discarded login-wall page's own
+        near-empty text, which was wrong anyway — word_count: 2 for a
+        multi-paragraph article)."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        renderer = PlaywrightRenderer()
+        with (
+            patch.object(
+                PlaywrightRenderer, "_ensure_browser", new_callable=AsyncMock
+            ),
+            patch.object(
+                PlaywrightRenderer,
+                "_try_enricher_fallback_async",
+                new_callable=AsyncMock,
+                return_value=(
+                    "one two three four five",
+                    {
+                        "title": "My Article",
+                        "author": "@user",
+                        "site": "X (Twitter)",
+                        "published": "2026-01-01",
+                    },
+                    "fxtwitter_article",
+                ),
+            ),
+        ):
+            result = await renderer.fetch(
+                "https://x.com/user/article/123", extra_wait_ms=0
+            )
+
+        fm = result.metadata["source_frontmatter"]
+        assert fm["title"] == "My Article"
+        assert fm["author"] == "@user"
+        assert fm["site"] == "X (Twitter)"
+        assert fm["published"] == "2026-01-01"
+        assert fm["word_count"] == 5
+        assert fm["content_profile"] == "social_post"
+
+    @pytest.mark.asyncio
+    async def test_word_count_is_cjk_aware(self):
+        """Regression: a naive `content.split()` word count treats an
+        entire whitespace-free CJK sentence as a single "word" (Chinese
+        text has no spaces between words), undercounting by 10-100x for
+        Chinese articles. Must use the same CJK-aware counter as the
+        native webextract pipeline (webextract/utils.count_words)."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        renderer = PlaywrightRenderer()
+        with (
+            patch.object(
+                PlaywrightRenderer, "_ensure_browser", new_callable=AsyncMock
+            ),
+            patch.object(
+                PlaywrightRenderer,
+                "_try_enricher_fallback_async",
+                new_callable=AsyncMock,
+                return_value=("这是一篇十个字的中文文章", {}, "fxtwitter_article"),
+            ),
+        ):
+            result = await renderer.fetch(
+                "https://x.com/user/article/123", extra_wait_ms=0
+            )
+
+        assert result.metadata["source_frontmatter"]["word_count"] == 12
+
+    @pytest.mark.asyncio
+    async def test_screenshot_enabled_uses_normal_browser_flow(self):
+        """A screenshot can only come from a real page render, so the
+        shortcut must not apply when one is requested."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        mock_page = AsyncMock()
+        mock_page.title = AsyncMock(return_value="Login wall")
+        mock_page.url = "https://x.com/user/article/123"
+        mock_page.content = AsyncMock(
+            return_value="<html><body>Continue with Google</body></html>"
+        )
+        mock_page.goto = AsyncMock()
+        mock_page.evaluate = AsyncMock()
+        mock_page.inner_text = AsyncMock(return_value="")
+
+        mock_context = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+
+        renderer = PlaywrightRenderer()
+        with patch.object(
+            PlaywrightRenderer,
+            "_ensure_browser",
+            new_callable=AsyncMock,
+            return_value=mock_browser,
+        ) as mock_ensure_browser:
+            screenshot_config = MagicMock(enabled=True)
+            await renderer.fetch(
+                "https://x.com/user/article/123",
+                extra_wait_ms=0,
+                screenshot_config=screenshot_config,
+            )
+
+        mock_ensure_browser.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_browser_when_enricher_returns_nothing(self):
+        """If the enricher is blocked (e.g. remote_consent='never') or
+        fails, the normal browser-render path still runs so the user gets
+        *something* rather than a hard failure."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        mock_page = AsyncMock()
+        mock_page.title = AsyncMock(return_value="Login wall")
+        mock_page.url = "https://x.com/user/article/123"
+        mock_page.content = AsyncMock(
+            return_value="<html><body>Continue with Google</body></html>"
+        )
+        mock_page.goto = AsyncMock()
+        mock_page.evaluate = AsyncMock()
+        mock_page.inner_text = AsyncMock(return_value="")
+
+        mock_context = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+
+        renderer = PlaywrightRenderer()
+        with (
+            patch.object(
+                PlaywrightRenderer,
+                "_ensure_browser",
+                new_callable=AsyncMock,
+                return_value=mock_browser,
+            ) as mock_ensure_browser,
+            patch.object(
+                PlaywrightRenderer,
+                "_try_enricher_fallback_async",
+                new_callable=AsyncMock,
+                return_value=("", None, ""),
+            ),
+        ):
+            result = await renderer.fetch(
+                "https://x.com/user/article/123",
+                extra_wait_ms=0,
+                remote_consent="never",
+            )
+
+        mock_ensure_browser.assert_awaited_once()
+        assert result.content
+
+
 class TestFetchWithPlaywright:
     """Tests for fetch_with_playwright function."""
 
@@ -398,6 +619,68 @@ class TestFetchWithPlaywright:
         assert result.content == "# Fallback\n\nBody"
         assert result.title == "Fallback Title"
         assert "source_frontmatter" not in result.metadata
+
+    @pytest.mark.asyncio
+    async def test_login_wall_triggers_enricher_for_article_url(self) -> None:
+        """X Article login walls (anonymous visitors see a sign-up wall
+        instead of content) must trigger the FxTwitter enricher fallback
+        instead of leaving the raw login-wall markdown in place."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        renderer = PlaywrightRenderer()
+        mock_context = AsyncMock()
+        mock_page = AsyncMock()
+
+        login_wall_html = (
+            "<html><body><article>"
+            "<p>Continue with Google</p><p>Continue with Apple</p>"
+            "</article></body></html>"
+        )
+        mock_page.title = AsyncMock(return_value="Fallback Title")
+        mock_page.url = "https://x.com/user/article/123"
+        mock_page.content = AsyncMock(return_value=login_wall_html)
+        mock_page.goto = AsyncMock()
+        mock_page.evaluate = AsyncMock()
+        # Shorter than the enriched result, so the separate inner_text
+        # "incomplete content" fallback (unrelated to this fix) never wins.
+        mock_page.inner_text = AsyncMock(return_value="Continue with Google")
+
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        renderer._browser = mock_browser
+        renderer._playwright = AsyncMock()
+
+        enriched_content = "Enriched article body from the FxTwitter API. " * 5
+
+        with (
+            patch(
+                "markitai.fetch_playwright.extract_web_content", create=True
+            ) as mock_extract,
+            patch.object(
+                PlaywrightRenderer,
+                "_try_enricher_fallback_async",
+                new_callable=AsyncMock,
+                return_value=(enriched_content, None, "fxtwitter_article"),
+            ) as mock_enrich,
+        ):
+            mock_extract.return_value = MagicMock(
+                markdown="Continue with Google",
+                quality=MagicMock(accepted=True),
+                info=None,
+                metadata=None,
+                diagnostics={},
+            )
+
+            result = await renderer.fetch(
+                "https://x.com/user/article/123",
+                extra_wait_ms=0,
+            )
+
+        mock_enrich.assert_awaited_once()
+        assert result.content == enriched_content
 
 
 class TestPlaywrightRenderer:
@@ -816,6 +1099,129 @@ class TestPlaywrightRenderer:
             await renderer.fetch("https://example.com", extra_wait_ms=0)
 
         mock_context.close.assert_called_once()
+
+
+class TestTryEnricherFallbackAsync:
+    """Tests for PlaywrightRenderer._try_enricher_fallback_async."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_x_url_even_with_status_path(self):
+        """A non-X/Twitter URL must never reach the enricher, even if its
+        path happens to contain "/status/" (regression: the domain check
+        once read `"x.com/" in url or "twitter.com/"`, missing `in url`,
+        which made it always true).
+        """
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+
+        renderer = PlaywrightRenderer()
+        with patch.object(
+            XOEmbedEnricher, "enrich", new_callable=AsyncMock
+        ) as mock_enrich:
+            result = await renderer._try_enricher_fallback_async(
+                "https://example.com/status/123", "always"
+            )
+
+        assert result == ("", None, "")
+        mock_enrich.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rejects_when_consent_denied(self):
+        """remote_consent='never' skips the enricher entirely."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+
+        renderer = PlaywrightRenderer()
+        with patch.object(
+            XOEmbedEnricher, "enrich", new_callable=AsyncMock
+        ) as mock_enrich:
+            result = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", "never"
+            )
+
+        assert result == ("", None, "")
+        mock_enrich.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_ask_consent_proceeds_without_prompting(self):
+        """remote_consent='ask' must NOT prompt or block here, unlike
+        defuddle/jina/cloudflare. should_run() already restricts this
+        enricher to URLs that matched a public x.com/twitter.com
+        status/article pattern — there is no arbitrary/private URL being
+        handed to a third party to gate on, so "ask" behaves like "always".
+        Regression: an earlier fix routed this through the shared
+        resolve_remote_consent(), which (a) auto-denied non-interactively
+        and (b) prompted interactively with a defuddle/Jina-specific
+        message even when invoked via `-s playwright`, which never primes
+        that shared consent cache.
+        """
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+        from markitai.webextract.resolver import ResolvedPage
+
+        resolved = ResolvedPage(content_html="<p>hi</p>")
+        renderer = PlaywrightRenderer()
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("click.confirm") as mock_confirm,
+            patch.object(
+                XOEmbedEnricher,
+                "enrich",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_enrich,
+        ):
+            mock_stdin.isatty.return_value = False
+            result = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", "ask"
+            )
+
+        assert result[0] == "hi"
+        mock_confirm.assert_not_called()
+        mock_enrich.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_env_no_remote_fetch_blocks_enricher(self, monkeypatch):
+        """MARKITAI_NO_REMOTE_FETCH is a hard, explicit opt-out and must
+        still be honored even though "ask"/"always" no longer prompt."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+
+        monkeypatch.setenv("MARKITAI_NO_REMOTE_FETCH", "1")
+        renderer = PlaywrightRenderer()
+        with patch.object(
+            XOEmbedEnricher, "enrich", new_callable=AsyncMock
+        ) as mock_enrich:
+            result = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", "always"
+            )
+
+        assert result == ("", None, "")
+        mock_enrich.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_returns_rendered_markdown_for_x_status_url(self):
+        """A supported X status URL with consent renders the enricher's HTML."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+        from markitai.webextract.resolver import ResolvedPage
+
+        resolved = ResolvedPage(
+            content_html="<article><p>Hello from enricher</p></article>",
+            metadata_overrides={"title": "Post by @user"},
+            diagnostics={"source": "fxtwitter"},
+        )
+        renderer = PlaywrightRenderer()
+        with patch.object(
+            XOEmbedEnricher, "enrich", new_callable=AsyncMock, return_value=resolved
+        ):
+            markdown, overrides, source = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", "always"
+            )
+
+        assert "Hello from enricher" in markdown
+        assert overrides == {"title": "Post by @user"}
+        assert source == "fxtwitter"
 
 
 class TestFetchWithPlaywrightFunction:

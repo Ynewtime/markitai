@@ -66,16 +66,18 @@ def extract_web_content(html: str, url: str) -> ExtractedWebContent:
     if resolved is not None and (resolved.content_html or resolved.content_root):
         return _build_from_resolved(html, url, resolved)
 
+    resolver_diagnostics: dict[str, object] | None = None
     if resolved is not None:
-        diag = resolved.diagnostics
+        resolver_diagnostics = resolved.diagnostics
         logger.debug(
             "[Webextract] Resolver matched but returned no content for {}: {}",
             url,
-            diag,
+            resolver_diagnostics,
         )
 
-    # Generic pipeline path
-    return _extract_generic(html, url)
+    # Generic pipeline path — carry resolver diagnostics so callers
+    # can detect that a site-specific extractor failed.
+    return _extract_generic(html, url, resolver_diagnostics=resolver_diagnostics)
 
 
 def _build_from_resolved(
@@ -194,12 +196,20 @@ class _ExtractionContext:
         return soup, root
 
 
-def _extract_generic(html: str, url: str) -> ExtractedWebContent:
+def _extract_generic(
+    html: str,
+    url: str,
+    *,
+    resolver_diagnostics: dict[str, object] | None = None,
+) -> ExtractedWebContent:
     """Run the generic extraction pipeline (no resolver match).
 
     Args:
         html: Raw HTML content.
         url: Source URL.
+        resolver_diagnostics: If a site-specific resolver matched but
+            returned no content, its diagnostics are passed through so
+            callers can detect the failure.
 
     Returns:
         Extracted web content with cleaned HTML and derived Markdown.
@@ -251,6 +261,12 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
 
     quality = assess_native_markdown(markdown, profile=content_profile.value)
 
+    final_diagnostics = {**diagnostics, "metadata": asdict(ctx.metadata)}
+    # Carry resolver failure signal so callers can detect it without
+    # guessing from content patterns
+    if resolver_diagnostics:
+        final_diagnostics["resolver_diagnostics"] = resolver_diagnostics
+
     return ExtractedWebContent(
         clean_html=clean_html,
         markdown=markdown,
@@ -259,7 +275,7 @@ def _extract_generic(html: str, url: str) -> ExtractedWebContent:
         info=info,
         quality=quality,
         semantic=None,
-        diagnostics={**diagnostics, "metadata": asdict(ctx.metadata)},
+        diagnostics=final_diagnostics,
     )
 
 

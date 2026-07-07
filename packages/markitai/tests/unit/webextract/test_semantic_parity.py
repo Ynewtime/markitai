@@ -46,7 +46,7 @@ def test_x_status_semantics_match_expected_fixture() -> None:
     html = _load_fixture("x_status_2030105637204676808.playwright.html")
     result = extract_web_content(html, X_URL)
 
-    assert result.metadata.title == "Post by @ixiaowenz"
+    assert result.metadata.title == "Post by @ixiaowenz on X"
 
     assert result.info is not None
     assert result.info.content_profile == ContentProfile.SOCIAL_POST

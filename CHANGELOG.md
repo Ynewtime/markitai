@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-07-07
+
+### Added
+
+- **Bilibili opus extractor**: site-specific extractor for `bilibili.com/opus/<id>` (专栏/动态) posts, scoped to the `.bili-opus-view` card and keeping only the title/author/content modules — generic extraction previously pulled the login prompt, stat/share sidebar, and an internal content-ID tag in as if they were article text
+- **Anti-bot/CAPTCHA challenge detection**: `_is_invalid_content()` recognizes Geetest, Cloudflare, reCAPTCHA, and hCaptcha challenge pages; an explicitly-chosen fetch strategy (e.g. `-s playwright`) now raises a clear error instead of silently returning the challenge page as if it were real content (the `auto` chain already fell back per-strategy on this)
+
+### Changed
+
+- **X/Twitter extraction is DOM-first again**: tweets and articles render through Playwright's DOM extractor first (rebuilt for X's 2026 redesign in 0.15.0, so it's the higher-fidelity path) and only fall back to the FxTwitter→oEmbed enricher when native extraction comes up short — replacing the previous design that always tried the FxTwitter API before launching a browser. `fetch_fxtwitter.py` is retired; its logic lives in `webextract/enrichers/x_oembed.py`'s `XOEmbedEnricher`, reached from one shared fallback path instead of two separately-maintained intercepts
+
+### Fixed
+
+- **X Article URL matching**: `XArticleExtractor` only matched the legacy `x.com/i/articles/<id>` system path; the common `x.com/<user>/article/<id>` form (singular — confirmed against defuddle's reference extractor) fell through to generic extraction and returned the login-wall page instead of content
+- **X Article fetch performance**: article pages are 100% login-walled for anonymous visitors, but fetching one still paid for a full browser launch, a fixed post-load wait, and auto-scroll before falling back to the enricher; article URLs now skip straight to the enricher when no screenshot is requested — `-s playwright` on an article drops from 5-10s+ to ~1.7-1.9s
+- **X Article frontmatter**: `word_count`/`content_profile` were computed from the discarded login-wall page (`word_count: 2`) rather than the enriched article content
+
 ## [0.15.0] - 2026-07-04
 
 Maintenance overhaul: full dependency refresh, Python 3.14 support, and a

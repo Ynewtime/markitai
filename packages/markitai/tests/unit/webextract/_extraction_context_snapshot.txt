@@ -1,7 +1,3 @@
-word_count=32
+word_count=23
 ---
-# Post by @ixiaowenz
-
-**小文 @ixiaowenz** · 2025-03-15
-
 This is a great insight about AI agents. The way they handle tool calls is fundamentally different from how we think about programming.

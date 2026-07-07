@@ -77,7 +77,10 @@ class TestStageFromLogRecord:
                 "Fetching (static)",
             ),
             ("JS required: string pattern matched 'x'", "Rendering (playwright)"),
-            ("[Fetch] FxTwitter succeeded for https://x.com/a", "Fetching (fxtwitter)"),
+            (
+                "[Fetch] Enriching via FxTwitter/oEmbed: https://x.com/a",
+                "Fetching (fxtwitter)",
+            ),
             ("[Defuddle] Fetching: https://example.com", "Fetching (defuddle)"),
             (
                 "Fetching URL with Jina Reader (JSON mode): https://example.com",

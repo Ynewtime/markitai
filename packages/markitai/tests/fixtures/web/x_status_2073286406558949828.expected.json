@@ -1,6 +1,9 @@
 {
   "metadata": {
-    "title": "Post by @dotey"
+    "title": "Post by @dotey on X",
+    "author": "@dotey",
+    "published": "2026-07-04",
+    "domain": "x.com"
   },
   "info": {
     "content_profile": "social_post"
@@ -40,7 +43,6 @@
     "Show more"
   ],
   "markdown_must_contain": [
-    "**宝玉 @dotey** · 2026-07-04",
     "https://github.com/jimliu/baoyu-design",
     "![](https://pbs.twimg.com/amplify_video_thumb/2073283886402981888/img/iLBiXgibPtjFs1tt.jpg)",
     "> **宝玉 @dotey** · Jun 19"

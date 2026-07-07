@@ -322,6 +322,21 @@ def _build_dom_cleanup_script(url: str | None = None) -> str:
     """
 
 
+def _is_x_article_url(url: str) -> bool:
+    """True for x.com/twitter.com ``/article/`` URLs (singular — confirmed
+    against defuddle's reference implementation, see
+    webextract/enrichers/x_oembed.py).
+
+    X Articles are login-walled for anonymous visitors, so DOM extraction
+    is guaranteed to produce nothing useful (see ``is_login_wall`` below).
+    Callers use this to skip launching a browser entirely and go straight
+    to the FxTwitter/oEmbed enricher — mirroring defuddle's
+    ``canExtractAsync() && prefersAsync()`` early exit for these URLs.
+    """
+    is_x = "x.com/" in url or "twitter.com/" in url
+    return is_x and "/article/" in url
+
+
 @dataclass
 class PlaywrightFetchResult:
     """Result from Playwright fetch."""
@@ -483,8 +498,54 @@ class PlaywrightRenderer:
         # Session persistence
         session_key: str | None = None,
         persist_context: bool = False,
+        # Enrichment control
+        remote_consent: str = "ask",
     ) -> PlaywrightFetchResult:
         """Fetch URL using a persistent browser instance."""
+        # X Articles are login-walled for anonymous visitors — the browser
+        # render (launch + navigate + fixed post-load wait + auto-scroll)
+        # is guaranteed wasted work, so skip it and go straight to the
+        # FxTwitter/oEmbed enricher (mirrors defuddle's
+        # canExtractAsync()+prefersAsync() early exit). Screenshots need an
+        # actual page render, so they keep the normal path.
+        needs_screenshot = bool(
+            screenshot_config and getattr(screenshot_config, "enabled", True)
+        )
+        if _is_x_article_url(url) and not needs_screenshot:
+            enriched_md, overrides, enricher_source = (
+                await self._try_enricher_fallback_async(url, remote_consent)
+            )
+            if enriched_md:
+                # Build source_frontmatter directly from the enriched
+                # content — cli/processors/url.py reads this specific key
+                # for the output YAML frontmatter. Computing word_count
+                # here (rather than skipping it) also avoids the stale
+                # values the slow path used to produce: it ran native
+                # webextract against the discarded login-wall page first,
+                # so word_count/content_profile described that ~2-word
+                # page rather than the actual enriched article.
+                from markitai.webextract.utils import count_words
+
+                source_frontmatter: dict[str, Any] = dict(overrides or {})
+                source_frontmatter["word_count"] = count_words(enriched_md)
+                # x_article gets the same profile as regular tweets in the
+                # native pipeline (see webextract/pipeline.py's
+                # _EXTRACTOR_CONTENT_PROFILES).
+                source_frontmatter.setdefault("content_profile", "social_post")
+                return PlaywrightFetchResult(
+                    content=enriched_md,
+                    title=source_frontmatter.get("title"),
+                    final_url=url,
+                    screenshot_path=None,
+                    metadata={
+                        "_enricher_source": enricher_source,
+                        "source_frontmatter": source_frontmatter,
+                    },
+                )
+            # Enricher blocked (e.g. remote_consent="never") or failed —
+            # fall through to the normal browser-render path below so the
+            # user still gets the (login-wall) page rather than nothing.
+
         # Build context options from advanced config
         ctx_options: dict[str, Any] = {}
         if extra_http_headers:
@@ -616,10 +677,59 @@ class PlaywrightRenderer:
                             getattr(extracted, "diagnostics", {}) or {}
                         )
 
-            # Fallback: use _html_to_markdown only if webextract didn't produce
-            # acceptable content
+            # Fallback chain:
+            # 1. For X/Twitter URLs with very short native content (<50 words),
+            #    try the oEmbed enricher (handles Articles via FxTwitter API)
+            # 2. Use _html_to_markdown as last resort
             if not markdown_content:
-                markdown_content = _html_to_markdown(html_content)
+                enriched_md, overrides, enricher_source = await self._try_enricher_fallback_async(
+                    url, remote_consent
+                )
+                if enriched_md:
+                    markdown_content = enriched_md
+                    metadata["_enricher_source"] = enricher_source
+                    if overrides:
+                        metadata.update(overrides)
+                        new_title = overrides.get("title")
+                        if new_title:
+                            title = str(new_title)
+                if not markdown_content:
+                    markdown_content = _html_to_markdown(html_content)
+            elif used_native_webextract:
+                # Structural completeness check (not a word-count guess).
+                # The extractor knows whether it found real content:
+                #   - Resolver explicitly signalled failure
+                #   - Article page only showed a preview (<500 chars)
+                #   - Login wall detected (for /article/ URLs where no
+                #     resolver ran; XArticleExtractor has no resolve())
+                diag = getattr(extracted, "diagnostics", {})
+                resolver_diag = diag.get("resolver_diagnostics", {})
+                x_resolve = resolver_diag.get("x_resolve", "")
+                is_article = resolver_diag.get("is_article", False)
+                is_x_url = ("x.com/" in url or "twitter.com/" in url)
+                # Login wall: only needed for /article/ where no resolver runs
+                is_login_wall = (
+                    "Continue with" in html_content and "/article/" in url
+                )
+
+                needs_enricher = (
+                    x_resolve == "no_primary_tweet_found"
+                    or (is_article and len(markdown_content) < 500)
+                    or is_login_wall
+                )
+                if needs_enricher and is_x_url and "/" in url:
+                    enriched_md, overrides, enricher_source = await self._try_enricher_fallback_async(
+                        url, remote_consent
+                    )
+                    if enriched_md:
+                        markdown_content = enriched_md
+                        used_native_webextract = False  # mark as enricher output
+                        metadata["_enricher_source"] = enricher_source
+                        if overrides:
+                            metadata.update(overrides)
+                            new_title = overrides.get("title")
+                            if new_title:
+                                title = str(new_title)
 
             if not used_native_webextract and _is_content_incomplete(markdown_content):
                 try:
@@ -673,6 +783,55 @@ class PlaywrightRenderer:
                 await self._playwright.stop()
                 self._playwright = None
 
+    async def _try_enricher_fallback_async(
+        self,
+        url: str,
+        remote_consent: str,
+    ) -> tuple[str, dict[str, Any] | None, str]:
+        """Try oEmbed/FxTwitter enrichment, returning (markdown, overrides, source).
+
+        Returns ("", None, "") on failure.  ``source`` is one of
+        ``"fxtwitter"``, ``"oembed"``, or ``""`` (no enrichment).
+
+        Unlike defuddle/jina/cloudflare, this never prompts for consent:
+        ``should_run()`` only lets URLs through that already matched a
+        public x.com/twitter.com status/article pattern, so there is no
+        arbitrary/private URL being handed to a third party to gate on —
+        "ask" behaves like "always" here. Explicit opt-outs
+        (``remote_consent="never"``, ``MARKITAI_NO_REMOTE_FETCH``) are
+        still honored.
+        """
+        from markitai.fetch import _env_no_remote_fetch
+        from markitai.webextract.enrichers.base import EnrichmentPolicy
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+
+        if remote_consent == "never" or _env_no_remote_fetch():
+            return "", None, ""
+
+        enricher = XOEmbedEnricher()
+        policy = EnrichmentPolicy(allow_network=True, allow_async=True)
+        if not enricher.should_run(url, policy):
+            return "", None, ""
+
+        logger.debug("[Fetch] Enriching via FxTwitter/oEmbed: {}", url)
+        try:
+            resolved = await enricher.enrich(url, None)
+        except Exception as exc:
+            logger.warning("[Playwright] enricher failed, falling back to DOM: {}", exc)
+            return "", None, ""
+
+        if resolved is None or not resolved.content_html:
+            return "", None, ""
+
+        from markitai.webextract.markdown import render_markdown
+        from markitai.webextract.pipeline import _create_markitdown
+
+        md_instance = _create_markitdown()
+        enriched_md = render_markdown(
+            resolved.content_html, md_instance=md_instance
+        )
+        source = str(resolved.diagnostics.get("source", ""))
+        return enriched_md, resolved.metadata_overrides or None, source
 
 async def fetch_with_playwright(
     url: str,
@@ -695,6 +854,8 @@ async def fetch_with_playwright(
     # Session persistence
     session_key: str | None = None,
     persist_context: bool = False,
+    # Enrichment control
+    remote_consent: str = "ask",
 ) -> PlaywrightFetchResult:
     """Fetch URL using Playwright (reuses renderer if provided)."""
     # Collect advanced kwargs
@@ -717,6 +878,8 @@ async def fetch_with_playwright(
         advanced_kwargs["session_key"] = session_key
     if persist_context:
         advanced_kwargs["persist_context"] = persist_context
+    # Enrichment control — always pass through
+    advanced_kwargs["remote_consent"] = remote_consent
 
     if renderer:
         return await renderer.fetch(

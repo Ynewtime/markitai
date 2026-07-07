@@ -24,7 +24,7 @@ def build_source_frontmatter(result: ExtractedWebContent) -> dict[str, Any]:
 
     # Page-level metadata
     meta = result.metadata
-    for key in ("title", "author", "site", "published", "description", "canonical_url"):
+    for key in ("title", "author", "site", "published", "description", "canonical_url", "domain"):
         value = getattr(meta, key, None)
         if value is not None:
             fm[key] = value
