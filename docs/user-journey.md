@@ -37,10 +37,10 @@ Markitai 面向以下典型用户：
 
 ```bash
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
+curl -fsSL https://markitai.dev/setup.sh | sh
 
 # Windows (PowerShell)
-powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
+powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 
 或通过包管理器手动安装：
