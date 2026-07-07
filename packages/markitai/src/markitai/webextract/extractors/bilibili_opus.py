@@ -54,7 +54,9 @@ class BilibiliOpusExtractor:
     def resolve(self, soup: BeautifulSoup, url: str) -> ResolvedPage:
         """Resolve a Bilibili opus page into a structured ResolvedPage."""
         view = soup.find(class_="bili-opus-view")
-        content_module = view.find(class_="opus-module-content") if isinstance(view, Tag) else None
+        content_module = (
+            view.find(class_="opus-module-content") if isinstance(view, Tag) else None
+        )
 
         if not isinstance(content_module, Tag):
             return ResolvedPage(

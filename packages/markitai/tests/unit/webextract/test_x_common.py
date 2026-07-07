@@ -52,10 +52,14 @@ class TestQuotedTweet:
     def test_quote_media_not_attributed_to_parent(self) -> None:
         item = parse_tweet_article(_article(_QUOTED_TWEET_HTML), tweet_id="1")
         parent_urls = [m.url for m in item.media]
-        assert parent_urls == ["https://pbs.twimg.com/media/MAIN.jpg?format=jpg&name=orig"]
+        assert parent_urls == [
+            "https://pbs.twimg.com/media/MAIN.jpg?format=jpg&name=orig"
+        ]
         assert item.quoted_item is not None
         quote_urls = [m.url for m in item.quoted_item.media]
-        assert quote_urls == ["https://pbs.twimg.com/media/QUOTE.jpg?format=jpg&name=orig"]
+        assert quote_urls == [
+            "https://pbs.twimg.com/media/QUOTE.jpg?format=jpg&name=orig"
+        ]
 
     def test_quote_text_does_not_leak_into_parent_text(self) -> None:
         item = parse_tweet_article(_article(_QUOTED_TWEET_HTML), tweet_id="1")
@@ -78,7 +82,8 @@ class TestMedia:
         """
         item = parse_tweet_article(_article(html))
         assert (
-            item.media[0].url == "https://pbs.twimg.com/media/X.jpg?format=jpg&name=orig"
+            item.media[0].url
+            == "https://pbs.twimg.com/media/X.jpg?format=jpg&name=orig"
         )
 
     def test_video_extracted_with_poster(self) -> None:

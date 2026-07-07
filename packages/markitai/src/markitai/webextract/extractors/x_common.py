@@ -742,11 +742,7 @@ def _extract_article_title(article: Tag) -> str | None:
     Returns:
         Article title string, or ``None`` if not an article.
     """
-    divs = [
-        d
-        for d in article.find_all("div", dir="auto")
-        if isinstance(d, Tag)
-    ]
+    divs = [d for d in article.find_all("div", dir="auto") if isinstance(d, Tag)]
     # Article pattern: first div empty, second div has the title
     if len(divs) >= 3 and not divs[0].get_text(strip=True):
         title = divs[1].get_text(strip=True)

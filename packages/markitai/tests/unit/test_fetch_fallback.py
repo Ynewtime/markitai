@@ -381,7 +381,9 @@ class TestExplicitStrategyCaptchaDetection:
         pw_result.final_url = "https://example.com"
         pw_result.metadata = {}
         pw_result.screenshot_path = None
-        monkeypatch.setattr(fp, "fetch_with_playwright", AsyncMock(return_value=pw_result))
+        monkeypatch.setattr(
+            fp, "fetch_with_playwright", AsyncMock(return_value=pw_result)
+        )
 
         with pytest.raises(FetchError) as exc_info:
             await fetch_url(
@@ -418,7 +420,9 @@ class TestExplicitStrategyCaptchaDetection:
         pw_result.final_url = "https://example.com"
         pw_result.metadata = {}
         pw_result.screenshot_path = None
-        monkeypatch.setattr(fp, "fetch_with_playwright", AsyncMock(return_value=pw_result))
+        monkeypatch.setattr(
+            fp, "fetch_with_playwright", AsyncMock(return_value=pw_result)
+        )
 
         result = await fetch_url(
             "https://example.com",
@@ -453,7 +457,9 @@ class TestExplicitStrategyCaptchaDetection:
         pw_result.final_url = "https://example.com"
         pw_result.metadata = {}
         pw_result.screenshot_path = None
-        monkeypatch.setattr(fp, "fetch_with_playwright", AsyncMock(return_value=pw_result))
+        monkeypatch.setattr(
+            fp, "fetch_with_playwright", AsyncMock(return_value=pw_result)
+        )
 
         result = await fetch_url(
             "https://example.com",
