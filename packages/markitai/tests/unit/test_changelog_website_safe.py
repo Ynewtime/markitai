@@ -29,7 +29,7 @@ def test_changelog_has_no_bare_angle_bracket_tags() -> None:
     assert CHANGELOG.exists(), CHANGELOG
     offenders: list[str] = []
     in_fence = False
-    for lineno, line in enumerate(CHANGELOG.read_text().splitlines(), 1):
+    for lineno, line in enumerate(CHANGELOG.read_text(encoding="utf-8").splitlines(), 1):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
             continue
