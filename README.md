@@ -23,9 +23,9 @@ FFmpeg), offers China-mainland mirror acceleration, and is bilingual (EN/中文)
 
 ```bash
 # Linux/macOS
-curl -fsSL https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.sh | sh
+curl -fsSL https://markitai.dev/setup.sh | sh
 # Windows (PowerShell)
-powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Ynewtime/markitai/main/scripts/setup.ps1 | iex"
+powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 
 **Minimal — uv / pip**, if you already have Python 3.11–3.14 and just want the package:
