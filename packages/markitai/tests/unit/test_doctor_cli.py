@@ -223,67 +223,6 @@ class TestAuthenticationChecks:
             assert "copilot-auth" in data
             assert data["copilot-auth"]["status"] == "error"
 
-    @pytest.fixture
-    def mock_config_with_gemini_cli(self) -> MagicMock:
-        """Create a mock config with Gemini CLI model configured."""
-        config = MagicMock()
-        mock_model = MagicMock()
-        mock_model.litellm_params.model = "gemini-cli/gemini-3.1-pro-preview"
-        mock_model.model_info = None
-        config.llm.model_list = [mock_model]
-        config.ocr = MagicMock()
-        config.ocr.lang = "en"
-        return config
-
-    def test_gemini_cli_auth_check_authenticated(
-        self, runner: CliRunner, mock_config_with_gemini_cli: MagicMock
-    ) -> None:
-        """Doctor JSON should include Gemini CLI auth when configured."""
-        from markitai.cli.commands.doctor import doctor
-        from markitai.providers.auth import AuthStatus
-
-        mock_auth_status = AuthStatus(
-            provider="gemini-cli",
-            authenticated=True,
-            user="gemini@example.com",
-            expires_at=None,
-            error=None,
-            details={
-                "source": "markitai",
-                "project_id": "demo-project",
-                "auth_mode": "google-one",
-                "credential_path": "/tmp/gemini-profile.json",
-            },
-        )
-
-        with (
-            patch("markitai.cli.commands.doctor.ConfigManager") as MockConfigManager,
-            patch("markitai.fetch_playwright.is_playwright_available") as mock_pw,
-            patch(
-                "markitai.fetch_playwright.is_playwright_browser_installed"
-            ) as mock_browser,
-            patch("markitai.fetch_playwright.clear_browser_cache"),
-            patch("markitai.cli.commands.doctor.shutil.which", return_value=None),
-            patch("markitai.llm.get_model_info_cached", return_value={}),
-            patch("markitai.providers.is_local_provider_model", return_value=True),
-            patch("markitai.cli.commands.doctor.AuthManager") as MockAuthManager,
-        ):
-            MockConfigManager.return_value.load.return_value = (
-                mock_config_with_gemini_cli
-            )
-            mock_pw.return_value = False
-            mock_browser.return_value = False
-            mock_manager = MockAuthManager.return_value
-            mock_manager.check_auth = AsyncMock(return_value=mock_auth_status)
-
-            result = runner.invoke(doctor, ["--json"])
-
-        assert result.exit_code in (0, 1)  # exit reflects host dep state
-        data = json.loads(result.output)
-        assert "gemini-cli-auth" in data
-        assert data["gemini-cli-auth"]["status"] == "ok"
-        assert "demo-project" in data["gemini-cli-auth"]["message"]
-
     def test_claude_agent_auth_check_authenticated(
         self, runner: CliRunner, mock_config_with_claude_agent: MagicMock
     ) -> None:
@@ -389,7 +328,6 @@ class TestSuggestExtras:
             result = suggest_extras()
 
         assert "browser" in result
-        assert "gemini-cli" in result
         assert "extra-fetch" in result
         assert "kreuzberg" in result
         assert "svg" in result

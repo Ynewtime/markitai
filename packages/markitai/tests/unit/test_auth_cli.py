@@ -18,100 +18,15 @@ class TestAuthCLI:
     """Tests for auth command registration and subcommands."""
 
     def test_auth_command_lists_all_providers(self) -> None:
-        """Main CLI should expose all four provider groups."""
+        """Main CLI should expose all three provider groups."""
         runner = CliRunner()
         result = runner.invoke(app, ["auth", "--help"])
 
         assert result.exit_code == 0
         output = result.output.lower()
-        assert "gemini" in output
         assert "copilot" in output
         assert "claude" in output
         assert "chatgpt" in output
-
-
-class TestGeminiAuthCLI:
-    """Tests for markitai auth gemini subcommands."""
-
-    def test_gemini_status_reports_managed_profile_json(self, tmp_path: Path) -> None:
-        """Status should expose the active managed Gemini profile."""
-        runner = CliRunner()
-        auth_dir = tmp_path / ".markitai" / "auth"
-        auth_dir.mkdir(parents=True)
-        profile_path = auth_dir / "gemini-profile.json"
-        profile_path.write_text(
-            json.dumps(
-                {
-                    "access_token": "managed-token",
-                    "refresh_token": "managed-refresh",
-                    "email": "gemini@example.com",
-                    "project_id": "demo-project",
-                    "auth_mode": "google-one",
-                    "source": "markitai",
-                }
-            ),
-            encoding="utf-8",
-        )
-        (auth_dir / "gemini-current.json").write_text(
-            json.dumps({"credential_path": str(profile_path)}),
-            encoding="utf-8",
-        )
-
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            result = runner.invoke(app, ["auth", "gemini", "status", "--json"])
-
-        assert result.exit_code == 0
-        payload = json.loads(result.output)
-        assert payload["authenticated"] is True
-        assert payload["user"] == "gemini@example.com"
-        assert payload["details"]["project_id"] == "demo-project"
-        assert payload["details"]["source"] == "markitai"
-
-    def test_gemini_status_shared_creds_display(self, tmp_path: Path) -> None:
-        """Shared credentials show clean one-liner without Source/Profile noise."""
-        runner = CliRunner()
-        gemini_dir = tmp_path / ".gemini"
-        gemini_dir.mkdir()
-        (gemini_dir / "oauth_creds.json").write_text(
-            json.dumps({"access_token": "ya29.xxx"})
-        )
-
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            result = runner.invoke(app, ["auth", "gemini", "status"])
-
-        assert result.exit_code == 0
-        # Shared creds should be clean one-liner, no Source/Profile lines
-        assert "Source:" not in result.output
-        assert "Profile:" not in result.output
-
-    def test_gemini_login_invokes_provider_login(self, tmp_path: Path) -> None:
-        """Login command should call Gemini provider login and print the result."""
-        runner = CliRunner()
-
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            from markitai.providers.gemini_cli import GeminiCredentialRecord
-
-            record = GeminiCredentialRecord(
-                path=tmp_path / ".markitai" / "auth" / "gemini-profile.json",
-                source="markitai",
-                email="gemini@example.com",
-                project_id="demo-project",
-                auth_mode="google-one",
-            )
-
-            with patch(
-                "markitai.providers.gemini_cli.GeminiCLIProvider"
-            ) as MockProvider:
-                MockProvider.return_value.alogin = AsyncMock(return_value=record)
-
-                result = runner.invoke(
-                    app,
-                    ["auth", "gemini", "login", "--mode", "google-one"],
-                )
-
-        assert result.exit_code == 0
-        assert "gemini@example.com" in result.output
-        assert "demo-project" in result.output
 
 
 class TestCopilotAuthCLI:
@@ -471,7 +386,7 @@ class TestAuthOverview:
             result = runner.invoke(app, ["auth"])
 
         assert result.exit_code == 0
-        for name in ("claude", "chatgpt", "copilot", "gemini"):
+        for name in ("claude", "chatgpt", "copilot"):
             assert name in result.output
         assert "not logged in" in result.output
         assert "✗" in result.output  # cross glyph for unauthenticated
@@ -702,20 +617,3 @@ class TestLoginFailureGuidance:
 
         assert result.exit_code == 1
         assert "markitai auth chatgpt login" not in result.output
-
-    def test_gemini_login_failure_shows_card_not_traceback(self) -> None:
-        runner = CliRunner()
-        with (
-            patch("markitai.providers.auth.can_attempt_login", return_value=True),
-            patch("markitai.providers.gemini_cli.GeminiCLIProvider") as MockProvider,
-        ):
-            MockProvider.return_value.alogin = AsyncMock(
-                side_effect=RuntimeError("OAuth flow failed")
-            )
-            result = runner.invoke(app, ["auth", "gemini", "login"])
-
-        assert result.exit_code == 1
-        assert "Gemini login failed" in result.output
-        assert "OAuth flow failed" in result.output
-        assert "markitai auth gemini login" not in result.output
-        assert "Traceback" not in result.output

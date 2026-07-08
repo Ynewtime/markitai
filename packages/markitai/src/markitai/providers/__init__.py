@@ -28,8 +28,12 @@ Provider prefixes:
         Use direct model names: gpt-4.1, claude-sonnet-4.6, gemini-3.1-pro-preview, etc.
     - chatgpt/<model>: Uses ChatGPT subscription (OAuth Device Code Flow)
         Models: gpt-5.4, gpt-5.4-codex, etc.
-    - gemini-cli/<model>: Uses Google AI subscription (OAuth via Gemini CLI)
-        Models: gemini-3.1-pro-preview, gemini-3.1-flash-lite-preview, etc.
+
+Gemini access is via standard LiteLLM routing, not a custom provider here:
+    - gemini/<model>: direct Google Gemini API key
+    - openrouter/google/<model>: OpenRouter
+(gemini-cli/, a Code Assist OAuth-reuse provider, was removed after Google
+retired individual-tier Code Assist onboarding for new projects.)
 """
 
 from __future__ import annotations
@@ -423,16 +427,6 @@ def validate_local_provider_deps(models: list[str]) -> list[str]:
                 "\n   Auth: copilot login"
             )
 
-    # Check for gemini-cli models
-    uses_gemini_cli = any(m.startswith("gemini-cli/") for m in models)
-    if uses_gemini_cli:
-        if not importlib.util.find_spec("google.auth"):
-            warnings.append(
-                "⚠️  gemini-cli/ models: google-auth not installed (token refresh disabled)."
-                "\n   Install for full support: uv add 'markitai\\[gemini-cli]'"
-                "\n   Without it, only unexpired tokens from Gemini CLI will work."
-            )
-
     return warnings
 
 
@@ -509,21 +503,6 @@ def register_providers() -> None:
     except Exception as e:
         logger.warning(f"[Providers] Failed to register chatgpt provider: {e}")
 
-    # Register Gemini CLI provider (optional google-auth dependency)
-    try:
-        from markitai.providers.gemini_cli import GeminiCLIProvider
-
-        gemini_cli_provider = GeminiCLIProvider()
-        litellm.custom_provider_map.append(
-            {"provider": "gemini-cli", "custom_handler": gemini_cli_provider}
-        )
-        _providers["gemini-cli"] = gemini_cli_provider
-        registered_providers.append("gemini-cli")
-    except ImportError as e:
-        logger.trace(f"[Providers] gemini-cli provider not available: {e}")
-    except Exception as e:
-        logger.warning(f"[Providers] Failed to register gemini-cli provider: {e}")
-
     if registered_providers:
         logger.debug(
             "[Providers] Registered custom providers: "
@@ -548,8 +527,8 @@ def get_provider(name: str) -> CustomLLM | None:
 def is_local_provider_model(model: str) -> bool:
     """Check if a model uses a local provider.
 
-    Local providers (claude-agent/, copilot/, chatgpt/, gemini-cli/) use
-    CLI/OAuth authentication and support vision-capable models.
+    Local providers (claude-agent/, copilot/, chatgpt/) use CLI/OAuth
+    authentication and support vision-capable models.
 
     Args:
         model: Model identifier (e.g., "claude-agent/sonnet")
@@ -557,7 +536,7 @@ def is_local_provider_model(model: str) -> bool:
     Returns:
         True if model uses a local provider
     """
-    return model.startswith(("claude-agent/", "copilot/", "chatgpt/", "gemini-cli/"))
+    return model.startswith(("claude-agent/", "copilot/", "chatgpt/"))
 
 
 def is_local_provider_available(model: str) -> bool:
@@ -578,10 +557,6 @@ def is_local_provider_available(model: str) -> bool:
         return importlib.util.find_spec("copilot") is not None
     if model.startswith("chatgpt/"):
         # chatgpt/ uses LiteLLM's built-in authenticator, always available
-        return True
-    if model.startswith("gemini-cli/"):
-        # Provider handles missing google-auth internally with clear error messages.
-        # Always return True so models aren't silently filtered out.
         return True
     # Non-local provider models are always "available" (API key validity checked elsewhere)
     return True
@@ -704,11 +679,6 @@ def _resolve_litellm_model(model: str) -> str | None:
         # e.g., "chatgpt/gpt-5.4" → "gpt-5.4"
         return model.replace("chatgpt/", "")
 
-    if model.startswith("gemini-cli/"):
-        # Gemini CLI models: strip prefix
-        # e.g., "gemini-cli/gemini-3.1-pro-preview" → "gemini-3.1-pro-preview"
-        return model.replace("gemini-cli/", "")
-
     return None
 
 
@@ -754,7 +724,7 @@ def get_local_provider_model_info(model: str) -> dict[str, int | bool] | None:
 
 # Provider prefixes that use OAuth and benefit from pre-flight auth check
 # All local provider prefixes (for extracting provider name from model ID)
-_LOCAL_PROVIDER_PREFIXES = ("claude-agent/", "copilot/", "chatgpt/", "gemini-cli/")
+_LOCAL_PROVIDER_PREFIXES = ("claude-agent/", "copilot/", "chatgpt/")
 
 
 async def preflight_auth_check(

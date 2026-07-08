@@ -272,44 +272,6 @@ def _check_claude_auth() -> dict[str, str]:
         }
 
 
-def _check_gemini_cli_auth_status() -> dict[str, str]:
-    """Check Gemini CLI authentication status."""
-    auth_manager = AuthManager()
-    try:
-        status = asyncio.run(auth_manager.check_auth("gemini-cli"))
-        if status.authenticated:
-            details = status.details or {}
-            parts = [status.user or "gemini-cli"]
-            project_id = details.get("project_id")
-            source = details.get("source")
-            if project_id:
-                parts.append(f"project: {project_id}")
-            if source:
-                parts.append(f"source: {source}")
-            return {
-                "name": "Gemini CLI Auth",
-                "description": "Gemini Code Assist authentication status",
-                "status": "ok",
-                "message": ", ".join(parts),
-                "install_hint": "",
-            }
-        return {
-            "name": "Gemini CLI Auth",
-            "description": "Gemini Code Assist authentication status",
-            "status": "error",
-            "message": status.error or "Not authenticated",
-            "install_hint": get_auth_resolution_hint("gemini-cli"),
-        }
-    except Exception as e:
-        return {
-            "name": "Gemini CLI Auth",
-            "description": "Gemini Code Assist authentication status",
-            "status": "error",
-            "message": f"Failed to check auth: {e}",
-            "install_hint": get_auth_resolution_hint("gemini-cli"),
-        }
-
-
 def _check_playwright() -> dict[str, Any]:
     """Check Playwright installation status.
 
@@ -609,11 +571,6 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         for m in configured_models
         if _is_active_model(m)
     )
-    uses_gemini_cli = any(
-        m.litellm_params.model.startswith("gemini-cli/")
-        for m in configured_models
-        if _is_active_model(m)
-    )
 
     if uses_claude_agent:
         try:
@@ -706,9 +663,6 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     if uses_chatgpt:
         results["chatgpt-auth"] = _check_chatgpt_auth()
 
-    if uses_gemini_cli:
-        results["gemini-cli-auth"] = _check_gemini_cli_auth_status()
-
     # 6. Check vision model configuration (auto-detect from litellm or config override)
     def is_vision_model(model_config: Any) -> bool:
         """Check if model supports vision (config override, local providers, or auto-detect)."""
@@ -777,7 +731,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     ui.title(t("doctor.title"))
     optional_deps = ["ffmpeg"]
     llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
-    auth_keys = ["claude-agent-auth", "copilot-auth", "chatgpt-auth", "gemini-cli-auth"]
+    auth_keys = ["claude-agent-auth", "copilot-auth", "chatgpt-auth"]
 
     # Config source (which config file was actually loaded)
     if manager.config_path is not None:
@@ -900,7 +854,6 @@ def suggest_extras() -> list[str]:
 
     # --- Always-include extras (pure Python packages from PyPI) ---
     extras.add("browser")  # playwright
-    extras.add("gemini-cli")  # google-auth + google-auth-oauthlib
     extras.add("extra-fetch")  # curl-cffi
     extras.add("kreuzberg")  # kreuzberg
     extras.add("svg")  # cairosvg (pip install succeeds; runtime detects missing lib)
@@ -945,7 +898,7 @@ def doctor(as_json: bool, fix: bool, suggest: bool) -> None:
         - LibreOffice (for Office document conversion)
         - RapidOCR (for scanned document processing)
         - LLM API configuration (for content enhancement)
-        - Auth status for local providers (Claude, Copilot, Gemini CLI)
+        - Auth status for local providers (Claude, Copilot, ChatGPT)
 
     Exits non-zero when a required dependency is missing, so it can be
     used in scripts and CI.

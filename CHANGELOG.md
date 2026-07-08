@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **Gemini CLI provider** (`gemini-cli/`): removed entirely, along with `markitai auth gemini`, the `gemini-cli` install extra, and its `google-auth`/`google-auth-oauthlib` dependencies. Google retired individual-tier Gemini Code Assist onboarding for new projects ("This client is no longer supported... migrate to the Antigravity suite of products"), so fresh logins could no longer complete. Use a direct Google Gemini API key (`gemini/<model>`) or route through OpenRouter (`openrouter/google/<model>`) instead
+
 ## [0.16.0] - 2026-07-07
 
 ### Added

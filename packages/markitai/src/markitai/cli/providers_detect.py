@@ -63,17 +63,6 @@ def _check_chatgpt_auth() -> bool:
         return False
 
 
-def _check_gemini_cli_auth() -> bool:
-    """Check if Gemini CLI is authenticated."""
-    from markitai.providers.auth import _check_gemini_cli_auth as check_fn
-
-    try:
-        status = check_fn()
-        return status.authenticated
-    except Exception:
-        return False
-
-
 def get_active_models_from_config(
     model_list: list[dict[str, Any]],
 ) -> list[str]:
@@ -125,12 +114,11 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
     1. Claude CLI (if installed and authenticated)
     2. Copilot CLI (if installed and authenticated)
     3. ChatGPT (if authenticated via OAuth)
-    4. Gemini CLI (if authenticated via OAuth)
-    5. ANTHROPIC_API_KEY environment variable
-    6. OPENAI_API_KEY environment variable
-    7. GEMINI_API_KEY environment variable
-    8. DEEPSEEK_API_KEY environment variable
-    9. OPENROUTER_API_KEY environment variable
+    4. ANTHROPIC_API_KEY environment variable
+    5. OPENAI_API_KEY environment variable
+    6. GEMINI_API_KEY environment variable
+    7. DEEPSEEK_API_KEY environment variable
+    8. OPENROUTER_API_KEY environment variable
 
     Returns:
         List of all detected providers (may be empty).
@@ -172,18 +160,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
             )
         )
 
-    # 4. Check Gemini CLI (OAuth)
-    if _check_gemini_cli_auth():
-        results.append(
-            ProviderDetectionResult(
-                provider="gemini-cli",
-                model="gemini-cli/gemini-3.1-pro-preview",
-                authenticated=True,
-                source="cli",
-            )
-        )
-
-    # 5-9. Check environment variables
+    # 4-8. Check environment variables
     env_providers = [
         ("ANTHROPIC_API_KEY", "anthropic", "anthropic/claude-sonnet-4-6"),
         ("OPENAI_API_KEY", "openai", "openai/gpt-5.4"),

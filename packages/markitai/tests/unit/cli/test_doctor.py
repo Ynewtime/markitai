@@ -365,7 +365,6 @@ class TestDoctorFixFiltering:
             "llm-api",
             "copilot-auth",
             "claude-agent-auth",
-            "gemini-cli-auth",
         }
         for key in non_installable:
             assert key not in FIXABLE_COMPONENTS, (
@@ -469,7 +468,6 @@ class TestDoctorFixFiltering:
                 assert component not in {
                     "copilot-auth",
                     "claude-agent-auth",
-                    "gemini-cli-auth",
                 }, f"_install_component should not be called with '{component}'"
 
 

@@ -1,8 +1,7 @@
 """OAuth flow display utilities for provider authentication.
 
-Provides Rich-formatted output for OAuth flows across providers
-(gemini-cli, chatgpt). All output goes to stderr to avoid interfering
-with stdout piping.
+Provides Rich-formatted output for OAuth flows across providers (chatgpt).
+All output goes to stderr to avoid interfering with stdout piping.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ if TYPE_CHECKING:
 _PROVIDER_LABELS: dict[str, str] = {
     "copilot": "GitHub Copilot",
     "claude-agent": "Claude",
-    "gemini-cli": "Gemini",
     "chatgpt": "ChatGPT",
 }
 
@@ -53,7 +51,7 @@ def show_login_start(provider: str, *, console: Console | None = None) -> None:
     """Display a brief login start message on stderr.
 
     Used before subprocess-based logins (copilot, claude) to provide
-    visual context consistent with the chatgpt/gemini Rich-formatted flows.
+    visual context consistent with chatgpt's Rich-formatted flow.
 
     Args:
         provider: Provider name (e.g., "copilot", "claude-agent").
@@ -68,7 +66,7 @@ def show_oauth_start(provider: str, *, console: Console | None = None) -> None:
     """Display OAuth flow start message on stderr.
 
     Args:
-        provider: Provider name (e.g., "gemini-cli").
+        provider: Provider name (e.g., "chatgpt").
         console: Optional console override for testing.
     """
     c = console or _get_stderr_console()

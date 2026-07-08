@@ -92,7 +92,6 @@ class LocalProviderWrapper:
     _IMAGE_CAPABLE_PATTERNS = (
         "claude-agent/",  # All claude-agent models support vision
         "chatgpt/",  # All ChatGPT models support vision (GPT-5.x)
-        "gemini-cli/",  # All Gemini CLI models support vision
         "copilot/claude-",  # All Copilot Claude models
         "copilot/gemini-",  # All Copilot Gemini models
         "copilot/gpt-4.1",  # GPT-4.1 series

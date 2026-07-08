@@ -16,7 +16,7 @@
 | **Playwright** | `--playwright`（SPA 渲染） | `uv pip install markitai[browser]`，浏览器需运行 `uv run playwright install chromium` |
 | **FFmpeg** | 音视频处理 | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
 | **Jina API 密钥** | `--jina`（URL 转换） | 设置 `JINA_API_KEY` 环境变量 |
-| **LLM API 密钥** | `--llm`（AI 增强） | 设置 `OPENAI_API_KEY` 或对应提供商的密钥。订阅制提供商（`chatgpt/`、`gemini-cli/`、`claude-agent/`、`copilot/`）使用 CLI/OAuth 认证 |
+| **LLM API 密钥** | `--llm`（AI 增强） | 设置 `OPENAI_API_KEY` 或对应提供商的密钥。订阅制提供商（`chatgpt/`、`claude-agent/`、`copilot/`）使用 CLI/OAuth 认证 |
 | **Cloudflare** | `--cloudflare`（云端渲染与转换） | 设置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 环境变量 |
 | **CairoSVG** | 高质量 SVG 渲染 | `uv pip install markitai[svg]` |
 

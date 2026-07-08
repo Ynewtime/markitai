@@ -54,7 +54,6 @@ have a different `mkai` on your PATH, use the full `markitai` to avoid ambiguity
 | `browser` | Playwright rendering for JS-heavy pages |
 | `claude-agent` | Claude Agent SDK as an LLM provider |
 | `copilot` | GitHub Copilot SDK as an LLM provider |
-| `gemini-cli` | Gemini CLI OAuth as an LLM provider |
 | `extra-fetch` | curl-cffi HTTP client (better anti-bot compatibility) |
 | `kreuzberg` | Kreuzberg extraction backend |
 | `svg` | SVG rasterization via cairosvg |

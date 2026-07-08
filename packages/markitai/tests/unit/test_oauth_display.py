@@ -53,12 +53,12 @@ class TestSuppressStdout:
 class TestShowOAuthStart:
     """Tests for show_oauth_start."""
 
-    def test_gemini_start_message(self) -> None:
-        """Gemini start message includes provider label."""
+    def test_unmapped_provider_falls_back_to_raw_name(self) -> None:
+        """A provider with no label mapping falls back to its raw name."""
         console, buf = _make_test_console()
-        show_oauth_start("gemini-cli", console=console)
+        show_oauth_start("some-new-provider", console=console)
         output = buf.getvalue()
-        assert "Gemini" in output
+        assert "some-new-provider" in output
         assert "Authentication" in output
         assert "browser" in output.lower()
 
@@ -122,9 +122,9 @@ class TestShowOAuthSuccess:
     def test_success_with_user(self) -> None:
         """Success message includes user info when provided."""
         console, buf = _make_test_console()
-        show_oauth_success("gemini-cli", user="me@example.com", console=console)
+        show_oauth_success("chatgpt", user="me@example.com", console=console)
         output = buf.getvalue()
-        assert "Gemini" in output
+        assert "ChatGPT" in output
         assert "authenticated" in output
         assert "me@example.com" in output
 
@@ -140,11 +140,11 @@ class TestShowOAuthSuccess:
         """Success message includes detail when provided."""
         console, buf = _make_test_console()
         show_oauth_success(
-            "gemini-cli",
-            detail="Saved to ~/.gemini/oauth_creds.json",
+            "chatgpt",
+            detail="Saved to ~/.markitai/auth/chatgpt.json",
             console=console,
         )
-        assert "oauth_creds.json" in buf.getvalue()
+        assert "chatgpt.json" in buf.getvalue()
 
 
 class TestParseChatGPTDeviceCode:

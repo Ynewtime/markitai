@@ -16,7 +16,7 @@ These are required for specific features:
 | **Playwright** | `--playwright` (SPA rendering) | `uv pip install markitai[browser]`, browser requires `uv run playwright install chromium` |
 | **FFmpeg** | Audio/video processing | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
 | **Jina API Key** | `--jina` (URL conversion) | Set `JINA_API_KEY` env var |
-| **LLM API Key** | `--llm` (AI enhancement) | Set `OPENAI_API_KEY` or provider-specific key. Subscription providers (`chatgpt/`, `gemini-cli/`, `claude-agent/`, `copilot/`) use CLI/OAuth auth instead |
+| **LLM API Key** | `--llm` (AI enhancement) | Set `OPENAI_API_KEY` or provider-specific key. Subscription providers (`chatgpt/`, `claude-agent/`, `copilot/`) use CLI/OAuth auth instead |
 | **Cloudflare** | `--cloudflare` (cloud rendering & conversion) | Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` env vars |
 | **CairoSVG** | High-quality SVG rendering | `uv pip install markitai[svg]` |
 

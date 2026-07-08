@@ -58,7 +58,6 @@ uv pip install "markitai[all]"
 |--------|------|----------|
 | `claude-agent` | Claude AI 支持 | 使用 Anthropic 模型做 LLM 增强 |
 | `copilot` | GitHub Copilot | 基于订阅的本地 LLM 增强 |
-| `gemini-cli` | Google Gemini | 使用 Google 模型 |
 | `browser` | Playwright 浏览器 | 抓取 JS 渲染的网页 |
 | `extra-fetch` | curl-cffi | 绕过反爬，增强 HTTP 能力 |
 | `kreuzberg` | 额外格式支持 | 扩展可转换的文件类型 |
@@ -85,7 +84,7 @@ markitai init
 
 系统会自动完成以下步骤：
 1. 检查系统依赖（Playwright、LibreOffice、FFmpeg、RapidOCR）
-2. 检测可用的 LLM 提供商（Claude CLI、Copilot CLI、ChatGPT、Gemini CLI，以及 DeepSeek/Gemini/OpenAI/Anthropic/OpenRouter API Key）
+2. 检测可用的 LLM 提供商（Claude CLI、Copilot CLI、ChatGPT，以及 DeepSeek/Gemini/OpenAI/Anthropic/OpenRouter API Key）
 3. 让用户选择配置文件保存位置（全局 `~/.markitai/config.json` 或本地 `./markitai.json`）
 4. 写入配置文件
 
@@ -689,19 +688,17 @@ markitai ./docs/ --dry-run -o ./output
 # 查看特定提供商认证状态
 markitai auth claude status
 markitai auth copilot status
-markitai auth gemini status
 markitai auth chatgpt status
 
 # 登录特定提供商
 markitai auth claude login
 markitai auth copilot login
-markitai auth gemini login
 
 # JSON 格式输出（便于脚本集成）
 markitai auth claude status --json
 ```
 
-> 支持的提供商：`claude`、`copilot`、`gemini`、`chatgpt`。每个提供商支持 `status` 和 `login` 子命令。
+> 支持的提供商：`claude`、`copilot`、`chatgpt`。每个提供商支持 `status` 和 `login` 子命令。Gemini 通过直连 API Key 或 OpenRouter 接入，不走本命令（见配置章节）。
 
 ### 9.2 缓存管理
 

@@ -21,38 +21,11 @@ import importlib.util
 import json
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
-
-
-def _email_from_google_userinfo(access_token: str) -> str | None:
-    """Fetch email from Google userinfo API using an access token.
-
-    Args:
-        access_token: A valid Google OAuth2 access token.
-
-    Returns:
-        Email address if available, None on any failure.
-    """
-    try:
-        import httpx
-
-        resp = httpx.get(
-            "https://www.googleapis.com/oauth2/v1/userinfo",
-            params={"alt": "json"},
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=5,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            email = data.get("email")
-            return email if isinstance(email, str) and email else None
-    except Exception as e:
-        logger.debug("[Auth] Google userinfo email extraction failed: {}", e)
-    return None
 
 
 def _email_from_jwt(id_token: str) -> str | None:
@@ -151,12 +124,6 @@ def _build_resolution_hint(provider: str) -> str:
             "OAuth Device Code Flow (visit the URL, enter the code).\n"
             "Login is also triggered automatically on the first chatgpt/ "
             "model call."
-        )
-    elif provider == "gemini-cli":
-        return (
-            "Run 'markitai auth gemini login' to create a managed Gemini profile,\n"
-            "or run 'gemini login' to reuse your shared Gemini CLI credentials.\n"
-            "Requires: uv add 'markitai\\[gemini-cli]'"
         )
     return "Please authenticate with the provider CLI."
 
@@ -570,154 +537,6 @@ def _clear_stale_chatgpt_device_code_request() -> None:
         logger.debug("[Auth] Cleared stale ChatGPT cooldown marker")
 
 
-def _check_gemini_cli_auth() -> AuthStatus:
-    """Check Gemini CLI authentication by reading OAuth credentials.
-
-    Checks Markitai-managed Gemini profiles first, then falls back to
-    ~/.gemini/oauth_creds.json.
-
-    Returns:
-        AuthStatus with authentication result
-    """
-    home = Path.home()
-    managed_dir = home / ".markitai" / "auth"
-    active_profile_path = managed_dir / "gemini-current.json"
-    shared_creds_path = home / ".gemini" / "oauth_creds.json"
-
-    def _read_json(path: Path) -> dict[str, Any] | None:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        return data if isinstance(data, dict) else None
-
-    def _expires_at(data: dict[str, Any]) -> datetime | None:
-        expiry_date_ms = data.get("expiry_date")
-        if not expiry_date_ms:
-            return None
-        try:
-            return datetime.fromtimestamp(expiry_date_ms / 1000, tz=UTC)
-        except (TypeError, ValueError, OSError):
-            return None
-
-    def _status_from_data(
-        data: dict[str, Any],
-        *,
-        source: str,
-        path: Path,
-    ) -> AuthStatus | None:
-        access_token = data.get("access_token")
-        if not access_token:
-            return None
-
-        email = data.get("email")
-        if not email:
-            # Fall back to extracting email from id_token JWT
-            email = _email_from_jwt(data.get("id_token", ""))
-        if not email and isinstance(access_token, str):
-            # Fall back to Google userinfo API
-            email = _email_from_google_userinfo(access_token)
-        project_id = data.get("project_id")
-        auth_mode = data.get("auth_mode")
-        user = email if isinstance(email, str) and email else "gemini-cli"
-        return AuthStatus(
-            provider="gemini-cli",
-            authenticated=True,
-            user=user,
-            expires_at=_expires_at(data),
-            error=None,
-            details={
-                "source": source,
-                "project_id": (
-                    str(project_id) if isinstance(project_id, str) else None
-                ),
-                "auth_mode": str(auth_mode) if isinstance(auth_mode, str) else None,
-                "credential_path": str(path),
-            },
-        )
-
-    active_data = _read_json(active_profile_path)
-    if active_data:
-        credential_path = active_data.get("credential_path")
-        if isinstance(credential_path, str) and credential_path:
-            managed_path = Path(credential_path)
-            try:
-                managed_path.resolve().relative_to(managed_dir.resolve())
-            except ValueError:
-                logger.warning(
-                    "[Auth] credential_path points outside managed dir, "
-                    f"ignoring: {managed_path}"
-                )
-                managed_path = None  # type: ignore[assignment]
-            if managed_path is not None and managed_path.exists():
-                managed_data = _read_json(managed_path)
-                if managed_data:
-                    status = _status_from_data(
-                        managed_data,
-                        source="markitai",
-                        path=managed_path,
-                    )
-                    if status is not None:
-                        return status
-
-    if managed_dir.exists():
-        managed_profiles = sorted(
-            (
-                path
-                for path in managed_dir.glob("gemini-*.json")
-                if path.name != active_profile_path.name
-            ),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-        for managed_path in managed_profiles:
-            managed_data = _read_json(managed_path)
-            if managed_data:
-                status = _status_from_data(
-                    managed_data,
-                    source="markitai",
-                    path=managed_path,
-                )
-                if status is not None:
-                    return status
-
-    if not shared_creds_path.exists():
-        return AuthStatus(
-            provider="gemini-cli",
-            authenticated=False,
-            user=None,
-            expires_at=None,
-            error=(
-                "Credentials file not found (~/.markitai/auth or "
-                "~/.gemini/oauth_creds.json)"
-            ),
-        )
-
-    shared_data = _read_json(shared_creds_path)
-    if shared_data is None:
-        return AuthStatus(
-            provider="gemini-cli",
-            authenticated=False,
-            user=None,
-            expires_at=None,
-            error="Failed to read credentials: invalid JSON",
-        )
-    status = _status_from_data(
-        shared_data,
-        source="gemini-cli",
-        path=shared_creds_path,
-    )
-    if status is not None:
-        return status
-    return AuthStatus(
-        provider="gemini-cli",
-        authenticated=False,
-        user=None,
-        expires_at=None,
-        error="No access token found",
-    )
-
-
 class AuthManager:
     """Singleton manager for provider authentication status.
 
@@ -801,8 +620,6 @@ class AuthManager:
             return self._check_claude()
         elif provider == "chatgpt":
             return _check_chatgpt_auth()
-        elif provider == "gemini-cli":
-            return _check_gemini_cli_auth()
         else:
             return AuthStatus(
                 provider=provider,
@@ -938,41 +755,6 @@ async def _login_claude_agent(output_manager: Any = None) -> AuthStatus:
     return config_status
 
 
-async def _login_gemini_cli(output_manager: Any = None) -> AuthStatus:
-    """Run Gemini OAuth login via GeminiCLIProvider.alogin().
-
-    Args:
-        output_manager: Optional OutputManager for formatted output.
-            Currently accepted for interface consistency; Gemini OAuth
-            already uses show_oauth_start/success which write to stderr.
-
-    Returns:
-        AuthStatus after the login attempt.
-    """
-    from markitai.providers.gemini_cli import GeminiCLIProvider
-
-    if output_manager is not None:
-        logger.debug(
-            "[Auth] Gemini login with output_manager (reserved for future use)"
-        )
-
-    try:
-        provider = GeminiCLIProvider()
-        await provider.alogin()
-    except Exception as e:
-        logger.warning("[Auth] Gemini login failed: {}", e)
-        return AuthStatus(
-            provider="gemini-cli",
-            authenticated=False,
-            user=None,
-            expires_at=None,
-            error=str(e),
-        )
-
-    AuthManager().clear_cache("gemini-cli")
-    return _check_gemini_cli_auth()
-
-
 async def _login_chatgpt(output_manager: Any = None) -> AuthStatus:
     """Trigger ChatGPT Device Code Flow authentication.
 
@@ -1043,13 +825,11 @@ def can_attempt_login(provider: str) -> bool:
     an install hint instead.
 
     Args:
-        provider: Provider name (e.g., "gemini-cli", "claude-agent")
+        provider: Provider name (e.g., "claude-agent", "copilot")
 
     Returns:
         True if login can be attempted.
     """
-    if provider == "gemini-cli":
-        return importlib.util.find_spec("google_auth_oauthlib") is not None
     if provider == "claude-agent":
         return _resolve_cli_path("claude") is not None
     if provider == "copilot":
@@ -1072,7 +852,6 @@ async def attempt_login(provider: str, output_manager: Any = None) -> AuthStatus
     Dispatches to the appropriate login flow:
     - copilot: subprocess ``copilot login``
     - claude-agent: subprocess ``claude auth login``
-    - gemini-cli: programmatic OAuth via GeminiCLIProvider.alogin()
     - chatgpt: Device Code Flow via LiteLLM Authenticator
 
     Args:
@@ -1087,8 +866,6 @@ async def attempt_login(provider: str, output_manager: Any = None) -> AuthStatus
         return await _login_copilot(output_manager)
     elif provider == "claude-agent":
         return await _login_claude_agent(output_manager)
-    elif provider == "gemini-cli":
-        return await _login_gemini_cli(output_manager)
     elif provider == "chatgpt":
         return await _login_chatgpt(output_manager)
     else:
@@ -1112,5 +889,4 @@ __all__ = [
     "_check_copilot_config_auth",
     "_check_claude_credentials_auth",
     "_check_chatgpt_auth",
-    "_check_gemini_cli_auth",
 ]

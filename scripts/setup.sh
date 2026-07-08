@@ -73,7 +73,6 @@ i18n() {
             ffmpeg)                     echo "FFmpeg" ;;
             claude_cli)                 echo "Claude Code CLI" ;;
             copilot_cli)                echo "Copilot CLI" ;;
-            gemini_cli)                 echo "Gemini CLI" ;;
             precommit)                  echo "pre-commit hooks" ;;
             python_deps)                echo "Python 依赖" ;;
 
@@ -188,7 +187,6 @@ i18n() {
             ffmpeg)                     echo "FFmpeg" ;;
             claude_cli)                 echo "Claude Code CLI" ;;
             copilot_cli)                echo "Copilot CLI" ;;
-            gemini_cli)                 echo "Gemini CLI" ;;
             precommit)                  echo "pre-commit hooks" ;;
             python_deps)                echo "Python dependencies" ;;
 
@@ -845,7 +843,7 @@ install_markitai() {
     _uv_tools_dir=$(uv tool dir 2>/dev/null || echo "$HOME/.local/share/uv/tools")
     _receipt_file="$_uv_tools_dir/markitai/uv-receipt.toml"
     if [ -f "$_receipt_file" ]; then
-        # Extract extras array: extras = ["browser", "gemini-cli", ...]
+        # Extract extras array: extras = ["browser", "copilot", ...]
         # Use [^]]* (non-greedy) to stop at first ], avoiding TOML outer brackets
         _extras_raw=$(grep -o 'extras = \[[^]]*\]' "$_receipt_file" 2>/dev/null \
             | sed 's/extras = \[//;s/\]//;s/"//g;s/ //g')
@@ -1354,29 +1352,6 @@ install_optional_copilot_cli() {
     return 1
 }
 
-# Detect Gemini CLI credentials and install google-auth extra (Optional)
-# Gemini CLI is installed separately; we only check for existing credentials
-# Returns: 0 if detected, 2 if not found
-detect_gemini_cli() {
-    # Check for Gemini CLI command or existing OAuth credentials
-    if command -v gemini >/dev/null 2>&1; then
-        clack_success "$(i18n gemini_cli): $(gemini --version 2>/dev/null | head -n1 || echo 'installed')"
-        install_markitai_extra "gemini-cli"
-        track_install "gemini_cli" "installed"
-        return 0
-    fi
-
-    if [ -f "$HOME/.gemini/oauth_creds.json" ]; then
-        clack_success "$(i18n gemini_cli): credentials detected"
-        install_markitai_extra "gemini-cli"
-        track_install "gemini_cli" "installed"
-        return 0
-    fi
-
-    # Not found — silent skip (Gemini CLI is not installable via script)
-    return 2
-}
-
 # Print installation summary
 # Usage: print_summary
 print_summary() {
@@ -1531,7 +1506,6 @@ run_user_setup() {
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli || true
     install_optional_copilot_cli || true
-    detect_gemini_cli || true
 
     finalize_markitai_extras || true
 
@@ -1565,7 +1539,6 @@ run_dev_setup() {
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli || true
     install_optional_copilot_cli || true
-    detect_gemini_cli || true
 
     print_summary
     print_dev_completion

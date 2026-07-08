@@ -10,7 +10,6 @@ dependencies = [
 # Forward extras to sub-package — single source of truth in packages/markitai/pyproject.toml
 claude-agent = ["markitai[claude-agent]"]
 copilot = ["markitai[copilot]"]
-gemini-cli = ["markitai[gemini-cli]"]
 browser = ["markitai[browser]"]
 extra-fetch = ["markitai[extra-fetch]"]
 all = ["markitai[all]"]

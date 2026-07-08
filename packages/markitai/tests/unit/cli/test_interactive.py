@@ -31,10 +31,6 @@ class TestProviderDetection:
                 "markitai.cli.providers_detect._check_chatgpt_auth",
                 return_value=False,
             ),
-            patch(
-                "markitai.cli.providers_detect._check_gemini_cli_auth",
-                return_value=False,
-            ),
             patch.dict("os.environ", {}, clear=True),
         ):
             result = detect_llm_provider()
@@ -58,10 +54,6 @@ class TestProviderDetection:
                 "markitai.cli.providers_detect._check_chatgpt_auth",
                 return_value=False,
             ),
-            patch(
-                "markitai.cli.providers_detect._check_gemini_cli_auth",
-                return_value=False,
-            ),
             patch.dict("os.environ", {}, clear=True),
         ):
             result = detect_llm_provider()
@@ -75,10 +67,6 @@ class TestProviderDetection:
             patch("markitai.cli.providers_detect.shutil.which", return_value=None),
             patch(
                 "markitai.cli.providers_detect._check_chatgpt_auth",
-                return_value=False,
-            ),
-            patch(
-                "markitai.cli.providers_detect._check_gemini_cli_auth",
                 return_value=False,
             ),
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=True),
@@ -96,10 +84,6 @@ class TestProviderDetection:
                 "markitai.cli.providers_detect._check_chatgpt_auth",
                 return_value=False,
             ),
-            patch(
-                "markitai.cli.providers_detect._check_gemini_cli_auth",
-                return_value=False,
-            ),
             patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=True),
         ):
             result = detect_llm_provider()
@@ -113,10 +97,6 @@ class TestProviderDetection:
             patch("markitai.cli.providers_detect.shutil.which", return_value=None),
             patch(
                 "markitai.cli.providers_detect._check_chatgpt_auth",
-                return_value=False,
-            ),
-            patch(
-                "markitai.cli.providers_detect._check_gemini_cli_auth",
                 return_value=False,
             ),
             patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=True),
@@ -134,10 +114,6 @@ class TestProviderDetection:
                 "markitai.cli.providers_detect._check_chatgpt_auth",
                 return_value=False,
             ),
-            patch(
-                "markitai.cli.providers_detect._check_gemini_cli_auth",
-                return_value=False,
-            ),
             patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-test"}, clear=True),
         ):
             result = detect_llm_provider()
@@ -153,10 +129,6 @@ class TestProviderDetection:
                 "markitai.cli.providers_detect._check_chatgpt_auth",
                 return_value=False,
             ),
-            patch(
-                "markitai.cli.providers_detect._check_gemini_cli_auth",
-                return_value=False,
-            ),
             patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-test"}, clear=True),
         ):
             result = detect_llm_provider()
@@ -170,10 +142,6 @@ class TestProviderDetection:
             patch("markitai.cli.providers_detect.shutil.which", return_value=None),
             patch(
                 "markitai.cli.providers_detect._check_chatgpt_auth",
-                return_value=False,
-            ),
-            patch(
-                "markitai.cli.providers_detect._check_gemini_cli_auth",
                 return_value=False,
             ),
             patch.dict("os.environ", {}, clear=True),
@@ -196,10 +164,6 @@ class TestProviderDetection:
                 "markitai.cli.providers_detect._check_chatgpt_auth",
                 return_value=False,
             ),
-            patch(
-                "markitai.cli.providers_detect._check_gemini_cli_auth",
-                return_value=False,
-            ),
             patch.dict(
                 "os.environ",
                 {"GEMINI_API_KEY": "test-key", "OPENAI_API_KEY": "sk-test"},
@@ -219,35 +183,12 @@ class TestProviderDetection:
                 "markitai.cli.providers_detect._check_chatgpt_auth",
                 return_value=True,
             ),
-            patch(
-                "markitai.cli.providers_detect._check_gemini_cli_auth",
-                return_value=False,
-            ),
             patch.dict("os.environ", {}, clear=True),
         ):
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "chatgpt"
             assert result.model == "chatgpt/gpt-5.4"
-
-    def test_detect_gemini_cli_provider(self) -> None:
-        """Should detect Gemini CLI when authenticated."""
-        with (
-            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
-            patch(
-                "markitai.cli.providers_detect._check_chatgpt_auth",
-                return_value=False,
-            ),
-            patch(
-                "markitai.cli.providers_detect._check_gemini_cli_auth",
-                return_value=True,
-            ),
-            patch.dict("os.environ", {}, clear=True),
-        ):
-            result = detect_llm_provider()
-            assert result is not None
-            assert result.provider == "gemini-cli"
-            assert result.model == "gemini-cli/gemini-3.1-pro-preview"
 
 
 class TestInteractiveSession:

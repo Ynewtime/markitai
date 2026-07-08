@@ -233,8 +233,8 @@ class TestFormatErrorMessage:
 
         # Simulate: ProviderError raised, then RetryError raised in except block
         provider_error = ProviderError(
-            "Code Assist API error (HTTP 404): model gemini-3.1-flash-lite-preview not found",
-            provider="gemini-cli",
+            "Copilot API error (HTTP 404): model gemini-3.1-flash-lite-preview not found",
+            provider="copilot",
         )
         # Simulate tenacity RetryError with a Future as args[0]
         future = Future()

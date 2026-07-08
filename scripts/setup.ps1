@@ -68,7 +68,6 @@ function i18n {
             "ffmpeg"                    { return "FFmpeg" }
             "claude_cli"                { return "Claude Code CLI" }
             "copilot_cli"               { return "Copilot CLI" }
-            "gemini_cli"                { return "Gemini CLI" }
             "precommit"                 { return "pre-commit hooks" }
             "python_deps"               { return "Python 依赖" }
 
@@ -185,7 +184,6 @@ function i18n {
             "ffmpeg"                    { return "FFmpeg" }
             "claude_cli"                { return "Claude Code CLI" }
             "copilot_cli"               { return "Copilot CLI" }
-            "gemini_cli"                { return "Gemini CLI" }
             "precommit"                 { return "pre-commit hooks" }
             "python_deps"               { return "Python dependencies" }
 
@@ -1355,32 +1353,6 @@ function Install-OptionalCopilotCLI {
     return $false
 }
 
-# Detect Gemini CLI credentials and install google-auth extra (Optional)
-# Gemini CLI is installed separately; we only check for existing credentials
-function Detect-GeminiCLI {
-    # Check for Gemini CLI command
-    $geminiCmd = Get-Command gemini -ErrorAction SilentlyContinue
-    if ($geminiCmd) {
-        $version = & gemini --version 2>&1 | Select-Object -First 1
-        Clack-Success "$(i18n 'gemini_cli'): $version"
-        Install-MarkitaiExtra -ExtraName "gemini-cli"
-        Track-Install -Component "gemini_cli" -Status "installed"
-        return $true
-    }
-
-    # Check for existing OAuth credentials
-    $credsPath = Join-Path (Join-Path $HOME ".gemini") "oauth_creds.json"
-    if (Test-Path $credsPath) {
-        Clack-Success "$(i18n 'gemini_cli'): credentials detected"
-        Install-MarkitaiExtra -ExtraName "gemini-cli"
-        Track-Install -Component "gemini_cli" -Status "installed"
-        return $true
-    }
-
-    # Not found — silent skip
-    return $false
-}
-
 # Print installation summary
 function Print-Summary {
     Clack-Section (i18n "section_summary")
@@ -1545,7 +1517,6 @@ function Run-UserSetup {
     Clack-Section (i18n "section_llm_cli")
     Install-OptionalClaudeCLI | Out-Null
     Install-OptionalCopilotCLI | Out-Null
-    Detect-GeminiCLI | Out-Null
 
     Finalize-MarkitaiExtras
 
@@ -1581,7 +1552,6 @@ function Run-DevSetup {
     Clack-Section (i18n "section_llm_cli")
     Install-OptionalClaudeCLI | Out-Null
     Install-OptionalCopilotCLI | Out-Null
-    Detect-GeminiCLI | Out-Null
 
     Print-Summary
     Print-DevCompletion
