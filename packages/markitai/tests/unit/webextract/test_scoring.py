@@ -43,28 +43,25 @@ def test_score_candidate_values_match_manual_calculation() -> None:
     div = soup.find("div")
     assert isinstance(div, Tag)
 
-    # Manual calculation (multiplicative link density):
-    # text: "Alpha bravo charlie delta echo. Foxtrot golf hotel india juliet. link1 link2"
-    # => 12 words => score starts at 12.0
-    # 2 paragraphs => +40
-    # 2 commas (period isn't comma) => actually 0 commas in this text
-    # class "content" matches => +30
-    # not "article" tag => +0
-    # base = 12 + 40 + 0 + 30 = 82
+    # Manual calculation (defuddle scoreElement):
+    # 12 words => score starts at 12.0
+    # 2 paragraphs => +20
+    # 0 commas
+    # class "content" matches => +15
+    # base = 12 + 20 + 0 + 15 = 47
     # link_text = "link1" + "link2" = 10 chars
-    # total_text = ~76 chars
-    # link_density = min(10/76, 0.5) ≈ 0.1316
-    # score = 82 * (1 - 0.1316) ≈ 71.2
+    # link_density = min(10 / len(text), 0.5) ≈ 0.12
+    # score = 47 * (1 - 0.12) ≈ 41
     score = score_candidate(div)
-    assert 65 < score < 80, f"Expected ~71, got {score}"
+    assert 35 < score < 47, f"Expected ~41, got {score}"
 
 
-def test_select_best_candidate_picks_content_rich_node() -> None:
-    """select_best_candidate must pick the node with the highest score."""
+def test_select_best_candidate_prefers_entry_point_selectors() -> None:
+    """An entry-point match (.post-content) must beat a generic wrapper."""
     html = """
     <html><body>
       <div class="sidebar"><p>Short sidebar.</p></div>
-      <div class="content">
+      <div class="post-content">
         <p>This is a long article body with many words to ensure high score.</p>
         <p>Another paragraph with substantial content for scoring.</p>
       </div>
@@ -74,7 +71,58 @@ def test_select_best_candidate_picks_content_rich_node() -> None:
     soup = parse_html(html)
     best = select_best_candidate(soup)
     assert best is not None
-    assert "content" in best.get("class", [])  # type: ignore[reportArgumentType, reportOperatorIssue]
+    assert "post-content" in best.get("class", [])  # type: ignore[reportArgumentType, reportOperatorIssue]
+
+
+def test_select_best_candidate_falls_back_to_body() -> None:
+    """With no entry-point match besides body, body is the candidate
+    (clutter is handled later by removals, mirroring defuddle)."""
+    html = """
+    <html><body>
+      <div class="wrapper">
+        <p>Prose paragraph with enough words to score reasonably well here.</p>
+      </div>
+    </body></html>
+    """
+    soup = parse_html(html)
+    best = select_best_candidate(soup)
+    assert best is not None
+    assert best.name == "body"
+
+
+def test_select_best_candidate_prefers_deepest_child() -> None:
+    """A contained <article> with >50 words beats its <main> wrapper."""
+    words = " ".join(f"word{i}" for i in range(60))
+    html = f"""
+    <html><body>
+      <main>
+        <div class="promo"><p>Sidebar noise with several words here.</p></div>
+        <article><p>{words}</p></article>
+      </main>
+    </body></html>
+    """
+    soup = parse_html(html)
+    best = select_best_candidate(soup)
+    assert best is not None
+    assert best.name == "article"
+
+
+def test_select_best_candidate_keeps_listing_parent() -> None:
+    """Multiple sibling <article> cards mean a listing page — keep parent."""
+    card = " ".join(f"word{i}" for i in range(60))
+    html = f"""
+    <html><body>
+      <main>
+        <article><p>{card}</p></article>
+        <article><p>{card}</p></article>
+        <article><p>{card}</p></article>
+      </main>
+    </body></html>
+    """
+    soup = parse_html(html)
+    best = select_best_candidate(soup)
+    assert best is not None
+    assert best.name == "main"
 
 
 def test_score_candidate_large_dom_many_candidates() -> None:

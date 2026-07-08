@@ -182,6 +182,10 @@ def canonicalize_embeds(root: Tag | BeautifulSoup) -> None:
         if canonical is not None:
             link = tag_factory.new_tag("a", href=canonical)
             link.string = canonical
+            # Mark so removals don't score the resulting link-only wrapper
+            # as navigation (defuddle keeps embeds as iframes until the
+            # markdown stage, so it never produces this artifact).
+            link["data-markitai-embed"] = "1"
             iframe.replace_with(link)
 
 

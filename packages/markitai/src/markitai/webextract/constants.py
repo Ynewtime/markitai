@@ -751,6 +751,7 @@ CONTENT_PROTECTION_SELECTORS: list[str] = [
     "blockquote",
     "figure",
     'input[type="checkbox"]',  # task lists (GitHub-style)
+    "[data-markitai-embed]",  # canonicalized video/social embed links
 ]
 
 # Elements that are allowed to be empty (void elements)

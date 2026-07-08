@@ -470,6 +470,29 @@ def _remove_listen_widgets(root: Tag, is_pre_content: _PreContentCheck) -> int:
     return removed
 
 
+def _remove_orphan_toc_headings(root: Tag) -> int:
+    """Remove ToC-labelled headings whose list is already gone.
+
+    NOTE: markitai-specific — mobile-style pruning (a markitai extension)
+    can remove a ToC list while leaving its "Table of Contents" heading
+    behind; a ToC label with no following list is always noise.
+    """
+    removed = 0
+    for heading in list(root.find_all(list(_HEADING_TAGS))):
+        if _gone(heading):
+            continue
+        if not _TOC_HEADING_RE.match(_text(heading)):
+            continue
+        nxt = _next_tag_sibling(heading)
+        if nxt is not None and (
+            nxt.name in ("ul", "ol") or nxt.find(["ul", "ol"]) is not None
+        ):
+            continue
+        heading.decompose()
+        removed += 1
+    return removed
+
+
 def _remove_toc(root: Tag, content_text: str, url: str) -> int:
     """Remove tables of contents — same-page anchor link lists near the top."""
     parsed_url = None
@@ -1329,6 +1352,7 @@ def remove_content_patterns(
 
     content_text = root.get_text()
     removed += _remove_toc(root, content_text, url)
+    removed += _remove_orphan_toc_headings(root)
     removed += _remove_metadata_candidates(
         root, content_text, is_pre_content, normalized_title, normalized_desc
     )
