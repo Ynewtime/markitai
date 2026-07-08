@@ -96,6 +96,7 @@
 | packages/markitai/src/markitai/utils/text.py                               |      244 |       53 |      114 |       13 |     77% |67, 69-112, 144, 173, 206, 221, 296-\>303, 319, 470, 489-496, 530, 582-583, 606-608, 610-\>572, 615 |
 | packages/markitai/src/markitai/webextract/\_\_init\_\_.py                  |       31 |        3 |       10 |        2 |     88% |32, 59, 89 |
 | packages/markitai/src/markitai/webextract/constants.py                     |       19 |        0 |        0 |        0 |    100% |           |
+| packages/markitai/src/markitai/webextract/content\_boundary.py             |      132 |       14 |       92 |       12 |     88% |54, 58, 69, 73, 88, 144-147, 149, 170, 173-\>172, 181, 192, 194 |
 | packages/markitai/src/markitai/webextract/dom.py                           |        8 |        0 |        0 |        0 |    100% |           |
 | packages/markitai/src/markitai/webextract/elements/\_\_init\_\_.py         |        5 |        0 |        0 |        0 |    100% |           |
 | packages/markitai/src/markitai/webextract/elements/callouts.py             |       57 |        1 |       26 |        5 |     93% |34-\>41, 42-\>46, 54-\>61, 74, 77-\>83 |
@@ -121,14 +122,14 @@
 | packages/markitai/src/markitai/webextract/extractors/x\_tweet.py           |      132 |       14 |       72 |       15 |     85% |63-\>65, 66, 71, 116, 129-\>152, 138, 147-\>136, 150, 180-181, 185-\>188, 204, 219-220, 247, 261-262, 267-\>265, 276 |
 | packages/markitai/src/markitai/webextract/extractors/youtube\_page.py      |       97 |       29 |       56 |       17 |     58% |57-58, 83-\>85, 85-\>87, 87-\>90, 122-\>126, 135-151, 172-179, 199-210, 232-\>235, 235-\>238, 240-\>251, 243-\>251 |
 | packages/markitai/src/markitai/webextract/frontmatter.py                   |       14 |        0 |        6 |        0 |    100% |           |
-| packages/markitai/src/markitai/webextract/markdown.py                      |      134 |       13 |       56 |       12 |     87% |89, 94-\>96, 114, 121-124, 177, 180, 218, 226, 234, 266, 272, 288 |
+| packages/markitai/src/markitai/webextract/markdown.py                      |      135 |       13 |       56 |       12 |     87% |89, 94-\>96, 114, 121-124, 177, 180, 222, 230, 238, 270, 276, 292 |
 | packages/markitai/src/markitai/webextract/metadata.py                      |      163 |       10 |      102 |       13 |     91% |60, 115, 172, 176-\>179, 181, 205, 238, 241-242, 254, 257-\>256, 261-\>exit, 263-\>262, 279, 282-\>276 |
 | packages/markitai/src/markitai/webextract/mobile\_styles.py                |       58 |        5 |       34 |        5 |     89% |28, 38-\>37, 41-42, 68, 72, 81-\>74 |
-| packages/markitai/src/markitai/webextract/pipeline.py                      |      191 |       11 |       54 |       11 |     90% |107-\>106, 116, 139-140, 298-\>307, 308-\>315, 315-\>317, 396-398, 400, 425-\>441, 467-469, 471, 503-\>506 |
+| packages/markitai/src/markitai/webextract/pipeline.py                      |      191 |       11 |       54 |       11 |     90% |107-\>106, 116, 139-140, 299-\>308, 309-\>320, 320-\>322, 401-403, 405, 431-\>448, 474-476, 478, 510-\>513 |
 | packages/markitai/src/markitai/webextract/preprocess.py                    |       54 |        1 |       14 |        1 |     97% |       133 |
 | packages/markitai/src/markitai/webextract/quality.py                       |      124 |        3 |       48 |        2 |     97% |87, 135-136 |
-| packages/markitai/src/markitai/webextract/removals/\_\_init\_\_.py         |       17 |        0 |        4 |        0 |    100% |           |
-| packages/markitai/src/markitai/webextract/removals/content\_patterns.py    |       65 |        0 |       32 |        0 |    100% |           |
+| packages/markitai/src/markitai/webextract/removals/\_\_init\_\_.py         |       19 |        0 |        6 |        0 |    100% |           |
+| packages/markitai/src/markitai/webextract/removals/content\_patterns.py    |      867 |      183 |      484 |       75 |     77% |162, 165, 230-231, 275, 277, 279, 284-285, 306-\>305, 313, 343, 344-\>346, 347, 380, 405, 418, 423-431, 440, 442, 468-469, 483, 490, 502-503, 507, 520, 528-536, 547, 552-\>558, 554-555, 562-563, 565-566, 611-616, 620-622, 652-\>659, 666-672, 682-686, 699-\>706, 718-726, 734-\>593, 752, 761-762, 766-768, 772, 788, 811-\>817, 818-\>823, 820-\>818, 825-830, 838-839, 868-\>870, 875-876, 897-898, 906, 912, 917-\>927, 923, 931-960, 969, 980-\>975, 991-1003, 1019-\>1035, 1025-1026, 1069-1071, 1080-1081, 1093, 1107, 1118, 1123, 1125, 1136, 1157-1166, 1174, 1181-1189, 1197, 1208, 1226-1235, 1244, 1248-1260, 1275-\>1279 |
 | packages/markitai/src/markitai/webextract/removals/hidden.py               |       61 |        8 |       40 |        8 |     84% |49, 97, 105, 109, 111, 116, 118, 122 |
 | packages/markitai/src/markitai/webextract/removals/scoring.py              |      108 |       10 |       66 |        5 |     90% |76, 78-79, 87, 107-108, 128, 163-\>169, 188-190 |
 | packages/markitai/src/markitai/webextract/removals/selectors.py            |      120 |       22 |       82 |        8 |     81% |46, 51-64, 84, 87, 101-\>105, 116, 130-132, 159, 164 |
@@ -137,17 +138,17 @@
 | packages/markitai/src/markitai/webextract/resolver.py                      |       55 |        4 |       20 |        1 |     93% |163, 166-172 |
 | packages/markitai/src/markitai/webextract/sanitize.py                      |       31 |        0 |       20 |        0 |    100% |           |
 | packages/markitai/src/markitai/webextract/schema.py                        |       38 |        4 |       20 |        2 |     90% |23, 26-27, 43 |
-| packages/markitai/src/markitai/webextract/scoring.py                       |       52 |        0 |       20 |        1 |     99% |   91-\>94 |
+| packages/markitai/src/markitai/webextract/scoring.py                       |      139 |       15 |       70 |        5 |     89% |77, 87, 100, 171-172, 187-194, 217, 231 |
 | packages/markitai/src/markitai/webextract/semantics.py                     |       38 |        0 |        0 |        0 |    100% |           |
 | packages/markitai/src/markitai/webextract/standardize.py                   |      169 |        7 |      104 |        8 |     95% |173, 196, 226, 261, 263, 318, 341, 369-\>367 |
 | packages/markitai/src/markitai/webextract/thread\_policy.py                |       16 |        1 |        4 |        1 |     90% |        62 |
 | packages/markitai/src/markitai/webextract/types.py                         |       44 |        0 |        0 |        0 |    100% |           |
-| packages/markitai/src/markitai/webextract/utils.py                         |       12 |        0 |        2 |        0 |    100% |           |
+| packages/markitai/src/markitai/webextract/utils.py                         |       16 |        0 |        2 |        0 |    100% |           |
 | packages/markitai/src/markitai/workflow/\_\_init\_\_.py                    |       20 |        4 |        8 |        2 |     79% |37-39, 50-52 |
 | packages/markitai/src/markitai/workflow/core.py                            |      483 |       71 |      176 |       37 |     82% |178-\>183, 194-219, 229, 295, 402, 427, 505, 507, 544-\>547, 596, 604-605, 616, 625, 646, 650, 671, 677-\>680, 694-695, 721, 738, 753-\>756, 768, 799, 846-\>855, 909, 949-996, 1023-1024, 1041, 1057, 1064, 1147, 1157, 1162, 1167, 1206-1208, 1213-1214, 1222-1226, 1241-1242, 1254-1255 |
 | packages/markitai/src/markitai/workflow/helpers.py                         |      206 |       16 |      106 |       17 |     89% |110, 116, 120, 147-\>149, 150, 278-\>272, 294-\>297, 334-337, 406, 416, 436-437, 439-442, 449-\>448, 452-\>448, 461-\>463, 478-\>484, 482, 534-\>542 |
 | packages/markitai/src/markitai/workflow/single.py                          |      196 |        4 |       34 |        6 |     96% |52, 159, 167, 344-\>366, 491 |
-| **TOTAL**                                                                  | **21021** | **3113** | **7878** | **1180** | **82%** |           |
+| **TOTAL**                                                                  | **22049** | **3325** | **8474** | **1271** | **82%** |           |
 
 
 ## Setup coverage badge
