@@ -63,7 +63,9 @@ Releases are **manual** and driven by pushing a version tag. There is no
 auto-generated release PR — you cut a release only when you intend to.
 
 1. Bump `__version__` in `packages/markitai/src/markitai/__init__.py`. This is
-   the **single source of truth** — hatch reads it at build time.
+   the **single source of truth** for the published package — hatch reads it
+   at build time. Also bump the workspace `version` in the root
+   `pyproject.toml` (unpublished, but shell prompts like starship read it).
 2. Add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` (this becomes the
    GitHub Release notes verbatim).
 3. Commit and push to `main` (e.g. `chore(release): v X.Y.Z`).
