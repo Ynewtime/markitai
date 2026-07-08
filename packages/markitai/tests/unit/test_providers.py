@@ -270,10 +270,6 @@ class TestRegisterProviders:
                     "markitai.providers.chatgpt.ChatGPTProvider",
                     return_value=MagicMock(),
                 ),
-                patch(
-                    "markitai.providers.gemini_cli.GeminiCLIProvider",
-                    return_value=MagicMock(),
-                ),
                 patch("markitai.providers.logger.debug") as mock_debug,
             ):
                 register_providers()
@@ -283,13 +279,12 @@ class TestRegisterProviders:
             ]
             assert (
                 "[Providers] Registered custom providers: "
-                "claude-agent, copilot, chatgpt, gemini-cli" in debug_messages
+                "claude-agent, copilot, chatgpt" in debug_messages
             )
             assert all(
                 "Registered claude-agent provider" not in msg
                 and "Registered copilot provider" not in msg
                 and "Registered chatgpt provider" not in msg
-                and "Registered gemini-cli provider" not in msg
                 for msg in debug_messages
             )
         finally:
@@ -1500,7 +1495,7 @@ class TestClaudeAgentPromptCaching:
 
 
 class TestNewProviderIdentification:
-    """Tests for chatgpt/ and gemini-cli/ provider identification."""
+    """Tests for chatgpt/ provider identification."""
 
     def test_chatgpt_model_is_local(self) -> None:
         """Test that chatgpt models are identified as local."""
@@ -1508,15 +1503,6 @@ class TestNewProviderIdentification:
 
         assert is_local_provider_model("chatgpt/gpt-5.4") is True
         assert is_local_provider_model("chatgpt/gpt-5.4-codex") is True
-
-    def test_gemini_cli_model_is_local(self) -> None:
-        """Test that gemini-cli models are identified as local."""
-        from markitai.providers import is_local_provider_model
-
-        assert is_local_provider_model("gemini-cli/gemini-3.1-pro-preview") is True
-        assert (
-            is_local_provider_model("gemini-cli/gemini-3.1-flash-lite-preview") is True
-        )
 
     def test_chatgpt_model_info(self) -> None:
         """Test that chatgpt models return valid model info."""
@@ -1527,29 +1513,6 @@ class TestNewProviderIdentification:
         assert "max_input_tokens" in info
         assert "max_output_tokens" in info
         assert "supports_vision" in info
-
-    def test_gemini_cli_model_info(self) -> None:
-        """Test that gemini-cli models return valid model info."""
-        from markitai.providers import get_local_provider_model_info
-
-        info = get_local_provider_model_info("gemini-cli/gemini-3.1-pro-preview")
-        assert info is not None
-        assert "max_input_tokens" in info
-        assert "max_output_tokens" in info
-        assert "supports_vision" in info
-
-    def test_validate_local_provider_deps_gemini_cli(self) -> None:
-        """Test dependency validation for gemini-cli models."""
-        from unittest.mock import patch
-
-        from markitai.providers import validate_local_provider_deps
-
-        with patch("importlib.util.find_spec", return_value=None):
-            warnings = validate_local_provider_deps(
-                ["gemini-cli/gemini-3.1-pro-preview"]
-            )
-            assert len(warnings) >= 1
-            assert any("google-auth" in w for w in warnings)
 
 
 class TestCountTokensFallback:

@@ -396,13 +396,9 @@ def _detect_providers() -> list[tuple[str, bool]]:
     providers.append(("GitHub Copilot CLI", copilot_available))
 
     # OAuth-authenticated providers (no CLI binary needed)
-    from markitai.cli.providers_detect import (
-        _check_chatgpt_auth,
-        _check_gemini_cli_auth,
-    )
+    from markitai.cli.providers_detect import _check_chatgpt_auth
 
     providers.append(("ChatGPT", _check_chatgpt_auth()))
-    providers.append(("Gemini CLI", _check_gemini_cli_auth()))
 
     # API key providers
     api_keys = [
@@ -426,7 +422,6 @@ def _build_config(
     Deduplication rules to avoid redundant Router entries:
     - Skip Anthropic API when Claude CLI is available (same model family)
     - Skip OpenRouter Gemini when direct Gemini API is available
-    - Skip direct Gemini API when Gemini CLI is available (same backend)
     """
     model_list = []
 
@@ -435,7 +430,6 @@ def _build_config(
         "Claude": ("default", "claude-agent/sonnet"),
         "ChatGPT": ("default", "chatgpt/gpt-5.4"),
         "Copilot": ("default", "copilot/claude-sonnet-4.6"),
-        "Gemini CLI": ("default", "gemini-cli/gemini-3.1-pro-preview"),
         "DeepSeek": ("default", "deepseek/deepseek-chat"),
         "Gemini": ("default", "gemini/gemini-3.1-flash-lite-preview"),
         "OpenAI": ("default", "openai/gpt-5.4"),
@@ -456,8 +450,6 @@ def _build_config(
         # Deduplicate: skip redundant provider routes
         if "Claude" in available_keys and "Anthropic" in available_keys:
             available_keys.discard("Anthropic")
-        if "Gemini CLI" in available_keys and "Gemini" in available_keys:
-            available_keys.discard("Gemini")
         if "Gemini" in available_keys and "OpenRouter" in available_keys:
             available_keys.discard("OpenRouter")
 

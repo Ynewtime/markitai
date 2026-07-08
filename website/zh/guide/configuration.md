@@ -251,14 +251,10 @@ Markitai 还支持使用 CLI 认证和订阅额度的本地提供商：
 - **Claude Agent** (`claude-agent/`): 使用 [Claude Agent SDK](https://github.com/anthropics/claude-code) 通过 Claude Code CLI 认证
 - **GitHub Copilot** (`copilot/`): 使用 [GitHub Copilot SDK](https://github.com/github/copilot-sdk) 通过 Copilot CLI 认证
 - **ChatGPT** (`chatgpt/`): 使用 ChatGPT 订阅，通过 OAuth Device Code Flow 和 Responses API 认证，无需额外 SDK
-- **Gemini CLI**（`gemini-cli/`）：使用 Google Gemini CLI 凭据，支持自动令牌刷新。凭据来源（按优先级）：
-  1. Markitai 管理的配置文件（`~/.markitai/auth/gemini-*.json`，通过 `markitai auth gemini login` 创建）
-  2. 共享 Gemini CLI 凭据（`~/.gemini/oauth_creds.json`）
-  3. 内置 OAuth 流程（首次使用时自动触发）
 
 这些提供商需要：
 1. 安装并认证对应的 CLI 工具（或使用环境变量认证——见下文）
-2. 可选 SDK 包：`uv add markitai[claude-agent]`、`uv add markitai[copilot]` 或 `uv add markitai[gemini-cli]`
+2. 可选 SDK 包：`uv add markitai[claude-agent]` 或 `uv add markitai[copilot]`
 
 **安装 Claude Code CLI：**
 ```bash
@@ -282,18 +278,9 @@ winget install GitHub.Copilot
 
 ChatGPT 提供商首次使用时通过 OAuth Device Code Flow 认证——只需配置模型并按照浏览器提示操作即可。
 
-**安装 Gemini CLI（可选）：**
-
-Gemini CLI 提供商可复用现有 Gemini CLI 凭据。安装 CLI 并认证，或让内置 OAuth 流程自动处理：
-
-```bash
-# 安装 Gemini CLI（可选——提供商有内置 OAuth）
-npm install -g @google/gemini-cli
-gemini  # 首次运行时触发 OAuth 登录
-
-# 安装 google-auth 以支持自动令牌刷新
-uv add 'markitai[gemini-cli]'
-```
+::: tip Gemini 接入方式
+Gemini：使用直连 API 密钥（`gemini/`，见下方“模型命名”）或通过 OpenRouter 接入（`openrouter/google/...`）。
+:::
 
 ### 模型命名
 
@@ -312,7 +299,6 @@ provider/model-name
 - `claude-agent/sonnet`（本地，需要 Claude Code CLI）
 - `copilot/gpt-5.4`（本地，需要 Copilot CLI）
 - `chatgpt/gpt-5.4`（本地，需要 ChatGPT 订阅）
-- `gemini-cli/gemini-3.1-pro-preview`（本地，需要 Gemini CLI 或 OAuth）
 
 Claude Agent SDK 支持的模型：
 - 别名（推荐）：`sonnet`、`opus`、`haiku`、`inherit`
@@ -326,9 +312,6 @@ GitHub Copilot SDK 支持的模型：
 ChatGPT 支持的模型：
 - `gpt-5.4`、`gpt-5.4-codex`、`codex-mini` 等
 
-Gemini CLI 支持的模型：
-- `gemini-3.1-pro-preview`、`gemini-3.1-flash-lite-preview`、`gemini-3.1-flash-image-preview` 等
-
 ::: warning 已下线模型
 以下模型已于 **2025年2月13日** 下线，不再可用：
 - `gpt-4o`、`gpt-4.1`、`gpt-4.1-mini`、`o4-mini`、`gpt-5`、`gpt-5.1`、`gpt-5.2`
@@ -337,7 +320,7 @@ Gemini CLI 支持的模型：
 :::
 
 ::: tip 本地提供商支持 Vision
-本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`、`gemini-cli/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-5.4`、`gemini-cli/gemini-3.1-pro-preview`）。
+本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-5.4`、`chatgpt/gpt-5.4`）。
 :::
 
 ::: tip 本地提供商故障排除
@@ -345,9 +328,9 @@ Gemini CLI 支持的模型：
 
 | 错误 | 解决方案 |
 |------|----------|
-| "SDK 未安装" | `uv add markitai[copilot]`、`uv add markitai[claude-agent]` 或 `uv add markitai[gemini-cli]` |
+| "SDK 未安装" | `uv add markitai[copilot]` 或 `uv add markitai[claude-agent]` |
 | "CLI 未找到" | 安装并认证 CLI 工具（[Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli)、[Claude Code](https://claude.ai/code)） |
-| "未认证" | 运行 `copilot auth login` 或 `claude auth login`。也可：为 Copilot 设置 `GH_TOKEN`/`GITHUB_TOKEN`，为 Claude 设置 `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1`。ChatGPT 首次使用时自动触发 OAuth。Gemini CLI 复用 `~/.gemini/oauth_creds.json`。 |
+| "未认证" | 运行 `copilot auth login` 或 `claude auth login`。也可：为 Copilot 设置 `GH_TOKEN`/`GITHUB_TOKEN`，为 Claude 设置 `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1`。ChatGPT 首次使用时自动触发 OAuth。 |
 | "速率限制" | 等待后重试，或检查订阅额度 |
 | "请求超时" | 超时是自适应的；处理非常大的文档可能需要更长时间 |
 
@@ -418,12 +401,11 @@ Gemini CLI 支持的模型：
 :::
 
 ::: warning 本地提供商与 `api_base`
-`api_base` 配置字段**不适用于**本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`、`gemini-cli/`）。这些提供商作为 CLI 子进程运行或使用 OAuth，内部管理 API 端点：
+`api_base` 配置字段**不适用于**本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`）。这些提供商作为 CLI 子进程运行或使用 OAuth，内部管理 API 端点：
 
 - **Claude Agent**: 设置 `ANTHROPIC_BASE_URL` 覆盖 API 端点。如果同时设置了 `ANTHROPIC_API_KEY`，CLI 将使用它进行直接 API 访问而非订阅认证。其他路由选项：`CLAUDE_CODE_USE_BEDROCK=1`、`CLAUDE_CODE_USE_VERTEX=1`、`CLAUDE_CODE_USE_FOUNDRY=1`。
-- **GitHub Copilot**: 端点由 Copilot CLI 内部管理，不可覆盖。基于令牌的认证请设置 `GH_TOKEN` 或 `GITHUB_TOKEN`。
+- **GitHub Copilot**: 端点由 Copilot CLI 内部管理，不可覆盖。基于令牌的认证请设置 `COPILOT_GITHUB_TOKEN`、`GH_TOKEN` 或 `GITHUB_TOKEN`。
 - **ChatGPT**: 使用 OpenAI Responses API 端点，通过 LiteLLM 内置 OAuth Device Code Flow 认证。
-- **Gemini CLI**: 使用 Google Code Assist API 端点，从 `~/.gemini/oauth_creds.json` 读取凭据。
 :::
 
 ### Vision 模型
@@ -501,7 +483,7 @@ Gemini CLI 支持的模型：
 
 ### 自适应超时
 
-本地 provider（`claude-agent/`、`copilot/`、`chatgpt/`、`gemini-cli/`）使用基于请求复杂度的**自适应超时计算**：
+本地 provider（`claude-agent/`、`copilot/`、`chatgpt/`）使用基于请求复杂度的**自适应超时计算**：
 
 - 基础超时：最小 60 秒，最大 600 秒
 - 考虑因素：提示词长度、图片存在/数量、预期输出 token 数

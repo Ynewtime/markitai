@@ -479,15 +479,6 @@ class TestLocalProviderWrapper:
         assert wrapper._is_image_capable("chatgpt/gpt-5.3") is True
         assert wrapper._is_image_capable("chatgpt/codex-mini") is True
 
-    def test_image_capable_includes_gemini_cli(self):
-        """gemini-cli/ models should be recognized as image-capable."""
-        wrapper = LocalProviderWrapper([])
-        assert wrapper._is_image_capable("gemini-cli/gemini-3.1-pro-preview") is True
-        assert (
-            wrapper._is_image_capable("gemini-cli/gemini-3.1-flash-lite-preview")
-            is True
-        )
-
 
 # =============================================================================
 # Test HybridRouter
@@ -625,7 +616,7 @@ class TestHybridRouter:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "gemini-cli/gemini-3-flash",
+                        "model": "copilot/gemini-3-flash",
                         "weight": 10,
                     },
                 },
@@ -633,7 +624,7 @@ class TestHybridRouter:
         )
 
         hybrid = HybridRouter(standard_router, local_wrapper)
-        hybrid.record_cooldown("gemini-cli/gemini-3-flash", 60.0)
+        hybrid.record_cooldown("copilot/gemini-3-flash", 60.0)
 
         selections = {hybrid._select_model("default") for _ in range(50)}
         assert selections == {"claude-agent/sonnet"}
@@ -655,7 +646,7 @@ class TestHybridRouter:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "gemini-cli/gemini-3-flash",
+                        "model": "copilot/gemini-3-flash",
                         "weight": 10,
                     },
                 },
@@ -664,7 +655,7 @@ class TestHybridRouter:
 
         hybrid = HybridRouter(standard_router, local_wrapper)
         # Set cooldown in the past (already expired)
-        hybrid._model_cooldowns["gemini-cli/gemini-3-flash"] = time.monotonic() - 1.0
+        hybrid._model_cooldowns["copilot/gemini-3-flash"] = time.monotonic() - 1.0
 
         selections = {hybrid._select_model("default") for _ in range(100)}
         assert len(selections) == 2
@@ -817,14 +808,14 @@ class TestLocalProviderWrapperCooldown:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "gemini-cli/gemini-3-flash",
+                        "model": "copilot/gemini-3-flash",
                         "weight": 10,
                     },
                 },
             ]
         )
 
-        wrapper.record_cooldown("gemini-cli/gemini-3-flash", 60.0)
+        wrapper.record_cooldown("copilot/gemini-3-flash", 60.0)
 
         selections = {wrapper._select_model("default") for _ in range(50)}
         assert selections == {"claude-agent/sonnet"}
@@ -843,7 +834,7 @@ class TestLocalProviderWrapperCooldown:
                 {
                     "model_name": "default",
                     "litellm_params": {
-                        "model": "gemini-cli/gemini-3-flash",
+                        "model": "copilot/gemini-3-flash",
                         "weight": 10,
                     },
                 },
@@ -851,7 +842,7 @@ class TestLocalProviderWrapperCooldown:
         )
 
         # Set cooldown in the past (already expired)
-        wrapper._model_cooldowns["gemini-cli/gemini-3-flash"] = time.monotonic() - 1.0
+        wrapper._model_cooldowns["copilot/gemini-3-flash"] = time.monotonic() - 1.0
 
         selections = {wrapper._select_model("default") for _ in range(100)}
         assert len(selections) == 2
@@ -2291,10 +2282,10 @@ class TestCallLlmRateLimitRetry:
     async def test_retries_rate_limit_with_quota_text(self, llm_config, prompts_config):
         """A 429 RateLimitError mentioning 'quota' must be retried.
 
-        gemini-cli 429 errors carry text like 'quota will reset after 57s'.
-        The word 'quota' must not trigger the non-retryable billing check
-        for genuine rate limits — the router cooldown routes the retry to
-        another model.
+        Some providers' 429 errors carry text like 'quota will reset after
+        57s'. The word 'quota' must not trigger the non-retryable billing
+        check for genuine rate limits — the router cooldown routes the
+        retry to another model.
         """
         from litellm.exceptions import RateLimitError
 
@@ -2314,10 +2305,10 @@ class TestCallLlmRateLimitRetry:
             side_effect=[
                 RateLimitError(
                     message=(
-                        "gemini-cli rate limit (429): Your quota will reset after 57s."
+                        "provider rate limit (429): Your quota will reset after 57s."
                     ),
-                    llm_provider="gemini-cli",
-                    model="gemini-cli/gemini-3-flash",
+                    llm_provider="copilot",
+                    model="copilot/gemini-3-flash",
                 ),
                 success_response,
             ]

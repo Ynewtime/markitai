@@ -29,10 +29,6 @@ _LOGIN_HINTS: dict[str, tuple[str, str]] = {
         "markitai auth copilot login",
         "Runs the GitHub Copilot CLI login flow.",
     ),
-    "gemini-cli": (
-        "markitai auth gemini login",
-        "Opens a browser for Google OAuth login.",
-    ),
     "chatgpt": (
         "markitai auth chatgpt login",
         "Starts the OAuth Device Code Flow (visit the URL, enter the code).",
@@ -45,10 +41,6 @@ _USAGE_HINTS: dict[str, str] = {
         "LLM calls with claude-agent/ models use your Claude subscription quota."
     ),
     "copilot": ("LLM calls with copilot/ models use your GitHub Copilot subscription."),
-    "gemini-cli": (
-        "LLM calls with gemini-cli/ models use your Google account "
-        "(free tier available)."
-    ),
     "chatgpt": "LLM calls with chatgpt/ models use your ChatGPT subscription.",
 }
 
@@ -56,7 +48,6 @@ _USAGE_HINTS: dict[str, str] = {
 _PROVIDER_MODEL_PREFIXES: dict[str, str] = {
     "claude-agent": "claude-agent/",
     "copilot": "copilot/",
-    "gemini-cli": "gemini-cli/",
     "chatgpt": "chatgpt/",
 }
 
@@ -189,20 +180,6 @@ def _login_failure_guidance(
             ["Complete the browser login before the device code expires, then retry."],
         )
 
-    if provider == "gemini-cli":
-        if not can_attempt_login("gemini-cli"):
-            return (
-                (
-                    "uv add 'markitai[gemini-cli]'",
-                    "Installs the Google OAuth dependencies required for login.",
-                ),
-                [],
-            )
-        return (
-            None,
-            ["Check network access to accounts.google.com, then retry."],
-        )
-
     return (None, [])
 
 
@@ -227,8 +204,8 @@ def _status_to_payload(status: AuthStatus) -> dict[str, Any]:
 def _display_user(status: AuthStatus) -> str:
     """Format user field for human-readable display.
 
-    Raw values like ``subscription: max`` or ``gemini-cli`` are cleaned
-    up so that the terminal output reads naturally.
+    Raw values like ``subscription: max`` are cleaned up so that the
+    terminal output reads naturally.
     """
     user = status.user or ""
     provider = status.provider
@@ -251,9 +228,6 @@ def _display_user(status: AuthStatus) -> str:
 
     if provider == "chatgpt" and user == "chatgpt":
         return "authenticated"
-
-    if provider == "gemini-cli" and user == "gemini-cli":
-        return "shared credentials"
 
     return user
 
@@ -327,7 +301,6 @@ _OVERVIEW_PROVIDERS: list[tuple[str, str]] = [
     ("claude", "claude-agent"),
     ("chatgpt", "chatgpt"),
     ("copilot", "copilot"),
-    ("gemini", "gemini-cli"),
 ]
 
 
@@ -336,16 +309,16 @@ _OVERVIEW_PROVIDERS: list[tuple[str, str]] = [
 def auth(ctx: click.Context) -> None:
     """Authentication helpers for local providers.
 
-    Check or set up login for Claude Code, GitHub Copilot, Gemini CLI,
-    and ChatGPT so markitai can use them for LLM processing (--llm)
-    without API keys. Run without a subcommand to see an overview of
-    all providers.
+    Check or set up login for Claude Code, GitHub Copilot, and ChatGPT
+    so markitai can use them for LLM processing (--llm) without API
+    keys. Run without a subcommand to see an overview of all providers.
+    Gemini access is via a direct API key or OpenRouter (see
+    `markitai config`) — not through this command.
 
     Examples:
         markitai auth                   # Overview of all providers
         markitai auth claude status     # Is Claude Code logged in?
         markitai auth claude login      # Log in via Claude Code CLI
-        markitai auth gemini login      # Google OAuth login for Gemini
         markitai doctor                 # Check all providers at once
     """
     if ctx.invoked_subcommand is not None:
@@ -362,112 +335,6 @@ def auth(ctx: click.Context) -> None:
     console.print()
     console.print("  [dim]Details: markitai auth <provider> status[/]")
     console.print("  [dim]Login:   markitai auth <provider> login[/]")
-
-
-# ── Gemini ───────────────────────────────────────────────────────────────────
-
-
-@auth.group()
-def gemini() -> None:
-    """Gemini CLI authentication helpers.
-
-    Uses Google OAuth (free tier available); credentials can be shared
-    with an existing gemini CLI install or managed by markitai.
-
-    Examples:
-        markitai auth gemini status     # Show the active profile
-        markitai auth gemini login      # Run OAuth login in the browser
-    """
-
-
-@gemini.command("status")
-@click.option("--json", "as_json", is_flag=True, help="Output auth status as JSON.")
-def gemini_status(as_json: bool) -> None:
-    """Show the current Gemini authentication profile.
-
-    Exits non-zero when not authenticated, so it is script-friendly.
-
-    Examples:
-        markitai auth gemini status         # Human-readable status
-        markitai auth gemini status --json  # Machine-readable status
-    """
-    status = _check_status("gemini-cli")
-
-    if as_json:
-        click.echo(json.dumps(_status_to_payload(status), indent=2, ensure_ascii=False))
-        return
-
-    infos: list[str] = []
-    details = status.details or {}
-    # Only show extra details for managed profiles (markitai-managed)
-    if status.authenticated and details.get("source") == "markitai":
-        if details.get("project_id"):
-            infos.append(f"Project: {details['project_id']}")
-        if details.get("auth_mode"):
-            infos.append(f"Mode: {details['auth_mode']}")
-        if details.get("credential_path"):
-            infos.append(f"Profile: {details['credential_path']}")
-    _render_status_card("Gemini", status, infos=infos)
-
-
-@gemini.command("login")
-@click.option(
-    "--mode",
-    type=click.Choice(["google-one", "code-assist"], case_sensitive=False),
-    default="google-one",
-    show_default=True,
-    help="Project binding mode.",
-)
-@click.option(
-    "--project-id",
-    type=str,
-    default=None,
-    help="Explicit GCP project ID for Code Assist mode.",
-)
-def gemini_login(mode: str, project_id: str | None) -> None:
-    """Run Gemini OAuth login and save a Markitai-managed profile.
-
-    Opens a browser for Google OAuth. Use --mode code-assist with
-    --project-id if your account requires a GCP project binding.
-
-    Examples:
-        markitai auth gemini login
-        markitai auth gemini login --mode code-assist --project-id my-project
-    """
-    from markitai.providers.auth import can_attempt_login
-
-    def _fail(error: str) -> None:
-        _print_login_result(
-            "Gemini",
-            AuthStatus(
-                provider="gemini-cli",
-                authenticated=False,
-                user=None,
-                expires_at=None,
-                error=error,
-            ),
-        )
-
-    if not can_attempt_login("gemini-cli"):
-        _fail("google-auth-oauthlib not installed")
-        return
-
-    from markitai.providers.gemini_cli import GeminiCLIProvider
-
-    provider = GeminiCLIProvider()
-    try:
-        record = asyncio.run(provider.alogin(mode=mode, project_id=project_id))
-    except Exception as e:
-        _fail(str(e))
-        return
-    AuthManager().clear_cache("gemini-cli")
-
-    console = get_console()
-    ui.summary(f"Gemini login successful: {record.email}")
-    ui.info(f"Project: {record.project_id}")
-    ui.info(f"Mode: {record.auth_mode}")
-    ui.info(f"Profile: {record.path}")
-    console.print(f"  [dim]{_next_step_hint('gemini-cli')}[/]")
 
 
 # ── Copilot ──────────────────────────────────────────────────────────────────

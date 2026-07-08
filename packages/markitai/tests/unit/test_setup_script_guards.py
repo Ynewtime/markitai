@@ -29,7 +29,6 @@ _NON_FATAL_CALLS = (
     "install_optional_ffmpeg",
     "install_optional_claude_cli",
     "install_optional_copilot_cli",
-    "detect_gemini_cli",
     "finalize_markitai_extras",
     "install_precommit",
 )

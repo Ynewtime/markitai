@@ -251,14 +251,10 @@ Markitai also supports local providers that use CLI authentication and subscript
 - **Claude Agent** (`claude-agent/`): Uses [Claude Agent SDK](https://github.com/anthropics/claude-code) with Claude Code CLI authentication
 - **GitHub Copilot** (`copilot/`): Uses [GitHub Copilot SDK](https://github.com/github/copilot-sdk) with Copilot CLI authentication
 - **ChatGPT** (`chatgpt/`): Uses ChatGPT subscription via OAuth Device Code Flow and Responses API. No extra SDK required.
-- **Gemini CLI** (`gemini-cli/`): Uses Google's Gemini CLI credentials with automatic token refresh. Credential sources (in priority order):
-  1. Markitai-managed profiles (`~/.markitai/auth/gemini-*.json`, created via `markitai auth gemini login`)
-  2. Shared Gemini CLI credentials (`~/.gemini/oauth_creds.json`)
-  3. Built-in OAuth flow (automatic on first use)
 
 These providers require:
 1. The respective CLI tool installed and authenticated (or environment variable auth — see below)
-2. Optional SDK package: `uv add markitai[claude-agent]`, `uv add markitai[copilot]`, or `uv add markitai[gemini-cli]`
+2. Optional SDK package: `uv add markitai[claude-agent]` or `uv add markitai[copilot]`
 
 **Install Claude Code CLI:**
 ```bash
@@ -282,18 +278,9 @@ winget install GitHub.Copilot
 
 ChatGPT provider authenticates via OAuth Device Code Flow on first use — just configure the model and follow the browser prompt.
 
-**Install Gemini CLI (optional):**
-
-Gemini CLI provider can reuse existing Gemini CLI credentials. Install the CLI and authenticate, or let the built-in OAuth flow handle it:
-
-```bash
-# Install Gemini CLI (optional — provider has built-in OAuth)
-npm install -g @google/gemini-cli
-gemini  # Triggers OAuth login on first run
-
-# Install google-auth for automatic token refresh
-uv add 'markitai[gemini-cli]'
-```
+::: tip Gemini Access
+Gemini is not a local/CLI provider — use a direct API key (`gemini/`, see [Model Naming](#model-naming)) or route through OpenRouter (`openrouter/google/...`).
+:::
 
 ### Model Naming
 
@@ -312,7 +299,6 @@ Examples:
 - `claude-agent/sonnet` (local, requires Claude Code CLI)
 - `copilot/gpt-5.4` (local, requires Copilot CLI)
 - `chatgpt/gpt-5.4` (local, requires ChatGPT subscription)
-- `gemini-cli/gemini-3.1-pro-preview` (local, requires Gemini CLI or OAuth)
 
 Claude Agent SDK supported models:
 - Aliases (recommended): `sonnet`, `opus`, `haiku`, `inherit`
@@ -326,9 +312,6 @@ GitHub Copilot SDK supported models:
 ChatGPT supported models:
 - `gpt-5.4`, `gpt-5.4-codex`, `codex-mini`, etc.
 
-Gemini CLI supported models:
-- `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3.1-flash-image-preview`, etc.
-
 ::: warning Deprecated Models
 The following models were **retired on February 13, 2025** and are no longer available:
 - `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini`, `gpt-5`, `gpt-5.1`, `gpt-5.2`
@@ -337,7 +320,7 @@ Please use `gpt-5.4` or other currently supported models.
 :::
 
 ::: tip Local Providers Support Vision
-Local providers (`claude-agent/`, `copilot/`, `chatgpt/`, `gemini-cli/`) support image analysis (`--alt`, `--desc`) via file attachments. Make sure to use a vision-capable model (e.g., `copilot/gpt-5.4`, `gemini-cli/gemini-3.1-pro-preview`).
+Local providers (`claude-agent/`, `copilot/`, `chatgpt/`) support image analysis (`--alt`, `--desc`) via file attachments. Make sure to use a vision-capable model (e.g., `copilot/gpt-5.4`, `chatgpt/gpt-5.4`).
 :::
 
 ::: tip Troubleshooting Local Providers
@@ -345,9 +328,9 @@ Common errors and solutions:
 
 | Error | Solution |
 |-------|----------|
-| "SDK not installed" | `uv add markitai[copilot]`, `uv add markitai[claude-agent]`, or `uv add markitai[gemini-cli]` |
+| "SDK not installed" | `uv add markitai[copilot]` or `uv add markitai[claude-agent]` |
 | "CLI not found" | Install and authenticate the CLI tool ([Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli), [Claude Code](https://claude.ai/code)) |
-| "Not authenticated" | Run `copilot auth login` or `claude auth login`. Alternatively: set `GH_TOKEN`/`GITHUB_TOKEN` for Copilot, or `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1` for Claude. ChatGPT auto-triggers OAuth on first use. Gemini CLI reuses `~/.gemini/oauth_creds.json`. |
+| "Not authenticated" | Run `copilot auth login` or `claude auth login`. Alternatively: set `GH_TOKEN`/`GITHUB_TOKEN` for Copilot, or `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1` for Claude. ChatGPT auto-triggers OAuth on first use. |
 | "Rate limit" | Wait and retry, or check your subscription quota |
 | "Request timeout" | Timeout is adaptive; for very large documents, processing may take longer |
 
@@ -418,12 +401,11 @@ Common use cases include self-hosted inference servers (vLLM, Ollama, LocalAI), 
 :::
 
 ::: warning Local Providers and `api_base`
-The `api_base` config field does **not** apply to local providers (`claude-agent/`, `copilot/`, `chatgpt/`, `gemini-cli/`). These providers run as CLI subprocesses or use OAuth and manage API endpoints internally:
+The `api_base` config field does **not** apply to local providers (`claude-agent/`, `copilot/`, `chatgpt/`). These providers run as CLI subprocesses or use OAuth and manage API endpoints internally:
 
 - **Claude Agent**: Set `ANTHROPIC_BASE_URL` to override the API endpoint. If `ANTHROPIC_API_KEY` is also set, the CLI will use it for direct API access instead of subscription authentication. Other routing options: `CLAUDE_CODE_USE_BEDROCK=1`, `CLAUDE_CODE_USE_VERTEX=1`, `CLAUDE_CODE_USE_FOUNDRY=1`.
-- **GitHub Copilot**: Endpoint is managed by the Copilot CLI internally and cannot be overridden. For token-based auth, set `GH_TOKEN` or `GITHUB_TOKEN` with a personal access token that has the "Copilot Requests" permission.
+- **GitHub Copilot**: Endpoint is managed by the Copilot CLI internally and cannot be overridden. For token-based auth, set `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` with a personal access token that has the "Copilot Requests" permission.
 - **ChatGPT**: Uses OpenAI's Responses API endpoint. Authentication handled via LiteLLM's built-in OAuth Device Code Flow.
-- **Gemini CLI**: Uses Google's Code Assist API endpoint. Credentials read from `~/.gemini/oauth_creds.json`.
 :::
 
 ### Vision Models
@@ -501,7 +483,7 @@ Set `weight: 0` to temporarily disable a model without removing its configuratio
 
 ### Adaptive Timeout
 
-Local providers (`claude-agent/`, `copilot/`, `chatgpt/`, `gemini-cli/`) use **adaptive timeout calculation** based on request complexity:
+Local providers (`claude-agent/`, `copilot/`, `chatgpt/`) use **adaptive timeout calculation** based on request complexity:
 
 - Base timeout: 60 seconds minimum, 600 seconds maximum
 - Factors: prompt length, image presence/count, expected output tokens

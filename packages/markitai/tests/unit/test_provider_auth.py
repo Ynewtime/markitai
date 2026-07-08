@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -990,182 +989,8 @@ class TestChatGPTAuth:
         assert "Failed to read" in (status.error or "")
 
 
-class TestGeminiCLIManagedAuth:
-    """Tests for Markitai-managed Gemini auth profiles."""
-
-    def _write_managed_profile(
-        self,
-        home: Path,
-        *,
-        email: str = "gemini@example.com",
-        project_id: str = "demo-project",
-        auth_mode: str = "google-one",
-    ) -> Path:
-        """Create a Markitai-managed Gemini auth profile."""
-        auth_dir = home / ".markitai" / "auth"
-        auth_dir.mkdir(parents=True)
-        profile_path = auth_dir / "gemini-profile.json"
-        profile_data: dict[str, Any] = {
-            "access_token": "managed-access-token",
-            "refresh_token": "managed-refresh-token",
-            "expiry_date": 1767225600000,
-            "email": email,
-            "project_id": project_id,
-            "auth_mode": auth_mode,
-            "source": "markitai",
-        }
-        profile_path.write_text(json.dumps(profile_data), encoding="utf-8")
-        (auth_dir / "gemini-current.json").write_text(
-            json.dumps({"credential_path": str(profile_path)}),
-            encoding="utf-8",
-        )
-        return profile_path
-
-    def test_check_gemini_cli_auth_prefers_markitai_managed_profile(
-        self, tmp_path: Path
-    ) -> None:
-        """Managed Gemini auth should override shared Gemini CLI credentials."""
-        from markitai.providers.auth import _check_gemini_cli_auth
-
-        managed_path = self._write_managed_profile(tmp_path)
-        shared_dir = tmp_path / ".gemini"
-        shared_dir.mkdir()
-        (shared_dir / "oauth_creds.json").write_text(
-            json.dumps({"access_token": "shared-access-token"}),
-            encoding="utf-8",
-        )
-
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            status = _check_gemini_cli_auth()
-
-        assert status.authenticated is True
-        assert status.user == "gemini@example.com"
-        assert status.details == {
-            "source": "markitai",
-            "project_id": "demo-project",
-            "auth_mode": "google-one",
-            "credential_path": str(managed_path),
-        }
-
-    def test_check_gemini_cli_auth_falls_back_to_shared_cli_credentials(
-        self, tmp_path: Path
-    ) -> None:
-        """Fallback to ~/.gemini/oauth_creds.json when no managed profile exists."""
-        from markitai.providers.auth import _check_gemini_cli_auth
-
-        shared_dir = tmp_path / ".gemini"
-        shared_dir.mkdir()
-        shared_path = shared_dir / "oauth_creds.json"
-        shared_path.write_text(
-            json.dumps({"access_token": "shared-access-token"}),
-            encoding="utf-8",
-        )
-
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            status = _check_gemini_cli_auth()
-
-        assert status.authenticated is True
-        assert status.user == "gemini-cli"
-        assert status.details == {
-            "source": "gemini-cli",
-            "project_id": None,
-            "auth_mode": None,
-            "credential_path": str(shared_path),
-        }
-
-
-class TestGeminiCLIAuth:
-    """Tests for Gemini CLI authentication checks."""
-
-    def test_gemini_cli_auth_authenticated(self, tmp_path: Path) -> None:
-        """Test _check_gemini_cli_auth when credentials exist."""
-        from markitai.providers.auth import _check_gemini_cli_auth
-
-        gemini_dir = tmp_path / ".gemini"
-        gemini_dir.mkdir()
-        creds_file = gemini_dir / "oauth_creds.json"
-        creds_file.write_text(
-            json.dumps({"access_token": "ya29.xxx", "refresh_token": "1//xxx"})
-        )
-
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            status = _check_gemini_cli_auth()
-
-        assert status.provider == "gemini-cli"
-        assert status.authenticated is True
-
-    def test_gemini_cli_auth_no_file(self, tmp_path: Path) -> None:
-        """Test _check_gemini_cli_auth when credentials file doesn't exist."""
-        from markitai.providers.auth import _check_gemini_cli_auth
-
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            status = _check_gemini_cli_auth()
-
-        assert status.authenticated is False
-        assert "not found" in (status.error or "").lower()
-
-    def test_gemini_cli_auth_no_token(self, tmp_path: Path) -> None:
-        """Test _check_gemini_cli_auth when file exists but no token."""
-        from markitai.providers.auth import _check_gemini_cli_auth
-
-        gemini_dir = tmp_path / ".gemini"
-        gemini_dir.mkdir()
-        creds_file = gemini_dir / "oauth_creds.json"
-        creds_file.write_text(json.dumps({"refresh_token": "1//xxx"}))
-
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            status = _check_gemini_cli_auth()
-
-        assert status.authenticated is False
-        assert "No access token" in (status.error or "")
-
-    def test_gemini_cli_auth_invalid_json(self, tmp_path: Path) -> None:
-        """Test _check_gemini_cli_auth when file has invalid JSON."""
-        from markitai.providers.auth import _check_gemini_cli_auth
-
-        gemini_dir = tmp_path / ".gemini"
-        gemini_dir.mkdir()
-        creds_file = gemini_dir / "oauth_creds.json"
-        creds_file.write_text("{broken")
-
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            status = _check_gemini_cli_auth()
-
-        assert status.authenticated is False
-        assert "Failed to read" in (status.error or "")
-
-    def test_gemini_cli_shared_creds_extracts_email_from_id_token(
-        self, tmp_path: Path
-    ) -> None:
-        """Shared creds with id_token should show email instead of 'gemini-cli'."""
-        import base64
-
-        from markitai.providers.auth import _check_gemini_cli_auth
-
-        payload = (
-            base64.urlsafe_b64encode(
-                json.dumps({"email": "gemini-user@gmail.com"}).encode()
-            )
-            .rstrip(b"=")
-            .decode()
-        )
-        id_token = f"header.{payload}.signature"
-
-        gemini_dir = tmp_path / ".gemini"
-        gemini_dir.mkdir()
-        (gemini_dir / "oauth_creds.json").write_text(
-            json.dumps({"access_token": "ya29.xxx", "id_token": id_token})
-        )
-
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            status = _check_gemini_cli_auth()
-
-        assert status.authenticated is True
-        assert status.user == "gemini-user@gmail.com"
-
-
 class TestAuthManagerNewProviders:
-    """Tests for AuthManager with chatgpt and gemini-cli providers."""
+    """Tests for AuthManager with the chatgpt provider."""
 
     @pytest.fixture(autouse=True)
     def reset_auth_manager(self) -> None:
@@ -1191,25 +1016,6 @@ class TestAuthManagerNewProviders:
         assert status.provider == "chatgpt"
         assert status.authenticated is True
 
-    @pytest.mark.asyncio
-    async def test_check_auth_gemini_cli(self, tmp_path: Path) -> None:
-        """Test AuthManager.check_auth for gemini-cli provider."""
-        from markitai.providers.auth import AuthManager
-
-        manager = AuthManager()
-
-        gemini_dir = tmp_path / ".gemini"
-        gemini_dir.mkdir()
-        (gemini_dir / "oauth_creds.json").write_text(
-            json.dumps({"access_token": "ya29.xxx"})
-        )
-
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            status = await manager.check_auth("gemini-cli")
-
-        assert status.provider == "gemini-cli"
-        assert status.authenticated is True
-
 
 class TestNewResolutionHints:
     """Tests for resolution hints for new providers."""
@@ -1220,13 +1026,6 @@ class TestNewResolutionHints:
 
         hint = get_auth_resolution_hint("chatgpt")
         assert "chatgpt" in hint.lower() or "oauth" in hint.lower()
-
-    def test_gemini_cli_resolution_hint(self) -> None:
-        """Test resolution hint for gemini-cli provider."""
-        from markitai.providers.auth import get_auth_resolution_hint
-
-        hint = get_auth_resolution_hint("gemini-cli")
-        assert "gemini" in hint.lower()
 
 
 class TestAttemptLogin:
@@ -1320,31 +1119,6 @@ class TestAttemptLogin:
         mock_exec.assert_called_once()
         args = mock_exec.call_args[0]
         assert "claude" in args[0]
-        assert result.authenticated is True
-
-    async def test_gemini_login_calls_alogin(self) -> None:
-        """attempt_login('gemini-cli') calls GeminiCLIProvider.alogin()."""
-        from markitai.providers.auth import attempt_login
-
-        mock_record = MagicMock()
-        mock_record.email = "test@example.com"
-
-        with (
-            patch("markitai.providers.gemini_cli.GeminiCLIProvider") as MockProvider,
-            patch(
-                "markitai.providers.auth._check_gemini_cli_auth",
-                return_value=AuthStatus(
-                    provider="gemini-cli",
-                    authenticated=True,
-                    user="test@example.com",
-                    expires_at=None,
-                    error=None,
-                ),
-            ),
-        ):
-            MockProvider.return_value.alogin = AsyncMock(return_value=mock_record)
-            result = await attempt_login("gemini-cli")
-
         assert result.authenticated is True
 
     async def test_chatgpt_login_success(self) -> None:
@@ -1559,20 +1333,6 @@ class TestAttemptLogin:
 
 class TestCanAttemptLogin:
     """Tests for can_attempt_login() guard function."""
-
-    def test_gemini_cli_with_oauthlib(self) -> None:
-        """Returns True when google_auth_oauthlib is importable."""
-        from markitai.providers.auth import can_attempt_login
-
-        with patch("importlib.util.find_spec", return_value=MagicMock()):
-            assert can_attempt_login("gemini-cli") is True
-
-    def test_gemini_cli_without_oauthlib(self) -> None:
-        """Returns False when google_auth_oauthlib is not installed."""
-        from markitai.providers.auth import can_attempt_login
-
-        with patch("importlib.util.find_spec", return_value=None):
-            assert can_attempt_login("gemini-cli") is False
 
     def test_claude_agent_with_cli(self) -> None:
         """Returns True when claude CLI is found."""

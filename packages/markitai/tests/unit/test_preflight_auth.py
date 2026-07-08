@@ -19,27 +19,6 @@ def _make_model_config(model: str, weight: int = 1) -> MagicMock:
 class TestPreflightAuthCheck:
     """Tests for preflight_auth_check function."""
 
-    async def test_checks_gemini_cli_provider(self) -> None:
-        """Checks auth for gemini-cli models with weight > 0."""
-        configs = [_make_model_config("gemini-cli/gemini-3.1-pro-preview", weight=1)]
-
-        mock_status = AuthStatus(
-            provider="gemini-cli",
-            authenticated=True,
-            user="test@example.com",
-            expires_at=None,
-            error=None,
-        )
-
-        with patch("markitai.providers.AuthManager") as MockManager:
-            instance = MockManager.return_value
-            instance.check_auth = AsyncMock(return_value=mock_status)
-            results = await preflight_auth_check(configs)
-
-        assert len(results) == 1
-        assert results[0].provider == "gemini-cli"
-        assert results[0].authenticated
-
     async def test_checks_chatgpt_provider(self) -> None:
         """Checks auth for chatgpt models with weight > 0."""
         configs = [_make_model_config("chatgpt/codex-mini", weight=1)]
@@ -64,7 +43,7 @@ class TestPreflightAuthCheck:
     async def test_skips_weight_zero_models(self) -> None:
         """Models with weight=0 are not checked."""
         configs = [
-            _make_model_config("gemini-cli/gemini-3.1-pro-preview", weight=0),
+            _make_model_config("claude-agent/sonnet", weight=0),
             _make_model_config("chatgpt/codex-mini", weight=0),
         ]
 
@@ -165,7 +144,6 @@ class TestPreflightAuthCheck:
     async def test_checks_all_local_providers(self) -> None:
         """All local providers checked when configured with weight > 0."""
         configs = [
-            _make_model_config("gemini-cli/gemini-3.1-pro-preview", weight=1),
             _make_model_config("chatgpt/codex-mini", weight=1),
             _make_model_config("claude-agent/sonnet", weight=1),
             _make_model_config("copilot/gpt-4.1", weight=1),
@@ -188,19 +166,19 @@ class TestPreflightAuthCheck:
             instance.check_auth = AsyncMock(side_effect=fake_check_auth)
             results = await preflight_auth_check(configs)
 
-        assert len(results) == 4
+        assert len(results) == 3
         providers_checked = {r.provider for r in results}
-        assert providers_checked == {"gemini-cli", "chatgpt", "claude-agent", "copilot"}
+        assert providers_checked == {"chatgpt", "claude-agent", "copilot"}
 
     async def test_deduplicates_same_provider(self) -> None:
         """Multiple models from same provider only trigger one check."""
         configs = [
-            _make_model_config("gemini-cli/gemini-3.1-pro-preview", weight=1),
-            _make_model_config("gemini-cli/gemini-3.1-flash-lite-preview", weight=2),
+            _make_model_config("copilot/gpt-4.1", weight=1),
+            _make_model_config("copilot/claude-haiku-4.5", weight=2),
         ]
 
         mock_status = AuthStatus(
-            provider="gemini-cli",
+            provider="copilot",
             authenticated=True,
             user="test",
             expires_at=None,
