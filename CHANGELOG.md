@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Web extraction: full defuddle content-pattern parity**: the text-pattern noise removal stage (`webextract/removals/content_patterns.py`) is now a faithful port of defuddle's `removeByContentPattern` — up from 5 pattern families to the full set: breadcrumb lists, promotional banner links, hero headers, "Listen to this article" TTS widgets, anchor-link tables of contents, timezone widgets, pinned labels, duplicate title/description blocks, metadata header blocks, category badges, bylines, read-time and standalone-date metadata, blog metadata lists, section back-navigation, trailing external-link/related-posts/tag-link blocks, related-content and CTA sections, newsletter signups, author contact blocks, author/share widgets, and social engagement counters. Eyebrow-label removal now also runs before selector removal, and the listing-page retry disables content-pattern removal (both mirroring defuddle). Pre-content checks anchor on a new `content_boundary` module (port of defuddle's `content-boundary.ts`) instead of byte offsets. Benchmark corpus mean vs the defuddle ground truth: 91.04 → 92.72
+
 ## [0.17.0] - 2026-07-08
 
 ### Removed

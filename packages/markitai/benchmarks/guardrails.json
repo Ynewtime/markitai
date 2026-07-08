@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-07-04T09:01:22+00:00",
+  "generated_at": "2026-07-08T16:04:40+00:00",
   "threshold_factor": 0.9,
-  "mean_floor": 83.02,
+  "mean_floor": 83.45,
   "fixtures": {
     "codeblocks--mintlify": {
       "min_score": 88.69
@@ -76,7 +76,7 @@
       "min_score": 90.0
     },
     "footnotes--maggieappleton.com-xanadu-patterns": {
-      "min_score": 89.24
+      "min_score": 89.23
     },
     "footnotes--nested-prose": {
       "min_score": 90.0
@@ -103,10 +103,10 @@
       "min_score": 86.35
     },
     "general--github.com-issue-56": {
-      "min_score": 84.11
+      "min_score": 84.28
     },
     "general--github.com-test-owner-test-repo-pull-42": {
-      "min_score": 66.75
+      "min_score": 68.49
     },
     "general--inline-comments-and-link-lists": {
       "min_score": 89.41
@@ -115,7 +115,7 @@
       "min_score": 89.58
     },
     "general--multi-article-portfolio": {
-      "min_score": 67.7
+      "min_score": 90.0
     },
     "general--news.ycombinator.com-item-id=12345678": {
       "min_score": 18.0
@@ -139,7 +139,7 @@
       "min_score": 88.64
     },
     "general--tailwind-hidden-blog-index": {
-      "min_score": 55.76
+      "min_score": 68.1
     },
     "general--trailing-cta-newsletter": {
       "min_score": 90.0

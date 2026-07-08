@@ -1,9 +1,10 @@
 {
-  "generated_at": "2026-07-03T02:40:17+00:00",
+  "generated_at": "2026-07-08T16:04:40+00:00",
   "scorer": "heuristic (rapidfuzz partial-ratio, marker-style)",
   "fixture_count": 83,
   "aggregate": {
-    "mean_score": 91.04
+    "mean_score": 92.72,
+    "local_mean_score": 99.47
   },
   "fixtures": {
     "codeblocks--mintlify": {
@@ -52,9 +53,9 @@
       "order_score": 100.0
     },
     "elements--embedded-videos": {
-      "score": 30.07,
-      "match_score": 20.92,
-      "order_score": 66.67
+      "score": 61.25,
+      "match_score": 57.11,
+      "order_score": 77.78
     },
     "elements--empty-p-br": {
       "score": 100.0,
@@ -97,48 +98,48 @@
       "order_score": 100.0
     },
     "footnotes--child-anchor-id": {
-      "score": 96.43,
-      "match_score": 95.54,
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "footnotes--heading-notes": {
-      "score": 94.74,
-      "match_score": 93.42,
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "footnotes--hr-continuation": {
-      "score": 96.8,
-      "match_score": 96.0,
+      "score": 99.44,
+      "match_score": 99.29,
       "order_score": 100.0
     },
     "footnotes--hr-strong-numbered": {
-      "score": 94.61,
-      "match_score": 93.26,
+      "score": 98.93,
+      "match_score": 98.66,
       "order_score": 100.0
     },
     "footnotes--hr-sup-numbered": {
-      "score": 96.06,
-      "match_score": 95.08,
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "footnotes--inline-footnote-span": {
-      "score": 92.81,
-      "match_score": 96.02,
-      "order_score": 80.0
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
     },
     "footnotes--maggieappleton.com-xanadu-patterns": {
-      "score": 97.98,
-      "match_score": 98.56,
-      "order_score": 95.63
+      "score": 99.14,
+      "match_score": 98.94,
+      "order_score": 99.97
     },
     "footnotes--nested-prose": {
-      "score": 95.65,
-      "match_score": 94.56,
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "general--12gramsofcarbon.com-p-ilyas-30-papers-to-carmack-vlaes": {
-      "score": 98.83,
-      "match_score": 98.54,
+      "score": 98.94,
+      "match_score": 98.67,
       "order_score": 100.0
     },
     "general--apnews-link-enhancement": {
@@ -162,9 +163,9 @@
       "order_score": 82.38
     },
     "general--daringfireball.net-2025-02-the_iphone_16e": {
-      "score": 97.33,
-      "match_score": 98.66,
-      "order_score": 92.0
+      "score": 99.71,
+      "match_score": 99.64,
+      "order_score": 100.0
     },
     "general--developer.mozilla.org-en-US-docs-Web-JavaScript-Reference-Global_Objects-Array": {
       "score": 95.94,
@@ -172,13 +173,13 @@
       "order_score": 94.3
     },
     "general--github.com-issue-56": {
-      "score": 93.45,
+      "score": 93.64,
       "match_score": 92.29,
-      "order_score": 98.1
+      "order_score": 99.05
     },
     "general--github.com-test-owner-test-repo-pull-42": {
-      "score": 74.17,
-      "match_score": 74.15,
+      "score": 76.1,
+      "match_score": 76.57,
       "order_score": 74.24
     },
     "general--inline-comments-and-link-lists": {
@@ -187,14 +188,14 @@
       "order_score": 100.0
     },
     "general--lesswrong.com-s-N7nDePaNabJdnbXeE-p-vJFdjigzmcXMhNTsx": {
-      "score": 94.26,
-      "match_score": 95.29,
-      "order_score": 90.11
+      "score": 99.53,
+      "match_score": 99.79,
+      "order_score": 98.48
     },
     "general--multi-article-portfolio": {
-      "score": 75.22,
-      "match_score": 78.83,
-      "order_score": 60.8
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
     },
     "general--news.ycombinator.com-item-id=12345678": {
       "score": 20.0,
@@ -217,9 +218,9 @@
       "order_score": 100.0
     },
     "general--scp-wiki.wikidot.com-scp-9935": {
-      "score": 82.62,
-      "match_score": 85.85,
-      "order_score": 69.7
+      "score": 98.46,
+      "match_score": 98.07,
+      "order_score": 100.0
     },
     "general--stephango.com-buy-wisely": {
       "score": 96.05,
@@ -232,9 +233,9 @@
       "order_score": 100.0
     },
     "general--tailwind-hidden-blog-index": {
-      "score": 61.95,
-      "match_score": 59.14,
-      "order_score": 73.16
+      "score": 75.67,
+      "match_score": 74.45,
+      "order_score": 80.53
     },
     "general--trailing-cta-newsletter": {
       "score": 100.0,
@@ -242,9 +243,9 @@
       "order_score": 100.0
     },
     "general--wikipedia": {
-      "score": 92.63,
-      "match_score": 92.46,
-      "order_score": 93.33
+      "score": 95.75,
+      "match_score": 95.8,
+      "order_score": 95.51
     },
     "general--www.figma.com-blog-introducing-codex-to-figma": {
       "score": 76.49,
@@ -282,9 +283,9 @@
       "order_score": 100.0
     },
     "issues--120-dhammatalks-footnotes": {
-      "score": 97.56,
-      "match_score": 97.88,
-      "order_score": 96.3
+      "score": 98.52,
+      "match_score": 98.36,
+      "order_score": 99.15
     },
     "issues--131-category-links": {
       "score": 89.76,
@@ -307,8 +308,8 @@
       "order_score": 100.0
     },
     "issues--142-arxiv-multi-citations": {
-      "score": 92.44,
-      "match_score": 90.55,
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "issues--143-arxiv-cross-references": {
@@ -420,6 +421,19 @@
       "score": 92.7,
       "match_score": 92.54,
       "order_score": 93.33
+    }
+  },
+  "local_fixture_count": 2,
+  "local_fixtures": {
+    "blog--jekyll.ynewtime.com-japanese-learning": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "github-repo--panniantong-agent-reach": {
+      "score": 98.94,
+      "match_score": 100.0,
+      "order_score": 94.68
     }
   }
 }
