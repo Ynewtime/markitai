@@ -6,6 +6,8 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
+from pydantic import ValidationError
+
 
 def clean_control_characters(text: str, preserve_whitespace: bool = True) -> str:
     """Remove control characters from string.
@@ -125,6 +127,23 @@ def format_error_message(error: Any, max_length: int = 200) -> str:
     """
     if error is None:
         return "Unknown error"
+
+    # pydantic's ValidationError.__str__ is a multi-line block per field
+    # (message, input value repr, and a docs URL) that survives the
+    # newline-collapse/truncate below as a confusing, often mid-field-cut
+    # fragment. Summarize as "N error(s) for Model: field (type), ...".
+    if isinstance(error, ValidationError):
+        errors = error.errors()
+        fields = [
+            f"{'.'.join(str(x) for x in err.get('loc', ())) or '?'} "
+            f"({err.get('type', 'invalid')})"
+            for err in errors[:5]
+        ]
+        summary = ", ".join(fields)
+        if len(errors) > 5:
+            summary += f", +{len(errors) - 5} more"
+        model_name = getattr(error, "title", None) or "model"
+        return f"ValidationError: {error.error_count()} error(s) for {model_name}: {summary}"
 
     # Get the exception class name
     exc_type = type(error).__name__

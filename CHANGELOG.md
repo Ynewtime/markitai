@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`COPILOT_GITHUB_TOKEN` auth support**: Copilot auth detection and login hints now check `COPILOT_GITHUB_TOKEN` first (matching `copilot login --help`'s own documented precedence), falling back to `GH_TOKEN` then `GITHUB_TOKEN`
 
+### Fixed
+
+- **Console log noise**: `instructor`'s internal per-attempt retry logs (pure duplicates of markitai's own `[LLM:...] Failed:` summaries) are no longer echoed to the console (file logs keep full detail); third-party log origin resolution in the loguru interceptor was fixed so third-party INFO filtering works as intended; pydantic `ValidationError`s now collapse to a one-line summary naming the model and fields instead of dumping the raw multi-line block. Per-call LLM timing summaries are now visible with `-v`
+
 ## [0.16.0] - 2026-07-07
 
 ### Added

@@ -60,6 +60,32 @@ class TestShouldShowLog:
             verbose=True,
         )
 
+    def test_verbose_shows_llm_call_timing(self) -> None:
+        """Per-call timing summaries survive the noise filter under -v.
+
+        These are the only signal a -v user has of how long an LLM stage
+        is actually taking (the spinner collapses it to one static line);
+        module="document" would otherwise be blanket-filtered as noise.
+        """
+        assert _should_show_log(
+            _record(
+                "[LLM:https://x.com/a/status/1] document_process: "
+                "claude-agent/haiku tokens=1574+6729 time=73558ms cost=$0.046399",
+                module="document",
+            ),
+            verbose=True,
+        )
+
+    def test_non_verbose_still_hides_llm_call_timing(self) -> None:
+        """Timing summaries are still gated behind -v, not shown by default."""
+        assert not _should_show_log(
+            _record(
+                "[LLM:test] document_process: default tokens=1+2 time=100ms cost=$0.0",
+                module="document",
+            ),
+            verbose=False,
+        )
+
     def test_warning_still_shows(self) -> None:
         """Warnings must always reach the console."""
         assert _should_show_log(
