@@ -143,7 +143,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
             results.append(
                 ProviderDetectionResult(
                     provider="copilot",
-                    model="copilot/claude-sonnet-4.6",
+                    model="copilot/claude-haiku-4.5",
                     authenticated=True,
                     source="cli",
                 )
@@ -154,7 +154,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
         results.append(
             ProviderDetectionResult(
                 provider="chatgpt",
-                model="chatgpt/gpt-5.4",
+                model="chatgpt/gpt-5.4-nano",
                 authenticated=True,
                 source="cli",
             )
@@ -162,14 +162,14 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
 
     # 4-8. Check environment variables
     env_providers = [
-        ("ANTHROPIC_API_KEY", "anthropic", "anthropic/claude-sonnet-4-6"),
-        ("OPENAI_API_KEY", "openai", "openai/gpt-5.4"),
+        ("ANTHROPIC_API_KEY", "anthropic", "anthropic/claude-haiku-4-5"),
+        ("OPENAI_API_KEY", "openai", "openai/gpt-5.4-nano"),
         ("GEMINI_API_KEY", "gemini", "gemini/gemini-3.1-flash-lite-preview"),
-        ("DEEPSEEK_API_KEY", "deepseek", "deepseek/deepseek-chat"),
+        ("DEEPSEEK_API_KEY", "deepseek", "deepseek/deepseek-v4-flash"),
         (
             "OPENROUTER_API_KEY",
             "openrouter",
-            "openrouter/google/gemini-3.1-flash-lite-preview",
+            "openrouter/google/gemini-3.1-flash-lite",
         ),
     ]
     for env_var, provider, model in env_providers:

@@ -60,7 +60,7 @@ class TestDetectAllProviders:
             results = detect_all_providers()
             assert len(results) == 1
             assert results[0].provider == "copilot"
-            assert results[0].model == "copilot/claude-sonnet-4.6"
+            assert results[0].model == "copilot/claude-haiku-4.5"
 
     def test_detect_env_providers(self) -> None:
         """Should detect environment variable providers."""
@@ -133,7 +133,7 @@ class TestDetectAllProviders:
             results = detect_all_providers()
             assert len(results) == 1
             assert results[0].provider == "chatgpt"
-            assert results[0].model == "chatgpt/gpt-5.4"
+            assert results[0].model == "chatgpt/gpt-5.4-nano"
 
 
 class TestDetectFirstProvider:

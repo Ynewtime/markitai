@@ -428,13 +428,13 @@ def _build_config(
     # Map provider display names to model configs (order = priority)
     provider_models = {
         "Claude": ("default", "claude-agent/sonnet"),
-        "ChatGPT": ("default", "chatgpt/gpt-5.4"),
-        "Copilot": ("default", "copilot/claude-sonnet-4.6"),
-        "DeepSeek": ("default", "deepseek/deepseek-chat"),
+        "ChatGPT": ("default", "chatgpt/gpt-5.4-nano"),
+        "Copilot": ("default", "copilot/claude-haiku-4.5"),
+        "DeepSeek": ("default", "deepseek/deepseek-v4-flash"),
         "Gemini": ("default", "gemini/gemini-3.1-flash-lite-preview"),
-        "OpenAI": ("default", "openai/gpt-5.4"),
-        "Anthropic": ("default", "anthropic/claude-sonnet-4-6"),
-        "OpenRouter": ("default", "openrouter/google/gemini-3.1-flash-lite-preview"),
+        "OpenAI": ("default", "openai/gpt-5.4-nano"),
+        "Anthropic": ("default", "anthropic/claude-haiku-4-5"),
+        "OpenRouter": ("default", "openrouter/google/gemini-3.1-flash-lite"),
     }
 
     if providers:

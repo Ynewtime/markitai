@@ -155,7 +155,7 @@ def _check_copilot_unsupported_models(model_list: list[Any], console: Console) -
         ui.step("Solutions:", console=console)
         ui.step("  1. Set weight: 0 for these models in config", console=console)
         ui.step(
-            "  2. Use other Copilot models like copilot/claude-sonnet-4.6",
+            "  2. Use other Copilot models like copilot/claude-haiku-4.5",
             console=console,
         )
 
