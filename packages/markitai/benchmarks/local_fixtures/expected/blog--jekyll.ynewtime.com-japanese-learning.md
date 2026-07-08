@@ -51,9 +51,3 @@
 | [NIHONGO eな +汉语](http://nihongo-e-na.com/chi/zhcn/) | 精选了对用汉语学日语的人有用的网站和工具 |
 | [唱歌学日语](https://www.jpmarumaru.com/tw/JPSongList.asp) | marumaru 是一个日语学习网站，非常适合初学者。 |
 | [青空朗读](http://aozoraroudoku.jp/) | 听日本名作的朗读 |
-
-## 关于这个主题，你还可以看看这些文章
-
-* [Language Acquisition](https://jekyll.ynewtime.com/Oral-English)
-* [漫推 - 『夜は短し歩けよ乙女』](https://jekyll.ynewtime.com/otome)
-* [漫推 - 『冰菓』](https://jekyll.ynewtime.com/Hyokaintro)

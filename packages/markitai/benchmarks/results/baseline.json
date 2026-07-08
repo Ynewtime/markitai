@@ -1,16 +1,16 @@
 {
-  "generated_at": "2026-07-08T16:04:40+00:00",
+  "generated_at": "2026-07-08T16:28:00+00:00",
   "scorer": "heuristic (rapidfuzz partial-ratio, marker-style)",
   "fixture_count": 83,
   "aggregate": {
-    "mean_score": 92.72,
+    "mean_score": 92.73,
     "local_mean_score": 99.47
   },
   "fixtures": {
     "codeblocks--mintlify": {
-      "score": 98.55,
-      "match_score": 99.32,
-      "order_score": 95.45
+      "score": 99.48,
+      "match_score": 99.35,
+      "order_score": 100.0
     },
     "codeblocks--rehype-pretty-code": {
       "score": 100.0,
@@ -128,9 +128,9 @@
       "order_score": 100.0
     },
     "footnotes--maggieappleton.com-xanadu-patterns": {
-      "score": 99.14,
-      "match_score": 98.94,
-      "order_score": 99.97
+      "score": 97.95,
+      "match_score": 97.96,
+      "order_score": 97.91
     },
     "footnotes--nested-prose": {
       "score": 100.0,
@@ -243,9 +243,9 @@
       "order_score": 100.0
     },
     "general--wikipedia": {
-      "score": 95.75,
-      "match_score": 95.8,
-      "order_score": 95.51
+      "score": 95.99,
+      "match_score": 95.82,
+      "order_score": 96.67
     },
     "general--www.figma.com-blog-introducing-codex-to-figma": {
       "score": 76.49,
@@ -368,9 +368,9 @@
       "order_score": 83.33
     },
     "issues--span-with-block-children-and-schema": {
-      "score": 98.36,
-      "match_score": 99.73,
-      "order_score": 92.86
+      "score": 99.03,
+      "match_score": 99.68,
+      "order_score": 96.43
     },
     "math--katex": {
       "score": 99.0,

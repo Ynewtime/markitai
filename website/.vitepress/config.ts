@@ -23,7 +23,7 @@ export default defineConfig({
       themeConfig: {
         nav: [
           { text: '指南', link: '/zh/guide/getting-started' },
-          { text: '更新日志', link: '/changelog' },
+          { text: '更新日志', link: '/zh/changelog' },
         ],
         sidebar: {
           '/zh/guide/': [

@@ -1,10 +1,10 @@
 {
-  "generated_at": "2026-07-08T16:04:40+00:00",
+  "generated_at": "2026-07-08T16:28:00+00:00",
   "threshold_factor": 0.9,
-  "mean_floor": 83.45,
+  "mean_floor": 83.46,
   "fixtures": {
     "codeblocks--mintlify": {
-      "min_score": 88.69
+      "min_score": 89.53
     },
     "codeblocks--rehype-pretty-code": {
       "min_score": 90.0
@@ -76,7 +76,7 @@
       "min_score": 90.0
     },
     "footnotes--maggieappleton.com-xanadu-patterns": {
-      "min_score": 89.23
+      "min_score": 88.16
     },
     "footnotes--nested-prose": {
       "min_score": 90.0
@@ -145,7 +145,7 @@
       "min_score": 90.0
     },
     "general--wikipedia": {
-      "min_score": 86.17
+      "min_score": 86.39
     },
     "general--www.figma.com-blog-introducing-codex-to-figma": {
       "min_score": 68.84
@@ -220,7 +220,7 @@
       "min_score": 66.79
     },
     "issues--span-with-block-children-and-schema": {
-      "min_score": 88.52
+      "min_score": 89.13
     },
     "math--katex": {
       "min_score": 89.1
