@@ -291,6 +291,7 @@ def _extract_once(
     use_partial_selectors: bool = True,
     use_hidden_removal: bool = True,
     use_scoring: bool = True,
+    use_content_patterns: bool = True,
 ) -> tuple[str, str, dict[str, int]]:
     """Run extraction pipeline once and return (clean_html, markdown, removal_stats)."""
     title = getattr(metadata, "title", None)
@@ -311,6 +312,10 @@ def _extract_once(
             use_partial_selectors=use_partial_selectors,
             use_hidden_removal=use_hidden_removal,
             use_scoring=use_scoring,
+            use_content_patterns=use_content_patterns,
+            url=url,
+            title=title or "",
+            description=getattr(metadata, "description", "") or "",
         )
     if isinstance(root, Tag):
         standardize_content(root, title=title, base_url=url)
@@ -409,6 +414,7 @@ def _extract_with_retry(
         use_partial_selectors=False,
         use_hidden_removal=False,
         use_scoring=False,
+        use_content_patterns=False,
     )
     wc4 = count_words(md4)
     if wc4 > word_count:
@@ -431,6 +437,7 @@ def _extract_with_retry(
                 use_partial_selectors=False,
                 use_hidden_removal=False,
                 use_scoring=False,
+                use_content_patterns=False,
             )
             if count_words(body_md) > word_count:
                 clean_html = body_html

@@ -18,6 +18,38 @@ _CJK_RE = re.compile(
 )
 
 
+_NORMALIZE_MAP = str.maketrans(
+    {
+        " ": " ",
+        "‘": "'",
+        "’": "'",
+        "‚": "'",
+        "‛": "'",
+        "‒": "-",
+        "–": "-",
+        "—": "-",
+        "―": "-",
+        "“": '"',
+        "”": '"',
+        "„": '"',
+        "‟": '"',
+        "…": "...",
+    }
+)
+
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def normalize_text(text: str) -> str:
+    """Canonicalize text for title/heading comparison.
+
+    Normalizes smart quotes, dashes, ellipses, and whitespace; lowercases.
+    Two strings a human would read as "the same" compare equal after this
+    pass. Ported from defuddle ``utils.ts`` ``normalizeText``.
+    """
+    return _WHITESPACE_RE.sub(" ", text.translate(_NORMALIZE_MAP)).strip().lower()
+
+
 def count_words(text: str) -> int:
     """Count words with CJK awareness.
 
