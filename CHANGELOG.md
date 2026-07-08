@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Cloudflare fetch no longer bypasses site-specific extractors**: the `cloudflare` strategy now calls Browser Rendering's `/content` endpoint (rendered HTML) instead of `/markdown` (server-side generic conversion), and routes the HTML through the same native webextract pipeline as every other strategy. Previously, pages that fell through to Cloudflare (e.g. CAPTCHA-gated Bilibili opus posts) skipped extractors like `BilibiliOpusExtractor` entirely and kept site chrome (share buttons, stat counters, back-to-top links) in the output
 - **Console log noise**: `instructor`'s internal per-attempt retry logs (pure duplicates of markitai's own `[LLM:...] Failed:` summaries) are no longer echoed to the console (file logs keep full detail); third-party log origin resolution in the loguru interceptor was fixed so third-party INFO filtering works as intended; pydantic `ValidationError`s now collapse to a one-line summary naming the model and fields instead of dumping the raw multi-line block. Per-call LLM timing summaries are now visible with `-v`
 
 ### Changed
