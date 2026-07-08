@@ -4035,6 +4035,7 @@ class TestCloudflareStrategy:
         # The rendered HTML must be handed to the shared native-extraction
         # path (site-specific extractors), not converted server-side
         mock_native.assert_awaited_once()
+        assert mock_native.await_args is not None
         assert mock_native.await_args.kwargs["html"] == html
         assert mock_native.await_args.kwargs["strategy_used"] == "cloudflare"
         assert result is native_result
