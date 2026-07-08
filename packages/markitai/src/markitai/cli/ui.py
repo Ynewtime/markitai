@@ -13,6 +13,8 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -256,6 +258,13 @@ _STAGE_MODULES: dict[str, str] = {
     "fetch_playwright": "Rendering (playwright)",
 }
 
+# A stage running longer than this gets an "(Ns)" elapsed-time suffix, so a
+# slow-but-alive LLM call (which can legitimately take 1-2+ minutes with no
+# stage transitions to bridge from) doesn't read as a hang. Short stages
+# (typical fetches) never show a number, avoiding noise.
+ELAPSED_SUFFIX_THRESHOLD_S = 5.0
+ELAPSED_TICK_INTERVAL_S = 1.0
+
 
 def stage_from_log_record(record: Mapping[str, Any]) -> str | None:
     """Map a loguru record to a spinner stage label.
@@ -278,6 +287,26 @@ def stage_from_log_record(record: Mapping[str, Any]) -> str | None:
 def _is_stage_record(record: Mapping[str, Any]) -> bool:
     """Loguru filter: keep only records that map to a known stage."""
     return stage_from_log_record(record) is not None
+
+
+def elapsed_suffix(started_at: float | None, now: float) -> str:
+    """Build the "(Ns)" spinner suffix once a stage has run long enough.
+
+    Args:
+        started_at: ``time.monotonic()`` value when the current stage began,
+            or None if no stage has started yet.
+        now: Current ``time.monotonic()`` value.
+
+    Returns:
+        ``" (Ns)"`` once elapsed time reaches ``ELAPSED_SUFFIX_THRESHOLD_S``,
+        otherwise ``""``.
+    """
+    if started_at is None:
+        return ""
+    elapsed = now - started_at
+    if elapsed < ELAPSED_SUFFIX_THRESHOLD_S:
+        return ""
+    return f" ({elapsed:.0f}s)"
 
 
 class ConversionStatus:
@@ -328,6 +357,8 @@ class ConversionStatus:
         self.stage_text = initial
         self._status: Status | None = None
         self._sink_id: int | None = None
+        self._stage_started_at: float | None = None
+        self._ticker_task: asyncio.Task[None] | None = None
 
     @property
     def active(self) -> bool:
@@ -344,20 +375,32 @@ class ConversionStatus:
             spinner_style="dim",
         )
         self._status.start()
+        self._stage_started_at = time.monotonic()
         # Temporary sink: rewrites the spinner text on known stage logs.
         # DEBUG level because fetch strategy hops log at DEBUG.
         self._sink_id = logger.add(
             self._on_stage_log, level="DEBUG", filter=_is_stage_record
         )
+        # Ticker: repaints with an elapsed-time suffix once a stage runs
+        # long (see ELAPSED_SUFFIX_THRESHOLD_S). No running loop (e.g. a
+        # sync test driving start()/stop() directly) just skips the ticker;
+        # the spinner still works, only the elapsed suffix is unavailable.
+        try:
+            self._ticker_task = asyncio.get_running_loop().create_task(self._tick())
+        except RuntimeError:
+            self._ticker_task = None
 
     def update(self, text: str) -> None:
         """Update the stage text (no-op rendering-wise when not active)."""
         self.stage_text = text
-        if self._status is not None:
-            self._status.update(f"[dim]{escape(text)}[/dim]")
+        self._stage_started_at = time.monotonic()
+        self._render()
 
     def stop(self) -> None:
         """Detach the loguru bridge and erase the spinner. Idempotent."""
+        if self._ticker_task is not None:
+            self._ticker_task.cancel()
+            self._ticker_task = None
         if self._sink_id is not None:
             try:
                 logger.remove(self._sink_id)
@@ -367,6 +410,19 @@ class ConversionStatus:
         if self._status is not None:
             self._status.stop()
             self._status = None
+
+    def _render(self) -> None:
+        """Repaint the spinner text, adding elapsed time once a stage runs long."""
+        if self._status is None:
+            return
+        suffix = elapsed_suffix(self._stage_started_at, time.monotonic())
+        self._status.update(f"[dim]{escape(self.stage_text)}{suffix}[/dim]")
+
+    async def _tick(self) -> None:
+        """Repaint on an interval so the elapsed-time suffix keeps counting."""
+        while True:
+            await asyncio.sleep(ELAPSED_TICK_INTERVAL_S)
+            self._render()
 
     def _on_stage_log(self, message: Any) -> None:
         """Loguru sink: map a stage log record to spinner text."""
