@@ -9,8 +9,10 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import io
 import sys
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -155,6 +157,77 @@ class TestConversionStatusBridge:
         status.update("Later...")
         assert status.stage_text == "Later..."
         assert not status.active
+
+
+class TestElapsedSuffix:
+    """Tests for the pure "(Ns)" elapsed-time suffix helper."""
+
+    def test_no_suffix_before_threshold(self) -> None:
+        started = 100.0
+        assert ui.elapsed_suffix(started, now=started + 4.9) == ""
+
+    def test_suffix_appears_at_threshold(self) -> None:
+        started = 100.0
+        assert (
+            ui.elapsed_suffix(started, now=started + ui.ELAPSED_SUFFIX_THRESHOLD_S)
+            == " (5s)"
+        )
+
+    def test_suffix_rounds_to_whole_seconds(self) -> None:
+        started = 100.0
+        assert ui.elapsed_suffix(started, now=started + 72.6) == " (73s)"
+
+    def test_no_start_time_means_no_suffix(self) -> None:
+        assert ui.elapsed_suffix(None, now=1000.0) == ""
+
+
+class TestConversionStatusTicker:
+    """Tests for the elapsed-time ticker task lifecycle."""
+
+    async def test_ticker_started_in_async_context(self) -> None:
+        console = make_tty_console()
+        status = ui.ConversionStatus("Enhancing with LLM...", console=console)
+        status.start()
+        try:
+            assert status._ticker_task is not None
+            assert not status._ticker_task.done()
+        finally:
+            status.stop()
+
+    async def test_ticker_cancelled_on_stop(self) -> None:
+        console = make_tty_console()
+        status = ui.ConversionStatus("Enhancing with LLM...", console=console)
+        status.start()
+        task = status._ticker_task
+        status.stop()
+        assert status._ticker_task is None
+        assert task is not None
+        # Let the cancellation actually propagate before asserting.
+        await asyncio.sleep(0)
+        assert task.cancelled() or task.done()
+
+    async def test_long_running_stage_gets_elapsed_suffix_in_render(self) -> None:
+        console = make_tty_console()
+        status = ui.ConversionStatus("Enhancing with LLM...", console=console)
+        status.start()
+        try:
+            assert status._status is not None
+            with patch.object(status._status, "update") as mock_update:
+                status._stage_started_at = time.monotonic() - 10.0
+                status._render()
+            rendered = mock_update.call_args.args[0]
+            assert "(10s)" in rendered
+        finally:
+            status.stop()
+
+    def test_start_without_running_loop_disables_ticker(self) -> None:
+        """Sync-driven usage (no event loop) must not raise."""
+        console = make_tty_console()
+        status = ui.ConversionStatus("Fetching...", console=console)
+        status.start()  # this test is sync: no running loop
+        assert status._ticker_task is None
+        assert status.active
+        status.stop()
 
 
 class TestConversionStatusGating:

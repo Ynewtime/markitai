@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`COPILOT_GITHUB_TOKEN` auth support**: Copilot auth detection and login hints now check `COPILOT_GITHUB_TOKEN` first (matching `copilot login --help`'s own documented precedence), falling back to `GH_TOKEN` then `GITHUB_TOKEN`
+- **Elapsed-time suffix on slow stages**: a conversion stage running longer than 5 seconds gets a live `(Ns)` suffix on its spinner line, so a slow-but-alive LLM call (legitimately 1-2+ minutes with no stage transitions) doesn't read as a hang; short stages stay clean
 
 ### Fixed
 
