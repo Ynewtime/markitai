@@ -378,6 +378,18 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
             "store": False,
             "stream": True,
             "include": ["reasoning.encrypted_content"],
+            # markitai's calls are one-shot extraction/cleaning tasks, never
+            # multi-step reasoning. Shape confirmed against pi's openai-codex
+            # provider, which hits this same private backend
+            # (github.com/earendil-works/pi, packages/ai/src/api/
+            # openai-codex-responses.ts). "none" (not pi's "minimal" default)
+            # verified live: gpt-5.4-mini rejects "minimal" with 400 --
+            # "Unsupported value: 'minimal' is not supported with the
+            # 'gpt-5.4-mini' model. Supported values are: 'none', 'low',
+            # 'medium', 'high', and 'xhigh'" -- "none" is accepted and is
+            # the true no-reasoning floor anyway.
+            "reasoning": {"effort": "none", "summary": "auto"},
+            "text": {"verbosity": "low"},
         }
 
         # Build headers (match Codex CLI conventions)

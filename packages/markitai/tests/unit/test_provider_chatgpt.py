@@ -414,6 +414,28 @@ class TestAPICall:
         assert "include" in body
         assert "reasoning.encrypted_content" in body["include"]
 
+    async def test_reasoning_effort_and_verbosity_minimized(self) -> None:
+        """Request body should minimize reasoning effort and verbosity.
+
+        markitai's calls are one-shot extraction/cleaning tasks, never
+        multi-step reasoning. Shape confirmed against pi's openai-codex
+        provider (same backend); "none" verified live against the real
+        API -- gpt-5.4-mini rejects pi's "minimal" default with a 400
+        ("Supported values are: 'none', 'low', 'medium', 'high', 'xhigh'").
+        """
+        provider = self._make_provider()
+        provider._authenticator = self._mock_auth()
+        provider._client = _mock_stream_client(_make_sse_lines())
+
+        await provider.acompletion(
+            "chatgpt/codex-mini",
+            [{"role": "user", "content": "Hi"}],
+        )
+
+        body = provider._client.stream.call_args[1]["json"]
+        assert body["reasoning"] == {"effort": "none", "summary": "auto"}
+        assert body["text"] == {"verbosity": "low"}
+
     async def test_api_error_400_raises_provider_error(self) -> None:
         from markitai.providers.errors import ProviderError
 

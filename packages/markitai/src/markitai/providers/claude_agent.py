@@ -426,6 +426,14 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
                 "permission_mode": "bypassPermissions",
                 "max_turns": 1,
                 "model": model_name,
+                # markitai's calls are one-shot extraction/cleaning tasks
+                # (clean markdown, generate frontmatter, caption an image),
+                # never multi-step reasoning. Leaving `thinking` unset lets
+                # the CLI apply its own default, which can silently spend a
+                # large fraction of the response as ThinkingBlocks that the
+                # response loop below only extracts TextBlock from — billed
+                # and counted in output_tokens, but never used.
+                "thinking": {"type": "disabled"},
             }
 
             # Pass system prompt via SDK's dedicated parameter

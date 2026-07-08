@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Console log noise**: `instructor`'s internal per-attempt retry logs (pure duplicates of markitai's own `[LLM:...] Failed:` summaries) are no longer echoed to the console (file logs keep full detail); third-party log origin resolution in the loguru interceptor was fixed so third-party INFO filtering works as intended; pydantic `ValidationError`s now collapse to a one-line summary naming the model and fields instead of dumping the raw multi-line block. Per-call LLM timing summaries are now visible with `-v`
 
+### Changed
+
+- **No more billed-but-unused reasoning**: `claude-agent/` requests now explicitly disable extended thinking, and `chatgpt/` requests set reasoning effort to `none` with low verbosity — markitai's calls are one-shot extraction/cleaning tasks, and the providers' defaults could silently spend a large fraction of each response on reasoning tokens the pipeline never reads
+
 ## [0.16.0] - 2026-07-07
 
 ### Added

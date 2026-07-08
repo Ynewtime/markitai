@@ -478,6 +478,80 @@ class TestClaudeAgentIntegration:
         assert "allow_dangerously_skip_permissions" not in options_call_kwargs
 
     @pytest.mark.asyncio
+    async def test_thinking_disabled(self) -> None:
+        """Test that extended thinking is explicitly disabled.
+
+        markitai's calls are one-shot extraction/cleaning tasks; leaving
+        `thinking` unset lets the CLI apply its own default, which can
+        silently spend a large fraction of the response as ThinkingBlocks
+        that the response loop only extracts TextBlock from — billed and
+        counted in output_tokens but never used (see also the real
+        73558ms/6729-output-token measurement that motivated this fix).
+        """
+        from markitai.providers.claude_agent import ClaudeAgentProvider
+
+        provider = ClaudeAgentProvider()
+
+        mock_text_block = MagicMock()
+        mock_text_block.text = "Response"
+
+        mock_assistant_message = MagicMock()
+        mock_assistant_message.content = [mock_text_block]
+
+        mock_result_message = MagicMock()
+        mock_result_message.usage = {"input_tokens": 10, "output_tokens": 5}
+        mock_result_message.total_cost_usd = 0.0
+        mock_result_message.structured_output = None
+
+        mock_client = AsyncMock()
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response():
+            yield mock_assistant_message
+            yield mock_result_message
+
+        mock_client.receive_response = mock_receive_response
+
+        mock_sdk_client_class = MagicMock()
+        mock_sdk_client_instance = AsyncMock()
+        mock_sdk_client_instance.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_sdk_client_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_sdk_client_class.return_value = mock_sdk_client_instance
+
+        mock_types = MagicMock()
+        mock_types.AssistantMessage = type(mock_assistant_message)
+        mock_types.ResultMessage = type(mock_result_message)
+        mock_types.TextBlock = type(mock_text_block)
+
+        mock_options_class = MagicMock()
+        mock_sdk = MagicMock(
+            ClaudeSDKClient=mock_sdk_client_class,
+            ClaudeAgentOptions=mock_options_class,
+            types=mock_types,
+        )
+
+        with (
+            patch(
+                "markitai.providers.claude_agent._is_claude_agent_sdk_available",
+                return_value=True,
+            ),
+            patch.dict(
+                "sys.modules",
+                {
+                    "claude_agent_sdk": mock_sdk,
+                    "claude_agent_sdk.types": mock_types,
+                },
+            ),
+        ):
+            await provider.acompletion(
+                model="claude-agent/haiku",
+                messages=[{"role": "user", "content": "Hello!"}],
+            )
+
+        options_call_kwargs = mock_options_class.call_args[1]
+        assert options_call_kwargs.get("thinking") == {"type": "disabled"}
+
+    @pytest.mark.asyncio
     async def test_system_message_passed_as_system_prompt(self) -> None:
         """Test that system messages use the SDK's system_prompt parameter.
 
