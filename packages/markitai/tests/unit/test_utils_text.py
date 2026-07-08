@@ -215,14 +215,38 @@ class TestFormatErrorMessage:
             result = format_error_message(e)
             # Should not have multiple consecutive spaces
             assert "  " not in result
-            assert "\n" not in result
+
+    def test_pydantic_validation_error_summarized(self):
+        """A pydantic ValidationError collapses to one line naming the fields.
+
+        The raw __str__ is a multi-line block per field (message, input
+        value repr, and a docs URL) that survives newline-collapse/truncate
+        as a confusing fragment. This should summarize instead.
+        """
+        from pydantic import BaseModel, ValidationError
+
+        class DocumentProcessResult(BaseModel):
+            cleaned_markdown: str
+            frontmatter: dict
+
+        try:
+            DocumentProcessResult.model_validate({"description": "x"})
+        except ValidationError as e:
+            result = format_error_message(e)
+
+        assert "\n" not in result
+        assert "errors.pydantic.dev" not in result
+        assert "DocumentProcessResult" in result
+        assert "cleaned_markdown" in result
+        assert "frontmatter" in result
+        assert "2 error" in result
 
     def test_provider_error_not_replaced_by_retry_error_context(self):
         """Test that informative ProviderError message is NOT replaced by
         opaque RetryError wrapper message via __context__ chain.
 
         Simulates the real scenario where:
-        1. gemini_cli raises ProviderError("model X not found")
+        1. copilot raises ProviderError("model X not found")
         2. tenacity catches it and raises RetryError(<Future...>)
         3. _find_non_retryable_provider_error extracts the ProviderError
         4. format_error_message should use the ProviderError message, not RetryError

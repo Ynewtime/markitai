@@ -390,12 +390,21 @@ def _is_third_party_log(name: str, module: str) -> bool:
 
 
 def _get_record_field(record: Any, key: str) -> str:
-    """Read a field from a loguru record, falling back to bound extras."""
-    value = record.get(key)
-    if isinstance(value, str) and value:
-        return value
+    """Read a field from a loguru record, preferring bound extras.
+
+    InterceptHandler.emit() calls logger.log() from inside this module, so
+    the record's *native* name/module always resolve to
+    "markitai.cli.logging_config" for every intercepted third-party log —
+    the actual origin only survives in the bound extras (record.name /
+    record.module from the original stdlib LogRecord). Native loguru calls
+    from markitai's own code never populate extras, so they fall through to
+    the native field, which is correct for them.
+    """
     extra_value = record.get("extra", {}).get(key, "")
-    return extra_value if isinstance(extra_value, str) else ""
+    if isinstance(extra_value, str) and extra_value:
+        return extra_value
+    value = record.get(key)
+    return value if isinstance(value, str) else ""
 
 
 def _is_internal_info_noise(record: Any) -> bool:
@@ -403,6 +412,15 @@ def _is_internal_info_noise(record: Any) -> bool:
     message = record.get("message", "")
     name = _get_record_field(record, "name").lower()
     module = _get_record_field(record, "module").lower()
+
+    # Per-call timing summaries (e.g. "document_process: claude-agent/haiku
+    # tokens=1574+6729 time=73558ms cost=$0.046399") are exactly what -v
+    # users need to see why a stage is taking long — the spinner collapses
+    # the whole LLM stage into one static line, and these are otherwise the
+    # only signal of per-call latency/retries/fallback. Let them through
+    # even though their module would otherwise be filtered as noise below.
+    if " time=" in message:
+        return False
 
     noisy_prefixes = (
         "[Router]",
@@ -435,6 +453,29 @@ def _is_internal_info_noise(record: Any) -> bool:
     return any(name.endswith(candidate) for candidate in noisy_names)
 
 
+# instructor's own internal retry loop (instructor/v2/core/retry.py) logs
+# every attempt and the final exhaustion at ERROR level via stdlib logging,
+# regardless of whether the failure is retryable or already reported
+# elsewhere. markitai's own [LLM:...] failure summaries (processor.py,
+# vision.py, document.py) already surface the same failure with call-level
+# context, so these are pure duplication on the console. File logs are
+# unaffected — this only trims the console filter.
+_THIRD_PARTY_RETRY_NOISE_PREFIXES = (
+    "API call failed on attempt ",
+    "Max retries exceeded. Total attempts:",
+)
+
+
+def _is_third_party_retry_noise(record: Any, name: str) -> bool:
+    """Return whether a WARNING/ERROR log is third-party retry-loop noise."""
+    if not name.lower().startswith("instructor"):
+        return False
+    message = record.get("message", "")
+    return any(
+        message.startswith(prefix) for prefix in _THIRD_PARTY_RETRY_NOISE_PREFIXES
+    )
+
+
 def _should_show_log(record: Any, verbose: bool) -> bool:
     """Filter function for console logging.
 
@@ -454,14 +495,16 @@ def _should_show_log(record: Any, verbose: bool) -> bool:
     if level == "DEBUG":
         return False
 
-    # Always show warnings and above
-    if level in ("WARNING", "ERROR", "CRITICAL"):
-        return True
-
     # Get the module/name from the record (bound by InterceptHandler for stdlib logs,
     # or from native loguru record fields for first-party logs).
     name = _get_record_field(record, "name")
     module = _get_record_field(record, "module")
+
+    # Always show warnings and above, except known third-party retry-loop
+    # noise that duplicates markitai's own failure summaries (see
+    # _is_third_party_retry_noise).
+    if level in ("WARNING", "ERROR", "CRITICAL"):
+        return not _is_third_party_retry_noise(record, name)
 
     # Filter out third-party INFO
     if level == "INFO" and _is_third_party_log(name, module):
