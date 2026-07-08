@@ -1781,7 +1781,7 @@ dev = [
 
 [[package]]
 name = "markitai-workspace"
-version = "0.16.0"
+version = "0.17.0"
 source = { virtual = "." }
 dependencies = [
     { name = "markitai" },
