@@ -49,7 +49,7 @@ def cf_account() -> str:
 
 
 class TestCloudflareBRIntegration:
-    """CF Browser Rendering /markdown API integration tests."""
+    """CF Browser Rendering /content API integration tests."""
 
     @pytest.mark.asyncio
     async def test_br_basic_url_fetch(self, cf_token, cf_account):

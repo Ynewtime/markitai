@@ -714,7 +714,7 @@ Configure how URLs are fetched:
 | `defuddle` | Use Defuddle API for clean content extraction (free, no auth) |
 | `playwright` | Use Playwright for JS-rendered pages (SPA support) |
 | `jina` | Use Jina Reader API |
-| `cloudflare` | Use Cloudflare Browser Rendering `/markdown` API |
+| `cloudflare` | Use Cloudflare Browser Rendering `/content` API (rendered HTML, extracted locally) |
 
 ### Playwright Settings
 

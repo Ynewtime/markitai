@@ -1428,6 +1428,25 @@ async def _build_native_fetch_result(
     )
 
 
+def _markitdown_convert_bytes(
+    content_bytes: bytes, suffix: str
+) -> tuple[str, str | None]:
+    """Write a temp file and convert with markitdown (CPU-bound).
+
+    Returns:
+        (text_content, title) tuple.
+    """
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False, mode="wb") as f:
+        f.write(content_bytes)
+        temp_path = Path(f.name)
+    try:
+        md = _get_markitdown()
+        md_result = md.convert(str(temp_path))
+        return md_result.text_content or "", md_result.title
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
 def _merge_screenshot_result(result: FetchResult, pw_result: Any) -> FetchResult:
     """Attach a separately captured screenshot without dropping existing fields."""
     return FetchResult(
@@ -1599,23 +1618,9 @@ async def fetch_with_static_conditional(
 
         # Save response to temp file and run sync markitdown in executor
         # to avoid blocking the event loop
-        def _sync_convert(content_bytes: bytes, suffix: str) -> tuple[str, str | None]:
-            """Write temp file and convert with markitdown (CPU-bound)."""
-            with tempfile.NamedTemporaryFile(
-                suffix=suffix, delete=False, mode="wb"
-            ) as f:
-                f.write(content_bytes)
-                temp_path = Path(f.name)
-            try:
-                md = _get_markitdown()
-                md_result = md.convert(str(temp_path))
-                return md_result.text_content or "", md_result.title
-            finally:
-                temp_path.unlink(missing_ok=True)
-
         loop = asyncio.get_running_loop()
         text_content, title = await loop.run_in_executor(
-            None, _sync_convert, response.content, suffix
+            None, _markitdown_convert_bytes, response.content, suffix
         )
 
         if not text_content:
@@ -1658,7 +1663,14 @@ async def fetch_with_cloudflare(
     wait_for_selector: str | None = None,
     http_credentials: dict[str, str] | None = None,
 ) -> FetchResult:
-    """Fetch URL using Cloudflare Browser Rendering /markdown API.
+    """Fetch URL using Cloudflare Browser Rendering /content API.
+
+    Fetches the rendered HTML (not CF's server-side /markdown conversion) so
+    the page goes through the same native webextract pipeline as every other
+    strategy — site-specific extractors included. CF's /markdown endpoint
+    hands back already-converted generic markdown, which bypasses
+    webextract entirely and lets site chrome through (share buttons,
+    stat counters, back-to-top links).
 
     Args:
         url: URL to fetch
@@ -1674,7 +1686,8 @@ async def fetch_with_cloudflare(
         http_credentials: HTTP Basic Auth credentials {username, password}
 
     Returns:
-        FetchResult with markdown content
+        FetchResult with markdown extracted from the rendered HTML
+        (native webextract preferred, markitdown fallback)
 
     Raises:
         FetchError: If fetch fails or credentials missing
@@ -1688,7 +1701,7 @@ async def fetch_with_cloudflare(
 
     endpoint = (
         f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
-        f"/browser-rendering/markdown"
+        f"/browser-rendering/content"
     )
     # cacheTTL is a query parameter, not a body parameter
     if cache_ttl > 0:
@@ -1737,6 +1750,9 @@ async def fetch_with_cloudflare(
     max_retries = 3
     retry_base_delay = 2.0  # seconds
 
+    html_content = ""
+    browser_ms_used: str | None = None
+
     try:
         # Use _detect_proxy() not get_proxy_for_url(endpoint), because
         # api.cloudflare.com is not in proxy_domains but may still need
@@ -1744,68 +1760,95 @@ async def fetch_with_cloudflare(
         proxy_url = _detect_proxy()
         proxy_config = proxy_url if proxy_url else None
 
-        async with get_cf_semaphore():
-            async with httpx.AsyncClient(
+        async with (
+            get_cf_semaphore(),
+            httpx.AsyncClient(
                 timeout=max(timeout / 1000 + 10, 60.0),
                 proxy=proxy_config,
-            ) as client:
-                for attempt in range(max_retries):
-                    response = await client.post(
-                        endpoint,
-                        headers={
-                            "Authorization": f"Bearer {api_token}",
-                            "Content-Type": "application/json",
-                        },
-                        json=payload,
-                    )
+            ) as client,
+        ):
+            for attempt in range(max_retries):
+                response = await client.post(
+                    endpoint,
+                    headers={
+                        "Authorization": f"Bearer {api_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
 
-                    if response.status_code == 429:
-                        if attempt < max_retries - 1:
-                            delay = retry_base_delay * (2**attempt)
-                            logger.warning(
-                                f"CF BR rate limited (429), retrying in {delay}s "
-                                f"(attempt {attempt + 1}/{max_retries}): {url}"
-                            )
-                            await asyncio.sleep(delay)
-                            continue
-                        raise FetchError(
-                            f"CF BR rate limit exceeded after {max_retries} retries: {url}"
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        delay = retry_base_delay * (2**attempt)
+                        logger.warning(
+                            f"CF BR rate limited (429), retrying in {delay}s "
+                            f"(attempt {attempt + 1}/{max_retries}): {url}"
                         )
-
-                    response.raise_for_status()
-
-                    # CF REST API returns JSON envelope
-                    data = response.json()
-                    if not data.get("success"):
-                        errors = data.get("errors", [])
-                        error_msg = "; ".join(e.get("message", str(e)) for e in errors)
-                        raise FetchError(f"CF BR API error: {error_msg}")
-
-                    markdown_content = data.get("result", "")
-
-                    title = _extract_markdown_title(markdown_content)
-
-                    return FetchResult(
-                        content=markdown_content,
-                        strategy_used="cloudflare",
-                        title=title,
-                        url=url,
-                        final_url=url,
-                        metadata={
-                            "converter": "cloudflare-br",
-                            "browser_ms_used": response.headers.get(
-                                "X-Browser-Ms-Used"
-                            ),
-                        },
+                        await asyncio.sleep(delay)
+                        continue
+                    raise FetchError(
+                        f"CF BR rate limit exceeded after {max_retries} retries: {url}"
                     )
-            # Unreachable: loop always returns or raises on 429 exhaustion
-            raise FetchError(f"CF BR fetch failed after {max_retries} attempts: {url}")
+
+                response.raise_for_status()
+
+                # CF REST API returns JSON envelope
+                data = response.json()
+                if not data.get("success"):
+                    errors = data.get("errors", [])
+                    error_msg = "; ".join(e.get("message", str(e)) for e in errors)
+                    raise FetchError(f"CF BR API error: {error_msg}")
+
+                html_content = data.get("result", "")
+                browser_ms_used = response.headers.get("X-Browser-Ms-Used")
+                # Convert outside the semaphore/client scope below, so the
+                # CF concurrency slot is freed as soon as the fetch is done
+                break
     except FetchError:
         raise
     except Exception as e:
         raise FetchError(
             f"Cloudflare BR fetch failed: {format_error_message(e)}"
         ) from e
+
+    if not html_content:
+        raise FetchError(f"CF BR returned no content: {url}")
+
+    base_metadata: dict[str, Any] = {"browser_ms_used": browser_ms_used}
+
+    # Same native-extraction path as static/playwright HTML, so site-specific
+    # extractors (webextract/extractors/registry.py) apply to CF-fetched pages
+    native_result = await _build_native_fetch_result(
+        html=html_content,
+        url=url,
+        final_url=url,
+        strategy_used="cloudflare",
+        base_metadata=base_metadata,
+    )
+    if native_result is not None:
+        return native_result
+
+    try:
+        loop = asyncio.get_running_loop()
+        text_content, title = await loop.run_in_executor(
+            None, _markitdown_convert_bytes, html_content.encode("utf-8"), ".html"
+        )
+    except Exception as e:
+        raise FetchError(
+            f"Cloudflare BR content conversion failed: {format_error_message(e)}"
+        ) from e
+
+    if not text_content:
+        raise FetchError(f"No content extracted from URL: {url}")
+
+    return FetchResult(
+        content=text_content,
+        strategy_used="cloudflare",
+        title=title,
+        url=url,
+        final_url=url,
+        metadata={**base_metadata, "converter": "markitdown"},
+    )
 
 
 async def fetch_with_jina(

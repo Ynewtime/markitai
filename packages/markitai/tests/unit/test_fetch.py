@@ -3984,15 +3984,16 @@ class TestCloudflareStrategy:
 
     @pytest.mark.asyncio
     async def test_fetch_with_cloudflare_success(self):
-        """Successful CF BR fetch returns markdown content from JSON envelope."""
-        from markitai.fetch import fetch_with_cloudflare
+        """CF BR /content HTML routes through the native webextract path."""
+        from markitai.fetch import FetchResult, fetch_with_cloudflare
 
-        # CF REST API returns JSON envelope: {"success": true, "result": "<markdown>"}
+        html = "<html><body><article><p>Content from CF BR.</p></article></body></html>"
+        # CF REST API returns JSON envelope: {"success": true, "result": "<html>"}
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "success": True,
-            "result": "# Hello World\n\nContent from CF BR.",
+            "result": html,
             "errors": [],
             "messages": [],
         }
@@ -4002,9 +4003,23 @@ class TestCloudflareStrategy:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
+        native_result = FetchResult(
+            content="Content from CF BR.",
+            strategy_used="cloudflare",
+            title="Hello",
+            url="https://example.com",
+            final_url="https://example.com",
+            metadata={"converter": "native-html", "browser_ms_used": "1500"},
+        )
+
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
             patch("httpx.AsyncClient") as mock_client_class,
+            patch(
+                "markitai.fetch._build_native_fetch_result",
+                new_callable=AsyncMock,
+                return_value=native_result,
+            ) as mock_native,
         ):
             mock_ctx = AsyncMock()
             mock_ctx.__aenter__.return_value = mock_client
@@ -4017,9 +4032,68 @@ class TestCloudflareStrategy:
                 account_id="test-account",
             )
 
-        assert result.content == "# Hello World\n\nContent from CF BR."
+        # The rendered HTML must be handed to the shared native-extraction
+        # path (site-specific extractors), not converted server-side
+        mock_native.assert_awaited_once()
+        assert mock_native.await_args.kwargs["html"] == html
+        assert mock_native.await_args.kwargs["strategy_used"] == "cloudflare"
+        assert result is native_result
+
+        # Endpoint is /content (raw HTML), not /markdown (server-side conversion)
+        posted_url = mock_client.post.await_args.args[0]
+        assert posted_url.endswith("/browser-rendering/content")
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_cloudflare_markitdown_fallback(self):
+        """When native extraction is unacceptable, HTML falls back to markitdown."""
+        from markitai.fetch import fetch_with_cloudflare
+
+        html = "<html><body><p>Short page.</p></body></html>"
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "success": True,
+            "result": html,
+            "errors": [],
+            "messages": [],
+        }
+        mock_response.headers = {"X-Browser-Ms-Used": "900"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch("httpx.AsyncClient") as mock_client_class,
+            patch(
+                "markitai.fetch._build_native_fetch_result",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "markitai.fetch._markitdown_convert_bytes",
+                return_value=("Short page.", "Title"),
+            ) as mock_convert,
+        ):
+            mock_ctx = AsyncMock()
+            mock_ctx.__aenter__.return_value = mock_client
+            mock_ctx.__aexit__.return_value = None
+            mock_client_class.return_value = mock_ctx
+
+            result = await fetch_with_cloudflare(
+                url="https://example.com",
+                api_token="test-token",
+                account_id="test-account",
+            )
+
+        assert mock_convert.call_args.args[0] == html.encode("utf-8")
+        assert mock_convert.call_args.args[1] == ".html"
+        assert result.content == "Short page."
+        assert result.title == "Title"
         assert result.strategy_used == "cloudflare"
-        assert result.metadata.get("browser_ms_used") == "1500"
+        assert result.metadata.get("converter") == "markitdown"
+        assert result.metadata.get("browser_ms_used") == "900"
 
     @pytest.mark.asyncio
     async def test_fetch_with_cloudflare_api_success_false(self):
@@ -4115,7 +4189,7 @@ class TestCloudflareStrategy:
             mock_resp.status_code = 200
             mock_resp.json.return_value = {
                 "success": True,
-                "result": "# Test\n\nContent for testing reject patterns.",
+                "result": "<html><body><p>Reject-pattern test.</p></body></html>",
                 "errors": [],
                 "messages": [],
             }
@@ -4130,6 +4204,10 @@ class TestCloudflareStrategy:
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
             patch("httpx.AsyncClient") as mock_client_class,
+            patch(
+                "markitai.fetch._markitdown_convert_bytes",
+                return_value=("Reject-pattern test.", None),
+            ),
         ):
             mock_ctx = AsyncMock()
             mock_ctx.__aenter__.return_value = mock_client
@@ -4252,7 +4330,7 @@ class TestCloudflareBRRetry:
         mock_200.status_code = 200
         mock_200.json.return_value = {
             "success": True,
-            "result": "# Retry OK\n\nContent after retry.",
+            "result": "<html><body><p>Content after retry.</p></body></html>",
             "errors": [],
             "messages": [],
         }
@@ -4266,6 +4344,15 @@ class TestCloudflareBRRetry:
             patch("markitai.fetch._detect_proxy", return_value=""),
             patch("httpx.AsyncClient") as mock_client_class,
             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch(
+                "markitai.fetch._build_native_fetch_result",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "markitai.fetch._markitdown_convert_bytes",
+                return_value=("Content after retry.", None),
+            ),
         ):
             mock_ctx = AsyncMock()
             mock_ctx.__aenter__.return_value = mock_client
@@ -4278,7 +4365,7 @@ class TestCloudflareBRRetry:
                 account_id="test-account",
             )
 
-            assert result.content == "# Retry OK\n\nContent after retry."
+            assert result.content == "Content after retry."
             assert result.strategy_used == "cloudflare"
             mock_sleep.assert_called_once()  # Slept between retries
 
@@ -4330,7 +4417,7 @@ class TestCloudflareBRPayload:
             mock_resp.status_code = 200
             mock_resp.json.return_value = {
                 "success": True,
-                "result": "# Test",
+                "result": "<html><body><p>Payload test.</p></body></html>",
                 "errors": [],
                 "messages": [],
             }
@@ -4349,6 +4436,15 @@ class TestCloudflareBRPayload:
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
             patch("httpx.AsyncClient") as mock_client_class,
+            patch(
+                "markitai.fetch._build_native_fetch_result",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "markitai.fetch._markitdown_convert_bytes",
+                return_value=("Payload test.", None),
+            ),
         ):
             mock_ctx = AsyncMock()
             mock_ctx.__aenter__.return_value = mock_client
