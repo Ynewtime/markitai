@@ -133,7 +133,7 @@ class TestDetectAllProviders:
             results = detect_all_providers()
             assert len(results) == 1
             assert results[0].provider == "chatgpt"
-            assert results[0].model == "chatgpt/gpt-5.4-nano"
+            assert results[0].model == "chatgpt/gpt-5.4-mini"
 
 
 class TestDetectFirstProvider:

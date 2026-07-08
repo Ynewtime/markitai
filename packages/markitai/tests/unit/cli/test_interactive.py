@@ -188,7 +188,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "chatgpt"
-            assert result.model == "chatgpt/gpt-5.4-nano"
+            assert result.model == "chatgpt/gpt-5.4-mini"
 
 
 class TestInteractiveSession:

@@ -9,7 +9,7 @@ from click.testing import CliRunner
 from markitai.cli.main import app
 
 # Detected providers used across merge tests; _build_config() maps these to
-# claude-agent/sonnet and chatgpt/gpt-5.4-nano model entries.
+# claude-agent/sonnet and chatgpt/gpt-5.4-mini model entries.
 _DETECTED = [("Claude CLI", True), ("ChatGPT", True)]
 
 
@@ -84,14 +84,14 @@ class TestMergeNewModels:
 
         added = _merge_new_models(existing, _build_config(_DETECTED))
 
-        assert added == ["chatgpt/gpt-5.4-nano"]
+        assert added == ["chatgpt/gpt-5.4-mini"]
         assert existing["output"] == {"dir": "./custom"}
         assert existing["llm"]["enabled"] is True
         # Existing entry is honored (custom name and weight preserved)
         assert existing["llm"]["model_list"][0]["model_name"] == "primary"
         assert existing["llm"]["model_list"][0]["litellm_params"]["weight"] == 2
         models = [e["litellm_params"]["model"] for e in existing["llm"]["model_list"]]
-        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-nano"]
+        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-mini"]
 
     def test_already_up_to_date_returns_empty_and_keeps_config(self) -> None:
         """No additions when every detected provider is already configured."""
@@ -109,7 +109,7 @@ class TestMergeNewModels:
                     },
                     {
                         "model_name": "default",
-                        "litellm_params": {"model": "chatgpt/gpt-5.4-nano"},
+                        "litellm_params": {"model": "chatgpt/gpt-5.4-mini"},
                     },
                 ],
             }
@@ -129,7 +129,7 @@ class TestMergeNewModels:
 
         added = _merge_new_models(existing, _build_config(_DETECTED))
 
-        assert added == ["claude-agent/sonnet", "chatgpt/gpt-5.4-nano"]
+        assert added == ["claude-agent/sonnet", "chatgpt/gpt-5.4-mini"]
         assert existing["llm"]["enabled"] is False
 
 
@@ -177,12 +177,12 @@ class TestInitYesWithExistingConfig:
 
         assert result.exit_code == 0
         assert "updated" in result.output.lower()
-        assert "chatgpt/gpt-5.4-nano" in result.output
+        assert "chatgpt/gpt-5.4-mini" in result.output
         data = json.loads(target.read_text(encoding="utf-8"))
         assert data["output"] == {"dir": "./custom"}
         assert data["llm"]["enabled"] is True
         models = [e["litellm_params"]["model"] for e in data["llm"]["model_list"]]
-        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-nano"]
+        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-mini"]
 
     def test_yes_is_idempotent_and_reports_up_to_date(self, tmp_path: Path) -> None:
         target = tmp_path / "config.json"
@@ -254,7 +254,7 @@ class TestWizardExistingConfig:
         data = json.loads(target.read_text(encoding="utf-8"))
         assert data["output"] == {"dir": "./custom"}
         models = [e["litellm_params"]["model"] for e in data["llm"]["model_list"]]
-        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-nano"]
+        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-mini"]
 
     def test_keep_leaves_file_unchanged(self, tmp_path: Path) -> None:
         target = tmp_path / "config.json"
@@ -279,4 +279,4 @@ class TestWizardExistingConfig:
         assert data["output"] == {"dir": "./output"}
         assert data["llm"]["enabled"] is False
         models = [e["litellm_params"]["model"] for e in data["llm"]["model_list"]]
-        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-nano"]
+        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-mini"]

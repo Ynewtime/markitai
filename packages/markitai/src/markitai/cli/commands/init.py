@@ -428,7 +428,7 @@ def _build_config(
     # Map provider display names to model configs (order = priority)
     provider_models = {
         "Claude": ("default", "claude-agent/sonnet"),
-        "ChatGPT": ("default", "chatgpt/gpt-5.4-nano"),
+        "ChatGPT": ("default", "chatgpt/gpt-5.4-mini"),
         "Copilot": ("default", "copilot/claude-haiku-4.5"),
         "DeepSeek": ("default", "deepseek/deepseek-v4-flash"),
         "Gemini": ("default", "gemini/gemini-3.1-flash-lite-preview"),
