@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Gemini CLI provider** (`gemini-cli/`): removed entirely, along with `markitai auth gemini`, the `gemini-cli` install extra, and its `google-auth`/`google-auth-oauthlib` dependencies. Google retired individual-tier Gemini Code Assist onboarding for new projects ("This client is no longer supported... migrate to the Antigravity suite of products"), so fresh logins could no longer complete. Use a direct Google Gemini API key (`gemini/<model>`) or route through OpenRouter (`openrouter/google/<model>`) instead
 
+### Added
+
+- **`COPILOT_GITHUB_TOKEN` auth support**: Copilot auth detection and login hints now check `COPILOT_GITHUB_TOKEN` first (matching `copilot login --help`'s own documented precedence), falling back to `GH_TOKEN` then `GITHUB_TOKEN`
+
 ## [0.16.0] - 2026-07-07
 
 ### Added

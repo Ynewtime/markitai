@@ -113,8 +113,8 @@ def _build_resolution_hint(provider: str) -> str:
         return (
             "Run 'markitai auth copilot login' (or 'copilot login') to "
             "authenticate with GitHub Copilot.\n"
-            "Alternatively, set GH_TOKEN or GITHUB_TOKEN env var "
-            "(requires 'Copilot Requests' permission).\n"
+            "Alternatively, set COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN "
+            "env var (requires 'Copilot Requests' permission).\n"
             "If Copilot CLI is not installed, install it with:\n"
             f"  {_get_cli_install_cmd('copilot')}"
         )
@@ -161,17 +161,22 @@ def _is_claude_agent_sdk_available() -> bool:
 def _check_copilot_config_auth() -> AuthStatus:
     """Check Copilot authentication by reading config file or env vars.
 
-    Checks (in order):
-    1. GH_TOKEN / GITHUB_TOKEN environment variables (personal access token)
-    2. ~/.copilot/config.json for logged_in_users
+    Checks (in order, matching `copilot login --help`'s own documented
+    precedence): COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN, then
+    ~/.copilot/config.json for logged_in_users.
 
     Returns:
         AuthStatus with authentication result
     """
-    # Check env var auth first (GH_TOKEN / GITHUB_TOKEN)
+    # Check env var auth first (COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN —
+    # this is the CLI's own documented order of precedence)
     import os
 
-    gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    gh_token = (
+        os.environ.get("COPILOT_GITHUB_TOKEN")
+        or os.environ.get("GH_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+    )
     if gh_token:
         return AuthStatus(
             provider="copilot",

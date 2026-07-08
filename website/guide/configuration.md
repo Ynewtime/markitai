@@ -330,7 +330,7 @@ Common errors and solutions:
 |-------|----------|
 | "SDK not installed" | `uv add markitai[copilot]` or `uv add markitai[claude-agent]` |
 | "CLI not found" | Install and authenticate the CLI tool ([Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli), [Claude Code](https://claude.ai/code)) |
-| "Not authenticated" | Run `copilot auth login` or `claude auth login`. Alternatively: set `GH_TOKEN`/`GITHUB_TOKEN` for Copilot, or `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1` for Claude. ChatGPT auto-triggers OAuth on first use. |
+| "Not authenticated" | Run `copilot auth login` or `claude auth login`. Alternatively: set `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN` for Copilot, or `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1` for Claude. ChatGPT auto-triggers OAuth on first use. |
 | "Rate limit" | Wait and retry, or check your subscription quota |
 | "Request timeout" | Timeout is adaptive; for very large documents, processing may take longer |
 

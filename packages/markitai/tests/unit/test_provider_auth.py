@@ -786,12 +786,29 @@ class TestConfigFileAuth:
 
 
 class TestCopilotEnvVarAuth:
-    """Tests for Copilot authentication via GH_TOKEN / GITHUB_TOKEN env vars.
+    """Tests for Copilot authentication via env vars.
 
-    The Copilot CLI supports authenticating via personal access tokens set in
-    GH_TOKEN or GITHUB_TOKEN environment variables (with "Copilot Requests"
-    permission). The auth pre-check should detect these as valid auth.
+    `copilot login --help` documents COPILOT_GITHUB_TOKEN, GH_TOKEN, and
+    GITHUB_TOKEN (checked in that order) as supported credential sources —
+    fine-grained PATs with "Copilot Requests" permission, or OAuth tokens
+    from the Copilot CLI or gh CLI apps. The auth pre-check should detect
+    all three as valid auth.
     """
+
+    def test_copilot_auth_detects_copilot_github_token(self, tmp_path: Path) -> None:
+        """COPILOT_GITHUB_TOKEN (the CLI's first-precedence var) should authenticate."""
+        from markitai.providers.auth import _check_copilot_config_auth
+
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch.dict(
+                "os.environ", {"COPILOT_GITHUB_TOKEN": "ghu_test789"}, clear=False
+            ),
+        ):
+            status = _check_copilot_config_auth()
+
+        assert status.authenticated is True
+        assert status.provider == "copilot"
 
     def test_copilot_auth_detects_gh_token(self, tmp_path: Path) -> None:
         """GH_TOKEN env var should be detected as valid Copilot auth."""
