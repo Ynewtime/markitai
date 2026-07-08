@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **No more billed-but-unused reasoning**: `claude-agent/` requests now explicitly disable extended thinking, and `chatgpt/` requests set reasoning effort to `none` with low verbosity — markitai's calls are one-shot extraction/cleaning tasks, and the providers' defaults could silently spend a large fraction of each response on reasoning tokens the pipeline never reads
+- **Cheaper detected-provider defaults**: provider detection and `markitai init` now suggest light-tier models (`copilot/claude-haiku-4.5`, `chatgpt/gpt-5.4-nano`, `openai/gpt-5.4-nano`, `anthropic/claude-haiku-4-5`, `deepseek/deepseek-v4-flash`, `openrouter/google/gemini-3.1-flash-lite`) instead of mid-tier ones — markitai's conversion tasks don't need them, and explicit config still uses whatever you set
 
 ## [0.16.0] - 2026-07-07
 

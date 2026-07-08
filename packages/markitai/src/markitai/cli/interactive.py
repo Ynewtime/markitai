@@ -316,10 +316,10 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
     )
 
     model_map = {
-        "anthropic": "anthropic/claude-sonnet-4-6",
-        "openai": "openai/gpt-5.4",
+        "anthropic": "anthropic/claude-haiku-4-5",
+        "openai": "openai/gpt-5.4-nano",
         "gemini": "gemini/gemini-3.1-flash-lite-preview",
-        "deepseek": "deepseek/deepseek-chat",
+        "deepseek": "deepseek/deepseek-v4-flash",
     }
 
     env_var_map = {
