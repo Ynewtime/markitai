@@ -154,7 +154,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
         results.append(
             ProviderDetectionResult(
                 provider="chatgpt",
-                model="chatgpt/gpt-5.4-nano",
+                model="chatgpt/gpt-5.4-mini",
                 authenticated=True,
                 source="cli",
             )
