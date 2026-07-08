@@ -1,3 +1,3 @@
 """Markitai - Opinionated Markdown converter with native LLM enhancement support."""
 
-__version__ = "0.17.0"  # single source of truth — bump before tagging vX.Y.Z
+__version__ = "0.18.0"  # single source of truth — bump before tagging vX.Y.Z
