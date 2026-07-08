@@ -367,11 +367,12 @@ Examples:
   "api_base": "http://localhost:11434"
 }
 
-// Azure OpenAI
+// Azure OpenAI — "azure/<...>" is your Azure deployment name (an alias you chose in Azure Portal), not a model ID
 {
-  "model": "azure/gpt-5.4",
+  "model": "azure/your-deployment-name",
   "api_key": "env:AZURE_API_KEY",
-  "api_base": "https://your-resource.openai.azure.com"
+  "api_base": "https://your-resource.openai.azure.com",
+  "api_version": "2025-02-01-preview"
 }
 
 // DeepSeek

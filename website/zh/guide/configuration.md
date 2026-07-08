@@ -367,11 +367,12 @@ ChatGPT 支持的模型：
   "api_base": "http://localhost:11434"
 }
 
-// Azure OpenAI
+// Azure OpenAI —— "azure/<...>" 填你的 Azure 部署名（你在 Azure Portal 自定义的别名），不是模型 ID
 {
-  "model": "azure/gpt-5.4",
+  "model": "azure/your-deployment-name",
   "api_key": "env:AZURE_API_KEY",
-  "api_base": "https://your-resource.openai.azure.com"
+  "api_base": "https://your-resource.openai.azure.com",
+  "api_version": "2025-02-01-preview"
 }
 
 // DeepSeek
