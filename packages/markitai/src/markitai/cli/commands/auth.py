@@ -126,7 +126,7 @@ def _login_failure_guidance(
 
     if provider == "copilot":
         env_alt = (
-            "Alternative: set GH_TOKEN or GITHUB_TOKEN "
+            "Alternative: set COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN "
             "(needs 'Copilot Requests' permission)"
         )
         if _resolve_cli_path("copilot") is None:
@@ -224,7 +224,7 @@ def _display_user(status: AuthStatus) -> str:
         return user
 
     if provider == "copilot" and user == "token":
-        return "env token (GH_TOKEN)"
+        return "env token (COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN)"
 
     if provider == "chatgpt" and user == "chatgpt":
         return "authenticated"
@@ -345,7 +345,7 @@ def copilot() -> None:
     """Copilot CLI authentication helpers.
 
     Uses your GitHub Copilot subscription via the copilot CLI
-    (or a GH_TOKEN/GITHUB_TOKEN env var).
+    (or a COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN env var).
 
     Examples:
         markitai auth copilot status    # Check current login
@@ -376,7 +376,9 @@ def copilot_status(as_json: bool) -> None:
     if status.authenticated:
         source = (status.details or {}).get("source")
         if source == "env":
-            infos.append("Source: GH_TOKEN/GITHUB_TOKEN environment variable")
+            infos.append(
+                "Source: COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN environment variable"
+            )
         elif source == "config":
             infos.append("Source: copilot CLI config (~/.copilot/config.json)")
     else:
@@ -389,7 +391,7 @@ def copilot_status(as_json: bool) -> None:
                 )
             )
         infos.append(
-            "Alternative: set GH_TOKEN or GITHUB_TOKEN "
+            "Alternative: set COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN "
             "(needs 'Copilot Requests' permission)"
         )
     _render_status_card("Copilot", status, checks=checks, infos=infos)

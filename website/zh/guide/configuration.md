@@ -330,7 +330,7 @@ ChatGPT 支持的模型：
 |------|----------|
 | "SDK 未安装" | `uv add markitai[copilot]` 或 `uv add markitai[claude-agent]` |
 | "CLI 未找到" | 安装并认证 CLI 工具（[Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli)、[Claude Code](https://claude.ai/code)） |
-| "未认证" | 运行 `copilot auth login` 或 `claude auth login`。也可：为 Copilot 设置 `GH_TOKEN`/`GITHUB_TOKEN`，为 Claude 设置 `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1`。ChatGPT 首次使用时自动触发 OAuth。 |
+| "未认证" | 运行 `copilot auth login` 或 `claude auth login`。也可：为 Copilot 设置 `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`，为 Claude 设置 `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1`。ChatGPT 首次使用时自动触发 OAuth。 |
 | "速率限制" | 等待后重试，或检查订阅额度 |
 | "请求超时" | 超时是自适应的；处理非常大的文档可能需要更长时间 |
 
