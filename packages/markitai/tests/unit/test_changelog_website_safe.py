@@ -1,4 +1,4 @@
-"""Guard: CHANGELOG.md is rendered by VitePress/Vue on the website.
+"""Guard: CHANGELOG.md / CHANGELOG.zh.md are rendered by VitePress/Vue on the website.
 
 Vue's template compiler treats a bare ``<word>`` outside a code span as
 an unclosed HTML element and fails the whole website build ("Element is
@@ -11,7 +11,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-CHANGELOG = Path(__file__).resolve().parents[4] / "CHANGELOG.md"
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+CHANGELOGS = [REPO_ROOT / "CHANGELOG.md", REPO_ROOT / "CHANGELOG.zh.md"]
 
 # ``<`` followed by a letter starts a tag for Vue; digits (e.g. "<4-page")
 # are safe. Only flag simple word-like tags — the exact shape Vue parses.
@@ -25,12 +28,13 @@ def _strip_code_spans(line: str) -> str:
     return re.sub(r"`[^`]*`", "", line)
 
 
-def test_changelog_has_no_bare_angle_bracket_tags() -> None:
-    assert CHANGELOG.exists(), CHANGELOG
+@pytest.mark.parametrize("changelog", CHANGELOGS, ids=lambda p: p.name)
+def test_changelog_has_no_bare_angle_bracket_tags(changelog: Path) -> None:
+    assert changelog.exists(), changelog
     offenders: list[str] = []
     in_fence = False
     for lineno, line in enumerate(
-        CHANGELOG.read_text(encoding="utf-8").splitlines(), 1
+        changelog.read_text(encoding="utf-8").splitlines(), 1
     ):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
