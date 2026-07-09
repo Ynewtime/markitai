@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import httpx
+import pytest
+
 
 class TestCheckDeprecatedModels:
     """Tests for check_deprecated_models function."""
@@ -1540,3 +1543,42 @@ class TestCountTokensFallback:
         mixed = "Hello 你好世界 World"  # mixed CJK + English
         result = count_tokens(mixed, "deepseek-chat")
         assert result >= 6, f"Mixed token count {result} is too low"
+
+
+class TestChatGPTTransportErrors:
+    """Tests for ChatGPT provider transport-error classification.
+
+    A transient network failure (connection refused, timeout) must be
+    retryable and carry diagnosable detail — str(httpx.ConnectError) is
+    often empty, which previously produced "ChatGPT connection error:"
+    with nothing after the colon and retryable=False.
+    """
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            pytest.param(httpx.ConnectError(""), id="connect-error-empty-message"),
+            pytest.param(httpx.ConnectTimeout(""), id="connect-timeout"),
+            pytest.param(httpx.ReadTimeout(""), id="read-timeout"),
+        ],
+    )
+    async def test_transport_error_is_retryable_with_detail(self, exc) -> None:
+        from markitai.providers.chatgpt import ChatGPTProvider
+        from markitai.providers.errors import ProviderError
+
+        class FakeClient:
+            def stream(self, *args: object, **kwargs: object) -> object:
+                raise exc
+
+        provider = ChatGPTProvider()
+        provider._client = FakeClient()  # type: ignore[assignment]
+
+        with pytest.raises(ProviderError) as exc_info:
+            await provider._stream_response("https://example.invalid", {}, {})
+
+        err = exc_info.value
+        assert err.retryable is True, "transient transport errors must be retryable"
+        message = str(err)
+        assert not message.rstrip().endswith(":"), (
+            f"error message must carry diagnosable detail, got: {message!r}"
+        )
