@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "docs:dev": "cp ../CHANGELOG.md ./changelog.md && cp ../CHANGELOG.zh.md ./zh/changelog.md && cp ../scripts/setup.sh ./public/setup.sh && vitepress dev",
-    "docs:build": "cp ../CHANGELOG.md ./changelog.md && cp ../CHANGELOG.zh.md ./zh/changelog.md && cp ../scripts/setup.sh ./public/setup.sh && vitepress build",
+    "docs:dev": "cp ../CHANGELOG.md ./changelog.md && cp ../CHANGELOG.zh.md ./zh/changelog.md && cp ../scripts/setup.sh ./public/setup.sh && cp ../scripts/setup.ps1 ./public/setup.ps1 && vitepress dev",
+    "docs:build": "cp ../CHANGELOG.md ./changelog.md && cp ../CHANGELOG.zh.md ./zh/changelog.md && cp ../scripts/setup.sh ./public/setup.sh && cp ../scripts/setup.ps1 ./public/setup.ps1 && vitepress build",
     "docs:preview": "vitepress preview"
   },
   "packageManager": "pnpm@10.32.1",

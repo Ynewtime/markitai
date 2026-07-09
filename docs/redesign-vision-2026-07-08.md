@@ -56,8 +56,7 @@ Document
 **现状问题。** `webextract/extractors/x_common.py` 751 行、
 `webextract/elements/footnotes.py` 1641 行。站点适配是全项目腐烂最快的部分：
 X 改一次 DOM 就要发一个版本。2026-07-08 的 Bilibili opus 事件也暴露了另一面——
-当 fetch 链落到 cloudflare `/markdown` 端点时，提取器整个被绕过（见
-`handoff-providers-logging-fetch-2026-07-08.md`）。
+当 fetch 链落到 cloudflare `/markdown` 端点时，提取器整个被绕过。
 
 **重设计。** 提取器拆成两层：
 
