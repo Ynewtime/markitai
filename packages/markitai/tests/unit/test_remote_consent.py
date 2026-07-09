@@ -25,6 +25,77 @@ VALID_CONTENT = (
 )
 
 
+class TestDefaultConsentBehavior:
+    """Default policy: public URLs go to remote services without a prompt.
+
+    Private/local/credentialed URLs never reach the consent gate at all —
+    is_private_or_local_domain() strips remote strategies from the chain
+    before it (see fetch.py). So the remaining consent question only
+    concerns public URLs, which default to allowed with a one-time
+    disclosure log instead of an interactive prompt.
+    """
+
+    def test_default_is_always(self) -> None:
+        assert FetchConfig().remote_consent == "always"
+
+    def test_default_allows_remote_without_prompt(self) -> None:
+        with patch("click.confirm") as mock_confirm:
+            assert resolve_remote_consent(FetchConfig()) is True
+            mock_confirm.assert_not_called()
+
+    def test_always_logs_disclosure_once_per_process(self) -> None:
+        """The first remote use logs an INFO disclosure; later calls don't."""
+        from loguru import logger
+
+        messages: list[str] = []
+        sink_id = logger.add(lambda m: messages.append(str(m)), level="INFO")
+        try:
+            assert resolve_remote_consent(FetchConfig()) is True
+            assert resolve_remote_consent(FetchConfig()) is True
+        finally:
+            logger.remove(sink_id)
+        disclosures = [m for m in messages if "remote extraction" in m.lower()]
+        assert len(disclosures) == 1, (
+            f"expected exactly one disclosure log, got: {disclosures}"
+        )
+
+
+class TestAskPromptWording:
+    """The interactive prompt must explain sequencing and name the actual
+    services in the chain — not read like a simultaneous broadcast."""
+
+    def _run_prompt(self, services: list[str]) -> str:
+        config = FetchConfig(remote_consent="ask")
+        texts: list[str] = []
+
+        def fake_confirm(text: str, *args: object, **kwargs: object) -> bool:
+            texts.append(text)
+            return True
+
+        def fake_echo(text: str = "", *args: object, **kwargs: object) -> None:
+            texts.append(str(text))
+
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("click.confirm", side_effect=fake_confirm),
+            patch("click.echo", side_effect=fake_echo),
+        ):
+            mock_stdin.isatty.return_value = True
+            assert resolve_remote_consent(config, services=services) is True
+        return " ".join(texts)
+
+    def test_names_chain_services_and_sequencing(self) -> None:
+        text = self._run_prompt(["defuddle", "jina"])
+        assert "defuddle.md" in text
+        assert "Jina" in text
+        assert "one at a time" in text
+        assert "Cloudflare" not in text, "services not in the chain must not be listed"
+
+    def test_includes_cloudflare_when_in_chain(self) -> None:
+        text = self._run_prompt(["defuddle", "jina", "cloudflare"])
+        assert "Cloudflare (your account)" in text
+
+
 class TestResolveRemoteConsent:
     """Tests for resolve_remote_consent decision logic."""
 
@@ -37,7 +108,7 @@ class TestResolveRemoteConsent:
         assert resolve_remote_consent(config) is False
 
     def test_ask_non_interactive_denies_consent(self) -> None:
-        config = FetchConfig()  # default: ask
+        config = FetchConfig(remote_consent="ask")
         with patch("sys.stdin") as mock_stdin:
             mock_stdin.isatty.return_value = False
             assert resolve_remote_consent(config) is False
@@ -56,7 +127,7 @@ class TestResolveRemoteConsent:
         assert resolve_remote_consent(config) is True
 
     def test_ask_interactive_prompts_once_and_caches_yes(self) -> None:
-        config = FetchConfig()
+        config = FetchConfig(remote_consent="ask")
         with (
             patch("sys.stdin") as mock_stdin,
             patch("click.confirm", return_value=True) as mock_confirm,
@@ -68,7 +139,7 @@ class TestResolveRemoteConsent:
             mock_confirm.assert_called_once()
 
     def test_ask_interactive_default_no_denies(self) -> None:
-        config = FetchConfig()
+        config = FetchConfig(remote_consent="ask")
         with (
             patch("sys.stdin") as mock_stdin,
             patch("click.confirm", return_value=False) as mock_confirm,
@@ -80,7 +151,7 @@ class TestResolveRemoteConsent:
 
     def test_prompt_disallowed_skips_prompt_even_on_tty(self) -> None:
         """--quiet disables the prompt: no consent, no interaction."""
-        config = FetchConfig()
+        config = FetchConfig(remote_consent="ask")
         set_remote_consent_prompt_allowed(False)
         with (
             patch("sys.stdin") as mock_stdin,
@@ -109,6 +180,55 @@ class TestResolveRemoteConsent:
         """The decision is resolved once; later config changes don't apply."""
         assert resolve_remote_consent(FetchConfig(remote_consent="never")) is False
         assert resolve_remote_consent(FetchConfig(remote_consent="always")) is False
+
+    def test_prompt_suspends_active_live_display(self) -> None:
+        """The consent prompt must pause an active StageList Live.
+
+        With the Live running, rich proxies sys.stderr; click's prompt then
+        loses its "[y/N]" suffix (FileProxy.flush prints with markup enabled)
+        and the Enter echo desyncs Live's cursor so spinner frames stack.
+        """
+        import io
+        import sys
+
+        from rich.console import Console
+        from rich.file_proxy import FileProxy
+
+        from markitai.cli import ui
+
+        stages = ui.StageList(
+            enabled=True,
+            transient=False,
+            console=Console(file=io.StringIO(), force_terminal=True, width=80),
+        )
+        stages.start()
+        seen: dict[str, bool] = {}
+
+        def fake_confirm(*args: object, **kwargs: object) -> bool:
+            seen["live_started"] = bool(stages._live and stages._live.is_started)
+            seen["stderr_proxied"] = isinstance(sys.stderr, FileProxy)
+            return True
+
+        try:
+            stages.advance("render", "Rendering...")
+            with (
+                patch("sys.stdin") as mock_stdin,
+                patch("click.confirm", side_effect=fake_confirm),
+            ):
+                mock_stdin.isatty.return_value = True
+                assert resolve_remote_consent(FetchConfig(remote_consent="ask")) is True
+
+            assert seen["live_started"] is False, (
+                "Live must be suspended while the consent prompt is shown"
+            )
+            assert seen["stderr_proxied"] is False, (
+                "the prompt must write to the real stderr, not rich's proxy"
+            )
+            assert stages._live is not None and stages._live.is_started, (
+                "Live must resume after the prompt"
+            )
+        finally:
+            stages.stop()
 
 
 class TestFallbackChainConsentGate:
@@ -277,9 +397,6 @@ class TestFallbackChainConsentGate:
 
 class TestRemoteConsentConfig:
     """Tests for the fetch.remote_consent config field."""
-
-    def test_default_is_ask(self) -> None:
-        assert FetchConfig().remote_consent == "ask"
 
     def test_invalid_value_rejected(self) -> None:
         with pytest.raises(ValueError):
