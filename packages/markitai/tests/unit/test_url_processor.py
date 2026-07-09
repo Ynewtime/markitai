@@ -830,6 +830,154 @@ class TestProcessUrlSuccessPath:
             await asyncio.gather(image_task_ref, return_exceptions=True)
 
 
+class TestImageAnalysisBranchCoverage:
+    """Every LLM branch that downloads images must also analyze them.
+
+    Regression: X posts fetched via site extractors (fxtwitter) return final
+    content only — static_content/browser_content are both None — so the
+    single-URL LLM branch fell through to text-only processing and never
+    called analyze_images_with_llm; downloaded images silently kept empty
+    alt text in rich mode. The URL-batch path skipped analysis entirely.
+    """
+
+    @staticmethod
+    def _make_extractor_fetch_result(url: str, screenshot_path: Path) -> MagicMock:
+        """Fetch result shaped like a site-extractor hit: screenshot, no multi-source."""
+        result = MagicMock()
+        result.content = f"# Post from {url}\n\n![](https://pbs.example.com/a.jpg)"
+        result.cache_hit = False
+        result.strategy_used = "playwright(fxtwitter)"
+        result.screenshot_path = screenshot_path
+        result.title = "Post"
+        result.static_content = None
+        result.browser_content = None
+        result.metadata = {}
+        return result
+
+    @staticmethod
+    def _make_download_result(tmp_path: Path) -> MagicMock:
+        image_path = tmp_path / ".markitai" / "assets" / "post.0001.jpeg"
+        download_result = MagicMock()
+        download_result.updated_markdown = (
+            "# Post\n\n![](.markitai/assets/post.0001.jpeg)"
+        )
+        download_result.downloaded_paths = [image_path]
+        download_result.failed_urls = []
+        return download_result
+
+    @pytest.mark.asyncio
+    async def test_screenshot_without_multi_source_analyzes_images(
+        self, tmp_path: Path
+    ) -> None:
+        """The screenshot-but-no-vision fall-through must still analyze images."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.cache.enabled = False
+        cfg.image.alt_enabled = True
+
+        screenshot = tmp_path / ".markitai" / "screenshots" / "post.full.jpg"
+        screenshot.parent.mkdir(parents=True)
+        screenshot.write_bytes(b"screenshot-data")
+
+        mock_result = self._make_extractor_fetch_result(
+            "https://x.com/user/status/1", screenshot
+        )
+        download_result = self._make_download_result(tmp_path)
+
+        analyze_mock = AsyncMock(return_value=("md", 0.0, {}, None))
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "markitai.image.download_url_images",
+                new_callable=AsyncMock,
+                return_value=download_result,
+            ),
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new_callable=AsyncMock,
+                return_value=("cleaned", 0.01, {}),
+            ),
+            patch(
+                "markitai.cli.processors.llm.analyze_images_with_llm",
+                analyze_mock,
+            ),
+        ):
+            await process_url(
+                url="https://x.com/user/status/1",
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        analyze_mock.assert_awaited_once()
+        assert analyze_mock.await_args.args[0] == download_result.downloaded_paths
+
+    @pytest.mark.asyncio
+    async def test_batch_url_analyzes_downloaded_images(self, tmp_path: Path) -> None:
+        """The URL-batch path must analyze downloaded images like single-URL."""
+
+        class MockUrlEntry:
+            def __init__(self, url: str, output_name: str | None = None):
+                self.url = url
+                self.output_name = output_name
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.cache.enabled = False
+        cfg.image.alt_enabled = True
+
+        mock_result = MagicMock()
+        mock_result.content = "# Page\n\n![](https://example.com/img.jpg)"
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Page"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+
+        download_result = self._make_download_result(tmp_path)
+        analyze_mock = AsyncMock(return_value=("md", 0.0, {}, None))
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "markitai.image.download_url_images",
+                new_callable=AsyncMock,
+                return_value=download_result,
+            ),
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new_callable=AsyncMock,
+                return_value=("cleaned", 0.01, {}),
+            ),
+            patch(
+                "markitai.cli.processors.llm.analyze_images_with_llm",
+                analyze_mock,
+            ),
+        ):
+            await process_url_batch(
+                url_entries=[MockUrlEntry("https://example.com/page1")],
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        analyze_mock.assert_awaited_once()
+        assert analyze_mock.await_args.args[0] == download_result.downloaded_paths
+
+
 class TestProcessUrlBatchSuccessPath:
     """Tests for successful batch URL processing."""
 

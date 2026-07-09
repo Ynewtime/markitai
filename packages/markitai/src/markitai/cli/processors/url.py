@@ -481,7 +481,8 @@ async def process_url(
                         _merge_llm_usage(llm_usage, image_usage)
                     stages.finalize("LLM enhanced (vision)")
                 else:
-                    # Has screenshot but vision skipped (e.g. pure mode)
+                    # Has screenshot but vision skipped (no multi-source
+                    # content, e.g. site-extractor results, or pure mode).
                     # Fall through to standard text-only LLM processing
                     # (hoisted stage text already reads "Enhancing with LLM...")
                     _, doc_cost, doc_usage = await process_with_llm(
@@ -496,6 +497,24 @@ async def process_url(
                     )
                     llm_cost += doc_cost
                     _merge_llm_usage(llm_usage, doc_usage)
+
+                    # Analyze downloaded images (alt/desc) — this branch used
+                    # to skip analysis entirely, leaving empty alt text
+                    if should_analyze_images:
+                        (
+                            _,
+                            image_cost,
+                            image_usage,
+                            img_analysis,
+                        ) = await analyze_images_with_llm(
+                            downloaded_images,
+                            markdown_for_llm,
+                            output_file,
+                            cfg,
+                            Path(url),
+                        )
+                        llm_cost += image_cost
+                        _merge_llm_usage(llm_usage, image_usage)
                     stages.finalize("LLM enhanced")
 
             elif should_analyze_images:
@@ -822,7 +841,7 @@ async def process_url_batch(
     )
 
     from markitai.cli.logging_config import LoggingContext
-    from markitai.cli.processors.llm import process_with_llm
+    from markitai.cli.processors.llm import analyze_images_with_llm, process_with_llm
     from markitai.fetch import (
         FetchError,
         FetchStrategy,
@@ -887,6 +906,7 @@ async def process_url_batch(
     failed = 0
     results: dict[str, dict] = {}
     active_urls: dict[str, str] = {}
+    image_analyses: list[ImageAnalysisResult] = []
 
     semaphore = asyncio.Semaphore(concurrency)
 
@@ -1006,6 +1026,7 @@ async def process_url_batch(
 
                 # Download images if --alt or --desc is enabled
                 images_count = 0
+                downloaded_images: list[Path] = []
                 if cfg.image.alt_enabled or cfg.image.desc_enabled:
                     download_result = await download_url_images(
                         markdown=markdown_content,
@@ -1017,7 +1038,8 @@ async def process_url_batch(
                         timeout=30,
                     )
                     markdown_content = download_result.updated_markdown
-                    images_count = len(download_result.downloaded_paths)
+                    downloaded_images = download_result.downloaded_paths
+                    images_count = len(downloaded_images)
 
                 # Generate output path with conflict resolution
                 base_output_file = output_dir / filename
@@ -1085,6 +1107,28 @@ async def process_url_batch(
                     llm_cost += doc_cost
                     _merge_llm_usage(llm_usage, doc_usage)
 
+                # Analyze downloaded images (alt/desc) — parity with the
+                # single-URL path: updates alt text in .llm.md and collects
+                # descriptions for images.json (the batch path used to skip
+                # image analysis entirely)
+                if cfg.llm.enabled and downloaded_images:
+                    (
+                        _,
+                        image_cost,
+                        image_usage,
+                        img_analysis,
+                    ) = await analyze_images_with_llm(
+                        downloaded_images,
+                        markdown_content,
+                        output_file,
+                        cfg,
+                        Path(url),
+                    )
+                    llm_cost += image_cost
+                    _merge_llm_usage(llm_usage, image_usage)
+                    if img_analysis is not None:
+                        image_analyses.append(img_analysis)
+
                 total_llm_cost += llm_cost
                 _merge_llm_usage(total_llm_usage, llm_usage)
 
@@ -1131,6 +1175,10 @@ async def process_url_batch(
 
         tasks = [process_single_url(entry, task, progress) for entry in url_entries]
         await asyncio.gather(*tasks)
+
+    # Write image descriptions collected across URLs (if enabled)
+    if image_analyses and cfg.image.desc_enabled:
+        write_images_json(output_dir, image_analyses)
 
     # Generate report (default ON for URL-batch runs; output.report=false opts out)
     finished_at = datetime.now()

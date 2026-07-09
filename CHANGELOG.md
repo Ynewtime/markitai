@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Output naming reverted to the append scheme**: `sample.pdf` → `sample.pdf.md` (not `sample.md`), undoing the 0.15.0 extension-replacement change, which hid the source format, mangled multi-suffix names, and made single-file and batch conversions of the same file disagree
 - **Windows install one-liner 404**: the website now serves `setup.ps1` (docs pointed to https://markitai.dev/setup.ps1 but only setup.sh was deployed); Chinese changelog edits now trigger site redeploys
 - **Prompt REMINDER leaked into cleaned output**: with smaller models (observed with `gpt-5.4-mini`), the vision-cleaning prompt's trailing `REMINDER: ...` instruction — and its `---` delimiter — could be echoed verbatim at the end of `.llm.md` output. The prompt now delimits the document with `<document>` tags and puts all instructions before the content, and a new output guard strips echoed prompt fragments, including from previously cached results
+- **Image alt text was silently skipped for some URL conversions**: URLs with a screenshot but no multi-source content (e.g. X posts via site extractors) fell through to text-only LLM processing without image analysis, and the URL-batch path never analyzed images at all — `--alt`/`--desc` had no effect there. Both paths now analyze downloaded images (alt text + `images.json`). The stdout asset rewrite also no longer overwrites LLM-generated alt text with the bare filename
 
 ### Removed
 
