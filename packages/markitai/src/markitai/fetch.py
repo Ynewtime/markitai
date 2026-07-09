@@ -162,14 +162,17 @@ def _should_fallback_after_refusal(strategy_name: str, reason: str) -> bool:
     if _remote_consent_prompt_allowed and sys.stdin.isatty():
         import click
 
-        decision = bool(
-            click.confirm(
-                f"{strategy_name} cannot fetch this URL ({reason}). "
-                "Fall back to the auto strategy chain?",
-                default=True,
-                err=True,
+        from markitai.cli.ui import suspend_active_live
+
+        with suspend_active_live():
+            decision = bool(
+                click.confirm(
+                    f"{strategy_name} cannot fetch this URL ({reason}). "
+                    "Fall back to the auto strategy chain?",
+                    default=True,
+                    err=True,
+                )
             )
-        )
         _explicit_fallback_decision = decision
         return decision
 
@@ -202,7 +205,7 @@ def peek_remote_consent(config: FetchConfig) -> bool | None:
         return _remote_consent_decision
     if _env_no_remote_fetch():
         return False
-    consent = getattr(config, "remote_consent", "ask")
+    consent = getattr(config, "remote_consent", "always")
     if consent == "always":
         return True
     if consent == "never":
@@ -212,14 +215,38 @@ def peek_remote_consent(config: FetchConfig) -> bool | None:
     return False
 
 
-def resolve_remote_consent(config: FetchConfig) -> bool:
+# Human-readable names for consent-gated remote strategies. Cloudflare runs
+# against the user's own account credentials, hence the qualifier.
+_REMOTE_SERVICE_LABELS = {
+    "defuddle": "defuddle.md",
+    "jina": "Jina",
+    "cloudflare": "Cloudflare (your account)",
+}
+
+
+def _remote_service_names(services: list[str] | None) -> str:
+    """Render the remote services actually in the chain, in try order."""
+    keys = services if services else ["defuddle", "jina"]
+    return ", ".join(_REMOTE_SERVICE_LABELS.get(s, s) for s in keys)
+
+
+def resolve_remote_consent(
+    config: FetchConfig, services: list[str] | None = None
+) -> bool:
     """Return True if remote extraction services may receive URLs.
 
     Precedence: MARKITAI_NO_REMOTE_FETCH env var (truthy behaves as "never")
     > ``fetch.remote_consent`` config ("always" / "never" / "ask"). With
+    "always" (the default) the first use is disclosed via an INFO log; with
     "ask", prompts once on an interactive TTY (unless prompting is disabled,
-    e.g. --quiet); otherwise remote services are skipped (privacy-safe
-    default). The decision is cached for the whole process.
+    e.g. --quiet), otherwise remote services are skipped. The decision is
+    cached for the whole process. Private/local/credentialed URLs never
+    reach this gate — the policy layer strips remote strategies for them.
+
+    Args:
+        config: Fetch configuration.
+        services: Remote strategy names actually in the current chain, in
+            try order (used for accurate disclosure/prompt wording).
     """
     global _remote_consent_decision
     if _remote_consent_decision is not None:
@@ -235,8 +262,14 @@ def resolve_remote_consent(config: FetchConfig) -> bool:
         _remote_consent_decision = False
         return False
 
-    consent = getattr(config, "remote_consent", "ask")
+    consent = getattr(config, "remote_consent", "always")
     if consent == "always":
+        logger.info(
+            "[Fetch] Local extraction was not enough; remote extraction "
+            "services may receive URLs, tried one at a time "
+            f"({_remote_service_names(services)}). Disable via "
+            "fetch.remote_consent=never or MARKITAI_NO_REMOTE_FETCH=1."
+        )
         _remote_consent_decision = True
         return True
     if consent == "never":
@@ -251,13 +284,24 @@ def resolve_remote_consent(config: FetchConfig) -> bool:
     if _remote_consent_prompt_allowed and sys.stdin.isatty():
         import click
 
-        allowed = bool(
-            click.confirm(
-                "Allow sending URLs to remote extraction services (defuddle.md, Jina)?",
-                default=False,
+        from markitai.cli.ui import suspend_active_live
+
+        # Pause any active Live progress display: its stream proxying eats
+        # the prompt's "[y/N]" suffix and the Enter echo desyncs its cursor.
+        with suspend_active_live():
+            click.echo(
+                "Local extraction didn't succeed for this URL. Remote "
+                "services can be tried next, one at a time (first success "
+                f"wins): {_remote_service_names(services)}.",
                 err=True,
             )
-        )
+            allowed = bool(
+                click.confirm(
+                    "Allow sending URLs to these remote services?",
+                    default=False,
+                    err=True,
+                )
+            )
         if not allowed:
             logger.info(
                 "[Fetch] Remote extraction services declined; "
@@ -2641,7 +2685,10 @@ async def _fetch_with_fallback(
         if (
             _consent_gated
             and strat in EXTERNAL_STRATEGIES
-            and not resolve_remote_consent(config)
+            and not resolve_remote_consent(
+                config,
+                services=[s for s in strategies if s in EXTERNAL_STRATEGIES],
+            )
         ):
             logger.debug(f"[Fetch] Skipping {strat}: no remote-fetch consent")
             errors.append(f"{strat}: skipped (no remote-fetch consent)")

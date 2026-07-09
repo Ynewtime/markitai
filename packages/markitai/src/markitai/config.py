@@ -703,13 +703,17 @@ class FetchConfig(BaseModel):
         "auto", "static", "defuddle", "playwright", "jina", "cloudflare"
     ] = Field(default=DEFAULT_FETCH_STRATEGY, description="Default URL fetch strategy")
     remote_consent: Literal["ask", "always", "never"] = Field(
-        default="ask",
+        default="always",
         description=(
             "Consent for sending URLs to remote extraction services "
-            "(defuddle.md, Jina, Cloudflare) in the auto strategy chain. "
-            "ask: prompt once per run on an interactive TTY, otherwise skip "
-            "remote services; always: use them without asking; never: local "
-            "strategies only. Overridden by the MARKITAI_NO_REMOTE_FETCH env var."
+            "(defuddle.md, Jina, Cloudflare) in the auto strategy chain, "
+            "tried one at a time only after local strategies fail. "
+            "Private/local/credentialed URLs never use remote services "
+            "regardless of this setting. always (default): use them without "
+            "asking (an INFO log discloses the first use); ask: prompt once "
+            "per run on an interactive TTY, otherwise skip remote services; "
+            "never: local strategies only. Overridden by the "
+            "MARKITAI_NO_REMOTE_FETCH env var."
         ),
     )
     defuddle: DefuddleConfig = Field(default_factory=DefuddleConfig)

@@ -14,6 +14,8 @@ Usage:
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -340,6 +342,13 @@ class _ActiveStage:
     pinned: bool = False
 
 
+# The StageList currently rendering (registered by start(), cleared by
+# stop()). Lets interactive prompts fired from deep inside the fetch layer
+# pause the Live display via suspend_active_live() without threading a
+# reference through every call site.
+_active_stagelist: StageList | None = None
+
+
 class StageList:
     """Live multi-stage progress checklist on stderr.
 
@@ -426,8 +435,10 @@ class StageList:
 
     def start(self) -> None:
         """Start live rendering (TTY only) and attach the loguru bridge."""
+        global _active_stagelist
         if not self.enabled:
             return
+        _active_stagelist = self
         if self._is_tty and self._live is None:
             # transient=True always: the Live region is erased on stop and
             # persistence is handled by _print_final_list(), so the
@@ -524,6 +535,9 @@ class StageList:
         Idempotent. An active stage that was never finalized or failed is
         discarded (its line disappears with the Live region).
         """
+        global _active_stagelist
+        if _active_stagelist is self:
+            _active_stagelist = None
         if self._sink_id is not None:
             try:
                 logger.remove(self._sink_id)
@@ -649,3 +663,29 @@ class StageList:
         """Stop rendering on context exit; never swallows exceptions."""
         self.stop()
         return False
+
+
+@contextmanager
+def suspend_active_live() -> Iterator[None]:
+    """Pause the active StageList's Live display around an interactive prompt.
+
+    While a Live is started, rich proxies sys.stdout/sys.stderr through
+    FileProxy: a prompt written without a trailing newline sits in the proxy
+    buffer and FileProxy.flush() prints it with markup enabled, eating
+    bracketed text like click.confirm's "[y/N]". The user's Enter echo also
+    moves the cursor without Live noticing, so every later refresh stacks
+    stale spinner frames instead of repainting in place. Stopping the Live
+    restores the real streams for the prompt; restarting repaints the list.
+
+    No-op when no StageList is rendering (non-TTY, quiet/verbose modes).
+    """
+    stagelist = _active_stagelist
+    live = stagelist._live if stagelist is not None else None
+    if live is None or not live.is_started:
+        yield
+        return
+    live.stop()
+    try:
+        yield
+    finally:
+        live.start(refresh=True)

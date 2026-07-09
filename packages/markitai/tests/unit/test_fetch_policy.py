@@ -8,6 +8,7 @@ from markitai.constants import (
 from markitai.fetch_policy import (
     ALL_STRATEGIES,
     FetchPolicyEngine,
+    is_private_or_local_domain,
     match_local_only,
     parse_no_proxy,
 )
@@ -255,6 +256,33 @@ class TestParseNoProxy:
     def test_wildcard_star_only(self) -> None:
         result = parse_no_proxy("*")
         assert result == ["*"]
+
+
+class TestIsPrivateOrLocalDomain:
+    """Domains that must never be sent to remote extraction services."""
+
+    def test_public_domains_are_not_private(self) -> None:
+        assert is_private_or_local_domain("x.com") is False
+        assert is_private_or_local_domain("www.bilibili.com") is False
+
+    def test_localhost_and_suffixes(self) -> None:
+        assert is_private_or_local_domain("localhost") is True
+        assert is_private_or_local_domain("app.localhost:3000") is True
+        assert is_private_or_local_domain("nas.local") is True
+        assert is_private_or_local_domain("wiki.corp") is True
+
+    def test_private_ips(self) -> None:
+        assert is_private_or_local_domain("10.0.1.5") is True
+        assert is_private_or_local_domain("192.168.1.1:8080") is True
+        assert is_private_or_local_domain("127.0.0.1") is True
+        assert is_private_or_local_domain("[::1]") is True
+
+    def test_userinfo_credentials_treated_as_private(self) -> None:
+        """URLs carrying credentials in the netloc (user:pass@host, user@host)
+        must be treated as private: the credential string itself is the
+        secret, so it must never reach a remote extraction service."""
+        assert is_private_or_local_domain("user:secret@example.com") is True
+        assert is_private_or_local_domain("admin@example.com") is True
 
 
 class TestStrategyPriorityOverride:

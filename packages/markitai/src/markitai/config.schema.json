@@ -342,8 +342,8 @@
           "type": "string"
         },
         "remote_consent": {
-          "default": "ask",
-          "description": "Consent for sending URLs to remote extraction services (defuddle.md, Jina, Cloudflare) in the auto strategy chain. ask: prompt once per run on an interactive TTY, otherwise skip remote services; always: use them without asking; never: local strategies only. Overridden by the MARKITAI_NO_REMOTE_FETCH env var.",
+          "default": "always",
+          "description": "Consent for sending URLs to remote extraction services (defuddle.md, Jina, Cloudflare) in the auto strategy chain, tried one at a time only after local strategies fail. Private/local/credentialed URLs never use remote services regardless of this setting. always (default): use them without asking (an INFO log discloses the first use); ask: prompt once per run on an interactive TTY, otherwise skip remote services; never: local strategies only. Overridden by the MARKITAI_NO_REMOTE_FETCH env var.",
           "enum": [
             "ask",
             "always",

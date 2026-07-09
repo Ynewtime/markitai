@@ -38,6 +38,10 @@ def _extract_host(domain: str) -> str:
 
 def is_private_or_local_domain(domain: str) -> bool:
     """Return True for localhost, private IPs, and common intranet-only hosts."""
+    if "@" in domain:
+        # Credentials in the netloc (user:pass@host, user@host): the userinfo
+        # itself is the secret, so never send such URLs to remote services.
+        return True
     host = _extract_host(domain).strip().lower()
     if not host:
         return False
