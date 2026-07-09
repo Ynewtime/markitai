@@ -289,6 +289,17 @@ class TestStopBehavior:
         # Active stage was never finalized: no done line for it
         assert stages._done == []
 
+    def test_double_stop_does_not_duplicate_failure_list(self) -> None:
+        console = make_pipe_console()
+        stages = ui.StageList(console=console, transient=True)
+        stages.start()
+        stages.advance("fetch", "Fetching...")
+        stages.fail()
+        stages.stop()
+        stages.stop()  # e.g. explicit stop in error path + finally safety net
+        out = console.file.getvalue()  # type: ignore[union-attr]
+        assert out.count("Fetching") == 1
+
 
 class TestGatingAndDegradation:
     """TTY / enabled gating and non-TTY static fallback."""

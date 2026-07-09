@@ -704,7 +704,11 @@ class StageList:
         if self._live is not None:
             self._live.stop()
             self._live = None
-            if (not self.transient or self._failed) and self._done:
+            if (
+                (not self.transient or self._failed)
+                and self._done
+                and not self._printed_final
+            ):
                 self._print_final_list()
         elif (
             self.enabled
@@ -712,6 +716,7 @@ class StageList:
             and self.transient
             and self._failed
             and self._done
+            and not self._printed_final
         ):
             # Non-TTY stdout mode stays silent on success, but a failure
             # still prints the context (which stage died).
