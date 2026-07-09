@@ -1046,40 +1046,6 @@ class TestProcessDocumentNoDoubleStabilize:
             mock_stabilize.assert_not_called()
 
 
-class TestWorkflowResult:
-    """Tests for WorkflowResult dataclass."""
-
-    def test_basic_creation(self):
-        """Test basic WorkflowResult creation."""
-        from markitai.workflow.single import WorkflowResult
-
-        result = WorkflowResult(markdown="# Test")
-        assert result.markdown == "# Test"
-        assert result.llm_cost == 0.0
-        assert result.llm_usage == {}
-        assert result.image_analysis is None
-
-    def test_with_all_fields(self):
-        """Test WorkflowResult with all fields."""
-        from markitai.workflow.single import ImageAnalysisResult, WorkflowResult
-
-        analysis = ImageAnalysisResult(
-            source_file="test.pdf",
-            assets=[{"asset": "img.png", "alt": "Test"}],
-        )
-        result = WorkflowResult(
-            markdown="# Test",
-            llm_cost=0.05,
-            llm_usage={"gpt-4": {"requests": 1}},
-            image_analysis=analysis,
-        )
-
-        assert result.llm_cost == 0.05
-        assert result.llm_usage["gpt-4"]["requests"] == 1
-        assert result.image_analysis is not None
-        assert result.image_analysis.source_file == "test.pdf"
-
-
 class TestProcessDocumentPure:
     """Test process_document_pure method."""
 

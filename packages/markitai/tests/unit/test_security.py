@@ -567,50 +567,6 @@ class TestAtomicWriteTextAsync:
         assert test_file.read_text(encoding="latin-1") == content
 
 
-class TestAtomicWriteJsonAsync:
-    """Tests for atomic_write_json_async function."""
-
-    @pytest.mark.asyncio
-    async def test_async_write_json(self, tmp_path: Path) -> None:
-        """Test basic async JSON write."""
-        import json
-
-        from markitai.security import atomic_write_json_async
-
-        test_file = tmp_path / "async.json"
-        data = {"async": True, "value": 123}
-
-        await atomic_write_json_async(test_file, data)
-
-        assert json.loads(test_file.read_text()) == data
-
-    @pytest.mark.asyncio
-    async def test_async_write_json_unicode(self, tmp_path: Path) -> None:
-        """Test async JSON with unicode."""
-        from markitai.security import atomic_write_json_async
-
-        test_file = tmp_path / "async_unicode.json"
-        data = {"greeting": "Здравствуй"}
-
-        await atomic_write_json_async(test_file, data, ensure_ascii=False)
-
-        content = test_file.read_text(encoding="utf-8")
-        assert "Здравствуй" in content
-
-    @pytest.mark.asyncio
-    async def test_async_write_json_indent(self, tmp_path: Path) -> None:
-        """Test async JSON with custom indent."""
-        from markitai.security import atomic_write_json_async
-
-        test_file = tmp_path / "async_indented.json"
-        data = {"key": "value"}
-
-        await atomic_write_json_async(test_file, data, indent=4)
-
-        content = test_file.read_text()
-        assert "    " in content
-
-
 class TestWriteBytesAsync:
     """Tests for write_bytes_async function."""
 

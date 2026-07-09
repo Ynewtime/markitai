@@ -37,9 +37,6 @@ from markitai.converter.base import ConvertResult
 from markitai.workflow.core import (
     ConversionContext,
     ConversionStepResult,
-    DocumentConversionError,
-    FileSizeError,
-    UnsupportedFormatError,
     prepare_output_directory,
     resolve_output_file,
     validate_and_detect_format,
@@ -180,33 +177,6 @@ class TestConversionStepResult:
         assert result.success is True
         assert result.error is None
         assert result.skip_reason == "exists"
-
-
-# =============================================================================
-# Exception Tests
-# =============================================================================
-
-
-class TestExceptions:
-    """Tests for custom exceptions."""
-
-    def test_document_conversion_error(self) -> None:
-        """Test DocumentConversionError."""
-        error = DocumentConversionError("Test error")
-        assert str(error) == "Test error"
-        assert isinstance(error, Exception)
-
-    def test_unsupported_format_error(self) -> None:
-        """Test UnsupportedFormatError."""
-        error = UnsupportedFormatError("Unknown format")
-        assert str(error) == "Unknown format"
-        assert isinstance(error, DocumentConversionError)
-
-    def test_file_size_error(self) -> None:
-        """Test FileSizeError."""
-        error = FileSizeError("File too large")
-        assert str(error) == "File too large"
-        assert isinstance(error, DocumentConversionError)
 
 
 # =============================================================================

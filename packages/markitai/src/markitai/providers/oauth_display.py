@@ -8,9 +8,6 @@ from __future__ import annotations
 
 import io
 import re
-import sys
-from collections.abc import Generator
-from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -31,22 +28,6 @@ def _get_stderr_console() -> Console:
     return Console(stderr=True)
 
 
-@contextmanager
-def suppress_stdout() -> Generator[io.StringIO]:
-    """Capture and suppress stdout writes during OAuth flows.
-
-    Yields:
-        StringIO buffer containing the captured output.
-    """
-    captured = io.StringIO()
-    original = sys.stdout
-    sys.stdout = captured
-    try:
-        yield captured
-    finally:
-        sys.stdout = original
-
-
 def show_login_start(provider: str, *, console: Console | None = None) -> None:
     """Display a brief login start message on stderr.
 
@@ -60,19 +41,6 @@ def show_login_start(provider: str, *, console: Console | None = None) -> None:
     c = console or _get_stderr_console()
     label = _PROVIDER_LABELS.get(provider, provider)
     c.print(f"  [dim]Running {label} login...[/]")
-
-
-def show_oauth_start(provider: str, *, console: Console | None = None) -> None:
-    """Display OAuth flow start message on stderr.
-
-    Args:
-        provider: Provider name (e.g., "chatgpt").
-        console: Optional console override for testing.
-    """
-    c = console or _get_stderr_console()
-    label = _PROVIDER_LABELS.get(provider, provider)
-    c.print(f"\n  [bold]{label} Authentication[/]")
-    c.print("  Opening browser for login...")
 
 
 def show_device_code(

@@ -7,11 +7,8 @@ from typing import Any
 __all__ = [
     "ConversionContext",
     "ConversionStepResult",
-    "DocumentConversionError",
-    "FileSizeError",
     "ImageAnalysisResult",
     "SingleFileWorkflow",
-    "UnsupportedFormatError",
     "add_basic_frontmatter",
     "convert_document_core",
     "merge_llm_usage",
@@ -24,9 +21,6 @@ def __getattr__(name: str) -> Any:
     if name in {
         "ConversionContext",
         "ConversionStepResult",
-        "DocumentConversionError",
-        "FileSizeError",
-        "UnsupportedFormatError",
         "convert_document_core",
     }:
         from markitai.workflow import core as _core

@@ -16,11 +16,7 @@ from markitai.image import (
     _sanitize_image_filename,
     download_url_images,
 )
-from markitai.urls import (
-    find_url_list_files,
-    is_url_list_file,
-    parse_url_list,
-)
+from markitai.urls import parse_url_list
 from markitai.utils.mime import get_extension_from_mime
 
 
@@ -39,18 +35,6 @@ def _create_test_png(width: int = 100, height: int = 100) -> bytes:
 
 class TestUrlListParsing:
     """Tests for URL list file parsing."""
-
-    def test_is_url_list_file_true(self, tmp_path: Path):
-        """Test .urls file detection."""
-        url_file = tmp_path / "test.urls"
-        url_file.touch()
-        assert is_url_list_file(url_file) is True
-
-    def test_is_url_list_file_false(self, tmp_path: Path):
-        """Test non-.urls file detection."""
-        txt_file = tmp_path / "test.txt"
-        txt_file.touch()
-        assert is_url_list_file(txt_file) is False
 
     def test_parse_plain_text_format(self, tmp_path: Path):
         """Test parsing plain text URL list."""
@@ -133,20 +117,6 @@ https://also-valid.org
         """Test error when file doesn't exist."""
         with pytest.raises(FileNotFoundError):
             parse_url_list(tmp_path / "nonexistent.urls")
-
-    def test_find_url_list_files(self, tmp_path: Path):
-        """Test finding .urls files in directory."""
-        # Create nested structure
-        (tmp_path / "a.urls").touch()
-        subdir = tmp_path / "subdir"
-        subdir.mkdir()
-        (subdir / "b.urls").touch()
-        (tmp_path / "other.txt").touch()
-
-        files = find_url_list_files(tmp_path)
-        assert len(files) == 2
-        assert any(f.name == "a.urls" for f in files)
-        assert any(f.name == "b.urls" for f in files)
 
 
 # =============================================================================
