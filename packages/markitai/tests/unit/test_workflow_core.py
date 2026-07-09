@@ -370,9 +370,9 @@ class TestResolveOutputFile:
         sample_context.output_dir.mkdir(parents=True)
         sample_context.config.output.on_conflict = "skip"
 
-        # Create existing output file (extension-replacement naming)
+        # Create existing output file (append naming: <input filename>.md)
         expected_output = (
-            sample_context.output_dir / f"{sample_context.input_path.stem}.md"
+            sample_context.output_dir / f"{sample_context.input_path.name}.md"
         )
         expected_output.touch()
 
@@ -387,9 +387,9 @@ class TestResolveOutputFile:
         sample_context.output_dir.mkdir(parents=True)
         sample_context.config.output.on_conflict = "overwrite"
 
-        # Create existing output file (extension-replacement naming)
+        # Create existing output file (append naming: <input filename>.md)
         expected_output = (
-            sample_context.output_dir / f"{sample_context.input_path.stem}.md"
+            sample_context.output_dir / f"{sample_context.input_path.name}.md"
         )
         expected_output.touch()
 
@@ -400,31 +400,32 @@ class TestResolveOutputFile:
         assert sample_context.output_file is not None
         assert sample_context.output_file == expected_output
 
-    def test_replaces_input_extension(self, sample_context: ConversionContext) -> None:
-        """Output name replaces the input extension (test.txt -> test.md)."""
+    def test_appends_md_to_input_name(self, sample_context: ConversionContext) -> None:
+        """Output name appends .md to the input filename (test.txt ->
+        test.txt.md). Regression: v0.15.0 replaced the extension instead."""
         sample_context.output_dir.mkdir(parents=True)
 
         result = resolve_output_file(sample_context)
 
         assert result.success is True
         assert sample_context.output_file is not None
-        expected = f"{sample_context.input_path.stem}.md"
+        expected = f"{sample_context.input_path.name}.md"
         assert sample_context.output_file.name == expected
 
-    def test_honors_preplanned_output_name(
+    def test_honors_explicit_output_name(
         self, sample_context: ConversionContext
     ) -> None:
-        """ctx.output_name (batch collision planning) takes precedence."""
+        """ctx.output_name (explicit -o file target) takes precedence."""
         sample_context.output_dir.mkdir(parents=True)
-        sample_context.output_name = f"{sample_context.input_path.name}.md"
+        sample_context.output_name = "custom-target.md"
 
         result = resolve_output_file(sample_context)
 
         assert result.success is True
         assert sample_context.output_file is not None
-        assert sample_context.output_file.name == f"{sample_context.input_path.name}.md"
+        assert sample_context.output_file.name == "custom-target.md"
 
-    def test_md_input_same_dir_uses_legacy_name(
+    def test_md_input_same_dir_does_not_overwrite_source(
         self, tmp_path: Path, default_config: MarkitaiConfig
     ) -> None:
         """A .md input converted into its own directory must not overwrite itself."""
@@ -448,9 +449,9 @@ class TestResolveOutputFile:
         sample_context.output_dir.mkdir(parents=True)
         sample_context.config.output.on_conflict = "rename"
 
-        # Create existing output file (extension-replacement naming)
+        # Create existing output file (append naming: <input filename>.md)
         expected_output = (
-            sample_context.output_dir / f"{sample_context.input_path.stem}.md"
+            sample_context.output_dir / f"{sample_context.input_path.name}.md"
         )
         expected_output.touch()
 
@@ -2101,8 +2102,8 @@ class TestConvertDocumentCore:
         output_dir.mkdir(parents=True)
         default_config.output.on_conflict = "skip"
 
-        # Create existing output file (extension-replacement naming)
-        existing_file = output_dir / f"{sample_txt_path.stem}.md"
+        # Create existing output file (append naming: <input filename>.md)
+        existing_file = output_dir / f"{sample_txt_path.name}.md"
         existing_file.write_text("existing content")
 
         ctx = ConversionContext(
@@ -2322,7 +2323,7 @@ class TestConvertDocumentCore:
         assert result.error is not None
         assert "LLM" in result.error
         # Base .md fallback should be written; no .llm.md should exist
-        base_output = output_dir / f"{sample_txt_path.stem}.md"
+        base_output = output_dir / f"{sample_txt_path.name}.md"
         assert base_output.exists()
         assert not base_output.with_suffix(".llm.md").exists()
 
@@ -2670,7 +2671,7 @@ class TestOnConflictSkipBeforeConversion:
         output_dir.mkdir(parents=True)
 
         # Create existing output file (the one that should cause a skip)
-        existing_output = output_dir / "test.md"
+        existing_output = output_dir / "test.txt.md"
         existing_output.write_text("already exists")
 
         ctx = ConversionContext(
@@ -2715,7 +2716,7 @@ class TestOnConflictSkipBeforeConversion:
         output_dir.mkdir(parents=True)
 
         # Existing output file
-        existing_output = output_dir / "test.md"
+        existing_output = output_dir / "test.txt.md"
         existing_output.write_text("old content")
 
         ctx = ConversionContext(

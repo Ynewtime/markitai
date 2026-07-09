@@ -87,7 +87,7 @@ class TestLanguagePreservation:
 
         assert result.exit_code == 0
 
-        output_file = output_dir / "english.md"
+        output_file = output_dir / "english.txt.md"
         assert output_file.exists()
 
         content = output_file.read_text(encoding="utf-8")
@@ -119,7 +119,7 @@ class TestLanguagePreservation:
 
         assert result.exit_code == 0
 
-        output_file = output_dir / "chinese.md"
+        output_file = output_dir / "chinese.txt.md"
         assert output_file.exists()
 
         content = output_file.read_text(encoding="utf-8")
@@ -150,7 +150,7 @@ class TestLanguagePreservation:
 
         assert result.exit_code == 0
 
-        output_file = output_dir / "mixed.md"
+        output_file = output_dir / "mixed.txt.md"
         assert output_file.exists()
 
         content = output_file.read_text(encoding="utf-8")
@@ -243,7 +243,7 @@ class TestPPTXHeaderFooterCleanup:
         assert result.exit_code == 0
 
         # Check output file exists
-        output_file = output_dir / "sample.md"
+        output_file = output_dir / "sample.pptx.md"
         assert output_file.exists()
 
     @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
@@ -260,7 +260,7 @@ class TestPPTXHeaderFooterCleanup:
 
         assert result.exit_code == 0
 
-        output_file = output_dir / "sample.md"
+        output_file = output_dir / "sample.pptx.md"
         content = output_file.read_text(encoding="utf-8")
 
         # Should not have common header/footer patterns
@@ -307,8 +307,8 @@ class TestSubdirectoryImagesJson:
         )
 
         assert result.exit_code == 0
-        assert (output_dir / "root.md").exists()
-        assert (output_dir / "sub" / "nested.md").exists()
+        assert (output_dir / "root.txt.md").exists()
+        assert (output_dir / "sub" / "nested.txt.md").exists()
 
     @pytest.mark.slow
     @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
@@ -326,8 +326,8 @@ class TestSubdirectoryImagesJson:
 
         assert result.exit_code == 0
 
-        # Check output structure (extension-replacement naming: sample.doc -> sample.md)
-        output_file = output_dir / "sample.md"
+        # Check output structure (append naming: sample.doc -> sample.doc.md)
+        output_file = output_dir / "sample.doc.md"
         assert output_file.exists()
 
         # If document has images, assets folder should be created
