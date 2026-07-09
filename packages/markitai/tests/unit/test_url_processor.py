@@ -916,6 +916,7 @@ class TestImageAnalysisBranchCoverage:
             )
 
         analyze_mock.assert_awaited_once()
+        assert analyze_mock.await_args is not None
         assert analyze_mock.await_args.args[0] == download_result.downloaded_paths
 
     @pytest.mark.asyncio
@@ -975,6 +976,7 @@ class TestImageAnalysisBranchCoverage:
             )
 
         analyze_mock.assert_awaited_once()
+        assert analyze_mock.await_args is not None
         assert analyze_mock.await_args.args[0] == download_result.downloaded_paths
 
 
