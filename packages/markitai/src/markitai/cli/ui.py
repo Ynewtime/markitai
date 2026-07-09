@@ -13,7 +13,6 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -21,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from rich.console import Console
 from rich.live import Live
-from rich.markup import escape
 from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.text import Text
@@ -30,8 +28,6 @@ from markitai.cli.console import get_console, get_stderr_console
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-
-    from rich.status import Status
 
     from markitai.config import MarkitaiConfig
 
@@ -232,7 +228,7 @@ def build_feature_str(cfg: MarkitaiConfig) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Live conversion status (single-URL / single-file conversions)
+# Shared spinner constant + elapsed-time helper (used by StageList below)
 # ---------------------------------------------------------------------------
 
 # Spinner shown during long-running single-input conversions.
@@ -241,57 +237,11 @@ def build_feature_str(cfg: MarkitaiConfig) -> str:
 # Change this constant to switch the spinner globally.
 STATUS_SPINNER = "line"
 
-# Known stage log messages -> human-readable spinner text. fetch.py and
-# workflow/core.py already emit these via loguru; ConversionStatus subscribes
-# with a temporary sink so stage transitions update the spinner text with
-# zero changes to the fetch/convert code.
-_STAGE_MESSAGE_PREFIXES: tuple[tuple[str, str], ...] = (
-    ("Fetching URL with static", "Fetching (static)"),
-    # Static content turned out to need JS: the auto chain moves on to a
-    # browser render next.
-    ("JS required", "Rendering (playwright)"),
-    ("[Fetch] Enriching", "Fetching (fxtwitter)"),
-    ("[Defuddle] Fetching", "Fetching (defuddle)"),
-    ("Fetching URL with Jina Reader", "Fetching (jina)"),
-    ("Fetching URL with CF Browser Rendering", "Rendering (cloudflare)"),
-    ("[LLM]", "Enhancing with LLM"),
-    ("Analyzing ", "Analyzing images"),
-)
-
-# Any log record emitted from these modules implies the given stage.
-_STAGE_MODULES: dict[str, str] = {
-    "fetch_playwright": "Rendering (playwright)",
-}
-
 # A stage running longer than this gets an "(Ns)" elapsed-time suffix, so a
 # slow-but-alive LLM call (which can legitimately take 1-2+ minutes with no
 # stage transitions to bridge from) doesn't read as a hang. Short stages
 # (typical fetches) never show a number, avoiding noise.
 ELAPSED_SUFFIX_THRESHOLD_S = 5.0
-ELAPSED_TICK_INTERVAL_S = 1.0
-
-
-def stage_from_log_record(record: Mapping[str, Any]) -> str | None:
-    """Map a loguru record to a spinner stage label.
-
-    Args:
-        record: A loguru record (dict-like, with "message"/"module" keys).
-
-    Returns:
-        A stage label such as ``"Rendering (playwright)"`` or None when the
-        record does not indicate a known conversion stage.
-    """
-    message = str(record.get("message", ""))
-    for prefix, stage in _STAGE_MESSAGE_PREFIXES:
-        if message.startswith(prefix):
-            return stage
-    module = str(record.get("module", "") or "")
-    return _STAGE_MODULES.get(module)
-
-
-def _is_stage_record(record: Mapping[str, Any]) -> bool:
-    """Loguru filter: keep only records that map to a known stage."""
-    return stage_from_log_record(record) is not None
 
 
 def elapsed_suffix(started_at: float | None, now: float) -> str:
@@ -314,144 +264,12 @@ def elapsed_suffix(started_at: float | None, now: float) -> str:
     return f" ({elapsed:.0f}s)"
 
 
-class ConversionStatus:
-    """Transient stderr spinner for long-running single-input conversions.
-
-    Shows a dim, pure-ASCII spinner (see ``STATUS_SPINNER``) on stderr while
-    fetching / converting / LLM-enhancing a single URL or file. Stage
-    transitions inside the fetch chain are picked up from existing loguru
-    logs via a temporary sink (``stage_from_log_record``), so fetch code
-    needs no changes.
-
-    Display gating (all must hold, otherwise every method is a no-op):
-
-    - the caller passes ``enabled=True`` — callers disable the status for
-      ``--quiet`` and for ``-v``/verbose (verbose already streams logs to
-      stderr; a spinner would interleave badly with them)
-    - the stderr console is a real terminal (suppressed in CI / pipes)
-
-    The spinner only ever writes to stderr, never stdout (content channel),
-    and is transient: rich erases the frame on ``stop()``, so final output
-    lines are never mixed with spinner frames. Always call ``stop()`` (or
-    use as a context manager) before printing final results.
-
-    Known v1 limitation: the lazy remote-consent prompt (``click.confirm``
-    inside the fetch chain) can fire while the spinner is live; the answer
-    line may briefly share a line with a spinner frame, after which the
-    next stage update repaints cleanly. Pausing around that prompt would
-    require changes to fetch.py, which owns the prompt.
-    """
-
-    def __init__(
-        self,
-        initial: str,
-        *,
-        enabled: bool = True,
-        console: Console | None = None,
-    ) -> None:
-        """Initialize the status.
-
-        Args:
-            initial: Initial stage text (e.g. ``"Fetching example.com..."``).
-            enabled: Caller-side gate (False for quiet/verbose modes).
-            console: Console to render on (defaults to the shared stderr
-                console). Must be a stderr console.
-        """
-        self._console = console if console is not None else get_stderr_console()
-        self.enabled = bool(enabled) and self._console.is_terminal
-        self.stage_text = initial
-        self._status: Status | None = None
-        self._sink_id: int | None = None
-        self._stage_started_at: float | None = None
-        self._ticker_task: asyncio.Task[None] | None = None
-
-    @property
-    def active(self) -> bool:
-        """Whether the spinner is currently rendering."""
-        return self._status is not None
-
-    def start(self) -> None:
-        """Start the spinner and attach the loguru stage bridge."""
-        if not self.enabled or self._status is not None:
-            return
-        self._status = self._console.status(
-            f"[dim]{escape(self.stage_text)}[/dim]",
-            spinner=STATUS_SPINNER,
-            spinner_style="dim",
-        )
-        self._status.start()
-        self._stage_started_at = time.monotonic()
-        # Temporary sink: rewrites the spinner text on known stage logs.
-        # DEBUG level because fetch strategy hops log at DEBUG.
-        self._sink_id = logger.add(
-            self._on_stage_log, level="DEBUG", filter=_is_stage_record
-        )
-        # Ticker: repaints with an elapsed-time suffix once a stage runs
-        # long (see ELAPSED_SUFFIX_THRESHOLD_S). No running loop (e.g. a
-        # sync test driving start()/stop() directly) just skips the ticker;
-        # the spinner still works, only the elapsed suffix is unavailable.
-        try:
-            self._ticker_task = asyncio.get_running_loop().create_task(self._tick())
-        except RuntimeError:
-            self._ticker_task = None
-
-    def update(self, text: str) -> None:
-        """Update the stage text (no-op rendering-wise when not active)."""
-        self.stage_text = text
-        self._stage_started_at = time.monotonic()
-        self._render()
-
-    def stop(self) -> None:
-        """Detach the loguru bridge and erase the spinner. Idempotent."""
-        if self._ticker_task is not None:
-            self._ticker_task.cancel()
-            self._ticker_task = None
-        if self._sink_id is not None:
-            try:
-                logger.remove(self._sink_id)
-            except ValueError:  # already removed (e.g. logger reconfigured)
-                pass
-            self._sink_id = None
-        if self._status is not None:
-            self._status.stop()
-            self._status = None
-
-    def _render(self) -> None:
-        """Repaint the spinner text, adding elapsed time once a stage runs long."""
-        if self._status is None:
-            return
-        suffix = elapsed_suffix(self._stage_started_at, time.monotonic())
-        self._status.update(f"[dim]{escape(self.stage_text)}{suffix}[/dim]")
-
-    async def _tick(self) -> None:
-        """Repaint on an interval so the elapsed-time suffix keeps counting."""
-        while True:
-            await asyncio.sleep(ELAPSED_TICK_INTERVAL_S)
-            self._render()
-
-    def _on_stage_log(self, message: Any) -> None:
-        """Loguru sink: map a stage log record to spinner text."""
-        stage = stage_from_log_record(message.record)
-        if stage is not None:
-            self.update(f"{stage}...")
-
-    def __enter__(self) -> ConversionStatus:
-        """Start the spinner on context entry."""
-        self.start()
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
-        """Stop the spinner on context exit; never swallows exceptions."""
-        self.stop()
-        return False
-
-
 # ---------------------------------------------------------------------------
 # Live multi-stage progress list (single-URL / single-file conversions)
 # ---------------------------------------------------------------------------
 
-# Known stage log messages -> (stage_key, spinner text). Same bridge idea as
-# ConversionStatus, but entries carry a stage key: a record whose key matches
+# Known stage log messages -> (stage_key, spinner text). A loguru bridge feeds
+# these entries; each carries a stage key: a record whose key matches
 # the active stage only rewrites the active line's text (fetch-internal
 # strategy hops), while a record with a NEW key advances the list (finalizes
 # the previous stage and starts a new line). This is what lets the file
