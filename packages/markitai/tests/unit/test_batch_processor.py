@@ -277,8 +277,8 @@ class TestCreateProcessFile:
         txt_file = sample_input_dir / "test.txt"
         txt_file.write_text("# Test")
 
-        # Create existing output file (extension-replacement naming)
-        existing_output = sample_output_dir / "test.md"
+        # Create existing output file (append naming: test.txt -> test.txt.md)
+        existing_output = sample_output_dir / "test.txt.md"
         existing_output.write_text("existing content")
 
         process_file = create_process_file(

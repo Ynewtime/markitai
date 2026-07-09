@@ -204,8 +204,8 @@ class TestSingleFileScenarios:
         )
 
         assert result.exit_code == 0
-        # Single-file conversion uses extension replacement (sample.pdf -> sample.md)
-        assert (output_dir / "sample.md").exists()
+        # Append naming: sample.pdf -> sample.pdf.md
+        assert (output_dir / "sample.pdf.md").exists()
 
     def test_pdf_with_screenshot(
         self, runner: CliRunner, fixtures_dir: Path, tmp_path: Path
@@ -243,8 +243,8 @@ class TestPresetScenarios:
         )
 
         assert result.exit_code == 0
-        # Single-file conversion uses extension replacement (sample.pdf -> sample.md)
-        assert (output_dir / "sample.md").exists()
+        # Append naming: sample.pdf -> sample.pdf.md
+        assert (output_dir / "sample.pdf.md").exists()
 
     def test_rich_preset_dry_run(
         self, runner: CliRunner, fixtures_dir: Path, tmp_path: Path
@@ -361,8 +361,8 @@ class TestErrorRecovery:
         )
 
         assert result.exit_code in (0, 1)
-        assert (output_dir / "valid.md").exists()
-        assert (output_dir / "also_valid.md").exists()
+        assert (output_dir / "valid.txt.md").exists()
+        assert (output_dir / "also_valid.md.md").exists()
 
 
 # =============================================================================

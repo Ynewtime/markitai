@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -112,7 +113,7 @@ class TestConvertCommand:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "sample.md").exists()
+        assert (output_dir / "sample.txt.md").exists()
 
     def test_convert_md(self, runner: CliRunner, sample_md: Path, tmp_path: Path):
         """Test converting a markdown file (passthrough)."""
@@ -126,7 +127,7 @@ class TestConvertCommand:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "sample.md").exists()
+        assert (output_dir / "sample.md.md").exists()
 
     def test_convert_dry_run(self, runner: CliRunner, sample_txt: Path, tmp_path: Path):
         """Test dry run mode."""
@@ -143,7 +144,7 @@ class TestConvertCommand:
         assert result.exit_code == 0
         assert "Would convert" in result.output or "Dry Run" in result.output
         # File should not be created in dry run
-        assert not (output_dir / "sample.md").exists()
+        assert not (output_dir / "sample.txt.md").exists()
 
     def test_convert_verbose(self, runner: CliRunner, sample_txt: Path, tmp_path: Path):
         """Test verbose mode."""
@@ -214,7 +215,7 @@ class TestOutputFileTarget:
         assert result.exit_code == 0
         assert target.is_file()
         # No directory named out.md anywhere
-        assert not (tmp_path / "sub" / "out.md" / "sample.md").exists()
+        assert not (tmp_path / "sub" / "out.md").is_dir()
 
     def test_existing_md_directory_keeps_directory_behavior(
         self, runner: CliRunner, sample_txt: Path, tmp_path: Path
@@ -226,7 +227,7 @@ class TestOutputFileTarget:
 
         assert result.exit_code == 0
         assert md_dir.is_dir()
-        assert (md_dir / "sample.md").is_file()
+        assert (md_dir / "sample.txt.md").is_file()
 
     def test_batch_md_target_is_usage_error(self, runner: CliRunner, tmp_path: Path):
         """Directory input with `-o out.md` must fail with a clear error."""
@@ -338,8 +339,8 @@ class TestBatchConvert:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "file1.md").exists()
-        assert (output_dir / "file2.md").exists()
+        assert (output_dir / "file1.txt.md").exists()
+        assert (output_dir / "file2.txt.md").exists()
 
     def test_batch_empty_directory(self, runner: CliRunner, tmp_path: Path):
         """Test batch mode with empty directory."""
@@ -473,10 +474,10 @@ class TestWorkflowCoreV2:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "sample.md").exists()
+        assert (output_dir / "sample.txt.md").exists()
 
         # Verify content has frontmatter
-        content = (output_dir / "sample.md").read_text()
+        content = (output_dir / "sample.txt.md").read_text()
         assert "---" in content
         assert "title:" in content or "source:" in content
 
@@ -495,7 +496,7 @@ class TestWorkflowCoreV2:
         )
         assert result.exit_code == 0
         assert "Would convert" in result.output or "Dry Run" in result.output
-        assert not (output_dir / "sample.md").exists()
+        assert not (output_dir / "sample.txt.md").exists()
 
     def test_unsupported_format(self, runner: CliRunner, tmp_path: Path):
         """Test with unsupported file format."""
@@ -520,7 +521,7 @@ class TestWorkflowCoreV2:
         output_dir.mkdir(parents=True)
 
         # Create existing output file
-        existing = output_dir / "sample.md"
+        existing = output_dir / "sample.txt.md"
         existing.write_text("existing content")
 
         # Create config with skip mode
@@ -631,8 +632,8 @@ class TestWorkflowCoreV2:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "file1.md").exists()
-        assert (output_dir / "file2.md").exists()
+        assert (output_dir / "file1.txt.md").exists()
+        assert (output_dir / "file2.txt.md").exists()
 
     def test_batch_preserves_subdirs(self, runner: CliRunner, tmp_path: Path):
         """Test batch preserves subdirectory structure."""
@@ -655,8 +656,8 @@ class TestWorkflowCoreV2:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "root.md").exists()
-        assert (output_dir / "subdir" / "nested.md").exists()
+        assert (output_dir / "root.txt.md").exists()
+        assert (output_dir / "subdir" / "nested.txt.md").exists()
 
     def test_batch_report_opt_out(self, runner: CliRunner, tmp_path: Path):
         """output.report=false disables batch report generation."""
@@ -679,15 +680,15 @@ class TestWorkflowCoreV2:
             ],
         )
         assert result.exit_code == 0
-        assert (output_dir / "file1.md").exists()
+        assert (output_dir / "file1.txt.md").exists()
         reports_dir = output_dir / ".markitai" / "reports"
         report_files = list(reports_dir.glob("*.json")) if reports_dir.exists() else []
         assert report_files == []
 
-    def test_batch_colliding_stems_use_legacy_names(
+    def test_batch_same_stem_inputs_stay_distinct(
         self, runner: CliRunner, tmp_path: Path
     ):
-        """Inputs mapping to the same output name fall back to legacy naming."""
+        """Same-stem inputs (a.txt + a.html) map to distinct output names."""
         input_dir = tmp_path / "input"
         input_dir.mkdir()
         (input_dir / "a.txt").write_text("Text content")
@@ -705,12 +706,11 @@ class TestWorkflowCoreV2:
             ],
         )
         assert result.exit_code == 0
-        # Colliding inputs (a.txt + a.html -> a.md) use legacy names
+        # Append naming keeps the source extension in the output name
         assert (output_dir / "a.txt.md").exists()
         assert (output_dir / "a.html.md").exists()
         assert not (output_dir / "a.md").exists()
-        # Non-colliding input keeps extension replacement
-        assert (output_dir / "b.md").exists()
+        assert (output_dir / "b.txt.md").exists()
 
     def test_md_input_into_own_dir_keeps_source(
         self, runner: CliRunner, tmp_path: Path
@@ -728,7 +728,7 @@ class TestWorkflowCoreV2:
             ],
         )
         assert result.exit_code == 0
-        # Source untouched, output uses legacy fallback name
+        # Source untouched; append naming yields note.md.md
         assert note.read_text() == "# Original note"
         assert (tmp_path / "note.md.md").exists()
 
@@ -762,6 +762,194 @@ class TestWorkflowCoreV2:
         assert "version" in report
         assert "summary" in report
         assert report["summary"]["completed_documents"] >= 1
+
+
+class TestBatchResume:
+    """Tests for --resume skipping completed batch work.
+
+    Regression: the CLI batch entry point accepted the resume flag but never
+    used it — every --resume run re-initialized state and re-converted all
+    files (piling up .v2.md rename copies under the default on_conflict).
+    """
+
+    def test_resume_skips_completed_files(self, runner: CliRunner, tmp_path: Path):
+        """A fully completed batch re-run with --resume does no work."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "a.txt").write_text("Content A")
+        (input_dir / "b.txt").write_text("Content B")
+        output_dir = tmp_path / "output"
+
+        first = runner.invoke(app, [str(input_dir), "-o", str(output_dir)])
+        assert first.exit_code == 0
+        a_md = output_dir / "a.txt.md"
+        b_md = output_dir / "b.txt.md"
+        assert a_md.exists() and b_md.exists()
+        a_mtime = a_md.stat().st_mtime_ns
+        b_mtime = b_md.stat().st_mtime_ns
+
+        second = runner.invoke(app, [str(input_dir), "-o", str(output_dir), "--resume"])
+        assert second.exit_code == 0
+        # Completed files must not be re-converted: no rename-versioned
+        # copies, and the original outputs are untouched
+        assert not (output_dir / "a.txt.v2.md").exists()
+        assert not (output_dir / "b.txt.v2.md").exists()
+        assert a_md.stat().st_mtime_ns == a_mtime
+        assert b_md.stat().st_mtime_ns == b_mtime
+
+    def test_resume_processes_new_and_failed_files(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        """--resume retries failed entries and picks up new files."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "a.txt").write_text("Content A")
+        (input_dir / "b.txt").write_text("Content B")
+        output_dir = tmp_path / "output"
+
+        first = runner.invoke(app, [str(input_dir), "-o", str(output_dir)])
+        assert first.exit_code == 0
+
+        # Simulate a failed entry: mark b.txt failed and remove its output
+        states_dir = output_dir / ".markitai" / "states"
+        state_file = next(states_dir.glob("markitai.*.state.json"))
+        state = json.loads(state_file.read_text())
+        state["documents"]["b.txt"]["status"] = "failed"
+        state_file.write_text(json.dumps(state))
+        (output_dir / "b.txt.md").unlink()
+
+        # New file added after the first run
+        (input_dir / "c.txt").write_text("Content C")
+
+        second = runner.invoke(app, [str(input_dir), "-o", str(output_dir), "--resume"])
+        assert second.exit_code == 0
+        # Failed entry retried, new file converted, completed file untouched
+        assert (output_dir / "b.txt.md").exists()
+        assert (output_dir / "c.txt.md").exists()
+        assert not (output_dir / "a.txt.v2.md").exists()
+
+    @staticmethod
+    def _fetch_stub() -> MagicMock:
+        """Mock FetchResult with the fields the batch URL processor reads."""
+        result = MagicMock()
+        result.content = "# Test Page\n\nSome content.\n"
+        result.cache_hit = False
+        result.strategy_used = "static"
+        result.screenshot_path = None
+        result.title = "Test Page"
+        result.static_content = None
+        result.browser_content = None
+        result.metadata = {}
+        return result
+
+    def test_resume_skips_completed_urls(self, runner: CliRunner, tmp_path: Path):
+        """URLs already COMPLETED in the state are not re-fetched on --resume."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "links.urls").write_text("https://example.com/alpha\n")
+        output_dir = tmp_path / "output"
+
+        async def fake_fetch(url, *args, **kwargs):
+            return self._fetch_stub()
+
+        with patch("markitai.fetch.fetch_url", side_effect=fake_fetch) as first_fetch:
+            first = runner.invoke(
+                app, [str(input_dir), "-o", str(output_dir), "--no-cache"]
+            )
+        assert first.exit_code == 0
+        assert first_fetch.call_count == 1
+        assert (output_dir / "alpha.md").exists()
+
+        with patch("markitai.fetch.fetch_url", side_effect=fake_fetch) as second_fetch:
+            second = runner.invoke(
+                app,
+                [str(input_dir), "-o", str(output_dir), "--no-cache", "--resume"],
+            )
+        assert second.exit_code == 0
+        # Completed URL skipped entirely: no fetch, no rename-versioned copy
+        assert second_fetch.call_count == 0
+        assert not (output_dir / "alpha.v2.md").exists()
+
+    def test_resume_fetches_only_new_urls(self, runner: CliRunner, tmp_path: Path):
+        """--resume picks up URLs added to the .urls file since the last run."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        urls_file = input_dir / "links.urls"
+        urls_file.write_text("https://example.com/alpha\n")
+        output_dir = tmp_path / "output"
+
+        fetched: list[str] = []
+
+        async def fake_fetch(url, *args, **kwargs):
+            fetched.append(url)
+            return self._fetch_stub()
+
+        with patch("markitai.fetch.fetch_url", side_effect=fake_fetch):
+            first = runner.invoke(
+                app, [str(input_dir), "-o", str(output_dir), "--no-cache"]
+            )
+        assert first.exit_code == 0
+        assert fetched == ["https://example.com/alpha"]
+
+        # New URL appended after the first run
+        urls_file.write_text("https://example.com/alpha\nhttps://example.com/beta\n")
+
+        fetched.clear()
+        with patch("markitai.fetch.fetch_url", side_effect=fake_fetch):
+            second = runner.invoke(
+                app,
+                [str(input_dir), "-o", str(output_dir), "--no-cache", "--resume"],
+            )
+        assert second.exit_code == 0
+        # Only the new URL is fetched; existing output untouched
+        assert fetched == ["https://example.com/beta"]
+        assert (output_dir / "beta.md").exists()
+        assert not (output_dir / "alpha.v2.md").exists()
+
+    def test_resume_retries_failed_urls(self, runner: CliRunner, tmp_path: Path):
+        """--resume re-fetches failed URLs but not completed ones."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "links.urls").write_text(
+            "https://example.com/alpha\nhttps://example.com/beta\n"
+        )
+        output_dir = tmp_path / "output"
+
+        fetched: list[str] = []
+
+        async def fake_fetch(url, *args, **kwargs):
+            fetched.append(url)
+            return self._fetch_stub()
+
+        with patch("markitai.fetch.fetch_url", side_effect=fake_fetch):
+            first = runner.invoke(
+                app, [str(input_dir), "-o", str(output_dir), "--no-cache"]
+            )
+        assert first.exit_code == 0
+        assert sorted(fetched) == [
+            "https://example.com/alpha",
+            "https://example.com/beta",
+        ]
+
+        # Simulate a failed URL: mark alpha failed and remove its output
+        states_dir = output_dir / ".markitai" / "states"
+        state_file = next(states_dir.glob("markitai.*.state.json"))
+        state = json.loads(state_file.read_text())
+        state["urls"]["https://example.com/alpha"]["status"] = "failed"
+        state_file.write_text(json.dumps(state))
+        (output_dir / "alpha.md").unlink()
+
+        fetched.clear()
+        with patch("markitai.fetch.fetch_url", side_effect=fake_fetch):
+            second = runner.invoke(
+                app,
+                [str(input_dir), "-o", str(output_dir), "--no-cache", "--resume"],
+            )
+        assert second.exit_code == 0
+        # Only the failed URL is re-fetched; the completed one is skipped
+        assert fetched == ["https://example.com/alpha"]
+        assert (output_dir / "alpha.md").exists()
+        assert not (output_dir / "beta.v2.md").exists()
 
 
 class TestConfigOutputDir:
@@ -816,7 +1004,7 @@ class TestConfigOutputDir:
 
         assert result.exit_code == 0
         assert output_dir.exists()
-        assert (output_dir / "test.md").exists()
+        assert (output_dir / "test.txt.md").exists()
 
     def test_cli_output_overrides_config(
         self, runner: CliRunner, sample_txt: Path, tmp_path: Path
@@ -845,7 +1033,7 @@ class TestConfigOutputDir:
 
         assert result.exit_code == 0
         assert cli_output.exists(), "CLI -o should be used"
-        assert (cli_output / "test.md").exists(), "Output should be in CLI -o dir"
+        assert (cli_output / "test.txt.md").exists(), "Output should be in CLI -o dir"
         assert not config_output.exists(), (
             "Config output.dir should NOT be used when -o specified"
         )
@@ -899,5 +1087,5 @@ class TestConfigOutputDir:
 
         assert result.exit_code == 0
         assert output_dir.exists(), "Batch mode should use config output.dir"
-        assert (output_dir / "file1.md").exists(), "Batch output file1 should exist"
-        assert (output_dir / "file2.md").exists(), "Batch output file2 should exist"
+        assert (output_dir / "file1.txt.md").exists(), "Batch output file1 should exist"
+        assert (output_dir / "file2.txt.md").exists(), "Batch output file2 should exist"

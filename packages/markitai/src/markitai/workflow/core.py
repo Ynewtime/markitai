@@ -324,12 +324,9 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
 def resolve_output_file(ctx: ConversionContext) -> ConversionStepResult:
     """Resolve output file path with conflict handling.
 
-    Output naming replaces the input extension (``sample.pdf`` ->
-    ``sample.md``). Batch callers pre-plan names via
-    ``markitai.utils.paths.plan_output_names`` and pass them through
-    ``ctx.output_name``; single-file conversions derive the name here
-    (falling back to legacy ``<name>.md`` if it would overwrite the
-    source file).
+    Output naming appends ``.md`` to the input filename (``sample.pdf`` ->
+    ``sample.pdf.md``); ``ctx.output_name`` overrides it (explicit ``-o``
+    file targets, URL entries with custom names).
 
     Args:
         ctx: Conversion context
@@ -338,13 +335,11 @@ def resolve_output_file(ctx: ConversionContext) -> ConversionStepResult:
         ConversionStepResult - may have skip_reason if file exists
     """
     from markitai.utils.output import resolve_output_path
-    from markitai.utils.paths import plan_output_names
+    from markitai.utils.paths import derive_output_name
 
     output_name = ctx.output_name
     if output_name is None:
-        output_name = plan_output_names([(ctx.input_path, ctx.output_dir)])[
-            ctx.input_path
-        ]
+        output_name = derive_output_name(ctx.input_path.name)
 
     base_output_file = ctx.output_dir / output_name
     ctx.output_file = resolve_output_path(

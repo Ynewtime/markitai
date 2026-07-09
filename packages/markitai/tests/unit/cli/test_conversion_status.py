@@ -376,7 +376,7 @@ class TestStdoutStaysPure:
         captured = capsys.readouterr()
         assert HIDE_CURSOR in fake_stderr.file.getvalue()  # type: ignore[union-attr]
         assert HIDE_CURSOR not in captured.out
-        assert (out_dir / "input.md").exists()
+        assert (out_dir / "input.txt.md").exists()
 
     async def test_file_conversion_quiet_shows_no_spinner(
         self, tmp_path: Path, monkeypatch

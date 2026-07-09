@@ -25,7 +25,7 @@ from markitai.converter import FileFormat, detect_format
 from markitai.json_order import order_report
 from markitai.security import atomic_write_json, validate_file_size
 from markitai.utils.cli_helpers import compute_task_hash, get_report_file_path
-from markitai.utils.paths import plan_output_names
+from markitai.utils.paths import derive_output_name
 from markitai.utils.progress import ProgressReporter
 from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import write_images_json
@@ -216,10 +216,7 @@ async def process_single_file(
 
         # Determine output location for display
         if output_dir is not None:
-            planned_name = (
-                output_file_name
-                or plan_output_names([(input_path, output_dir)])[input_path]
-            )
+            planned_name = output_file_name or derive_output_name(input_path.name)
             output_display = str(output_dir / planned_name)
         else:
             output_display = "stdout"
@@ -297,10 +294,7 @@ async def process_single_file(
             progress.stop_spinner()
             if not quiet and not stdout_mode:
                 assert output_dir is not None
-                planned_name = (
-                    output_file_name
-                    or plan_output_names([(input_path, output_dir)])[input_path]
-                )
+                planned_name = output_file_name or derive_output_name(input_path.name)
                 base_output_file = output_dir / planned_name
                 console.print(f"[yellow]Skipped (exists):[/yellow] {base_output_file}")
             return
