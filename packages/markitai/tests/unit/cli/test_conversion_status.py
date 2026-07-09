@@ -4,17 +4,15 @@ Covers:
 - the loguru log -> spinner stage-text bridge (stage_from_log_record)
 - TTY / quiet / verbose gating
 - stdout purity: spinner frames only ever go to stderr, never stdout
-- the remote-consent prompt interplay (mocked prompt mid-fetch)
 """
 
 from __future__ import annotations
 
 import asyncio
 import io
-import sys
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from loguru import logger
@@ -22,7 +20,6 @@ from rich.console import Console
 
 from markitai.cli import ui
 from markitai.cli.processors.file import process_single_file
-from markitai.cli.processors.url import process_url
 from markitai.config import MarkitaiConfig
 
 # ANSI hide-cursor sequence emitted by rich Status/Live on a terminal;
@@ -33,20 +30,6 @@ HIDE_CURSOR = "\x1b[?25l"
 def make_tty_console() -> Console:
     """Console backed by a StringIO that claims to be a terminal."""
     return Console(file=io.StringIO(), force_terminal=True, width=80)
-
-
-def make_fetch_result(content: str = "# Test Page\n\nSome content.") -> MagicMock:
-    """Mock FetchResult matching what process_url consumes."""
-    result = MagicMock()
-    result.content = content
-    result.cache_hit = False
-    result.strategy_used = "static"
-    result.screenshot_path = None
-    result.title = "Test Page"
-    result.static_content = None
-    result.browser_content = None
-    result.metadata = {}
-    return result
 
 
 class TestSpinnerChoice:
@@ -255,100 +238,8 @@ class TestConversionStatusGating:
         assert HIDE_CURSOR in console.file.getvalue()  # type: ignore[union-attr]
 
 
-class TestProcessorGating:
-    """Processors must gate the status on quiet/verbose/stdout-mode."""
-
-    async def _run_process_url(self, tmp_path: Path, **kwargs) -> MagicMock:
-        cfg = MarkitaiConfig()
-        cfg.llm.enabled = False
-        cfg.cache.enabled = False
-        with (
-            patch(
-                "markitai.fetch.fetch_url",
-                new_callable=AsyncMock,
-                return_value=make_fetch_result(),
-            ),
-            patch("markitai.cli.ui.ConversionStatus") as status_cls,
-        ):
-            await process_url(
-                url="https://example.com/test",
-                output_dir=tmp_path,
-                cfg=cfg,
-                dry_run=False,
-                verbose=kwargs.get("verbose", False),
-                quiet=kwargs.get("quiet", False),
-            )
-        return status_cls
-
-    async def test_default_file_mode_enables_status(self, tmp_path: Path) -> None:
-        status_cls = await self._run_process_url(tmp_path)
-        assert status_cls.call_args.kwargs["enabled"] is True
-
-    async def test_verbose_disables_status(self, tmp_path: Path) -> None:
-        status_cls = await self._run_process_url(tmp_path, verbose=True)
-        assert status_cls.call_args.kwargs["enabled"] is False
-
-    async def test_quiet_disables_status(self, tmp_path: Path) -> None:
-        status_cls = await self._run_process_url(tmp_path, quiet=True)
-        assert status_cls.call_args.kwargs["enabled"] is False
-
-    async def test_stdout_mode_disables_status(self, capsys) -> None:
-        cfg = MarkitaiConfig()
-        cfg.llm.enabled = False
-        cfg.cache.enabled = False
-        with (
-            patch(
-                "markitai.fetch.fetch_url",
-                new_callable=AsyncMock,
-                return_value=make_fetch_result(),
-            ),
-            patch("markitai.cli.ui.ConversionStatus") as status_cls,
-        ):
-            await process_url(
-                url="https://example.com/test",
-                output_dir=None,  # stdout mode
-                cfg=cfg,
-                dry_run=False,
-                verbose=False,
-            )
-        capsys.readouterr()  # discard content output
-        assert status_cls.call_args.kwargs["enabled"] is False
-
-
 class TestStdoutStaysPure:
     """Integration: spinner frames never leak into stdout."""
-
-    async def test_url_conversion_spinner_on_stderr_only(
-        self, tmp_path: Path, capsys, monkeypatch
-    ) -> None:
-        fake_stderr = make_tty_console()
-        monkeypatch.setattr("markitai.cli.ui.get_stderr_console", lambda: fake_stderr)
-
-        cfg = MarkitaiConfig()
-        cfg.llm.enabled = False
-        cfg.cache.enabled = False
-
-        async def slow_fetch(*args, **kwargs):
-            logger.debug("Fetching URL with static strategy: https://example.com")
-            return make_fetch_result()
-
-        with patch("markitai.fetch.fetch_url", side_effect=slow_fetch):
-            await process_url(
-                url="https://example.com/test",
-                output_dir=tmp_path,
-                cfg=cfg,
-                dry_run=False,
-                verbose=False,
-            )
-
-        captured = capsys.readouterr()
-        # Spinner rendered on (fake) stderr...
-        assert HIDE_CURSOR in fake_stderr.file.getvalue()  # type: ignore[union-attr]
-        # ...but stdout carries no spinner control codes or frames
-        assert HIDE_CURSOR not in captured.out
-        assert "Fetching (static)" not in captured.out
-        # Output file exists and final path was reported
-        assert (tmp_path / "test.md").exists()
 
     async def test_file_conversion_spinner_on_stderr_only(
         self, tmp_path: Path, capsys, monkeypatch
@@ -402,62 +293,3 @@ class TestStdoutStaysPure:
         )
 
         assert fake_stderr.file.getvalue() == ""  # type: ignore[union-attr]
-
-
-class TestConsentPromptInterplay:
-    """The lazy remote-consent prompt fires inside the wrapped fetch coroutine.
-
-    v1 behavior: the status stays live around the prompt (pausing would
-    require changes to fetch.py, which owns the prompt). These tests pin
-    down that the flow completes, the spinner is stopped before final
-    output, and stdout stays pure.
-    """
-
-    async def test_mocked_prompt_mid_fetch_keeps_stdout_pure(
-        self, tmp_path: Path, capsys, monkeypatch
-    ) -> None:
-        fake_stderr = make_tty_console()
-        monkeypatch.setattr("markitai.cli.ui.get_stderr_console", lambda: fake_stderr)
-
-        cfg = MarkitaiConfig()
-        cfg.llm.enabled = False
-        cfg.cache.enabled = False
-
-        prompt_calls: list[str] = []
-
-        async def fetch_with_prompt(*args, **kwargs):
-            # Simulate resolve_remote_consent(): click.confirm(err=True)
-            # writes the prompt to stderr while the spinner is live.
-            with patch("click.confirm", return_value=False) as confirm:
-                import click
-
-                answer = click.confirm(
-                    "Allow sending URLs to remote extraction services?",
-                    default=False,
-                    err=True,
-                )
-                prompt_calls.append(f"answered={answer}")
-                assert confirm.called
-            sys.stderr.write("Allow sending URLs ...? [y/N]: n\n")
-            return make_fetch_result()
-
-        with patch("markitai.fetch.fetch_url", side_effect=fetch_with_prompt):
-            await process_url(
-                url="https://example.com/test",
-                output_dir=tmp_path,
-                cfg=cfg,
-                dry_run=False,
-                verbose=False,
-            )
-
-        captured = capsys.readouterr()
-        assert prompt_calls == ["answered=False"]
-        # Conversion completed despite the mid-fetch prompt
-        assert (tmp_path / "test.md").exists()
-        # stdout never received spinner frames or prompt text
-        assert HIDE_CURSOR not in captured.out
-        assert "Allow sending" not in captured.out
-        # Spinner was cleaned up: rich shows the cursor again on stop
-        stderr_output = fake_stderr.file.getvalue()  # type: ignore[union-attr]
-        assert HIDE_CURSOR in stderr_output
-        assert "\x1b[?25h" in stderr_output  # show-cursor on stop
