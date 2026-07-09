@@ -27,7 +27,6 @@ from markitai.utils.paths import (
     ensure_screenshots_dir,
     ensure_subdir,
 )
-from markitai.utils.progress import ProgressReporter
 from markitai.utils.text import (
     clean_control_characters,
     format_error_message,
@@ -39,7 +38,6 @@ __all__ = [
     "compute_task_hash",
     "get_report_file_path",
     "is_url",
-    "ProgressReporter",
     "sanitize_filename",
     "url_to_filename",
     # Executor

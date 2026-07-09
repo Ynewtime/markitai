@@ -795,12 +795,6 @@ def app(
         logger.debug(f"Output directory: {output.resolve()}")
 
     async def run_workflow() -> None:
-        # Create OutputManager for stderr line tracking
-        # Only enabled in stdout mode (when we need to erase before printing content)
-        from markitai.cli.output_manager import OutputManager
-
-        om = OutputManager(enabled=is_stdout_mode and not verbose and not quiet)
-
         # Helper to get effective output directory (CLI -o or config fallback)
         def get_effective_output() -> Path | None:
             if output is not None:
@@ -877,9 +871,7 @@ def app(
                             err=True,
                         )
                         if response.lower() == "y":
-                            login_result = await attempt_login(
-                                status.provider, output_manager=om
-                            )
+                            login_result = await attempt_login(status.provider)
                             if login_result.authenticated:
                                 auth_summaries.append(
                                     f"  [green]✓[/green] {status.provider}"
