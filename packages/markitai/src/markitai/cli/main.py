@@ -936,7 +936,6 @@ def app(
                 log_file_path,
                 fetch_strategy=fetch_strategy,
                 explicit_fetch_strategy=explicit_fetch_strategy,
-                output_manager=om,
                 quiet=quiet,
             )
             return
