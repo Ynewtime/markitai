@@ -403,18 +403,6 @@ def build_frontmatter_dict(
     return result
 
 
-def _filename_to_title(filename: str) -> str:
-    """Convert filename to title by removing extension.
-
-    Args:
-        filename: Source filename
-
-    Returns:
-        Filename without extension
-    """
-    return Path(filename).stem
-
-
 def frontmatter_to_yaml(frontmatter: dict[str, Any]) -> str:
     """Convert frontmatter dict to YAML string.
 

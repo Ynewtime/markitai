@@ -138,18 +138,6 @@ def resolve_asset_references(
     return _ASSET_REF_PATTERN.sub(_replace, markdown)
 
 
-def strip_asset_references(markdown: str) -> str:
-    """Deprecated: use ``resolve_asset_references`` instead."""
-    import warnings
-
-    warnings.warn(
-        "strip_asset_references is deprecated, use resolve_asset_references instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return resolve_asset_references(markdown, temp_dir=Path())
-
-
 def _file_final_stage_text(active_key: str | None, input_name: str) -> str:
     """Completion text for the last active stage of a file conversion."""
     if active_key == "llm":

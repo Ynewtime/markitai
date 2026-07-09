@@ -20,9 +20,6 @@ from markitai.webextract.semantics import (
     MediaAttachment,
 )
 
-# Sections that indicate the end of the main conversation content.
-_STOP_LABELS = frozenset({"Discover more", "Timeline: Trending now"})
-
 _HANDLE_RE = re.compile(r"(@\w+)")
 
 # Upgrade X image CDN size parameter, e.g. "...&name=small" -> "...&name=orig"
@@ -113,21 +110,6 @@ def is_new_dom_article(article: Tag) -> bool:
         True for 2026-DOM articles.
     """
     return article.has_attr("data-tweet-id")
-
-
-def is_recommendation_section(tag: Tag) -> bool:
-    """Check whether a tag is a recommendation / noise section.
-
-    Args:
-        tag: A BeautifulSoup Tag to check.
-
-    Returns:
-        True if the tag is a recommendation section that should be excluded.
-    """
-    aria_label = tag.get("aria-label", "")
-    if isinstance(aria_label, str) and aria_label in _STOP_LABELS:
-        return True
-    return False
 
 
 # ---------------------------------------------------------------------------
