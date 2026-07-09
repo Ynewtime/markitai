@@ -632,6 +632,134 @@ def sample_test_image(tmp_path: Path) -> Path:
     return img_path
 
 
+class TestSocialPostVerbatimBody:
+    """social_post content keeps its body verbatim through LLM processing.
+
+    Site extractors already emit curated markdown for social posts; the LLM
+    cleanup pass adds no value there, and weak models damaged structure
+    (flattened quoted-tweet blockquotes, respaced CJK text). The LLM result
+    must be used for metadata only.
+    """
+
+    SOCIAL_BODY = (
+        "相比 GLM 5.2 生成的前端网页效果，GPT目前版本就是垃圾。\n\n"
+        "> **向阳乔木 @vista8** · Jul 5\n"
+        ">\n"
+        "> 这就是为啥大家不愿意用GPT做前端设计的原因。"
+    )
+
+    # What a weak model typically returns: blockquote flattened, CJK respaced
+    MANGLED_BODY = (
+        "相比 GLM 5.2 生成的前端网页效果，GPT 目前版本就是垃圾。\n\n"
+        "**向阳乔木 @vista8** · Jul 5\n\n"
+        "这就是为啥大家不愿意用 GPT 做前端设计的原因。"
+    )
+
+    @pytest.mark.asyncio
+    async def test_social_post_keeps_body_verbatim(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_instructor_result_factory,
+    ) -> None:
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+        result, raw = mock_instructor_result_factory(
+            cleaned_markdown=self.MANGLED_BODY,
+            description="社媒帖测试",
+            tags=["GPT", "GLM"],
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, frontmatter = await processor.process_document(
+                self.SOCIAL_BODY,
+                "https://x.com/user/status/1",
+                extra_meta={"content_profile": "social_post"},
+            )
+
+        assert cleaned == self.SOCIAL_BODY
+        assert "description:" in frontmatter
+        assert "content_profile: social_post" in frontmatter
+
+    @pytest.mark.asyncio
+    async def test_non_social_profile_still_uses_cleaned_body(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_instructor_result_factory,
+    ) -> None:
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+        result, raw = mock_instructor_result_factory(
+            cleaned_markdown="# Processed Article\n\nProcessed content.",
+        )
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, _ = await processor.process_document(
+                "# Raw Article\n\nRaw content.",
+                "https://example.com/article",
+                extra_meta={"content_profile": "article"},
+            )
+
+        assert "Processed Article" in cleaned
+
+    @pytest.mark.asyncio
+    async def test_social_post_fallback_skips_cleaner(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+    ) -> None:
+        """When the combined call fails, the cleaner fallback must not run
+        for social posts either — the body stays verbatim."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(
+            side_effect=AssertionError("cleaner must not run for social posts")
+        )
+        processor._router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                side_effect=Exception("Instructor failed")
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, frontmatter = await processor.process_document(
+                self.SOCIAL_BODY,
+                "https://x.com/user/status/1",
+                extra_meta={"content_profile": "social_post"},
+            )
+
+        assert cleaned == self.SOCIAL_BODY
+        mock_router.acompletion.assert_not_called()
+
+
 class TestTryRepairInstructorResponse:
     """Repair of wrong-shape (but syntactically valid) LLM JSON responses.
 

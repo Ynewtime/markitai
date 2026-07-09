@@ -1756,6 +1756,15 @@ Generate the following fields:
             content=markdown,
         )
 
+        # Social posts arrive pre-curated by the site extractors: the LLM
+        # cleanup adds no value there and weak models can damage structure
+        # (flattened quote blocks, respaced CJK text), so the LLM result is
+        # used for metadata only and the body passes through verbatim.
+        body_verbatim = (
+            extra_meta is not None
+            and extra_meta.get("content_profile") == "social_post"
+        )
+
         # Protect image positions before any LLM processing to prevent drift
         image_protected, image_mapping = self._protect_image_positions(markdown)
 
@@ -1767,31 +1776,38 @@ Generate the following fields:
         try:
             result = await self._process_document_combined(protected_content, source)
 
-            fallback = self._fallback_if_boundary_placeholders_missing(
-                result.cleaned_markdown,
-                markdown,
-                mapping,
-                source,
-                "document_process",
-            )
-            if fallback is not None:
-                cleaned = fallback
-            else:
-                # Restore protected content from placeholders, with fallback
-                # Disable "append missing images at end" — image positions are
-                # managed by image_mapping, not by unprotect_content fallback
-                cleaned = self.unprotect_content(
-                    result.cleaned_markdown,
-                    mapping,
-                    protected,
-                    restore_missing_images_at_end=False,
+            if body_verbatim:
+                logger.info(
+                    f"[LLM:{source}] social_post profile: body kept verbatim, "
+                    "LLM result used for metadata only"
                 )
-            cleaned = self.fix_malformed_image_refs(cleaned)
-            cleaned = self._stabilize_paged_markdown(markdown, cleaned, source)
-            # Restore image positions (or fall back to original if placeholders were lost)
-            cleaned = self._restore_images_or_fallback(
-                cleaned, markdown, image_mapping, source, "document_process"
-            )
+                cleaned = markdown
+            else:
+                fallback = self._fallback_if_boundary_placeholders_missing(
+                    result.cleaned_markdown,
+                    markdown,
+                    mapping,
+                    source,
+                    "document_process",
+                )
+                if fallback is not None:
+                    cleaned = fallback
+                else:
+                    # Restore protected content from placeholders, with fallback
+                    # Disable "append missing images at end" — image positions are
+                    # managed by image_mapping, not by unprotect_content fallback
+                    cleaned = self.unprotect_content(
+                        result.cleaned_markdown,
+                        mapping,
+                        protected,
+                        restore_missing_images_at_end=False,
+                    )
+                cleaned = self.fix_malformed_image_refs(cleaned)
+                cleaned = self._stabilize_paged_markdown(markdown, cleaned, source)
+                # Restore image positions (or fall back to original if placeholders were lost)
+                cleaned = self._restore_images_or_fallback(
+                    cleaned, markdown, image_mapping, source, "document_process"
+                )
 
             # Convert Frontmatter to YAML string using utility function
             from markitai.utils.frontmatter import (
@@ -1834,13 +1850,16 @@ Generate the following fields:
 
         # Fallback: Run cleaning only (no longer use generate_frontmatter)
         # Use clean_markdown which has its own protection mechanism
-        try:
-            cleaned = await self.clean_markdown(markdown, context=source)
-        except Exception as clean_err:
-            logger.warning(
-                f"Markdown cleaning failed: {format_error_message(clean_err)}"
-            )
+        if body_verbatim:
             cleaned = markdown
+        else:
+            try:
+                cleaned = await self.clean_markdown(markdown, context=source)
+            except Exception as clean_err:
+                logger.warning(
+                    f"Markdown cleaning failed: {format_error_message(clean_err)}"
+                )
+                cleaned = markdown
 
         # Build fallback frontmatter — prefer title from cleaned content so it
         # stays consistent with any heading corrections made by the cleaner.
