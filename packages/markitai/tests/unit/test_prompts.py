@@ -178,6 +178,30 @@ class TestCleanerModeRules:
         assert "__MARKITAI_IMG_N__" not in prompt
 
 
+class TestDocumentProcessStructureRules:
+    """document_process_system must pin down structure rules weak models miss.
+
+    Regression: claude-agent/haiku flattened quoted-tweet blockquotes and
+    inserted spaces between CJK and Latin characters — both allowed by the
+    old prompt, which neither listed blockquotes as protected nor forbade
+    spacing changes.
+    """
+
+    def test_blockquote_preservation_rule_present(self):
+        from markitai.prompts import PromptManager
+
+        pm = PromptManager()
+        prompt = pm.get_prompt("document_process_system", source="test.md")
+        assert "blockquote" in prompt.lower()
+
+    def test_cjk_spacing_rule_present(self):
+        from markitai.prompts import PromptManager
+
+        pm = PromptManager()
+        prompt = pm.get_prompt("document_process_system", source="test.md")
+        assert "CJK" in prompt
+
+
 class TestVisionUserPromptStructure:
     """document_vision_user must delimit content unambiguously.
 
