@@ -504,6 +504,17 @@ class StageList:
         if not self.enabled:
             return
         self._failed = True
+        if self._active is None:
+            # No active stage (e.g. the fetch stage was already finalized as a
+            # success, then the empty-content guard fails the whole run). With
+            # text, still record a failure line so the checklist shows where it
+            # died; with no text there is nothing to show, so stay a no-op.
+            if text is not None:
+                line = _DoneLine(mark=MARK_ERROR, style="red", text=text, duration=None)
+                self._done.append(line)
+                self._print_static_if_degraded(line)
+                self._refresh()
+            return
         self._finalize_active(text=text, failed=True)
         self._refresh()
 

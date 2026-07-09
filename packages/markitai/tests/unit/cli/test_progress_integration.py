@@ -189,9 +189,11 @@ class TestUrlErrorPath:
                 verbose=False,
             )
 
-        stderr_text = fake_stderr.file.getvalue()  # type: ignore[union-attr]
-        # The failed fetch stage line persisted (file mode persists on stop)
-        assert "Fetching" in stderr_text
+        stderr_text = strip_ansi(fake_stderr.file.getvalue())  # type: ignore[union-attr]
+        # The failed fetch stage line persisted with its failure mark (file
+        # mode persists on stop); the mark distinguishes the persisted line
+        # from a leftover spinner frame, which also contains "Fetching".
+        assert f"{ui.MARK_ERROR} Fetching" in stderr_text
 
 
 class TestUrlLlmStage:

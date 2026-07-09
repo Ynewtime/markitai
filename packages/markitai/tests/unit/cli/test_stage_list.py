@@ -161,6 +161,25 @@ class TestExplicitApi:
             assert stages._done[0].mark == ui.MARK_ERROR
             assert stages._done[0].text == "Enhancing with LLM"
 
+    def test_fail_with_text_but_no_active_stage_appends_line(self) -> None:
+        console = make_tty_console()
+        with ui.StageList(console=console) as stages:
+            stages.advance("fetch", "Fetching...")
+            stages.finalize("Fetched via static")
+            stages.fail("No content extracted")
+            assert len(stages._done) == 2
+            line = stages._done[1]
+            assert line.mark == ui.MARK_ERROR
+            assert line.text == "No content extracted"
+            assert line.duration is None
+
+    def test_fail_without_text_and_no_active_stage_only_sets_failed(self) -> None:
+        console = make_tty_console()
+        with ui.StageList(console=console) as stages:
+            stages.fail()
+            assert stages._done == []
+            assert stages._failed is True
+
     def test_calls_before_start_or_when_disabled_are_noops(self) -> None:
         console = make_tty_console()
         stages = ui.StageList(console=console, enabled=False)
