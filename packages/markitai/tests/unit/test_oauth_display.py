@@ -227,9 +227,8 @@ class TestShowDeviceCodeStderr:
     def test_show_device_code_writes_to_stderr_console(self) -> None:
         """show_device_code outputs via the provided console (stderr by default).
 
-        Regression: when OutputManager._enabled was False, device codes were
-        silently swallowed because show_device_code used OutputManager.print().
-        Now it writes directly to stderr console.
+        Regression: device codes were once silently swallowed by an output
+        buffer. show_device_code now writes directly to the stderr console.
         """
         console, buf = _make_test_console()
         show_device_code(
@@ -245,7 +244,7 @@ class TestShowDeviceCodeStderr:
         """DeviceCodeInterceptor renders device codes through its console.
 
         Regression: interceptor must display via stderr console so that codes
-        are visible even when OutputManager is disabled.
+        are visible regardless of stdout mode.
         """
         console, buf = _make_test_console()
         interceptor = DeviceCodeInterceptor(console=console)

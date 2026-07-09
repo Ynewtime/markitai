@@ -82,7 +82,8 @@ def _quick_init(target: Path) -> None:
     # Generate .env template if not exists
     _ensure_env_template()
 
-    with ui.ConversionStatus("Detecting LLM providers..."):
+    with ui.StageList(transient=True) as stages:
+        stages.advance("detect", "Detecting LLM providers...")
         providers = _detect_providers()
 
     if target.exists():
@@ -297,17 +298,18 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
     # Run independent checks concurrently (dependency probes and provider
     # detection don't depend on each other); a transient stderr spinner
     # gives feedback until the first sections render.
-    spinner = ui.ConversionStatus("Checking dependencies...")
-    spinner.start()
+    stages = ui.StageList(transient=True)
+    stages.start()
     try:
+        stages.advance("init", "Checking dependencies...")
         with ThreadPoolExecutor(max_workers=2) as executor:
             deps_future = executor.submit(_check_deps)
             providers_future = executor.submit(_detect_providers)
             deps = deps_future.result()
-            spinner.update("Detecting LLM providers...")
+            stages.update_text("Detecting LLM providers...")
             providers = providers_future.result()
     finally:
-        spinner.stop()
+        stages.stop()
 
     # Phase 1: Check dependencies
     ui.section("Dependencies")

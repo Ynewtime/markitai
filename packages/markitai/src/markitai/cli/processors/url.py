@@ -29,7 +29,6 @@ from markitai.utils.cli_helpers import (
 )
 from markitai.utils.output import resolve_output_path
 from markitai.utils.paths import ensure_dir, ensure_screenshots_dir
-from markitai.utils.progress import ProgressReporter
 from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import (
     add_basic_frontmatter as _add_basic_frontmatter,
@@ -77,7 +76,6 @@ async def process_url(
     log_file_path: Path | None = None,
     fetch_strategy: FetchStrategy | None = None,
     explicit_fetch_strategy: bool = False,
-    output_manager: Any = None,
     quiet: bool = False,
 ) -> None:
     """Process a URL and convert to Markdown.
@@ -189,18 +187,14 @@ async def process_url(
     llm_cost = 0.0
     llm_usage: dict[str, dict[str, Any]] = {}
 
-    # Progress reporter: suppress in stdout mode (like single file)
-    progress = ProgressReporter(
-        enabled=not stdout_mode and not verbose, output_manager=output_manager
-    )
-
-    # Live status spinner (stderr, transient) for the long fetch/convert/LLM
-    # phases. Suppressed for --quiet, verbose (-v streams logs; a spinner
-    # would interleave badly) and stdout mode (the OutputManager owns stderr
-    # there); ConversionStatus itself no-ops when stderr is not a TTY.
-    status = ui.ConversionStatus(
-        f"Fetching {ui.truncate(url, 60)}...",
-        enabled=not stdout_mode and not quiet and not verbose,
+    # Live multi-stage progress list (stderr). Enabled in BOTH file and
+    # stdout modes — stdout mode renders transiently (erased before the
+    # markdown hits stdout), file mode persists the final list. Suppressed
+    # for --quiet and -v/verbose (verbose already streams logs to stderr).
+    # StageList itself degrades on non-TTY stderr.
+    stages = ui.StageList(
+        enabled=not quiet and not verbose,
+        transient=stdout_mode,
     )
 
     # Track cache hit for reporting
@@ -216,8 +210,8 @@ async def process_url(
 
     try:
         logger.info(f"Fetching URL: {url} (strategy: {fetch_strategy.value})")
-        progress.start_spinner(f"Fetching {url}...")
-        status.start()
+        stages.start()
+        stages.advance("fetch", f"Fetching {ui.truncate(url, 60)}...")
 
         # Fetch URL using the configured strategy
         # Prepare screenshot options if enabled
@@ -247,8 +241,13 @@ async def process_url(
             source_extra_meta = fetch_result.metadata.get("source_frontmatter")
             cache_note = " (cached)" if fetch_cache_hit else ""
             logger.info(f"Fetched via {used_strategy}{cache_note}: {url}")
+            stages.finalize(
+                f"Fetched via {used_strategy}",
+                annotation="cached" if fetch_cache_hit else None,
+            )
         except JinaRateLimitError:
-            status.stop()
+            stages.fail()
+            stages.stop()
             ui.error(
                 "Jina Reader rate limit exceeded (free tier: 20 RPM)",
                 console=diag_console,
@@ -259,12 +258,14 @@ async def process_url(
             )
             raise SystemExit(1)
         except FetchError as e:
-            status.stop()
+            stages.fail()
+            stages.stop()
             _print_multiline_error(str(e), diag_console)
             raise SystemExit(1)
 
         if not original_markdown.strip():
-            status.stop()
+            stages.fail("No content extracted")
+            stages.stop()
             ui.error(f"No content extracted from URL: {url}", console=diag_console)
             ui.step(
                 "The page may be empty, require JavaScript, "
@@ -278,14 +279,13 @@ async def process_url(
         output_file = resolve_output_path(base_output_file, cfg.output.on_conflict)
 
         if output_file is None:
-            status.stop()
+            stages.stop()
             logger.info(f"[SKIP] Output exists: {base_output_file}")
             console.print(f"[yellow]Skipped (exists):[/yellow] {base_output_file}")
             return
 
         # original_markdown was already set from fetch_result.content above
         markdown_for_llm = original_markdown
-        progress.log(f"Fetched via {used_strategy}: {url}")
 
         # Download images from URLs if --alt or --desc is enabled
         # Only update markdown_for_llm, keep original_markdown unchanged
@@ -296,12 +296,11 @@ async def process_url(
 
         # Log screenshot capture if successful
         if screenshot_path and screenshot_path.exists():
-            progress.log(f"Screenshot captured: {screenshot_path.name}")
+            stages.note(f"Screenshot captured: {screenshot_path.name}")
             logger.info(f"Screenshot saved: {screenshot_path}")
 
         if cfg.image.alt_enabled or cfg.image.desc_enabled:
-            progress.start_spinner("Downloading images...")
-            status.update("Downloading images...")
+            stages.advance("images", "Downloading images...")
             download_result = await download_url_images(
                 markdown=original_markdown,
                 output_dir=effective_output_dir,
@@ -320,17 +319,16 @@ async def process_url(
                     logger.warning(f"Failed to download image: {failed_url}")
 
             if downloaded_images:
-                progress.log(f"Downloaded {len(downloaded_images)} images")
+                stages.finalize(f"Downloaded {len(downloaded_images)} images")
             else:
-                progress.log("No images to download")
+                stages.finalize("No images to download")
 
         # Check for screenshot-only mode without LLM
         # --screenshot-only without --llm: just save screenshot, no .md output
         has_screenshot = screenshot_path is not None and screenshot_path.exists()
         if cfg.screenshot.screenshot_only and not cfg.llm.enabled:
-            status.stop()
+            stages.stop()
             if has_screenshot and screenshot_path is not None:
-                progress.log(f"Screenshot saved: {screenshot_path.name}")
                 console.print(f"[green]Screenshot saved:[/green] {screenshot_path}")
             else:
                 diag_console.print(
@@ -384,7 +382,12 @@ async def process_url(
             base_content = original_markdown
         final_content = base_content
         if cfg.llm.enabled:
-            status.update("Enhancing with LLM...")
+            # Pin the LLM stage BEFORE the first [LLM] log: the loguru
+            # bridge would otherwise advance to an unpinned bridge stage
+            # that the next explicit advance finalizes, leaving a spurious
+            # ~0s "Enhancing with LLM" done line. Branches refine the text
+            # via update_text (same stage; the timer keeps running).
+            stages.advance("llm", "Enhancing with LLM...", pin=True)
             logger.info(f"[LLM] Processing URL content: {url}")
 
             # Check if image analysis should run
@@ -400,7 +403,7 @@ async def process_url(
 
             if use_screenshot_only and screenshot_path:
                 # Screenshot-only mode: extract content purely from screenshot
-                progress.start_spinner("Extracting content from screenshot...")
+                stages.update_text("Extracting content from screenshot...")
 
                 _, doc_cost, doc_usage = await process_url_screenshot_only(
                     screenshot_path,
@@ -428,7 +431,7 @@ async def process_url(
                     )
                     llm_cost += image_cost
                     _merge_llm_usage(llm_usage, image_usage)
-                progress.log("LLM processing complete (screenshot-only)")
+                stages.finalize("LLM enhanced (screenshot-only)")
 
             # Check for multi-source content (static + browser + screenshot)
             elif has_screenshot:
@@ -440,9 +443,7 @@ async def process_url(
 
                 if use_vision_enhancement and screenshot_path:
                     # Multi-source URL with screenshot: use vision LLM
-                    progress.start_spinner(
-                        "Processing with Vision LLM (multi-source)..."
-                    )
+                    stages.update_text("Processing with Vision LLM...")
                     multi_source_content = build_multi_source_content(
                         fetch_result.static_content,
                         fetch_result.browser_content,
@@ -478,11 +479,11 @@ async def process_url(
                         )
                         llm_cost += image_cost
                         _merge_llm_usage(llm_usage, image_usage)
-                    progress.log("LLM processing complete (vision enhanced)")
+                    stages.finalize("LLM enhanced (vision)")
                 else:
                     # Has screenshot but vision skipped (e.g. pure mode)
                     # Fall through to standard text-only LLM processing
-                    progress.start_spinner("Processing with LLM...")
+                    # (hoisted stage text already reads "Enhancing with LLM...")
                     _, doc_cost, doc_usage = await process_with_llm(
                         markdown_for_llm,
                         url,
@@ -495,11 +496,11 @@ async def process_url(
                     )
                     llm_cost += doc_cost
                     _merge_llm_usage(llm_usage, doc_usage)
-                    progress.log("LLM processing complete")
+                    stages.finalize("LLM enhanced")
 
             elif should_analyze_images:
                 # Standard processing with image analysis (no screenshot/vision)
-                progress.start_spinner("Processing document and images with LLM...")
+                stages.update_text("Enhancing with LLM (document + images)...")
 
                 # Create event for signaling .llm.md readiness
                 llm_ready_event = asyncio.Event()
@@ -542,10 +543,10 @@ async def process_url(
                 llm_cost += doc_cost + image_cost
                 _merge_llm_usage(llm_usage, doc_usage)
                 _merge_llm_usage(llm_usage, image_usage)
-                progress.log("LLM processing complete (document + images)")
+                stages.finalize("LLM enhanced (document + images)")
             else:
                 # Only document processing, no images to analyze, no screenshot
-                progress.start_spinner("Processing with LLM...")
+                # (hoisted stage text already reads "Enhancing with LLM...")
                 _, doc_cost, doc_usage = await process_with_llm(
                     markdown_for_llm,
                     url,  # Use URL as source identifier
@@ -558,7 +559,7 @@ async def process_url(
                 )
                 llm_cost += doc_cost
                 _merge_llm_usage(llm_usage, doc_usage)
-                progress.log("LLM processing complete")
+                stages.finalize("LLM enhanced")
 
             # Read the LLM-processed content for stdout output
             llm_output_file = output_file.with_suffix(".llm.md")
@@ -569,10 +570,9 @@ async def process_url(
         if img_analysis and cfg.image.desc_enabled:
             write_images_json(effective_output_dir, [img_analysis])
 
-        # Stop the live status and clear progress output before printing
-        # the final result (status is transient; rich erases its frame)
-        status.stop()
-        progress.clear_and_finish()
+        # Stop the live stage list before printing the final result
+        # (transient in stdout mode; rich erases its frame)
+        stages.stop()
 
         if stdout_mode:
             from markitai.cli.processors.file import (
@@ -760,12 +760,13 @@ async def process_url(
     except SystemExit:
         raise
     except Exception as e:
-        status.stop()
+        stages.fail()
+        stages.stop()
         _print_multiline_error(str(e), diag_console)
         raise SystemExit(1)
     finally:
-        # Safety net: ensure spinner is gone on every exit path
-        status.stop()
+        # Safety net: ensure the stage list is stopped on every exit path
+        stages.stop()
         # Cleanup temp directory for stdout mode
         if stdout_mode and temp_dir is not None:
             import shutil
