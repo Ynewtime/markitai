@@ -12,7 +12,7 @@ import re
 import time
 from collections.abc import Awaitable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, get_origin
 
 import instructor
 import yaml
@@ -151,21 +151,61 @@ def _try_repair_instructor_response(
     if repaired is None:
         return None
 
-    try:
-        import json
+    import json
 
+    try:
         data = json.loads(repaired)
-        result = response_model.model_validate(data)
-        logger.info(
-            f"[JSON repair] Successfully repaired malformed JSON "
-            f"for {response_model.__name__}"
-        )
-        return result, last
     except Exception:
         logger.debug(
             f"[JSON repair] Repair attempt failed for {response_model.__name__}"
         )
         return None
+
+    # Valid JSON may still have the wrong shape: small models return the
+    # bare payload without the wrapper object (e.g. one image result
+    # instead of {"images": [...]}). Try the wrapped form as well.
+    candidates: list[Any] = [data]
+    wrapped = _wrap_bare_payload_for_model(data, response_model)
+    if wrapped is not None:
+        candidates.append(wrapped)
+
+    for candidate in candidates:
+        try:
+            result = response_model.model_validate(candidate)
+        except Exception:
+            continue
+        logger.info(
+            f"[JSON repair] Successfully repaired malformed JSON "
+            f"for {response_model.__name__}"
+        )
+        return result, last
+
+    logger.debug(f"[JSON repair] Repair attempt failed for {response_model.__name__}")
+    return None
+
+
+def _wrap_bare_payload_for_model(
+    data: Any, response_model: type
+) -> dict[str, Any] | None:
+    """Wrap a bare item/list into the model's single required list field.
+
+    Only applies to wrapper models like BatchImageAnalysisResult, whose sole
+    required field is a list; returns None for anything else.
+    """
+    fields = getattr(response_model, "model_fields", None)
+    if not fields:
+        return None
+    required = [(name, f) for name, f in fields.items() if f.is_required()]
+    if len(required) != 1:
+        return None
+    field_name, field = required[0]
+    if get_origin(field.annotation) is not list:
+        return None
+    if isinstance(data, list):
+        return {field_name: data}
+    if isinstance(data, dict) and field_name not in data:
+        return {field_name: [data]}
+    return None
 
 
 def _find_non_retryable_provider_error(
