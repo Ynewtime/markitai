@@ -240,3 +240,94 @@ class TestUrlLlmStage:
         # A done line renders as "✓ Enhancing with LLM (0.0s)"; the active
         # spinner line ("Enhancing with LLM...") has no mark and no parens.
         assert f"{ui.MARK_SUCCESS} Enhancing with LLM (" not in stderr_text
+
+
+class TestFileProcessorStageList:
+    """process_single_file drives StageList; bridge advances stages."""
+
+    async def test_file_mode_persists_convert_stage(
+        self, tmp_path: Path, capsys, monkeypatch
+    ) -> None:
+        from markitai.cli.processors.file import process_single_file
+
+        fake_stderr = make_tty_console()
+        monkeypatch.setattr("markitai.cli.ui.get_stderr_console", lambda: fake_stderr)
+
+        input_file = tmp_path / "input.txt"
+        input_file.write_text("hello world\n", encoding="utf-8")
+        out_dir = tmp_path / "out"
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        await process_single_file(
+            input_path=input_file,
+            output_dir=out_dir,
+            cfg=cfg,
+            dry_run=False,
+            verbose=False,
+            quiet=False,
+        )
+
+        stderr_text = fake_stderr.file.getvalue()  # type: ignore[union-attr]
+        # Converted stage line persisted with a duration
+        assert "Converted input.txt" in stderr_text
+        assert (out_dir / "input.md").exists()
+        captured = capsys.readouterr()
+        assert HIDE_CURSOR not in captured.out
+
+    async def test_stdout_mode_is_transient_but_active(
+        self, tmp_path: Path, capsys, monkeypatch
+    ) -> None:
+        from markitai.cli.processors.file import process_single_file
+
+        fake_stderr = make_tty_console()
+        monkeypatch.setattr("markitai.cli.ui.get_stderr_console", lambda: fake_stderr)
+
+        input_file = tmp_path / "input.txt"
+        input_file.write_text("hello world\n", encoding="utf-8")
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        await process_single_file(
+            input_path=input_file,
+            output_dir=None,  # stdout mode
+            cfg=cfg,
+            dry_run=False,
+            verbose=False,
+            quiet=False,
+        )
+
+        # Live rendered on stderr (the fix: stdout mode is no longer silent)
+        assert HIDE_CURSOR in fake_stderr.file.getvalue()  # type: ignore[union-attr]
+        captured = capsys.readouterr()
+        assert "hello world" in captured.out
+        assert HIDE_CURSOR not in captured.out
+
+    async def test_quiet_mode_fully_silent(self, tmp_path: Path, monkeypatch) -> None:
+        from markitai.cli.processors.file import process_single_file
+
+        fake_stderr = make_tty_console()
+        monkeypatch.setattr("markitai.cli.ui.get_stderr_console", lambda: fake_stderr)
+
+        input_file = tmp_path / "input.txt"
+        input_file.write_text("hello world\n", encoding="utf-8")
+        out_dir = tmp_path / "out"
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        await process_single_file(
+            input_path=input_file,
+            output_dir=out_dir,
+            cfg=cfg,
+            dry_run=False,
+            verbose=False,
+            quiet=True,
+        )
+
+        assert fake_stderr.file.getvalue() == ""  # type: ignore[union-attr]

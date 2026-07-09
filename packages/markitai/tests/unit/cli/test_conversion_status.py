@@ -3,7 +3,6 @@
 Covers:
 - the loguru log -> spinner stage-text bridge (stage_from_log_record)
 - TTY / quiet / verbose gating
-- stdout purity: spinner frames only ever go to stderr, never stdout
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import io
 import time
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -19,8 +17,6 @@ from loguru import logger
 from rich.console import Console
 
 from markitai.cli import ui
-from markitai.cli.processors.file import process_single_file
-from markitai.config import MarkitaiConfig
 
 # ANSI hide-cursor sequence emitted by rich Status/Live on a terminal;
 # a reliable marker that the spinner rendered on a given stream.
@@ -236,60 +232,3 @@ class TestConversionStatusGating:
         with ui.ConversionStatus("Fetching...", console=console) as status:
             assert status.active
         assert HIDE_CURSOR in console.file.getvalue()  # type: ignore[union-attr]
-
-
-class TestStdoutStaysPure:
-    """Integration: spinner frames never leak into stdout."""
-
-    async def test_file_conversion_spinner_on_stderr_only(
-        self, tmp_path: Path, capsys, monkeypatch
-    ) -> None:
-        fake_stderr = make_tty_console()
-        monkeypatch.setattr("markitai.cli.ui.get_stderr_console", lambda: fake_stderr)
-
-        input_file = tmp_path / "input.txt"
-        input_file.write_text("hello world\n", encoding="utf-8")
-        out_dir = tmp_path / "out"
-
-        cfg = MarkitaiConfig()
-        cfg.llm.enabled = False
-        cfg.cache.enabled = False
-
-        await process_single_file(
-            input_path=input_file,
-            output_dir=out_dir,
-            cfg=cfg,
-            dry_run=False,
-            verbose=False,
-            quiet=False,
-        )
-
-        captured = capsys.readouterr()
-        assert HIDE_CURSOR in fake_stderr.file.getvalue()  # type: ignore[union-attr]
-        assert HIDE_CURSOR not in captured.out
-        assert (out_dir / "input.md").exists()
-
-    async def test_file_conversion_quiet_shows_no_spinner(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        fake_stderr = make_tty_console()
-        monkeypatch.setattr("markitai.cli.ui.get_stderr_console", lambda: fake_stderr)
-
-        input_file = tmp_path / "input.txt"
-        input_file.write_text("hello world\n", encoding="utf-8")
-        out_dir = tmp_path / "out"
-
-        cfg = MarkitaiConfig()
-        cfg.llm.enabled = False
-        cfg.cache.enabled = False
-
-        await process_single_file(
-            input_path=input_file,
-            output_dir=out_dir,
-            cfg=cfg,
-            dry_run=False,
-            verbose=False,
-            quiet=True,
-        )
-
-        assert fake_stderr.file.getvalue() == ""  # type: ignore[union-attr]
