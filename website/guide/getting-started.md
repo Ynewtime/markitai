@@ -13,12 +13,14 @@ These are required for specific features:
 
 | Dependency | Required For | Installation |
 |------------|--------------|--------------|
-| **Playwright** | `--playwright` (SPA rendering) | `uv pip install markitai[browser]`, browser requires `uv run playwright install chromium` |
-| **FFmpeg** | Audio/video processing | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
-| **Jina API Key** | `--jina` (URL conversion) | Set `JINA_API_KEY` env var |
+| **Playwright** | `-s playwright` (SPA rendering) | `uv pip install markitai[browser]`, browser requires `uv run playwright install chromium` |
+| **FFmpeg** | Checked by `doctor`/`init` (transitive `markitdown[all]` dependency); markitai does not currently register any audio/video conversion format | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
+| **Jina API Key** | `-s jina` (URL conversion) | Set `JINA_API_KEY` env var |
 | **LLM API Key** | `--llm` (AI enhancement) | Set `OPENAI_API_KEY` or provider-specific key. Subscription providers (`chatgpt/`, `claude-agent/`, `copilot/`) use CLI/OAuth auth instead |
-| **Cloudflare** | `--cloudflare` (cloud rendering & conversion) | Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` env vars |
+| **Cloudflare** | `-s cloudflare` (cloud rendering & conversion) | Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` env vars |
 | **CairoSVG** | High-quality SVG rendering | `uv pip install markitai[svg]` |
+| **pillow-heif** | HEIC/HEIF/AVIF image input | `uv pip install markitai[heif]` |
+| **kreuzberg** | `.xml`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex`, `.odt`, `.ods` conversion | `uv pip install markitai[kreuzberg]` (included in `[all]`) |
 
 ::: tip Browser Automation
 For SPA websites (Twitter, React apps, etc.), Playwright is used automatically. Before first use, install the browser:
@@ -27,7 +29,7 @@ uv run playwright install chromium
 # Linux also requires system dependencies:
 uv run playwright install-deps chromium
 ```
-Then use `--playwright` flag to force browser rendering.
+Then use `-s playwright` to force browser rendering.
 :::
 
 ## Installation
@@ -47,15 +49,14 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 :::
 
 ::: warning Security Notice
-- The script will warn you if running as root/Administrator
-- All installations require explicit confirmation (default: No)
-- Remote script execution requires two-step confirmation
+- The script checks for root/Administrator and asks before continuing
+- Each component prompts before installing — uv and the Playwright browser default to Yes; LibreOffice, FFmpeg, and the Claude/Copilot CLIs default to No
 :::
 
 The script will:
-- Check for Python 3.11-3.14
-- Install [uv](https://docs.astral.sh/uv/) package manager (requires confirmation)
-- Install markitai with browser automation support (other optional extras installed on confirmation)
+- Check for / auto-install Python 3.11-3.14 (no prompt)
+- Install [uv](https://docs.astral.sh/uv/) package manager (confirmation, defaults to Yes)
+- Install markitai itself, plus its pip-only extras (browser automation, `extra-fetch`, `kreuzberg`, `svg`, `heif`), with no further prompts; LibreOffice, FFmpeg, and the Claude/Copilot CLIs are offered afterward with their own confirmation (defaults to No)
 
 #### Version Pinning
 
@@ -200,17 +201,21 @@ markitai doctor --fix
 
 ```
 output/
-├── document.docx.md        # Basic Markdown (skipped in --llm mode unless --keep-base)
-├── document.docx.llm.md    # LLM-enhanced version (when --llm is used)
-├── .markitai/               # Metadata namespace
+├── document.pdf.md          # Basic Markdown (skipped in --llm mode unless --keep-base)
+├── document.pdf.llm.md      # LLM-enhanced version (when --llm is used)
+├── .markitai/                 # Metadata namespace
 │   ├── assets/
-│   │   ├── document.docx.0001.jpg
-│   │   └── images.json     # Image descriptions
-│   ├── screenshots/         # Page screenshots (when --screenshot is used)
-│   │   └── document.docx.0001.png
-│   ├── reports/             # Conversion reports (JSON)
-│   └── states/              # Batch state files (for --resume)
+│   │   ├── document.docx.0001.jpg   # Images embedded in the source document
+│   │   └── images.json      # Image descriptions
+│   ├── screenshots/          # Page/slide screenshots (PDF/PPTX only; full-page for URLs; --screenshot)
+│   │   └── document.pdf.page0001.jpg
+│   ├── reports/               # Conversion reports (JSON) — batch/URL-batch runs by default, or when output.report = true
+│   └── states/                # Batch state files (for --resume)
 ```
+
+::: tip
+The output filename appends `.md` to the full input filename: `document.docx` → `document.docx.md` (`document.docx.llm.md` with `--llm`). The source format stays visible and distinct inputs (e.g. `report.pdf` and `report.docx`) never collide.
+:::
 
 ::: tip
 In `--llm` mode, only `.llm.md` is written by default. Use `--keep-base` to also write the base `.md` file.
@@ -223,7 +228,7 @@ In `--llm` mode, only `.llm.md` is written by default. Use `--keep-base` to also
 | Office | `.docx`, `.doc`, `.pptx`, `.ppt`, `.xlsx`, `.xls`, `.odt`, `.ods`, `.numbers` |
 | PDF | `.pdf` |
 | Text / Markup / Structured Data | `.txt`, `.md`, `.markdown`, `.html`, `.htm`, `.xhtml`, `.xml`, `.csv`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex` |
-| Images | `.jpg`, `.jpeg`, `.png`, `.webp`, `.svg`, `.gif`, `.bmp`, `.tiff`, `.tif` |
+| Images | `.jpg`, `.jpeg`, `.png`, `.webp`, `.svg`, `.gif`, `.bmp`, `.tiff`, `.tif`, `.heic`, `.heif`, `.avif` (last three need `markitai[heif]`) |
 | Other Documents | `.epub`, `.eml`, `.msg`, `.ipynb` |
 | URLs | `http://`, `https://` |
 

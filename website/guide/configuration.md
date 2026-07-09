@@ -92,13 +92,14 @@ markitai config validate ./markitai.json    # Validate specific file
       "min_area": 5000,
       "deduplicate": true
     },
-    "stdout_persist": false,
+    "stdout_persist": true,
     "stdout_persist_dir": "~/.markitai/assets",
     "stdout_fetch_external": false
   },
   "ocr": {
     "enabled": false,
-    "lang": "en"
+    "lang": "en",
+    "per_page_routing": true
   },
   "screenshot": {
     "enabled": false,
@@ -110,6 +111,7 @@ markitai config validate ./markitai.json    # Validate specific file
   },
   "cache": {
     "enabled": true,
+    "no_cache": false,
     "no_cache_patterns": [],
     "max_size_bytes": 536870912,
     "global_dir": "~/.markitai"
@@ -124,6 +126,7 @@ markitai config validate ./markitai.json    # Validate specific file
   },
   "fetch": {
     "strategy": "auto",
+    "remote_consent": "ask",
     "kreuzberg_convert_enabled": false,
     "defuddle": {
       "timeout": 30,
@@ -176,7 +179,8 @@ markitai config validate ./markitai.json    # Validate specific file
   "output": {
     "dir": null,
     "on_conflict": "rename",
-    "allow_symlinks": false
+    "allow_symlinks": false,
+    "report": null
   },
   "log": {
     "level": "INFO",
@@ -184,6 +188,9 @@ markitai config validate ./markitai.json    # Validate specific file
     "dir": null,
     "rotation": "10 MB",
     "retention": "7 days"
+  },
+  "security": {
+    "pdf_sanitize": "warn"
   },
   "prompts": {
     "dir": "~/.markitai/prompts"
@@ -220,6 +227,7 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 | `MARKITAI_STATIC_HTTP` | Static HTTP backend: `httpx` (default) or `curl_cffi` (TLS impersonation) |
 | `MARKITAI_LANG` | CLI language override (`en` or `zh`) |
 | `MARKITAI_PURE` | Enable pure mode (`1`, `true`, or `yes`) |
+| `MARKITAI_NO_REMOTE_FETCH` | Force `fetch.remote_consent` to `never` (`1`, `true`, or `yes`) |
 | `MODEL` | Single-model override when no `model_list` configured |
 
 ### `.env` File Loading
@@ -434,6 +442,31 @@ To explicitly override auto-detection, set `supports_vision`:
 }
 ```
 
+### Model Token Limits
+
+Both `litellm_params` and `model_info` accept optional token-limit overrides:
+
+```json
+{
+  "model_name": "default",
+  "litellm_params": {
+    "model": "gemini/gemini-3.1-flash-lite-preview",
+    "api_key": "env:GEMINI_API_KEY",
+    "max_tokens": 8192
+  },
+  "model_info": {
+    "max_tokens": 8192,
+    "max_input_tokens": 1000000
+  }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|--------------|
+| `litellm_params.max_tokens` | `null` | Overrides the max **output** tokens requested per call for this model |
+| `model_info.max_tokens` | `null` | Max output tokens metadata; auto-detected from litellm if omitted |
+| `model_info.max_input_tokens` | `null` | Max input/context tokens metadata; auto-detected from litellm if omitted |
+
 ### Router Settings
 
 Configure how Markitai routes requests across multiple models:
@@ -455,9 +488,10 @@ Configure how Markitai routes requests across multiple models:
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
 | `routing_strategy` | `simple-shuffle`, `least-busy`, `usage-based-routing`, `latency-based-routing` | `simple-shuffle` | How to select models |
-| `num_retries` | 0-10 | 2 | Retry count on failure |
+| `num_retries` | ≥0 | 2 | Retry count on failure |
 | `timeout` | seconds | 120 | Request timeout (base value for adaptive calculation) |
-| `concurrency` | 1-20 | 10 | Max concurrent LLM requests |
+| `fallbacks` | list | `[]` | LiteLLM Router fallback model groups |
+| `concurrency` | ≥1 | 10 | Max concurrent LLM requests |
 
 #### Model Weight
 
@@ -480,7 +514,7 @@ Each model in `model_list` accepts a `weight` parameter in `litellm_params` to c
 | `weight: 1` (default) | Normal priority |
 | `weight: 10` | 10x more likely to be selected than weight=1 models |
 
-Set `weight: 0` to temporarily disable a model without removing its configuration. At least one model must have `weight > 0`.
+Set `weight: 0` to temporarily disable a model without removing its configuration. At least one model must have `weight > 0` — this is enforced when the LLM router actually starts (first LLM use), not by `markitai config validate`, so an all-zero-weight config will validate cleanly but fail at first use.
 
 ### Adaptive Timeout
 
@@ -490,15 +524,15 @@ Local providers (`claude-agent/`, `copilot/`, `chatgpt/`) use **adaptive timeout
 - Factors: prompt length, image presence/count, expected output tokens
 - Formula:
   1. `timeout = 60 + (prompt_chars / 500)`
-  2. If images: `timeout *= 1.5`, then add `(extra_images - 1) * 10s` for multiple images
-  3. If expected output tokens provided: add `tokens / 4`
+  2. If expected output tokens provided: add `tokens / 4`
+  3. If images: `timeout *= 1.5` (this also scales the output-token term above), then add `(extra_images - 1) * 10s` for multiple images
   4. Clamp to [60, 600] seconds
 
 This prevents timeouts on large documents while keeping short requests responsive.
 
 ### Prompt Caching (Claude Agent)
 
-Claude Agent provider automatically enables **prompt caching** for system prompts longer than 4KB. This reduces API costs by caching frequently-used system prompt prefixes.
+Claude Agent provider automatically enables **prompt caching** for system prompts of 4096 characters (~4KB) or more. This reduces API costs by caching frequently-used system prompt prefixes.
 
 ::: tip
 Prompt caching is transparent - no configuration needed. View cache statistics with `markitai cache stats --verbose`.
@@ -541,7 +575,7 @@ Control how images are processed and compressed:
 | `filter.min_height` | `50` | Skip images shorter than this |
 | `filter.min_area` | `5000` | Skip images with area below this |
 | `filter.deduplicate` | `true` | Remove duplicate images |
-| `stdout_persist` | `false` | Save piped images to persistent asset store |
+| `stdout_persist` | `true` | Save piped images to persistent asset store |
 | `stdout_persist_dir` | `~/.markitai/assets` | Directory for persistent image storage |
 | `stdout_fetch_external` | `false` | Download external image URLs in stdout mode |
 
@@ -622,15 +656,17 @@ Configure Optical Character Recognition for scanned documents. Markitai uses [Ra
 {
   "ocr": {
     "enabled": false,
-    "lang": "en"
+    "lang": "en",
+    "per_page_routing": true
   }
 }
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | `false` | Enable OCR for PDF |
+| `enabled` | `false` | Enable OCR for PDF and standalone images |
 | `lang` | `en` | RapidOCR language code |
+| `per_page_routing` | `true` | With `--ocr`, keep the native text layer for pages that don't look scanned/garbled and OCR only the remaining pages. Disable to OCR every page |
 
 Supported language codes:
 - `en` - English
@@ -683,6 +719,7 @@ Configure how URLs are fetched:
 {
   "fetch": {
     "strategy": "auto",
+    "remote_consent": "ask",
     "playwright": {
       "timeout": 30000,
       "wait_for": "domcontentloaded",
@@ -700,7 +737,7 @@ Configure how URLs are fetched:
       "api_token": "env:CLOUDFLARE_API_TOKEN",
       "account_id": "env:CLOUDFLARE_ACCOUNT_ID"
     },
-    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
+    "fallback_patterns": ["twitter.com", "x.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   }
 }
 ```
@@ -709,12 +746,24 @@ Configure how URLs are fetched:
 
 | Strategy | Description |
 |----------|-------------|
-| `auto` | Auto-detect: tries strategies in priority order (defuddle → jina → static → playwright → cloudflare); SPA domains promote playwright |
+| `auto` | Auto-detect: local-first priority order (static → playwright → defuddle → jina → cloudflare); known SPA/JS-heavy domains use playwright → defuddle → jina → cloudflare → static instead — see [Fetch Policy Guide](/guide/fetch-policy) |
 | `static` | Use static HTTP fetch with native webextract (fast, no JS) |
 | `defuddle` | Use Defuddle API for clean content extraction (free, no auth) |
 | `playwright` | Use Playwright for JS-rendered pages (SPA support) |
 | `jina` | Use Jina Reader API |
 | `cloudflare` | Use Cloudflare Browser Rendering `/content` API (rendered HTML, extracted locally) |
+
+`fetch.kreuzberg_convert_enabled` (default `false`) forces the kreuzberg converter for **file** conversion — the config equivalent of the `-b kreuzberg` CLI flag (see [CLI Reference](/guide/cli#b-backend-name)).
+
+### Remote Fetch Consent
+
+URLs are never sent to third-party extraction services (defuddle.md, Jina, Cloudflare) in the `auto` chain without consent:
+
+| Setting | Options | Default | Description |
+|---------|---------|---------|-------------|
+| `fetch.remote_consent` | `ask`, `always`, `never` | `ask` | `ask`: prompt once per run on an interactive TTY, otherwise skip remote services and stay local-only; `always`: use remote services without asking; `never`: local strategies only |
+
+`MARKITAI_NO_REMOTE_FETCH=1` (or `true`/`yes`) overrides this to `never` regardless of config. Explicitly choosing a remote strategy (`-s defuddle`, `-s jina`, or `-s cloudflare`) counts as consent for that run.
 
 ### Playwright Settings
 
@@ -771,7 +820,7 @@ Defuddle is free and requires no API key or authentication. It's a good default 
 
 Cloudflare provides two capabilities through a unified `--cloudflare` flag:
 
-1. **Browser Rendering** (`/markdown` API) for URL-to-markdown conversion
+1. **Browser Rendering** (`/content` API — fetches rendered HTML, then extracts locally through the same native webextract pipeline as every other strategy) for URL-to-markdown conversion
 2. **Workers AI toMarkdown** for file-to-markdown conversion (PDF, Office, CSV, XML, images)
 
 ```json
@@ -821,7 +870,7 @@ Browser Rendering is available on the Free plan. Workers AI toMarkdown is free f
    | Permission | Access | Required for |
    |------------|--------|--------------|
    | Account / Cloudflare Workers AI | Read | `toMarkdown` file conversion |
-   | Account / Browser Rendering | Edit | `/markdown` URL rendering |
+   | Account / Browser Rendering | Edit | `/content` URL rendering |
 
    Set **Account Resources** to your target account, then create and copy the token.
 
@@ -883,10 +932,14 @@ Configure per-domain fetch overrides for sites with specific requirements:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `wait_for_selector` | `null` | CSS selector to wait for before content extraction |
-| `wait_for` | `null` | Wait condition override: `load`, `domcontentloaded`, `networkidle` |
-| `extra_wait_ms` | `null` | Extra wait time override (ms) |
+| `wait_for` | `null` | Wait condition override: `load`, `domcontentloaded`, `networkidle` (unset inherits the global `fetch.playwright.wait_for`) |
+| `extra_wait_ms` | `null` | Extra wait time override in ms (unset inherits the global `fetch.playwright.extra_wait_ms`) |
 | `prefer_strategy` | `null` | Preferred strategy: `static`, `defuddle`, `playwright`, `cloudflare`, `jina` |
 | `strategy_priority` | `null` | Custom strategy order for this domain (overrides global and `prefer_strategy`) |
+| `skip_auto_scroll` | `false` | Skip auto-scrolling for single-content pages (tweets, issues, docs) |
+| `reject_resource_patterns` | `null` | Block Playwright-navigation resources matching these URL patterns (e.g. `["**/analytics/**"]`) |
+
+Markitai ships built-in profiles for `x.com`/`twitter.com` and `github.com`. Setting your own `domain_profiles` entry for the same domain **replaces it entirely** rather than merging field-by-field — any built-in tuning is lost unless you repeat it yourself.
 
 ### Fallback Patterns
 
@@ -968,6 +1021,7 @@ Control output file handling:
 | `dir` | - | `null` | Output directory |
 | `on_conflict` | `rename`, `overwrite`, `skip` | `rename` | How to handle existing files |
 | `allow_symlinks` | - | `false` | Allow symlinks in output paths |
+| `report` | `true`, `false`, `null` | `null` | Write a JSON conversion report. `null` (default) writes one for batch/URL-batch runs only; `true`/`false` force it on/off for every run |
 
 ## Log Configuration
 
@@ -992,6 +1046,22 @@ Configure logging behavior:
 | `dir` | `null` | Log file directory (auto-detected if not set) |
 | `rotation` | `10 MB` | Rotate when file exceeds this size |
 | `retention` | `7 days` | Delete logs older than this |
+
+## Security Configuration
+
+Control PDF hidden-text handling — a prompt-injection vector for LLM pipelines (invisible text such as white-on-white, near-zero-size, zero-opacity, or off-page content that would otherwise be silently included in the extracted markdown):
+
+```json
+{
+  "security": {
+    "pdf_sanitize": "warn"
+  }
+}
+```
+
+| Setting | Options | Default | Description |
+|---------|---------|---------|-------------|
+| `pdf_sanitize` | `off`, `warn`, `remove` | `warn` | `warn` logs a consolidated advisory naming affected pages; `remove` also strips the matched hidden text from the output; `off` disables detection |
 
 ## Custom Prompts
 

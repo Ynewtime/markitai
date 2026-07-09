@@ -6,25 +6,29 @@ Markitai uses a policy-driven Fetch Policy Engine to determine the best strategy
 
 The engine follows a policy-driven approach to select the order of fetching strategies:
 
-1. **Explicit Strategy**: If you provide an explicit strategy (e.g., `--playwright`, `--defuddle`, or `--jina`), the engine will use only that strategy.
-2. **Domain Profiles**: You can configure specific settings for individual domains, such as custom selectors to wait for or extra wait times.
+1. **Explicit Strategy**: If you provide an explicit strategy (e.g., `-s playwright`, `-s defuddle`, or `-s jina`), the engine uses only that strategy — with two caveats: explicit `-s defuddle`/`-s jina`/`-s cloudflare` can still gracefully fall back to the full `auto` chain if the remote service refuses the request (rate limit, auth, etc.); and domain-profile content settings (`wait_for_selector`, `skip_auto_scroll`, etc.) still apply on top of an explicitly-chosen `playwright` strategy.
+2. **Domain Profiles**: You can configure specific settings for individual domains, such as custom selectors to wait for, extra wait times, or a full custom strategy order.
 3. **Adaptive Fallback**: In `auto` mode (default), the engine intelligently orders strategies based on the domain and previous success history.
 
 ### Default Order (Standard Domains)
 
-For most websites, Markitai prioritizes free, fast strategies first:
+Markitai is local-first: for most websites, the native local pipeline is tried before any remote, consent-gated service:
 
 ```
-Defuddle → Jina → Static (HTTP) → Playwright (Browser) → Cloudflare
+Static (HTTP) → Playwright (Browser) → Defuddle → Jina → Cloudflare
 ```
+
+Static's native webextract pipeline matches remote Defuddle's quality on the extraction benchmark corpus (and does better on CJK spacing), so it goes first — and unlike the remote strategies, it never sends the URL off-machine or requires fetch consent.
 
 ### SPA/Heavy-JS Order
 
-For domains known to require JavaScript (like `x.com`, `instagram.com`, or domains that have failed static fetching before):
+For domains known to require JavaScript (like `x.com`, `instagram.com`, domains listed in `fallback_patterns`, or domains that have previously failed static fetching and were learned into the SPA cache), Markitai skips straight to the browser:
 
 ```
-Defuddle → Jina → Playwright (Browser) → Cloudflare → Static
+Playwright (Browser) → Defuddle → Jina → Cloudflare → Static
 ```
+
+Static goes last here since it has already failed (or is expected to fail) to produce usable content for these domains.
 
 ## Configuration
 
@@ -69,10 +73,14 @@ Domain profiles allow per-domain overrides for fetch behavior:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `wait_for_selector` | string | `null` | CSS selector to wait for before extracting content |
-| `wait_for` | string | `"domcontentloaded"` | Page load event to wait for (`load`, `domcontentloaded`, `networkidle`) |
-| `extra_wait_ms` | integer | `3000` | Extra milliseconds to wait after page load event |
+| `wait_for` | string | `null` | Page load event override (`load`, `domcontentloaded`, `networkidle`); unset inherits the global `fetch.playwright.wait_for` (default `domcontentloaded`) |
+| `extra_wait_ms` | integer | `null` | Extra milliseconds to wait after page load event; unset inherits the global `fetch.playwright.extra_wait_ms` (default `3000`) |
 | `prefer_strategy` | string | `null` | Preferred strategy for this domain (`static`, `defuddle`, `playwright`, `cloudflare`, `jina`) |
 | `strategy_priority` | list | `null` | Custom strategy order for this domain (overrides global and `prefer_strategy`) |
+| `skip_auto_scroll` | boolean | `false` | Skip auto-scrolling for single-content pages (tweets, issues, docs) |
+| `reject_resource_patterns` | list | `null` | Block Playwright-navigation resources matching these URL patterns (e.g. `["**/analytics/**"]`) |
+
+Markitai ships built-in profiles for `x.com`/`twitter.com` and `github.com`. Configuring your own profile for the same domain **replaces it entirely** rather than merging field-by-field — any built-in tuning (like the x.com profile's `skip_auto_scroll`/`reject_resource_patterns`) is lost unless you repeat it yourself.
 
 Example with multiple domains:
 
@@ -137,13 +145,13 @@ If the environment variable is set but curl-cffi is not installed, Markitai sile
 ```
 URL Request
     │
-    ├─ Explicit strategy (--static/--defuddle/--playwright/--jina/--cloudflare)?
+    ├─ Explicit strategy (-s static/playwright/defuddle/jina/cloudflare)?
     │       └─ Yes → Use only that strategy
     │
-    ├─ Domain in SPA cache or known JS-heavy?
-    │       └─ Yes → SPA order (Defuddle → Jina → Playwright → Cloudflare → Static)
+    ├─ Domain in SPA cache or known JS-heavy (fallback_patterns)?
+    │       └─ Yes → SPA order (Playwright → Defuddle → Jina → Cloudflare → Static)
     │
-    └─ Default → Standard order (Defuddle → Jina → Static → Playwright → Cloudflare)
+    └─ Default → Standard order (Static → Playwright → Defuddle → Jina → Cloudflare)
             │
             ├─ Try strategy #1 → Success? → Done
             ├─ Try strategy #2 → Success? → Done
@@ -152,8 +160,10 @@ URL Request
             └─ Try strategy #5 → Success? → Done / Give up
 ```
 
-Each strategy validates content quality before accepting the result. If the content appears empty or too short, it falls through to the next strategy.
+Domain profiles (`strategy_priority` or `prefer_strategy`) and a global `strategy_priority` override can reorder this chain per-domain or globally, ahead of the SPA/default fallback — see [Domain Profiles](#domain-profiles) below. Private/local/intranet domains and `local_only_patterns` matches are restricted to local-only strategies (`static`, `playwright`) regardless of the above.
+
+Each strategy validates content quality before accepting the result — checking for empty/too-short content, login walls, and anti-bot/CAPTCHA challenge pages (Geetest, Cloudflare, reCAPTCHA, hCaptcha). If validation fails, it falls through to the next strategy.
 
 ::: tip
-When a domain fails static fetching, it's automatically added to the SPA domain cache. Future requests to that domain will skip directly to browser rendering, saving time.
+When static fetching succeeds but the content indicates JavaScript rendering is required (or the page is empty), the domain is added to the SPA cache for 30 days. Future requests to that domain will skip directly to browser rendering, saving time. Other failure modes (CAPTCHA, login walls, network errors) don't trigger this — only the JS-required signal does.
 :::
