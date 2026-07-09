@@ -95,6 +95,48 @@ class TestResolveAssetReferences:
         assert "![image:" not in result
         assert "file://" in result
 
+    def test_asset_store_tier_preserves_alt_text(self, tmp_path: Path) -> None:
+        """LLM-generated alt text must survive the asset-store rewrite.
+
+        Regression: the rewrite hardcoded the filename as alt, overwriting
+        captions produced by image analysis in stdout mode.
+        """
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        (assets_dir / "chart.jpg").write_bytes(b"chart-data")
+
+        from markitai.utils.asset_store import AssetStore
+
+        store = AssetStore(tmp_path / "store")
+        markdown = "![A bar chart of Q3 revenue](.markitai/assets/chart.jpg)"
+        result = resolve_asset_references(
+            markdown,
+            temp_dir=tmp_path,
+            asset_store=store,
+            source_name="doc.pdf",
+        )
+
+        assert "![A bar chart of Q3 revenue](file://" in result
+
+    def test_asset_store_tier_uses_filename_for_empty_alt(self, tmp_path: Path) -> None:
+        """Empty alt text falls back to the filename."""
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        (assets_dir / "chart.jpg").write_bytes(b"chart-data")
+
+        from markitai.utils.asset_store import AssetStore
+
+        store = AssetStore(tmp_path / "store")
+        markdown = "![](.markitai/assets/chart.jpg)"
+        result = resolve_asset_references(
+            markdown,
+            temp_dir=tmp_path,
+            asset_store=store,
+            source_name="doc.pdf",
+        )
+
+        assert "![chart.jpg](file://" in result
+
     def test_asset_store_tier_persists_image(self, tmp_path: Path) -> None:
         """When asset_store is provided and image exists, should produce file:// URI."""
         assets_dir = tmp_path / ".markitai" / "assets"

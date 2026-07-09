@@ -127,7 +127,9 @@ def resolve_asset_references(
                 try:
                     ref_path = asset_store.save(image_path, source_name)
                     uri = asset_store.ref_path_to_markdown_uri(ref_path)
-                    return f"![{filename}]({uri})"
+                    # Keep LLM-generated alt text; fall back to the filename
+                    alt_text = match.group(1) or filename
+                    return f"![{alt_text}]({uri})"
                 except Exception as e:
                     logger.warning(f"Asset store save failed for {filename}: {e}")
                     # fall through to placeholder
