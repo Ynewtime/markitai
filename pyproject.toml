@@ -12,6 +12,9 @@ claude-agent = ["markitai[claude-agent]"]
 copilot = ["markitai[copilot]"]
 browser = ["markitai[browser]"]
 extra-fetch = ["markitai[extra-fetch]"]
+kreuzberg = ["markitai[kreuzberg]"]
+svg = ["markitai[svg]"]
+heif = ["markitai[heif]"]
 all = ["markitai[all]"]
 
 [tool.uv.workspace]
@@ -26,7 +29,7 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
-    "ruff>=0.15.0",
+    "ruff>=0.15.7",
     "pyright>=1.1.408",
     "pre-commit>=4.5.1",
     "bandit>=1.8.0",
@@ -85,6 +88,12 @@ skips = [
     "B607",  # partial path - system commands (powershell, scutil)
 ]
 
+# NOTE: intentionally duplicated with packages/markitai/pyproject.toml [tool.pyright]
+# (not a drifted leftover): CI (`uv run pyright packages/markitai/src packages/markitai/tests`)
+# and the pre-commit pyright hook both run from the repo root, and pyright only reads
+# config from its cwd — deleting this section puts CI on bare "standard" defaults
+# (measured: 0 errors -> 38 errors). This copy also governs tests/, which the package
+# copy excludes.
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
