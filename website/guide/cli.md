@@ -21,6 +21,8 @@ Enable LLM-powered format cleaning and optimization. By default, only `.llm.md` 
 markitai document.docx --llm
 ```
 
+Social posts (extractor-curated content marked `content_profile: social_post`, e.g. X/Twitter posts) keep their body verbatim — the LLM only generates frontmatter metadata, so post structure and wording are never altered.
+
 ::: tip
 `--llm`, `--alt`, `--desc`, `--ocr`, and `--screenshot` all have `--no-*` counterparts (`--no-llm`, `--no-alt`, `--no-desc`, `--no-ocr`, `--no-screenshot`) to explicitly disable a feature a preset would otherwise enable — e.g. `--preset rich --no-desc`.
 :::
