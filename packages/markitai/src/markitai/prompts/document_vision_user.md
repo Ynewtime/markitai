@@ -1,9 +1,5 @@
-Please clean the following document:
+Please clean the document provided between the <document> and </document> tags. Output only the cleaned document content, without the tags.
 
----
-
+<document>
 {content}
-
----
-
-REMINDER: All `__MARKITAI_*__` placeholders must appear in your output exactly as in the input. Do not remove, modify, or merge any placeholder. Do not wrap output in a code block.
+</document>

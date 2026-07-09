@@ -178,18 +178,36 @@ class TestCleanerModeRules:
         assert "__MARKITAI_IMG_N__" not in prompt
 
 
-class TestVisionPromptReminder:
-    """Verify document_vision_user prompt contains tail REMINDER."""
+class TestVisionUserPromptStructure:
+    """document_vision_user must delimit content unambiguously.
 
-    def test_vision_user_prompt_has_reminder(self):
-        """document_vision_user.md should end with a REMINDER about placeholders."""
+    Regression: the old template wrapped content in `---` fences and appended
+    a REMINDER line after the closing fence; `---` is valid Markdown, so small
+    models echoed the fence + REMINDER into their cleaned output. The template
+    must wrap content in <document> tags with no instructions after the
+    closing tag.
+    """
+
+    def test_content_wrapped_in_document_tags(self):
         from markitai.prompts import PromptManager
 
         pm = PromptManager()
         prompt = pm.get_prompt("document_vision_user", content="test content")
-        assert "REMINDER:" in prompt
-        assert "__MARKITAI_" in prompt
-        # REMINDER should appear AFTER the content
-        content_pos = prompt.index("test content")
-        reminder_pos = prompt.index("REMINDER:")
-        assert reminder_pos > content_pos
+        assert "<document>\ntest content\n</document>" in prompt
+
+    def test_nothing_follows_closing_tag(self):
+        """No trailing instructions after the content — they get echoed."""
+        from markitai.prompts import PromptManager
+
+        pm = PromptManager()
+        prompt = pm.get_prompt("document_vision_user", content="test content")
+        assert prompt.rstrip().endswith("</document>")
+
+    def test_no_reminder_tail(self):
+        """Placeholder rules live in the system prompt and the in-code tail
+        reminder; the user template must not duplicate them next to content."""
+        from markitai.prompts import PromptManager
+
+        pm = PromptManager()
+        prompt = pm.get_prompt("document_vision_user", content="test content")
+        assert "REMINDER:" not in prompt
