@@ -224,10 +224,14 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
 
         except (AuthenticationError, ProviderError):
             raise
-        except httpx.ConnectError as e:
+        except httpx.TransportError as e:
+            # Transient network failures (connection refused, timeouts) are
+            # retryable. str(e) is often empty for httpx transport errors,
+            # so fall back to repr for a diagnosable message.
             raise ProviderError(
-                f"ChatGPT connection error: {e}",
+                f"ChatGPT connection error: {str(e) or repr(e)}",
                 provider="chatgpt",
+                retryable=True,
             ) from e
         except Exception as e:
             raise ProviderError(
