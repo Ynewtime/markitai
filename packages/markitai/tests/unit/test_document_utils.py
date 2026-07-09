@@ -835,6 +835,42 @@ class TestTryRepairInstructorResponse:
         assert repaired is None
 
 
+class TestFallbackFrontmatterDegradation:
+    """Fallback frontmatter must be visibly marked as degraded output.
+
+    When every LLM path fails, markitai silently wrote a .llm.md whose only
+    hint of degradation was an empty description. The fallback must carry an
+    explicit marker in the frontmatter and emit an ERROR-level log (the only
+    level quiet/stdout mode shows).
+    """
+
+    def test_fallback_frontmatter_marks_llm_enhanced_false(
+        self, mock_processor: MagicMock
+    ) -> None:
+        frontmatter_yaml = mock_processor._build_fallback_frontmatter(
+            "https://example.com/post",
+            "# A Title\n\nBody text.",
+        )
+        data = yaml.safe_load(frontmatter_yaml)
+        assert data["llm_enhanced"] is False
+
+    def test_fallback_frontmatter_logs_error(self, mock_processor: MagicMock) -> None:
+        from loguru import logger
+
+        errors: list[str] = []
+        sink_id = logger.add(lambda message: errors.append(str(message)), level="ERROR")
+        try:
+            mock_processor._build_fallback_frontmatter(
+                "https://example.com/post",
+                "# A Title\n\nBody text.",
+            )
+        finally:
+            logger.remove(sink_id)
+        assert any("LLM enhancement failed" in msg for msg in errors), (
+            f"expected an ERROR-level degradation notice, got: {errors}"
+        )
+
+
 class TestCleanMarkdownAsync:
     """Async tests for clean_markdown method."""
 
