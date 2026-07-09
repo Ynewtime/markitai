@@ -83,8 +83,8 @@ def show_device_code(
 ) -> None:
     """Display device code auth instructions on stderr.
 
-    Always writes directly to stderr console to ensure device codes are
-    visible regardless of OutputManager state or stdout mode.
+    Always writes directly to the stderr console to ensure device codes
+    are visible regardless of stdout mode.
 
     Args:
         url: Auth URL the user should visit.
@@ -109,8 +109,8 @@ def show_oauth_success(
 ) -> None:
     """Display OAuth success message on stderr.
 
-    Always writes directly to stderr console to ensure auth results are
-    visible regardless of OutputManager state.
+    Always writes directly to the stderr console to ensure auth results
+    are visible regardless of stdout mode.
 
     Args:
         provider: Provider name.

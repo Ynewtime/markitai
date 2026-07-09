@@ -667,16 +667,11 @@ class AuthManager:
             del self._cache[provider]
 
 
-async def _login_copilot(output_manager: Any = None) -> AuthStatus:
+async def _login_copilot() -> AuthStatus:
     """Run `copilot login` interactively.
 
     Always runs with inherited stdio so the CLI sees a real TTY —
     required for credential storage to work correctly.
-
-    Args:
-        output_manager: Accepted for interface consistency but not used.
-            Copilot CLI requires a real TTY on stdout; piping or PTY
-            redirection breaks its credential storage flow.
 
     Returns:
         AuthStatus after the login attempt.
@@ -715,13 +710,10 @@ async def _login_copilot(output_manager: Any = None) -> AuthStatus:
     return config_status
 
 
-async def _login_claude_agent(output_manager: Any = None) -> AuthStatus:
+async def _login_claude_agent() -> AuthStatus:
     """Run `claude auth login` interactively.
 
     Always runs with inherited stdio so the CLI sees a real TTY.
-
-    Args:
-        output_manager: Accepted for interface consistency but not used.
 
     Returns:
         AuthStatus after the login attempt.
@@ -760,7 +752,7 @@ async def _login_claude_agent(output_manager: Any = None) -> AuthStatus:
     return config_status
 
 
-async def _login_chatgpt(output_manager: Any = None) -> AuthStatus:
+async def _login_chatgpt() -> AuthStatus:
     """Trigger ChatGPT Device Code Flow authentication.
 
     Calls LiteLLM's Authenticator.get_access_token() which handles the
@@ -768,13 +760,7 @@ async def _login_chatgpt(output_manager: Any = None) -> AuthStatus:
     completion -> exchange for tokens -> save to disk.
 
     The DeviceCodeInterceptor captures stdout from the authenticator and
-    re-displays the device code in Rich format on stderr (or via the
-    provided output_manager).
-
-    Args:
-        output_manager: Optional OutputManager for formatted output.
-            When provided, OAuth display functions use it instead of
-            creating a separate Rich console.
+    re-displays the device code in Rich format on stderr.
 
     Returns:
         AuthStatus after the login attempt.
@@ -851,7 +837,7 @@ def can_attempt_login(provider: str) -> bool:
     return False
 
 
-async def attempt_login(provider: str, output_manager: Any = None) -> AuthStatus:
+async def attempt_login(provider: str) -> AuthStatus:
     """Attempt interactive login for a provider.
 
     Dispatches to the appropriate login flow:
@@ -861,18 +847,16 @@ async def attempt_login(provider: str, output_manager: Any = None) -> AuthStatus
 
     Args:
         provider: Provider name (e.g., "copilot", "claude-agent").
-        output_manager: Optional OutputManager for formatted output.
-            Forwarded to individual login functions.
 
     Returns:
         AuthStatus after the login attempt.
     """
     if provider == "copilot":
-        return await _login_copilot(output_manager)
+        return await _login_copilot()
     elif provider == "claude-agent":
-        return await _login_claude_agent(output_manager)
+        return await _login_claude_agent()
     elif provider == "chatgpt":
-        return await _login_chatgpt(output_manager)
+        return await _login_chatgpt()
     else:
         return AuthStatus(
             provider=provider,

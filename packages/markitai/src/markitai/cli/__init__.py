@@ -27,11 +27,9 @@ from markitai.utils.cli_helpers import (
     url_to_filename,
 )
 from markitai.utils.output import resolve_output_path
-from markitai.utils.progress import ProgressReporter
 
 __all__ = [
     "ImageAnalysisResult",
-    "ProgressReporter",
     "_warn_case_sensitivity_mismatches",
     "app",
     "compute_task_hash",
