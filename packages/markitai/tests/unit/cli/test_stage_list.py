@@ -374,3 +374,39 @@ class TestRendering:
             with console.capture() as cap:
                 console.print(segments[-1])
             assert "(" not in cap.get().replace("Fetching...", "")
+
+
+class TestSpinnerChoice:
+    """The configured spinner frames must be pure ASCII."""
+
+    def test_spinner_is_pure_ascii(self) -> None:
+        from rich.spinner import Spinner
+
+        frames = Spinner(ui.STATUS_SPINNER).frames
+        assert frames, "spinner has no frames"
+        for frame in frames:
+            assert all(ord(ch) < 128 for ch in frame), (
+                f"non-ASCII frame in spinner {ui.STATUS_SPINNER!r}: {frame!r}"
+            )
+
+
+class TestElapsedSuffix:
+    """Tests for the pure "(Ns)" elapsed-time suffix helper."""
+
+    def test_no_suffix_before_threshold(self) -> None:
+        started = 100.0
+        assert ui.elapsed_suffix(started, now=started + 4.9) == ""
+
+    def test_suffix_appears_at_threshold(self) -> None:
+        started = 100.0
+        assert (
+            ui.elapsed_suffix(started, now=started + ui.ELAPSED_SUFFIX_THRESHOLD_S)
+            == " (5s)"
+        )
+
+    def test_suffix_rounds_to_whole_seconds(self) -> None:
+        started = 100.0
+        assert ui.elapsed_suffix(started, now=started + 72.6) == " (73s)"
+
+    def test_no_start_time_means_no_suffix(self) -> None:
+        assert ui.elapsed_suffix(None, now=1000.0) == ""
