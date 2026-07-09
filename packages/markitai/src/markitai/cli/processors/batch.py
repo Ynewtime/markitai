@@ -60,7 +60,6 @@ def create_process_file(
     output_dir: Path,
     preconverted_map: dict[Path, Path],
     shared_processor: LLMProcessor | None,
-    output_names: dict[Path, str] | None = None,
 ) -> Callable:
     """Create a process_file function using workflow/core pipeline.
 
@@ -73,15 +72,12 @@ def create_process_file(
         output_dir: Output directory
         preconverted_map: Map of pre-converted legacy Office files
         shared_processor: Shared LLM processor for batch mode
-        output_names: Pre-planned output filenames per input path
-            (from ``plan_output_names``); unplanned files derive their
-            name in the core pipeline
 
     Returns:
         An async function that processes a single file and returns ProcessResult
     """
     from markitai.batch import ProcessResult
-    from markitai.utils.paths import plan_output_names
+    from markitai.utils.paths import derive_output_name
     from markitai.workflow.core import ConversionContext, convert_document_core
 
     async def process_file(file_path: Path) -> ProcessResult:
@@ -94,18 +90,15 @@ def create_process_file(
         try:
             # Calculate relative path to preserve directory structure
             file_output_dir = _file_output_dir(file_path, input_dir, output_dir)
-            output_name = (output_names or {}).get(file_path) or plan_output_names(
-                [(file_path, file_output_dir)]
-            )[file_path]
 
-            # Create conversion context
+            # Create conversion context (output name derived in the core
+            # pipeline: <input filename>.md)
             ctx = ConversionContext(
                 input_path=file_path,
                 output_dir=file_output_dir,
                 config=cfg,
                 actual_file=preconverted_map.get(file_path),
                 shared_processor=shared_processor,
-                output_name=output_name,
                 use_multiprocess_images=True,
                 input_base_dir=input_dir,
             )
@@ -122,10 +115,11 @@ def create_process_file(
                 return ProcessResult(success=False, error=result.error)
 
             if result.skip_reason == "exists":
-                logger.debug(f"[SKIP] Output exists: {file_output_dir / output_name}")
+                skipped_output = file_output_dir / derive_output_name(file_path.name)
+                logger.debug(f"[SKIP] Output exists: {skipped_output}")
                 return ProcessResult(
                     success=True,
-                    output_path=str(file_output_dir / output_name),
+                    output_path=str(skipped_output),
                     error="skipped (exists)",
                 )
 
@@ -580,7 +574,7 @@ async def process_batch(
 
     from datetime import datetime
 
-    from markitai.batch import BatchProcessor, FileStatus, UrlState
+    from markitai.batch import BatchProcessor, FileState, FileStatus, UrlState
     from markitai.cli.processors.validators import (
         check_playwright_for_urls,
         warn_case_sensitivity_mismatches,
@@ -651,6 +645,50 @@ async def process_batch(
     check_symlink_safety(output_dir, allow_symlinks=cfg.output.allow_symlinks)
     ensure_dir(output_dir)
 
+    # Collect URL source files (used for state bookkeeping below)
+    url_sources_set: set[str] = set()
+    for source_file, _entry in url_entries_from_files:
+        url_sources_set.add(str(source_file))
+
+    # Resume: load the previous state (same task hash) and keep COMPLETED
+    # entries; PENDING/FAILED entries (including interrupted IN_PROGRESS,
+    # downgraded by load_state) are re-queued, and files/URLs discovered
+    # this run but absent from the state are added as new work.
+    resumed_state = batch.load_state() if resume else None
+    if resumed_state is not None:
+        known_resolved = {str(Path(k).resolve()) for k in resumed_state.files}
+        for f in files:
+            if str(f.resolve()) not in known_resolved:
+                resumed_state.files[str(f)] = FileState(path=str(f))
+        files_to_process = resumed_state.get_pending_files()
+
+        url_entries_to_process = []
+        for source_file, entry in url_entries_from_files:
+            url_state = resumed_state.urls.get(entry.url)
+            if url_state is None:
+                resumed_state.urls[entry.url] = UrlState(
+                    url=entry.url,
+                    source_file=str(source_file),
+                    status=FileStatus.PENDING,
+                )
+                url_entries_to_process.append((source_file, entry))
+            elif url_state.status != FileStatus.COMPLETED:
+                url_entries_to_process.append((source_file, entry))
+        resumed_state.url_sources = sorted(
+            set(resumed_state.url_sources) | url_sources_set
+        )
+
+        done_count = resumed_state.completed_count + resumed_state.completed_urls_count
+        remaining = len(files_to_process) + len(url_entries_to_process)
+        console.print(
+            f"[dim]Resuming batch: {done_count} completed, {remaining} remaining[/dim]"
+        )
+    else:
+        if resume:
+            logger.debug("No previous batch state found; starting fresh")
+        files_to_process = files
+        url_entries_to_process = url_entries_from_files
+
     if dry_run:
         feature_str = ui.build_feature_str(cfg)
         cache_status = "enabled" if cfg.cache.enabled else "disabled"
@@ -666,24 +704,25 @@ async def process_batch(
         console.print(f"  Features: {feature_str}")
         console.print(f"  Cache: {cache_status}")
         console.print()
-        console.print(f"  Files ({len(files)})")
-        for f in files[:10]:
+        console.print(f"  Files ({len(files_to_process)})")
+        for f in files_to_process[:10]:
             console.print(f"    {ui.MARK_INFO} {ui.truncate(f.name, url_max)}")
-        if len(files) > 10:
-            console.print(f"    ... and {len(files) - 10} more files")
-        if url_entries_from_files:
+        if len(files_to_process) > 10:
+            console.print(f"    ... and {len(files_to_process) - 10} more files")
+        if url_entries_to_process:
             console.print()
-            console.print(f"  URLs ({len(url_entries_from_files)})")
-            for _source_file, entry in url_entries_from_files[:10]:
+            console.print(f"  URLs ({len(url_entries_to_process)})")
+            for _source_file, entry in url_entries_to_process[:10]:
                 console.print(f"    {ui.MARK_INFO} {ui.truncate(entry.url, url_max)}")
-            if len(url_entries_from_files) > 10:
+            if len(url_entries_to_process) > 10:
                 console.print(
-                    f"    ... and {len(url_entries_from_files) - 10} more URLs"
+                    f"    ... and {len(url_entries_to_process) - 10} more URLs"
                 )
         console.print()
         console.print("  " + "\u2500" * 20)
         console.print(
-            f"  Total: {len(files)} files, {len(url_entries_from_files)} URLs"
+            f"  Total: {len(files_to_process)} files, "
+            f"{len(url_entries_to_process)} URLs"
         )
         if cfg.cache.enabled:
             ui.step("Tip: Use 'markitai cache stats -v' to view cached entries")
@@ -697,14 +736,14 @@ async def process_batch(
     batch.start_live_display(
         verbose=verbose,
         console_handler_id=console_handler_id,
-        total_files=len(files),
-        total_urls=len(url_entries_from_files),
+        total_files=len(files_to_process),
+        total_urls=len(url_entries_to_process),
     )
 
     # Pre-convert legacy Office files using batch COM (Windows only)
     # This reduces overhead by starting each Office app only once
     legacy_suffixes = {".doc", ".ppt", ".xls"}
-    legacy_files = [f for f in files if f.suffix.lower() in legacy_suffixes]
+    legacy_files = [f for f in files_to_process if f.suffix.lower() in legacy_suffixes]
     preconverted_map: dict[Path, Path] = {}
     preconvert_temp_dir: tempfile.TemporaryDirectory | None = None
 
@@ -740,7 +779,7 @@ async def process_batch(
 
     # Create shared Playwright renderer for batch URL processing
     shared_renderer = None
-    if url_entries_from_files:
+    if url_entries_to_process:
         from markitai.fetch import _detect_proxy, _get_playwright_renderer
 
         # Only initialize if browser strategy might be needed
@@ -749,14 +788,6 @@ async def process_batch(
         shared_renderer = await _get_playwright_renderer(proxy=proxy)
         logger.debug("Created shared PlaywrightRenderer for batch URL processing")
 
-    # Plan output names up front over the full discovered file list so that
-    # collisions (a.pdf + a.docx -> a.md) fall back to legacy naming
-    from markitai.utils.paths import plan_output_names
-
-    output_names = plan_output_names(
-        [(f, _file_output_dir(f, input_dir, output_dir)) for f in files]
-    )
-
     # Create process_file using workflow/core implementation
     process_file = create_process_file(
         cfg=cfg,
@@ -764,18 +795,14 @@ async def process_batch(
         output_dir=output_dir,
         preconverted_map=preconverted_map,
         shared_processor=shared_processor,
-        output_names=output_names,
     )
     logger.debug("Using workflow/core implementation for batch processing")
 
-    # Group URL entries by source file and collect source file list
-    url_sources_set: set[str] = set()
-    if url_entries_from_files:
-        for source_file, _entry in url_entries_from_files:
-            url_sources_set.add(str(source_file))
-
-    # Initialize batch state with files
-    if files or url_entries_from_files:
+    # Adopt the resumed state, or initialize a fresh one
+    if resumed_state is not None:
+        batch.state = resumed_state
+        batch.state.started_at = batch_started_at
+    elif files or url_entries_from_files:
         batch.state = batch.init_state(
             input_dir=input_dir,
             files=files,
@@ -795,7 +822,7 @@ async def process_batch(
 
     # Create URL processor function
     url_processor = None
-    if url_entries_from_files:
+    if url_entries_to_process:
         url_processor = create_url_processor(
             cfg=cfg,
             output_dir=output_dir,
@@ -941,16 +968,17 @@ async def process_batch(
     # Run all tasks via queue + worker pool (URLs + files)
     state = batch.state
     try:
-        if files or url_entries_from_files:
+        if files_to_process or url_entries_to_process:
             logger.debug(
-                f"Processing {len(files)} files and {len(url_entries_from_files)} URLs "
+                f"Processing {len(files_to_process)} files and "
+                f"{len(url_entries_to_process)} URLs "
                 f"with concurrency {cfg.batch.concurrency}"
             )
 
             items: list[tuple[str, Any]] = []
-            for source_file, entry in url_entries_from_files:
+            for source_file, entry in url_entries_to_process:
                 items.append(("url", (entry.url, source_file, entry.output_name)))
-            for file_path in files:
+            for file_path in files_to_process:
                 items.append(("file", file_path))
 
             if items:
