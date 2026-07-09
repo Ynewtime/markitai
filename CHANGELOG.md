@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Weak models could mangle social-post bodies during LLM cleanup** (flattened quoted-post blockquotes, respaced CJK text — observed with `claude-agent/haiku`): content profiled as `social_post` now passes its body through verbatim and the LLM only generates metadata. For all other document types, the document-processing prompt gained explicit blockquote-preservation and CJK-spacing rules
 - **ChatGPT connection errors were non-retryable and unreadable**: httpx transport failures (connection reset/refused, timeouts) were mapped to a non-retryable `ProviderError` with an empty message, bypassing every retry layer. They are now marked retryable and carry the underlying error text
 - **Console log lines no longer tear the live progress display**: log output now routes through the shared rich stderr console, so lines print above the StageList spinner instead of leaving stale frames behind; quiet/stdout mode also applies the same third-party retry-noise filter as normal mode (raw instructor retry errors previously leaked through)
+- **Failed LLM enhancement is now visible in the output**: when every LLM path fails, the fallback `.llm.md` frontmatter carries `llm_enhanced: false` and an ERROR-level log is emitted — previously the only hint of degraded output was an empty description
 
 ### Removed
 

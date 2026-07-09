@@ -18,6 +18,7 @@
 - **弱模型可能在 LLM 清理时破坏社媒帖正文**（引用推文的 blockquote 被拍平、CJK 与英文之间被私自加空格——在 `claude-agent/haiku` 上观察到）：标记为 `social_post` 的内容现在正文原样直通，LLM 仅生成元数据；其他文档类型的处理 prompt 也补充了 blockquote 保护与 CJK 空格显式规则
 - **ChatGPT 连接错误此前不可重试且信息为空**：httpx 传输层错误（连接重置/拒绝、超时）被映射为不可重试的 `ProviderError` 且消息为空，导致所有重试层被绕过。现在标记为可重试并携带底层错误文本
 - **控制台日志不再撕裂实时进度显示**：日志输出改经共享的 rich stderr console 路由，日志行会打印在 StageList 转轮上方而不再留下残影帧；quiet/stdout 模式也应用与普通模式相同的第三方重试噪音过滤（此前 instructor 的原始重试错误会直接漏到控制台）
+- **LLM 增强失败现在在输出中可见**：当所有 LLM 路径都失败时，兜底生成的 `.llm.md` frontmatter 会带上 `llm_enhanced: false` 标记并打出 ERROR 级日志——此前降级输出的唯一线索只有一个空的 description
 
 ### Removed
 
