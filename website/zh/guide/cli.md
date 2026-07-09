@@ -21,6 +21,8 @@ markitai <input> [options]
 markitai document.docx --llm
 ```
 
+社媒帖（由站点提取器整理、标记为 `content_profile: social_post` 的内容，如 X/Twitter 帖子）的正文会原样直通——LLM 仅生成 frontmatter 元数据，帖子结构和原文措辞不会被改动。
+
 ::: tip
 `--llm`、`--alt`、`--desc`、`--ocr`、`--screenshot` 都有对应的 `--no-*` 反义参数（`--no-llm`、`--no-alt`、`--no-desc`、`--no-ocr`、`--no-screenshot`），可用来显式关闭某个预设本会启用的特性——例如 `--preset rich --no-desc`。
 :::
