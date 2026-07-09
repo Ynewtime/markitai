@@ -198,6 +198,35 @@ class InterceptHandler(logging.Handler):
         ).opt(exception=record.exc_info).log(level, record.getMessage())
 
 
+def _console_sink(message: Any) -> None:
+    """Write a rendered console log line via the shared rich stderr Console.
+
+    Routing through the Console keeps log lines coordinated with an active
+    Live display (ui.StageList): rich prints them above the Live region
+    instead of tearing through the spinner line and leaving stale frames
+    behind. The sink receives colorized output (colorize=True); Text.from_ansi
+    preserves the styling and rich strips it when stderr is not a terminal.
+    """
+    from rich.text import Text
+
+    from markitai.cli.console import get_stderr_console
+
+    get_stderr_console().print(
+        Text.from_ansi(str(message).rstrip("\n")), soft_wrap=True
+    )
+
+
+def _should_show_quiet_log(record: Any) -> bool:
+    """Filter for the quiet-mode console sink (ERROR+ only).
+
+    Even in quiet mode, third-party retry-loop noise duplicates markitai's
+    own [LLM:...] failure summaries and must stay off the console (see
+    _is_third_party_retry_noise). This is the sink active in single-URL
+    stdout mode, where unfiltered instructor errors previously leaked.
+    """
+    return not _is_third_party_retry_noise(record, _get_record_field(record, "name"))
+
+
 def _format_json_log(record: Any) -> str:
     """Loguru format callable producing one JSON object per line.
 
@@ -270,15 +299,18 @@ def setup_logging(
     if quiet:
         # In quiet mode, still surface errors so LLM failures aren't invisible
         console_handler_id = logger.add(
-            sys.stderr,
+            _console_sink,
             level="ERROR",
             format="<level>{message}</level>",
+            colorize=True,
+            filter=_should_show_quiet_log,
         )
     else:
         console_handler_id = logger.add(
-            sys.stderr,
+            _console_sink,
             level="INFO",
             format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+            colorize=True,
             filter=lambda record: _should_show_log(record, verbose),
         )
 
