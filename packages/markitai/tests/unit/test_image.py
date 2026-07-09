@@ -1882,14 +1882,6 @@ class TestDownloadUrlImages:
         assert len(result.failed_urls) == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.network
-    async def test_download_success_integration(self, tmp_path: Path) -> None:
-        """Integration test for successful download (requires network)."""
-        # This test is marked as network-dependent and may be skipped
-        # It serves as a real integration test when network is available
-        pass  # Skip for now - would need real URL
-
-    @pytest.mark.asyncio
     async def test_download_resolves_relative_urls(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

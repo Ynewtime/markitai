@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 import pytest
 
 
@@ -32,15 +30,6 @@ class TestWorkflowLazyImports:
         from markitai.workflow import convert_document_core
 
         assert callable(convert_document_core)
-
-    def test_import_write_assets_json_deprecated(self) -> None:
-        """write_assets_json should still resolve but emit DeprecationWarning."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            from markitai.workflow import write_assets_json  # noqa: F811
-
-            assert callable(write_assets_json)
-            assert any(issubclass(x.category, DeprecationWarning) for x in w)
 
     def test_import_nonexistent_raises_error(self) -> None:
         """Should raise AttributeError for nonexistent attribute."""

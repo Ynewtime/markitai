@@ -684,25 +684,3 @@ class TestUrlConversion:
         assert "Dry Run" in result.output
         assert "Features:" in result.output
         assert "LLM" in result.output
-
-    @pytest.mark.skip(reason="Requires network access")
-    def test_url_conversion_real(self, tmp_path: Path) -> None:
-        """Test real URL conversion (requires network)."""
-        from click.testing import CliRunner
-
-        from markitai.cli import app
-
-        output_dir = tmp_path / "output"
-
-        runner = CliRunner()
-        result = runner.invoke(
-            app,
-            [
-                "https://example.com",
-                "-o",
-                str(output_dir),
-            ],
-        )
-
-        assert result.exit_code == 0
-        assert (output_dir / "example_com.md").exists()
