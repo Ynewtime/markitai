@@ -141,6 +141,108 @@ class TestQuietModeErrorHandler:
         finally:
             logger.remove(handler_id)
 
+    def test_quiet_mode_filters_instructor_retry_noise(self, capsys) -> None:
+        """Instructor's retry-loop ERROR noise must not leak in quiet mode.
+
+        markitai's own [LLM:...] failure summaries already report the same
+        failure; the raw instructor lines are duplication (see
+        _is_third_party_retry_noise). The non-quiet sink filters them, and
+        the quiet sink must too — this is exactly the sink active in
+        single-URL stdout mode where the leak was observed.
+        """
+        import logging
+
+        from loguru import logger
+
+        from markitai.cli.logging_config import setup_logging
+
+        handler_id, _ = setup_logging(verbose=False, quiet=True, log_dir=None)
+        try:
+            stdlib_logger = logging.getLogger("instructor.v2.retry")
+            stdlib_logger.error(
+                "API call failed on attempt 1: ChatGPT connection error:"
+            )
+            stdlib_logger.error(
+                "Max retries exceeded. Total attempts: 1, "
+                "Last error: ChatGPT connection error:"
+            )
+            captured = capsys.readouterr()
+            assert "API call failed" not in captured.err
+            assert "Max retries exceeded" not in captured.err
+        finally:
+            logger.remove(handler_id)
+
+    def test_quiet_mode_keeps_other_instructor_errors(self, capsys) -> None:
+        """Only the known retry-noise prefixes are filtered, not all errors."""
+        import logging
+
+        from loguru import logger
+
+        from markitai.cli.logging_config import setup_logging
+
+        handler_id, _ = setup_logging(verbose=False, quiet=True, log_dir=None)
+        try:
+            logging.getLogger("instructor.v2.retry").error(
+                "Unexpected code path in retry_sync_v2"
+            )
+            captured = capsys.readouterr()
+            assert "Unexpected code path" in captured.err
+        finally:
+            logger.remove(handler_id)
+
+
+class TestConsoleSinkRichRouting:
+    """Console log lines must go through the shared rich stderr Console.
+
+    Writing straight to sys.stderr tears through an active rich Live
+    display (StageList): the error lands on the spinner line and Live's
+    next refresh repaints stale frames, which reads as the whole pipeline
+    re-running. Routing through the same Console lets rich print log
+    lines above the Live region instead.
+    """
+
+    def test_quiet_sink_routes_through_rich_stderr_console(self, monkeypatch) -> None:
+        import io
+
+        from loguru import logger
+        from rich.console import Console
+
+        from markitai.cli import console as console_mod
+        from markitai.cli.logging_config import setup_logging
+
+        buf = io.StringIO()
+        monkeypatch.setattr(
+            console_mod, "_stderr_console", Console(file=buf, width=200)
+        )
+
+        handler_id, _ = setup_logging(verbose=False, quiet=True, log_dir=None)
+        try:
+            logger.error("routed through rich console (quiet)")
+            assert "routed through rich console (quiet)" in buf.getvalue()
+        finally:
+            logger.remove(handler_id)
+
+    def test_normal_sink_routes_through_rich_stderr_console(self, monkeypatch) -> None:
+        import io
+
+        from loguru import logger
+        from rich.console import Console
+
+        from markitai.cli import console as console_mod
+        from markitai.cli.logging_config import setup_logging
+
+        buf = io.StringIO()
+        monkeypatch.setattr(
+            console_mod, "_stderr_console", Console(file=buf, width=200)
+        )
+
+        handler_id, _ = setup_logging(verbose=False, quiet=False, log_dir=None)
+        try:
+            logger.error("routed through rich console (normal)")
+            assert "routed through rich console (normal)" in buf.getvalue()
+        finally:
+            logger.remove(handler_id)
+
 
 class TestJsonLogFormat:
     """Tests for the JSON file log format."""
