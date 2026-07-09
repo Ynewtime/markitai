@@ -26,7 +26,6 @@ from markitai.json_order import order_report
 from markitai.security import atomic_write_json, validate_file_size
 from markitai.utils.cli_helpers import compute_task_hash, get_report_file_path
 from markitai.utils.paths import derive_output_name
-from markitai.utils.progress import ProgressReporter
 from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import write_images_json
 
@@ -151,6 +150,15 @@ def strip_asset_references(markdown: str) -> str:
     return resolve_asset_references(markdown, temp_dir=Path())
 
 
+def _file_final_stage_text(active_key: str | None, input_name: str) -> str:
+    """Completion text for the last active stage of a file conversion."""
+    if active_key == "llm":
+        return "LLM enhanced"
+    if active_key == "images":
+        return "Images analyzed"
+    return f"Converted {input_name}"
+
+
 async def process_single_file(
     input_path: Path,
     output_dir: Path | None,
@@ -159,7 +167,6 @@ async def process_single_file(
     log_file_path: Path | None = None,
     verbose: bool = False,
     quiet: bool = False,
-    output_manager: Any = None,
 ) -> None:
     """Process a single file with layered output.
 
@@ -250,17 +257,14 @@ async def process_single_file(
     else:
         effective_output_dir = output_dir
 
-    # Progress spinner: only show when saving to file and not quiet/verbose
-    show_spinner = not stdout_mode and not quiet and not verbose
-    progress = ProgressReporter(enabled=show_spinner, output_manager=output_manager)
-
-    # Live status spinner (stderr, transient) for the long conversion/LLM
-    # phases. Same gating as ProgressReporter (file mode, not quiet, not
-    # verbose — -v streams logs and a spinner would interleave badly);
-    # ConversionStatus itself no-ops when stderr is not a TTY. Stage text
-    # follows conversion logs via a temporary loguru bridge (see cli.ui).
-    status = ui.ConversionStatus(
-        f"Converting {input_path.name}...", enabled=show_spinner
+    # Live multi-stage progress list (stderr). Enabled in BOTH file and
+    # stdout modes; suppressed for --quiet and -v/verbose. The stage text
+    # follows conversion logs via the loguru bridge (see cli.ui.StageList) —
+    # convert_document_core needs no changes: its "[LLM]"/"Analyzing" logs
+    # advance the list automatically.
+    stages = ui.StageList(
+        enabled=not quiet and not verbose,
+        transient=stdout_mode,
     )
 
     try:
@@ -268,8 +272,8 @@ async def process_single_file(
         if verbose and not quiet and not stdout_mode:
             ui.title(f"Converting {input_path.name}")
 
-        progress.start_spinner(f"Converting {input_path.name}...")
-        status.start()
+        stages.start()
+        stages.advance("convert", f"Converting {input_path.name}...")
 
         # Create conversion context (explicit -o file target overrides the
         # derived output name)
@@ -290,8 +294,7 @@ async def process_single_file(
 
         # Handle skipped files (already exists)
         if result.skip_reason == "exists":
-            status.stop()
-            progress.stop_spinner()
+            stages.stop()
             if not quiet and not stdout_mode:
                 assert output_dir is not None
                 planned_name = output_file_name or derive_output_name(input_path.name)
@@ -301,8 +304,7 @@ async def process_single_file(
 
         # Handle skipped files (image-only format, no LLM/OCR)
         if result.skip_reason == "image_only":
-            status.stop()
-            progress.stop_spinner()
+            stages.stop()
             if not quiet:
                 ui.warning(
                     f"Skipped {input_path.name} (image file, no text to extract). "
@@ -311,9 +313,11 @@ async def process_single_file(
                 )
             return
 
-        # Stop spinner before output (status is transient; frame is erased)
-        status.stop()
-        progress.stop_spinner()
+        # Finalize the last active stage (the loguru bridge may have advanced
+        # it past "convert") and stop the list before printing the result
+        # (transient in stdout mode; rich erases its frame)
+        stages.finalize(_file_final_stage_text(stages.active_key, input_path.name))
+        stages.stop()
 
         # Write image descriptions (single file)
         if ctx.image_analysis and cfg.image.desc_enabled:
@@ -484,15 +488,15 @@ async def process_single_file(
 
     except Exception as e:
         error_msg = format_error_message(e)
-        status.stop()
-        progress.stop_spinner()
+        stages.fail()
+        stages.stop()
         if not quiet:
             ui.error(error_msg, console=diag_console)
         sys.exit(1)
 
     finally:
-        # Safety net: ensure spinner is gone on every exit path
-        status.stop()
+        # Safety net: ensure the stage list is stopped on every exit path
+        stages.stop()
         if error_msg:
             logger.warning(f"Failed to process {input_path.name}: {error_msg}")
         # Cleanup temp directory for stdout mode
