@@ -13,12 +13,14 @@
 
 | 依赖 | 用途 | 安装方式 |
 |------|------|----------|
-| **Playwright** | `--playwright`（SPA 渲染） | `uv pip install markitai[browser]`，浏览器需运行 `uv run playwright install chromium` |
-| **FFmpeg** | 音视频处理 | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
-| **Jina API 密钥** | `--jina`（URL 转换） | 设置 `JINA_API_KEY` 环境变量 |
+| **Playwright** | `-s playwright`（SPA 渲染） | `uv pip install markitai[browser]`，浏览器需运行 `uv run playwright install chromium` |
+| **FFmpeg** | `doctor`/`init` 会检测（属于 `markitdown[all]` 的间接依赖）；markitai 目前尚未注册任何音视频转换格式 | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
+| **Jina API 密钥** | `-s jina`（URL 转换） | 设置 `JINA_API_KEY` 环境变量 |
 | **LLM API 密钥** | `--llm`（AI 增强） | 设置 `OPENAI_API_KEY` 或对应提供商的密钥。订阅制提供商（`chatgpt/`、`claude-agent/`、`copilot/`）使用 CLI/OAuth 认证 |
-| **Cloudflare** | `--cloudflare`（云端渲染与转换） | 设置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 环境变量 |
+| **Cloudflare** | `-s cloudflare`（云端渲染与转换） | 设置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 环境变量 |
 | **CairoSVG** | 高质量 SVG 渲染 | `uv pip install markitai[svg]` |
+| **pillow-heif** | HEIC/HEIF/AVIF 图片输入 | `uv pip install markitai[heif]` |
+| **kreuzberg** | `.xml`、`.tsv`、`.rtf`、`.rst`、`.org`、`.tex`、`.odt`、`.ods` 转换 | `uv pip install markitai[kreuzberg]`（已包含在 `[all]` 中） |
 
 ::: tip 浏览器自动化
 对于 SPA 网站（Twitter、React 应用等），会自动使用 Playwright。首次使用前需安装浏览器：
@@ -27,7 +29,7 @@ uv run playwright install chromium
 # Linux 还需安装系统依赖：
 uv run playwright install-deps chromium
 ```
-然后使用 `--playwright` 参数强制启用浏览器渲染。
+然后使用 `-s playwright` 强制启用浏览器渲染。
 :::
 
 ## 安装
@@ -47,15 +49,14 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 :::
 
 ::: warning 安全提示
-- 以 root/管理员 身份运行时脚本会发出警告
-- 所有安装操作都需要明确确认（默认: 否）
-- 远程脚本执行需要两步确认
+- 以 root/管理员 身份运行时，脚本会先检测并询问是否继续
+- 每个组件安装前都会询问确认——uv 和 Playwright 浏览器默认 Yes；LibreOffice、FFmpeg 和 Claude/Copilot CLI 默认 No
 :::
 
 脚本会：
-- 检测 Python 3.11-3.14
-- 安装 [uv](https://docs.astral.sh/uv/) 包管理器（需要确认）
-- 安装 markitai 及浏览器自动化支持（其他可选依赖需确认后安装）
+- 检测 / 自动安装 Python 3.11-3.14（无需确认）
+- 安装 [uv](https://docs.astral.sh/uv/) 包管理器（需确认，默认 Yes）
+- 安装 markitai 本体及其纯 pip 依赖的可选组件（浏览器自动化、`extra-fetch`、`kreuzberg`、`svg`、`heif`），无需额外确认；LibreOffice、FFmpeg 和 Claude/Copilot CLI 会在随后单独询问确认（默认 No）
 
 #### 版本固定
 
@@ -196,17 +197,21 @@ markitai doctor --fix
 
 ```
 output/
-├── document.docx.md        # 基础 Markdown（--llm 模式下默认跳过，除非加 --keep-base）
-├── document.docx.llm.md    # LLM 增强版本（使用 --llm 时）
-├── .markitai/               # 元数据命名空间
+├── document.pdf.md           # 基础 Markdown（--llm 模式下默认跳过，除非加 --keep-base）
+├── document.pdf.llm.md       # LLM 增强版本（使用 --llm 时）
+├── .markitai/                  # 元数据命名空间
 │   ├── assets/
-│   │   ├── document.docx.0001.jpg
-│   │   └── images.json     # 图片描述
-│   ├── screenshots/         # 页面截图（使用 --screenshot 时）
-│   │   └── document.docx.0001.png
-│   ├── reports/             # 转换报告（JSON）
-│   └── states/              # 批处理状态文件（用于 --resume）
+│   │   ├── document.docx.0001.jpg   # 源文档内嵌的图片
+│   │   └── images.json       # 图片描述
+│   ├── screenshots/           # 页面/幻灯片截图（仅 PDF/PPTX；URL 为整页截图；--screenshot）
+│   │   └── document.pdf.page0001.jpg
+│   ├── reports/                # 转换报告（JSON）——批量/URL 批量任务默认生成，或 output.report = true 时生成
+│   └── states/                 # 批处理状态文件（用于 --resume）
 ```
+
+::: tip
+输出文件名在完整输入文件名后追加 `.md`：`document.docx` → `document.docx.md`（`--llm` 模式下为 `document.docx.llm.md`）。源文件格式在输出名中保持可见，不同输入（例如 `report.pdf` 和 `report.docx`）永远不会命名冲突。
+:::
 
 ::: tip
 在 `--llm` 模式下，默认只写入 `.llm.md`。使用 `--keep-base` 可以同时写入基础 `.md` 文件。
@@ -219,7 +224,7 @@ output/
 | Office 文档 | `.docx`, `.doc`, `.pptx`, `.ppt`, `.xlsx`, `.xls`, `.odt`, `.ods`, `.numbers` |
 | PDF | `.pdf` |
 | 文本 / 标记 / 结构化数据 | `.txt`, `.md`, `.markdown`, `.html`, `.htm`, `.xhtml`, `.xml`, `.csv`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex` |
-| 图片 | `.jpg`, `.jpeg`, `.png`, `.webp`, `.svg`, `.gif`, `.bmp`, `.tiff`, `.tif` |
+| 图片 | `.jpg`, `.jpeg`, `.png`, `.webp`, `.svg`, `.gif`, `.bmp`, `.tiff`, `.tif`, `.heic`, `.heif`, `.avif`（后三种需要 `markitai[heif]`） |
 | 其他文档 | `.epub`, `.eml`, `.msg`, `.ipynb` |
 | URL | `http://`, `https://` |
 

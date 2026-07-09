@@ -56,18 +56,19 @@ uv pip install "markitai[all]"
 
 | 依赖组 | 用途 | 典型场景 |
 |--------|------|----------|
-| `claude-agent` | Claude AI 支持 | 使用 Anthropic 模型做 LLM 增强 |
+| `claude-agent` | Claude AI 支持 | 使用 Claude 订阅（Claude Code CLI）做 LLM 增强 |
 | `copilot` | GitHub Copilot | 基于订阅的本地 LLM 增强 |
 | `browser` | Playwright 浏览器 | 抓取 JS 渲染的网页 |
-| `extra-fetch` | curl-cffi | 绕过反爬，增强 HTTP 能力 |
-| `kreuzberg` | 额外格式支持 | 扩展可转换的文件类型 |
-| `svg` | cairosvg | SVG 文件渲染 |
+| `extra-fetch` | curl-cffi | 绕过 TLS 指纹检测，增强 HTTP 能力 |
+| `kreuzberg` | 额外格式支持 | 扩展 XML/TSV/RTF/RST/ORG/TEX/ODT/ODS 等文件类型 |
+| `svg` | cairosvg | SVG 文件高质量渲染 |
+| `heif` | pillow-heif | HEIC/HEIF/AVIF 图片输入解码 |
 
 **安装后验证：**
 
 ```bash
 markitai --version
-# markitai 0.13.0
+# markitai 0.18.0（版本号请以实际安装结果为准）
 ```
 
 ---
@@ -103,10 +104,18 @@ markitai init --local
 
 ### 2.2 配置优先级
 
-用户需了解的配置加载顺序（从高到低）：
+这里有两条容易混淆的优先级链条：
+
+**配置文件的查找顺序**（决定加载哪个文件）：
 
 ```
-CLI 参数（含 --config / -c）> MARKITAI_CONFIG 环境变量 > ./markitai.json（项目级） > ~/.markitai/config.json（用户级） > 内置默认值
+--config / -c 参数指定路径 > MARKITAI_CONFIG 环境变量 > ./markitai.json（项目级） > ~/.markitai/config.json（用户级）
+```
+
+**具体设置值的生效顺序**（决定同一个设置项谁说了算）：
+
+```
+命令行参数 > 环境变量（如 OPENAI_API_KEY） > 配置文件里的值 > 内置默认值
 ```
 
 这意味着用户可以在全局配置中设置常用默认值，在项目配置中覆盖特定行为，并通过命令行参数做临时调整。
@@ -116,7 +125,7 @@ CLI 参数（含 --config / -c）> MARKITAI_CONFIG 环境变量 > ./markitai.jso
 常用环境变量：
 
 ```bash
-export MODEL="claude-sonnet-4-6"    # 指定 LLM 模型
+export MODEL="anthropic/claude-sonnet-4-6"  # 指定 LLM 模型（需带 provider/ 前缀）
 export MARKITAI_PURE=1                      # 启用纯净模式
 export ANTHROPIC_API_KEY="sk-..."           # Anthropic 认证
 export OPENAI_API_KEY="sk-..."              # OpenAI 认证
@@ -153,7 +162,7 @@ markitai report.pdf -o ./output
 1. 终端显示进度信息（文件检测、格式识别）
 2. 转换引擎处理文件
 3. 如果有嵌入图片，自动提取并存储到 `output/.markitai/assets/`
-4. 生成 `output/report.pdf.md`（保留原始扩展名）
+4. 生成 `output/report.pdf.md`（在完整输入文件名后追加 `.md`，保留原始扩展名，不同输入不会重名）
 
 **输出文件结构：**
 
@@ -162,24 +171,30 @@ output/
 ├── report.pdf.md                # 转换后的 Markdown
 └── .markitai/
     └── assets/
-        ├── image-001.jpg        # 提取的图片
-        └── image-002.jpg
+        ├── report.pdf.0001.jpg  # 提取的图片（命名为 <源文件名>.<4位序号>.<扩展名>）
+        └── report.pdf.0002.jpg
 ```
 
 ### 3.2 支持的文件格式
 
-用户可以转换以下格式，无需额外配置：
+内置转换器覆盖以下格式，无需额外配置：
 
 | 类别 | 格式 |
 |------|------|
-| 文档 | PDF, DOCX, DOC, RTF, ODT, EPUB |
+| 文档 | PDF, DOCX, DOC, EPUB |
 | 演示文稿 | PPTX, PPT |
-| 电子表格 | XLSX, XLS, CSV, TSV, ODS, NUMBERS |
-| 图片 | JPEG, PNG, WEBP, GIF, BMP, TIFF, SVG |
+| 电子表格 | XLSX, XLS, CSV, NUMBERS |
+| 图片 | JPEG, PNG, WEBP, GIF, BMP, TIFF, SVG，以及 HEIC/HEIF/AVIF（需要 `markitai[heif]`） |
 | 网页 | HTML, HTM, XHTML |
-| 文本 | TXT, MD, RST, ORG, TEX, XML |
+| 文本 | TXT, MD |
 | 笔记本 | IPYNB (Jupyter) |
 | 邮件 | EML, MSG |
+
+以下格式需要额外安装 `uv pip install markitai[kreuzberg]`（`markitai[all]` 已包含）才能转换，否则会报"没有可用转换器"：
+
+| 类别 | 格式 |
+|------|------|
+| 需要 kreuzberg | RTF, ODT, TSV, ODS, RST, ORG, TEX, XML |
 
 ### 3.3 输出行为
 
@@ -212,12 +227,12 @@ markitai_processed: "2026-03-15T10:30:00"
 
 正文内容...
 
-![图表](.markitai/assets/image-001.jpg)
+![图表](.markitai/assets/report.pdf.0001.jpg)
 ```
 
 LLM 增强模式生成的 `.llm.md` 文件包含更丰富的 frontmatter（额外包含 `description`、`tags`），URL 转换还会包含 `fetch_strategy`。
 
-> 注意：只有 `--pure` 且未启用 LLM 时，才会跳过 frontmatter，直接输出原始转换正文。
+> 注意：`--pure` 无论是否同时启用 `--llm`，都会跳过 frontmatter 生成——`--pure` 单独使用时直接输出无 frontmatter 的原始转换正文；`--pure --llm` 会把内容送入 LLM 做文本清洗，但同样不生成 frontmatter/描述/标签等元数据，只返回清洗后的正文。
 
 ```bash
 markitai report.pdf -o ./output --pure
@@ -258,33 +273,34 @@ markitai https://example.com/article -o ./output
 
 ### 4.2 抓取策略选择
 
-系统默认使用 `auto` 策略，自动选择最优方案并在失败时回退。用户也可强制指定：
+系统默认使用 `auto` 策略（本地优先：static → playwright → defuddle → jina → cloudflare，已知 SPA/重 JS 域名则改为 playwright 优先），自动选择最优方案并在失败时回退。用户也可用 `-s/--strategy` 强制指定（`--static`/`--defuddle`/`--playwright`/`--jina`/`--cloudflare` 仍可用，但已弃用，会打印迁移提示）：
 
 ```bash
 # 静态 HTTP 抓取（最快，适合简单页面）
-markitai https://blog.example.com --static -o ./output
+markitai https://blog.example.com -s static -o ./output
 
 # Defuddle API（最佳内容清洗，无需认证）
-markitai https://news.example.com --defuddle -o ./output
+markitai https://news.example.com -s defuddle -o ./output
 
 # Playwright 浏览器渲染（完整 JS 支持，适合 SPA）
-markitai https://app.example.com --playwright -o ./output
+markitai https://app.example.com -s playwright -o ./output
 
 # Jina Reader API（云端处理）
-markitai https://example.com --jina -o ./output
+markitai https://example.com -s jina -o ./output
 
-# Cloudflare 浏览器渲染
-markitai https://example.com --cloudflare -o ./output
+# Cloudflare Browser Rendering
+markitai https://example.com -s cloudflare -o ./output
 ```
 
 **策略选择建议：**
 
 | 场景 | 推荐策略 |
 |------|----------|
-| 静态博客、文档站 | `--static` 或 `auto` |
-| 新闻网站、内容站 | `--defuddle` |
-| 需要登录或 JS 渲染 | `--playwright` |
-| 有反爬保护的站点 | `--cloudflare` |
+| 静态博客、文档站 | `-s static` 或 `auto` |
+| 新闻网站、内容站 | `-s defuddle` |
+| 需要登录或 JS 渲染、SPA | `-s playwright` |
+| 基础限流/常规反爬 | `-s cloudflare` |
+| x.com/twitter.com 等**强反爬**站点 | `-s playwright` 或 `-s jina`（Cloudflare Browser Rendering 对这类站点常返回 400，详见 website/guide/configuration.md 的 Cloudflare Settings 一节） |
 | 简单场景 | `auto`（默认） |
 
 ### 4.3 批量 URL 处理
@@ -356,11 +372,11 @@ markitai article-with-images.pdf
 ```
 
 **第二优先级 — 持久化资源存储：**
-如果配置了 `image.stdout_persist = true`，图片保存到 `~/.markitai/assets/` 并生成 `file:///` URI 引用：
+`image.stdout_persist` 默认就是 `true`，图片会保存到 `~/.markitai/assets/` 并生成 `file:///` URI 引用（设为 `false` 可关闭）：
 
 ```bash
 markitai article.pdf
-# 图片引用：![图表](file:///home/user/.markitai/assets/refs/article/image-001.jpg)
+# 图片引用：![图表](file:///home/user/.markitai/assets/article.pdf.0001.jpg)
 ```
 
 **第三优先级 — 占位符：**
@@ -451,8 +467,8 @@ markitai report.pdf --llm --keep-base -o ./output
 输出：
 ```
 output/
-├── report.pdf.md          # 原始转换
-└── report.pdf.llm.md      # LLM 增强版
+├── report.pdf.md           # 原始转换
+└── report.pdf.llm.md       # LLM 增强版
 ```
 
 ### 6.5 纯净模式
@@ -519,7 +535,7 @@ output/
 ├── document.pdf.llm.md
 └── .markitai/
     └── assets/
-        ├── image-001.jpg
+        ├── document.pdf.0001.jpg
         └── images.json          # 图片元数据
 ```
 
@@ -531,7 +547,7 @@ output/
   "updated": "2026-03-15T10:30:00",
   "images": [
     {
-      "path": "/absolute/path/to/.markitai/assets/image-001.jpg",
+      "path": "/absolute/path/to/.markitai/assets/document.pdf.0001.jpg",
       "alt": "2026年Q1-Q3月度营收趋势图",
       "desc": "营收趋势柱状图，显示2026年Q1至Q3的月度营收数据...",
       "text": "",
@@ -660,7 +676,9 @@ markitai ./large-dataset/ --llm -o ./output
 markitai ./large-dataset/ --llm --resume -o ./output
 ```
 
-系统通过 `.markitai/states/markitai.<hash>.state.json` 跟踪每个文件的处理状态（pending → in_progress → completed/failed），续传时自动跳过已完成的文件。
+系统通过 `.markitai/states/markitai.<hash>.state.json` 跟踪每个文件的处理状态（pending → in_progress → completed/failed）。续传时：已完成的文件直接跳过；上次中断时处于 in_progress、或标记为 failed 的文件会重新入队；本次新发现的文件/URL 也会一并纳入——终端会显示 `Resuming batch: N completed, M remaining`。`.urls` 批量 URL 输入同样支持 `--resume`，逻辑与文件批量对称。
+
+> 注意：`--resume` 仅对批量（目录或 `.urls`）输入生效；单个文件/URL 转换会忽略该参数。
 
 ### 8.6 预览模式
 
@@ -768,25 +786,24 @@ markitai -I
 
 ### 9.6 域名配置文件
 
-为特定域名定制抓取行为：
+为特定域名定制抓取行为，可配置字段包括 `wait_for_selector`、`wait_for`、`extra_wait_ms`、`prefer_strategy`、`strategy_priority`、`skip_auto_scroll`、`reject_resource_patterns`：
 
 ```json
 // markitai.json
 {
   "fetch": {
     "domain_profiles": {
-      "github.com": {
-        "strategy": "static",
-        "headers": { "Accept": "text/html" }
-      },
       "spa-app.example.com": {
-        "strategy": "playwright",
-        "wait_for": "networkidle"
+        "prefer_strategy": "playwright",
+        "wait_for": "networkidle",
+        "wait_for_selector": "#app-root"
       }
     }
   }
 }
 ```
+
+> 注意：Markitai 内置了 `x.com`/`twitter.com` 和 `github.com` 的域名配置。若在 `domain_profiles` 中为同一域名重新配置，会**整体替换**内置配置而非逐字段合并——例如自行覆盖 `github.com` 时，需要自己重新声明内置的 `wait_for_selector: ".markdown-body"` 等字段，否则会丢失。
 
 ---
 
@@ -797,7 +814,7 @@ markitai -I
 **问题：转换后乱码或格式丢失**
 ```bash
 # 尝试使用 kreuzberg 转换器
-markitai document.pdf --kreuzberg -o ./output
+markitai document.pdf -b kreuzberg -o ./output
 ```
 
 **问题：URL 抓取失败**
@@ -806,7 +823,7 @@ markitai document.pdf --kreuzberg -o ./output
 markitai https://example.com -v -o ./output
 
 # 尝试切换抓取策略
-markitai https://example.com --playwright -o ./output
+markitai https://example.com -s playwright -o ./output
 ```
 
 **问题：LLM 调用失败**
@@ -821,7 +838,7 @@ markitai doctor
 ### 10.2 日志
 
 日志配置选项：
-- 日志级别：DEBUG / INFO / WARNING / ERROR
+- 日志级别：DEBUG / INFO / WARNING / ERROR / CRITICAL
 - 日志目录：可自定义（默认无文件日志）
 - 日志轮转：默认 10MB 轮转，保留 7 天
 - 日志格式：text 或 json
@@ -859,7 +876,7 @@ https://docs.example.com/api/v2/resources
 EOF
 
 # 2. 批量抓取
-markitai docs.urls --defuddle -o ./api-docs
+markitai docs.urls -s defuddle -o ./api-docs
 ```
 
 ### 场景 C：在脚本中集成
