@@ -382,6 +382,12 @@ async def process_url(
             base_content = original_markdown
         final_content = base_content
         if cfg.llm.enabled:
+            # Pin the LLM stage BEFORE the first [LLM] log: the loguru
+            # bridge would otherwise advance to an unpinned bridge stage
+            # that the next explicit advance finalizes, leaving a spurious
+            # ~0s "Enhancing with LLM" done line. Branches refine the text
+            # via update_text (same stage; the timer keeps running).
+            stages.advance("llm", "Enhancing with LLM...", pin=True)
             logger.info(f"[LLM] Processing URL content: {url}")
 
             # Check if image analysis should run
@@ -397,7 +403,7 @@ async def process_url(
 
             if use_screenshot_only and screenshot_path:
                 # Screenshot-only mode: extract content purely from screenshot
-                stages.advance("llm", "Extracting content from screenshot...", pin=True)
+                stages.update_text("Extracting content from screenshot...")
 
                 _, doc_cost, doc_usage = await process_url_screenshot_only(
                     screenshot_path,
@@ -437,7 +443,7 @@ async def process_url(
 
                 if use_vision_enhancement and screenshot_path:
                     # Multi-source URL with screenshot: use vision LLM
-                    stages.advance("llm", "Processing with Vision LLM...", pin=True)
+                    stages.update_text("Processing with Vision LLM...")
                     multi_source_content = build_multi_source_content(
                         fetch_result.static_content,
                         fetch_result.browser_content,
@@ -477,7 +483,7 @@ async def process_url(
                 else:
                     # Has screenshot but vision skipped (e.g. pure mode)
                     # Fall through to standard text-only LLM processing
-                    stages.advance("llm", "Enhancing with LLM...", pin=True)
+                    # (hoisted stage text already reads "Enhancing with LLM...")
                     _, doc_cost, doc_usage = await process_with_llm(
                         markdown_for_llm,
                         url,
@@ -494,9 +500,7 @@ async def process_url(
 
             elif should_analyze_images:
                 # Standard processing with image analysis (no screenshot/vision)
-                stages.advance(
-                    "llm", "Enhancing with LLM (document + images)...", pin=True
-                )
+                stages.update_text("Enhancing with LLM (document + images)...")
 
                 # Create event for signaling .llm.md readiness
                 llm_ready_event = asyncio.Event()
@@ -542,7 +546,7 @@ async def process_url(
                 stages.finalize("LLM enhanced (document + images)")
             else:
                 # Only document processing, no images to analyze, no screenshot
-                stages.advance("llm", "Enhancing with LLM...", pin=True)
+                # (hoisted stage text already reads "Enhancing with LLM...")
                 _, doc_cost, doc_usage = await process_with_llm(
                     markdown_for_llm,
                     url,  # Use URL as source identifier

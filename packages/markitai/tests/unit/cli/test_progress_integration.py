@@ -7,16 +7,25 @@ Replaces the processor-level classes of test_conversion_status.py.
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from loguru import logger
 from rich.console import Console
 
+from markitai.cli import ui
 from markitai.cli.processors.url import process_url
 from markitai.config import MarkitaiConfig
 
 HIDE_CURSOR = "\x1b[?25l"
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def strip_ansi(text: str) -> str:
+    """Drop ANSI CSI sequences so assertions see the plain rendered text."""
+    return _ANSI_RE.sub("", text)
 
 
 def make_tty_console() -> Console:
@@ -183,3 +192,51 @@ class TestUrlErrorPath:
         stderr_text = fake_stderr.file.getvalue()  # type: ignore[union-attr]
         # The failed fetch stage line persisted (file mode persists on stop)
         assert "Fetching" in stderr_text
+
+
+class TestUrlLlmStage:
+    """The [LLM] log must not race the pinned LLM stage.
+
+    logger.info("[LLM] ...") fires at the top of the LLM block; if no pinned
+    stage is active yet, the loguru bridge advances to an unpinned bridge
+    stage which the explicit advance then finalizes — leaving a spurious
+    ~0s "Enhancing with LLM" success line in the checklist.
+    """
+
+    async def test_llm_run_has_no_spurious_bridge_stage_line(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        fake_stderr = make_tty_console()
+        monkeypatch.setattr("markitai.cli.ui.get_stderr_console", lambda: fake_stderr)
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.cache.enabled = False
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=make_fetch_result(),
+            ),
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new_callable=AsyncMock,
+                return_value=("", 0.0, {}),
+            ),
+        ):
+            await process_url(
+                url="https://example.com/test",
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        stderr_text = strip_ansi(fake_stderr.file.getvalue())  # type: ignore[union-attr]
+        # The real LLM stage finalized with its explicit completion text...
+        assert "LLM enhanced" in stderr_text
+        # ...and no spurious success line exists for the bare bridge text.
+        # A done line renders as "✓ Enhancing with LLM (0.0s)"; the active
+        # spinner line ("Enhancing with LLM...") has no mark and no parens.
+        assert f"{ui.MARK_SUCCESS} Enhancing with LLM (" not in stderr_text
