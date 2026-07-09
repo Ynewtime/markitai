@@ -976,7 +976,6 @@ def app(
             log_file_path,
             verbose=verbose,
             quiet=quiet,
-            output_manager=om,
         )
 
     async def run_workflow_with_cleanup() -> None:
