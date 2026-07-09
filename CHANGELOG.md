@@ -15,10 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`--resume` was a no-op**: the CLI batch entry point accepted the flag but always reprocessed every file from scratch. It now correctly loads saved state — completed files are skipped, failed/interrupted files are retried, newly-discovered files are picked up — and reports `Resuming batch: N completed, M remaining`
 - **Output naming reverted to the append scheme**: `sample.pdf` → `sample.pdf.md` (not `sample.md`), undoing the 0.15.0 extension-replacement change, which hid the source format, mangled multi-suffix names, and made single-file and batch conversions of the same file disagree
+- **Windows install one-liner 404**: the website now serves `setup.ps1` (docs pointed to https://markitai.dev/setup.ps1 but only setup.sh was deployed); Chinese changelog edits now trigger site redeploys
 
 ### Removed
 
 - **Legacy progress facilities retired**: internal `ConversionStatus`, `ProgressReporter`, and `OutputManager` are replaced by StageList; `markitai.utils`/`markitai.cli` no longer export `ProgressReporter`, and `attempt_login()` lost its unused `output_manager` parameter
+- **Dead code sweep**: unreachable async enricher registry, unused exception hierarchy, deprecated no-caller helpers, test-only utility functions, and ~5MB of unreferenced test fixtures; `markitdown` dependency narrowed from `[all]` to the office extras actually used (drops azure/audio/pdfminer/youtube transitive deps); `httpx` and `lxml` are now declared directly
 
 ## [0.18.0] - 2026-07-09
 

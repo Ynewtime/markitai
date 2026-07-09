@@ -48,6 +48,17 @@ deliberately with `--update-baseline` when a quality change is intentional.
 The full-corpus run is manual/CI-cron only — a fast smoke test
 (`tests/unit/test_webextract_quality_benchmark.py`) covers the scorer math.
 
+## Syncing the defuddle fixture corpus
+
+`scripts/sync_defuddle_fixtures.sh /path/to/defuddle` refreshes the defuddle
+parity corpus in `tests/defuddle_fixtures/` from a local clone of the upstream
+[defuddle](https://github.com/kepano/defuddle) repo — it copies that repo's
+`tests/fixtures/*.html` and `tests/expected/*.md` and records the source commit
+in `VERSION`. Run it only when deliberately refreshing the corpus against a
+newer defuddle; both the parity tests and the quality benchmark read these
+fixtures, so a resync can shift scores. The corpus was last synced 2026-03-23
+(see `tests/defuddle_fixtures/VERSION`).
+
 ## Conventions
 
 - Match surrounding code style; ruff (`E,W,F,I,B,C4,UP,ARG,SIM`) and pyright
