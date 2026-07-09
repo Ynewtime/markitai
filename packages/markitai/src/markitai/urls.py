@@ -32,20 +32,6 @@ class UrlListParseError(Exception):
     pass
 
 
-def is_url_list_file(path: Path) -> bool:
-    """Check if path is a URL list file.
-
-    URL list files are identified by the .urls extension.
-
-    Args:
-        path: Path to check
-
-    Returns:
-        True if the file has .urls extension
-    """
-    return path.suffix.lower() == ".urls"
-
-
 def parse_url_list(file_path: Path) -> list[UrlEntry]:
     """Parse a URL list file.
 
@@ -176,18 +162,3 @@ def _parse_text_url_list(content: str, file_path: Path) -> list[UrlEntry]:
         entries.append(UrlEntry(url=url, output_name=output_name or None))
 
     return entries
-
-
-def find_url_list_files(directory: Path) -> list[Path]:
-    """Find all .urls files in a directory (recursive).
-
-    Args:
-        directory: Directory to search
-
-    Returns:
-        List of paths to .urls files, sorted by path
-    """
-    if not directory.is_dir():
-        return []
-
-    return sorted(directory.glob("**/*.urls"))

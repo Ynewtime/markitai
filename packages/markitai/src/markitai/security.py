@@ -222,33 +222,6 @@ async def atomic_write_text_async(
         raise
 
 
-async def atomic_write_json_async(
-    path: Path,
-    obj: Any,
-    indent: int = DEFAULT_JSON_INDENT,
-    ensure_ascii: bool = False,
-    *,
-    follow_symlinks: bool = False,
-) -> None:
-    """Write JSON to file atomically (async version).
-
-    Args:
-        path: Target file path
-        obj: Object to serialize as JSON
-        indent: JSON indentation (default: 2)
-        ensure_ascii: If True, escape non-ASCII characters (default: False)
-        follow_symlinks: If True, write to the resolved symlink target instead of
-            replacing the symlink entry itself.
-    """
-    content = json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii)
-    await atomic_write_text_async(
-        path,
-        content,
-        encoding="utf-8",
-        follow_symlinks=follow_symlinks,
-    )
-
-
 async def write_bytes_async(
     path: Path,
     data: bytes,

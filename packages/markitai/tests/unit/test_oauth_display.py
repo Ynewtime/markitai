@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import io
-import sys
 
-import pytest
 from rich.console import Console
 
 from markitai.providers.oauth_display import (
@@ -13,9 +11,7 @@ from markitai.providers.oauth_display import (
     parse_chatgpt_device_code,
     show_device_code,
     show_login_start,
-    show_oauth_start,
     show_oauth_success,
-    suppress_stdout,
 )
 
 
@@ -24,49 +20,6 @@ def _make_test_console() -> tuple[Console, io.StringIO]:
     buf = io.StringIO()
     console = Console(file=buf, no_color=True, width=120, highlight=False)
     return console, buf
-
-
-class TestSuppressStdout:
-    """Tests for suppress_stdout context manager."""
-
-    def test_captures_stdout(self) -> None:
-        """stdout writes inside the context are captured."""
-        with suppress_stdout() as captured:
-            print("hello from stdout")
-        assert "hello from stdout" in captured.getvalue()
-
-    def test_restores_stdout_after(self) -> None:
-        """sys.stdout is restored after exiting context."""
-        original = sys.stdout
-        with suppress_stdout():
-            pass
-        assert sys.stdout is original
-
-    def test_restores_stdout_on_exception(self) -> None:
-        """sys.stdout is restored even if an exception occurs."""
-        original = sys.stdout
-        with pytest.raises(ValueError), suppress_stdout():
-            raise ValueError("boom")
-        assert sys.stdout is original
-
-
-class TestShowOAuthStart:
-    """Tests for show_oauth_start."""
-
-    def test_unmapped_provider_falls_back_to_raw_name(self) -> None:
-        """A provider with no label mapping falls back to its raw name."""
-        console, buf = _make_test_console()
-        show_oauth_start("some-new-provider", console=console)
-        output = buf.getvalue()
-        assert "some-new-provider" in output
-        assert "Authentication" in output
-        assert "browser" in output.lower()
-
-    def test_chatgpt_start_message(self) -> None:
-        """ChatGPT uses correct provider label."""
-        console, buf = _make_test_console()
-        show_oauth_start("chatgpt", console=console)
-        assert "ChatGPT" in buf.getvalue()
 
 
 class TestShowDeviceCode:

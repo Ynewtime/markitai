@@ -107,24 +107,6 @@ class ConversionStepResult:
     skip_reason: str | None = None
 
 
-class DocumentConversionError(Exception):
-    """Error during document conversion."""
-
-    pass
-
-
-class UnsupportedFormatError(DocumentConversionError):
-    """Unsupported file format."""
-
-    pass
-
-
-class FileSizeError(DocumentConversionError):
-    """File size exceeds limit."""
-
-    pass
-
-
 async def run_in_converter_thread(func, *args, **kwargs):
     """Run a converter function in the shared thread pool.
 

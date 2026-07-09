@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,16 +27,6 @@ class ImageAnalysisResult:
 
     source_file: str
     assets: list[dict[str, Any]]
-
-
-@dataclass
-class WorkflowResult:
-    """Result of processing a file through the workflow."""
-
-    markdown: str
-    llm_cost: float = 0.0
-    llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
-    image_analysis: ImageAnalysisResult | None = None
 
 
 def _read_markdown_body(output_file: Path, fallback: str) -> str:

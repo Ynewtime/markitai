@@ -22,10 +22,19 @@ def test_sanitize_tag_tree_handles_none_attrs() -> None:
     assert "hello" in div.get_text()
 
 
-def test_sanitize_html_removes_event_handlers_and_javascript_links() -> None:
-    from markitai.webextract.sanitize import sanitize_html_fragment
+def _sanitize_fragment(html: str) -> str:
+    """Parse a fragment, sanitize the tree in place, and serialize it back."""
+    from bs4 import BeautifulSoup
 
-    sanitized = sanitize_html_fragment(
+    from markitai.webextract.sanitize import sanitize_tag_tree
+
+    soup = BeautifulSoup(html, "html.parser")
+    sanitize_tag_tree(soup)
+    return str(soup)
+
+
+def test_sanitize_removes_event_handlers_and_javascript_links() -> None:
+    sanitized = _sanitize_fragment(
         '<div onclick="evil()"><a href="javascript:evil()">x</a><p>safe</p></div>'
     )
 
@@ -36,25 +45,19 @@ def test_sanitize_html_removes_event_handlers_and_javascript_links() -> None:
 
 def test_sanitize_removes_url_encoded_javascript() -> None:
     """URL-encoded javascript: should be caught after decoding."""
-    from markitai.webextract.sanitize import sanitize_html_fragment
-
-    sanitized = sanitize_html_fragment('<a href="javascript%3Aalert(1)">click</a>')
+    sanitized = _sanitize_fragment('<a href="javascript%3Aalert(1)">click</a>')
     assert "javascript" not in sanitized.lower() or "href" not in sanitized
 
 
 def test_sanitize_removes_vbscript_links() -> None:
     """vbscript: scheme should be removed."""
-    from markitai.webextract.sanitize import sanitize_html_fragment
-
-    sanitized = sanitize_html_fragment('<a href="vbscript:evil()">click</a>')
+    sanitized = _sanitize_fragment('<a href="vbscript:evil()">click</a>')
     assert "vbscript" not in sanitized.lower() or "href" not in sanitized
 
 
 def test_sanitize_checks_formaction_attribute() -> None:
     """formaction with javascript: should be removed."""
-    from markitai.webextract.sanitize import sanitize_html_fragment
-
-    sanitized = sanitize_html_fragment(
+    sanitized = _sanitize_fragment(
         '<div formaction="javascript:evil()"><p>safe</p></div>'
     )
     assert "formaction" not in sanitized

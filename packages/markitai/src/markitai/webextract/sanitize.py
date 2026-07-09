@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from urllib.parse import unquote
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import Tag
 
 UNSAFE_URL_PREFIXES = (
     "javascript:",
@@ -25,22 +25,6 @@ REMOVE_TAGS = {
     "textarea",
     "select",
 }
-
-
-def sanitize_html_fragment(html: str) -> str:
-    """Remove unsafe attributes, links, and obvious noise tags.
-
-    Args:
-        html: HTML fragment to sanitize.
-
-    Returns:
-        Sanitized HTML string.
-    """
-
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in list(soup.find_all(True)):
-        _sanitize_tag(tag)
-    return str(soup)
 
 
 def sanitize_tag_tree(root: Tag) -> None:
