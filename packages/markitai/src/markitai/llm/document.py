@@ -286,6 +286,7 @@ class DocumentMixin:
         protect_content: Any
         unprotect_content: Any
         fix_malformed_image_refs: Any
+        strip_prompt_echo: Any
         clean_frontmatter: Any
         smart_truncate: Any
         split_text_by_pages: Any
@@ -1064,8 +1065,9 @@ class DocumentMixin:
         cache_content = _compute_document_fingerprint(extracted_text, page_name_list)
         cached = self._persistent_cache.get(cache_key, cache_content, context=context)
         if cached is not None:
-            # Fix malformed image refs even for cached content (handles old cache entries)
-            return self.fix_malformed_image_refs(cached)
+            # Fix malformed image refs and echoed prompt tails even for cached
+            # content (handles old cache entries)
+            return self.strip_prompt_echo(self.fix_malformed_image_refs(cached))
 
         # Extract and protect content before LLM processing
         protected = self.extract_protected_content(extracted_text)
@@ -1125,7 +1127,9 @@ class DocumentMixin:
         )
 
         # Restore protected content from placeholders, with fallback for removed items
-        result = self.unprotect_content(response.content, mapping, protected)
+        result = self.unprotect_content(
+            self.strip_prompt_echo(response.content), mapping, protected
+        )
 
         # Fix malformed image references (e.g., extra closing parentheses)
         result = self.fix_malformed_image_refs(result)
@@ -1347,8 +1351,11 @@ class DocumentMixin:
                 frontmatter_to_yaml,
             )
 
-            # Fix malformed image refs even for cached content (handles old cache entries)
-            cleaned = self.fix_malformed_image_refs(cached.get("cleaned_markdown", ""))
+            # Fix malformed image refs and echoed prompt tails even for cached
+            # content (handles old cache entries)
+            cleaned = self.strip_prompt_echo(
+                self.fix_malformed_image_refs(cached.get("cleaned_markdown", ""))
+            )
             fm = build_frontmatter_dict(
                 source=source,
                 description=cached.get("description", ""),
@@ -1485,8 +1492,9 @@ Generate the following fields:
                 f"tokens={input_tokens}+{output_tokens} time={elapsed_ms}ms cost=${cost:.6f}"
             )
 
+            response_markdown = self.strip_prompt_echo(response.cleaned_markdown)
             fallback = self._fallback_if_boundary_placeholders_missing(
-                response.cleaned_markdown,
+                response_markdown,
                 extracted_text,
                 mapping,
                 source,
@@ -1498,7 +1506,7 @@ Generate the following fields:
                 # Restore protected content from placeholders.
                 # Pass protected dict for fallback restoration if LLM removed placeholders.
                 cleaned_markdown = self.unprotect_content(
-                    response.cleaned_markdown, mapping, protected
+                    response_markdown, mapping, protected
                 )
 
             # Fix malformed image references (e.g., extra closing parentheses)

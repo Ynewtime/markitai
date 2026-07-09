@@ -35,6 +35,11 @@ _PAGE_REF_RE = re.compile(r"!\[Page\s+(\d+)\]")
 _CODE_BLOCK_RE = re.compile(
     r"^```(?:ya?ml)?\s*\n?(.*?)\n?```$", re.DOTALL | re.IGNORECASE
 )
+# Prompt-instruction lines echoed by the LLM into its output. Matches the
+# in-code tail reminder wording and the pre-tag-delimiter template tail
+# (still present in old cached results); the __MARKITAI_ mention
+# distinguishes them from legitimate document content.
+_ECHOED_REMINDER_RE = re.compile(r"^\s*REMINDER:.*__MARKITAI_")
 _PROMPT_LEAKAGE_PATTERNS = [
     re.compile(r"^根据.*生成.*frontmatter.*:.*$", re.IGNORECASE),
     re.compile(r"^请.*生成.*:.*$", re.IGNORECASE),
@@ -452,6 +457,46 @@ def fix_malformed_image_refs(text: str) -> str:
         i += 1
 
     return "".join(result)
+
+
+def strip_prompt_echo(text: str) -> str:
+    """Remove prompt fragments echoed by the LLM into its output.
+
+    Smaller models sometimes copy prompt text verbatim into the cleaned
+    document: REMINDER lines about __MARKITAI_*__ placeholders (from the
+    in-code tail reminder, or from the old `---`-delimited template still
+    present in cached results), and the <document> tags the current
+    document_vision_user template wraps content in.
+
+    Args:
+        text: LLM response content that may contain echoed prompt fragments
+
+    Returns:
+        Content with echoed REMINDER lines (and their `---` delimiter)
+        removed and echoed <document> wrapper tags unwrapped
+    """
+    if "REMINDER:" in text:
+        kept: list[str] = []
+        for line in text.split("\n"):
+            if _ECHOED_REMINDER_RE.match(line):
+                # Drop the echoed prompt delimiter directly above the reminder
+                while kept and kept[-1].strip() == "":
+                    kept.pop()
+                if kept and kept[-1].strip() == "---":
+                    kept.pop()
+                    while kept and kept[-1].strip() == "":
+                        kept.pop()
+                continue
+            kept.append(line)
+        text = "\n".join(kept)
+
+    # Unwrap echoed <document> tags at the outermost head/tail only —
+    # tag lines mid-content (e.g. inside code blocks) are real content
+    if text.lstrip().startswith("<document>"):
+        text = text.lstrip()[len("<document>") :].lstrip("\n")
+    if text.rstrip().endswith("</document>"):
+        text = text.rstrip()[: -len("</document>")].rstrip("\n")
+    return text
 
 
 def protect_image_positions(

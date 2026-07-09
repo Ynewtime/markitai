@@ -1387,6 +1387,53 @@ class TestEnhanceDocumentCompleteAsync:
         assert "source: test.md" in frontmatter
 
     @pytest.mark.asyncio
+    async def test_enhance_document_complete_strips_prompt_echo(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        sample_test_image: Path,
+        mock_enhanced_result_factory,
+    ) -> None:
+        """Regression: LLM may echo prompt instructions into its output.
+
+        Observed with gpt-5.4-mini on sample.pdf: cleaned_markdown ended with
+        the old document_vision_user.md tail (`---` + REMINDER line).
+        """
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+
+        echoed = (
+            "# Vision Enhanced\n\nEnhanced content.\n\n---\n\n"
+            "REMINDER: All `__MARKITAI_*__` placeholders must appear in your "
+            "output exactly as in the input. Do not remove, modify, or merge "
+            "any placeholder. Do not wrap output in a code block."
+        )
+        result, raw = mock_enhanced_result_factory(cleaned_markdown=echoed)
+
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock()
+        processor._router = mock_router
+        processor._vision_router = mock_router
+
+        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=(result, raw)
+            )
+            mock_instructor.return_value = mock_client
+
+            cleaned, _ = await processor.enhance_document_complete(
+                "# Test\n\nContent",
+                [sample_test_image],
+                "test.md",
+                max_pages_per_batch=10,
+            )
+
+        assert "REMINDER" not in cleaned
+        assert "Enhanced content." in cleaned
+
+    @pytest.mark.asyncio
     async def test_enhance_document_complete_reverts_suspicious_page_expansion(
         self,
         llm_config: LLMConfig,

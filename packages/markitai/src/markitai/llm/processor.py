@@ -609,6 +609,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
     protect_content = staticmethod(content.protect_content)
     unprotect_content = staticmethod(content.unprotect_content)
     fix_malformed_image_refs = staticmethod(content.fix_malformed_image_refs)
+    strip_prompt_echo = staticmethod(content.strip_prompt_echo)
     clean_frontmatter = staticmethod(content.clean_frontmatter)
     smart_truncate = staticmethod(content.smart_truncate)
     split_text_by_pages = staticmethod(content.split_text_by_pages)
