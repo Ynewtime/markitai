@@ -11,8 +11,10 @@ This module provides CLI commands for managing Markitai configuration:
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import rich_click as click
 from rich.syntax import Syntax
@@ -26,6 +28,94 @@ console = get_console()
 
 # Sentinel to distinguish "key not found" from "key exists but is null"
 _MISSING = object()
+
+_REDACTED = "[REDACTED]"
+
+
+def _normalize_config_key(key: str) -> str:
+    """Normalize snake/camel/header-style keys for policy matching."""
+    snake_key = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", key)
+    snake_key = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", snake_key)
+    return re.sub(r"[^a-z0-9]+", "_", snake_key.lower()).strip("_")
+
+
+def _is_sensitive_config_key(key: str) -> bool:
+    """Return whether a config key conventionally contains secret material."""
+    normalized = _normalize_config_key(key)
+    parts = set(normalized.split("_"))
+
+    if normalized == "apikey" or normalized.endswith("_apikey"):
+        return True
+    if "api" in parts and "key" in parts:
+        return True
+    if "token" in parts:  # Deliberately does not match non-secret ``max_tokens``.
+        return True
+    return bool(
+        parts
+        & {
+            "authorization",
+            "cookie",
+            "cookies",
+            "credential",
+            "credentials",
+            "passwd",
+            "password",
+            "secret",
+        }
+    )
+
+
+def _safe_api_base_origin(value: Any) -> Any:
+    """Expose only a URL origin, never credentials, paths, query, or fragment."""
+    if isinstance(value, str) and value.startswith("env:"):
+        return value
+    if not isinstance(value, str):
+        return _REDACTED
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return _REDACTED
+    if not parsed.scheme or not hostname:
+        return _REDACTED
+    display_host = f"[{hostname}]" if ":" in hostname else hostname
+    if port is not None:
+        display_host = f"{display_host}:{port}"
+    return f"{parsed.scheme}://{display_host}"
+
+
+def _redact_header_values(headers: Any) -> Any:
+    """Keep header names for diagnosis while hiding every configured value."""
+    if not isinstance(headers, dict):
+        return _REDACTED
+    # Playwright forwards these strings verbatim; unlike api_key/api_token,
+    # this field does not resolve ``env:VAR`` references. Treat every value as
+    # inline material, including values that merely look like an env reference.
+    return dict.fromkeys(headers, _REDACTED)
+
+
+def _redact_config_secrets(value: Any) -> Any:
+    """Recursively redact inline secrets while preserving ``env:VAR`` refs."""
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized = _normalize_config_key(str(key))
+            if normalized == "extra_http_headers":
+                redacted[key] = _redact_header_values(item)
+            elif normalized == "api_base":
+                redacted[key] = _safe_api_base_origin(item)
+            elif _is_sensitive_config_key(str(key)):
+                if isinstance(item, str) and item.startswith("env:"):
+                    redacted[key] = item
+                else:
+                    redacted[key] = _REDACTED
+            else:
+                redacted[key] = _redact_config_secrets(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_config_secrets(item) for item in value]
+    return value
 
 
 def _resolve_field_type(key: str) -> Any:
@@ -135,7 +225,12 @@ def config() -> None:
     default="json",
     help="Output format (json, yaml, or table).",
 )
-def config_list(output_format: str) -> None:
+@click.option(
+    "--show-secrets",
+    is_flag=True,
+    help="Show secret values instead of redacting them (unsafe for shared logs).",
+)
+def config_list(output_format: str, show_secrets: bool) -> None:
     """Show current effective configuration.
 
     Merges defaults, config file, environment variables — what markitai
@@ -150,6 +245,8 @@ def config_list(output_format: str) -> None:
     cfg = manager.load()
 
     config_dict = cfg.model_dump(mode="json", exclude_none=True)
+    if not show_secrets:
+        config_dict = _redact_config_secrets(config_dict)
 
     if output_format == "json":
         config_json = json.dumps(config_dict, indent=2, ensure_ascii=False)
