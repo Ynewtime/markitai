@@ -9,6 +9,20 @@ export default defineConfig({
 
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }],
+    ['link', { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' }],
+    [
+      'script',
+      {},
+      `(function () {
+        try {
+          var nav = navigator
+          var platform = (nav.userAgentData && nav.userAgentData.platform) || nav.platform || nav.userAgent || ''
+          if (/windows|win32|win64|wow64/i.test(platform)) {
+            document.documentElement.classList.add('platform-windows')
+          }
+        } catch (_) {}
+      })()`,
+    ],
   ],
 
   locales: {

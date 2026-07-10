@@ -42,15 +42,35 @@ features:
   <div class="home-quickstart-steps" role="list" aria-label="Quick start commands">
     <div class="home-quickstart-step" role="listitem">
       <span class="step-number" aria-hidden="true">1</span>
-      <div><p>Install the core package</p><code>uv tool install markitai</code></div>
+      <div>
+        <p class="non-windows-only">Install with the portable script for macOS or Linux</p>
+        <code class="platform-install-command non-windows-only">curl -fsSL https://markitai.dev/setup.sh | sh</code>
+        <p class="windows-only">Install with the portable script for Windows</p>
+        <code class="platform-install-command windows-only">powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"</code>
+        <details class="home-install-options">
+          <summary>Other platforms and manual install</summary>
+          <div class="home-install-option">
+            <span>macOS or Linux</span>
+            <code>curl -fsSL https://markitai.dev/setup.sh | sh</code>
+          </div>
+          <div class="home-install-option">
+            <span>Windows</span>
+            <code>powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"</code>
+          </div>
+          <div class="home-install-option">
+            <span>Already have uv</span>
+            <code>uv tool install markitai</code>
+          </div>
+        </details>
+      </div>
     </div>
     <div class="home-quickstart-step" role="listitem">
       <span class="step-number" aria-hidden="true">2</span>
-      <div><p>Create a tiny input</p><code>echo "First Markitai conversion" &gt; hello.txt</code></div>
+      <div><p>Convert a live page</p><code>markitai https://markitai.dev/guide/getting-started --pure</code></div>
     </div>
     <div class="home-quickstart-step output" role="listitem">
       <span class="step-number" aria-hidden="true">3</span>
-      <div><p>Get clean Markdown on stdout</p><code>markitai hello.txt --pure</code></div>
+      <div><p>Get clean Markdown on stdout</p><code># Getting Started ...</code></div>
     </div>
   </div>
 </section>

@@ -8,17 +8,17 @@ Install the core package. Optional browser rendering, extra format support, and 
 uv tool install markitai
 ```
 
-Create a tiny text file and convert it:
+Convert a real page — this very guide:
 
 ```bash
-echo "First Markitai conversion" > hello.txt
-markitai hello.txt --pure
+mkai https://markitai.dev/guide/getting-started --pure
 ```
 
-With `--pure`, Markitai prints the Markdown body to stdout without frontmatter:
+`mkai` is the short alias installed alongside `markitai`. With `--pure`, the Markdown body goes to stdout without frontmatter:
 
 ```text
-First Markitai conversion
+# Getting Started
+...
 ```
 
 Add `-o output/` when you want a file instead. Continue below for the guided installer, documents and URLs, LLM enhancement, and optional format support.

@@ -172,7 +172,7 @@
   line-height: 1.4;
 }
 
-.home-quickstart-step code {
+.VPHome .home-quickstart-steps .home-quickstart-step code {
   display: block;
   padding: 0;
   overflow-wrap: anywhere;
@@ -183,11 +183,55 @@
   white-space: normal;
 }
 
-.home-quickstart-step.output code {
+.VPHome .home-quickstart-steps .home-quickstart-step.output code {
   color: #bbf7d0;
 }
 
-@media (max-width: 767px) {
+/* The platform class is added in <head> before first paint. */
+.VPHome .home-quickstart-steps .home-quickstart-step .windows-only {
+  display: none;
+}
+
+.platform-windows .VPHome .home-quickstart-steps .home-quickstart-step .non-windows-only {
+  display: none;
+}
+
+.platform-windows .VPHome .home-quickstart-steps .home-quickstart-step p.windows-only,
+.platform-windows .VPHome .home-quickstart-steps .home-quickstart-step code.windows-only {
+  display: block;
+}
+
+.home-install-options {
+  margin-top: 12px;
+  color: #a1a1aa;
+  font-size: 12px;
+}
+
+.home-install-options summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.home-install-options[open] summary {
+  margin-bottom: 12px;
+}
+
+.home-install-option + .home-install-option {
+  margin-top: 10px;
+}
+
+.home-install-option span {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.VPHome .home-quickstart-steps .home-install-option code {
+  color: #e4e4e7;
+  font-size: 12px;
+}
+
+@media (max-width: 959px) {
   .home-quickstart {
     grid-template-columns: 1fr;
     gap: 32px;
@@ -234,8 +278,9 @@
   }
 
   .home-quickstart-step p,
-  .home-quickstart-step code,
-  .home-quickstart-step.output code {
+  .VPHome .home-quickstart-steps .home-quickstart-step code,
+  .VPHome .home-quickstart-steps .home-quickstart-step.output code,
+  .VPHome .home-quickstart-steps .home-install-option code {
     color: CanvasText;
   }
 }
@@ -271,8 +316,9 @@
   }
 
   .home-quickstart-step p,
-  .home-quickstart-step code,
-  .home-quickstart-step.output code {
+  .VPHome .home-quickstart-steps .home-quickstart-step code,
+  .VPHome .home-quickstart-steps .home-quickstart-step.output code,
+  .VPHome .home-quickstart-steps .home-install-option code {
     color: #000;
   }
 }
