@@ -271,6 +271,18 @@ class TestSummaryFunction:
         assert ui.MARK_SUCCESS not in output
         assert "Check failed" in output
 
+    def test_summary_warning_uses_warning_symbol(self) -> None:
+        """Test a degraded summary uses warning rather than success/error."""
+        buffer = io.StringIO()
+        console = Console(file=buffer, force_terminal=True, width=80)
+
+        ui.summary("Optional checks unavailable", ok=None, console=console)
+
+        output = buffer.getvalue()
+        assert ui.MARK_WARNING in output
+        assert ui.MARK_SUCCESS not in output
+        assert ui.MARK_ERROR not in output
+
 
 class TestDefaultConsole:
     """Tests for default console behavior."""

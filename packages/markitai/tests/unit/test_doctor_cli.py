@@ -166,7 +166,7 @@ class TestAuthenticationChecks:
 
             result = runner.invoke(doctor, ["--json"])
 
-            assert result.exit_code in (0, 1)  # exit reflects host dep state
+            assert result.exit_code == 0
             data = json.loads(result.output)
             assert "copilot-auth" in data
             assert data["copilot-auth"]["status"] == "ok"
@@ -218,7 +218,7 @@ class TestAuthenticationChecks:
 
             result = runner.invoke(doctor, ["--json"])
 
-            assert result.exit_code in (0, 1)  # exit reflects host dep state
+            assert result.exit_code == 1
             data = json.loads(result.output)
             assert "copilot-auth" in data
             assert data["copilot-auth"]["status"] == "error"
@@ -430,7 +430,7 @@ class TestDoctorFromMainCLI:
 
 
 class TestDoctorExitCode:
-    """Exit-code contract: 1 when required deps are missing, 0 when all ok."""
+    """Exit-code contract for core health versus optional capabilities."""
 
     @pytest.fixture
     def runner(self) -> CliRunner:
@@ -451,6 +451,7 @@ class TestDoctorExitCode:
         *,
         playwright_ok: bool,
         libreoffice_ok: bool,
+        rapidocr_ok: bool = True,
         as_json: bool = False,
     ):
         from markitai.cli.commands.doctor import doctor
@@ -470,6 +471,18 @@ class TestDoctorExitCode:
                 "markitai.utils.office.is_libreoffice_functional",
                 return_value=libreoffice_ok,
             ),
+            patch(
+                "markitai.cli.commands.doctor._check_rapidocr",
+                return_value={
+                    "name": "RapidOCR",
+                    "description": "OCR for scanned documents",
+                    "status": "ok" if rapidocr_ok else "missing",
+                    "message": "RapidOCR installed"
+                    if rapidocr_ok
+                    else "RapidOCR not installed",
+                    "install_hint": "" if rapidocr_ok else "install RapidOCR",
+                },
+            ),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = playwright_ok
@@ -477,15 +490,15 @@ class TestDoctorExitCode:
             args = ["--json"] if as_json else []
             return runner.invoke(doctor, args)
 
-    def test_missing_required_exits_nonzero(
+    def test_missing_optional_capabilities_exit_zero(
         self, runner: CliRunner, mock_config: MagicMock
     ) -> None:
         result = self._invoke(
             runner, mock_config, playwright_ok=False, libreoffice_ok=False
         )
-        assert result.exit_code == 1
+        assert result.exit_code == 0
 
-    def test_missing_required_exits_nonzero_json(
+    def test_missing_optional_capabilities_exit_zero_json(
         self, runner: CliRunner, mock_config: MagicMock
     ) -> None:
         result = self._invoke(
@@ -495,14 +508,18 @@ class TestDoctorExitCode:
             libreoffice_ok=False,
             as_json=True,
         )
-        assert result.exit_code == 1
-        # JSON payload must still be valid on failure
+        assert result.exit_code == 0
         assert "playwright" in json.loads(result.output)
 
-    def test_failure_summary_mentions_missing_count(
+    def test_missing_rapidocr_exits_nonzero(
         self, runner: CliRunner, mock_config: MagicMock
     ) -> None:
         result = self._invoke(
-            runner, mock_config, playwright_ok=False, libreoffice_ok=False
+            runner,
+            mock_config,
+            playwright_ok=True,
+            libreoffice_ok=True,
+            rapidocr_ok=False,
         )
-        assert "required missing" in result.output or "必需缺失" in result.output
+        assert result.exit_code == 1
+        assert "Health check failed" in result.output or "健康检查失败" in result.output

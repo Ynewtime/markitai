@@ -111,6 +111,10 @@ class TestPlaywrightDependency:
                 "markitai.fetch_playwright.is_playwright_browser_installed"
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
+            patch(
+                "markitai.cli.commands.doctor._smoke_test_playwright_browser",
+                return_value=(True, ""),
+            ),
             patch("markitai.cli.commands.doctor.shutil.which", return_value=None),
             patch("markitai.utils.office.find_libreoffice", return_value=None),
         ):
@@ -411,7 +415,7 @@ class TestLLMAPIDependency:
             assert result.exit_code in (0, 1)  # exit reflects host dep state
             data = json.loads(result.output)
             assert data["llm-api"]["status"] == "ok"
-            assert "1 model" in data["llm-api"]["message"]
+            assert "1 active model" in data["llm-api"]["message"]
 
     def test_llm_api_not_configured(self, runner: CliRunner) -> None:
         """Test LLM API status when no models configured."""

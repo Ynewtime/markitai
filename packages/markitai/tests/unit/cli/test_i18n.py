@@ -131,16 +131,16 @@ class TestTranslate:
     def test_translate_with_format_args(self) -> None:
         """Should support format arguments."""
         i18n.set_language("en")
-        result = i18n.t("doctor.summary", passed=3, optional=1)
-        assert "3 required passed" in result
-        assert "1 optional missing" in result
+        result = i18n.t("doctor.summary", passed=3, degraded=1)
+        assert "3 required/configured checks passed" in result
+        assert "1 non-blocking warnings" in result
 
     def test_translate_with_format_args_chinese(self) -> None:
         """Should support format arguments in Chinese."""
         i18n.set_language("zh")
-        result = i18n.t("doctor.summary", passed=3, optional=1)
-        assert "3 必需通过" in result
-        assert "1 可选缺失" in result
+        result = i18n.t("doctor.summary", passed=3, degraded=1)
+        assert "3 项必需或已配置检查通过" in result
+        assert "1 项非阻断警告" in result
 
     def test_unknown_key_returns_key(self) -> None:
         """Should return key itself for unknown translations."""
@@ -183,8 +183,17 @@ class TestTextsCompleteness:
             "doctor.optional",
             "doctor.auth",
             "doctor.summary",
+            "doctor.summary_repair_failed",
             "doctor.all_good",
             "doctor.fix_hint",
+            "doctor.fix_attempting",
+            "doctor.fix_installing",
+            "doctor.fix_success",
+            "doctor.fix_verification_failed",
+            "doctor.fix_failed",
+            "doctor.fix_error",
+            "doctor.playwright_package_manual",
+            "doctor.manual_install",
             "cache.title",
             "cache.llm",
             "cache.spa",

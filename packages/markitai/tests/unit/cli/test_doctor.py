@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +12,7 @@ from click.testing import CliRunner
 
 from markitai.cli.commands.doctor import (
     FIXABLE_COMPONENTS,
+    _check_playwright,
     _install_component,
     doctor,
     get_install_hint,
@@ -350,9 +353,11 @@ class TestDoctorSummaryAllGood:
             mock_cm.return_value.load.return_value = cfg
             result = cli_runner.invoke(doctor)
 
-        # "All dependencies configured correctly" should NOT appear
-        assert "All dependencies configured correctly" not in result.output
-        assert "\u6240\u6709\u4f9d\u8d56\u914d\u7f6e\u6b63\u786e" not in result.output
+        # The all-green summary should NOT appear.
+        assert result.exit_code == 1
+        assert "Health check failed" in result.output
+        assert "All checks passed" not in result.output
+        assert "\u6240\u6709\u68c0\u67e5\u5747\u901a\u8fc7" not in result.output
 
 
 class TestDoctorFixFiltering:
@@ -475,7 +480,7 @@ class TestPlaywrightInstallFix:
     """Tests for playwright --fix handling missing package vs missing browser."""
 
     def test_playwright_install_when_package_missing(self) -> None:
-        """When playwright package is missing, --fix should install the package first."""
+        """A missing package must never be installed into the caller project."""
         with (
             patch("markitai.cli.commands.doctor.get_console") as mock_gc,
             patch("markitai.cli.commands.doctor.subprocess.run") as mock_run,
@@ -485,12 +490,8 @@ class TestPlaywrightInstallFix:
 
             result = _install_component("playwright", package_missing=True)
 
-            # Should first install the package via uv add
-            first_call = mock_run.call_args_list[0]
-            cmd = first_call[0][0]
-            assert "uv" in cmd[0]
-            assert "add" in cmd or "playwright" in cmd
-            assert result is True
+            mock_run.assert_not_called()
+            assert result is False
 
     def test_playwright_install_when_only_browser_missing(self) -> None:
         """When only browser is missing, should just install chromium."""
@@ -512,13 +513,345 @@ class TestPlaywrightInstallFix:
             assert result is True
 
 
+class TestPlaywrightRuntimeCheck:
+    """The normal doctor path verifies launchability, not just browser files."""
+
+    def test_installed_browser_that_cannot_launch_is_not_green(self) -> None:
+        with (
+            patch(
+                "markitai.fetch_playwright.is_playwright_available", return_value=True
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed",
+                return_value=True,
+            ),
+            patch(
+                "markitai.cli.commands.doctor._smoke_test_playwright_browser",
+                return_value=(False, "headless launch failed: missing libX11"),
+            ),
+        ):
+            result = _check_playwright()
+
+        assert result["status"] == "warning"
+        assert "missing libX11" in result["message"]
+
+
+class TestDoctorCapabilityContract:
+    """Public CLI contract for core health and optional capabilities."""
+
+    @staticmethod
+    def _result(
+        name: str,
+        status: str,
+        message: str,
+        install_hint: str = "",
+    ) -> dict[str, str]:
+        return {
+            "name": name,
+            "description": "test dependency",
+            "status": status,
+            "message": message,
+            "install_hint": install_hint,
+        }
+
+    def _invoke(
+        self,
+        cli_runner: CliRunner,
+        mock_config: object,
+        *args: str,
+        playwright_status: str = "missing",
+        playwright_after_fix_status: str | None = None,
+        rapidocr_status: str = "ok",
+        run_result: MagicMock | None = None,
+        run_results: list[MagicMock] | None = None,
+    ) -> tuple[object, MagicMock]:
+        def playwright_result(status: str) -> dict[str, str]:
+            if status == "ok":
+                message = "Chromium installed"
+            elif status == "warning":
+                message = "Playwright installed but browser not found"
+            else:
+                message = "Playwright not installed"
+            return self._result("Playwright", status, message, "install playwright")
+
+        playwright_results = [playwright_result(playwright_status)]
+        if playwright_after_fix_status is not None:
+            playwright_results.append(playwright_result(playwright_after_fix_status))
+        with (
+            patch("markitai.cli.commands.doctor.ConfigManager") as mock_cm,
+            patch("markitai.fetch_playwright.clear_browser_cache"),
+            patch(
+                "markitai.cli.commands.doctor._check_playwright",
+                side_effect=playwright_results,
+            ),
+            patch(
+                "markitai.cli.commands.doctor._check_libreoffice",
+                return_value=self._result(
+                    "LibreOffice", "missing", "LibreOffice not installed"
+                ),
+            ),
+            patch(
+                "markitai.cli.commands.doctor._check_ffmpeg",
+                return_value=self._result("FFmpeg", "missing", "FFmpeg not installed"),
+            ),
+            patch(
+                "markitai.cli.commands.doctor._check_rapidocr",
+                return_value=self._result(
+                    "RapidOCR",
+                    rapidocr_status,
+                    "RapidOCR installed"
+                    if rapidocr_status == "ok"
+                    else "RapidOCR not installed",
+                    "install RapidOCR",
+                ),
+            ),
+            patch("markitai.cli.commands.doctor.subprocess.run") as mock_run,
+        ):
+            mock_cm.return_value.load.return_value = mock_config
+            mock_cm.return_value.config_path = None
+            if run_results is not None:
+                mock_run.side_effect = run_results
+            elif run_result is not None:
+                mock_run.return_value = run_result
+            result = cli_runner.invoke(doctor, list(args))
+        return result, mock_run
+
+    def test_missing_optional_capabilities_exit_zero(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Unavailable browser, Office, and media support are not core failures."""
+        result, _ = self._invoke(cli_runner, mock_config)
+
+        assert result.exit_code == 0, result.output
+
+    def test_missing_optional_capabilities_render_as_warnings(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Unavailable optional tools are visually distinct from core failures."""
+        result, _ = self._invoke(cli_runner, mock_config)
+
+        assert "Optional Capabilities" in result.output
+        assert "! Playwright: Playwright not installed" in result.output
+        assert "✗ Playwright: Playwright not installed" not in result.output
+
+    def test_unconfigured_optional_llm_is_not_a_red_failure(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """No model list is a yellow optional state, consistent with exit 0."""
+        result, _ = self._invoke(cli_runner, mock_config, playwright_status="ok")
+
+        assert result.exit_code == 0
+        assert "! LLM API: No models configured" in result.output
+        assert "✗ LLM API: No models configured" not in result.output
+
+    @pytest.mark.parametrize("configured_by", ["strategy", "screenshot"])
+    def test_configured_playwright_capability_is_blocking(
+        self,
+        cli_runner: CliRunner,
+        mock_config: object,
+        configured_by: str,
+    ) -> None:
+        """An enabled browser-dependent workflow must not exit healthy."""
+        if configured_by == "strategy":
+            mock_config.fetch.strategy = "playwright"  # type: ignore[attr-defined]
+            mock_config.screenshot.enabled = False  # type: ignore[attr-defined]
+        else:
+            mock_config.fetch.strategy = "auto"  # type: ignore[attr-defined]
+            mock_config.screenshot.enabled = True  # type: ignore[attr-defined]
+
+        result, _ = self._invoke(cli_runner, mock_config)
+
+        assert result.exit_code == 1
+        assert "✗ Playwright: Playwright not installed" in result.output
+
+    def test_missing_env_for_active_api_model_is_blocking(
+        self,
+        cli_runner: CliRunner,
+        mock_config: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Doctor catches an env reference that the router would skip at runtime."""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        model = _make_model_config("openai/gpt-4o-mini")
+        model.model_info = MagicMock(supports_vision=False)
+        model.litellm_params.api_key = "env:OPENAI_API_KEY"
+        model.litellm_params.api_base = None
+        mock_config.llm.model_list = [model]  # type: ignore[attr-defined]
+        mock_config.fetch.strategy = "auto"  # type: ignore[attr-defined]
+        mock_config.screenshot.enabled = False  # type: ignore[attr-defined]
+
+        result, _ = self._invoke(
+            cli_runner,
+            mock_config,
+            playwright_status="ok",
+        )
+
+        assert result.exit_code == 1
+        assert "OPENAI_API_KEY" in result.output
+
+    def test_nonfatal_rapidocr_language_warning_does_not_fail_core(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """An installed core with an unknown language stays a warning, not red."""
+        result, _ = self._invoke(
+            cli_runner,
+            mock_config,
+            playwright_status="ok",
+            rapidocr_status="warning",
+        )
+
+        assert result.exit_code == 0
+        assert "Health check failed" not in result.output
+
+    def test_unavailable_optional_checks_use_warning_summary(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """A healthy core with degraded optional checks must not end in green."""
+        result, _ = self._invoke(cli_runner, mock_config)
+
+        summary_lines = [
+            line for line in result.output.splitlines() if "Core check passed" in line
+        ]
+        assert summary_lines, result.output
+        assert all("!" in line and "✓" not in line for line in summary_lines)
+
+    def test_missing_rapidocr_exits_nonzero_even_with_fix(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """The core OCR dependency stays red when --fix cannot install it."""
+        result, mock_run = self._invoke(
+            cli_runner,
+            mock_config,
+            "--fix",
+            playwright_status="ok",
+            rapidocr_status="missing",
+        )
+
+        assert result.exit_code == 1
+        mock_run.assert_not_called()
+
+    def test_fix_installs_browser_with_markitai_python_from_isolated_cwd(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Browser repair cannot resolve tools or mutate metadata from the caller cwd."""
+        result, mock_run = self._invoke(
+            cli_runner,
+            mock_config,
+            "--fix",
+            playwright_status="warning",
+            playwright_after_fix_status="ok",
+            run_result=MagicMock(returncode=0, stderr=""),
+        )
+
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_count == 2
+        install_call, smoke_call = mock_run.call_args_list
+        assert install_call.args[0] == [
+            sys.executable,
+            "-m",
+            "playwright",
+            "install",
+            "chromium",
+        ]
+        assert os.path.isabs(install_call.kwargs["cwd"])
+        assert install_call.kwargs["cwd"] != os.getcwd()
+        assert smoke_call.args[0][:2] == [sys.executable, "-c"]
+        assert "chromium.launch" in smoke_call.args[0][2]
+        assert os.path.isabs(smoke_call.kwargs["cwd"])
+        assert smoke_call.kwargs["cwd"] != os.getcwd()
+        assert result.output.count("Playwright capability verified") == 1
+        assert result.output.rfind("Core check passed") > result.output.rfind(
+            "Playwright capability verified"
+        )
+
+    def test_failed_browser_repair_exits_nonzero(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """An attempted repair that fails must not report a successful exit."""
+        result, _ = self._invoke(
+            cli_runner,
+            mock_config,
+            "--fix",
+            playwright_status="warning",
+            run_result=MagicMock(returncode=1, stderr="download failed"),
+        )
+
+        assert result.exit_code == 1
+
+    def test_successful_installer_exit_is_rechecked_before_success(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """A zero installer exit is not enough when Chromium remains unavailable."""
+        result, _ = self._invoke(
+            cli_runner,
+            mock_config,
+            "--fix",
+            playwright_status="warning",
+            playwright_after_fix_status="warning",
+            run_result=MagicMock(returncode=0, stderr=""),
+        )
+
+        assert result.exit_code == 1
+        assert "verification failed" in result.output.lower()
+
+    def test_browser_marker_success_still_requires_headless_launch(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """A browser path is not healthy when Chromium cannot actually launch."""
+        result, mock_run = self._invoke(
+            cli_runner,
+            mock_config,
+            "--fix",
+            playwright_status="warning",
+            playwright_after_fix_status="ok",
+            run_results=[
+                MagicMock(returncode=0, stdout="", stderr=""),
+                MagicMock(returncode=1, stdout="", stderr="missing libX11"),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert mock_run.call_count == 2
+        assert "headless launch failed" in result.output.lower()
+        assert "missing libX11" in result.output
+
+    def test_fix_with_missing_playwright_package_is_safe_failure(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Package repair is manual and never modifies the caller's project."""
+        result, mock_run = self._invoke(
+            cli_runner, mock_config, "--fix", playwright_status="missing"
+        )
+
+        assert result.exit_code == 1
+        mock_run.assert_not_called()
+        assert "uv tool install" in result.output
+        assert "pipx install" in result.output
+
+    def test_json_and_fix_are_explicitly_mutually_exclusive(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Machine-readable output must not silently ignore a requested repair."""
+        result, mock_run = self._invoke(
+            cli_runner,
+            mock_config,
+            "--json",
+            "--fix",
+            playwright_status="warning",
+        )
+
+        assert result.exit_code == 2
+        assert "cannot be used together" in result.output
+        mock_run.assert_not_called()
+
+
 class TestDoctorOutputFormat:
     """Tests for unified doctor output formatting (glyphs, layout, spacing)."""
 
     def _invoke_doctor_failing(
         self, cli_runner: CliRunner, mock_config: object, *, config_path: object = None
     ):
-        """Invoke doctor with LibreOffice missing (required dep failure)."""
+        """Invoke doctor with RapidOCR missing (required dep failure)."""
         with (
             patch("markitai.cli.commands.doctor.ConfigManager") as mock_cm,
             patch(
@@ -534,6 +867,16 @@ class TestDoctorOutputFormat:
             patch(
                 "markitai.fetch_playwright.is_playwright_browser_installed",
                 return_value=True,
+            ),
+            patch(
+                "markitai.cli.commands.doctor._check_rapidocr",
+                return_value={
+                    "name": "RapidOCR",
+                    "description": "OCR for scanned documents",
+                    "status": "missing",
+                    "message": "RapidOCR not installed",
+                    "install_hint": "install RapidOCR",
+                },
             ),
             patch(
                 "markitai.cli.commands.doctor.subprocess.run",
@@ -554,7 +897,7 @@ class TestDoctorOutputFormat:
         summary_lines = [
             line
             for line in result.output.splitlines()
-            if "Check failed" in line or "检查未通过" in line
+            if "Health check failed" in line or "健康检查未通过" in line
         ]
         assert summary_lines, result.output
         for line in summary_lines:
@@ -567,7 +910,7 @@ class TestDoctorOutputFormat:
         """Failing dependency items render 'Name: detail' on a single line."""
         result = self._invoke_doctor_failing(cli_runner, mock_config)
 
-        assert "✗ LibreOffice: soffice/libreoffice command not found" in result.output
+        assert "! LibreOffice: soffice/libreoffice command not found" in result.output
         # No continuation-line format in dependency sections
         assert "│ soffice" not in result.output
 

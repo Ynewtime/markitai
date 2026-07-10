@@ -176,20 +176,25 @@ def section(text: str, *, console: Console | None = None) -> None:
     c.print(f"[bold]{text}[/]")
 
 
-def summary(text: str, *, ok: bool = True, console: Console | None = None) -> None:
+def summary(
+    text: str, *, ok: bool | None = True, console: Console | None = None
+) -> None:
     """Display a summary message with a status glyph and leading blank line.
 
     Args:
         text: The summary message to display.
-        ok: True renders a green checkmark, False a red cross.
+        ok: True renders a green checkmark, False a red cross, and None a
+            yellow warning mark.
         console: Optional console for output (defaults to shared console).
     """
     c = console or get_console()
     c.print()
-    if ok:
+    if ok is True:
         c.print(f"[green]{MARK_SUCCESS}[/] {text}")
-    else:
+    elif ok is False:
         c.print(f"[red]{MARK_ERROR}[/] {text}")
+    else:
+        c.print(f"[yellow]{MARK_WARNING}[/] {text}")
 
 
 def build_feature_str(cfg: MarkitaiConfig) -> str:
