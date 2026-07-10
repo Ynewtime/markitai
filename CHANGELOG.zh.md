@@ -5,24 +5,34 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
-## [Unreleased]
+## [0.20.0] - 2026-07-10
+
+### Added
+
+- **macOS 未安装 LibreOffice 时可使用本机 Microsoft Office**：旧版 `.doc`、`.ppt`、`.xls` 文件可通过 AppleScript 调用 Word、PowerPoint 或 Excel 完成转换，PowerPoint 也能先将 PPTX 幻灯片导出为 PDF 再渲染。此备选方案由 `office.macos_fallback` 控制，无头环境可将其关闭，`doctor` 和文档也会说明一次性的自动化授权要求
 
 ### Changed
 
-- **公网 URL 无需确认，同时收紧远程抓取的隐私边界**：公网 URL 可以直接使用远程后备服务，首次使用前会在 stderr 输出一次进程级说明，覆盖 defuddle.md、Jina、Cloudflare、FxTwitter 和 Twitter oEmbed；私网、本机及带凭据的 URL 始终留在本机，`MARKITAI_NO_REMOTE_FETCH=1` 也会阻止显式指定的远程 `-s` 策略
+- **公网 URL 无需确认，同时收紧远程抓取的隐私边界**：公网 URL 可以直接使用远程后备服务，首次使用前会在 stderr 输出一次进程级说明，覆盖 defuddle.md、Jina、Cloudflare、FxTwitter 和 Twitter oEmbed；私网、本机、DNS 解析到非公网地址及带凭据的 URL（包括路径中的敏感令牌）始终留在本机，`MARKITAI_NO_REMOTE_FETCH=1` 也会阻止显式指定的远程 `-s` 策略
 - **`doctor` 改为检查能力是否真的可用**：普通检查只有 RapidOCR 和已配置的工作流会影响退出状态；Playwright 会实际启动 Chromium，活跃模型引用的环境变量会被检查，用户请求的 `--fix` 也只会安装并复查 Chromium，不会修改当前项目的依赖
 - **`markitai init` 默认保留已有配置**：直接按 Enter 会选择 Keep，Update 和 Overwrite 仍需明确选择
-- **入门流程从核心包开始**：README 和网站统一使用 `uv tool install markitai`，分别说明 `uv tool`、`pipx` 和虚拟环境的浏览器附加依赖，加入 60 秒无 LLM 示例，并完善中文导航、屏幕阅读器和高对比度支持
+- **入门流程从便携安装脚本开始**：首页会在首次绘制前判断 Windows 与 macOS 或 Linux，并推荐 `setup.ps1` 或 `setup.sh`，同时保留 `uv tool install markitai` 作为手动安装方式；页面还加入了 60 秒无 LLM 示例，并完善中文导航、屏幕阅读器和高对比度支持
+- **显式配置 `gpt-5.6-luna` 时可识别其 Copilot 价格信息**：OpenAI 和 ChatGPT 的自动入门配置继续使用已普遍开放的模型，受限预览模型仅供用户主动选择
 
 ### Fixed
 
 - **`--quiet` 模式在单项和批量任务中保持一致**：请求输出到 stdout 的 Markdown 会保留，错误仍写入 stderr，`--quiet --dry-run` 不显示预览，URL 批量任务部分失败时保留成功结果并退出 10，进度和成功路径等提示则保持隐藏
 - **未启用任何提取方式的图片转换不再误报成功**：单张图片未指定 `--ocr` 或 `--llm` 时会退出 1 并给出处理建议，不再以成功状态结束却没有任何输出
+- **重复运行安装脚本会保留用户意图**：shell 和 PowerShell 脚本发现 `~/.markitai/config.json` 已存在时会跳过 `markitai init --yes`，同时保留已有 extras；即使 Markitai 已安装，显式设置的 `MARKITAI_VERSION` 也不会被普通升级路径绕过
+- **首页快速开始命令在亮色模式下保持清晰**：深色命令面板现在会稳定使用浅色文字和透明代码背景，并在命令变得拥挤前切换为纵向排版；站点也会提供真实的 `/favicon.ico`，不再返回 404
+- **Python 3.14 的依赖解析不再固定到不兼容的 ONNX Runtime**：按平台设置的约束会在必要时保留 Magika 的 Windows 上限，其他环境则可使用支持 Python 3.14 的 ONNX Runtime 版本
 
 ### Security
 
 - **配置输出默认隐藏秘密**：`markitai config list` 会递归遮蔽秘密和自定义请求头，`api_base` 只保留协议、主机名和端口，只有显式传入 `--show-secrets` 才会显示原始值
-- **URL 凭据不会出现在诊断信息和文件名中**：终端错误、进度标签、`--dry-run` 预览、控制台与文件日志，以及自动生成的输出文件名都会移除用户信息、查询参数和片段
+- **URL 凭据始终留在本机且不会出现在诊断信息中**：终端错误、进度标签、`--dry-run` 预览、控制台与文件日志，以及自动生成的输出文件名都会移除用户信息、敏感路径令牌、查询参数和片段；只要主机名解析结果中包含非公网地址，就无法越过远程分发边界
+- **macOS Office 自动化会隔离不受信任的文档**：备选转换在打开只读暂存副本时会禁用宏和外部链接更新，只绑定并关闭自己打开的文档，跨进程串行访问 Office 应用，并以私有权限保留可清理的暂存文件
+- **无头安装不会被视为同意安装可选软件**：没有可用终端时，便携安装脚本只安装 uv、Python 和 Markitai；只有显式设置 `MARKITAI_INSTALL_OPTIONAL=1`，才会安装可选包、浏览器二进制、系统依赖和第三方 CLI
 
 ## [0.19.0] - 2026-07-10
 

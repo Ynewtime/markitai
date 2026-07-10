@@ -87,13 +87,13 @@ Pin specific versions using environment variables:
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.19.0"
+export MARKITAI_VERSION="0.20.0"
 export UV_VERSION="0.9.27"
 curl -fsSL https://markitai.dev/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.19.0"
+$env:MARKITAI_VERSION = "0.20.0"
 $env:UV_VERSION = "0.9.27"
 powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```

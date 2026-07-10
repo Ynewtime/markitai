@@ -5,24 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.20.0] - 2026-07-10
+
+### Added
+
+- **macOS can use installed Microsoft Office when LibreOffice is absent**: legacy `.doc`, `.ppt`, and `.xls` files are converted through Word, PowerPoint, or Excel via AppleScript, and PowerPoint can export PPTX slides to PDF for rendering. The fallback is enabled by `office.macos_fallback`, can be disabled for headless sessions, and reports one-time Automation permission requirements through `doctor` and the documentation
 
 ### Changed
 
-- **Remote fetching keeps public URLs frictionless while tightening privacy**: public URLs may use remote fallbacks without confirmation, with one process-wide stderr notice covering defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed; private, local, and credential-bearing URLs remain local, while `MARKITAI_NO_REMOTE_FETCH=1` blocks every remote path, including an explicit remote `-s`
+- **Remote fetching keeps public URLs frictionless while tightening privacy**: public URLs may use remote fallbacks without confirmation, with one process-wide stderr notice covering defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed; private, local, DNS-resolved non-global, and credential-bearing URLs (including sensitive path tokens) remain local, while `MARKITAI_NO_REMOTE_FETCH=1` blocks every remote path, including an explicit remote `-s`
 - **`doctor` reports capability health instead of package presence**: normal checks fail only for RapidOCR and configured workflows; Playwright is verified by launching Chromium, active model environment references are checked, and a requested `--fix` only installs and rechecks Chromium without changing project dependencies
 - **`markitai init` now preserves existing configuration by default**: pressing Enter selects Keep, while Update and Overwrite remain explicit choices
-- **Onboarding starts with the core package**: the README and website use `uv tool install markitai`, explain browser extras for uv tool, pipx, and virtual environments, include a 60-second no-LLM example, and improve Chinese navigation plus screen-reader and high-contrast support
+- **Onboarding starts with the portable installer**: the homepage detects Windows versus macOS or Linux before first paint and recommends `setup.ps1` or `setup.sh`, keeps `uv tool install markitai` as a manual option, includes a 60-second no-LLM example, and improves Chinese navigation plus screen-reader and high-contrast support
+- **Copilot pricing metadata recognizes `gpt-5.6-luna` when explicitly configured**: generally available models remain the automatic OpenAI and ChatGPT onboarding defaults while the limited-preview model stays opt-in
 
 ### Fixed
 
 - **Quiet mode is consistent across single and batch work**: Markdown requested on stdout is preserved, errors stay on stderr, quiet dry runs omit previews, partial URL batches keep successful outputs and exit 10, and informational progress or success paths remain hidden
 - **Image conversions with no enabled extraction path no longer report success**: a standalone image without `--ocr` or `--llm` now exits 1 with an actionable message instead of producing no output with a successful status
+- **Installer reruns preserve intent**: the shell and PowerShell setup scripts skip `markitai init --yes` when `~/.markitai/config.json` already exists, preserve existing extras, and honor an explicit `MARKITAI_VERSION` even when Markitai is already installed
+- **Homepage quick-start commands remain readable in light mode**: the dark command panel now consistently uses light text and transparent code backgrounds, stacks before commands become cramped, and serves a real `/favicon.ico` instead of returning 404
+- **Python 3.14 dependency resolution avoids an incompatible ONNX Runtime pin**: platform-aware constraints keep Magika's Windows cap where required while allowing supported ONNX Runtime releases elsewhere
 
 ### Security
 
 - **Configuration output hides secrets by default**: `markitai config list` recursively redacts secrets and custom header values, reduces `api_base` values to their origin, and only reveals original values when `--show-secrets` is explicitly passed
-- **URL credentials stay out of diagnostics and filenames**: userinfo, query strings, and fragments are removed from terminal errors, progress labels, dry-run previews, console and file logs, and generated output names
+- **URL credentials stay local and out of diagnostics**: userinfo, sensitive path tokens, query strings, and fragments are removed from terminal errors, progress labels, dry-run previews, console and file logs, and generated output names; hostnames resolving to any non-global address cannot cross a remote dispatch boundary
+- **macOS Office automation isolates untrusted documents**: the fallback disables macros and external-link updates while opening read-only staged copies, binds and closes only the exact document it opened, serializes app access across processes, and keeps recoverable staging files private
+- **Headless setup never implies consent to optional software**: without a usable terminal, the portable installer installs only uv, Python, and Markitai unless `MARKITAI_INSTALL_OPTIONAL=1` explicitly enables optional packages, browser binaries, system dependencies, and third-party CLIs
 
 ## [0.19.0] - 2026-07-10
 

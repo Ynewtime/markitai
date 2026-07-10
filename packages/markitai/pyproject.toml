@@ -92,6 +92,9 @@ path = "src/markitai/__init__.py"
 
 [tool.hatch.metadata.hooks.custom]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["/benchmarks/results/latest.json"]
+
 [tool.hatch.build.targets.sdist.force-include]
 "../../README.md" = "README.md"
 "../../LICENSE" = "LICENSE"

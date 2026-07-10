@@ -1,6 +1,6 @@
 [project]
 name = "markitai-workspace"
-version = "0.19.0"  # workspace identity only (unpublished); keep in sync with packages/markitai/src/markitai/__init__.py
+version = "0.20.0"  # workspace identity only (unpublished); keep in sync with packages/markitai/src/markitai/__init__.py
 requires-python = ">=3.11,<3.15"
 dependencies = [
     "markitai",
@@ -16,6 +16,16 @@ kreuzberg = ["markitai[kreuzberg]"]
 svg = ["markitai[svg]"]
 heif = ["markitai[heif]"]
 all = ["markitai[all]"]
+
+[tool.uv]
+constraint-dependencies = [
+    # magika 0.6.3 caps onnxruntime<=1.20.1 on win32 only. A lone 1.20.1 satisfies
+    # every platform, so `uv lock` collapses all environments onto it — but 1.20.1
+    # ships no Python 3.14 wheels. Force a modern onnxruntime everywhere except
+    # win32 on <=3.13 (the only environments where magika's cap must be honored).
+    "onnxruntime>=1.21; sys_platform != 'win32'",
+    "onnxruntime>=1.21; python_full_version >= '3.14'",
+]
 
 [tool.uv.workspace]
 members = ["packages/*"]
