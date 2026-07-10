@@ -36,21 +36,60 @@ TEXTS: dict[str, dict[str, str]] = {
     # Doctor command
     "doctor.title": {"en": "System Check", "zh": "系统检查"},
     "doctor.required": {"en": "Required Dependencies", "zh": "必需依赖"},
-    "doctor.optional": {"en": "Optional Dependencies", "zh": "可选依赖"},
+    "doctor.optional": {"en": "Optional Capabilities", "zh": "可选能力"},
     "doctor.auth": {"en": "Authentication", "zh": "认证状态"},
     "doctor.summary": {
-        "en": "Check complete ({passed} required passed, {optional} optional missing)",
-        "zh": "检查完成（{passed} 必需通过，{optional} 可选缺失）",
+        "en": "Core check passed ({passed} required/configured checks passed, {degraded} non-blocking warnings)",
+        "zh": "核心检查通过（{passed} 项必需或已配置检查通过，{degraded} 项非阻断警告）",
     },
     "doctor.summary_failed": {
-        "en": "Check failed ({failed} required missing, {passed} passed, {optional} optional missing)",
-        "zh": "检查未通过（{failed} 必需缺失，{passed} 通过，{optional} 可选缺失）",
+        "en": "Health check failed ({failed} required/configured checks failed, {passed} passed, {degraded} non-blocking warnings)",
+        "zh": "健康检查未通过（{failed} 项必需或已配置检查失败，{passed} 项通过，{degraded} 项非阻断警告）",
+    },
+    "doctor.summary_repair_failed": {
+        "en": "Requested repair failed ({degraded} non-blocking warnings remain)",
+        "zh": "请求的修复未成功（仍有 {degraded} 项非阻断警告）",
     },
     "doctor.all_good": {
-        "en": "All dependencies configured correctly",
-        "zh": "所有依赖配置正确",
+        "en": "All checks passed; dependencies and capabilities configured correctly",
+        "zh": "所有检查均通过，依赖与能力配置正确",
     },
-    "doctor.fix_hint": {"en": "To fix missing dependencies:", "zh": "修复缺失依赖："},
+    "doctor.fix_hint": {
+        "en": "To resolve unavailable checks and capabilities:",
+        "zh": "解决不可用的检查项与能力：",
+    },
+    "doctor.fix_attempting": {
+        "en": "Attempting safe automatic repairs...",
+        "zh": "正在尝试安全的自动修复……",
+    },
+    "doctor.fix_installing": {
+        "en": "Installing {component}...",
+        "zh": "正在安装 {component}……",
+    },
+    "doctor.fix_success": {
+        "en": "{component} capability verified",
+        "zh": "已验证 {component} 能力可用",
+    },
+    "doctor.fix_verification_failed": {
+        "en": "{component} verification failed: {detail}",
+        "zh": "{component} 验证失败：{detail}",
+    },
+    "doctor.fix_failed": {
+        "en": "Repair failed: {detail}",
+        "zh": "修复失败：{detail}",
+    },
+    "doctor.fix_error": {
+        "en": "Repair error: {detail}",
+        "zh": "修复出错：{detail}",
+    },
+    "doctor.playwright_package_manual": {
+        "en": "Playwright is not installed in the Markitai environment; replace the isolated tool installation manually:",
+        "zh": "Markitai 环境中未安装 Playwright；请手动替换隔离的工具安装：",
+    },
+    "doctor.manual_install": {
+        "en": "Install this capability manually:",
+        "zh": "请手动安装此能力：",
+    },
     "doctor.config_source": {"en": "Config: {path}", "zh": "配置文件：{path}"},
     "doctor.config_defaults": {
         "en": "defaults (no config file found; create one with 'markitai init' at ~/.markitai/config.json or ./markitai.json)",
@@ -136,7 +175,7 @@ def t(key: str, **kwargs: str | int) -> str:
         Translated text, or the key itself if not found
 
     Example:
-        >>> t("doctor.summary", passed=3, optional=1)
+        >>> t("doctor.summary", passed=3, degraded=1)
         "Check complete (3 required passed, 1 optional missing)"
     """
     lang = get_language()

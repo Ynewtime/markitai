@@ -1,17 +1,19 @@
 """Doctor CLI command for system health checking.
 
-This module provides the doctor command for verifying all optional dependencies,
-authentication status, and overall system health.
+This module provides the doctor command for verifying the core dependency,
+optional capabilities, authentication status, and overall system health.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import rich_click as click
@@ -29,9 +31,9 @@ INSTALL_HINTS: dict[str, dict[str, str]] = {
         "win32": "winget install FFmpeg.FFmpeg\n# Or: scoop install ffmpeg\n# Or: choco install ffmpeg",
     },
     "playwright": {
-        "darwin": "uv run playwright install chromium",
-        "linux": "uv run playwright install chromium && uv run playwright install-deps chromium",
-        "win32": "uv run playwright install chromium",
+        "darwin": "python -m playwright install chromium",
+        "linux": "python -m playwright install chromium  # system libraries may also require: python -m playwright install-deps chromium",
+        "win32": "python -m playwright install chromium",
     },
     "claude-cli": {
         "darwin": "curl -fsSL https://claude.ai/install.sh | bash",
@@ -69,23 +71,82 @@ def get_install_hint(component: str, platform: str | None = None) -> str:
     )
 
 
-# Components that --fix can actually install.
-# Maps result key -> True (auto-installable) or False (manual hint only).
-# Keys not in this mapping (auth checks, vision-model, llm-api) are skipped.
-FIXABLE_COMPONENTS: dict[str, bool] = {
-    "playwright": True,  # auto-install via uv
-    "libreoffice": False,  # manual hint
-    "ffmpeg": False,  # manual hint
-    "rapidocr": False,  # manual hint
-    "claude-agent-sdk": False,  # manual hint
-    "copilot-sdk": False,  # manual hint
-}
+# Components for which --fix has a safe, scoped repair path. Keys not in this
+# mapping are reported with manual hints and never passed to an installer.
+FIXABLE_COMPONENTS: dict[str, bool] = {"playwright": True}
+
+_PLAYWRIGHT_LAUNCH_SMOKE = (
+    "from playwright.sync_api import sync_playwright\n"
+    "with sync_playwright() as p:\n"
+    "    browser = p.chromium.launch(headless=True)\n"
+    "    browser.close()\n"
+)
+
+
+def _compact_runtime_error(detail: str, *, limit: int = 1200) -> str:
+    """Keep actionable launch diagnostics without dumping a full traceback."""
+    lines = [line.strip() for line in detail.splitlines() if line.strip()]
+    critical_markers = (
+        "fatal",
+        "missing",
+        "not found",
+        "permission denied",
+        "timed out",
+    )
+    critical = [
+        line for line in lines if any(m in line.lower() for m in critical_markers)
+    ]
+    errors = [line for line in lines if "error" in line.lower()]
+    selected = critical[-2:] or errors[-2:] or lines[-2:]
+    compact = " | ".join(selected) or "unknown launch failure"
+    if len(compact) > limit:
+        compact = f"…{compact[-limit:]}"
+    return compact
+
+
+def _playwright_package_install_hint() -> str:
+    """Return install commands that preserve tool-environment isolation."""
+    return (
+        "uv tool install 'markitai[browser]' --force\n"
+        "# Or: pipx install 'markitai[browser]' --force"
+    )
+
+
+def _smoke_test_playwright_browser() -> tuple[bool, str]:
+    """Launch and close Chromium in an isolated subprocess with a timeout."""
+    try:
+        with TemporaryDirectory(prefix="markitai-doctor-smoke-") as workdir:
+            result = subprocess.run(
+                [sys.executable, "-c", _PLAYWRIGHT_LAUNCH_SMOKE],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=workdir,
+            )
+    except subprocess.TimeoutExpired:
+        return False, "headless launch timed out after 30 seconds"
+    except Exception as e:
+        return False, f"headless launch error: {e}"
+
+    if result.returncode == 0:
+        return True, ""
+
+    detail = _compact_runtime_error(result.stderr or result.stdout)
+    if detail == "unknown launch failure":
+        detail = f"exit code {result.returncode}"
+    if sys.platform.startswith("linux"):
+        detail += (
+            "; install system libraries with "
+            f"'{sys.executable} -m playwright install-deps chromium'"
+        )
+    return False, f"headless launch failed: {detail}"
 
 
 def _has_errors(results: dict[str, dict[str, Any]]) -> bool:
     """Check whether any check result has error or missing status.
 
-    This covers all categories: required deps, optional deps, LLM, auth, vision.
+    This covers all categories: required deps, optional capabilities, LLM,
+    auth, and vision.
 
     Args:
         results: The full results dict from doctor checks.
@@ -101,9 +162,8 @@ def _install_component(component: str, *, package_missing: bool = False) -> bool
 
     Args:
         component: Component name to install.
-        package_missing: For playwright, True means the package itself is
-            missing (not just the browser). Triggers ``uv add playwright``
-            before browser install.
+        package_missing: For Playwright, whether the Python package itself is
+            missing rather than only its Chromium browser.
 
     Returns:
         True if installation succeeded.
@@ -111,47 +171,48 @@ def _install_component(component: str, *, package_missing: bool = False) -> bool
     console = get_console()
     hint = get_install_hint(component)
 
-    console.print(f"[yellow]Installing {component}...[/yellow]")
-
     # Only auto-install safe components
     safe_components = {"playwright"}
 
     if component not in safe_components:
-        console.print("[yellow]Please install manually:[/yellow]")
+        console.print(f"[yellow]{t('doctor.manual_install')}[/yellow]")
         console.print(f"  {hint}")
         return False
 
     if component == "playwright":
         try:
-            # If the package itself is missing, install it first
+            # Installing a Python package into the caller's current project is
+            # unsafe. Tell tool users how to replace their isolated install.
             if package_missing:
-                pkg_result = subprocess.run(
-                    ["uv", "add", "playwright"],
+                console.print(
+                    f"[red]\u2717[/red] {t('doctor.playwright_package_manual')}"
+                )
+                console.print(_playwright_package_install_hint())
+                return False
+
+            # Use the same interpreter that imports Markitai/Playwright, and
+            # isolate cwd so no project metadata can be discovered or changed.
+            console.print(
+                f"[yellow]{t('doctor.fix_installing', component=component)}[/yellow]"
+            )
+            with TemporaryDirectory(prefix="markitai-doctor-") as workdir:
+                result = subprocess.run(
+                    [sys.executable, "-m", "playwright", "install", "chromium"],
                     capture_output=True,
                     text=True,
                     timeout=300,
+                    cwd=workdir,
                 )
-                if pkg_result.returncode != 0:
-                    console.print(
-                        f"[red]\u2717[/red] Failed to install playwright package: {pkg_result.stderr}"
-                    )
-                    return False
-
-            # Install browser
-            result = subprocess.run(
-                ["uv", "run", "playwright", "install", "chromium"],
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
             if result.returncode == 0:
-                console.print(f"[green]\u2713[/green] {component} installed")
                 return True
             else:
-                console.print(f"[red]\u2717[/red] Failed: {result.stderr}")
+                console.print(
+                    f"[red]\u2717[/red] "
+                    f"{t('doctor.fix_failed', detail=result.stderr.strip())}"
+                )
                 return False
         except Exception as e:
-            console.print(f"[red]\u2717[/red] Error: {e}")
+            console.print(f"[red]\u2717[/red] {t('doctor.fix_error', detail=str(e))}")
             return False
 
     return False
@@ -272,7 +333,7 @@ def _check_claude_auth() -> dict[str, str]:
         }
 
 
-def _check_playwright() -> dict[str, Any]:
+def _check_playwright(*, check_runtime: bool = True) -> dict[str, Any]:
     """Check Playwright installation status.
 
     Returns:
@@ -285,6 +346,16 @@ def _check_playwright() -> dict[str, Any]:
 
     if is_playwright_available():
         if is_playwright_browser_installed(use_cache=False):
+            if check_runtime:
+                runtime_ok, runtime_detail = _smoke_test_playwright_browser()
+                if not runtime_ok:
+                    return {
+                        "name": "Playwright",
+                        "description": "Browser automation for dynamic URLs",
+                        "status": "warning",
+                        "message": f"Chromium installed but unusable: {runtime_detail}",
+                        "install_hint": get_install_hint("playwright"),
+                    }
             return {
                 "name": "Playwright",
                 "description": "Browser automation for dynamic URLs",
@@ -306,7 +377,7 @@ def _check_playwright() -> dict[str, Any]:
             "description": "Browser automation for dynamic URLs",
             "status": "missing",
             "message": "Playwright not installed",
-            "install_hint": f"uv add playwright && {get_install_hint('playwright')}",
+            "install_hint": _playwright_package_install_hint(),
         }
 
 
@@ -513,28 +584,60 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     # 5. Check LLM API configuration (check model_list for configured models)
     configured_models = cfg.llm.model_list if cfg.llm.model_list else []
-    if configured_models:
-        # Count distinct API providers (exclude local providers like claude-agent, copilot)
-        local_prefixes = ("claude-agent/", "copilot/")
-        api_providers: set[str] = set()
-        for m in configured_models:
-            model_id = m.litellm_params.model
-            if not any(model_id.startswith(p) for p in local_prefixes):
-                provider = model_id.split("/")[0] if "/" in model_id else "openai"
-                api_providers.add(provider)
+    active_models = [m for m in configured_models if _is_active_model(m)]
+    local_prefixes = ("claude-agent/", "copilot/", "chatgpt/")
+    active_api_models = [
+        m
+        for m in active_models
+        if not any(m.litellm_params.model.startswith(p) for p in local_prefixes)
+    ]
+    missing_llm_env_vars: set[str] = set()
+    for model in active_api_models:
+        for field in ("api_key", "api_base"):
+            value = getattr(model.litellm_params, field, None)
+            if isinstance(value, str) and value.startswith("env:"):
+                env_name = value[4:]
+                if env_name and os.environ.get(env_name) is None:
+                    missing_llm_env_vars.add(env_name)
 
-        if api_providers:
-            providers_str = ", ".join(sorted(api_providers))
-            message = f"{len(configured_models)} model(s) configured, API provider(s): {providers_str}"
+    if configured_models:
+        api_providers = {
+            (
+                m.litellm_params.model.split("/")[0]
+                if "/" in m.litellm_params.model
+                else "openai"
+            )
+            for m in active_api_models
+        }
+        if not active_models:
+            status = "warning"
+            message = "Models are configured, but all have weight 0 (disabled)"
+            install_hint = "Set weight > 0 on at least one model to enable LLM use"
+        elif missing_llm_env_vars:
+            missing = ", ".join(sorted(missing_llm_env_vars))
+            status = "error"
+            message = (
+                f"Missing environment variable(s) used by active models: {missing}"
+            )
+            install_hint = f"Set the missing environment variable(s): {missing}"
         else:
-            message = f"{len(configured_models)} model(s) configured"
+            status = "ok"
+            if api_providers:
+                providers_str = ", ".join(sorted(api_providers))
+                message = (
+                    f"{len(active_models)} active model(s), "
+                    f"API provider(s): {providers_str}"
+                )
+            else:
+                message = f"{len(active_models)} active model(s) configured"
+            install_hint = ""
 
         results["llm-api"] = {
             "name": "LLM API",
             "description": "Content enhancement and image analysis",
-            "status": "ok",
+            "status": status,
             "message": message,
-            "install_hint": "",
+            "install_hint": install_hint,
         }
     else:
         # Point at the actually-loaded config file (matches the header line),
@@ -685,7 +788,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         info = get_model_info_cached(model_config.litellm_params.model)
         return info.get("supports_vision", False)
 
-    vision_models = [m for m in configured_models if is_vision_model(m)]
+    vision_models = [m for m in active_models if is_vision_model(m)]
     if vision_models:
         vision_model_names = [m.litellm_params.model for m in vision_models]
         display_names = ", ".join(vision_model_names[:2])
@@ -710,13 +813,43 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         }
 
     # Define dependency groups
-    required_deps = ["playwright", "libreoffice", "rapidocr"]
+    # RapidOCR ships as a core dependency. The other tools unlock specific
+    # input types, so their absence should not make the base installation
+    # unhealthy.
+    required_deps = ["rapidocr"]
+    required_checks = set(required_deps)
+    fetch_strategy = getattr(getattr(cfg, "fetch", None), "strategy", "auto")
+    screenshot_enabled = (
+        getattr(getattr(cfg, "screenshot", None), "enabled", False) is True
+    )
+    uses_playwright = fetch_strategy == "playwright" or screenshot_enabled
+    if uses_playwright:
+        required_checks.add("playwright")
+    if active_api_models:
+        required_checks.add("llm-api")
+    if uses_claude_agent:
+        required_checks.update({"claude-agent-sdk", "claude-agent-auth"})
+    if uses_copilot:
+        required_checks.update({"copilot-sdk", "copilot-auth"})
+    if uses_chatgpt:
+        required_checks.add("chatgpt-auth")
+
+    def _is_blocking_failure(key: str, info: dict[str, Any]) -> bool:
+        if key not in required_checks:
+            return False
+        status = info.get("status")
+        if status in {"missing", "error"}:
+            return True
+        # A configured capability/provider warning means the requested
+        # workflow is not ready. RapidOCR's unknown-language warning is a
+        # non-blocking configuration warning because the package is present.
+        return status == "warning" and key != "rapidocr"
 
     def _required_failed_count() -> int:
         return sum(
             1
-            for key in required_deps
-            if key in results and results[key]["status"] in ("missing", "error")
+            for key in required_checks
+            if key in results and _is_blocking_failure(key, results[key])
         )
 
     # Output results
@@ -729,7 +862,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     # Unified UI output
     ui.title(t("doctor.title"))
-    optional_deps = ["ffmpeg"]
+    optional_deps = ["playwright", "libreoffice", "ffmpeg"]
     llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
     auth_keys = ["claude-agent-auth", "copilot-auth", "chatgpt-auth"]
 
@@ -739,15 +872,15 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     else:
         ui.info(t("doctor.config_source", path=t("doctor.config_defaults")))
 
-    def render_item(info: dict[str, Any]) -> None:
+    def render_item(info: dict[str, Any], *, blocking: bool = False) -> None:
         """Render one check result inline: '<glyph> Name: message'."""
         line = f"{info['name']}: {info['message']}"
         if info["status"] == "ok":
             ui.success(line)
-        elif info["status"] == "warning":
-            ui.warning(line)
-        else:
+        elif blocking:
             ui.error(line)
+        else:
+            ui.warning(line)
 
     def render_section(header: str, keys: list[str]) -> None:
         """Render a section preceded by exactly one blank line."""
@@ -755,19 +888,15 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         ui.section(header)
         for key in keys:
             if key in results:
-                render_item(results[key])
+                render_item(
+                    results[key],
+                    blocking=_is_blocking_failure(key, results[key]),
+                )
 
     # Required dependencies
-    passed = sum(
-        1 for key in required_deps if results.get(key, {}).get("status") == "ok"
-    )
-    required_failed = _required_failed_count()
     render_section(t("doctor.required"), required_deps)
 
-    # Optional dependencies
-    optional_missing = sum(
-        1 for key in optional_deps if key in results and results[key]["status"] != "ok"
-    )
+    # Optional capabilities
     if any(k in results for k in optional_deps):
         render_section(t("doctor.optional"), optional_deps)
 
@@ -779,39 +908,10 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     if any(k in results for k in auth_keys):
         render_section(t("doctor.auth"), auth_keys)
 
-    # Summary — consider ALL check categories, not just required deps
-    has_any_error = _has_errors(results)
-    if not has_any_error and optional_missing == 0:
-        ui.summary(t("doctor.all_good"))
-    elif required_failed:
-        ui.summary(
-            t(
-                "doctor.summary_failed",
-                failed=required_failed,
-                passed=passed,
-                optional=optional_missing,
-            ),
-            ok=False,
-        )
-    else:
-        ui.summary(t("doctor.summary", passed=passed, optional=optional_missing))
-
-    # Installation hints (simplified format)
-    hints = [
-        (info["name"], info["install_hint"])
-        for info in results.values()
-        if info["status"] in ("missing", "error") and info.get("install_hint")
-    ]
-
-    if hints:
-        console.print()
-        console.print(f"[yellow]{t('doctor.fix_hint')}[/yellow]")
-        for name, hint in hints:
-            console.print(f"  [dim]\u2022[/dim] {name}: {hint}")
-
     # Attempt to fix missing components if --fix flag is set
     # Only fixable components (defined in FIXABLE_COMPONENTS) are attempted.
     # Non-fixable items (auth, vision-model, llm-api) are skipped.
+    repair_failed = False
     if fix and not as_json:
         fixable = [
             key
@@ -820,18 +920,105 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         ]
         if fixable:
             console.print()
-            console.print("[bold]Attempting to fix missing components...[/bold]")
+            console.print(f"[bold]{t('doctor.fix_attempting')}[/bold]")
             for component in fixable:
                 # For playwright, detect whether the package itself is missing
                 pkg_missing = (
                     component == "playwright"
                     and results[component].get("status") == "missing"
                 )
-                _install_component(component, package_missing=pkg_missing)
+                if not _install_component(component, package_missing=pkg_missing):
+                    repair_failed = True
+                    continue
 
-    # Scripts rely on the exit code: fail when required deps are missing.
-    # After --fix we don't re-verify, so don't guess — keep exit 0 there.
-    if required_failed and not fix:
+                # A successful installer exit only means the command ran. The
+                # capability itself must be checked again before --fix can
+                # report success.
+                if component == "playwright":
+                    verification = _check_playwright(check_runtime=False)
+                    results[component] = verification
+                    if verification.get("status") != "ok":
+                        ui.error(
+                            t(
+                                "doctor.fix_verification_failed",
+                                component=verification["name"],
+                                detail=verification["message"],
+                            )
+                        )
+                        repair_failed = True
+                    else:
+                        runtime_ok, runtime_detail = _smoke_test_playwright_browser()
+                        if not runtime_ok:
+                            verification["status"] = "warning"
+                            verification["message"] = (
+                                f"Chromium installed but unusable: {runtime_detail}"
+                            )
+                            verification["install_hint"] = get_install_hint(
+                                "playwright"
+                            )
+                            ui.error(
+                                t(
+                                    "doctor.fix_verification_failed",
+                                    component=verification["name"],
+                                    detail=runtime_detail,
+                                )
+                            )
+                            repair_failed = True
+                        else:
+                            ui.success(
+                                t(
+                                    "doctor.fix_success",
+                                    component=verification["name"],
+                                )
+                            )
+
+    # Render hints and the final outcome only after any requested repair has
+    # been rechecked, so one invocation cannot end with a stale pre-fix status.
+    hints = [
+        (info["name"], info["install_hint"])
+        for info in results.values()
+        if info["status"] in ("missing", "error", "warning")
+        and info.get("install_hint")
+    ]
+    if hints:
+        console.print()
+        console.print(f"[yellow]{t('doctor.fix_hint')}[/yellow]")
+        for name, hint in hints:
+            console.print(f"  [dim]\u2022[/dim] {name}: {hint}")
+
+    passed = sum(
+        1 for key in required_checks if results.get(key, {}).get("status") == "ok"
+    )
+    required_failed = _required_failed_count()
+    degraded_checks = sum(
+        1
+        for key, info in results.items()
+        if info.get("status") != "ok" and not _is_blocking_failure(key, info)
+    )
+    if required_failed:
+        ui.summary(
+            t(
+                "doctor.summary_failed",
+                failed=required_failed,
+                passed=passed,
+                degraded=degraded_checks,
+            ),
+            ok=False,
+        )
+    elif repair_failed:
+        ui.summary(
+            t("doctor.summary_repair_failed", degraded=degraded_checks), ok=False
+        )
+    elif degraded_checks:
+        ui.summary(
+            t("doctor.summary", passed=passed, degraded=degraded_checks), ok=None
+        )
+    else:
+        ui.summary(t("doctor.all_good"))
+
+    # Scripts rely on the exit code: --fix must not turn an unresolved core
+    # dependency into a successful health check.
+    if required_failed or repair_failed:
         raise SystemExit(1)
 
 
@@ -881,7 +1068,7 @@ def suggest_extras() -> list[str]:
 @click.option(
     "--fix",
     is_flag=True,
-    help="Attempt to install missing components.",
+    help="Attempt safe automatic repairs (currently Chromium only).",
 )
 @click.option(
     "--suggest-extras",
@@ -894,20 +1081,28 @@ def doctor(as_json: bool, fix: bool, suggest: bool) -> None:
 
     This command helps diagnose setup issues by verifying:
 
+        Core requirement:
+        - RapidOCR (for scanned document processing)
+
+        Optional capabilities:
         - Playwright (for dynamic URL fetching)
         - LibreOffice (for Office document conversion)
-        - RapidOCR (for scanned document processing)
+        - FFmpeg (for audio/video processing)
         - LLM API configuration (for content enhancement)
         - Auth status for local providers (Claude, Copilot, ChatGPT)
 
-    Exits non-zero when a required dependency is missing, so it can be
-    used in scripts and CI.
+    Exits non-zero when RapidOCR is missing; a configured Playwright workflow
+    cannot launch; an active API model references a missing environment
+    variable; an actively configured local provider cannot load/authenticate;
+    or a requested automatic repair fails, so it can be used in scripts and CI.
 
     Examples:
         markitai doctor                 # Full health report
         markitai doctor --fix           # Try to install what's missing
         markitai doctor --json          # Machine-readable report
     """
+    if as_json and fix:
+        raise click.UsageError("--json and --fix cannot be used together")
     if suggest:
         click.echo(",".join(suggest_extras()))
         return
