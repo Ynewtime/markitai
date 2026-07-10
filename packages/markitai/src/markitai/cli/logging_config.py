@@ -28,6 +28,14 @@ if TYPE_CHECKING:
 
 # Import version for print_version
 from markitai import __version__
+from markitai.utils.url_redaction import redact_urls_in_text
+
+
+def _redact_log_record(record: Any) -> None:
+    """Remove URL credential surfaces before any console or file sink."""
+    message = record.get("message")
+    if isinstance(message, str):
+        record["message"] = redact_urls_in_text(message)
 
 
 def _get_console() -> Console:
@@ -292,6 +300,7 @@ def setup_logging(
     _setup_warning_filters()
 
     logger.remove()
+    logger.configure(patcher=_redact_log_record)
 
     # Console logging: quiet mode only shows ERROR+, normal mode shows INFO+
     # DEBUG goes to file only; console shows INFO+ (or ERROR+ in quiet) with filter

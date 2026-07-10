@@ -279,3 +279,38 @@ class TestJsonLogFormat:
         assert matching, "logged message should round-trip through JSON intact"
         assert matching[0]["lvl"] == "INFO"
         assert "ts" in matching[0] and "src" in matching[0]
+
+
+class TestLogUrlRedaction:
+    """Every configured log sink must receive credential-safe URLs."""
+
+    def test_file_log_redacts_userinfo_query_and_fragment(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from loguru import logger
+
+        from markitai.cli.logging_config import setup_logging
+
+        monkeypatch.delenv("MARKITAI_LOG_DIR", raising=False)
+        raw_url = (
+            "https://alice:password@example.com/private/report"
+            "?token=query-secret#access_token=fragment-secret"
+        )
+
+        _handler_id, log_file = setup_logging(
+            verbose=False,
+            quiet=True,
+            log_dir=str(tmp_path),
+        )
+        try:
+            logger.error(f"Failed to fetch {raw_url}")
+        finally:
+            logger.remove()
+
+        assert log_file is not None
+        content = log_file.read_text()
+        assert "https://example.com/private/report" in content
+        assert "alice" not in content
+        assert "password" not in content
+        assert "query-secret" not in content
+        assert "fragment-secret" not in content

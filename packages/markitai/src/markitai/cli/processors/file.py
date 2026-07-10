@@ -164,7 +164,8 @@ async def process_single_file(
     - No output_dir: Print markdown content to stdout
     - With output_dir: Save file, print path (e.g., "output/file.md")
     - With output_dir + verbose: Show detailed progress
-    - With quiet: No output at all
+    - With quiet: Suppress diagnostics/informational output, but preserve a
+      requested stdout Markdown payload
 
     Args:
         input_path: Path to the input file.
@@ -173,7 +174,7 @@ async def process_single_file(
         dry_run: If True, only show what would be done.
         log_file_path: Path to log file for report.
         verbose: Enable verbose output.
-        quiet: Suppress all output.
+        quiet: Suppress diagnostics and informational output.
     """
     from markitai.workflow.core import ConversionContext, convert_document_core
 
@@ -183,31 +184,28 @@ async def process_single_file(
     if output_dir is not None:
         output_dir, output_file_name = split_output_file_target(output_dir)
 
-    # Determine output mode early so diagnostics can be routed:
-    # in stdout mode the markdown content owns stdout, so warnings/errors
-    # must go to stderr to keep piped output clean
+    # Diagnostics always go to stderr. Stdout is reserved for Markdown payloads
+    # and successful file-mode output paths.
     stdout_mode = output_dir is None
-    diag_console = get_stderr_console() if stdout_mode else console
+    diag_console = get_stderr_console()
 
     # Validate file size to prevent DoS
     try:
         validate_file_size(input_path, MAX_DOCUMENT_SIZE)
     except ValueError as e:
-        if not quiet:
-            ui.error(str(e), console=diag_console)
+        ui.error(str(e), console=diag_console)
         raise SystemExit(1)
 
     # Detect file format for dry-run display
     fmt = detect_format(input_path)
     if fmt == FileFormat.UNKNOWN:
-        if not quiet:
-            ui.error(
-                f"Unsupported file format: {input_path.suffix}", console=diag_console
-            )
+        ui.error(f"Unsupported file format: {input_path.suffix}", console=diag_console)
         raise SystemExit(1)
 
     # Handle dry-run
     if dry_run:
+        if quiet:
+            raise SystemExit(0)
         feature_str = ui.build_feature_str(cfg)
         cache_status = "enabled" if cfg.cache.enabled else "disabled"
 
@@ -295,13 +293,12 @@ async def process_single_file(
         # Handle skipped files (image-only format, no LLM/OCR)
         if result.skip_reason == "image_only":
             stages.stop()
-            if not quiet:
-                ui.warning(
-                    f"Skipped {input_path.name} (image file, no text to extract). "
-                    f"Use --llm or --ocr for content extraction.",
-                    console=diag_console,
-                )
-            return
+            ui.warning(
+                f"Skipped {input_path.name} (image file, no text to extract). "
+                f"Use --llm or --ocr for content extraction.",
+                console=diag_console,
+            )
+            raise SystemExit(1)
 
         # Finalize the last active stage (the loguru bridge may have advanced
         # it past "convert") and stop the list before printing the result
@@ -407,8 +404,10 @@ async def process_single_file(
                 final_output_file = ctx.output_file
 
         # Output based on mode
-        if quiet:
-            # Quiet mode: no output
+        if quiet and not stdout_mode:
+            # Quiet file mode: suppress the informational output path. In
+            # stdout mode the Markdown is the requested payload, not a log,
+            # so --quiet must never discard it.
             pass
         elif stdout_mode:
             # stdout mode: output markdown content
@@ -480,8 +479,7 @@ async def process_single_file(
         error_msg = format_error_message(e)
         stages.fail()
         stages.stop()
-        if not quiet:
-            ui.error(error_msg, console=diag_console)
+        ui.error(error_msg, console=diag_console)
         sys.exit(1)
 
     finally:

@@ -30,6 +30,10 @@ from markitai.utils.cli_helpers import (
 from markitai.utils.output import resolve_output_path
 from markitai.utils.paths import ensure_dir, ensure_screenshots_dir
 from markitai.utils.text import format_error_message
+from markitai.utils.url_redaction import redact_url as _safe_url_for_display
+from markitai.utils.url_redaction import (
+    redact_urls_in_text as _redact_urls_in_message,
+)
 from markitai.workflow.helpers import (
     add_basic_frontmatter as _add_basic_frontmatter,
 )
@@ -65,6 +69,14 @@ def _print_multiline_error(message: str, console: Any) -> None:
     ui.error(escape(first), console=console)
     for line in rest:
         console.print(f"    {line}", markup=False, highlight=False)
+
+
+def _print_url_error(url: str, message: str, console: Any) -> None:
+    """Print one actionable URL error without exposing URL credentials."""
+    _print_multiline_error(
+        f"{_safe_url_for_display(url)}: {_redact_urls_in_message(message)}",
+        console,
+    )
 
 
 async def process_url(
@@ -137,13 +149,14 @@ async def process_url(
     # Generate output filename from URL (explicit -o file target wins)
     filename = explicit_file_name or url_to_filename(url)
 
-    # Determine stdout mode (no output_dir means print to stdout).
-    # In stdout mode the markdown content owns stdout, so diagnostics
-    # must go to stderr to keep piped output clean.
+    # Determine stdout mode (no output_dir means print to stdout). Diagnostics
+    # always go to stderr; stdout is payload/success output only.
     stdout_mode = output_dir is None
-    diag_console = get_stderr_console() if stdout_mode else console
+    diag_console = get_stderr_console()
 
     if dry_run:
+        if quiet:
+            raise SystemExit(0)
         feature_str = ui.build_feature_str(cfg)
         cache_status = "enabled" if cfg.cache.enabled else "disabled"
         fetch_strategy_str = fetch_strategy.value if fetch_strategy else "auto"
@@ -151,7 +164,7 @@ async def process_url(
         path_max = max(ui.term_width(console) - 10, 20)
 
         ui.title("Dry Run")
-        console.print(f"  URL: {ui.truncate(url, path_max)}")
+        console.print(f"  URL: {ui.truncate(_safe_url_for_display(url), path_max)}")
         if output_dir is not None:
             console.print(
                 f"  Output: {ui.truncate(str(output_dir / filename), path_max)}"
@@ -209,9 +222,14 @@ async def process_url(
         fetch_cache = get_fetch_cache(cache_dir, cfg.cache.max_size_bytes)
 
     try:
-        logger.info(f"Fetching URL: {url} (strategy: {fetch_strategy.value})")
+        logger.info(
+            f"Fetching URL: {_safe_url_for_display(url)} "
+            f"(strategy: {fetch_strategy.value})"
+        )
         stages.start()
-        stages.advance("fetch", f"Fetching {ui.truncate(url, 60)}...")
+        stages.advance(
+            "fetch", f"Fetching {ui.truncate(_safe_url_for_display(url), 60)}..."
+        )
 
         # Fetch URL using the configured strategy
         # Prepare screenshot options if enabled
@@ -240,7 +258,9 @@ async def process_url(
             # Extract source frontmatter from external strategies (defuddle, etc.)
             source_extra_meta = fetch_result.metadata.get("source_frontmatter")
             cache_note = " (cached)" if fetch_cache_hit else ""
-            logger.info(f"Fetched via {used_strategy}{cache_note}: {url}")
+            logger.info(
+                f"Fetched via {used_strategy}{cache_note}: {_safe_url_for_display(url)}"
+            )
             stages.finalize(
                 f"Fetched via {used_strategy}",
                 annotation="cached" if fetch_cache_hit else None,
@@ -260,13 +280,13 @@ async def process_url(
         except FetchError as e:
             stages.fail()
             stages.stop()
-            _print_multiline_error(str(e), diag_console)
+            _print_url_error(url, str(e), diag_console)
             raise SystemExit(1)
 
         if not original_markdown.strip():
             stages.fail("No content extracted")
             stages.stop()
-            ui.error(f"No content extracted from URL: {url}", console=diag_console)
+            _print_url_error(url, "No content extracted", diag_console)
             ui.step(
                 "The page may be empty, require JavaScript, "
                 "or use an unsupported format.",
@@ -281,7 +301,8 @@ async def process_url(
         if output_file is None:
             stages.stop()
             logger.info(f"[SKIP] Output exists: {base_output_file}")
-            console.print(f"[yellow]Skipped (exists):[/yellow] {base_output_file}")
+            if not quiet:
+                console.print(f"[yellow]Skipped (exists):[/yellow] {base_output_file}")
             return
 
         # original_markdown was already set from fetch_result.content above
@@ -316,7 +337,9 @@ async def process_url(
 
             if download_result.failed_urls:
                 for failed_url in download_result.failed_urls:
-                    logger.warning(f"Failed to download image: {failed_url}")
+                    logger.warning(
+                        f"Failed to download image: {_safe_url_for_display(failed_url)}"
+                    )
 
             if downloaded_images:
                 stages.finalize(f"Downloaded {len(downloaded_images)} images")
@@ -329,7 +352,8 @@ async def process_url(
         if cfg.screenshot.screenshot_only and not cfg.llm.enabled:
             stages.stop()
             if has_screenshot and screenshot_path is not None:
-                console.print(f"[green]Screenshot saved:[/green] {screenshot_path}")
+                if not quiet:
+                    console.print(f"[green]Screenshot saved:[/green] {screenshot_path}")
             else:
                 diag_console.print(
                     "[yellow]Warning: --screenshot-only but no screenshot captured[/yellow]"
@@ -388,7 +412,7 @@ async def process_url(
             # ~0s "Enhancing with LLM" done line. Branches refine the text
             # via update_text (same stage; the timer keeps running).
             stages.advance("llm", "Enhancing with LLM...", pin=True)
-            logger.info(f"[LLM] Processing URL content: {url}")
+            logger.info(f"[LLM] Processing URL content: {_safe_url_for_display(url)}")
 
             # Check if image analysis should run
             should_analyze_images = (
@@ -761,7 +785,7 @@ async def process_url(
                 final_output_file.replace(output_file)
                 final_output_file = output_file
 
-            if verbose:
+            if verbose and not quiet:
                 console.print(f"  {ui.MARK_SUCCESS} Fetched via {used_strategy}")
                 if images_count > 0:
                     console.print(
@@ -773,15 +797,16 @@ async def process_url(
                     )
                 console.print()
 
-            duration_str = f" ({duration:.1f}s)" if verbose else ""
-            ui.success(f"{final_output_file}{duration_str}")
+            if not quiet:
+                duration_str = f" ({duration:.1f}s)" if verbose else ""
+                ui.success(f"{final_output_file}{duration_str}")
 
     except SystemExit:
         raise
     except Exception as e:
         stages.fail()
         stages.stop()
-        _print_multiline_error(str(e), diag_console)
+        _print_url_error(url, str(e), diag_console)
         raise SystemExit(1)
     finally:
         # Safety net: ensure the stage list is stopped on every exit path
@@ -804,6 +829,7 @@ async def process_url_batch(
     concurrency: int = 3,
     fetch_strategy: FetchStrategy | None = None,
     explicit_fetch_strategy: bool = False,
+    quiet: bool = False,
 ) -> None:
     """Batch process multiple URLs from a URL list file.
 
@@ -821,6 +847,7 @@ async def process_url_batch(
         concurrency: Max concurrent URL processing (default 3)
         fetch_strategy: Strategy to use for fetching URL content
         explicit_fetch_strategy: If True, strategy was explicitly set via CLI flag
+        quiet: Suppress progress, summary, and output-path information
     """
     # Batch output must be a directory; reject file-like -o values early
     if output_dir.suffix == ".md" and not output_dir.is_dir():
@@ -859,6 +886,8 @@ async def process_url_batch(
 
     # Dry run: just show what would be done
     if dry_run:
+        if quiet:
+            raise SystemExit(0)
         feature_str = ui.build_feature_str(cfg)
         cache_status = "enabled" if cfg.cache.enabled else "disabled"
         fetch_strategy_str = fetch_strategy.value if fetch_strategy else "auto"
@@ -878,7 +907,7 @@ async def process_url_batch(
             filename = entry.output_name or url_to_filename(entry.url).replace(
                 ".md", ""
             )
-            line = f"{entry.url} -> {filename}.md"
+            line = f"{_safe_url_for_display(entry.url)} -> {filename}.md"
             console.print(f"  - {ui.truncate(line, entry_max)}")
         if len(url_entries) > 10:
             console.print(f"  ... and {len(url_entries) - 10} more")
@@ -907,12 +936,13 @@ async def process_url_batch(
     results: dict[str, dict] = {}
     active_urls: dict[str, str] = {}
     image_analyses: list[ImageAnalysisResult] = []
+    diag_console = get_stderr_console()
 
     semaphore = asyncio.Semaphore(concurrency)
 
     def format_url_label(url: str) -> str:
         """Build a compact URL label for progress display."""
-        parsed = urlparse(url)
+        parsed = urlparse(_safe_url_for_display(url))
         path_parts = [part for part in parsed.path.split("/") if part]
         tail = "/".join(path_parts[-2:]) if path_parts else ""
         label = parsed.netloc if not tail else f"{parsed.netloc}/{tail}"
@@ -946,7 +976,10 @@ async def process_url_batch(
                 else:
                     filename = url_to_filename(url)
 
-                logger.info(f"Processing URL: {url} (strategy: {fetch_strategy.value})")
+                logger.info(
+                    f"Processing URL: {_safe_url_for_display(url)} "
+                    f"(strategy: {fetch_strategy.value})"
+                )
                 active_urls[url] = format_url_label(url)
                 update_progress_label(progress_obj, progress_task)
 
@@ -971,31 +1004,44 @@ async def process_url_batch(
                     source_extra_meta = fetch_result.metadata.get("source_frontmatter")
                     cache_status = " [cache]" if fetch_result.cache_hit else ""
                     logger.info(
-                        f"Fetched via {url_fetch_strategy}{cache_status}: {url}"
+                        f"Fetched via {url_fetch_strategy}{cache_status}: "
+                        f"{_safe_url_for_display(url)}"
                     )
                 except JinaRateLimitError:
-                    logger.error(f"Jina Reader rate limit exceeded for: {url}")
+                    err_msg = "Jina Reader rate limit exceeded (20 RPM)"
+                    logger.error(
+                        "Jina Reader rate limit exceeded for: "
+                        f"{_safe_url_for_display(url)}"
+                    )
                     results[url] = {
                         "status": "failed",
-                        "error": "Jina Reader rate limit exceeded (20 RPM)",
+                        "error": err_msg,
                     }
+                    _print_url_error(url, err_msg, diag_console)
                     failed += 1
                     return
                 except FetchError as e:
                     # Actionable fetch errors are multi-line blocks; keep them
                     # intact in logs/report instead of truncating at 200 chars.
                     err_msg = format_error_message(e, max_length=800)
-                    logger.error(f"Failed to fetch {url}: {err_msg}")
+                    logger.error(
+                        f"Failed to fetch {_safe_url_for_display(url)}: "
+                        f"{_redact_urls_in_message(err_msg)}"
+                    )
                     results[url] = {"status": "failed", "error": err_msg}
+                    _print_url_error(url, err_msg, diag_console)
                     failed += 1
                     return
 
                 if not markdown_content.strip():
-                    logger.warning(f"No content extracted from URL: {url}")
+                    logger.warning(
+                        f"No content extracted from URL: {_safe_url_for_display(url)}"
+                    )
                     results[url] = {
                         "status": "failed",
                         "error": "No content extracted",
                     }
+                    _print_url_error(url, "No content extracted", diag_console)
                     failed += 1
                     return
 
@@ -1145,12 +1191,18 @@ async def process_url_batch(
                     "screenshots": screenshots_count,
                 }
                 completed += 1
-                logger.info(f"Completed via {url_fetch_strategy}: {url}")
+                logger.info(
+                    f"Completed via {url_fetch_strategy}: {_safe_url_for_display(url)}"
+                )
 
             except Exception as e:
                 err_msg = format_error_message(e)
-                logger.error(f"Failed to process {url}: {err_msg}")
+                logger.error(
+                    f"Failed to process {_safe_url_for_display(url)}: "
+                    f"{_redact_urls_in_message(err_msg)}"
+                )
                 results[url] = {"status": "failed", "error": err_msg}
+                _print_url_error(url, err_msg, diag_console)
                 failed += 1
 
             finally:
@@ -1169,6 +1221,7 @@ async def process_url_batch(
             MofNCompleteColumn(),
             TimeElapsedColumn(),
             console=console,
+            disable=quiet,
         ) as progress,
     ):
         task = progress.add_task("[cyan]URLs", total=len(url_entries))
@@ -1228,12 +1281,23 @@ async def process_url_batch(
     else:
         logger.debug("Report generation disabled (output.report=false)")
 
-    # Print summary
-    ui.summary(f"Done: {completed} URLs ({duration:.1f}s)")
+    # Print informational results only when requested. Failures themselves are
+    # emitted to stderr at the point they occur, including in quiet mode.
+    if not quiet:
+        if failed == 0:
+            ui.summary(f"Done: {completed} URLs ({duration:.1f}s)")
+        elif completed > 0:
+            ui.warning(
+                f"Partial result: {completed} completed, {failed} failed",
+                console=diag_console,
+            )
+        else:
+            ui.error(f"All {failed} URLs failed", console=diag_console)
+        out_max = max(ui.term_width(console) - 10, 20)
+        console.print(f"\n  Output: {ui.truncate(str(output_dir) + '/', out_max)}")
+
     if failed > 0:
-        ui.warning(f"{failed} failed")
-    out_max = max(ui.term_width(console) - 10, 20)
-    console.print(f"\n  Output: {ui.truncate(str(output_dir) + '/', out_max)}")
+        raise SystemExit(10)  # PARTIAL_FAILURE, aligned with directory batch mode
 
 
 def build_multi_source_content(
@@ -1325,13 +1389,15 @@ async def process_url_with_vision(
 
     except Exception as e:
         logger.warning(
-            f"Vision enhancement failed for {url}: {format_error_message(e)}, "
+            f"Vision enhancement failed for {_safe_url_for_display(url)}: "
+            f"{_redact_urls_in_message(format_error_message(e))}, "
             "falling back to standard processing"
         )
         from rich.console import Console
 
         Console(stderr=True).print(
-            f"[yellow]Warning: Vision enhancement failed for {url}, falling back to standard processing[/yellow]"
+            "[yellow]Warning: Vision enhancement failed for "
+            f"{_safe_url_for_display(url)}, falling back to standard processing[/yellow]"
         )
         # Fallback to standard processing
         result = await process_with_llm(
@@ -1431,6 +1497,8 @@ async def process_url_screenshot_only(
 
     except Exception as e:
         logger.error(
-            f"Screenshot-only extraction failed for {url}: {format_error_message(e)}"
+            "Screenshot-only extraction failed for "
+            f"{_safe_url_for_display(url)}: "
+            f"{_redact_urls_in_message(format_error_message(e))}"
         )
         raise

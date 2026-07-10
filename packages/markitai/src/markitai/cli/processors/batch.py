@@ -24,6 +24,7 @@ from markitai.utils.cli_helpers import sanitize_filename, url_to_filename
 from markitai.utils.output import resolve_output_path
 from markitai.utils.paths import ensure_dir, ensure_screenshots_dir
 from markitai.utils.text import format_error_message
+from markitai.utils.url_redaction import redact_url, redact_urls_in_text
 from markitai.workflow.helpers import (
     add_basic_frontmatter as _add_basic_frontmatter,
 )
@@ -247,7 +248,10 @@ def create_url_processor(
             else:
                 filename = url_to_filename(url)
 
-            logger.debug(f"[URL] Processing: {url} (strategy: {_fetch_strategy.value})")
+            logger.debug(
+                f"[URL] Processing: {redact_url(url)} "
+                f"(strategy: {_fetch_strategy.value})"
+            )
             source_extra_meta: dict[str, Any] | None = None
 
             # Fetch URL using the configured strategy
@@ -272,21 +276,25 @@ def create_url_processor(
                 source_extra_meta = fetch_result.metadata.get("source_frontmatter")
                 cache_status = " [cache]" if fetch_result.cache_hit else ""
                 logger.debug(
-                    f"[URL] Fetched via {fetch_result.strategy_used}{cache_status}: {url}"
+                    f"[URL] Fetched via {fetch_result.strategy_used}{cache_status}: "
+                    f"{redact_url(url)}"
                 )
             except JinaRateLimitError:
-                logger.error(f"[URL] Jina rate limit exceeded for: {url}")
+                logger.error(f"[URL] Jina rate limit exceeded for: {redact_url(url)}")
                 return ProcessResult(
                     success=False,
                     error="Jina Reader rate limit exceeded (20 RPM)",
                 ), extra_info
             except FetchError as e:
                 err_msg = format_error_message(e)
-                logger.error(f"[URL] Fetch failed {url}: {err_msg}")
+                logger.error(
+                    f"[URL] Fetch failed {redact_url(url)}: "
+                    f"{redact_urls_in_text(err_msg)}"
+                )
                 return ProcessResult(success=False, error=err_msg), extra_info
 
             if not original_markdown.strip():
-                logger.warning(f"[URL] No content: {url}")
+                logger.error(f"[URL] No content: {redact_url(url)}")
                 return ProcessResult(
                     success=False,
                     error="No content extracted",
@@ -386,7 +394,8 @@ def create_url_processor(
                     )
 
                     logger.debug(
-                        f"[URL] Using vision enhancement for multi-source URL: {url}"
+                        "[URL] Using vision enhancement for multi-source URL: "
+                        f"{redact_url(url)}"
                     )
 
                     # Use vision enhancement with screenshot
@@ -523,7 +532,8 @@ def create_url_processor(
 
             total_time = time.perf_counter() - start_time
             logger.debug(
-                f"[URL] Completed via {extra_info['fetch_strategy']}: {url} "
+                f"[URL] Completed via {extra_info['fetch_strategy']}: "
+                f"{redact_url(url)} "
                 f"({total_time:.2f}s)" + (" [cache]" if is_cache_hit else "")
             )
 
@@ -545,7 +555,10 @@ def create_url_processor(
         except Exception as e:
             total_time = time.perf_counter() - start_time
             err_msg = format_error_message(e)
-            logger.error(f"[URL] Failed {url}: {err_msg} ({total_time:.2f}s)")
+            logger.error(
+                f"[URL] Failed {redact_url(url)}: "
+                f"{redact_urls_in_text(err_msg)} ({total_time:.2f}s)"
+            )
             return ProcessResult(success=False, error=err_msg), extra_info
 
     return process_url
@@ -563,6 +576,7 @@ async def process_batch(
     fetch_strategy: FetchStrategy | None = None,
     explicit_fetch_strategy: bool = False,
     glob_patterns: tuple[str, ...] = (),
+    quiet: bool = False,
 ) -> None:
     """Process directory in batch mode."""
     # Batch output must be a directory; reject file-like -o values early
@@ -630,16 +644,22 @@ async def process_batch(
         except Exception as e:
             logger.warning(f"Failed to parse URL list {url_file}: {e}")
 
+    # A quiet dry run intentionally produces no preview and has no side
+    # effects. Discovery above still validates the input shape.
+    if dry_run and quiet:
+        raise SystemExit(0)
+
     # Check Playwright availability if URLs will be processed
-    if url_entries_from_files:
+    if url_entries_from_files and not quiet:
         check_playwright_for_urls(cfg, console)
 
     if not files and not url_entries_from_files:
-        console.print("[yellow]No supported files or URL lists found.[/yellow]")
+        if not quiet:
+            console.print("[yellow]No supported files or URL lists found.[/yellow]")
         raise SystemExit(0)
 
     # Warn about potential case-sensitivity mismatches in --no-cache-for patterns
-    if cfg.cache.no_cache_patterns:
+    if cfg.cache.no_cache_patterns and not quiet:
         warn_case_sensitivity_mismatches(files, input_dir, cfg.cache.no_cache_patterns)
 
     check_symlink_safety(output_dir, allow_symlinks=cfg.output.allow_symlinks)
@@ -680,9 +700,11 @@ async def process_batch(
 
         done_count = resumed_state.completed_count + resumed_state.completed_urls_count
         remaining = len(files_to_process) + len(url_entries_to_process)
-        console.print(
-            f"[dim]Resuming batch: {done_count} completed, {remaining} remaining[/dim]"
-        )
+        if not quiet:
+            console.print(
+                f"[dim]Resuming batch: {done_count} completed, "
+                f"{remaining} remaining[/dim]"
+            )
     else:
         if resume:
             logger.debug("No previous batch state found; starting fresh")
@@ -713,7 +735,9 @@ async def process_batch(
             console.print()
             console.print(f"  URLs ({len(url_entries_to_process)})")
             for _source_file, entry in url_entries_to_process[:10]:
-                console.print(f"    {ui.MARK_INFO} {ui.truncate(entry.url, url_max)}")
+                console.print(
+                    f"    {ui.MARK_INFO} {ui.truncate(redact_url(entry.url), url_max)}"
+                )
             if len(url_entries_to_process) > 10:
                 console.print(
                     f"    ... and {len(url_entries_to_process) - 10} more URLs"
@@ -733,12 +757,13 @@ async def process_batch(
 
     # Start Live display early to capture all logs (including URL processing)
     # This ensures all INFO+ logs go to the panel instead of console
-    batch.start_live_display(
-        verbose=verbose,
-        console_handler_id=console_handler_id,
-        total_files=len(files_to_process),
-        total_urls=len(url_entries_to_process),
-    )
+    if not quiet:
+        batch.start_live_display(
+            verbose=verbose,
+            console_handler_id=console_handler_id,
+            total_files=len(files_to_process),
+            total_urls=len(url_entries_to_process),
+        )
 
     # Pre-convert legacy Office files using batch COM (Windows only)
     # This reduces overhead by starting each Office app only once
@@ -884,7 +909,9 @@ async def process_batch(
             url_state.status = FileStatus.FAILED
             url_state.error = err_msg
             batch._dirty_keys.add(url)
-            logger.error(f"[URL] Failed {url}: {err_msg}")
+            logger.error(
+                f"[URL] Failed {redact_url(url)}: {redact_urls_in_text(err_msg)}"
+            )
 
         finally:
             end_time = asyncio.get_running_loop().time()
@@ -1029,16 +1056,17 @@ async def process_batch(
         batch.compact_state()
 
         # Print summary (uses state for URL stats)
-        batch.print_summary(
-            url_completed=state.completed_urls_count,
-            url_failed=state.failed_urls_count,
-            url_cache_hits=sum(
-                1
-                for u in state.urls.values()
-                if u.status == FileStatus.COMPLETED and u.cache_hit
-            ),
-            url_sources=len(state.url_sources),
-        )
+        if not quiet:
+            batch.print_summary(
+                url_completed=state.completed_urls_count,
+                url_failed=state.failed_urls_count,
+                url_cache_hits=sum(
+                    1
+                    for u in state.urls.values()
+                    if u.status == FileStatus.COMPLETED and u.cache_hit
+                ),
+                url_sources=len(state.url_sources),
+            )
 
         # Write aggregated image analysis JSON (if any)
         if batch.image_analysis_results and cfg.image.desc_enabled:

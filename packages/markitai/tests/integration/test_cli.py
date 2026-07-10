@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -256,9 +256,165 @@ class TestOutputFileTarget:
         assert "pass an output directory" in flat
         assert not (tmp_path / "out.md").exists()
 
+    def test_url_list_without_output_reports_usage_on_stderr(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        urls_file = tmp_path / "links.urls"
+        urls_file.write_text("https://example.com/\n")
+
+        result = runner.invoke(app, [str(urls_file)])
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "requires -o/--output directory" in result.stderr
+
 
 class TestStdoutPipePurity:
     """In stdout mode (no -o), diagnostics must go to stderr, not stdout."""
+
+    def test_quiet_preserves_primary_markdown_payload(
+        self, runner: CliRunner, sample_txt: Path
+    ) -> None:
+        """Quiet suppresses diagnostics, never the requested stdout payload."""
+        result = runner.invoke(app, [str(sample_txt), "--quiet"])
+
+        assert result.exit_code == 0
+        assert result.stdout.lstrip().startswith("---")
+        assert "This is test content." in result.stdout
+        assert result.stderr == ""
+
+    def test_quiet_single_url_file_mode_only_writes_artifact(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        fetch_result = MagicMock()
+        fetch_result.content = "# Quiet URL\n"
+        fetch_result.cache_hit = False
+        fetch_result.strategy_used = "static"
+        fetch_result.screenshot_path = None
+        fetch_result.title = "Quiet URL"
+        fetch_result.metadata = {}
+        output_file = tmp_path / "result.md"
+
+        with patch(
+            "markitai.fetch.fetch_url",
+            new_callable=AsyncMock,
+            return_value=fetch_result,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "https://example.com/page",
+                    "-o",
+                    str(output_file),
+                    "--quiet",
+                    "--no-cache",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert output_file.exists()
+
+    def test_quiet_single_url_stdout_mode_preserves_markdown(
+        self, runner: CliRunner
+    ) -> None:
+        fetch_result = MagicMock()
+        fetch_result.content = "# Quiet URL\n\nPayload stays on stdout.\n"
+        fetch_result.cache_hit = False
+        fetch_result.strategy_used = "static"
+        fetch_result.screenshot_path = None
+        fetch_result.title = "Quiet URL"
+        fetch_result.metadata = {}
+
+        with patch(
+            "markitai.fetch.fetch_url",
+            new_callable=AsyncMock,
+            return_value=fetch_result,
+        ):
+            result = runner.invoke(
+                app,
+                ["https://example.com/page", "--quiet", "--no-cache"],
+            )
+
+        assert result.exit_code == 0
+        assert "# Quiet URL" in result.stdout
+        assert "Payload stays on stdout." in result.stdout
+        assert result.stderr == ""
+
+    def test_missing_input_error_goes_to_stderr(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A failed conversion must not write diagnostics into stdout."""
+        missing = tmp_path / "missing.pdf"
+
+        result = runner.invoke(app, [str(missing)])
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "does not exist" in result.stderr
+
+    def test_image_without_ocr_or_llm_is_not_a_successful_empty_conversion(
+        self, runner: CliRunner, fixtures_dir: Path
+    ) -> None:
+        """A supported image request without an extraction mode fails clearly."""
+        result = runner.invoke(app, [str(fixtures_dir / "sample.jpg")])
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "Use --llm or --ocr" in result.stderr
+
+    def test_quiet_unsupported_input_still_explains_failure(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        unsupported = tmp_path / "input.unsupported"
+        unsupported.write_text("content")
+
+        result = runner.invoke(app, [str(unsupported), "--quiet"])
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "Unsupported file format" in result.stderr
+
+    def test_file_output_mode_failure_still_uses_stderr(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        unsupported = tmp_path / "input.unsupported"
+        unsupported.write_text("content")
+
+        result = runner.invoke(
+            app,
+            [str(unsupported), "-o", str(tmp_path / "output"), "--quiet"],
+        )
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "Unsupported file format" in result.stderr
+
+    def test_quiet_image_failure_still_explains_required_feature(
+        self, runner: CliRunner, fixtures_dir: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [str(fixtures_dir / "sample.jpg"), "--quiet"],
+        )
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "Use --llm or --ocr" in result.stderr
+
+    def test_quiet_runtime_failure_still_reaches_stderr(
+        self, runner: CliRunner, sample_txt: Path
+    ) -> None:
+        with patch(
+            "markitai.workflow.core.convert_document_core",
+            side_effect=RuntimeError("conversion exploded"),
+        ):
+            result = runner.invoke(app, [str(sample_txt), "--quiet"])
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "conversion exploded" in result.stderr
 
     def test_alt_warning_goes_to_stderr(self, runner: CliRunner, sample_txt: Path):
         """`--alt` without LLM warns on stderr; stdout stays pure markdown."""
@@ -296,8 +452,244 @@ class TestStdoutPipePurity:
         assert long_url in result.stdout
 
 
+class TestUrlBatchExitContract:
+    """The public CLI distinguishes partial output from complete success."""
+
+    def test_url_list_forwards_quiet_to_batch_processor(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        urls_file = tmp_path / "links.urls"
+        urls_file.write_text("https://example.com/page\n")
+        output_dir = tmp_path / "output"
+
+        with patch(
+            "markitai.cli.processors.url.process_url_batch",
+            new_callable=AsyncMock,
+        ) as process_batch_mock:
+            result = runner.invoke(
+                app,
+                [str(urls_file), "-o", str(output_dir), "--quiet"],
+            )
+
+        assert result.exit_code == 0
+        assert process_batch_mock.await_args is not None
+        assert process_batch_mock.await_args.kwargs["quiet"] is True
+
+    def test_url_list_partial_failure_exits_ten(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from markitai.fetch import FetchError
+
+        urls_file = tmp_path / "links.urls"
+        urls_file.write_text("https://example.com/success\nhttps://example.com/fail\n")
+        output_dir = tmp_path / "output"
+
+        async def fake_fetch(url: str, *args: object, **kwargs: object) -> MagicMock:
+            if url.endswith("/fail"):
+                raise FetchError("Connection refused")
+            result = MagicMock()
+            result.content = "# Success\n"
+            result.cache_hit = False
+            result.strategy_used = "static"
+            result.screenshot_path = None
+            result.title = "Success"
+            result.metadata = {}
+            return result
+
+        with patch("markitai.fetch.fetch_url", side_effect=fake_fetch):
+            result = runner.invoke(
+                app,
+                [str(urls_file), "-o", str(output_dir), "--no-cache"],
+            )
+
+        assert result.exit_code == 10
+        assert (output_dir / "success.md").exists()
+        assert not (output_dir / "fail.md").exists()
+
+
+class TestRemoteFetchHardOptOut:
+    """The environment opt-out wins over explicit remote CLI flags."""
+
+    def test_explicit_remote_strategy_is_blocked(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MARKITAI_NO_REMOTE_FETCH", "1")
+
+        result = runner.invoke(
+            app,
+            [
+                "https://example.com/article",
+                "-s",
+                "jina",
+                "--config-json",
+                '{"cache":{"enabled":false}}',
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "MARKITAI_NO_REMOTE_FETCH" in result.stderr
+
+    def test_config_remote_strategy_still_respects_consent_never(
+        self, runner: CliRunner
+    ) -> None:
+        with patch(
+            "markitai.fetch.fetch_with_jina",
+            new_callable=AsyncMock,
+        ) as remote_fetch:
+            result = runner.invoke(
+                app,
+                [
+                    "https://example.com/article",
+                    "--config-json",
+                    (
+                        '{"fetch":{"strategy":"jina",'
+                        '"remote_consent":"never"},'
+                        '"cache":{"enabled":false}}'
+                    ),
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "remote extraction is not allowed" in result.stderr
+        remote_fetch.assert_not_awaited()
+
+    def test_url_output_mode_failure_still_uses_stderr(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MARKITAI_NO_REMOTE_FETCH", "1")
+
+        result = runner.invoke(
+            app,
+            [
+                "https://example.com/article",
+                "-s",
+                "jina",
+                "-o",
+                str(tmp_path / "output"),
+                "--quiet",
+                "--config-json",
+                '{"cache":{"enabled":false}}',
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "MARKITAI_NO_REMOTE_FETCH" in result.stderr
+
+
 class TestBatchConvert:
     """Tests for batch conversion."""
+
+    def test_quiet_batch_writes_outputs_without_informational_ui(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "file.txt").write_text("Content")
+        output_dir = tmp_path / "output"
+
+        result = runner.invoke(
+            app,
+            [str(input_dir), "-o", str(output_dir), "--quiet"],
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert (output_dir / "file.txt.md").exists()
+
+    def test_quiet_batch_failure_is_reported_on_stderr(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "broken.txt").write_text("Content")
+        output_dir = tmp_path / "output"
+
+        with patch(
+            "markitai.workflow.core.convert_document_core",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("conversion exploded"),
+        ):
+            result = runner.invoke(
+                app,
+                [str(input_dir), "-o", str(output_dir), "--quiet"],
+            )
+
+        assert result.exit_code == 10
+        assert result.stdout == ""
+        assert "broken.txt" in result.stderr
+        assert "conversion exploded" in result.stderr
+
+    def test_quiet_directory_url_failure_redacts_signed_url_on_stderr(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from markitai.fetch import FetchError
+
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "links.urls").write_text(
+            "https://alice:password@example.com/private/report"
+            "?token=query-secret#access_token=fragment-secret\n"
+        )
+        output_dir = tmp_path / "output"
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                side_effect=FetchError("Connection refused"),
+            ),
+            patch(
+                "markitai.fetch._get_playwright_renderer",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_available",
+                return_value=False,
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    str(input_dir),
+                    "-o",
+                    str(output_dir),
+                    "--quiet",
+                    "--no-cache",
+                ],
+            )
+
+        assert result.exit_code == 10
+        assert result.stdout == ""
+        assert "https://example.com/private/report" in result.stderr
+        assert "alice" not in result.stderr
+        assert "password" not in result.stderr
+        assert "token" not in result.stderr
+        assert "query-secret" not in result.stderr
+        assert "fragment-secret" not in result.stderr
+        assert "Playwright is not installed" not in result.stderr
+
+    def test_quiet_batch_dry_run_suppresses_preview(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "file.txt").write_text("Content")
+        output_dir = tmp_path / "output"
+
+        result = runner.invoke(
+            app,
+            [str(input_dir), "-o", str(output_dir), "--dry-run", "--quiet"],
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert not output_dir.exists()
 
     def test_batch_dry_run(self, runner: CliRunner, tmp_path: Path):
         """Test batch mode dry run."""
@@ -771,6 +1163,26 @@ class TestBatchResume:
     used it — every --resume run re-initialized state and re-converted all
     files (piling up .v2.md rename copies under the default on_conflict).
     """
+
+    def test_quiet_resume_suppresses_resume_and_summary_ui(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        (input_dir / "a.txt").write_text("Content A")
+        output_dir = tmp_path / "output"
+
+        first = runner.invoke(app, [str(input_dir), "-o", str(output_dir)])
+        assert first.exit_code == 0
+
+        resumed = runner.invoke(
+            app,
+            [str(input_dir), "-o", str(output_dir), "--resume", "--quiet"],
+        )
+
+        assert resumed.exit_code == 0
+        assert resumed.stdout == ""
+        assert resumed.stderr == ""
 
     def test_resume_skips_completed_files(self, runner: CliRunner, tmp_path: Path):
         """A fully completed batch re-run with --resume does no work."""

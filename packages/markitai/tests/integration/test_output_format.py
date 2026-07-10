@@ -172,7 +172,7 @@ class TestImageAltGeneration:
     def test_image_skipped_without_llm(
         self, runner: CliRunner, image_file: Path, tmp_path: Path
     ) -> None:
-        """Test that image-only format is skipped without LLM/OCR (Rule A)."""
+        """A single image without extraction features is a visible failure."""
         output_dir = tmp_path / "output"
 
         result = runner.invoke(
@@ -180,14 +180,13 @@ class TestImageAltGeneration:
             [str(image_file), "-o", str(output_dir)],
         )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
 
         # No output file should be created (image-only skip)
         output_file = output_dir / "sample.jpg.md"
         assert not output_file.exists()
 
-        # Should show skip warning
-        assert "Skipped" in result.output or "image" in result.output.lower()
+        assert "Use --llm or --ocr" in result.output
 
     def test_alt_flag_shows_llm_warning(
         self, runner: CliRunner, image_file: Path, tmp_path: Path

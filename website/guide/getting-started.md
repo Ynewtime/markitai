@@ -1,5 +1,28 @@
 # Getting Started
 
+## Your First Conversion in 60 Seconds
+
+Install the core package. Optional browser rendering, extra format support, and LLM providers can wait until you need them:
+
+```bash
+uv tool install markitai
+```
+
+Create a tiny text file and convert it:
+
+```bash
+echo "First Markitai conversion" > hello.txt
+markitai hello.txt --pure
+```
+
+With `--pure`, Markitai prints the Markdown body to stdout without frontmatter:
+
+```text
+First Markitai conversion
+```
+
+Add `-o output/` when you want a file instead. Continue below for the guided installer, documents and URLs, LLM enhancement, and optional format support.
+
 ## Prerequisites
 
 ### Required
@@ -13,21 +36,20 @@ These are required for specific features:
 
 | Dependency | Required For | Installation |
 |------------|--------------|--------------|
-| **Playwright** | `-s playwright` (SPA rendering) | `uv pip install markitai[browser]`, browser requires `uv run playwright install chromium` |
+| **Playwright** | `-s playwright` (SPA rendering) | Recommended uv-tool path: `uv tool install 'markitai[browser]' --force`, then `markitai doctor --fix`. See [Manual Installation](#manual-installation) for pipx and virtual environments. |
 | **FFmpeg** | Checked by `doctor`/`init` (transitive `markitdown[all]` dependency); markitai does not currently register any audio/video conversion format | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
 | **Jina API Key** | `-s jina` (URL conversion) | Set `JINA_API_KEY` env var |
-| **LLM API Key** | `--llm` (AI enhancement) | Set `OPENAI_API_KEY` or provider-specific key. Subscription providers (`chatgpt/`, `claude-agent/`, `copilot/`) use CLI/OAuth auth instead |
+| **LLM authentication** | `--llm` (AI enhancement) | Use a provider API key, or sign in through a subscription provider (`chatgpt/`, `claude-agent/`, `copilot/`) with OAuth or its CLI |
 | **Cloudflare** | `-s cloudflare` (cloud rendering & conversion) | Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` env vars |
 | **CairoSVG** | High-quality SVG rendering | `uv pip install markitai[svg]` |
 | **pillow-heif** | HEIC/HEIF/AVIF image input | `uv pip install markitai[heif]` |
 | **kreuzberg** | `.xml`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex`, `.odt`, `.ods` conversion | `uv pip install markitai[kreuzberg]` (included in `[all]`) |
 
 ::: tip Browser Automation
-For SPA websites (Twitter, React apps, etc.), Playwright is used automatically. Before first use, install the browser:
+For SPA websites (Twitter, React apps, etc.), Playwright is used automatically. The commands below assume the recommended uv-tool installation. If you installed Markitai with pipx or into a virtual environment, use the matching browser-extra command under [Manual Installation](#manual-installation).
 ```bash
-uv run playwright install chromium
-# Linux also requires system dependencies:
-uv run playwright install-deps chromium
+uv tool install 'markitai[browser]' --force
+markitai doctor --fix
 ```
 Then use `-s playwright` to force browser rendering.
 :::
@@ -50,7 +72,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 
 ::: warning Security Notice
 - The script checks for root/Administrator and asks before continuing
-- Each component prompts before installing — uv and the Playwright browser default to Yes; LibreOffice, FFmpeg, and the Claude/Copilot CLIs default to No
+- Each component prompts before installing. uv and the Playwright browser default to Yes; LibreOffice, FFmpeg, and the Claude/Copilot CLIs default to No
 :::
 
 The script will:
@@ -64,42 +86,69 @@ Pin specific versions using environment variables:
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.14.0"
+export MARKITAI_VERSION="0.19.0"
 export UV_VERSION="0.9.27"
 curl -fsSL https://markitai.dev/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.14.0"
+$env:MARKITAI_VERSION = "0.19.0"
 $env:UV_VERSION = "0.9.27"
 powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 :::
 
+This example pins the release documented here. Omit `MARKITAI_VERSION` to install the latest stable release; if you are reading an older copy of the docs, check the current release before reusing the pin.
+
 ### Manual Installation
 
-If you already have Python 3.11–3.14 and prefer a minimal install:
+If you already have Python 3.11-3.14 and prefer a minimal install:
 
 ```bash
 # Using uv (recommended, isolated environment)
-uv tool install "markitai[all]"
+uv tool install markitai
 
 # Or using uv pip (into a virtual environment)
-uv pip install "markitai[all]"
+uv pip install markitai
 ```
+
+Add only the extras required by your workflow later, for example `markitai[browser]` for Playwright or `markitai[heif]` for HEIC/HEIF/AVIF input. See [Optional Dependencies](#optional-dependencies) for the full list.
 
 Unlike the one-click setup, a manual install does **not** set up optional
 components or config for you. Do the remaining steps yourself:
 
 ```bash
-markitai doctor           # see what's installed / missing
-markitai doctor --fix     # install the Playwright Chromium browser (for --playwright)
+markitai doctor           # see core and optional capabilities
 markitai init             # create a config and set up an LLM provider
 ```
 
+For Playwright browser rendering, choose the browser-extra command that matches how you installed Markitai:
+
+::: code-group
+```bash [uv tool]
+uv tool install 'markitai[browser]' --force
+```
+
+```bash [pipx]
+pipx install 'markitai[browser]' --force
+```
+
+```bash [Active virtual environment]
+uv pip install 'markitai[browser]'
+```
+:::
+
+Then let `doctor` install Chromium into that environment:
+
+```bash
+markitai doctor --fix
+```
+
+`doctor --fix` installs Chromium only when the Playwright package is already present. With a core-only install, it exits safely and tells you which extra to add.
+
 ::: tip Both `markitai` and `mkai` work
-Every install provides the `markitai` command **and the shorter `mkai` alias** —
-they are the exact same command (`mkai --help` == `markitai --help`). If a
+Every install provides the `markitai` command **and the shorter `mkai` alias**.
+They are the exact same command (`mkai --help` == `markitai --help`). If a
 different `mkai` already exists on your `PATH`, use the full `markitai` to avoid
 ambiguity.
 :::
@@ -146,6 +195,8 @@ Convert web pages directly:
 markitai https://example.com/article -o output/
 ```
 
+For public URLs, local methods run first on standard sites, then `auto` may try Defuddle, Jina, or Cloudflare without asking. The first remote attempt in a process is disclosed on stderr. Private, local, intranet, and credential-bearing URLs remain local-only. Set `MARKITAI_NO_REMOTE_FETCH=1` if every URL must stay local.
+
 ### LLM Enhancement
 
 Enable AI-powered format cleaning and optimization:
@@ -154,7 +205,7 @@ Enable AI-powered format cleaning and optimization:
 markitai document.docx --llm
 ```
 
-This requires setting up an API key (see [Configuration](/guide/configuration)).
+Configure either a provider API key or a subscription provider. ChatGPT uses OAuth; Claude Agent and GitHub Copilot use their CLI authentication. See [Configuration](/guide/configuration#supported-providers).
 
 ### Using Presets
 
@@ -187,13 +238,13 @@ markitai ./docs -o ./output --resume
 
 ### System Check
 
-Verify all dependencies and auto-fix missing components:
+Check the core requirement and see which optional capabilities are available. Missing optional tools do not fail the core health check:
 
 ```bash
 # Check system health
 markitai doctor
 
-# Auto-fix missing components
+# If the Playwright package is present, install and re-check Chromium
 markitai doctor --fix
 ```
 
@@ -264,9 +315,10 @@ sudo dnf install libreoffice
 ```
 
 **Install Playwright browsers:**
+Use the browser-extra command matching your environment under [Manual Installation](#manual-installation), then run:
+
 ```bash
-uv run playwright install chromium
-uv run playwright install-deps chromium  # Install system dependencies
+markitai doctor --fix
 ```
 
 ### macOS

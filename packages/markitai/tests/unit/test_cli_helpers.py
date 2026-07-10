@@ -449,6 +449,21 @@ class TestUrlHelpers:
         assert "?" not in filename
         assert filename.endswith(".md")
 
+    def test_url_to_filename_excludes_credentials(self) -> None:
+        """Generated filenames must not contain URL userinfo or signed values."""
+        from markitai.cli import url_to_filename
+
+        filename = url_to_filename(
+            "https://alice:password@example.com/private/report"
+            "?token=query-secret#access_token=fragment-secret"
+        )
+
+        assert filename == "example_com_report.md"
+        assert "alice" not in filename
+        assert "password" not in filename
+        assert "query-secret" not in filename
+        assert "fragment-secret" not in filename
+
     def test_sanitize_filename(self) -> None:
         """Test sanitize_filename function."""
         from markitai.cli import sanitize_filename
