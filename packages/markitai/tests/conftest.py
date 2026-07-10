@@ -85,10 +85,18 @@ def sample_config_dict() -> dict:
 
 @pytest.fixture(autouse=True)
 def _reset_remote_fetch_consent(monkeypatch: pytest.MonkeyPatch):
-    """Isolate the process-wide remote-fetch consent cache between tests."""
-    from markitai import fetch
+    """Isolate remote consent and keep unit tests independent of live DNS."""
+    from markitai import fetch, fetch_policy
+
+    async def resolve_public_test_host(_hostname: str) -> tuple[str, ...]:
+        return ("93.184.216.34",)
 
     monkeypatch.delenv("MARKITAI_NO_REMOTE_FETCH", raising=False)
+    monkeypatch.setattr(
+        fetch_policy,
+        "resolve_hostname_addresses",
+        resolve_public_test_host,
+    )
     fetch.reset_remote_consent()
     fetch.reset_explicit_fallback_decision()
     yield

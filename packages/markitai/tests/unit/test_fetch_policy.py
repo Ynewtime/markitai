@@ -10,6 +10,7 @@ from markitai.constants import (
 from markitai.fetch_policy import (
     ALL_STRATEGIES,
     FetchPolicyEngine,
+    assess_url_for_remote,
     is_private_or_local_domain,
     match_local_only,
     parse_no_proxy,
@@ -97,16 +98,54 @@ def test_private_guard_keeps_public_hosts_available(domain: str) -> None:
         "https://example.com/account?ticket=secret",
         "https://example.com/account?pwd=secret",
         "https://example.com/sso?SAMLResponse=secret",
+        "https://example.com/reset/550e8400-e29b-41d4-a716-446655440000",
+        "https://example.com/api-key/550e8400-e29b-41d4-a716-446655440000",
+        ("https://example.com/download/AbCDef0123456789_-AbCDef0123456789"),
     ],
 )
 def test_url_credentials_are_hard_local_only(url: str) -> None:
     assert url_contains_credentials(url) is True
 
 
-def test_normal_public_url_query_is_not_treated_as_credentials() -> None:
-    assert (
-        url_contains_credentials("https://example.com/article?page=2#section") is False
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/article?page=2#section",
+        "https://example.com/releases/markitai-0.20.0-py3-none-any.whl",
+        "https://example.com/articles/how-to-use-python-3-14-in-2026",
+        "https://example.com/reset/complete.html",
+    ],
+)
+def test_normal_public_url_is_not_treated_as_credentials(url: str) -> None:
+    assert url_contains_credentials(url) is False
+
+
+@pytest.mark.asyncio
+async def test_remote_assessment_rejects_private_dns_answer() -> None:
+    async def resolve_private(_hostname: str) -> tuple[str, ...]:
+        return ("93.184.216.34", "10.0.0.25")
+
+    assessment = await assess_url_for_remote(
+        "https://portal.example.com/article",
+        resolver=resolve_private,
     )
+
+    assert assessment.allowed is False
+    assert assessment.reason == "non_global_address"
+
+
+@pytest.mark.asyncio
+async def test_remote_assessment_allows_ordinary_public_url() -> None:
+    async def resolve_public(_hostname: str) -> tuple[str, ...]:
+        return ("93.184.216.34", "2606:4700::1111")
+
+    assessment = await assess_url_for_remote(
+        "https://example.com/articles/getting-started",
+        resolver=resolve_public,
+    )
+
+    assert assessment.allowed is True
+    assert assessment.reason is None
 
 
 class TestFetchPolicyEngine:

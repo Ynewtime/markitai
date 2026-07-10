@@ -5,11 +5,14 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit, urlunsplit
 
+from markitai.fetch_policy import sensitive_path_segment_indexes
+
 _HTTP_URL_IN_TEXT = re.compile(r"https?://[^\s<>'\"]+")
+_REDACTED_PATH_SEGMENT = "[REDACTED]"
 
 
 def redact_url(url: str) -> str:
-    """Return an origin-and-path URL without userinfo, query, or fragment."""
+    """Return a display-safe URL with credential surfaces removed."""
     try:
         parsed = urlsplit(url)
         hostname = parsed.hostname
@@ -22,7 +25,11 @@ def redact_url(url: str) -> str:
         except ValueError:
             port = None
         netloc = f"{host}:{port}" if port is not None else host
-        return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+        path_segments = parsed.path.split("/")
+        for index in sensitive_path_segment_indexes(parsed.path):
+            path_segments[index] = _REDACTED_PATH_SEGMENT
+        safe_path = "/".join(path_segments)
+        return urlunsplit((parsed.scheme, netloc, safe_path, "", ""))
     except (TypeError, ValueError):
         return "[URL redacted]"
 

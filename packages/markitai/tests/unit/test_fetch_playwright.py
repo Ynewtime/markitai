@@ -1158,6 +1158,32 @@ class TestTryEnricherFallbackAsync:
         mock_enrich.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_rejects_x_url_when_hostname_resolves_private(self):
+        """FxTwitter/oEmbed must share the remote DNS privacy boundary."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+
+        renderer = PlaywrightRenderer()
+        with (
+            patch(
+                "markitai.fetch_policy.resolve_hostname_addresses",
+                new_callable=AsyncMock,
+                return_value=("127.0.0.1",),
+            ),
+            patch.object(
+                XOEmbedEnricher,
+                "enrich",
+                new_callable=AsyncMock,
+            ) as mock_enrich,
+        ):
+            result = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", "always"
+            )
+
+        assert result == ("", None, "")
+        mock_enrich.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_ask_consent_proceeds_without_prompting(
         self, capsys: pytest.CaptureFixture[str]
     ):
