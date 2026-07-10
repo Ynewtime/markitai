@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Remote extraction no longer prompts by default** (`fetch.remote_consent` default `ask` → `always`): public URLs fall back to remote extraction services (defuddle.md, Jina, Cloudflare — tried one at a time, only after local strategies fail) without an interactive confirmation; the first use is disclosed via an INFO log. Private/local URLs never use remote services regardless of this setting, and URLs carrying credentials in the netloc (`user:pass@host`) are now treated as private too. Set `fetch.remote_consent=ask`/`never` or `MARKITAI_NO_REMOTE_FETCH=1` to restore prompting or disable remote services
-- **Consent prompt rewording** (for `remote_consent=ask`): the prompt now explains why it appears (local extraction didn't succeed), that services are tried one at a time (first success wins), and dynamically lists only the services actually in the chain — Cloudflare (which runs against your own account credentials) only appears when configured. Interactive prompts also pause the live progress display instead of tearing it
+- **Remote extraction no longer prompts by default** (`fetch.remote_consent` default `ask` → `always`): public URLs can fall back to remote extraction services without an interactive confirmation; services are tried one at a time and the first remote use is disclosed directly on stderr, even under `--quiet`. Private/local URLs and URLs carrying credentials in userinfo or sensitive query/fragment parameters stay local. `MARKITAI_NO_REMOTE_FETCH=1` is a hard opt-out that also blocks an explicit remote `-s`; `fetch.remote_consent=ask`/`never` controls automatic and config-selected remote use
+- **Process-wide remote disclosure and consent wording**: the one-time notice and optional `ask` prompt list every service the cached process decision may authorize (defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed), explain that services are tried one at a time, and pause the live progress display instead of tearing it
 
 ### Added
 

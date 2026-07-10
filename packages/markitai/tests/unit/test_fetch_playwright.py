@@ -1141,7 +1141,26 @@ class TestTryEnricherFallbackAsync:
         mock_enrich.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_ask_consent_proceeds_without_prompting(self):
+    async def test_rejects_credential_bearing_x_url(self):
+        """The local Playwright path must not leak signed URLs via an enricher."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+
+        renderer = PlaywrightRenderer()
+        with patch.object(
+            XOEmbedEnricher, "enrich", new_callable=AsyncMock
+        ) as mock_enrich:
+            result = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123?token=topsecret", "always"
+            )
+
+        assert result == ("", None, "")
+        mock_enrich.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_ask_consent_proceeds_without_prompting(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
         """remote_consent='ask' must NOT prompt or block here, unlike
         defuddle/jina/cloudflare. should_run() already restricts this
         enricher to URLs that matched a public x.com/twitter.com
@@ -1177,6 +1196,41 @@ class TestTryEnricherFallbackAsync:
         assert result[0] == "hi"
         mock_confirm.assert_not_called()
         mock_enrich.assert_awaited_once()
+        disclosure = capsys.readouterr().err
+        assert "remote extraction services may receive URLs" in disclosure
+        assert "FxTwitter, Twitter oEmbed" in disclosure
+
+    @pytest.mark.asyncio
+    async def test_cached_ask_decline_blocks_x_enricher(self):
+        """A process-wide No decision covers the X services named by the prompt."""
+        from markitai.config import FetchConfig
+        from markitai.fetch import resolve_remote_consent
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("click.confirm", return_value=False),
+        ):
+            mock_stdin.isatty.return_value = True
+            assert (
+                resolve_remote_consent(
+                    FetchConfig(remote_consent="ask"),
+                    services=["defuddle", "jina"],
+                )
+                is False
+            )
+
+        renderer = PlaywrightRenderer()
+        with patch.object(
+            XOEmbedEnricher, "enrich", new_callable=AsyncMock
+        ) as mock_enrich:
+            result = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", "ask"
+            )
+
+        assert result == ("", None, "")
+        mock_enrich.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_env_no_remote_fetch_blocks_enricher(self, monkeypatch):

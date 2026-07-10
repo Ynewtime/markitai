@@ -9,8 +9,8 @@
 
 ### Changed
 
-- **远程提取默认不再弹出确认**（`fetch.remote_consent` 默认值 `ask` → `always`）：公网 URL 会在本地策略失败后直接按链回退到远程提取服务（defuddle.md、Jina、Cloudflare——逐个尝试，成功即停），不再打断询问；首次使用会通过 INFO 日志披露。私有/本地 URL 无论此配置如何都不会使用远程服务，netloc 携带凭据的 URL（`user:pass@host`）现在也视同私有。可通过 `fetch.remote_consent=ask`/`never` 或 `MARKITAI_NO_REMOTE_FETCH=1` 恢复询问或禁用远程服务
-- **确认提示文案重写**（针对 `remote_consent=ask`）：提示现在会说明弹出原因（本地提取未成功）、逐个尝试的机制（一次一个、成功即停），并动态列出实际在链中的服务——Cloudflare（使用你自己的账户凭据）仅在已配置时出现。交互式确认现在也会先暂停实时进度显示，不再撕裂界面
+- **远程提取默认不再弹出确认**（`fetch.remote_consent` 默认值 `ask` → `always`）：公网 URL 可直接回退到远程提取服务；服务按顺序逐个尝试，第一次远程使用会直接在 stderr 揭露，即使 `--quiet` 也不会隐藏。私网、本机 URL，以及 userinfo 或 query/fragment 敏感参数中携带凭据的 URL 始终留在本机。`MARKITAI_NO_REMOTE_FETCH=1` 是硬性禁用开关，也会阻止显式远程 `-s`；`fetch.remote_consent=ask`/`never` 控制自动与配置文件选择的远程使用
+- **进程级远程揭露与确认文案**：一次性说明及可选的 `ask` 提示会完整列出该进程缓存决策可能授权的所有服务（defuddle.md、Jina、Cloudflare、FxTwitter、Twitter oEmbed），说明各服务按顺序逐个尝试，并在提示时暂停实时进度，避免界面错位
 
 ### Fixed
 

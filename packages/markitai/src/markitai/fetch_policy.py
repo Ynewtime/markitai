@@ -18,7 +18,9 @@ Strategy priority rationale (v0.15.0, local-first):
 from __future__ import annotations
 
 import ipaddress
+import re
 from dataclasses import dataclass
+from urllib.parse import parse_qsl, urlsplit
 
 from markitai.constants import ALL_FETCH_STRATEGIES, LOCAL_STRATEGIES
 
@@ -36,13 +38,52 @@ def _extract_host(domain: str) -> str:
     return domain.split(":", 1)[0]
 
 
+def _legacy_ipv4_address(host: str) -> ipaddress.IPv4Address | None:
+    """Parse deterministic inet_aton-style IPv4 aliases such as ``127.1``."""
+    parts = host.split(".")
+    if not 1 <= len(parts) <= 4:
+        return None
+
+    values: list[int] = []
+    try:
+        for part in parts:
+            lowered = part.lower()
+            if lowered.startswith("0x"):
+                value = int(lowered[2:], 16)
+            elif len(lowered) > 1 and lowered.startswith("0"):
+                value = int(lowered, 8)
+            else:
+                value = int(lowered, 10)
+            values.append(value)
+    except ValueError:
+        return None
+
+    widths = {
+        1: (32,),
+        2: (8, 24),
+        3: (8, 8, 16),
+        4: (8, 8, 8, 8),
+    }[len(values)]
+    if any(value < 0 or value >= (1 << width) for value, width in zip(values, widths)):
+        return None
+
+    packed = 0
+    for value, width in zip(values, widths):
+        packed = (packed << width) | value
+    return ipaddress.IPv4Address(packed)
+
+
+def _is_non_public_ip(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return not address.is_global or address.is_multicast
+
+
 def is_private_or_local_domain(domain: str) -> bool:
     """Return True for localhost, private IPs, and common intranet-only hosts."""
     if "@" in domain:
         # Credentials in the netloc (user:pass@host, user@host): the userinfo
         # itself is the secret, so never send such URLs to remote services.
         return True
-    host = _extract_host(domain).strip().lower()
+    host = _extract_host(domain).strip().lower().rstrip(".")
     if not host:
         return False
     if host == "localhost" or host.endswith(".localhost"):
@@ -53,17 +94,76 @@ def is_private_or_local_domain(domain: str) -> bool:
         return True
 
     try:
-        ip = ipaddress.ip_address(host)
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        legacy_address = _legacy_ipv4_address(host)
+        return bool(legacy_address and _is_non_public_ip(legacy_address))
+
+    return _is_non_public_ip(address)
+
+
+def _normalize_query_key(key: str) -> str:
+    snake_key = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", key)
+    snake_key = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", snake_key)
+    return re.sub(r"[^a-z0-9]+", "_", snake_key.lower()).strip("_")
+
+
+def _is_sensitive_query_key(key: str) -> bool:
+    normalized = _normalize_query_key(key)
+    parts = set(normalized.split("_"))
+    if normalized in {
+        "apikey",
+        "auth",
+        "code",
+        "key",
+        "pwd",
+        "sid",
+        "sig",
+        "ticket",
+    }:
+        return True
+    if "api" in parts and "key" in parts:
+        return True
+    if "key" in parts and ({"auth", "access"} & parts):
+        return True
+    return bool(
+        parts
+        & {
+            "assertion",
+            "authorization",
+            "auth",
+            "bearer",
+            "credential",
+            "credentials",
+            "jwt",
+            "otp",
+            "passcode",
+            "passwd",
+            "password",
+            "pwd",
+            "saml",
+            "session",
+            "secret",
+            "signature",
+            "ticket",
+            "token",
+        }
+    )
+
+
+def url_contains_credentials(url: str) -> bool:
+    """Detect userinfo and credential-bearing query/fragment parameters."""
+    try:
+        parsed = urlsplit(url)
     except ValueError:
         return False
+    if parsed.username is not None or parsed.password is not None:
+        return True
 
-    return (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
+    for component in (parsed.query, parsed.fragment if "=" in parsed.fragment else ""):
+        if any(_is_sensitive_query_key(key) for key, _ in parse_qsl(component)):
+            return True
+    return False
 
 
 def parse_no_proxy(value: str | None) -> list[str]:
@@ -88,7 +188,7 @@ def match_local_only(domain: str, patterns: list[str]) -> bool:
     if not patterns:
         return False
 
-    host = _extract_host(domain).strip().lower()
+    host = _extract_host(domain).strip().lower().rstrip(".")
     if not host:
         return False
 

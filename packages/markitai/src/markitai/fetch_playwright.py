@@ -805,11 +805,31 @@ class PlaywrightRenderer:
         (``remote_consent="never"``, ``MARKITAI_NO_REMOTE_FETCH``) are
         still honored.
         """
-        from markitai.fetch import _env_no_remote_fetch
+        from markitai.fetch import (
+            _env_no_remote_fetch,
+            disclose_remote_use,
+            peek_cached_remote_consent,
+        )
+        from markitai.fetch_policy import (
+            is_private_or_local_domain,
+            url_contains_credentials,
+        )
         from markitai.webextract.enrichers.base import EnrichmentPolicy
         from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
 
         if remote_consent == "never" or _env_no_remote_fetch():
+            return "", None, ""
+        # ``ask`` intentionally does not open a second prompt on this narrowly
+        # scoped public X/Twitter path. It must still honor a process-wide No
+        # decision already made by the complete-service consent prompt.
+        if peek_cached_remote_consent() is False:
+            return "", None, ""
+
+        from urllib.parse import urlsplit
+
+        if is_private_or_local_domain(urlsplit(url).netloc) or url_contains_credentials(
+            url
+        ):
             return "", None, ""
 
         enricher = XOEmbedEnricher()
@@ -817,6 +837,7 @@ class PlaywrightRenderer:
         if not enricher.should_run(url, policy):
             return "", None, ""
 
+        disclose_remote_use(["fxtwitter", "twitter-oembed"])
         logger.debug("[Fetch] Enriching via FxTwitter/oEmbed: {}", url)
         try:
             resolved = await enricher.enrich(url, None)
