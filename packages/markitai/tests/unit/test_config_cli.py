@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -46,6 +47,77 @@ class TestConfigListCommand:
             # Output should contain JSON-like content
             assert "llm" in result.output or "gpt-4" in result.output
 
+    def test_list_json_redacts_nested_secrets_but_keeps_env_references(
+        self, runner: CliRunner
+    ) -> None:
+        """The default JSON view is safe to paste into diagnostics."""
+        config_data = {
+            "llm": {
+                "enabled": True,
+                "model_list": [
+                    {
+                        "model_name": "default",
+                        "litellm_params": {
+                            "model": "openai/gpt-4o-mini",
+                            "api_key": "env:OPENAI_API_KEY",
+                            "api_base": (
+                                "https://user:password@llm.example/v1"
+                                "?api_key=query-secret#fragment-secret"
+                            ),
+                            "max_tokens": 4096,
+                        },
+                    }
+                ],
+            },
+            "fetch": {
+                "jina": {"api_key": "jina-plaintext-secret"},
+                "playwright": {
+                    "cookies": [{"name": "session", "value": "cookie-value"}],
+                    "http_credentials": {
+                        "username": "alice",
+                        "password": "basic-auth-password",
+                    },
+                    "extra_http_headers": {
+                        "Authorization": "Bearer header-token",
+                        "X-Auth": "opaque-header-secret",
+                        "X-Secret": "header-secret",
+                        "clientSecret": "camelcase-secret",
+                        "accessToken": "camelcase-token",
+                        "X-Env-Like": "env:actual-inline-token",
+                    },
+                },
+                "cloudflare": {"api_token": "cloudflare-token"},
+            },
+        }
+
+        with runner.isolated_filesystem():
+            Path("markitai.json").write_text(json.dumps(config_data))
+            result = runner.invoke(config_list)
+
+        assert result.exit_code == 0
+        assert "env:OPENAI_API_KEY" in result.output
+        assert "4096" in result.output
+        for secret in (
+            "jina-plaintext-secret",
+            "cookie-value",
+            "alice",
+            "basic-auth-password",
+            "header-token",
+            "opaque-header-secret",
+            "header-secret",
+            "camelcase-secret",
+            "camelcase-token",
+            "actual-inline-token",
+            "cloudflare-token",
+            "user:password",
+            "query-secret",
+            "fragment-secret",
+        ):
+            assert secret not in result.output
+        assert "https://llm.example" in result.output
+        assert "https://llm.example/v1" not in result.output
+        assert "[REDACTED]" in result.output
+
     def test_list_table_format(self, runner: CliRunner, mock_config: MagicMock) -> None:
         """Test config list with table format."""
         with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
@@ -56,6 +128,47 @@ class TestConfigListCommand:
             assert result.exit_code == 0
             # Table output should have structure
             assert "Configuration" in result.output or "llm" in result.output
+
+    @pytest.mark.parametrize(
+        "format_args",
+        [[], ["--format", "yaml"], ["--format", "table"]],
+        ids=["json", "yaml", "table"],
+    )
+    def test_list_redaction_is_consistent_across_formats(
+        self, runner: CliRunner, format_args: list[str]
+    ) -> None:
+        config_data = {
+            "fetch": {
+                "jina": {"api_key": "jina-plaintext-secret"},
+                "cloudflare": {"api_token": "env:CLOUDFLARE_API_TOKEN"},
+            }
+        }
+
+        with runner.isolated_filesystem():
+            Path("markitai.json").write_text(json.dumps(config_data))
+            result = runner.invoke(
+                config_list,
+                format_args,
+                terminal_width=240,
+            )
+
+        assert result.exit_code == 0
+        assert "jina-plaintext-secret" not in result.output
+        assert "[REDACTED]" in result.output
+        assert "env:CLOUDFLARE_API_TOKEN" in result.output
+
+    def test_list_show_secrets_is_an_explicit_escape_hatch(
+        self, runner: CliRunner
+    ) -> None:
+        config_data = {"fetch": {"jina": {"api_key": "jina-plaintext-secret"}}}
+
+        with runner.isolated_filesystem():
+            Path("markitai.json").write_text(json.dumps(config_data))
+            result = runner.invoke(config_list, ["--show-secrets"])
+
+        assert result.exit_code == 0
+        assert "jina-plaintext-secret" in result.output
+        assert "[REDACTED]" not in result.output
 
 
 class TestConfigPathCommand:
