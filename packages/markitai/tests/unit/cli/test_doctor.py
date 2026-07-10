@@ -32,6 +32,7 @@ def mock_config() -> object:
     config.llm.model_list = []
     config.ocr = MagicMock()
     config.ocr.lang = "en"
+    config.office.macos_fallback = True
     return config
 
 
@@ -564,6 +565,7 @@ class TestDoctorCapabilityContract:
         rapidocr_status: str = "ok",
         run_result: MagicMock | None = None,
         run_results: list[MagicMock] | None = None,
+        libreoffice_check: MagicMock | None = None,
     ) -> tuple[object, MagicMock]:
         def playwright_result(status: str) -> dict[str, str]:
             if status == "ok":
@@ -577,6 +579,11 @@ class TestDoctorCapabilityContract:
         playwright_results = [playwright_result(playwright_status)]
         if playwright_after_fix_status is not None:
             playwright_results.append(playwright_result(playwright_after_fix_status))
+        libreoffice_probe = libreoffice_check or MagicMock(
+            return_value=self._result(
+                "LibreOffice", "missing", "LibreOffice not installed"
+            )
+        )
         with (
             patch("markitai.cli.commands.doctor.ConfigManager") as mock_cm,
             patch("markitai.fetch_playwright.clear_browser_cache"),
@@ -586,9 +593,7 @@ class TestDoctorCapabilityContract:
             ),
             patch(
                 "markitai.cli.commands.doctor._check_libreoffice",
-                return_value=self._result(
-                    "LibreOffice", "missing", "LibreOffice not installed"
-                ),
+                new=libreoffice_probe,
             ),
             patch(
                 "markitai.cli.commands.doctor._check_ffmpeg",
@@ -615,6 +620,26 @@ class TestDoctorCapabilityContract:
                 mock_run.return_value = run_result
             result = cli_runner.invoke(doctor, list(args))
         return result, mock_run
+
+    def test_disabled_macos_fallback_is_passed_to_probe(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        mock_config.office.macos_fallback = False  # type: ignore[attr-defined]
+        probe = MagicMock(
+            return_value=self._result(
+                "LibreOffice", "missing", "LibreOffice not installed"
+            )
+        )
+
+        result, _ = self._invoke(
+            cli_runner,
+            mock_config,
+            playwright_status="ok",
+            libreoffice_check=probe,
+        )
+
+        assert result.exit_code == 0
+        probe.assert_called_once_with(False)
 
     def test_missing_optional_capabilities_exit_zero(
         self, cli_runner: CliRunner, mock_config: object
@@ -859,6 +884,7 @@ class TestDoctorOutputFormat:
                 return_value="/usr/bin/ffmpeg",
             ),
             patch("markitai.utils.office.find_libreoffice", return_value=None),
+            patch("markitai.utils.office_mac.find_ms_office_app", return_value=False),
             patch("markitai.fetch_playwright.clear_browser_cache"),
             patch(
                 "markitai.fetch_playwright.is_playwright_available",

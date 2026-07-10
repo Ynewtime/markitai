@@ -835,6 +835,19 @@
       "title": "OCRConfig",
       "type": "object"
     },
+    "OfficeConfig": {
+      "description": "Office document conversion configuration.",
+      "properties": {
+        "macos_fallback": {
+          "default": true,
+          "description": "On macOS without LibreOffice, drive installed MS Office apps via AppleScript for legacy conversion and PPTX PDF export. Disable in headless sessions where macOS permission dialogs cannot be answered.",
+          "title": "Macos Fallback",
+          "type": "boolean"
+        }
+      },
+      "title": "OfficeConfig",
+      "type": "object"
+    },
     "OutputConfig": {
       "description": "Output configuration.",
       "properties": {
@@ -1354,6 +1367,9 @@
     },
     "ocr": {
       "$ref": "#/$defs/OCRConfig"
+    },
+    "office": {
+      "$ref": "#/$defs/OfficeConfig"
     },
     "screenshot": {
       "$ref": "#/$defs/ScreenshotConfig"

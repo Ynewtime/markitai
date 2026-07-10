@@ -104,6 +104,9 @@ markitai config validate ./markitai.json    # Validate specific file
     "lang": "en",
     "per_page_routing": true
   },
+  "office": {
+    "macos_fallback": true
+  },
   "screenshot": {
     "enabled": false,
     "screenshot_only": false,
@@ -682,6 +685,26 @@ Supported language codes:
 
 ::: tip
 RapidOCR is included as a dependency and works out of the box. No additional installation required.
+:::
+
+## Office Configuration
+
+Control the macOS MS Office fallback used when LibreOffice is not installed.
+
+```json
+{
+  "office": {
+    "macos_fallback": true
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `macos_fallback` | `true` | On macOS without LibreOffice, drive installed MS Office apps (Word/PowerPoint/Excel) via AppleScript for legacy `.doc`/`.ppt`/`.xls` conversion and PPTX slide rendering |
+
+::: tip
+The first conversion triggers a one-time macOS Automation consent dialog per app. Disable this fallback in headless sessions (SSH, CI) where the dialog cannot be answered.
 :::
 
 ## Batch Configuration

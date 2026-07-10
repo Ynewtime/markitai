@@ -17,6 +17,7 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.image import ImageProcessor
+from markitai.utils import office_mac
 from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.office import find_libreoffice, has_ms_office
 from markitai.utils.paths import create_tracked_temp_dir, ensure_screenshots_dir
@@ -87,7 +88,8 @@ class PptxConverter(OfficeConverter):
     """Converter for PPTX (PowerPoint) documents.
 
     Text extraction uses MarkItDown (via python-pptx) - cross-platform.
-    Slide rendering uses COM (Windows) or LibreOffice (Linux/macOS).
+    Slide rendering uses COM (Windows) or LibreOffice (Linux/macOS),
+    falling back to PowerPoint AppleScript on macOS without LibreOffice.
 
     Modes:
     - Default: Text extraction only
@@ -354,59 +356,94 @@ class PptxConverter(OfficeConverter):
 
         logger.info(f"[PPTX] Rendering slides via PDF: {input_path.name}")
 
-        soffice_cmd = find_libreoffice()
-        if not soffice_cmd:
-            import platform
+        import platform
 
-            if platform.system() == "Windows":
+        soffice_cmd = find_libreoffice()
+        if soffice_cmd is None:
+            # macOS fallback: export PDF via PowerPoint AppleScript
+            if (
+                platform.system() == "Darwin"
+                and (self.config is None or self.config.office.macos_fallback)
+                and office_mac.powerpoint_available()
+            ):
+                pass  # fall through to the PowerPoint branch below
+            elif platform.system() == "Windows":
                 logger.warning(
                     "[PPTX] Cannot render slides: Neither MS Office nor LibreOffice found. "
                     "Install Microsoft Office (recommended) or LibreOffice to enable slide rendering."
                 )
+                return [], []
+            elif platform.system() == "Darwin":
+                if self.config is not None and not self.config.office.macos_fallback:
+                    logger.warning(
+                        "[PPTX] Cannot render slides: LibreOffice not found and "
+                        "office.macos_fallback is disabled. Install LibreOffice, "
+                        "or enable office.macos_fallback to use Microsoft PowerPoint."
+                    )
+                else:
+                    logger.warning(
+                        "[PPTX] Cannot render slides: Neither LibreOffice nor "
+                        "Microsoft PowerPoint found. Install LibreOffice or "
+                        "Microsoft Office to enable slide rendering."
+                    )
+                return [], []
             else:
                 logger.warning(
                     "[PPTX] Cannot render slides: LibreOffice not found. "
                     "Install LibreOffice to enable slide rendering."
                 )
-            return [], []
+                return [], []
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             pdf_path = temp_path / f"{input_path.stem}.pdf"
 
-            # Create isolated user profile for concurrent LibreOffice execution
-            profile_path = temp_path / "lo_profile"
-            profile_path.mkdir()
-            profile_url = profile_path.as_uri()
-
-            try:
-                lo_start = time.perf_counter()
-                result = subprocess.run(
-                    [
-                        soffice_cmd,
-                        "--headless",
-                        f"-env:UserInstallation={profile_url}",
-                        "--convert-to",
-                        "pdf",
-                        "--outdir",
-                        str(temp_path),
-                        str(input_path),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=600,
-                )
-                lo_time = time.perf_counter() - lo_start
-                logger.info(f"[PPTX] LibreOffice conversion: {lo_time:.2f}s")
-                if result.returncode != 0 or not pdf_path.exists():
-                    logger.warning(f"[PPTX] LibreOffice failed: {result.stderr}")
+            if soffice_cmd is None:
+                try:
+                    pp_start = time.perf_counter()
+                    office_mac.pptx_to_pdf(input_path, temp_path)
+                    pp_time = time.perf_counter() - pp_start
+                    logger.info(f"[PPTX] PowerPoint PDF export: {pp_time:.2f}s")
+                except RuntimeError as e:
+                    logger.warning(f"[PPTX] PowerPoint PDF export failed: {e}")
                     return [], []
-            except subprocess.TimeoutExpired:
-                logger.error("[PPTX] LibreOffice timeout (>600s)")
-                return [], []
-            except Exception as e:
-                logger.error(f"[PPTX] LibreOffice error: {e}")
-                return [], []
+                if not pdf_path.exists():
+                    logger.warning("[PPTX] PowerPoint did not produce a PDF")
+                    return [], []
+            else:
+                # Create isolated user profile for concurrent LibreOffice execution
+                profile_path = temp_path / "lo_profile"
+                profile_path.mkdir()
+                profile_url = profile_path.as_uri()
+
+                try:
+                    lo_start = time.perf_counter()
+                    result = subprocess.run(
+                        [
+                            soffice_cmd,
+                            "--headless",
+                            f"-env:UserInstallation={profile_url}",
+                            "--convert-to",
+                            "pdf",
+                            "--outdir",
+                            str(temp_path),
+                            str(input_path),
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=600,
+                    )
+                    lo_time = time.perf_counter() - lo_start
+                    logger.info(f"[PPTX] LibreOffice conversion: {lo_time:.2f}s")
+                    if result.returncode != 0 or not pdf_path.exists():
+                        logger.warning(f"[PPTX] LibreOffice failed: {result.stderr}")
+                        return [], []
+                except subprocess.TimeoutExpired:
+                    logger.error("[PPTX] LibreOffice timeout (>600s)")
+                    return [], []
+                except Exception as e:
+                    logger.error(f"[PPTX] LibreOffice error: {e}")
+                    return [], []
 
             try:
                 import pymupdf

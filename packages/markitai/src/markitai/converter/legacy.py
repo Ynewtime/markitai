@@ -4,6 +4,7 @@ These formats require conversion to modern formats first.
 Conversion priority:
 1. MS Office COM (Windows) - faster and more accurate
 2. LibreOffice CLI (cross-platform) - fallback
+3. MS Office AppleScript (macOS) - fallback when LibreOffice is absent
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.converter.office import OfficeConverter, PptxConverter
+from markitai.utils import office_mac
 from markitai.utils.office import (
     check_ms_excel_available,
     check_ms_powerpoint_available,
@@ -417,6 +419,7 @@ class LegacyOfficeConverter(BaseConverter):
     Conversion priority:
     1. MS Office COM (Windows) - faster and more accurate
     2. LibreOffice CLI (cross-platform) - fallback
+    3. MS Office AppleScript (macOS) - fallback when LibreOffice is absent
     """
 
     # Mapping of legacy format to target format
@@ -491,7 +494,8 @@ class LegacyOfficeConverter(BaseConverter):
     ) -> Path:
         """Convert legacy format to modern format.
 
-        Tries MS Office COM first (Windows), falls back to LibreOffice.
+        Tries MS Office COM first (Windows), falls back to LibreOffice,
+        then to MS Office via AppleScript (macOS, when LibreOffice is absent).
 
         Args:
             input_path: Path to the legacy format file
@@ -521,11 +525,31 @@ class LegacyOfficeConverter(BaseConverter):
             logger.info(f"Converting {input_path.name} with LibreOffice...")
             return self._convert_with_libreoffice(input_path, target_format, output_dir)
 
+        # macOS fallback: no LibreOffice, drive installed MS Office via AppleScript
+        if (
+            platform.system() == "Darwin"
+            and (self.config is None or self.config.office.macos_fallback)
+            and office_mac.legacy_app_available(suffix)
+        ):
+            app = office_mac.APP_BY_SUFFIX[suffix]
+            logger.info(f"Converting {input_path.name} with {app} (AppleScript)...")
+            return office_mac.convert_legacy(input_path, target_format, output_dir)
+
         # No conversion method available
         if platform.system() == "Windows":
             raise RuntimeError(
                 f"Cannot convert {suffix} files. "
                 "Install Microsoft Office (recommended) or LibreOffice."
+            )
+        elif platform.system() == "Darwin":
+            if self.config is not None and not self.config.office.macos_fallback:
+                raise RuntimeError(
+                    f"Cannot convert {suffix} files. Install LibreOffice, or "
+                    "enable office.macos_fallback to use Microsoft Office."
+                )
+            raise RuntimeError(
+                f"Cannot convert {suffix} files. "
+                "Install LibreOffice or Microsoft Office."
             )
         else:
             raise RuntimeError(f"Cannot convert {suffix} files. Install LibreOffice.")
