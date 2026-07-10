@@ -443,6 +443,38 @@ clack_confirm() {
     esac
 }
 
+# Return success when an interactive terminal is available. Piped installers
+# may still have a controlling terminal at /dev/tty, so stdin alone is not
+# enough to decide whether prompting is safe.
+has_interactive_tty() {
+    if [ -t 0 ]; then
+        return 0
+    fi
+    ( : </dev/tty ) 2>/dev/null
+}
+
+# Headless installs must opt in before any optional package, browser binary,
+# system dependency, or third-party CLI is installed.
+optional_install_requested() {
+    case "${MARKITAI_INSTALL_OPTIONAL:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Interactive runs keep each component's normal default. Without a terminal,
+# every optional component defaults to off unless MARKITAI_INSTALL_OPTIONAL is
+# explicitly truthy.
+clack_confirm_optional() {
+    if ! has_interactive_tty; then
+        if optional_install_requested; then
+            return 0
+        fi
+        return 1
+    fi
+    clack_confirm "$1" "$2"
+}
+
 # Note/message box with guide line
 # Usage: clack_note "title" "line1" "line2" ...
 # Or:    clack_note "title" <<EOF
@@ -703,12 +735,18 @@ choose_install_source() {
 # Build the markitai package spec honoring install source and extras
 # Usage: markitai_pkg_spec "extra1,extra2"
 markitai_pkg_spec() {
-    if [ "$MARKITAI_SOURCE" = "local" ]; then
-        echo "markitai[$1] @ $MARKITAI_LOCAL_PATH"
-    elif [ -n "$MARKITAI_VERSION" ]; then
-        echo "markitai[$1]==$MARKITAI_VERSION"
+    if [ -n "$1" ]; then
+        _mi_base="markitai[$1]"
     else
-        echo "markitai[$1]"
+        _mi_base="markitai"
+    fi
+
+    if [ "$MARKITAI_SOURCE" = "local" ]; then
+        echo "$_mi_base @ $MARKITAI_LOCAL_PATH"
+    elif [ -n "$MARKITAI_VERSION" ]; then
+        echo "$_mi_base==$MARKITAI_VERSION"
+    else
+        echo "$_mi_base"
     fi
 }
 
@@ -717,6 +755,9 @@ markitai_pkg_spec() {
 # ============================================================
 MARKITAI_VERSION="${MARKITAI_VERSION:-}"
 UV_VERSION="${UV_VERSION:-}"
+# Set to 1/true/yes/on to install optional extras and components when no TTY
+# is available. Interactive runs continue to prompt component by component.
+MARKITAI_INSTALL_OPTIONAL="${MARKITAI_INSTALL_OPTIONAL:-}"
 
 # Global variable for Python command path
 PYTHON_CMD=""
@@ -865,9 +906,10 @@ install_markitai() {
 
     # Upgrade existing installation, or fresh install
     if [ -d "$_uv_tools_dir/markitai" ]; then
-        # Already installed as uv tool — upgrade to latest version
-        # (skip upgrade for local source: always force reinstall from the repo)
-        if [ "$MARKITAI_SOURCE" != "local" ]; then
+        # An unpinned PyPI install can use the receipt-based upgrade path.
+        # Explicit versions and local sources must replace the receipt with
+        # the exact package spec assembled above.
+        if [ "$MARKITAI_SOURCE" != "local" ] && [ -z "$MARKITAI_VERSION" ]; then
             if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool upgrade markitai; then
                 export PATH="$HOME/.local/bin:$PATH"
                 _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
@@ -880,6 +922,12 @@ install_markitai() {
         if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
             export PATH="$HOME/.local/bin:$PATH"
             _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
+            if [ "$MARKITAI_SOURCE" != "local" ] && [ -n "$MARKITAI_VERSION" ] \
+                && [ "$_mi_version" != "$MARKITAI_VERSION" ]; then
+                clack_error "$(i18n markitai) version mismatch: expected $MARKITAI_VERSION, got ${_mi_version:-unknown}"
+                track_install "markitai" "failed"
+                return 1
+            fi
             clack_success "$(i18n markitai) $_mi_version"
             track_install "markitai" "installed"
             return 0
@@ -890,6 +938,12 @@ install_markitai() {
         if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD"; then
             export PATH="$HOME/.local/bin:$PATH"
             _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
+            if [ "$MARKITAI_SOURCE" != "local" ] && [ -n "$MARKITAI_VERSION" ] \
+                && [ "$_mi_version" != "$MARKITAI_VERSION" ]; then
+                clack_error "$(i18n markitai) version mismatch: expected $MARKITAI_VERSION, got ${_mi_version:-unknown}"
+                track_install "markitai" "failed"
+                return 1
+            fi
             clack_success "$(i18n markitai) $_mi_version"
             track_install "markitai" "installed"
             return 0
@@ -901,8 +955,13 @@ install_markitai() {
     return 1
 }
 
-# Global variable tracking all needed extras (comma-separated)
-MARKITAI_EXTRAS="browser"
+# Global variable tracking all needed extras (comma-separated). Fresh
+# headless installs start with the core package; the explicit opt-in flag or
+# an interactive session keeps the guided browser-extra default.
+MARKITAI_EXTRAS=""
+if has_interactive_tty || optional_install_requested; then
+    MARKITAI_EXTRAS="browser"
+fi
 
 # Track a markitai extra for deferred installation
 # Usage: install_markitai_extra "claude-agent"
@@ -919,6 +978,11 @@ install_markitai_extra() {
 # Merges `markitai doctor --suggest-extras` output with manually tracked
 # MARKITAI_EXTRAS (from CLI install functions), so nothing is lost.
 finalize_markitai_extras() {
+    # Do not silently add optional Python extras during a headless core install.
+    if ! has_interactive_tty && ! optional_install_requested; then
+        return 0
+    fi
+
     # Merge suggested extras INTO manually tracked set (not replace)
     _suggested=$(markitai doctor --suggest-extras 2>/dev/null || true)
     if [ -n "$_suggested" ]; then
@@ -1060,7 +1124,7 @@ install_optional_playwright() {
 
     clack_info "$(i18n info_playwright_purpose)"
 
-    if ! clack_confirm "$(i18n confirm_playwright)" "y"; then
+    if ! clack_confirm_optional "$(i18n confirm_playwright)" "y"; then
         clack_skip "$(i18n playwright)"
         track_install "playwright" "skipped"
         return 2
@@ -1141,7 +1205,7 @@ install_optional_libreoffice() {
 
     clack_info "$(i18n info_libreoffice_purpose)"
 
-    if ! clack_confirm "$(i18n confirm_libreoffice)" "n"; then
+    if ! clack_confirm_optional "$(i18n confirm_libreoffice)" "n"; then
         clack_skip "$(i18n libreoffice)"
         track_install "libreoffice" "skipped"
         return 2
@@ -1200,7 +1264,7 @@ install_optional_ffmpeg() {
 
     clack_info "$(i18n info_ffmpeg_purpose)"
 
-    if ! clack_confirm "$(i18n confirm_ffmpeg)" "n"; then
+    if ! clack_confirm_optional "$(i18n confirm_ffmpeg)" "n"; then
         clack_skip "$(i18n ffmpeg)"
         track_install "ffmpeg" "skipped"
         return 2
@@ -1258,7 +1322,7 @@ install_optional_claude_cli() {
         return 0
     fi
 
-    if ! clack_confirm "$(i18n confirm_claude_cli)" "n"; then
+    if ! clack_confirm_optional "$(i18n confirm_claude_cli)" "n"; then
         clack_skip "$(i18n claude_cli)"
         track_install "claude_cli" "skipped"
         return 2
@@ -1311,7 +1375,7 @@ install_optional_copilot_cli() {
         return 0
     fi
 
-    if ! clack_confirm "$(i18n confirm_copilot_cli)" "n"; then
+    if ! clack_confirm_optional "$(i18n confirm_copilot_cli)" "n"; then
         clack_skip "$(i18n copilot_cli)"
         track_install "copilot_cli" "skipped"
         return 2
@@ -1472,9 +1536,14 @@ print_dev_completion() {
         "  ${CYAN}uv run markitai --help${NC}"
 }
 
-# Initialize markitai config (silent)
+# Initialize markitai config (silent, first install only)
+# Skips when a config already exists: `init --yes` would silently append
+# newly detected providers to the user's model_list.
 # Returns: 0 always
 init_config() {
+    if [ -f "$HOME/.markitai/config.json" ]; then
+        return 0
+    fi
     if command -v markitai >/dev/null 2>&1; then
         markitai init --yes >/dev/null 2>&1 || true
     fi

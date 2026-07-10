@@ -72,7 +72,8 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 
 ::: warning Security Notice
 - The script checks for root/Administrator and asks before continuing
-- Each component prompts before installing. uv and the Playwright browser default to Yes; LibreOffice, FFmpeg, and the Claude/Copilot CLIs default to No
+- In an interactive terminal, optional components prompt before installing. The Playwright browser defaults to Yes; LibreOffice, FFmpeg, and the Claude/Copilot CLIs default to No
+- Without a usable terminal, only uv, Python, and Markitai are installed. Set `MARKITAI_INSTALL_OPTIONAL=1` to explicitly enable the optional steps in automation
 :::
 
 The script will:

@@ -72,7 +72,8 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 
 ::: warning 安全提示
 - 以 root/管理员 身份运行时，脚本会先检测并询问是否继续
-- 每个组件安装前都会询问确认。uv 和 Playwright 浏览器默认 Yes；LibreOffice、FFmpeg 和 Claude/Copilot CLI 默认 No
+- 在交互式终端中，可选组件会在安装前询问确认。Playwright 浏览器默认 Yes；LibreOffice、FFmpeg 和 Claude/Copilot CLI 默认 No
+- 没有可用终端时只安装 uv、Python 和 Markitai；自动化场景只有显式设置 `MARKITAI_INSTALL_OPTIONAL=1` 才会执行可选安装步骤
 :::
 
 脚本会：
