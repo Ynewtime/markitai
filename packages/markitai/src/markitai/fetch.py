@@ -109,23 +109,27 @@ def get_cf_semaphore() -> asyncio.Semaphore:
 # Resolved once per process and cached.
 _remote_consent_decision: bool | None = None
 _remote_consent_prompt_allowed: bool = True
+_remote_disclosure_emitted: bool = False
 
 
 def reset_remote_consent() -> None:
     """Reset the cached remote-fetch consent decision (mainly for tests)."""
     global _remote_consent_decision, _remote_consent_prompt_allowed
+    global _remote_disclosure_emitted
     _remote_consent_decision = None
     _remote_consent_prompt_allowed = True
+    _remote_disclosure_emitted = False
 
 
 def set_remote_consent(allowed: bool) -> None:
     """Seed the process-wide remote-fetch consent decision.
 
     Used when the user explicitly selects a remote strategy
-    (e.g. ``-s jina``), which counts as consent for the run.
+    (e.g. ``-s jina``), which counts as consent for the run unless the
+    process-wide ``MARKITAI_NO_REMOTE_FETCH`` hard opt-out is active.
     """
     global _remote_consent_decision
-    _remote_consent_decision = allowed
+    _remote_consent_decision = False if _env_no_remote_fetch() else allowed
 
 
 def set_remote_consent_prompt_allowed(allowed: bool) -> None:
@@ -189,6 +193,13 @@ def _env_no_remote_fetch() -> bool:
     return value not in ("", "0", "false", "no")
 
 
+def peek_cached_remote_consent() -> bool | None:
+    """Return only the hard opt-out or an explicit/cached process decision."""
+    if _env_no_remote_fetch():
+        return False
+    return _remote_consent_decision
+
+
 def peek_remote_consent(config: FetchConfig) -> bool | None:
     """Non-prompting view of the remote-consent state.
 
@@ -201,10 +212,10 @@ def peek_remote_consent(config: FetchConfig) -> bool | None:
     """
     import sys
 
-    if _remote_consent_decision is not None:
-        return _remote_consent_decision
     if _env_no_remote_fetch():
         return False
+    if _remote_consent_decision is not None:
+        return _remote_consent_decision
     consent = getattr(config, "remote_consent", "always")
     if consent == "always":
         return True
@@ -221,13 +232,51 @@ _REMOTE_SERVICE_LABELS = {
     "defuddle": "defuddle.md",
     "jina": "Jina",
     "cloudflare": "Cloudflare (your account)",
+    "fxtwitter": "FxTwitter",
+    "twitter-oembed": "Twitter oEmbed",
 }
 
 
 def _remote_service_names(services: list[str] | None) -> str:
-    """Render the remote services actually in the chain, in try order."""
-    keys = services if services else ["defuddle", "jina"]
+    """Render every service covered by the process-wide decision.
+
+    Consent and first-use disclosure are cached for the whole process, so the
+    wording must cover services that a later URL may introduce, not only the
+    chain that happened to trigger the first decision.
+    """
+    keys = list(_REMOTE_SERVICE_LABELS)
+    for service in services or []:
+        if service not in keys:
+            keys.append(service)
     return ", ".join(_REMOTE_SERVICE_LABELS.get(s, s) for s in keys)
+
+
+def disclose_remote_use(services: list[str] | None = None) -> None:
+    """Emit the process-wide first-use privacy disclosure directly to stderr."""
+    global _remote_disclosure_emitted
+    if _remote_disclosure_emitted:
+        return
+
+    disclosure = (
+        "[Fetch] This run's remote extraction services may receive URLs "
+        "when needed, tried one at a time "
+        f"({_remote_service_names(services)}). Disable all remote extraction "
+        "with MARKITAI_NO_REMOTE_FETCH=1; fetch.remote_consent=never disables "
+        "automatic and config-selected remote use. Private/local/"
+        "credential-bearing URLs stay local."
+    )
+    # This is a privacy boundary, not diagnostic logging. Write it to stderr
+    # directly so normal INFO filtering and --quiet cannot hide it.
+    import click
+
+    from markitai.cli.ui import suspend_active_live
+
+    with suspend_active_live():
+        click.echo(disclosure, err=True)
+    # Keep the disclosure in diagnostic log files too. The console filter
+    # suppresses this copy to avoid duplicating the direct stderr message.
+    logger.info(disclosure)
+    _remote_disclosure_emitted = True
 
 
 def resolve_remote_consent(
@@ -235,41 +284,39 @@ def resolve_remote_consent(
 ) -> bool:
     """Return True if remote extraction services may receive URLs.
 
-    Precedence: MARKITAI_NO_REMOTE_FETCH env var (truthy behaves as "never")
+    Precedence: MARKITAI_NO_REMOTE_FETCH env var (truthy behaves as a hard
+    "never", including explicit remote strategies) > cached/explicit decision
     > ``fetch.remote_consent`` config ("always" / "never" / "ask"). With
-    "always" (the default) the first use is disclosed via an INFO log; with
-    "ask", prompts once on an interactive TTY (unless prompting is disabled,
-    e.g. --quiet), otherwise remote services are skipped. The decision is
-    cached for the whole process. Private/local/credentialed URLs never
-    reach this gate — the policy layer strips remote strategies for them.
+    "always" (the default) the first use is disclosed directly to stderr and
+    retained in the INFO log; with "ask", prompts once on an interactive TTY
+    (unless prompting is disabled, e.g. --quiet), otherwise remote services
+    are skipped. The decision is cached for the whole process.
+    Private/local/credentialed URLs never reach this gate — the policy layer
+    strips remote strategies for them.
 
     Args:
         config: Fetch configuration.
-        services: Remote strategy names actually in the current chain, in
-            try order (used for accurate disclosure/prompt wording).
+        services: Remote strategy names that triggered the decision. The
+            process-wide disclosure/prompt also names every other service the
+            cached decision can authorize later in the run.
     """
     global _remote_consent_decision
-    if _remote_consent_decision is not None:
-        return _remote_consent_decision
-
     import sys
 
     if _env_no_remote_fetch():
-        logger.info(
-            "[Fetch] Remote extraction services disabled by MARKITAI_NO_REMOTE_FETCH; "
-            "using local strategies only"
-        )
+        if _remote_consent_decision is not False:
+            logger.info(
+                "[Fetch] Remote extraction services disabled by "
+                "MARKITAI_NO_REMOTE_FETCH; using local strategies only"
+            )
         _remote_consent_decision = False
         return False
+    if _remote_consent_decision is not None:
+        return _remote_consent_decision
 
     consent = getattr(config, "remote_consent", "always")
     if consent == "always":
-        logger.info(
-            "[Fetch] Local extraction was not enough; remote extraction "
-            "services may receive URLs, tried one at a time "
-            f"({_remote_service_names(services)}). Disable via "
-            "fetch.remote_consent=never or MARKITAI_NO_REMOTE_FETCH=1."
-        )
+        disclose_remote_use(services)
         _remote_consent_decision = True
         return True
     if consent == "never":
@@ -290,14 +337,14 @@ def resolve_remote_consent(
         # the prompt's "[y/N]" suffix and the Enter echo desyncs its cursor.
         with suspend_active_live():
             click.echo(
-                "Local extraction didn't succeed for this URL. Remote "
-                "services can be tried next, one at a time (first success "
+                "This run can try remote services for public URLs, one at a "
+                "time (first success "
                 f"wins): {_remote_service_names(services)}.",
                 err=True,
             )
             allowed = bool(
                 click.confirm(
-                    "Allow sending URLs to these remote services?",
+                    "Allow sending public URLs to these remote services when needed?",
                     default=False,
                     err=True,
                 )
@@ -2017,11 +2064,21 @@ async def fetch_with_jina(
         raise FetchError(f"Jina Reader fetch failed: {format_error_message(e)}")
 
 
-def _ensure_external_strategy_allowed(url: str, strategy_name: str) -> None:
-    """Raise FetchError if an external-only strategy targets a private/local URL."""
+def _ensure_external_strategy_allowed(
+    url: str,
+    strategy_name: str,
+    *,
+    config: FetchConfig | None = None,
+    allow_pattern_override: bool = False,
+) -> None:
+    """Enforce hard privacy guards before any external-only strategy runs."""
     from urllib.parse import urlparse
 
-    from markitai.fetch_policy import is_private_or_local_domain
+    from markitai.fetch_policy import (
+        is_private_or_local_domain,
+        match_local_only,
+        url_contains_credentials,
+    )
 
     if strategy_name not in {
         FetchStrategy.DEFUDDLE.value,
@@ -2030,11 +2087,28 @@ def _ensure_external_strategy_allowed(url: str, strategy_name: str) -> None:
     }:
         return
 
-    domain = urlparse(url).netloc.lower()
-    if is_private_or_local_domain(domain):
+    if _env_no_remote_fetch():
         raise FetchError(
-            f"{strategy_name} cannot fetch private/local URLs. "
+            f"{strategy_name} is disabled by MARKITAI_NO_REMOTE_FETCH. "
+            "Unset it before explicitly selecting a remote strategy."
+        )
+
+    domain = urlparse(url).netloc.lower()
+    if is_private_or_local_domain(domain) or url_contains_credentials(url):
+        raise FetchError(
+            f"{strategy_name} cannot fetch private/local or credential-bearing URLs. "
             "Use static or playwright instead."
+        )
+
+    if (
+        config is not None
+        and not allow_pattern_override
+        and match_local_only(domain, _build_local_only_patterns(config.policy))
+    ):
+        raise FetchError(
+            f"{strategy_name} cannot fetch a URL matched by local-only policy. "
+            "Use static/playwright, or explicitly select the remote strategy "
+            "on the CLI to override the pattern for this public URL."
         )
 
 
@@ -2066,6 +2140,22 @@ async def _dispatch_strategy(
         (result, validators_to_write) — validators is non-None for static strategy
     """
     validators_to_write: tuple[str | None, str | None] | None = None
+
+    if strategy.value in EXTERNAL_STRATEGIES:
+        _ensure_external_strategy_allowed(
+            url,
+            strategy.value,
+            config=config,
+            allow_pattern_override=explicit_strategy,
+        )
+        if explicit_strategy:
+            disclose_remote_use([strategy.value])
+        elif not resolve_remote_consent(config, services=[strategy.value]):
+            raise FetchError(
+                f"{strategy.value} remote extraction is not allowed by "
+                "fetch.remote_consent. Use an explicit -s strategy to opt in, "
+                "or set fetch.remote_consent=always."
+            )
 
     if strategy == FetchStrategy.PLAYWRIGHT:
         from markitai.fetch_playwright import (
@@ -2105,7 +2195,6 @@ async def _dispatch_strategy(
             screenshot_path=pw_result.screenshot_path,
         )
     elif strategy == FetchStrategy.CLOUDFLARE:
-        _ensure_external_strategy_allowed(url, FetchStrategy.CLOUDFLARE.value)
         cf = config.cloudflare
         token = cf.get_resolved_api_token(strict=True)
         acct = cf.get_resolved_account_id(strict=True)
@@ -2125,7 +2214,6 @@ async def _dispatch_strategy(
             http_credentials=cf.http_credentials,
         )
     elif strategy == FetchStrategy.JINA:
-        _ensure_external_strategy_allowed(url, FetchStrategy.JINA.value)
         api_key = config.jina.get_resolved_api_key()
         result = await fetch_with_jina(
             url,
@@ -2137,7 +2225,6 @@ async def _dispatch_strategy(
             wait_for_selector=config.jina.wait_for_selector,
         )
     elif strategy == FetchStrategy.DEFUDDLE:
-        _ensure_external_strategy_allowed(url, FetchStrategy.DEFUDDLE.value)
         result = await fetch_with_defuddle(
             url,
             config.defuddle.timeout,
@@ -2632,6 +2719,7 @@ async def _fetch_with_fallback(
     from markitai.fetch_policy import (
         FetchPolicyEngine,
         is_private_or_local_domain,
+        url_contains_credentials,
     )
 
     errors = []
@@ -2659,15 +2747,21 @@ async def _fetch_with_fallback(
         local_only_patterns=effective_local_only,
     )
     strategies = decision.order[: config.policy.max_strategy_hops]
-    if is_private_or_local_domain(domain):
+    if is_private_or_local_domain(domain) or url_contains_credentials(url):
         strategies = [s for s in strategies if s in {"static", "playwright"}]
+        if not strategies:
+            strategies = list(LOCAL_STRATEGIES)
 
     # Remote-fetch consent gate: defuddle/jina/cloudflare send the URL to
     # third-party services. When the answer is already known (config/env/
     # cached), filter up front; when it would need an interactive prompt,
     # DEFER it — the chain is local-first, so most fetches succeed via
     # static/playwright and the user is never asked (lazy consent).
-    _consent_gated = not decision.reason.startswith("explicit_")
+    # A strategy selected in config is still governed by remote_consent.
+    # CLI-explicit remote choices seed the process decision to True before
+    # reaching this chain, so they remain deliberate opt-ins without creating
+    # a second bypass seam here.
+    _consent_gated = True
     if _consent_gated and any(s in EXTERNAL_STRATEGIES for s in strategies):
         _peeked = peek_remote_consent(config)
         if _peeked is False:
@@ -2679,6 +2773,14 @@ async def _fetch_with_fallback(
     domain_profile_applied = decision.reason == "spa_or_pattern"
 
     for strat in strategies:
+        if strat in EXTERNAL_STRATEGIES:
+            try:
+                _ensure_external_strategy_allowed(url, strat, config=config)
+            except FetchError as e:
+                logger.debug(f"[Fetch] Skipping {strat}: {e}")
+                errors.append(f"{strat}: {e}")
+                continue
+
         # Lazy consent: only when the chain actually reaches a remote
         # strategy (local ones failed) do we resolve — and possibly
         # prompt for — remote-fetch consent
@@ -2693,6 +2795,8 @@ async def _fetch_with_fallback(
             logger.debug(f"[Fetch] Skipping {strat}: no remote-fetch consent")
             errors.append(f"{strat}: skipped (no remote-fetch consent)")
             continue
+        if strat in EXTERNAL_STRATEGIES:
+            disclose_remote_use([s for s in strategies if s in EXTERNAL_STRATEGIES])
         try:
             if strat == "static":
                 result = await fetch_with_static(url)

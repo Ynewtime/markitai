@@ -1,5 +1,7 @@
 """Tests for fetch policy engine."""
 
+import pytest
+
 from markitai.constants import (
     ALL_FETCH_STRATEGIES,
     EXTERNAL_STRATEGIES,
@@ -11,6 +13,7 @@ from markitai.fetch_policy import (
     is_private_or_local_domain,
     match_local_only,
     parse_no_proxy,
+    url_contains_credentials,
 )
 
 
@@ -52,6 +55,58 @@ def test_policy_prefers_local_strategies_for_localhost() -> None:
     )
     assert decision.order == ["static", "playwright"]
     assert decision.reason == "private_or_local"
+
+
+@pytest.mark.parametrize(
+    "domain",
+    [
+        "127.1",
+        "127.0.1",
+        "0x7f.0.0.1",
+        "2130706433",
+        "100.64.0.1",
+        "224.0.0.1",
+        "localhost.",
+        "localhost.:8000",
+        "printer.local.",
+    ],
+)
+def test_private_guard_rejects_numeric_aliases_and_terminal_dot(
+    domain: str,
+) -> None:
+    assert is_private_or_local_domain(domain) is True
+
+
+@pytest.mark.parametrize("domain", ["8.8.8.8", "example.com", "dead.beef"])
+def test_private_guard_keeps_public_hosts_available(domain: str) -> None:
+    assert is_private_or_local_domain(domain) is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:password@example.com/private",
+        "https://example.com/file?token=secret",
+        "https://example.com/file?X-Amz-Credential=id&X-Amz-Signature=sig",
+        "https://example.com/reset?api_key=secret",
+        "https://example.com/callback#access_token=secret",
+        "https://example.com/account?session_id=secret",
+        "https://example.com/account?sid=secret",
+        "https://example.com/account?auth_key=secret",
+        "https://example.com/account?access_key=secret",
+        "https://example.com/account?ticket=secret",
+        "https://example.com/account?pwd=secret",
+        "https://example.com/sso?SAMLResponse=secret",
+    ],
+)
+def test_url_credentials_are_hard_local_only(url: str) -> None:
+    assert url_contains_credentials(url) is True
+
+
+def test_normal_public_url_query_is_not_treated_as_credentials() -> None:
+    assert (
+        url_contains_credentials("https://example.com/article?page=2#section") is False
+    )
 
 
 class TestFetchPolicyEngine:
@@ -193,6 +248,9 @@ def test_strategy_constants_are_consistent() -> None:
 class TestMatchLocalOnly:
     def test_exact_domain_match(self) -> None:
         assert match_local_only("internal.corp.com", ["internal.corp.com"]) is True
+
+    def test_exact_domain_match_ignores_dns_terminal_dot(self) -> None:
+        assert match_local_only("internal.corp.com.", ["internal.corp.com"]) is True
 
     def test_domain_no_match(self) -> None:
         assert match_local_only("example.com", ["internal.corp.com"]) is False

@@ -709,11 +709,15 @@ class FetchConfig(BaseModel):
             "(defuddle.md, Jina, Cloudflare) in the auto strategy chain, "
             "tried one at a time only after local strategies fail. "
             "Private/local/credentialed URLs never use remote services "
-            "regardless of this setting. always (default): use them without "
-            "asking (an INFO log discloses the first use); ask: prompt once "
+            "regardless of this setting. Public X/Twitter Playwright "
+            "enrichment also uses the first-use disclosure. It does not open "
+            "its own prompt under ask, but honors a cached process-wide "
+            "decline, never, and the hard opt-out. always (default): use them without "
+            "asking (a stderr notice discloses the first use); ask: prompt once "
             "per run on an interactive TTY, otherwise skip remote services; "
             "never: local strategies only. Overridden by the "
-            "MARKITAI_NO_REMOTE_FETCH env var."
+            "MARKITAI_NO_REMOTE_FETCH hard opt-out, including when an "
+            "explicit remote strategy is selected."
         ),
     )
     defuddle: DefuddleConfig = Field(default_factory=DefuddleConfig)

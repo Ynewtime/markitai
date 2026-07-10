@@ -10,7 +10,10 @@ from markitai.config import FetchConfig
 from markitai.fetch import (
     FetchError,
     FetchResult,
+    FetchStrategy,
     _fetch_with_fallback,
+    fetch_url,
+    peek_remote_consent,
     reset_remote_consent,
     resolve_remote_consent,
     set_remote_consent,
@@ -31,8 +34,8 @@ class TestDefaultConsentBehavior:
     Private/local/credentialed URLs never reach the consent gate at all —
     is_private_or_local_domain() strips remote strategies from the chain
     before it (see fetch.py). So the remaining consent question only
-    concerns public URLs, which default to allowed with a one-time
-    disclosure log instead of an interactive prompt.
+    concerns public URLs, which default to allowed with a one-time stderr
+    disclosure instead of an interactive prompt.
     """
 
     def test_default_is_always(self) -> None:
@@ -59,10 +62,54 @@ class TestDefaultConsentBehavior:
             f"expected exactly one disclosure log, got: {disclosures}"
         )
 
+    @pytest.mark.parametrize(
+        ("verbose", "quiet"),
+        [(False, True), (False, False), (True, False)],
+        ids=["quiet", "normal", "verbose"],
+    )
+    def test_always_discloses_directly_to_stderr_once_in_all_output_modes(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        verbose: bool,
+        quiet: bool,
+    ) -> None:
+        """The privacy disclosure bypasses INFO filtering and stays one-shot."""
+        from loguru import logger
+
+        from markitai.cli.logging_config import setup_logging
+
+        handler_id, _ = setup_logging(verbose=verbose, quiet=quiet, log_dir=None)
+        try:
+            set_remote_consent_prompt_allowed(False)
+            assert (
+                resolve_remote_consent(FetchConfig(), services=["defuddle", "jina"])
+                is True
+            )
+            assert (
+                resolve_remote_consent(FetchConfig(), services=["defuddle", "jina"])
+                is True
+            )
+            captured = capsys.readouterr()
+        finally:
+            if handler_id is not None:
+                logger.remove(handler_id)
+
+        assert captured.out == ""
+        disclosures = [
+            line
+            for line in captured.err.splitlines()
+            if "remote extraction services may receive URLs" in line
+        ]
+        assert len(disclosures) == 1
+        assert "defuddle.md, Jina" in disclosures[0]
+        assert "Cloudflare (your account)" in disclosures[0]
+        assert "FxTwitter" in disclosures[0]
+        assert "Twitter oEmbed" in disclosures[0]
+        assert "MARKITAI_NO_REMOTE_FETCH=1" in disclosures[0]
+
 
 class TestAskPromptWording:
-    """The interactive prompt must explain sequencing and name the actual
-    services in the chain — not read like a simultaneous broadcast."""
+    """A process-wide decision must name every service it can authorize."""
 
     def _run_prompt(self, services: list[str]) -> str:
         config = FetchConfig(remote_consent="ask")
@@ -84,16 +131,20 @@ class TestAskPromptWording:
             assert resolve_remote_consent(config, services=services) is True
         return " ".join(texts)
 
-    def test_names_chain_services_and_sequencing(self) -> None:
+    def test_names_all_authorized_services_and_sequencing(self) -> None:
         text = self._run_prompt(["defuddle", "jina"])
         assert "defuddle.md" in text
         assert "Jina" in text
-        assert "one at a time" in text
-        assert "Cloudflare" not in text, "services not in the chain must not be listed"
-
-    def test_includes_cloudflare_when_in_chain(self) -> None:
-        text = self._run_prompt(["defuddle", "jina", "cloudflare"])
         assert "Cloudflare (your account)" in text
+        assert "FxTwitter" in text
+        assert "Twitter oEmbed" in text
+        assert "one at a time" in text
+
+    def test_process_wide_prompt_is_stable_across_first_service(self) -> None:
+        first_chain = self._run_prompt(["fxtwitter", "twitter-oembed"])
+        reset_remote_consent()
+        second_chain = self._run_prompt(["defuddle", "jina", "cloudflare"])
+        assert first_chain == second_chain
 
 
 class TestResolveRemoteConsent:
@@ -117,6 +168,249 @@ class TestResolveRemoteConsent:
         monkeypatch.setenv("MARKITAI_NO_REMOTE_FETCH", "1")
         config = FetchConfig(remote_consent="always")
         assert resolve_remote_consent(config) is False
+
+    def test_env_opt_out_wins_over_explicit_cached_consent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The emergency opt-out cannot be bypassed by an explicit strategy."""
+        monkeypatch.setenv("MARKITAI_NO_REMOTE_FETCH", "1")
+        set_remote_consent(True)
+
+        assert peek_remote_consent(FetchConfig()) is False
+        assert resolve_remote_consent(FetchConfig()) is False
+
+    @pytest.mark.asyncio
+    async def test_env_opt_out_blocks_explicit_remote_dispatch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Even direct explicit dispatch must honor the hard environment guard."""
+        monkeypatch.setenv("MARKITAI_NO_REMOTE_FETCH", "1")
+        remote_result = FetchResult(
+            content=VALID_CONTENT,
+            strategy_used="jina",
+            url="https://example.com/article",
+        )
+
+        with (
+            patch(
+                "markitai.fetch.fetch_with_jina",
+                new_callable=AsyncMock,
+                return_value=remote_result,
+            ) as remote_fetch,
+            pytest.raises(FetchError, match="MARKITAI_NO_REMOTE_FETCH"),
+        ):
+            await fetch_url(
+                "https://example.com/article",
+                FetchStrategy.JINA,
+                FetchConfig(strategy="jina"),
+                explicit_strategy=True,
+                skip_read_cache=True,
+            )
+
+        remote_fetch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.1/private",
+            "http://localhost./private",
+            ("https://example.com/file?X-Amz-Credential=id&X-Amz-Signature=topsecret"),
+        ],
+    )
+    async def test_hard_url_guard_blocks_explicit_remote_dispatch(
+        self, url: str
+    ) -> None:
+        """Host aliases and signed URLs never reach a remote extractor."""
+        remote_result = FetchResult(
+            content=VALID_CONTENT,
+            strategy_used="jina",
+            url=url,
+        )
+
+        with (
+            patch(
+                "markitai.fetch.fetch_with_jina",
+                new_callable=AsyncMock,
+                return_value=remote_result,
+            ) as remote_fetch,
+            pytest.raises(FetchError, match="cannot fetch"),
+        ):
+            await fetch_url(
+                url,
+                FetchStrategy.JINA,
+                FetchConfig(strategy="jina"),
+                explicit_strategy=True,
+                skip_read_cache=True,
+            )
+
+        remote_fetch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_config_selected_remote_strategy_respects_never(self) -> None:
+        """A config strategy is not the same as an explicit CLI opt-in."""
+        url = "https://example.com/article"
+        remote_result = FetchResult(
+            content=VALID_CONTENT,
+            strategy_used="jina",
+            url=url,
+        )
+
+        with (
+            patch(
+                "markitai.fetch.fetch_with_jina",
+                new_callable=AsyncMock,
+                return_value=remote_result,
+            ) as remote_fetch,
+            pytest.raises(FetchError, match="remote extraction is not allowed"),
+        ):
+            await fetch_url(
+                url,
+                FetchStrategy.JINA,
+                FetchConfig(strategy="jina", remote_consent="never"),
+                explicit_strategy=False,
+                skip_read_cache=True,
+            )
+
+        remote_fetch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("policy", "no_proxy"),
+        [
+            ({"local_only_patterns": ["example.com"], "inherit_no_proxy": False}, None),
+            ({"local_only_patterns": [], "inherit_no_proxy": True}, "example.com"),
+        ],
+        ids=["configured-pattern", "inherited-no-proxy"],
+    )
+    async def test_config_selected_remote_strategy_respects_local_only_patterns(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        policy: dict[str, object],
+        no_proxy: str | None,
+    ) -> None:
+        """Config selection cannot bypass local-only policy or inherited NO_PROXY."""
+        if no_proxy is None:
+            monkeypatch.delenv("NO_PROXY", raising=False)
+            monkeypatch.delenv("no_proxy", raising=False)
+        else:
+            monkeypatch.setenv("NO_PROXY", no_proxy)
+        url = "https://example.com/article"
+        config = FetchConfig(
+            strategy="jina",
+            remote_consent="always",
+            policy=policy,
+        )
+
+        with (
+            patch(
+                "markitai.fetch.fetch_with_jina", new_callable=AsyncMock
+            ) as remote_fetch,
+            pytest.raises(FetchError, match="local-only"),
+        ):
+            await fetch_url(
+                url,
+                FetchStrategy.JINA,
+                config,
+                explicit_strategy=False,
+                skip_read_cache=True,
+            )
+
+        remote_fetch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cli_explicit_remote_strategy_can_override_local_only_pattern(
+        self,
+    ) -> None:
+        """An explicit CLI-style opt-in still overrides pattern-based policy."""
+        url = "https://example.com/article"
+        config = FetchConfig(
+            strategy="jina",
+            remote_consent="never",
+            policy={
+                "local_only_patterns": ["example.com"],
+                "inherit_no_proxy": False,
+            },
+        )
+        remote_result = FetchResult(
+            content=VALID_CONTENT,
+            strategy_used="jina",
+            url=url,
+        )
+
+        with patch(
+            "markitai.fetch.fetch_with_jina",
+            new_callable=AsyncMock,
+            return_value=remote_result,
+        ) as remote_fetch:
+            result = await fetch_url(
+                url,
+                FetchStrategy.JINA,
+                config,
+                explicit_strategy=True,
+                skip_read_cache=True,
+            )
+
+        assert result.strategy_used == "jina"
+        remote_fetch.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_config_selected_remote_strategy_discloses_always(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Config-selected remote fetching uses the same one-time disclosure."""
+        url = "https://example.com/article"
+        remote_result = FetchResult(
+            content=VALID_CONTENT,
+            strategy_used="jina",
+            url=url,
+        )
+
+        with patch(
+            "markitai.fetch.fetch_with_jina",
+            new_callable=AsyncMock,
+            return_value=remote_result,
+        ) as remote_fetch:
+            result = await fetch_url(
+                url,
+                FetchStrategy.JINA,
+                FetchConfig(strategy="jina", remote_consent="always"),
+                explicit_strategy=False,
+                skip_read_cache=True,
+            )
+
+        assert result.strategy_used == "jina"
+        remote_fetch.assert_awaited_once()
+        assert "remote extraction services may receive URLs" in capsys.readouterr().err
+
+    @pytest.mark.asyncio
+    async def test_cli_explicit_remote_strategy_overrides_config_never(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The explicit-strategy argument remains the deliberate config override."""
+        url = "https://example.com/article"
+        remote_result = FetchResult(
+            content=VALID_CONTENT,
+            strategy_used="jina",
+            url=url,
+        )
+
+        with patch(
+            "markitai.fetch.fetch_with_jina",
+            new_callable=AsyncMock,
+            return_value=remote_result,
+        ) as remote_fetch:
+            result = await fetch_url(
+                url,
+                FetchStrategy.JINA,
+                FetchConfig(strategy="jina", remote_consent="never"),
+                explicit_strategy=True,
+                skip_read_cache=True,
+            )
+
+        assert result.strategy_used == "jina"
+        remote_fetch.assert_awaited_once()
+        assert "remote extraction services may receive URLs" in capsys.readouterr().err
 
     @pytest.mark.parametrize("value", ["0", "false", "no", "", "  "])
     def test_env_var_falsy_values_ignored(
@@ -241,7 +535,7 @@ class TestFallbackChainConsentGate:
     async def test_no_consent_skips_remote_strategies(self) -> None:
         """ask + non-interactive: defuddle/jina never receive the URL."""
         url = "https://example.com/article"
-        config = FetchConfig()  # remote_consent defaults to "ask"
+        config = FetchConfig(remote_consent="ask")
 
         with (
             patch("sys.stdin") as mock_stdin,
@@ -266,11 +560,40 @@ class TestFallbackChainConsentGate:
         mock_jina.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_signed_url_stays_local_when_local_extractors_fail(self) -> None:
+        """Credential-bearing public URLs are never handed to remote fallbacks."""
+        url = "https://example.com/file?X-Amz-Credential=id&X-Amz-Signature=topsecret"
+        config = FetchConfig(remote_consent="always")
+
+        with (
+            patch(
+                "markitai.fetch.fetch_with_static",
+                new_callable=AsyncMock,
+                side_effect=FetchError("static failed"),
+            ),
+            patch(
+                "markitai.fetch_playwright.is_playwright_available",
+                return_value=False,
+            ),
+            patch(
+                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+            ) as mock_defuddle,
+            patch(
+                "markitai.fetch.fetch_with_jina", new_callable=AsyncMock
+            ) as mock_jina,
+            pytest.raises(FetchError),
+        ):
+            await _fetch_with_fallback(url, config)
+
+        mock_defuddle.assert_not_awaited()
+        mock_jina.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_interactive_ask_no_prompt_when_local_succeeds(self) -> None:
         """Lazy consent: with ask + interactive TTY, a fetch satisfied by
         the local-first chain (static wins) must never prompt the user."""
         url = "https://example.com/article"
-        config = FetchConfig()  # remote_consent defaults to "ask"
+        config = FetchConfig(remote_consent="ask")
 
         def _fail_if_prompted(*args: object, **kwargs: object) -> bool:
             raise AssertionError("consent prompt fired despite static success")
@@ -295,7 +618,9 @@ class TestFallbackChainConsentGate:
         mock_defuddle.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_always_uses_remote_strategies(self) -> None:
+    async def test_always_uses_remote_strategies(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """remote_consent=always keeps remote strategies in the chain: when
         the local-first strategies fail, defuddle runs without any prompt."""
         url = "https://example.com/article"
@@ -324,6 +649,7 @@ class TestFallbackChainConsentGate:
 
         assert result.strategy_used == "defuddle"
         mock_defuddle.assert_called_once()
+        assert "remote extraction services may receive URLs" in capsys.readouterr().err
 
     @pytest.mark.asyncio
     async def test_env_var_skips_remote_despite_always(
@@ -349,10 +675,10 @@ class TestFallbackChainConsentGate:
         mock_defuddle.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_explicit_remote_strategy_bypasses_gate(self) -> None:
-        """An explicit remote strategy counts as consent (no prompt, no skip)."""
+    async def test_configured_remote_strategy_respects_ask_policy(self) -> None:
+        """A strategy selected in config still respects the configured consent mode."""
         url = "https://example.com/article"
-        config = FetchConfig(strategy="jina")  # remote_consent stays "ask"
+        config = FetchConfig(strategy="jina", remote_consent="ask")
         jina_result = FetchResult(content=VALID_CONTENT, strategy_used="jina", url=url)
 
         with (
@@ -365,11 +691,12 @@ class TestFallbackChainConsentGate:
             patch("click.confirm") as mock_confirm,
         ):
             mock_stdin.isatty.return_value = True
+            mock_confirm.return_value = True
             result = await _fetch_with_fallback(url, config)
 
         assert result.strategy_used == "jina"
         mock_jina.assert_called_once()
-        mock_confirm.assert_not_called()
+        mock_confirm.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_all_remote_priority_falls_back_to_local(self) -> None:
