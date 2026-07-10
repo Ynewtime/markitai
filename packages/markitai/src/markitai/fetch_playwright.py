@@ -798,10 +798,10 @@ class PlaywrightRenderer:
         ``"fxtwitter"``, ``"oembed"``, or ``""`` (no enrichment).
 
         Unlike defuddle/jina/cloudflare, this never prompts for consent:
-        ``should_run()`` only lets URLs through that already matched a
-        public x.com/twitter.com status/article pattern, so there is no
-        arbitrary/private URL being handed to a third party to gate on —
-        "ask" behaves like "always" here. Explicit opt-outs
+        ``should_run()`` first restricts candidates to x.com/twitter.com
+        status/article URLs, then the shared full-URL and DNS privacy policy
+        verifies that the URL is public. "ask" behaves like "always" here.
+        Explicit opt-outs
         (``remote_consent="never"``, ``MARKITAI_NO_REMOTE_FETCH``) are
         still honored.
         """
@@ -810,10 +810,7 @@ class PlaywrightRenderer:
             disclose_remote_use,
             peek_cached_remote_consent,
         )
-        from markitai.fetch_policy import (
-            is_private_or_local_domain,
-            url_contains_credentials,
-        )
+        from markitai.fetch_policy import assess_url_for_remote
         from markitai.webextract.enrichers.base import EnrichmentPolicy
         from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
 
@@ -825,16 +822,11 @@ class PlaywrightRenderer:
         if peek_cached_remote_consent() is False:
             return "", None, ""
 
-        from urllib.parse import urlsplit
-
-        if is_private_or_local_domain(urlsplit(url).netloc) or url_contains_credentials(
-            url
-        ):
-            return "", None, ""
-
         enricher = XOEmbedEnricher()
         policy = EnrichmentPolicy(allow_network=True, allow_async=True)
         if not enricher.should_run(url, policy):
+            return "", None, ""
+        if not (await assess_url_for_remote(url)).allowed:
             return "", None, ""
 
         disclose_remote_use(["fxtwitter", "twitter-oembed"])

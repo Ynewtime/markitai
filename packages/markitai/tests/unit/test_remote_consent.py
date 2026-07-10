@@ -216,6 +216,7 @@ class TestResolveRemoteConsent:
             "http://127.1/private",
             "http://localhost./private",
             ("https://example.com/file?X-Amz-Credential=id&X-Amz-Signature=topsecret"),
+            "https://example.com/reset/550e8400-e29b-41d4-a716-446655440000",
         ],
     )
     async def test_hard_url_guard_blocks_explicit_remote_dispatch(
@@ -235,6 +236,33 @@ class TestResolveRemoteConsent:
                 return_value=remote_result,
             ) as remote_fetch,
             pytest.raises(FetchError, match="cannot fetch"),
+        ):
+            await fetch_url(
+                url,
+                FetchStrategy.JINA,
+                FetchConfig(strategy="jina"),
+                explicit_strategy=True,
+                skip_read_cache=True,
+            )
+
+        remote_fetch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_private_dns_answer_blocks_explicit_remote_dispatch(self) -> None:
+        """A public-looking hostname resolving to a private IP stays local."""
+        url = "https://portal.example.com/article"
+
+        with (
+            patch(
+                "markitai.fetch_policy.resolve_hostname_addresses",
+                new_callable=AsyncMock,
+                return_value=("10.0.0.25",),
+            ),
+            patch(
+                "markitai.fetch.fetch_with_jina",
+                new_callable=AsyncMock,
+            ) as remote_fetch,
+            pytest.raises(FetchError, match="non-public"),
         ):
             await fetch_url(
                 url,
@@ -304,6 +332,11 @@ class TestResolveRemoteConsent:
 
         with (
             patch(
+                "markitai.fetch_policy.resolve_hostname_addresses",
+                new_callable=AsyncMock,
+                return_value=("93.184.216.34",),
+            ) as resolve_host,
+            patch(
                 "markitai.fetch.fetch_with_jina", new_callable=AsyncMock
             ) as remote_fetch,
             pytest.raises(FetchError, match="local-only"),
@@ -317,6 +350,7 @@ class TestResolveRemoteConsent:
             )
 
         remote_fetch.assert_not_awaited()
+        resolve_host.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_cli_explicit_remote_strategy_can_override_local_only_pattern(

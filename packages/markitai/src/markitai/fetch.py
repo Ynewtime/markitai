@@ -2064,7 +2064,7 @@ async def fetch_with_jina(
         raise FetchError(f"Jina Reader fetch failed: {format_error_message(e)}")
 
 
-def _ensure_external_strategy_allowed(
+async def _ensure_external_strategy_allowed(
     url: str,
     strategy_name: str,
     *,
@@ -2072,12 +2072,9 @@ def _ensure_external_strategy_allowed(
     allow_pattern_override: bool = False,
 ) -> None:
     """Enforce hard privacy guards before any external-only strategy runs."""
-    from urllib.parse import urlparse
-
     from markitai.fetch_policy import (
-        is_private_or_local_domain,
+        assess_url_for_remote,
         match_local_only,
-        url_contains_credentials,
     )
 
     if strategy_name not in {
@@ -2093,13 +2090,9 @@ def _ensure_external_strategy_allowed(
             "Unset it before explicitly selecting a remote strategy."
         )
 
-    domain = urlparse(url).netloc.lower()
-    if is_private_or_local_domain(domain) or url_contains_credentials(url):
-        raise FetchError(
-            f"{strategy_name} cannot fetch private/local or credential-bearing URLs. "
-            "Use static or playwright instead."
-        )
+    from urllib.parse import urlparse
 
+    domain = urlparse(url).netloc.lower()
     if (
         config is not None
         and not allow_pattern_override
@@ -2109,6 +2102,22 @@ def _ensure_external_strategy_allowed(
             f"{strategy_name} cannot fetch a URL matched by local-only policy. "
             "Use static/playwright, or explicitly select the remote strategy "
             "on the CLI to override the pattern for this public URL."
+        )
+
+    assessment = await assess_url_for_remote(url)
+    if not assessment.allowed:
+        reason = assessment.reason or "privacy policy"
+        if reason == "non_global_address":
+            reason = "hostname resolves to a non-public address"
+        elif reason == "hostname_resolution_failed":
+            reason = "hostname could not be resolved safely"
+        elif reason == "credential_material":
+            reason = "URL contains credential material"
+        elif reason == "private_or_local_host":
+            reason = "URL targets a private/local host"
+        raise FetchError(
+            f"{strategy_name} cannot fetch this URL: {reason}. "
+            "Use static or playwright instead."
         )
 
 
@@ -2142,7 +2151,7 @@ async def _dispatch_strategy(
     validators_to_write: tuple[str | None, str | None] | None = None
 
     if strategy.value in EXTERNAL_STRATEGIES:
-        _ensure_external_strategy_allowed(
+        await _ensure_external_strategy_allowed(
             url,
             strategy.value,
             config=config,
@@ -2775,7 +2784,7 @@ async def _fetch_with_fallback(
     for strat in strategies:
         if strat in EXTERNAL_STRATEGIES:
             try:
-                _ensure_external_strategy_allowed(url, strat, config=config)
+                await _ensure_external_strategy_allowed(url, strat, config=config)
             except FetchError as e:
                 logger.debug(f"[Fetch] Skipping {strat}: {e}")
                 errors.append(f"{strat}: {e}")

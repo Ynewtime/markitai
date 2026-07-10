@@ -17,10 +17,15 @@ Strategy priority rationale (v0.15.0, local-first):
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
+import math
 import re
+import socket
+from collections import Counter
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from markitai.constants import ALL_FETCH_STRATEGIES, LOCAL_STRATEGIES
 
@@ -151,19 +156,201 @@ def _is_sensitive_query_key(key: str) -> bool:
     )
 
 
+_SENSITIVE_PATH_CONTEXTS = {
+    "activate",
+    "activation",
+    "invite",
+    "invitation",
+    "magic",
+    "magic_link",
+    "password_reset",
+    "reset",
+    "secret",
+    "session",
+    "token",
+    "verify",
+    "verification",
+}
+_UUID_TOKEN_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+_JWT_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$")
+_URLSAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_~.-]+$")
+
+
+def _shannon_entropy(value: str) -> float:
+    if not value:
+        return 0.0
+    length = len(value)
+    return -sum(
+        (count / length) * math.log2(count / length)
+        for count in Counter(value).values()
+    )
+
+
+def _looks_high_entropy_path_token(segment: str) -> bool:
+    """Return whether a standalone path segment looks like an opaque secret."""
+    if _JWT_TOKEN_RE.fullmatch(segment):
+        return True
+    if len(segment) < 24 or not _URLSAFE_TOKEN_RE.fullmatch(segment):
+        return False
+    # Hex hashes and UUID-like public identifiers are common URL paths. Treat
+    # them as secrets only when a preceding route segment supplies context.
+    compact = segment.replace("-", "")
+    if compact and all(char in "0123456789abcdefABCDEF" for char in compact):
+        return False
+    has_mixed_random_alphabet = (
+        any(char.islower() for char in segment)
+        and any(char.isupper() for char in segment)
+        and any(char.isdigit() for char in segment)
+    )
+    return (
+        has_mixed_random_alphabet
+        and len(set(segment)) >= 10
+        and _shannon_entropy(segment) >= 3.5
+    )
+
+
+def _looks_contextual_path_token(segment: str) -> bool:
+    """Return whether a segment following a sensitive route looks token-like."""
+    if len(segment) < 8:
+        return False
+    if _UUID_TOKEN_RE.fullmatch(segment) or _looks_high_entropy_path_token(segment):
+        return True
+    if re.fullmatch(r"[0-9a-f]{16,}", segment, re.IGNORECASE):
+        return True
+    if re.fullmatch(r"[a-z]+(?:-[a-z]+)*", segment):
+        return False
+    return (
+        len(segment) >= 12
+        and _URLSAFE_TOKEN_RE.fullmatch(segment) is not None
+        and (
+            any(char.isupper() for char in segment)
+            or any(char.isdigit() for char in segment)
+        )
+        and _shannon_entropy(segment) >= 3.2
+    )
+
+
+def sensitive_path_segment_indexes(path: str) -> frozenset[int]:
+    """Locate path segments that should stay local and be hidden in displays."""
+    raw_segments = path.split("/")
+    decoded_segments = [unquote(segment) for segment in raw_segments]
+    sensitive: set[int] = set()
+
+    for index, segment in enumerate(decoded_segments):
+        if not segment:
+            continue
+        if _looks_high_entropy_path_token(segment):
+            sensitive.add(index)
+            continue
+
+        for separator in ("=", ":"):
+            key, found, value = segment.partition(separator)
+            if found and value and _is_sensitive_query_key(key):
+                sensitive.add(index)
+                break
+
+        if index == 0:
+            continue
+        context = _normalize_query_key(decoded_segments[index - 1])
+        if (
+            context in _SENSITIVE_PATH_CONTEXTS
+            or _is_sensitive_query_key(decoded_segments[index - 1])
+        ) and _looks_contextual_path_token(segment):
+            sensitive.add(index)
+
+    return frozenset(sensitive)
+
+
 def url_contains_credentials(url: str) -> bool:
-    """Detect userinfo and credential-bearing query/fragment parameters."""
+    """Detect userinfo and credential-bearing path/query/fragment material."""
     try:
         parsed = urlsplit(url)
     except ValueError:
         return False
     if parsed.username is not None or parsed.password is not None:
         return True
+    if sensitive_path_segment_indexes(parsed.path):
+        return True
 
     for component in (parsed.query, parsed.fragment if "=" in parsed.fragment else ""):
         if any(_is_sensitive_query_key(key) for key, _ in parse_qsl(component)):
             return True
     return False
+
+
+@dataclass(frozen=True)
+class RemoteURLAssessment:
+    """Decision from the hard URL privacy boundary for remote services."""
+
+    allowed: bool
+    reason: str | None = None
+
+
+HostResolver = Callable[[str], Awaitable[Sequence[str]]]
+
+
+async def resolve_hostname_addresses(hostname: str) -> tuple[str, ...]:
+    """Resolve a hostname without blocking the event loop."""
+    loop = asyncio.get_running_loop()
+    records = await asyncio.wait_for(
+        loop.getaddrinfo(hostname, None, type=socket.SOCK_STREAM),
+        timeout=5.0,
+    )
+    return tuple(dict.fromkeys(str(record[4][0]) for record in records))
+
+
+def _address_is_global(value: str) -> bool:
+    """Return False for malformed, scoped, private, or otherwise non-global IPs."""
+    unscoped = value.split("%", 1)[0]
+    try:
+        address = ipaddress.ip_address(unscoped)
+    except ValueError:
+        return False
+    return address.is_global and not address.is_multicast
+
+
+async def assess_url_for_remote(
+    url: str,
+    *,
+    resolver: HostResolver | None = None,
+) -> RemoteURLAssessment:
+    """Apply the complete hard privacy policy before sharing a URL remotely."""
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+    except (TypeError, ValueError):
+        return RemoteURLAssessment(False, "invalid_url")
+
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        return RemoteURLAssessment(False, "invalid_url")
+    if url_contains_credentials(url):
+        return RemoteURLAssessment(False, "credential_material")
+    if is_private_or_local_domain(parsed.netloc):
+        return RemoteURLAssessment(False, "private_or_local_host")
+
+    try:
+        direct_address = ipaddress.ip_address(hostname.split("%", 1)[0])
+    except ValueError:
+        direct_address = None
+
+    if direct_address is not None:
+        addresses: Sequence[str] = (str(direct_address),)
+    else:
+        resolve = resolver or resolve_hostname_addresses
+        try:
+            addresses = await resolve(hostname)
+        except (TimeoutError, OSError, UnicodeError):
+            return RemoteURLAssessment(False, "hostname_resolution_failed")
+
+    if not addresses:
+        return RemoteURLAssessment(False, "hostname_resolution_failed")
+    if any(not _address_is_global(address) for address in addresses):
+        return RemoteURLAssessment(False, "non_global_address")
+    return RemoteURLAssessment(True)
 
 
 def parse_no_proxy(value: str | None) -> list[str]:
