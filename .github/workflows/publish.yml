@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,16 +39,62 @@ jobs:
           cache-dependency-glob: "uv.lock"
           python-version: "3.13"
 
-      - name: Install LibreOffice
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libreoffice --no-install-recommends
-
       - name: Install dependencies
         run: uv sync --frozen --all-groups --all-extras
 
       - name: Run lint
         run: uv run ruff check packages/markitai/src
+
+  # Releases gate on the same OS/Python matrix as ci.yml: a platform-only
+  # test failure (e.g. Windows) must block PyPI publishing, not just CI.
+  test:
+    name: Test (Python ${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.11', '3.12', '3.13', '3.14']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-groups --all-extras
+
+      - name: Install LibreOffice (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice --no-install-recommends
+
+      - name: Install LibreOffice (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install --cask libreoffice
+
+      - name: Install LibreOffice (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $maxRetries = 3
+          for ($i = 1; $i -le $maxRetries; $i++) {
+            choco install libreoffice-fresh -y --no-progress
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "Attempt $i failed, retrying in $($i * 5) seconds..."
+            Start-Sleep -Seconds ($i * 5)
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Run unit tests
         run: uv run pytest packages/markitai/tests/unit
@@ -57,7 +103,7 @@ jobs:
         run: uv run pytest packages/markitai/tests/integration
 
   publish:
-    needs: [test]
+    needs: [lint, test]
     runs-on: ubuntu-latest
     permissions:
       contents: write  # create the GitHub Release
