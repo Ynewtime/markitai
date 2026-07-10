@@ -177,7 +177,7 @@ def _prompt_existing_config_action(target: Path) -> str:
     console.print("  [2] Overwrite: replace with a freshly generated config")
     console.print("  [3] Keep:      leave the file unchanged")
     console.print()
-    choice = click.prompt("  Choose", type=click.IntRange(1, 3), default=1)
+    choice = click.prompt("  Choose", type=click.IntRange(1, 3), default=3)
     return {1: "update", 2: "overwrite", 3: "keep"}[choice]
 
 
