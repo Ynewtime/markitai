@@ -377,13 +377,46 @@ function Clack-Confirm {
 
     Write-Host $S_BAR -ForegroundColor DarkGray
     Write-Host $S_STEP_SUBMIT -ForegroundColor Cyan -NoNewline
-    $answer = Read-Host "  $Prompt [$hint]"
+    if (Test-InteractiveInput) {
+        $answer = Read-Host "  $Prompt [$hint]"
+    } else {
+        Write-Host "  $Prompt [$hint]"
+        $answer = $Default
+    }
 
     if ([string]::IsNullOrWhiteSpace($answer)) {
         $answer = $Default
     }
 
     return $answer -match "^[Yy]"
+}
+
+# PowerShell's redirected-input state is the equivalent of the POSIX setup
+# script having no usable terminal for prompts.
+function Test-InteractiveInput {
+    try {
+        return -not [Console]::IsInputRedirected
+    } catch {
+        return $false
+    }
+}
+
+function Test-OptionalInstallRequested {
+    return $env:MARKITAI_INSTALL_OPTIONAL -match "^(1|true|yes|on)$"
+}
+
+# Without interactive input, optional components are disabled unless the
+# caller explicitly opts in through MARKITAI_INSTALL_OPTIONAL.
+function Confirm-OptionalInstall {
+    param(
+        [string]$Prompt,
+        [string]$Default = "n"
+    )
+
+    if (-not (Test-InteractiveInput)) {
+        return (Test-OptionalInstallRequested)
+    }
+    return (Clack-Confirm $Prompt $Default)
 }
 
 # Note/message box with guide line
@@ -650,13 +683,18 @@ function Select-InstallSource {
 function Get-MarkitaiPkgSpec {
     param([string]$Extras)
 
+    $base = "markitai"
+    if ($Extras) {
+        $base = "markitai[$Extras]"
+    }
+
     if ($script:MARKITAI_SOURCE -eq "local") {
-        return "markitai[$Extras] @ $($script:MarkitaiLocalPath)"
+        return "$base @ $($script:MarkitaiLocalPath)"
     }
     if ($script:MarkitaiVersion) {
-        return "markitai[$Extras]==$($script:MarkitaiVersion)"
+        return "$base==$($script:MarkitaiVersion)"
     }
-    return "markitai[$Extras]"
+    return $base
 }
 
 # ============================================================
@@ -812,9 +850,9 @@ function Install-Markitai {
     $exitCode = 1
 
     if (Test-Path $markitaiToolDir) {
-        # Already installed as uv tool — upgrade to latest version
-        # (skip upgrade for local source: always force reinstall from the repo)
-        if ($script:MARKITAI_SOURCE -ne "local") {
+        # Only an unpinned PyPI install can use the receipt-based upgrade path.
+        # Explicit versions and local sources must apply the exact spec below.
+        if ($script:MARKITAI_SOURCE -ne "local" -and -not $script:MarkitaiVersion) {
             try {
                 $null = & uv tool upgrade markitai 2>&1
                 $exitCode = $LASTEXITCODE
@@ -846,6 +884,15 @@ function Install-Markitai {
         $markitaiCmd = Get-Command markitai -ErrorAction SilentlyContinue
         $version = if ($markitaiCmd) { (& markitai --version 2>&1 | Select-Object -First 1).Split(' ')[-1] } else { (i18n "installed") }
         if (-not $version) { $version = (i18n "installed") }
+        if (
+            $script:MARKITAI_SOURCE -ne "local" -and
+            $script:MarkitaiVersion -and
+            $version -ne $script:MarkitaiVersion
+        ) {
+            Clack-Error "$(i18n 'markitai') version mismatch: expected $($script:MarkitaiVersion), got $version"
+            Track-Install -Component "markitai" -Status "failed"
+            return $false
+        }
         Clack-Success "$(i18n 'markitai') $version"
         Track-Install -Component "markitai" -Status "installed"
         return $true
@@ -856,8 +903,12 @@ function Install-Markitai {
     return $false
 }
 
-# Global variable tracking all needed extras (comma-separated)
-$script:MARKITAI_EXTRAS = "browser"
+# Global variable tracking all needed extras (comma-separated). A fresh
+# non-interactive install starts with core only unless explicitly opted in.
+$script:MARKITAI_EXTRAS = ""
+if ((Test-InteractiveInput) -or (Test-OptionalInstallRequested)) {
+    $script:MARKITAI_EXTRAS = "browser"
+}
 
 # Track a markitai extra for deferred installation
 # Extras are accumulated and installed once via Finalize-MarkitaiExtras
@@ -876,6 +927,10 @@ function Install-MarkitaiExtra {
 # Merges `markitai doctor --suggest-extras` output with manually tracked
 # MARKITAI_EXTRAS (from CLI install functions), so nothing is lost.
 function Finalize-MarkitaiExtras {
+    if (-not (Test-InteractiveInput) -and -not (Test-OptionalInstallRequested)) {
+        return
+    }
+
     # Merge suggested extras INTO manually tracked set (not replace)
     try {
         $suggested = & markitai doctor --suggest-extras 2>$null
@@ -1045,7 +1100,7 @@ function Install-OptionalPlaywright {
 
     Clack-Info (i18n "info_playwright_purpose")
 
-    if (-not (Clack-Confirm (i18n "confirm_playwright") "y")) {
+    if (-not (Confirm-OptionalInstall (i18n "confirm_playwright") "y")) {
         Clack-Skip (i18n "playwright")
         Track-Install -Component "playwright" -Status "skipped"
         return $false
@@ -1126,7 +1181,7 @@ function Install-OptionalLibreOffice {
 
     Clack-Info (i18n "info_libreoffice_purpose")
 
-    if (-not (Clack-Confirm (i18n "confirm_libreoffice") "n")) {
+    if (-not (Confirm-OptionalInstall (i18n "confirm_libreoffice") "n")) {
         Clack-Skip (i18n "libreoffice")
         Track-Install -Component "libreoffice" -Status "skipped"
         return $false
@@ -1188,7 +1243,7 @@ function Install-OptionalFFmpeg {
 
     Clack-Info (i18n "info_ffmpeg_purpose")
 
-    if (-not (Clack-Confirm (i18n "confirm_ffmpeg") "n")) {
+    if (-not (Confirm-OptionalInstall (i18n "confirm_ffmpeg") "n")) {
         Clack-Skip (i18n "ffmpeg")
         Track-Install -Component "ffmpeg" -Status "skipped"
         return $false
@@ -1244,7 +1299,7 @@ function Install-OptionalClaudeCLI {
         return $true
     }
 
-    if (-not (Clack-Confirm (i18n "confirm_claude_cli") "n")) {
+    if (-not (Confirm-OptionalInstall (i18n "confirm_claude_cli") "n")) {
         Clack-Skip (i18n "claude_cli")
         Track-Install -Component "claude_cli" -Status "skipped"
         return $false
@@ -1305,7 +1360,7 @@ function Install-OptionalCopilotCLI {
         return $true
     }
 
-    if (-not (Clack-Confirm (i18n "confirm_copilot_cli") "n")) {
+    if (-not (Confirm-OptionalInstall (i18n "confirm_copilot_cli") "n")) {
         Clack-Skip (i18n "copilot_cli")
         Track-Install -Component "copilot_cli" -Status "skipped"
         return $false
@@ -1480,8 +1535,13 @@ function Print-DevCompletion {
         "  uv run markitai --help"
 }
 
-# Initialize markitai config (silent)
+# Initialize markitai config (silent, first install only)
+# Skips when a config already exists: `init --yes` would silently append
+# newly detected providers to the user's model_list.
 function Initialize-Config {
+    if (Test-Path "$HOME/.markitai/config.json") {
+        return
+    }
     $markitaiExists = Get-Command markitai -ErrorAction SilentlyContinue
     if ($markitaiExists) {
         try {
