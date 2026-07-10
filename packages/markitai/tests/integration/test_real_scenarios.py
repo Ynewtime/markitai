@@ -296,8 +296,8 @@ class TestURLListScenarios:
             [str(urls_file), "-o", str(output_dir)],
         )
 
-        # May partially fail due to network
-        assert result.exit_code in (0, 1)
+        # May fully or partially fail due to network. Partial success is exit 10.
+        assert result.exit_code in (0, 1, 10)
 
 
 # =============================================================================

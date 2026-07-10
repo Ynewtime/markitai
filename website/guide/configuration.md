@@ -39,6 +39,7 @@ markitai config list
 markitai config list --format json    # JSON (default)
 markitai config list --format table   # Rich table view
 markitai config list --format yaml    # YAML (requires pyyaml: uv add pyyaml)
+markitai config list --show-secrets   # Reveal original secret values
 
 # Get specific value
 markitai config get llm.enabled
@@ -53,6 +54,8 @@ markitai config edit
 markitai config validate
 markitai config validate ./markitai.json    # Validate specific file
 ```
+
+`config list` recursively redacts secrets by default, including nested API keys, tokens, cookies, credentials, and every custom HTTP header value. Custom `api_base` values are reduced to their origin. Use `--show-secrets` only for local inspection, and never paste its complete output into an issue, chat, CI log, or other shared channel.
 
 ### Full Configuration Example
 
@@ -126,7 +129,7 @@ markitai config validate ./markitai.json    # Validate specific file
   },
   "fetch": {
     "strategy": "auto",
-    "remote_consent": "ask",
+    "remote_consent": "always",
     "kreuzberg_convert_enabled": false,
     "defuddle": {
       "timeout": 30,
@@ -199,7 +202,7 @@ markitai config validate ./markitai.json    # Validate specific file
 ```
 
 ::: tip
-Use `env:VAR_NAME` syntax to reference environment variables in the config file. For `JINA_API_KEY`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`, you can also just set the environment variable (or add it to `.env`) without configuring anything in the config file — markitai reads them automatically.
+Use `env:VAR_NAME` syntax to reference environment variables in the config file. For `JINA_API_KEY`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`, you can also just set the environment variable (or add it to `.env`) without configuring anything in the config file; markitai reads them automatically.
 :::
 
 ## Environment Variables
@@ -227,15 +230,15 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 | `MARKITAI_STATIC_HTTP` | Static HTTP backend: `httpx` (default) or `curl_cffi` (TLS impersonation) |
 | `MARKITAI_LANG` | CLI language override (`en` or `zh`) |
 | `MARKITAI_PURE` | Enable pure mode (`1`, `true`, or `yes`) |
-| `MARKITAI_NO_REMOTE_FETCH` | Force `fetch.remote_consent` to `never` (`1`, `true`, or `yes`) |
+| `MARKITAI_NO_REMOTE_FETCH` | Hard-disable remote extraction, including explicit remote `-s` strategies (`1`, `true`, or `yes`) |
 | `MODEL` | Single-model override when no `model_list` configured |
 
 ### `.env` File Loading
 
 Markitai automatically loads `.env` files in the following order (first-loaded values win):
 
-1. `./.env` (current working directory — project-level)
-2. `~/.markitai/.env` (user home — global fallback)
+1. `./.env` (current working directory, project-level)
+2. `~/.markitai/.env` (user home, global fallback)
 
 Project-level `.env` takes priority, allowing per-project overrides of global settings.
 
@@ -261,7 +264,7 @@ Markitai also supports local providers that use CLI authentication and subscript
 - **ChatGPT** (`chatgpt/`): Uses ChatGPT subscription via OAuth Device Code Flow and Responses API. No extra SDK required.
 
 These providers require:
-1. The respective CLI tool installed and authenticated (or environment variable auth — see below)
+1. The respective CLI tool installed and authenticated (or environment variable auth; see below)
 2. Optional SDK package: `uv add markitai[claude-agent]` or `uv add markitai[copilot]`
 
 **Install Claude Code CLI:**
@@ -284,10 +287,10 @@ winget install GitHub.Copilot
 
 **ChatGPT (no CLI needed):**
 
-ChatGPT provider authenticates via OAuth Device Code Flow on first use — just configure the model and follow the browser prompt.
+ChatGPT provider authenticates via OAuth Device Code Flow on first use. Just configure the model and follow the browser prompt.
 
 ::: tip Gemini Access
-Gemini is not a local/CLI provider — use a direct API key (`gemini/`, see [Model Naming](#model-naming)) or route through OpenRouter (`openrouter/google/...`).
+Gemini is not a local/CLI provider. Use a direct API key (`gemini/`, see [Model Naming](#model-naming)) or route through OpenRouter (`openrouter/google/...`).
 :::
 
 ### Model Naming
@@ -510,11 +513,11 @@ Each model in `model_list` accepts a `weight` parameter in `litellm_params` to c
 
 | Value | Behavior |
 |-------|----------|
-| `weight: 0` | **Disabled** — model is excluded from routing entirely |
+| `weight: 0` | **Disabled**: model is excluded from routing entirely |
 | `weight: 1` (default) | Normal priority |
 | `weight: 10` | 10x more likely to be selected than weight=1 models |
 
-Set `weight: 0` to temporarily disable a model without removing its configuration. At least one model must have `weight > 0` — this is enforced when the LLM router actually starts (first LLM use), not by `markitai config validate`, so an all-zero-weight config will validate cleanly but fail at first use.
+Set `weight: 0` to temporarily disable a model without removing its configuration. At least one model must have `weight > 0`. This is enforced when the LLM router actually starts (first LLM use), not by `markitai config validate`, so an all-zero-weight config will validate cleanly but fail at first use.
 
 ### Adaptive Timeout
 
@@ -719,7 +722,7 @@ Configure how URLs are fetched:
 {
   "fetch": {
     "strategy": "auto",
-    "remote_consent": "ask",
+    "remote_consent": "always",
     "playwright": {
       "timeout": 30000,
       "wait_for": "domcontentloaded",
@@ -746,24 +749,28 @@ Configure how URLs are fetched:
 
 | Strategy | Description |
 |----------|-------------|
-| `auto` | Auto-detect: local-first priority order (static → playwright → defuddle → jina → cloudflare); known SPA/JS-heavy domains use playwright → defuddle → jina → cloudflare → static instead — see [Fetch Policy Guide](/guide/fetch-policy) |
+| `auto` | Auto-detect: local-first priority order (static → playwright → defuddle → jina → cloudflare); known SPA/JS-heavy domains use playwright → defuddle → jina → cloudflare → static instead. See [Fetch Policy Guide](/guide/fetch-policy) |
 | `static` | Use static HTTP fetch with native webextract (fast, no JS) |
 | `defuddle` | Use Defuddle API for clean content extraction (free, no auth) |
 | `playwright` | Use Playwright for JS-rendered pages (SPA support) |
 | `jina` | Use Jina Reader API |
 | `cloudflare` | Use Cloudflare Browser Rendering `/content` API (rendered HTML, extracted locally) |
 
-`fetch.kreuzberg_convert_enabled` (default `false`) forces the kreuzberg converter for **file** conversion — the config equivalent of the `-b kreuzberg` CLI flag (see [CLI Reference](/guide/cli#b-backend-name)).
+`fetch.kreuzberg_convert_enabled` (default `false`) forces the kreuzberg converter for **file** conversion. It is the config equivalent of the `-b kreuzberg` CLI flag (see [CLI Reference](/guide/cli#b-backend-name)).
 
 ### Remote Fetch Consent
 
-URLs are never sent to third-party extraction services (defuddle.md, Jina, Cloudflare) in the `auto` chain without consent:
+For public URLs, `auto` may fall back to a remote extraction service without asking. Local strategies still run first on standard domains. When a process reaches its first remote attempt, Markitai writes a disclosure to stderr before sending the requested URL to the next service in the chain. The notice names the complete service set covered by the process-wide decision: defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed. Services are tried one at a time; the URL is not broadcast to all of them.
+
+For public X/Twitter status or article URLs, Playwright may try FxTwitter and then Twitter oEmbed after local DOM extraction fails. This public-URL enrichment does not open its own `ask` prompt, but it uses the same one-time stderr disclosure and honors a process-wide decline already given to the complete-service prompt. Both `fetch.remote_consent=never` and `MARKITAI_NO_REMOTE_FETCH=1` disable it.
+
+Private, local, intranet, and credential-bearing URLs never use remote extraction, even when a remote strategy is selected explicitly. Credential-bearing includes URL userinfo and sensitive query/fragment parameters such as tokens, signatures, credentials, passwords, API keys, and authorization codes. In the `auto` policy chain, domains matched by `fetch.policy.local_only_patterns` or `NO_PROXY` (when `inherit_no_proxy` is enabled) also stay local. For an otherwise public URL, explicitly passing a non-`auto` remote `-s` flag is an intentional override of those pattern-based rules. A remote `fetch.strategy` set only in config remains governed by `fetch.remote_consent` and emits the same first-use disclosure.
 
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
-| `fetch.remote_consent` | `ask`, `always`, `never` | `ask` | `ask`: prompt once per run on an interactive TTY, otherwise skip remote services and stay local-only; `always`: use remote services without asking; `never`: local strategies only |
+| `fetch.remote_consent` | `ask`, `always`, `never` | `always` | `always`: allow remote fallback for public URLs without asking and disclose the first remote attempt on stderr; `ask`: prompt once per process on an interactive TTY, otherwise skip remote extraction services (the public X/Twitter enrichment exception above only discloses); `never`: local strategies only |
 
-`MARKITAI_NO_REMOTE_FETCH=1` (or `true`/`yes`) overrides this to `never` regardless of config. Explicitly choosing a remote strategy (`-s defuddle`, `-s jina`, or `-s cloudflare`) counts as consent for that run.
+`MARKITAI_NO_REMOTE_FETCH=1` (or `true`/`yes`) is the hard opt-out: it blocks remote extraction even when `-s defuddle`, `-s jina`, or `-s cloudflare` is passed. Without that environment override, explicitly passing one of those CLI flags opts into that service for the run and can override `fetch.remote_consent=never` plus `local_only_patterns`/`NO_PROXY` for an otherwise public URL. The private/local/credential-bearing URL safeguard still applies.
 
 ### Playwright Settings
 
@@ -820,7 +827,7 @@ Defuddle is free and requires no API key or authentication. It's a good default 
 
 Cloudflare provides two capabilities through a unified `--cloudflare` flag:
 
-1. **Browser Rendering** (`/content` API — fetches rendered HTML, then extracts locally through the same native webextract pipeline as every other strategy) for URL-to-markdown conversion
+1. **Browser Rendering** (`/content` API, which fetches rendered HTML and then extracts locally through the same native webextract pipeline as every other strategy) for URL-to-markdown conversion
 2. **Workers AI toMarkdown** for file-to-markdown conversion (PDF, Office, CSV, XML, images)
 
 ```json
@@ -863,9 +870,9 @@ Browser Rendering is available on the Free plan. Workers AI toMarkdown is free f
 
 **How to obtain credentials:**
 
-1. **Account ID** — Log in to the [Cloudflare Dashboard](https://dash.cloudflare.com/). The Account ID is shown in the URL (`dash.cloudflare.com/<account_id>/...`) or on the right sidebar of any zone's **Overview** page.
+1. **Account ID**: Log in to the [Cloudflare Dashboard](https://dash.cloudflare.com/). The Account ID is shown in the URL (`dash.cloudflare.com/<account_id>/...`) or on the right sidebar of any zone's **Overview** page.
 
-2. **API Token** — Go to [My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens) and click **Create Token**. Use the *Custom token* template with the following permissions:
+2. **API Token**: Go to [My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens) and click **Create Token**. Use the *Custom token* template with the following permissions:
 
    | Permission | Access | Required for |
    |------------|--------|--------------|
@@ -874,7 +881,7 @@ Browser Rendering is available on the Free plan. Workers AI toMarkdown is free f
 
    Set **Account Resources** to your target account, then create and copy the token.
 
-3. **Enable Browser Rendering** — In your Cloudflare dashboard, go to **Workers & Pages → Browser Rendering** and follow the prompts to enable it (available on Free plan).
+3. **Enable Browser Rendering**: In your Cloudflare dashboard, go to **Workers & Pages → Browser Rendering** and follow the prompts to enable it (available on Free plan).
 
 ```bash
 export CLOUDFLARE_API_TOKEN="your-api-token"
@@ -939,7 +946,7 @@ Configure per-domain fetch overrides for sites with specific requirements:
 | `skip_auto_scroll` | `false` | Skip auto-scrolling for single-content pages (tweets, issues, docs) |
 | `reject_resource_patterns` | `null` | Block Playwright-navigation resources matching these URL patterns (e.g. `["**/analytics/**"]`) |
 
-Markitai ships built-in profiles for `x.com`/`twitter.com` and `github.com`. Setting your own `domain_profiles` entry for the same domain **replaces it entirely** rather than merging field-by-field — any built-in tuning is lost unless you repeat it yourself.
+Markitai ships built-in profiles for `x.com`/`twitter.com` and `github.com`. Setting your own `domain_profiles` entry for the same domain **replaces it entirely** rather than merging field-by-field; any built-in tuning is lost unless you repeat it yourself.
 
 ### Fallback Patterns
 
@@ -1049,7 +1056,7 @@ Configure logging behavior:
 
 ## Security Configuration
 
-Control PDF hidden-text handling — a prompt-injection vector for LLM pipelines (invisible text such as white-on-white, near-zero-size, zero-opacity, or off-page content that would otherwise be silently included in the extracted markdown):
+Control PDF hidden-text handling. This is a prompt-injection vector for LLM pipelines (invisible text such as white-on-white, near-zero-size, zero-opacity, or off-page content that would otherwise be silently included in the extracted markdown):
 
 ```json
 {
@@ -1117,4 +1124,3 @@ Set a specific prompt file path:
 ::: tip
 The system/user split prevents LLM from accidentally including prompt instructions in its output. System prompts define the role and rules, while user prompts contain the actual content to process.
 :::
-

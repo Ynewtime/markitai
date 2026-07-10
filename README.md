@@ -8,7 +8,7 @@
 Opinionated Markdown converter with native LLM enhancement support.
 
 - **Multi-format**: DOCX, PPTX, XLSX, PDF, TXT, MD, images (JPG/PNG/WebP), and URLs → clean Markdown
-- **LLM enhancement**: AI-powered format cleaning, frontmatter metadata, and vision analysis of embedded images — via [litellm](https://github.com/BerriAI/litellm), so any provider works (OpenAI, Anthropic, Gemini, local CLIs, ...)
+- **LLM enhancement**: AI-powered format cleaning, frontmatter metadata, and vision analysis of embedded images via [litellm](https://github.com/BerriAI/litellm), so any provider works (OpenAI, Anthropic, Gemini, local CLIs, and more)
 - **Batch processing**: concurrent conversion with progress display and `--resume` for interrupted jobs
 - **OCR**: scanned PDFs and images via RapidOCR
 - **Web fetching**: static HTTP with cache revalidation, or Playwright rendering for JS-heavy pages
@@ -17,7 +17,7 @@ Docs: <https://markitai.dev>
 
 ## Install
 
-**Recommended — guided installer.** Checks/installs Python and uv, lets you
+**Recommended: guided installer.** Checks/installs Python and uv, lets you
 pick extras, installs optional components (Playwright browser, LibreOffice,
 FFmpeg), offers China-mainland mirror acceleration, and is bilingual (EN/中文):
 
@@ -28,23 +28,30 @@ curl -fsSL https://markitai.dev/setup.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 
-**Minimal — uv / pip**, if you already have Python 3.11–3.14 and just want the package:
+**Minimal (uv / pip)**, if you already have Python 3.11-3.14 and just want the package:
 
 ```bash
-uv tool install "markitai[all]"     # isolated environment (recommended)
-pipx install "markitai[all]"        # or pipx
+uv tool install markitai     # isolated environment (recommended)
+pipx install markitai        # or pipx
 ```
 
 After a uv/pip install, do the setup steps the guided installer would have done for you:
 
 ```bash
-markitai doctor           # check what's installed / missing
-markitai doctor --fix     # install the Playwright Chromium browser if you use --playwright
+markitai doctor           # check core and optional capabilities
 markitai init             # create a config and set up an LLM provider
 ```
 
-Both installs provide the `markitai` command **and the shorter `mkai` alias** —
-they are the same command (`mkai --help` == `markitai --help`). If you already
+If you need Playwright browser rendering, add its package before asking `doctor` to install Chromium:
+
+```bash
+uv tool install "markitai[browser]" --force     # uv tool install
+# pipx install "markitai[browser]" --force      # pipx alternative
+markitai doctor --fix                           # install Chromium
+```
+
+Both installs provide the `markitai` command **and the shorter `mkai` alias**.
+They are the same command (`mkai --help` == `markitai --help`). If you already
 have a different `mkai` on your PATH, use the full `markitai` to avoid ambiguity.
 
 ### Extras

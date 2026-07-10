@@ -84,6 +84,30 @@ class TestProcessUrlDryRun:
         assert exc_info.value.code == 0
 
     @pytest.mark.asyncio
+    async def test_quiet_dry_run_suppresses_preview(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """A quiet single-URL dry run validates without informational output."""
+        cfg = MarkitaiConfig()
+        output_dir = tmp_path / "output"
+
+        with pytest.raises(SystemExit) as exc_info:
+            await process_url(
+                url="https://example.com/test?token=secret",
+                output_dir=output_dir,
+                cfg=cfg,
+                dry_run=True,
+                verbose=False,
+                quiet=True,
+            )
+
+        captured = capfd.readouterr()
+        assert exc_info.value.code == 0
+        assert captured.out == ""
+        assert captured.err == ""
+        assert not output_dir.exists()
+
+    @pytest.mark.asyncio
     async def test_dry_run_with_llm_enabled(self, tmp_path: Path) -> None:
         """Test dry run shows LLM status when enabled."""
         cfg = MarkitaiConfig()
@@ -187,6 +211,35 @@ class TestProcessUrlBatchDryRun:
             )
 
         assert exc_info.value.code == 0
+
+    @pytest.mark.asyncio
+    async def test_batch_dry_run_redacts_url_credentials(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        class MockUrlEntry:
+            url = (
+                "https://alice:password@example.com/private/report"
+                "?token=query-secret#access_token=fragment-secret"
+            )
+            output_name = None
+
+        with pytest.raises(SystemExit) as exc_info:
+            await process_url_batch(
+                url_entries=[MockUrlEntry()],
+                output_dir=tmp_path,
+                cfg=MarkitaiConfig(),
+                dry_run=True,
+                verbose=False,
+            )
+
+        captured = capfd.readouterr()
+        combined = captured.out + captured.err
+        assert exc_info.value.code == 0
+        assert "https://example.com/private/report" in combined
+        assert "alice" not in combined
+        assert "password" not in combined
+        assert "query-secret" not in combined
+        assert "fragment-secret" not in combined
 
     @pytest.mark.asyncio
     async def test_batch_dry_run_with_llm(self, tmp_path: Path) -> None:
@@ -335,6 +388,48 @@ class TestProcessUrlFetchErrors:
         assert exc_info.value.code == 1
 
     @pytest.mark.asyncio
+    async def test_single_url_error_redacts_credentials_query_and_fragment(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """Single-URL diagnostics must not expose signed URL secrets."""
+        from markitai.fetch import FetchError
+
+        url = (
+            "https://alice:password@example.com/private/report"
+            "?token=query-secret#access_token=fragment-secret"
+        )
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                side_effect=FetchError(f"Connection refused while fetching {url}"),
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await process_url(
+                url=url,
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+                quiet=False,
+            )
+
+        captured = capfd.readouterr()
+        assert exc_info.value.code == 1
+        assert "https://example.com/private/report" in captured.err
+        assert "Connection refused" in captured.err
+        assert "alice" not in captured.err
+        assert "password" not in captured.err
+        assert "token" not in captured.err
+        assert "query-secret" not in captured.err
+        assert "fragment-secret" not in captured.err
+
+    @pytest.mark.asyncio
     async def test_jina_rate_limit_error_handling(self, tmp_path: Path) -> None:
         """Test that JinaRateLimitError is handled properly."""
         from markitai.fetch import JinaRateLimitError
@@ -455,8 +550,10 @@ class TestProcessUrlWithVision:
         )
 
     @pytest.mark.asyncio
-    async def test_vision_processing_fallback_on_error(self, tmp_path: Path) -> None:
-        """Test fallback to standard processing when vision fails."""
+    async def test_vision_processing_fallback_on_error(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """Fallback diagnostics must not expose a signed source URL."""
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
 
@@ -467,9 +564,13 @@ class TestProcessUrlWithVision:
         output_file = tmp_path / "output.md"
         output_file.write_text("# Original content")
 
+        url = (
+            "https://alice:password@example.com/private/report"
+            "?token=query-secret#access_token=fragment-secret"
+        )
         mock_processor = MagicMock()
         mock_processor.enhance_url_with_vision = AsyncMock(
-            side_effect=Exception("Vision API error")
+            side_effect=Exception(f"Vision API error while fetching {url}")
         )
 
         # Mock the fallback process_with_llm
@@ -481,7 +582,7 @@ class TestProcessUrlWithVision:
             result = await process_url_with_vision(
                 content="# Original content",
                 screenshot_path=screenshot_path,
-                url="https://example.com",
+                url=url,
                 cfg=cfg,
                 output_file=output_file,
                 processor=mock_processor,
@@ -489,6 +590,13 @@ class TestProcessUrlWithVision:
 
             assert result[0] == "fallback content"
             assert result[1] == 0.002
+
+        captured = capfd.readouterr()
+        assert "https://example.com/private/report" in captured.err
+        assert "alice" not in captured.err
+        assert "password" not in captured.err
+        assert "query-secret" not in captured.err
+        assert "fragment-secret" not in captured.err
 
 
 class TestProcessUrlScreenshotOnly:
@@ -984,6 +1092,171 @@ class TestProcessUrlBatchSuccessPath:
     """Tests for successful batch URL processing."""
 
     @pytest.mark.asyncio
+    async def test_quiet_success_suppresses_progress_summary_and_output_path(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        class MockUrlEntry:
+            def __init__(self, url: str):
+                self.url = url
+                self.output_name = None
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        result = MagicMock()
+        result.content = "# Success"
+        result.cache_hit = False
+        result.strategy_used = "static"
+        result.screenshot_path = None
+        result.title = "Success"
+        result.metadata = {}
+
+        with patch(
+            "markitai.fetch.fetch_url",
+            new_callable=AsyncMock,
+            return_value=result,
+        ):
+            await process_url_batch(
+                url_entries=[MockUrlEntry("https://example.com/success")],
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+                quiet=True,
+            )
+
+        captured = capfd.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
+        assert (tmp_path / "success.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_quiet_dry_run_suppresses_preview(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        class MockUrlEntry:
+            url = "https://example.com/page"
+            output_name = None
+
+        cfg = MarkitaiConfig()
+        output_dir = tmp_path / "output"
+
+        with pytest.raises(SystemExit) as exc_info:
+            await process_url_batch(
+                url_entries=[MockUrlEntry()],
+                output_dir=output_dir,
+                cfg=cfg,
+                dry_run=True,
+                verbose=False,
+                quiet=True,
+            )
+
+        captured = capfd.readouterr()
+        assert exc_info.value.code == 0
+        assert captured.out == ""
+        assert captured.err == ""
+        assert not output_dir.exists()
+
+    @pytest.mark.asyncio
+    async def test_quiet_partial_failure_only_emits_failure_on_stderr(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """Quiet hides progress/summary/path while preserving each failure."""
+        from markitai.fetch import FetchError
+
+        class MockUrlEntry:
+            def __init__(self, url: str):
+                self.url = url
+                self.output_name = None
+
+        entries = [
+            MockUrlEntry("https://example.com/success"),
+            MockUrlEntry("https://example.com/fail"),
+        ]
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        async def mock_fetch(url: str, *args: object, **kwargs: object) -> MagicMock:
+            if url.endswith("/fail"):
+                raise FetchError("Connection refused")
+            result = MagicMock()
+            result.content = "# Success"
+            result.cache_hit = False
+            result.strategy_used = "static"
+            result.screenshot_path = None
+            result.title = "Success"
+            result.metadata = {}
+            return result
+
+        with (
+            patch("markitai.fetch.fetch_url", side_effect=mock_fetch),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await process_url_batch(
+                url_entries=entries,
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+                quiet=True,
+            )
+
+        captured = capfd.readouterr()
+        assert exc_info.value.code == 10
+        assert captured.out == ""
+        assert "https://example.com/fail" in captured.err
+        assert "Connection refused" in captured.err
+        assert "Done:" not in captured.err
+        assert "Output:" not in captured.err
+        assert (tmp_path / "success.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_failure_stderr_redacts_url_credentials_query_and_fragment(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """The new per-URL error channel must not expose signed URL secrets."""
+        from markitai.fetch import FetchError
+
+        class MockUrlEntry:
+            url = (
+                "https://alice:password@example.com/private/report"
+                "?token=query-secret#access_token=fragment-secret"
+            )
+            output_name = None
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                side_effect=FetchError("Connection refused"),
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await process_url_batch(
+                url_entries=[MockUrlEntry()],
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+                quiet=False,
+            )
+
+        captured = capfd.readouterr()
+        assert exc_info.value.code == 10
+        assert "https://example.com/private/report" in captured.err
+        assert "alice" not in captured.err
+        assert "password" not in captured.err
+        assert "token" not in captured.err
+        assert "query-secret" not in captured.err
+        assert "fragment-secret" not in captured.err
+
+    @pytest.mark.asyncio
     async def test_batch_processes_all_urls(self, tmp_path: Path) -> None:
         """Test batch processing completes for all URLs."""
 
@@ -1191,7 +1464,9 @@ class TestProcessUrlBatchSuccessPath:
         assert any("page1" in desc and "page2" in desc for desc in descriptions)
 
     @pytest.mark.asyncio
-    async def test_batch_handles_mixed_success_failure(self, tmp_path: Path) -> None:
+    async def test_batch_handles_mixed_success_failure(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
         """Test batch handles mix of successful and failed URLs."""
         from markitai.fetch import FetchError
 
@@ -1220,9 +1495,12 @@ class TestProcessUrlBatchSuccessPath:
             result.title = "Success"
             return result
 
-        with patch(
-            "markitai.fetch.fetch_url",
-            side_effect=mock_fetch,
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                side_effect=mock_fetch,
+            ),
+            pytest.raises(SystemExit) as exc_info,
         ):
             await process_url_batch(
                 url_entries=entries,
@@ -1232,10 +1510,59 @@ class TestProcessUrlBatchSuccessPath:
                 verbose=False,
             )
 
+        assert exc_info.value.code == 10
+        captured = capfd.readouterr()
+        combined_output = captured.out + captured.err
+        assert "Partial result: 1 completed, 1 failed" in combined_output
+        assert "✓" not in combined_output
         # Success file should exist
         assert (tmp_path / "success.md").exists()
         # Fail file should not exist
         assert not (tmp_path / "fail.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_batch_all_failure_summary_is_not_successful(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """An all-failed run must not lead with a green completion marker."""
+        from markitai.fetch import FetchError
+
+        class MockUrlEntry:
+            def __init__(self, url: str):
+                self.url = url
+                self.output_name = None
+
+        entries = [
+            MockUrlEntry("https://example.com/one"),
+            MockUrlEntry("https://example.com/two"),
+        ]
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                side_effect=FetchError("Connection refused"),
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await process_url_batch(
+                url_entries=entries,
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        captured = capfd.readouterr()
+        combined_output = captured.out + captured.err
+        assert exc_info.value.code == 10
+        assert "All 2 URLs failed" in combined_output
+        assert "✓" not in combined_output
+        assert "https://example.com/one" in captured.err
+        assert "https://example.com/two" in captured.err
 
     @pytest.mark.asyncio
     async def test_batch_with_custom_output_names(self, tmp_path: Path) -> None:
@@ -1729,6 +2056,44 @@ class TestProcessUrlStdoutMode:
     """Tests for URL stdout mode (output_dir=None)."""
 
     @pytest.mark.asyncio
+    async def test_quiet_stdout_mode_preserves_markdown_payload(
+        self, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """Quiet suppresses UI, not the requested URL Markdown payload."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        mock_result = MagicMock()
+        mock_result.content = "# Quiet URL\n\nPayload stays on stdout."
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Quiet URL"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+
+        with patch(
+            "markitai.fetch.fetch_url",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            await process_url(
+                url="https://example.com/quiet",
+                output_dir=None,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+                quiet=True,
+            )
+
+        captured = capfd.readouterr()
+        assert "# Quiet URL" in captured.out
+        assert "Payload stays on stdout." in captured.out
+        assert captured.err == ""
+
+    @pytest.mark.asyncio
     async def test_url_stdout_mode_prints_content(self) -> None:
         """URL with output_dir=None should print markdown to console, not write file."""
         cfg = MarkitaiConfig()
@@ -1815,6 +2180,44 @@ class TestProcessUrlStdoutMode:
 
 class TestProcessUrlFileMode:
     """Tests for URL file output mode."""
+
+    @pytest.mark.asyncio
+    async def test_quiet_file_mode_writes_file_without_informational_output(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """Quiet keeps the artifact but suppresses its success/path message."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+
+        mock_result = MagicMock()
+        mock_result.content = "# Test Page\n\nSome content here."
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Test Page"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+
+        with patch(
+            "markitai.fetch.fetch_url",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            await process_url(
+                url="https://example.com/test",
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+                quiet=True,
+            )
+
+        captured = capfd.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
+        assert (tmp_path / "test.md").exists()
 
     @pytest.mark.asyncio
     async def test_url_file_mode_shows_output_path_not_markdown(

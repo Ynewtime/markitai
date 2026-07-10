@@ -190,6 +190,35 @@ import pytest
 from markitai.config import MarkitaiConfig
 
 
+class TestQuietDryRun:
+    """Quiet single-file dry runs should be validation-only."""
+
+    @pytest.mark.asyncio
+    async def test_quiet_dry_run_suppresses_preview(
+        self,
+        tmp_path: Path,
+        fixtures_dir: Path,
+        capfd: pytest.CaptureFixture[str],
+    ) -> None:
+        from markitai.cli.processors.file import process_single_file
+
+        output_dir = tmp_path / "output"
+        with pytest.raises(SystemExit) as exc_info:
+            await process_single_file(
+                input_path=fixtures_dir / "sample.txt",
+                output_dir=output_dir,
+                cfg=MarkitaiConfig(),
+                dry_run=True,
+                quiet=True,
+            )
+
+        captured = capfd.readouterr()
+        assert exc_info.value.code == 0
+        assert captured.out == ""
+        assert captured.err == ""
+        assert not output_dir.exists()
+
+
 class TestImageOnlySkip:
     """Tests for image-only format skip behavior."""
 
@@ -197,7 +226,7 @@ class TestImageOnlySkip:
     async def test_image_file_skipped_without_llm_ocr(
         self, tmp_path: Path, fixtures_dir: Path
     ) -> None:
-        """Image file should be skipped when neither LLM nor OCR is enabled."""
+        """A single image without extraction features is an actionable failure."""
         from markitai.cli.processors.file import process_single_file
 
         input_path = fixtures_dir / "sample.bmp"
@@ -206,13 +235,15 @@ class TestImageOnlySkip:
         cfg = MarkitaiConfig()
         # Neither LLM nor OCR enabled (defaults)
 
-        # Should return normally (no error, no SystemExit)
-        await process_single_file(
-            input_path=input_path,
-            output_dir=output_dir,
-            cfg=cfg,
-            dry_run=False,
-        )
+        with pytest.raises(SystemExit) as exc_info:
+            await process_single_file(
+                input_path=input_path,
+                output_dir=output_dir,
+                cfg=cfg,
+                dry_run=False,
+            )
+
+        assert exc_info.value.code == 1
 
         # No output file should be created
         output_files = list(output_dir.glob("*.md"))
@@ -222,20 +253,22 @@ class TestImageOnlySkip:
     async def test_image_file_skipped_stdout_mode(
         self, tmp_path: Path, fixtures_dir: Path
     ) -> None:
-        """Image file should be skipped in stdout mode too."""
+        """Stdout mode must not report success when no image payload exists."""
         from markitai.cli.processors.file import process_single_file
 
         input_path = fixtures_dir / "sample.bmp"
         cfg = MarkitaiConfig()
 
-        # stdout mode: output_dir=None. Should return normally.
-        await process_single_file(
-            input_path=input_path,
-            output_dir=None,
-            cfg=cfg,
-            dry_run=False,
-            quiet=True,  # quiet to suppress output
-        )
+        with pytest.raises(SystemExit) as exc_info:
+            await process_single_file(
+                input_path=input_path,
+                output_dir=None,
+                cfg=cfg,
+                dry_run=False,
+                quiet=True,  # quiet to suppress diagnostics
+            )
+
+        assert exc_info.value.code == 1
 
 
 class TestFinalOutputFileDetermination:

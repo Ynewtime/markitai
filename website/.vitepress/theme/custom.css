@@ -84,3 +84,195 @@
 .dark .VPFeature .icon svg {
   stroke: var(--vp-c-brand-1);
 }
+
+/* Homepage: show the shortest path to a useful result. */
+.home-quickstart {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 48px;
+  margin: 96px 0 0;
+  padding: 48px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 20px;
+  background: var(--vp-c-bg-soft);
+}
+
+.home-quickstart-intro {
+  align-self: center;
+}
+
+.home-quickstart .eyebrow {
+  margin: 0 0 12px;
+  color: var(--vp-c-text-2);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.VPHome .home-quickstart h2 {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: clamp(28px, 4vw, 40px);
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+}
+
+.home-quickstart-intro > p:not(.eyebrow) {
+  margin: 20px 0 0;
+  color: var(--vp-c-text-2);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.home-quickstart-intro > a {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 24px;
+  font-weight: 600;
+}
+
+.home-quickstart-steps {
+  overflow: hidden;
+  border: 1px solid #3f3f46;
+  border-radius: 14px;
+  background: #18181b;
+  color: #fafafa;
+}
+
+.home-quickstart-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 16px;
+  padding: 22px 24px;
+}
+
+.home-quickstart-step + .home-quickstart-step {
+  border-top: 1px solid #3f3f46;
+}
+
+.home-quickstart-step .step-number {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #71717a;
+  border-radius: 50%;
+  color: #d4d4d8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.home-quickstart-step p {
+  margin: 0 0 7px;
+  color: #a1a1aa;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.home-quickstart-step code {
+  display: block;
+  padding: 0;
+  overflow-wrap: anywhere;
+  background: transparent;
+  color: #fafafa;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: normal;
+}
+
+.home-quickstart-step.output code {
+  color: #bbf7d0;
+}
+
+@media (max-width: 767px) {
+  .home-quickstart {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    margin-top: 64px;
+    padding: 28px 20px 20px;
+    border-radius: 16px;
+  }
+
+  .home-quickstart-step {
+    padding: 18px;
+  }
+}
+
+/* Keep gradient text readable in high-contrast modes and printed pages. */
+@media (forced-colors: active) {
+  :root,
+  .dark {
+    --vp-home-hero-name-color: CanvasText;
+    --vp-home-hero-name-background: none;
+  }
+
+  .VPHero .name.clip {
+    background: none;
+    color: CanvasText;
+    -webkit-text-fill-color: CanvasText;
+  }
+
+  .VPButton.brand,
+  .dark .VPButton.brand {
+    border: 1px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+
+  .home-quickstart,
+  .home-quickstart-steps {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .home-quickstart-step + .home-quickstart-step {
+    border-top-color: CanvasText;
+  }
+
+  .home-quickstart-step p,
+  .home-quickstart-step code,
+  .home-quickstart-step.output code {
+    color: CanvasText;
+  }
+}
+
+@media print {
+  :root,
+  .dark {
+    --vp-home-hero-name-color: #000;
+    --vp-home-hero-name-background: none;
+  }
+
+  .VPHero .name.clip {
+    background: none;
+    color: #000;
+    -webkit-text-fill-color: #000;
+  }
+
+  .home-quickstart {
+    break-inside: avoid;
+    margin-top: 32px;
+    border-color: #777;
+    background: #fff;
+  }
+
+  .home-quickstart-steps {
+    border-color: #777;
+    background: #fff;
+    color: #000;
+  }
+
+  .home-quickstart-step + .home-quickstart-step {
+    border-top-color: #aaa;
+  }
+
+  .home-quickstart-step p,
+  .home-quickstart-step code,
+  .home-quickstart-step.output code {
+    color: #000;
+  }
+}

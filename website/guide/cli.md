@@ -21,10 +21,10 @@ Enable LLM-powered format cleaning and optimization. By default, only `.llm.md` 
 markitai document.docx --llm
 ```
 
-Social posts (extractor-curated content marked `content_profile: social_post`, e.g. X/Twitter posts) keep their body verbatim — the LLM only generates frontmatter metadata, so post structure and wording are never altered.
+Social posts (extractor-curated content marked `content_profile: social_post`, e.g. X/Twitter posts) keep their body verbatim. The LLM only generates frontmatter metadata, so post structure and wording are never altered.
 
 ::: tip
-`--llm`, `--alt`, `--desc`, `--ocr`, and `--screenshot` all have `--no-*` counterparts (`--no-llm`, `--no-alt`, `--no-desc`, `--no-ocr`, `--no-screenshot`) to explicitly disable a feature a preset would otherwise enable — e.g. `--preset rich --no-desc`.
+`--llm`, `--alt`, `--desc`, `--ocr`, and `--screenshot` all have `--no-*` counterparts (`--no-llm`, `--no-alt`, `--no-desc`, `--no-ocr`, `--no-screenshot`) to explicitly disable a feature a preset would otherwise enable, for example `--preset rich --no-desc`.
 :::
 
 ### `-p, --preset <name>`
@@ -39,12 +39,12 @@ Use a predefined configuration preset.
 
 ```bash
 markitai document.pdf --preset rich
-markitai document.pdf --preset rich --no-desc   # Rich without desc — any preset feature can be toggled off with --no-*
+markitai document.pdf --preset rich --no-desc   # Rich without desc; any preset feature can be toggled off with --no-*
 ```
 
 ### `--alt`
 
-Generate alt text for images using AI. Requires `--llm` — without it, image analysis is skipped with a warning.
+Generate alt text for images using AI. Requires `--llm`. Without it, image analysis is skipped with a warning.
 
 ```bash
 markitai document.pdf --llm --alt
@@ -52,7 +52,7 @@ markitai document.pdf --llm --alt
 
 ### `--desc`
 
-Generate detailed descriptions for images. Requires `--llm` — without it, image analysis is skipped with a warning.
+Generate detailed descriptions for images. Requires `--llm`. Without it, image analysis is skipped with a warning.
 
 ```bash
 markitai document.pdf --llm --desc
@@ -83,7 +83,7 @@ Capture screenshots only without extracting content. Behavior depends on `--llm`
 
 | Command | Output |
 |---------|--------|
-| `--screenshot-only` | Screenshots only (no .md files) |
+| `--screenshot-only` | Screenshots only (no `.md` files) |
 | `--llm --screenshot-only` | `.llm.md` + screenshots (LLM extracts from screenshots); add `--keep-base` to also get `.md` |
 
 ```bash
@@ -99,7 +99,7 @@ Use `--llm --screenshot-only` for pages where traditional content extraction fai
 :::
 
 ::: warning
-For **file input** (PDF/PPTX), `--screenshot-only` without `--llm` does **not** skip `.md` — it still writes the normal extracted-text markdown alongside the screenshots. The "no .md files" guarantee above only applies to URL input.
+For **file input** (PDF/PPTX), `--screenshot-only` without `--llm` does **not** skip `.md`. It still writes the normal extracted-text markdown alongside the screenshots. The "no `.md` files" guarantee above only applies to URL input.
 :::
 
 ### `--ocr`
@@ -109,6 +109,8 @@ Enable OCR for scanned documents.
 ```bash
 markitai scanned.pdf --ocr
 ```
+
+For a single image input, enable `--ocr` to extract text or `--llm` to analyze the image. If neither feature is enabled, Markitai exits with status 1 instead of reporting a successful conversion with no output.
 
 ### `--pure`
 
@@ -166,7 +168,7 @@ markitai document.docx -o ./result.md
 
 ### `--resume`
 
-Resume interrupted batch processing. Completed files are skipped, `FAILED`/interrupted (`IN_PROGRESS` at crash time) files are retried, and newly-added files are picked up — reporting `Resuming batch: N completed, M remaining`. Only applies to batch (directory/`.urls`) input; ignored for a single file/URL.
+Resume interrupted batch processing. Completed files are skipped, `FAILED`/interrupted (`IN_PROGRESS` at crash time) files are retried, and newly-added files are picked up. The command reports `Resuming batch: N completed, M remaining`. This option applies only to batch (directory/`.urls`) input and is ignored for a single file/URL.
 
 ```bash
 markitai ./docs -o ./output --resume
@@ -231,7 +233,7 @@ markitai urls.urls -o ./output
 
 The `.urls` file supports three formats:
 
-Plain text — one URL per line, with an optional custom output name after whitespace:
+Plain text: one URL per line, with an optional custom output name after whitespace:
 ```
 # Comments start with #
 https://example.com/page1
@@ -250,6 +252,8 @@ JSON array of objects, with an optional `output_name`:
   {"url": "https://example2.com", "output_name": "custom"}
 ]
 ```
+
+Successful URLs are kept even when another URL in the batch fails. A partially successful `.urls` run exits with status 10, so scripts and CI can distinguish it from complete success.
 
 ### `--glob, -g <pattern>`
 
@@ -293,10 +297,10 @@ Select the URL fetch strategy. This is the primary flag for URL fetching, orthog
 | Value | Description |
 |-------|-------------|
 | `auto` (default) | Tries strategies in policy order, falling back on failure |
-| `static` | Static HTTP fetch with native webextract — fast, no JS, no external API |
-| `playwright` | Browser rendering via Playwright — for JS-heavy SPA sites (e.g. x.com) |
-| `defuddle` | Defuddle API — free, no authentication, excellent content cleaning |
-| `jina` | Jina Reader API — cloud-based alternative when browser rendering is unavailable |
+| `static` | Static HTTP fetch with native webextract; fast, no JS, no external API |
+| `playwright` | Browser rendering via Playwright for JS-heavy SPA sites (e.g. x.com) |
+| `defuddle` | Defuddle API: free, no authentication, excellent content cleaning |
+| `jina` | Jina Reader API, a cloud-based alternative when browser rendering is unavailable |
 | `cloudflare` | Cloudflare Browser Rendering `/content` API. Also enables Workers AI `toMarkdown` for file conversion (see `-b/--backend`) |
 
 ```bash
@@ -324,8 +328,8 @@ Select the file conversion backend, orthogonal to `-s/--strategy` (which only af
 | Value | Description |
 |-------|-------------|
 | `native` (default) | Built-in converters (DOCX, PDF, images, etc.) |
-| `kreuzberg` | Force the kreuzberg converter for all file formats — requires `uv pip install markitai[kreuzberg]` |
-| `cloudflare` | Cloudflare Workers AI `toMarkdown` — requires CF credentials |
+| `kreuzberg` | Force the kreuzberg converter for all file formats; requires `uv pip install markitai[kreuzberg]` |
+| `cloudflare` | Cloudflare Workers AI `toMarkdown`; requires CF credentials |
 
 ```bash
 markitai document.pdf -b kreuzberg
@@ -333,10 +337,10 @@ markitai document.pdf -b cloudflare
 markitai https://example.com -s playwright -b kreuzberg   # -s and -b combine freely
 ```
 
-`-b kreuzberg` and `-s cloudflare` are mutually exclusive — both override file conversion.
+`-b kreuzberg` and `-s cloudflare` are mutually exclusive; both override file conversion.
 
 ::: tip
-Cloudflare Browser Rendering is available on the Free plan. Workers AI `toMarkdown` is free for PDF/Office/CSV/XML; image conversion uses Neurons quota. For formats with a local converter, native/kreuzberg generally produce higher-quality output — `-b cloudflare` warns when a better local converter is available.
+Cloudflare Browser Rendering is available on the Free plan. Workers AI `toMarkdown` is free for PDF/Office/CSV/XML; image conversion uses Neurons quota. For formats with a local converter, native/kreuzberg generally produce higher-quality output. `-b cloudflare` warns when a better local converter is available.
 :::
 
 ### Deprecated per-backend flags
@@ -393,13 +397,18 @@ markitai -I
 
 ### `markitai config list`
 
-Display all configuration settings.
+Display the effective configuration. Secret values are redacted recursively by default, including values nested inside provider, fetch, or authentication settings.
 
 ```bash
 markitai config list                        # Default format: json
 markitai config list --format table         # Compact table view
 markitai config list -f yaml                # Requires: uv add pyyaml
+markitai config list --show-secrets         # Explicitly reveal original values
 ```
+
+::: warning
+Use `--show-secrets` only for local inspection. Do not paste its complete output into an issue, chat, CI log, or other shared channel.
+:::
 
 ### `markitai config get <key>`
 
@@ -485,23 +494,28 @@ SPA domains are learned automatically when static fetch detects JavaScript requi
 
 ### `markitai doctor`
 
-Check system health, dependencies, and authentication status. This is the primary diagnostic command. Exits non-zero when a required dependency is missing, so it can be used in scripts and CI.
+Check core health, optional capabilities, and authentication status. Missing unused optional tools are warnings, not a failed installation. The command exits non-zero when the core RapidOCR dependency fails; a configured Playwright workflow cannot launch; an active API model references a missing environment variable; an actively configured local LLM provider cannot load or authenticate; or a requested automatic repair does not succeed. Scripts and CI can therefore rely on the result.
 
 ```bash
 markitai doctor
-markitai doctor --fix     # Currently only auto-installs the Playwright browser; other missing components just print an install hint
+markitai doctor --fix     # Safely install and re-check Chromium when the Playwright package is already present
 markitai doctor --json    # JSON output
-markitai doctor --suggest-extras   # Comma-separated pip extras for `uv tool install "markitai[...]"` — always includes browser/extra-fetch/kreuzberg/svg/heif, plus claude-agent/copilot if those CLIs are detected
+markitai doctor --suggest-extras   # Comma-separated pip extras for `uv tool install "markitai[...]"`; includes browser/extra-fetch/kreuzberg/svg/heif, plus detected provider extras
 ```
 
-This command verifies:
-- **Playwright**: For dynamic URL fetching (SPA rendering)
-- **LibreOffice**: For Office document conversion (doc, docx, xls, xlsx, ppt, pptx)
-- **FFmpeg**: For audio/video file processing (mp3, mp4, wav, etc.)
-- **RapidOCR**: For scanned document OCR (built-in, no external dependencies)
+This command separates the core requirement from optional capabilities:
+
+- **Core requirement: RapidOCR** for scanned document OCR
+- **Optional until configured: Playwright** for dynamic URL fetching (SPA rendering). It becomes a blocking check when `fetch.strategy` is `playwright` or `screenshot.enabled` is true
+- **Optional: LibreOffice** for legacy Office conversion and slide rendering
+- **Optional: FFmpeg** for audio/video tooling
 - **LLM API**: Configuration and model status
 - **Vision Model**: For image analysis (auto-detected from litellm)
 - **Local Provider Auth**: Authentication status for Claude Agent, GitHub Copilot, and ChatGPT (if configured)
+
+Every normal doctor run performs an isolated, timeout-bounded Chromium launch smoke test when the browser files exist, so a stale marker or missing Linux system library cannot produce a green result. `doctor --fix` never adds a Python package to the current project. If Playwright is installed but Chromium is missing or unusable, it installs Chromium with Markitai's own interpreter and repeats the runtime check. A failed launch stays non-zero; on Linux the message includes the `playwright install-deps chromium` recovery command. If the Playwright package itself is missing, the command exits safely and tells you to replace the isolated tool install with `uv tool install 'markitai[browser]' --force` or the pipx equivalent.
+
+`--json` and `--fix` are mutually exclusive: JSON is a read-only health snapshot, while repair is an interactive human-facing operation.
 
 Example output:
 ```
@@ -510,26 +524,26 @@ Example output:
   • Config: ~/.markitai/config.json
 
 Required Dependencies
-  ✓ Playwright: Chromium installed
-  ✓ LibreOffice: installed
   ✓ RapidOCR: v1.4.0, lang: en (English)
 
-Optional Dependencies
+Optional Capabilities
+  ⚠ Playwright: Playwright not installed
+  ⚠ LibreOffice: Not installed
   ✓ FFmpeg: v6.0
 
 LLM
-  ✓ LLM API: 1 model(s) configured
+  ✓ LLM API: 1 active model(s) configured
   ✓ Vision Model: 1 detected: copilot/claude-haiku-4.5
   ✓ GitHub Copilot SDK: SDK + CLI installed
 
 Authentication
   ✓ Copilot Auth: Authenticated
 
-✓ All dependencies configured correctly
+⚠ Core check passed (3 required/configured checks passed, 2 non-blocking warnings)
 ```
 
 ::: tip
-`API provider(s): ...` in the `LLM API` line only appears when a genuine remote-API model (not `claude-agent/`/`copilot/`) is configured.
+`API provider(s): ...` in the `LLM API` line only appears when a genuine remote-API model (not `claude-agent/`, `copilot/`, or `chatgpt/`) is active. Explicit `env:` references on active API models are resolved by doctor; a missing variable is a configured failure rather than a green model count.
 :::
 
 ::: tip
@@ -541,7 +555,7 @@ When using local providers (`claude-agent/` or `copilot/`), the doctor command a
 ### `markitai auth`
 
 Authentication helpers for local providers (Copilot, Claude, ChatGPT). Gemini
-access is via a direct API key or OpenRouter (see [Configuration](/guide/configuration#model-naming)) — not through this command. Run with no subcommand for a one-line login-status overview of all three providers.
+access is via a direct API key or OpenRouter (see [Configuration](/guide/configuration#model-naming)), not through this command. Run with no subcommand for a one-line login-status overview of all three providers.
 
 ```bash
 markitai auth                   # Overview of all providers
@@ -606,7 +620,7 @@ You can also use `markitai doctor` to check authentication status for all config
 
 ### `--quiet, -q`
 
-Suppress non-essential output.
+Suppress progress and informational messages. Errors still go to stderr. If a single conversion normally writes Markdown to stdout, `--quiet` preserves that payload; it does not turn the result into an empty stream. The one-time remote privacy disclosure is also intentionally kept on stderr when a remote service may receive a public URL.
 
 ```bash
 markitai document.docx --quiet

@@ -44,6 +44,12 @@ def url_to_filename(url: str) -> str:
         Safe filename with .md extension
     """
     parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    safe_netloc = f"{hostname}:{port}" if port is not None else hostname
 
     # Try to get filename from path
     path = parsed.path.rstrip("/")
@@ -56,12 +62,12 @@ def url_to_filename(url: str) -> str:
             # Include domain prefix when URL has query params (e.g. watch?v=abc)
             # to avoid overly generic filenames like "watch.md"
             if parsed.query:
-                domain = parsed.netloc.replace(".", "_").replace(":", "_")
+                domain = safe_netloc.replace(".", "_").replace(":", "_")
                 return f"{sanitize_filename(domain)}_{filename}.md"
             return f"{filename}.md"
 
     # Fallback: use domain name
-    domain = parsed.netloc.replace(".", "_").replace(":", "_")
+    domain = safe_netloc.replace(".", "_").replace(":", "_")
     path_part = parsed.path.strip("/").replace("/", "_")[:50]  # limit length
     if path_part:
         return f"{sanitize_filename(domain)}_{sanitize_filename(path_part)}.md"

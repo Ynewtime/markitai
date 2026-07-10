@@ -130,6 +130,7 @@ from markitai.utils.cli_helpers import (
     is_url,
 )
 from markitai.utils.executor import shutdown_converter_executor
+from markitai.utils.url_redaction import redact_url
 
 console = get_console()
 # Separate stderr console for status/progress (doesn't mix with stdout output)
@@ -478,7 +479,9 @@ def app(
     if not is_url_input:
         input_path = Path(input_path_str)
         if not input_path.exists():
-            console.print(f"[red]Error: Path '{input_path}' does not exist.[/red]")
+            stderr_console.print(
+                f"[red]Error: Path '{input_path}' does not exist.[/red]"
+            )
             ctx.exit(1)
 
         # Auto-detect .urls file
@@ -488,11 +491,13 @@ def app(
             try:
                 url_entries = parse_url_list(input_path)
             except UrlListParseError as e:
-                console.print(f"[red]Error parsing URL list: {e}[/red]")
+                stderr_console.print(f"[red]Error parsing URL list: {e}[/red]")
                 ctx.exit(1)
 
             if not url_entries:
-                console.print(f"[yellow]No valid URLs found in {input_path}[/yellow]")
+                stderr_console.print(
+                    f"[yellow]No valid URLs found in {input_path}[/yellow]"
+                )
                 ctx.exit(0)
 
             is_url_list_mode = True
@@ -618,7 +623,7 @@ def app(
             builtin = ", ".join(sorted(BUILTIN_PRESETS))
             custom = ", ".join(sorted(cfg.presets)) if cfg.presets else ""
             available = builtin + (f", {custom}" if custom else "")
-            console.print(
+            stderr_console.print(
                 f"[red]Error: Unknown preset '{preset}'. Available: {available}[/red]"
             )
             raise SystemExit(1)
@@ -716,12 +721,12 @@ def app(
         name for name, used in deprecated_strategy_flags.items() if used
     ]
     if len(deprecated_selected) > 1:
-        console.print(
+        stderr_console.print(
             "[red]Error: --defuddle, --playwright, --static, --jina, and --cloudflare are mutually exclusive.[/red]"
         )
         ctx.exit(1)
     if fetch_strategy_name is not None and deprecated_selected:
-        console.print(
+        stderr_console.print(
             f"[red]Error: -s/--strategy and --{deprecated_selected[0]} are "
             "mutually exclusive.[/red]"
         )
@@ -761,7 +766,7 @@ def app(
     # picks the URL fetch strategy) plus the deprecated --kreuzberg alias
     if use_kreuzberg:
         if file_backend is not None:
-            console.print(
+            stderr_console.print(
                 "[red]Error: -b/--backend and --kreuzberg are mutually exclusive.[/red]"
             )
             ctx.exit(1)
@@ -772,7 +777,7 @@ def app(
 
     if file_backend == "kreuzberg":
         if fetch_strategy_name == "cloudflare":
-            console.print(
+            stderr_console.print(
                 "[red]Error: '-b kreuzberg' and '-s cloudflare' are mutually "
                 "exclusive (both override file conversion).[/red]"
             )
@@ -787,7 +792,7 @@ def app(
     if is_url_list_mode:
         logger.debug(f"Processing URL list: {len(url_entries)} URLs")
     elif is_url_input:
-        logger.debug(f"Processing URL: {input_path_str}")
+        logger.debug(f"Processing URL: {redact_url(input_path_str)}")
     else:
         assert input_path is not None  # Already validated above
         logger.debug(f"Processing: {input_path.resolve()}")
@@ -815,7 +820,7 @@ def app(
         if is_url_list_mode:
             effective_output = get_effective_output()
             if effective_output is None:
-                console.print(
+                stderr_console.print(
                     "[red]Error: URL list mode requires -o/--output directory.[/red]"
                 )
                 ctx.exit(1)
@@ -825,7 +830,7 @@ def app(
         elif input_path is not None and input_path.is_dir():
             effective_output = get_effective_output()
             if effective_output is None:
-                console.print(
+                stderr_console.print(
                     "[red]Error: Batch mode requires -o/--output directory.[/red]"
                 )
                 ctx.exit(1)
@@ -851,13 +856,13 @@ def app(
 
             # Auth output goes directly to stderr console — must be
             # visible in all modes (stdout, verbose, quiet).
-            stderr_console = get_stderr_console()
+            auth_console = get_stderr_console()
 
             for status in auth_results:
                 if status.authenticated:
                     continue
 
-                stderr_console.print(
+                auth_console.print(
                     f"[yellow]  ! {status.provider}:"
                     f" {escape(status.error or '')}[/yellow]"
                 )
@@ -883,13 +888,13 @@ def app(
                                     f" {escape(login_result.error or '')}"
                                 )
                     except (EOFError, KeyboardInterrupt):
-                        stderr_console.print("")
+                        auth_console.print("")
                 else:
                     hint = get_auth_resolution_hint(status.provider)
-                    stderr_console.print(f"    [dim]{hint}[/dim]")
+                    auth_console.print(f"    [dim]{hint}[/dim]")
 
             for summary in auth_summaries:
-                stderr_console.print(summary)
+                auth_console.print(summary)
 
         # ── Phase 3: Dispatch to appropriate processor ──
 
@@ -909,6 +914,7 @@ def app(
                 concurrency=cfg.batch.url_concurrency,
                 fetch_strategy=fetch_strategy,
                 explicit_fetch_strategy=explicit_fetch_strategy,
+                quiet=quiet,
             )
             return
 
@@ -952,6 +958,7 @@ def app(
                 fetch_strategy=fetch_strategy,
                 explicit_fetch_strategy=explicit_fetch_strategy,
                 glob_patterns=glob_patterns,
+                quiet=quiet,
             )
             return
 
@@ -994,7 +1001,7 @@ def app(
     try:
         asyncio.run(run_workflow_with_cleanup())
     except EnvVarNotFoundError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        stderr_console.print(f"[red]Error: {e}[/red]")
         ctx.exit(1)
     except ValueError as e:
         error_msg = str(e)
@@ -1002,7 +1009,7 @@ def app(
             "missing environment variable" in error_msg
             or "No available models" in error_msg
         ):
-            console.print(f"[red]Error: {error_msg}[/red]")
+            stderr_console.print(f"[red]Error: {error_msg}[/red]")
             ctx.exit(1)
         raise
 

@@ -1,5 +1,28 @@
 # 快速开始
 
+## 60 秒完成第一次转换
+
+先安装核心包。浏览器渲染、额外格式支持和 LLM 提供商等可选能力，可以等到实际需要时再配置：
+
+```bash
+uv tool install markitai
+```
+
+创建一个简单的文本文件并转换：
+
+```bash
+echo "第一次 Markitai 转换" > hello.txt
+markitai hello.txt --pure
+```
+
+加上 `--pure` 后，Markitai 会把不含 frontmatter 的 Markdown 正文打印到 stdout：
+
+```text
+第一次 Markitai 转换
+```
+
+如需保存到文件，请加上 `-o output/`。下文包含引导式安装、文档与 URL 转换、LLM 增强及可选格式支持。
+
 ## 环境要求
 
 ### 必需依赖
@@ -13,21 +36,20 @@
 
 | 依赖 | 用途 | 安装方式 |
 |------|------|----------|
-| **Playwright** | `-s playwright`（SPA 渲染） | `uv pip install markitai[browser]`，浏览器需运行 `uv run playwright install chromium` |
+| **Playwright** | `-s playwright`（SPA 渲染） | 推荐的 uv tool 方案：`uv tool install 'markitai[browser]' --force`，然后运行 `markitai doctor --fix`。pipx 和虚拟环境请见[手动安装](#手动安装)。 |
 | **FFmpeg** | `doctor`/`init` 会检测（属于 `markitdown[all]` 的间接依赖）；markitai 目前尚未注册任何音视频转换格式 | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
 | **Jina API 密钥** | `-s jina`（URL 转换） | 设置 `JINA_API_KEY` 环境变量 |
-| **LLM API 密钥** | `--llm`（AI 增强） | 设置 `OPENAI_API_KEY` 或对应提供商的密钥。订阅制提供商（`chatgpt/`、`claude-agent/`、`copilot/`）使用 CLI/OAuth 认证 |
+| **LLM 认证** | `--llm`（AI 增强） | 使用提供商 API 密钥，或通过 OAuth/CLI 登录订阅制提供商（`chatgpt/`、`claude-agent/`、`copilot/`） |
 | **Cloudflare** | `-s cloudflare`（云端渲染与转换） | 设置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 环境变量 |
 | **CairoSVG** | 高质量 SVG 渲染 | `uv pip install markitai[svg]` |
 | **pillow-heif** | HEIC/HEIF/AVIF 图片输入 | `uv pip install markitai[heif]` |
 | **kreuzberg** | `.xml`、`.tsv`、`.rtf`、`.rst`、`.org`、`.tex`、`.odt`、`.ods` 转换 | `uv pip install markitai[kreuzberg]`（已包含在 `[all]` 中） |
 
 ::: tip 浏览器自动化
-对于 SPA 网站（Twitter、React 应用等），会自动使用 Playwright。首次使用前需安装浏览器：
+对于 SPA 网站（Twitter、React 应用等），会自动使用 Playwright。以下命令适用于推荐的 uv tool 安装方式。若你通过 pipx 或虚拟环境安装 Markitai，请使用[手动安装](#手动安装)中对应的 browser extra 命令。
 ```bash
-uv run playwright install chromium
-# Linux 还需安装系统依赖：
-uv run playwright install-deps chromium
+uv tool install 'markitai[browser]' --force
+markitai doctor --fix
 ```
 然后使用 `-s playwright` 强制启用浏览器渲染。
 :::
@@ -50,7 +72,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 
 ::: warning 安全提示
 - 以 root/管理员 身份运行时，脚本会先检测并询问是否继续
-- 每个组件安装前都会询问确认——uv 和 Playwright 浏览器默认 Yes；LibreOffice、FFmpeg 和 Claude/Copilot CLI 默认 No
+- 每个组件安装前都会询问确认。uv 和 Playwright 浏览器默认 Yes；LibreOffice、FFmpeg 和 Claude/Copilot CLI 默认 No
 :::
 
 脚本会：
@@ -64,40 +86,67 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.14.0"
+export MARKITAI_VERSION="0.19.0"
 export UV_VERSION="0.9.27"
 curl -fsSL https://markitai.dev/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.14.0"
+$env:MARKITAI_VERSION = "0.19.0"
 $env:UV_VERSION = "0.9.27"
 powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 :::
 
+此示例固定的是当前文档对应的版本。省略 `MARKITAI_VERSION` 即可安装最新稳定版；如果你正在阅读旧版文档，请先查看当前版本，再复制其中的固定版本号。
+
 ### 手动安装
 
-如果你已有 Python 3.11–3.14，只想要最小安装：
+如果你已有 Python 3.11-3.14，只想要最小安装：
 
 ```bash
 # 使用 uv（推荐，隔离环境）
-uv tool install "markitai[all]"
+uv tool install markitai
 
 # 或使用 uv pip（安装到虚拟环境）
-uv pip install "markitai[all]"
+uv pip install markitai
 ```
+
+后续只需添加工作流所需的额外依赖，例如 Playwright 使用 `markitai[browser]`，HEIC/HEIF/AVIF 图片输入使用 `markitai[heif]`。完整列表见[可选依赖](#可选依赖)。
 
 与一键安装不同，手动安装**不会**帮你配置可选组件和配置文件，剩余步骤需自行完成：
 
 ```bash
-markitai doctor           # 查看已装 / 缺失的组件
-markitai doctor --fix     # 安装 Playwright Chromium 浏览器（用于 --playwright）
+markitai doctor           # 查看核心与可选能力
 markitai init             # 创建配置并设置 LLM 提供方
 ```
 
+如需 Playwright 浏览器渲染，请根据 Markitai 的安装方式选择对应的 browser extra 命令：
+
+::: code-group
+```bash [uv tool]
+uv tool install 'markitai[browser]' --force
+```
+
+```bash [pipx]
+pipx install 'markitai[browser]' --force
+```
+
+```bash [已激活的虚拟环境]
+uv pip install 'markitai[browser]'
+```
+:::
+
+然后让 `doctor` 在该环境中安装 Chromium：
+
+```bash
+markitai doctor --fix
+```
+
+只有 Playwright 包已经存在时，`doctor --fix` 才会安装 Chromium。仅安装核心包时，该命令会安全退出，并提示需要添加哪个 extra。
+
 ::: tip markitai 和 mkai 都可用
-每次安装都会同时提供 `markitai` 命令**和更短的 `mkai` 别名**——两者是完全相同的命令（`mkai --help` 等同 `markitai --help`）。若你的 `PATH` 上已存在别的 `mkai`，请使用完整的 `markitai` 以避免歧义。
+每次安装都会同时提供 `markitai` 命令**和更短的 `mkai` 别名**。两者是完全相同的命令（`mkai --help` 等同 `markitai --help`）。若你的 `PATH` 上已存在别的 `mkai`，请使用完整的 `markitai` 以避免歧义。
 :::
 
 ## 快速上手
@@ -142,6 +191,8 @@ markitai document.docx -o output/
 markitai https://example.com/article -o output/
 ```
 
+对于公网 URL，标准站点会先尝试本地方法，随后 `auto` 可以无需确认地尝试 Defuddle、Jina 或 Cloudflare。每个进程第一次准备使用远程服务时，会在 stderr 输出说明。私网、本机、内网及自带认证信息的 URL 始终只在本机处理。如需让所有 URL 都留在本机，请设置 `MARKITAI_NO_REMOTE_FETCH=1`。
+
 ### LLM 增强
 
 启用 AI 驱动的格式清洗和优化：
@@ -150,7 +201,7 @@ markitai https://example.com/article -o output/
 markitai document.docx --llm
 ```
 
-这需要设置 API 密钥（参见[配置说明](/zh/guide/configuration)）。
+请配置提供商 API 密钥或订阅制提供商。ChatGPT 使用 OAuth，Claude Agent 和 GitHub Copilot 使用各自的 CLI 认证。详见[配置说明](/zh/guide/configuration#支持的提供商)。
 
 ### 使用预设
 
@@ -183,13 +234,13 @@ markitai ./docs -o ./output --resume
 
 ### 系统检查
 
-验证所有依赖项，自动修复缺失组件：
+检查核心要求，并查看当前可用的可选能力。缺少可选工具不会让核心健康检查失败：
 
 ```bash
 # 检查系统状态
 markitai doctor
 
-# 自动修复缺失组件
+# Playwright 包存在时，安装并重新检查 Chromium
 markitai doctor --fix
 ```
 
@@ -260,9 +311,10 @@ sudo dnf install libreoffice
 ```
 
 **安装 Playwright 浏览器：**
+请先在[手动安装](#手动安装)中选择与当前环境匹配的 browser extra 命令，然后运行：
+
 ```bash
-uv run playwright install chromium
-uv run playwright install-deps chromium  # 安装系统依赖
+markitai doctor --fix
 ```
 
 ### macOS
