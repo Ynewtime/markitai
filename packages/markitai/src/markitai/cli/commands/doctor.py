@@ -381,8 +381,11 @@ def _check_playwright(*, check_runtime: bool = True) -> dict[str, Any]:
         }
 
 
-def _check_libreoffice() -> dict[str, Any]:
+def _check_libreoffice(macos_fallback: bool = True) -> dict[str, Any]:
     """Check LibreOffice installation status.
+
+    Args:
+        macos_fallback: Whether configured MS Office fallback may be used.
 
     Returns:
         Result dict with name, description, status, message, install_hint.
@@ -403,6 +406,28 @@ def _check_libreoffice() -> dict[str, Any]:
             "install_hint": "",
         }
     else:
+        # macOS: installed MS Office apps take over legacy conversion and
+        # PPTX PDF export via AppleScript (see utils/office_mac.py)
+        if sys.platform == "darwin" and macos_fallback:
+            from markitai.utils import office_mac
+
+            office_apps = [
+                app.removeprefix("Microsoft ")
+                for app in ("Microsoft Word", "Microsoft PowerPoint", "Microsoft Excel")
+                if office_mac.find_ms_office_app(app)
+            ]
+            if office_apps:
+                return {
+                    "name": "LibreOffice",
+                    "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
+                    "status": "warning",
+                    "message": (
+                        "not found; MS Office fallback available "
+                        f"({', '.join(office_apps)} via AppleScript, "
+                        "needs one-time Automation permission)"
+                    ),
+                    "install_hint": get_install_hint("libreoffice"),
+                }
         return {
             "name": "LibreOffice",
             "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
@@ -572,7 +597,9 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     # Run independent system tool checks in parallel
     with ThreadPoolExecutor(max_workers=4) as executor:
         future_playwright = executor.submit(_check_playwright)
-        future_libreoffice = executor.submit(_check_libreoffice)
+        future_libreoffice = executor.submit(
+            _check_libreoffice, cfg.office.macos_fallback
+        )
         future_ffmpeg = executor.submit(_check_ffmpeg)
         future_rapidocr = executor.submit(_check_rapidocr, cfg)
 

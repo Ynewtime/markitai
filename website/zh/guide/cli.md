@@ -507,7 +507,7 @@ markitai doctor --suggest-extras   # 输出适合 `uv tool install "markitai[...
 
 - **核心要求：RapidOCR**，用于扫描文档 OCR
 - **未配置时可选：Playwright**，用于动态 URL 抓取（SPA 渲染）；当 `fetch.strategy` 为 `playwright` 或 `screenshot.enabled` 为 true 时，它会成为阻断检查
-- **可选：LibreOffice**，用于旧版 Office 转换和幻灯片渲染
+- **可选：LibreOffice**，用于旧版 Office 转换和幻灯片渲染（macOS 上未安装时会回退到已装的 MS Office）
 - **可选：FFmpeg**，用于音视频工具链
 - **LLM API**：配置和模型状态
 - **Vision Model**：用于图像分析（从 litellm 自动检测）

@@ -507,7 +507,7 @@ This command separates the core requirement from optional capabilities:
 
 - **Core requirement: RapidOCR** for scanned document OCR
 - **Optional until configured: Playwright** for dynamic URL fetching (SPA rendering). It becomes a blocking check when `fetch.strategy` is `playwright` or `screenshot.enabled` is true
-- **Optional: LibreOffice** for legacy Office conversion and slide rendering
+- **Optional: LibreOffice** for legacy Office conversion and slide rendering (on macOS, installed MS Office apps are used as a fallback)
 - **Optional: FFmpeg** for audio/video tooling
 - **LLM API**: Configuration and model status
 - **Vision Model**: For image analysis (auto-detected from litellm)

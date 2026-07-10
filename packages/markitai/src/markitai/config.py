@@ -352,6 +352,20 @@ class OCRConfig(BaseModel):
     )
 
 
+class OfficeConfig(BaseModel):
+    """Office document conversion configuration."""
+
+    macos_fallback: bool = Field(
+        default=True,
+        description=(
+            "On macOS without LibreOffice, drive installed MS Office apps "
+            "via AppleScript for legacy conversion and PPTX PDF export. "
+            "Disable in headless sessions where macOS permission dialogs "
+            "cannot be answered."
+        ),
+    )
+
+
 class ScreenshotConfig(BaseModel):
     """Screenshot rendering configuration.
 
@@ -774,6 +788,7 @@ class MarkitaiConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     image: ImageConfig = Field(default_factory=ImageConfig)
     ocr: OCRConfig = Field(default_factory=OCRConfig)
+    office: OfficeConfig = Field(default_factory=OfficeConfig)
     screenshot: ScreenshotConfig = Field(default_factory=ScreenshotConfig)
     prompts: PromptsConfig = Field(default_factory=PromptsConfig)
     batch: BatchConfig = Field(default_factory=BatchConfig)

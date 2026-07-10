@@ -321,8 +321,8 @@ markitai doctor --fix
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ✅ 完全支持 | 需要 LibreOffice |
-| PPTX 幻灯片渲染 | ✅ 完全支持 | 需要 LibreOffice |
+| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ✅ 完全支持 | 优先 LibreOffice；未安装时回退到已装的 MS Office |
+| PPTX 幻灯片渲染 | ✅ 完全支持 | 优先 LibreOffice；未安装时回退到已装的 MS PowerPoint |
 | EMF/WMF 图片 | ❌ 不支持 | Windows 专有格式 |
 | 浏览器自动化 | ✅ 完全支持 | - |
 
@@ -330,6 +330,12 @@ markitai doctor --fix
 ```bash
 brew install --cask libreoffice
 ```
+
+**MS Office 备选（未安装 LibreOffice 时）：** 如果已安装 Word/PowerPoint/Excel，
+markitai 会改用 AppleScript 驱动它们完成转换。首次转换会触发一次性的 macOS
+授权弹窗（"终端想要控制 Microsoft Word"），每个应用批准一次即可。该备选方案
+会短暂打开应用窗口，且需要图形界面会话；无头环境可在配置中通过
+`"office": { "macos_fallback": false }` 关闭。
 
 ## 下一步
 

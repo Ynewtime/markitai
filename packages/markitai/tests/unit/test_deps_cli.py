@@ -242,6 +242,10 @@ class TestLibreOfficeDependency:
                 "markitai.utils.office.find_libreoffice",
                 return_value=None,
             ),
+            patch(
+                "markitai.utils.office_mac.find_ms_office_app",
+                return_value=False,
+            ),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = False

@@ -325,8 +325,8 @@ markitai doctor --fix
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.xls`, `.ppt`) | ✅ Full | Requires LibreOffice |
-| PPTX Slide Rendering | ✅ Full | Requires LibreOffice |
+| Legacy Office (`.doc`, `.xls`, `.ppt`) | ✅ Full | LibreOffice preferred; falls back to installed MS Office |
+| PPTX Slide Rendering | ✅ Full | LibreOffice preferred; falls back to installed MS PowerPoint |
 | EMF/WMF Images | ❌ No | Windows-only format |
 | Browser Automation | ✅ Full | - |
 
@@ -334,6 +334,13 @@ markitai doctor --fix
 ```bash
 brew install --cask libreoffice
 ```
+
+**MS Office fallback (no LibreOffice):** if Word/PowerPoint/Excel are
+installed, markitai drives them via AppleScript instead. The first
+conversion triggers a one-time macOS consent dialog ("Terminal wants to
+control Microsoft Word"). Approve it once per app. This fallback opens
+the app window briefly and needs a GUI session; disable it with
+`"office": { "macos_fallback": false }` in config for headless use.
 
 ## Next Steps
 
