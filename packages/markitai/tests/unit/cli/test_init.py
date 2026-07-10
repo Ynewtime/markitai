@@ -13,6 +13,17 @@ from markitai.cli.main import app
 _DETECTED = [("Claude CLI", True), ("ChatGPT", True)]
 
 
+def test_limited_preview_models_are_not_selected_by_onboarding() -> None:
+    """Automatic setup must use models available to ordinary accounts."""
+    from markitai.cli.commands.init import _build_config
+
+    config = _build_config([("ChatGPT", True), ("OpenAI API", True)])
+    models = [entry["litellm_params"]["model"] for entry in config["llm"]["model_list"]]
+
+    assert models == ["chatgpt/gpt-5.4-mini", "openai/gpt-5.4-nano"]
+    assert all("gpt-5.6" not in model for model in models)
+
+
 class TestInitAtomicWrites:
     """Tests that init command uses atomic writes for file operations."""
 

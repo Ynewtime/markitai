@@ -287,6 +287,7 @@ CLAUDE_CODE_ALIASES: tuple[str, ...] = ("haiku", "sonnet", "opus", "inherit")
 # Format: {"model_prefix": (input_price, output_price)}
 COPILOT_MODEL_PRICING: dict[str, tuple[float, float]] = {
     # OpenAI models
+    "gpt-5.6-luna": (1.0, 6.0),
     "gpt-5.4": (2.5, 10.0),
     "gpt-5.4-mini": (0.15, 0.60),
     "gpt-5.4-codex": (7.5, 22.5),

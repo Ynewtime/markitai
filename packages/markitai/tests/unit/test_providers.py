@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import httpx
 import pytest
 
@@ -377,6 +379,19 @@ class TestEstimateModelCost:
         assert result.is_estimated is True
         assert result.source == "none"
         assert result.cost_usd == 0.0
+
+    def test_luna_pricing_is_available_without_selecting_it_by_default(self) -> None:
+        """The preview model may be priced when explicitly configured."""
+        from markitai.providers import estimate_model_cost
+
+        with (
+            patch("litellm.get_model_info", side_effect=ValueError("not indexed")),
+            patch("markitai.providers._find_litellm_model_fuzzy", return_value=None),
+        ):
+            result = estimate_model_cost("gpt-5.6-luna", 1_000_000, 1_000_000)
+
+        assert result.source == "fallback"
+        assert result.cost_usd == 7.0
 
     def test_calculate_cost_unknown_model(self) -> None:
         """Test cost calculation for unknown model returns 0 with 'none' source."""
