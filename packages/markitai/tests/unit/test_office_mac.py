@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -14,6 +15,13 @@ from markitai.config import MarkitaiConfig, OfficeConfig
 from markitai.converter.legacy import LegacyOfficeConverter
 from markitai.converter.office import PptxConverter
 from markitai.utils import office_mac
+
+# office_mac locks via fcntl and stages files with POSIX permission bits;
+# neither exists on Windows, where the fallback is unreachable anyway.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="office_mac uses Unix-only fcntl and POSIX permissions",
+)
 
 
 @pytest.fixture(autouse=True)
