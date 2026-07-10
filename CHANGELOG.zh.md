@@ -5,12 +5,31 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
+## [Unreleased]
+
+### Changed
+
+- **公网 URL 无需确认，同时收紧远程抓取的隐私边界**：公网 URL 可以直接使用远程后备服务，首次使用前会在 stderr 输出一次进程级说明，覆盖 defuddle.md、Jina、Cloudflare、FxTwitter 和 Twitter oEmbed；私网、本机及带凭据的 URL 始终留在本机，`MARKITAI_NO_REMOTE_FETCH=1` 也会阻止显式指定的远程 `-s` 策略
+- **`doctor` 改为检查能力是否真的可用**：普通检查只有 RapidOCR 和已配置的工作流会影响退出状态；Playwright 会实际启动 Chromium，活跃模型引用的环境变量会被检查，用户请求的 `--fix` 也只会安装并复查 Chromium，不会修改当前项目的依赖
+- **`markitai init` 默认保留已有配置**：直接按 Enter 会选择 Keep，Update 和 Overwrite 仍需明确选择
+- **入门流程从核心包开始**：README 和网站统一使用 `uv tool install markitai`，分别说明 `uv tool`、`pipx` 和虚拟环境的浏览器附加依赖，加入 60 秒无 LLM 示例，并完善中文导航、屏幕阅读器和高对比度支持
+
+### Fixed
+
+- **`--quiet` 模式在单项和批量任务中保持一致**：请求输出到 stdout 的 Markdown 会保留，错误仍写入 stderr，`--quiet --dry-run` 不显示预览，URL 批量任务部分失败时保留成功结果并退出 10，进度和成功路径等提示则保持隐藏
+- **未启用任何提取方式的图片转换不再误报成功**：单张图片未指定 `--ocr` 或 `--llm` 时会退出 1 并给出处理建议，不再以成功状态结束却没有任何输出
+
+### Security
+
+- **配置输出默认隐藏秘密**：`markitai config list` 会递归遮蔽秘密和自定义请求头，`api_base` 只保留协议、主机名和端口，只有显式传入 `--show-secrets` 才会显示原始值
+- **URL 凭据不会出现在诊断信息和文件名中**：终端错误、进度标签、`--dry-run` 预览、控制台与文件日志，以及自动生成的输出文件名都会移除用户信息、查询参数和片段
+
 ## [0.19.0] - 2026-07-10
 
 ### Changed
 
-- **远程提取默认不再弹出确认**（`fetch.remote_consent` 默认值 `ask` → `always`）：公网 URL 可直接回退到远程提取服务；服务按顺序逐个尝试，第一次远程使用会直接在 stderr 揭露，即使 `--quiet` 也不会隐藏。私网、本机 URL，以及 userinfo 或 query/fragment 敏感参数中携带凭据的 URL 始终留在本机。`MARKITAI_NO_REMOTE_FETCH=1` 是硬性禁用开关，也会阻止显式远程 `-s`；`fetch.remote_consent=ask`/`never` 控制自动与配置文件选择的远程使用
-- **进程级远程揭露与确认文案**：一次性说明及可选的 `ask` 提示会完整列出该进程缓存决策可能授权的所有服务（defuddle.md、Jina、Cloudflare、FxTwitter、Twitter oEmbed），说明各服务按顺序逐个尝试，并在提示时暂停实时进度，避免界面错位
+- **远程提取默认不再弹出确认**（`fetch.remote_consent` 默认值 `ask` → `always`）：公网 URL 会在本地策略失败后直接按链回退到远程提取服务（defuddle.md、Jina、Cloudflare——逐个尝试，成功即停），不再打断询问；首次使用会通过 INFO 日志披露。私有/本地 URL 无论此配置如何都不会使用远程服务，netloc 携带凭据的 URL（`user:pass@host`）现在也视同私有。可通过 `fetch.remote_consent=ask`/`never` 或 `MARKITAI_NO_REMOTE_FETCH=1` 恢复询问或禁用远程服务
+- **确认提示文案重写**（针对 `remote_consent=ask`）：提示现在会说明弹出原因（本地提取未成功）、逐个尝试的机制（一次一个、成功即停），并动态列出实际在链中的服务——Cloudflare（使用你自己的账户凭据）仅在已配置时出现。交互式确认现在也会先暂停实时进度显示，不再撕裂界面
 
 ### Fixed
 
