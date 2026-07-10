@@ -8,17 +8,17 @@
 uv tool install markitai
 ```
 
-创建一个简单的文本文件并转换：
+转换一个真实网页——就是你正在读的这一篇：
 
 ```bash
-echo "第一次 Markitai 转换" > hello.txt
-markitai hello.txt --pure
+mkai https://markitai.dev/zh/guide/getting-started --pure
 ```
 
-加上 `--pure` 后，Markitai 会把不含 frontmatter 的 Markdown 正文打印到 stdout：
+`mkai` 是与 `markitai` 一同安装的短别名。加上 `--pure` 后，不含 frontmatter 的 Markdown 正文会直接打印到 stdout：
 
 ```text
-第一次 Markitai 转换
+# 快速开始
+...
 ```
 
 如需保存到文件，请加上 `-o output/`。下文包含引导式安装、文档与 URL 转换、LLM 增强及可选格式支持。

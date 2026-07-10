@@ -42,15 +42,35 @@ features:
   <div class="home-quickstart-steps" role="list" aria-label="快速开始命令">
     <div class="home-quickstart-step" role="listitem">
       <span class="step-number" aria-hidden="true">1</span>
-      <div><p>安装核心包</p><code>uv tool install markitai</code></div>
+      <div>
+        <p class="non-windows-only">使用适用于 macOS 或 Linux 的便携安装脚本</p>
+        <code class="platform-install-command non-windows-only">curl -fsSL https://markitai.dev/setup.sh | sh</code>
+        <p class="windows-only">使用适用于 Windows 的便携安装脚本</p>
+        <code class="platform-install-command windows-only">powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"</code>
+        <details class="home-install-options">
+          <summary>其他平台和手动安装方式</summary>
+          <div class="home-install-option">
+            <span>macOS 或 Linux</span>
+            <code>curl -fsSL https://markitai.dev/setup.sh | sh</code>
+          </div>
+          <div class="home-install-option">
+            <span>Windows</span>
+            <code>powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"</code>
+          </div>
+          <div class="home-install-option">
+            <span>已经安装 uv</span>
+            <code>uv tool install markitai</code>
+          </div>
+        </details>
+      </div>
     </div>
     <div class="home-quickstart-step" role="listitem">
       <span class="step-number" aria-hidden="true">2</span>
-      <div><p>创建一个简单的输入文件</p><code>echo "第一次 Markitai 转换" &gt; hello.txt</code></div>
+      <div><p>转换一个真实网页</p><code>markitai https://markitai.dev/zh/guide/getting-started --pure</code></div>
     </div>
     <div class="home-quickstart-step output" role="listitem">
       <span class="step-number" aria-hidden="true">3</span>
-      <div><p>从 stdout 得到干净的 Markdown</p><code>markitai hello.txt --pure</code></div>
+      <div><p>从 stdout 得到干净的 Markdown</p><code># 快速开始 ...</code></div>
     </div>
   </div>
 </section>
