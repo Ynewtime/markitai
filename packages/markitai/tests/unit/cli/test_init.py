@@ -241,11 +241,11 @@ class TestWizardExistingConfig:
             encoding="utf-8",
         )
 
-    def test_update_is_default_choice_and_merges(self, tmp_path: Path) -> None:
+    def test_update_choice_merges(self, tmp_path: Path) -> None:
         target = tmp_path / "config.json"
         self._write_existing(target)
 
-        result = self._invoke_wizard(target, "\n")  # accept default (Update)
+        result = self._invoke_wizard(target, "1\n")
 
         assert result.exit_code == 0
         assert "Update" in result.output
@@ -255,6 +255,17 @@ class TestWizardExistingConfig:
         assert data["output"] == {"dir": "./custom"}
         models = [e["litellm_params"]["model"] for e in data["llm"]["model_list"]]
         assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-mini"]
+
+    def test_keep_is_default_choice(self, tmp_path: Path) -> None:
+        target = tmp_path / "config.json"
+        self._write_existing(target)
+        original = target.read_text(encoding="utf-8")
+
+        result = self._invoke_wizard(target, "\n")  # accept default (Keep)
+
+        assert result.exit_code == 0
+        assert "Kept existing config" in result.output
+        assert target.read_text(encoding="utf-8") == original
 
     def test_keep_leaves_file_unchanged(self, tmp_path: Path) -> None:
         target = tmp_path / "config.json"
