@@ -1,6 +1,9 @@
 # Archive
 .archive
 
+# Local-only working docs (kept out of the public repo)
+docs/
+
 # Git worktrees
 .worktrees/
 
