@@ -5,12 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Remote fetching keeps public URLs frictionless while tightening privacy**: public URLs may use remote fallbacks without confirmation, with one process-wide stderr notice covering defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed; private, local, and credential-bearing URLs remain local, while `MARKITAI_NO_REMOTE_FETCH=1` blocks every remote path, including an explicit remote `-s`
+- **`doctor` reports capability health instead of package presence**: normal checks fail only for RapidOCR and configured workflows; Playwright is verified by launching Chromium, active model environment references are checked, and a requested `--fix` only installs and rechecks Chromium without changing project dependencies
+- **`markitai init` now preserves existing configuration by default**: pressing Enter selects Keep, while Update and Overwrite remain explicit choices
+- **Onboarding starts with the core package**: the README and website use `uv tool install markitai`, explain browser extras for uv tool, pipx, and virtual environments, include a 60-second no-LLM example, and improve Chinese navigation plus screen-reader and high-contrast support
+
+### Fixed
+
+- **Quiet mode is consistent across single and batch work**: Markdown requested on stdout is preserved, errors stay on stderr, quiet dry runs omit previews, partial URL batches keep successful outputs and exit 10, and informational progress or success paths remain hidden
+- **Image conversions with no enabled extraction path no longer report success**: a standalone image without `--ocr` or `--llm` now exits 1 with an actionable message instead of producing no output with a successful status
+
+### Security
+
+- **Configuration output hides secrets by default**: `markitai config list` recursively redacts secrets and custom header values, reduces `api_base` values to their origin, and only reveals original values when `--show-secrets` is explicitly passed
+- **URL credentials stay out of diagnostics and filenames**: userinfo, query strings, and fragments are removed from terminal errors, progress labels, dry-run previews, console and file logs, and generated output names
+
 ## [0.19.0] - 2026-07-10
 
 ### Changed
 
-- **Remote extraction no longer prompts by default** (`fetch.remote_consent` default `ask` → `always`): public URLs can fall back to remote extraction services without an interactive confirmation; services are tried one at a time and the first remote use is disclosed directly on stderr, even under `--quiet`. Private/local URLs and URLs carrying credentials in userinfo or sensitive query/fragment parameters stay local. `MARKITAI_NO_REMOTE_FETCH=1` is a hard opt-out that also blocks an explicit remote `-s`; `fetch.remote_consent=ask`/`never` controls automatic and config-selected remote use
-- **Process-wide remote disclosure and consent wording**: the one-time notice and optional `ask` prompt list every service the cached process decision may authorize (defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed), explain that services are tried one at a time, and pause the live progress display instead of tearing it
+- **Remote extraction no longer prompts by default** (`fetch.remote_consent` default `ask` → `always`): public URLs fall back to remote extraction services (defuddle.md, Jina, Cloudflare — tried one at a time, only after local strategies fail) without an interactive confirmation; the first use is disclosed via an INFO log. Private/local URLs never use remote services regardless of this setting, and URLs carrying credentials in the netloc (`user:pass@host`) are now treated as private too. Set `fetch.remote_consent=ask`/`never` or `MARKITAI_NO_REMOTE_FETCH=1` to restore prompting or disable remote services
+- **Consent prompt rewording** (for `remote_consent=ask`): the prompt now explains why it appears (local extraction didn't succeed), that services are tried one at a time (first success wins), and dynamically lists only the services actually in the chain — Cloudflare (which runs against your own account credentials) only appears when configured. Interactive prompts also pause the live progress display instead of tearing it
 
 ### Added
 
