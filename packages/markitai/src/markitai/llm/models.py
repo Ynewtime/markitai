@@ -29,20 +29,30 @@ def model_list_fingerprint(model_list: list[Any]) -> str:
     Persistent LLM cache entries are scoped by the model pool that could
     have produced them (the router picks the concrete model only after the
     cache lookup, so a single real model name is not available as a key).
-    Only the real model identifiers (``litellm_params.model``) participate:
-    order and duplicates are normalized away, and credentials/endpoints
-    (api_key, api_base) are deliberately excluded so key rotation does not
-    invalidate the cache.
+    Only the real model identifiers (``litellm_params.model``) of routable
+    entries participate: ``weight == 0`` means "disabled (excluded from
+    routing)" and cannot produce results, so disabled entries neither keep
+    their stale results servable nor invalidate the pool when added or
+    removed. Order and duplicates are normalized away, and credentials/
+    endpoints (api_key, api_base) are deliberately excluded so key rotation
+    does not invalidate the cache.
 
     Args:
         model_list: Model configurations (``ModelConfig``-shaped objects
-            exposing a ``litellm_params.model`` attribute).
+            exposing ``litellm_params.model`` and optionally
+            ``litellm_params.weight``, missing weight = enabled).
 
     Returns:
         ``"pool:<16-hex-char sha256 prefix>"``, or ``"pool:none"`` for an
         empty pool.
     """
-    models = sorted({item.litellm_params.model for item in model_list})
+    models = sorted(
+        {
+            item.litellm_params.model
+            for item in model_list
+            if getattr(item.litellm_params, "weight", 1) > 0
+        }
+    )
     if not models:
         return "pool:none"
     digest = hashlib.sha256("\n".join(models).encode("utf-8")).hexdigest()[:16]

@@ -25,13 +25,20 @@ from markitai.llm.models import (
 )
 
 
-def _model_config(model: str, api_key: str = "test-key", api_base: str | None = None):
+def _model_config(
+    model: str,
+    api_key: str = "test-key",
+    api_base: str | None = None,
+    weight: int = 1,
+):
     """Build a real ModelConfig for fingerprint tests."""
     from markitai.config import LiteLLMParams, ModelConfig
 
     return ModelConfig(
         model_name="default",
-        litellm_params=LiteLLMParams(model=model, api_key=api_key, api_base=api_base),
+        litellm_params=LiteLLMParams(
+            model=model, api_key=api_key, api_base=api_base, weight=weight
+        ),
     )
 
 
@@ -93,6 +100,35 @@ class TestModelListFingerprint:
         assert prefix == "pool"
         assert len(digest) == 16
         assert all(ch in "0123456789abcdef" for ch in digest)
+
+    def test_disabled_models_are_excluded(self):
+        """weight=0 entries cannot produce results, so they leave the pool.
+
+        Disabling a model must change the fingerprint (its old results stop
+        being servable); the disabled entry itself must not participate.
+        """
+        enabled_only = [_model_config("openai/gpt-4o-mini")]
+        with_disabled = [
+            _model_config("openai/gpt-4o-mini"),
+            _model_config("deepseek/deepseek-chat", weight=0),
+        ]
+        both_enabled = [
+            _model_config("openai/gpt-4o-mini"),
+            _model_config("deepseek/deepseek-chat"),
+        ]
+
+        assert model_list_fingerprint(with_disabled) == model_list_fingerprint(
+            enabled_only
+        )
+        assert model_list_fingerprint(with_disabled) != model_list_fingerprint(
+            both_enabled
+        )
+
+    def test_all_disabled_pool_is_none(self):
+        assert (
+            model_list_fingerprint([_model_config("openai/gpt-4o-mini", weight=0)])
+            == "pool:none"
+        )
 
 
 class TestGetModelInfoCached:
