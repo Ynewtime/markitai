@@ -231,6 +231,7 @@ def _make_vision_analyzer():
         engine=engine,
         prompt_manager=prompt_manager,
         config=config,
+        vision_cache_model_scope="pool:test",
         get_vision_router=lambda: MagicMock(),
         get_cached_image=get_cached_image,
         get_next_call_index=lambda _context: 0,

@@ -120,6 +120,7 @@ class MockVisionProcessor(VisionAnalyzer):
             engine=engine,
             prompt_manager=self._prompt_manager,
             config=self.config,
+            vision_cache_model_scope="pool:test-vision",
             get_vision_router=lambda: self.vision_router,
             get_cached_image=lambda image_path: self._get_cached_image_impl(image_path),
             get_next_call_index=lambda _context: 0,
@@ -397,7 +398,8 @@ class TestAnalyzeImage:
             mock_processor._persistent_cache.set.assert_called_once()
             call_args = mock_processor._persistent_cache.set.call_args
             assert call_args[0][0] == "image_analysis"  # cache_key
-            assert call_args[1]["model"] == "vision"
+            # Vision results are scoped by the injected vision pool fingerprint
+            assert call_args[1]["model"] == "pool:test-vision"
 
     @pytest.mark.asyncio
     async def test_document_context_included_in_user_message(
@@ -699,7 +701,7 @@ class TestAnalyzeBatch:
         ).hexdigest()
         first_cache_key = _vision_cache_content_key(first_fingerprint)
 
-        def mock_get(key: str, fingerprint: str, context: str = ""):
+        def mock_get(key: str, fingerprint: str, context: str = "", model: str = ""):
             if fingerprint == first_cache_key:
                 return {
                     "caption": "Cached",

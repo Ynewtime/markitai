@@ -2,6 +2,7 @@
 
 Tests cover:
 - Model info caching and retrieval
+- Model pool fingerprinting for cache scoping
 - Response cost extraction
 - Context display name formatting
 - MarkitaiLLMLogger callback handling
@@ -20,7 +21,78 @@ from markitai.llm.models import (
     get_model_info_cached,
     get_model_max_output_tokens,
     get_response_cost,
+    model_list_fingerprint,
 )
+
+
+def _model_config(model: str, api_key: str = "test-key", api_base: str | None = None):
+    """Build a real ModelConfig for fingerprint tests."""
+    from markitai.config import LiteLLMParams, ModelConfig
+
+    return ModelConfig(
+        model_name="default",
+        litellm_params=LiteLLMParams(model=model, api_key=api_key, api_base=api_base),
+    )
+
+
+class TestModelListFingerprint:
+    """Tests for model_list_fingerprint (persistent-cache model scoping)."""
+
+    def test_order_insensitive_and_deduplicated(self):
+        """Same model set in any order (with duplicates) yields one fingerprint."""
+        a = [
+            _model_config("openai/gpt-4o-mini"),
+            _model_config("deepseek/deepseek-chat"),
+        ]
+        b = [
+            _model_config("deepseek/deepseek-chat"),
+            _model_config("openai/gpt-4o-mini"),
+            _model_config("openai/gpt-4o-mini"),
+        ]
+
+        assert model_list_fingerprint(a) == model_list_fingerprint(b)
+
+    def test_different_model_sets_differ(self):
+        """Different model pools must produce different fingerprints."""
+        a = [_model_config("openai/gpt-4o-mini")]
+        b = [_model_config("deepseek/deepseek-chat")]
+        c = [
+            _model_config("openai/gpt-4o-mini"),
+            _model_config("deepseek/deepseek-chat"),
+        ]
+
+        fingerprints = {
+            model_list_fingerprint(a),
+            model_list_fingerprint(b),
+            model_list_fingerprint(c),
+        }
+        assert len(fingerprints) == 3
+
+    def test_credentials_do_not_affect_fingerprint(self):
+        """api_key/api_base rotation must not invalidate the cache scope."""
+        a = [_model_config("openai/gpt-4o-mini", api_key="key-one")]
+        b = [
+            _model_config(
+                "openai/gpt-4o-mini",
+                api_key="key-two",
+                api_base="https://proxy.example.com/v1",
+            )
+        ]
+
+        assert model_list_fingerprint(a) == model_list_fingerprint(b)
+
+    def test_empty_list(self):
+        """Empty pool maps to the sentinel scope."""
+        assert model_list_fingerprint([]) == "pool:none"
+
+    def test_fingerprint_format(self):
+        """Non-empty pools map to 'pool:' plus a 16-hex-char digest."""
+        fingerprint = model_list_fingerprint([_model_config("openai/gpt-4o-mini")])
+
+        prefix, _, digest = fingerprint.partition(":")
+        assert prefix == "pool"
+        assert len(digest) == 16
+        assert all(ch in "0123456789abcdef" for ch in digest)
 
 
 class TestGetModelInfoCached:

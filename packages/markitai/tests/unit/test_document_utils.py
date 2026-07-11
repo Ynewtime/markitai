@@ -33,6 +33,8 @@ def _make_enhancer() -> DocumentEnhancer:
         engine=MagicMock(),
         prompt_manager=MagicMock(),
         config=MagicMock(),
+        cache_model_scope="pool:test",
+        vision_cache_model_scope="pool:test-vision",
         get_vision_router=lambda: MagicMock(),
         get_cached_image=lambda _image_path: (b"", ""),
         get_next_call_index=lambda _context: 0,
@@ -1407,8 +1409,8 @@ Slide body
             "tags": ["cached"],
         }
 
-        # Pre-populate in-memory cache
-        cache_key = "document_process:test.md"
+        # Pre-populate in-memory cache (content-addressed key: no source)
+        cache_key = "document_process"
         processor._cache.set(cache_key, content, cached_value)
 
         # Also need to mock the instructor to fail so it uses cache

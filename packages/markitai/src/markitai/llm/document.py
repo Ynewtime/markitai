@@ -200,6 +200,12 @@ class DocumentEnhancer:
       cache layers, cache hit/miss counters, and usage accounting
     - ``prompt_manager``: prompt template lookup
     - ``config``: LLM configuration (concurrency, retry counts)
+    - ``cache_model_scope``: persistent-cache ``model`` scope for calls
+      routed through the main router (the processor's model-pool
+      fingerprint, see ``model_list_fingerprint``)
+    - ``vision_cache_model_scope``: persistent-cache ``model`` scope for
+      calls routed through the vision router (fingerprint of the vision
+      model pool, which may be a subset of the main pool)
     - ``get_vision_router``: provider callback for the vision router.
       A callback (not the router instance) because the processor's
       vision router is a lazy property and tests inject doubles after
@@ -217,6 +223,8 @@ class DocumentEnhancer:
         engine: LLMEngine,
         prompt_manager: PromptManager,
         config: LLMConfig,
+        cache_model_scope: str,
+        vision_cache_model_scope: str,
         get_vision_router: Callable[[], Any],
         get_cached_image: Callable[[Path], tuple[bytes, str]],
         get_next_call_index: Callable[[str], int],
@@ -224,6 +232,8 @@ class DocumentEnhancer:
         self._engine = engine
         self._prompt_manager = prompt_manager
         self._config = config
+        self._cache_model_scope = cache_model_scope
+        self._vision_cache_model_scope = vision_cache_model_scope
         self._get_vision_router = get_vision_router
         self._get_cached_image = get_cached_image
         self._get_next_call_index = get_next_call_index
@@ -282,7 +292,9 @@ class DocumentEnhancer:
             return cached
 
         # 2. Check persistent cache (cross-session)
-        cached = self._engine.persistent_cache.get(cache_key, content, context=context)
+        cached = self._engine.persistent_cache.get(
+            cache_key, content, context=context, model=self._cache_model_scope
+        )
         if cached is not None:
             self._engine.record_cache_hit()
             # Also populate in-memory cache for faster subsequent access
@@ -342,7 +354,9 @@ class DocumentEnhancer:
 
         # Cache the result in both layers
         self._engine.memory_cache.set(cache_key, content, result)
-        self._engine.persistent_cache.set(cache_key, content, result, model="default")
+        self._engine.persistent_cache.set(
+            cache_key, content, result, model=self._cache_model_scope
+        )
 
         return result
 
@@ -697,7 +711,7 @@ class DocumentEnhancer:
             context=context,
             cache_key=cache_key,
             cache_content=cache_content,
-            cache_model="vision",
+            cache_model=self._vision_cache_model_scope,
             validate=_guard_degeneration,
             cache_if=lambda _result: not degenerated,
             serialize=_document_result_to_cache_value,
@@ -856,7 +870,7 @@ class DocumentEnhancer:
             context=context,
             cache_key=cache_key,
             cache_content=cache_content,
-            cache_model="vision",
+            cache_model=self._vision_cache_model_scope,
             validate=_postprocess,
             cache_if=lambda _result: not degenerated,
             serialize=_document_result_to_cache_value,
@@ -916,7 +930,10 @@ class DocumentEnhancer:
         cache_key = f"enhance_vision:{context}:{len(page_images)}"
         cache_content = _compute_document_fingerprint(extracted_text, page_name_list)
         cached = self._engine.persistent_cache.get(
-            cache_key, cache_content, context=context
+            cache_key,
+            cache_content,
+            context=context,
+            model=self._vision_cache_model_scope,
         )
         if cached is not None:
             # Fix malformed image refs and echoed prompt tails even for cached
@@ -1009,7 +1026,10 @@ class DocumentEnhancer:
         # Skip persisting degenerate responses so a clean retry isn't poisoned
         if not degenerated:
             self._engine.persistent_cache.set(
-                cache_key, cache_content, result, model="vision"
+                cache_key,
+                cache_content,
+                result,
+                model=self._vision_cache_model_scope,
             )
 
         return result
@@ -1312,7 +1332,7 @@ Generate the following fields:
             context=source,
             cache_key=cache_key,
             cache_content=cache_content,
-            cache_model="vision",
+            cache_model=self._vision_cache_model_scope,
             validate=_postprocess,
             serialize=_document_result_to_cache_value,
             deserialize=_document_result_from_cache_value,
@@ -1692,7 +1712,10 @@ Generate the following fields:
         Returns:
             DocumentProcessResult with cleaned markdown and frontmatter
         """
-        cache_key = f"document_process:{source}"
+        # Content-addressed: cache_content is the full markdown, so the
+        # source file name is deliberately NOT part of the key (a renamed
+        # file with identical content must still hit).
+        cache_key = "document_process"
 
         # Truncate content if needed (with warning)
         original_len = len(markdown)
@@ -1745,7 +1768,7 @@ Generate the following fields:
             context=source,
             cache_key=cache_key,
             cache_content=markdown,
-            cache_model="default",
+            cache_model=self._cache_model_scope,
             validate=_validate,
             serialize=_document_result_to_cache_value,
             deserialize=_document_result_from_cache_value,

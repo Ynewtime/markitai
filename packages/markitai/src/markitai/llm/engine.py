@@ -207,7 +207,11 @@ class LLMCall:
         context: Usage-tracking context (file name / URL)
         cache_key: Cache key; None disables both cache read and write
         cache_content: Content fingerprint parameter for the caches
-        cache_model: ``model`` parameter passed to the persistent cache
+        cache_model: ``model`` parameter passed to the persistent cache's
+            get and set (part of the SQLite cache key). Call sites pass the
+            model-pool fingerprint of the router the call goes through (see
+            ``model_list_fingerprint``); the literal ``"default"`` is only
+            the no-configuration fallback
         validate: Optional hook returning the (possibly corrected) result;
             if it raises, nothing is cached and the error propagates
         cache_if: Optional hook called after ``validate`` and before the
@@ -245,7 +249,8 @@ class LLMEngine:
     - ``memory_cache``: ContentCache interface
       (``get(key, content)`` / ``set(key, content, value)``)
     - ``persistent_cache``: PersistentCache interface
-      (``get(key, content, context=...)`` / ``set(key, content, value, model=...)``)
+      (``get(key, content, context=..., model=...)`` /
+      ``set(key, content, value, model=...)``)
     - ``track_usage``: ``(model, input_tokens, output_tokens, cost, context)``
     - ``calculate_max_tokens``: ``(messages, model_id, router=...) -> int | None``
       (bound from ``LLMProcessor._calculate_dynamic_max_tokens``)
@@ -359,7 +364,10 @@ class LLMEngine:
                 return deserialize(cached), None
 
             cached = self.persistent_cache.get(
-                call.cache_key, call.cache_content, context=call.context
+                call.cache_key,
+                call.cache_content,
+                context=call.context,
+                model=call.cache_model,
             )
             if cached is not None:
                 # Also populate in-memory cache for faster subsequent access

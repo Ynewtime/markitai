@@ -60,6 +60,7 @@ from markitai.llm.engine import LLMEngine
 from markitai.llm.models import (
     MarkitaiLLMLogger,
     get_model_info_cached,
+    model_list_fingerprint,
 )
 from markitai.llm.types import (
     ImageAnalysis,
@@ -647,6 +648,8 @@ class LLMProcessor:
         self._engine: LLMEngine | None = None
         self._documents: DocumentEnhancer | None = None
         self._vision: VisionAnalyzer | None = None
+        self._cache_model_scope: str | None = None
+        self._vision_cache_model_scope: str | None = None
         self._prompt_manager = PromptManager(prompts_config)
 
         # Usage tracking (global across all contexts)
@@ -800,6 +803,37 @@ class LLMProcessor:
         return self._engine
 
     @property
+    def cache_model_scope(self) -> str:
+        """Persistent-cache scope for calls routed through the main router.
+
+        Fingerprint of the configured model pool (lazily computed, see
+        ``model_list_fingerprint``): results cached under one model
+        configuration are not served for a different one.
+        """
+        if self._cache_model_scope is None:
+            self._cache_model_scope = model_list_fingerprint(self.config.model_list)
+        return self._cache_model_scope
+
+    @property
+    def vision_cache_model_scope(self) -> str:
+        """Persistent-cache scope for calls routed through the vision router.
+
+        Mirrors the ``vision_router`` pool selection: fingerprint of the
+        enabled vision-capable subset of ``model_list``, falling back to the
+        main pool scope when the vision router falls back to the main router.
+        """
+        if self._vision_cache_model_scope is None:
+            vision_models = [
+                m for m in self.config.model_list if self._is_vision_model(m)
+            ]
+            enabled_vision = [m for m in vision_models if m.litellm_params.weight > 0]
+            if enabled_vision:
+                self._vision_cache_model_scope = model_list_fingerprint(enabled_vision)
+            else:
+                self._vision_cache_model_scope = self.cache_model_scope
+        return self._vision_cache_model_scope
+
+    @property
     def documents(self) -> DocumentEnhancer:
         """Document enhancement service (lazy, engine-backed).
 
@@ -814,6 +848,8 @@ class LLMProcessor:
                 engine=self.engine,
                 prompt_manager=self._prompt_manager,
                 config=self.config,
+                cache_model_scope=self.cache_model_scope,
+                vision_cache_model_scope=self.vision_cache_model_scope,
                 get_vision_router=lambda: self.vision_router,
                 get_cached_image=lambda image_path: self._get_cached_image(image_path),
                 get_next_call_index=lambda context: self._get_next_call_index(context),
@@ -831,6 +867,7 @@ class LLMProcessor:
                 engine=self.engine,
                 prompt_manager=self._prompt_manager,
                 config=self.config,
+                vision_cache_model_scope=self.vision_cache_model_scope,
                 get_vision_router=lambda: self.vision_router,
                 get_cached_image=lambda image_path: self._get_cached_image(image_path),
                 get_next_call_index=lambda context: self._get_next_call_index(context),
