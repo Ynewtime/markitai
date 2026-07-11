@@ -11,26 +11,11 @@ This package contains processing functions for different input types:
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 
-
-def split_output_file_target(output: Path) -> tuple[Path, str | None]:
-    """Interpret an ``-o`` value that looks like a markdown file path.
-
-    For single-file/single-URL conversions, ``-o out.md`` means "write the
-    output exactly to this file" rather than "create a directory named
-    out.md". Returns ``(output_dir, output_name)``:
-
-    - ``-o out.md`` (not an existing directory) -> ``(Path("."), "out.md")``
-    - ``-o results/out.md`` -> ``(Path("results"), "out.md")``
-    - ``-o out.md`` where a *directory* named ``out.md`` exists -> treated
-      as a directory: ``(Path("out.md"), None)``
-    - any other value -> ``(output, None)``
-    """
-    if output.suffix == ".md" and not output.is_dir():
-        return output.parent, output.name
-    return output, None
+# Moved to the runs layer (Phase 4B); re-exported here so existing
+# importers keep working.
+from markitai.runs.output import split_output_file_target
 
 
 async def run_parallel_llm_tasks(

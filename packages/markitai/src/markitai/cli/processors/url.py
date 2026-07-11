@@ -16,7 +16,6 @@ from loguru import logger
 
 from markitai.cli import ui
 from markitai.cli.console import get_console, get_stderr_console
-from markitai.cli.processors import split_output_file_target
 from markitai.config import MarkitaiConfig
 from markitai.constants import SCREENSHOTS_REL_PATH
 from markitai.json_order import order_report
@@ -25,6 +24,14 @@ from markitai.runs import (
     build_single_report,
     build_url_batch_report,
     resolve_exit_code,
+)
+from markitai.runs.output import (
+    ASSET_REF_PATTERN,
+    finalize_explicit_output,
+    normalize_temp_asset_refs,
+    prepare_output_target,
+    resolve_asset_references,
+    warn_ephemeral_links,
 )
 from markitai.security import atomic_write_json, atomic_write_text
 from markitai.utils.cli_helpers import (
@@ -148,16 +155,16 @@ async def process_url(
 
     # `-o out.md` (single-URL mode) targets an output FILE, not a directory:
     # the parent becomes the output dir and the name overrides derived naming
-    explicit_file_name: str | None = None
-    if output_dir is not None:
-        output_dir, explicit_file_name = split_output_file_target(output_dir)
+    target = prepare_output_target(output_dir)
+    output_dir = target.output_dir
+    explicit_file_name = target.explicit_file_name
 
     # Generate output filename from URL (explicit -o file target wins)
     filename = explicit_file_name or url_to_filename(url)
 
     # Determine stdout mode (no output_dir means print to stdout). Diagnostics
     # always go to stderr; stdout is payload/success output only.
-    stdout_mode = output_dir is None
+    stdout_mode = target.stdout_mode
     diag_console = get_stderr_console()
 
     if dry_run:
@@ -184,21 +191,12 @@ async def process_url(
             ui.step("Tip: Use 'markitai cache stats -v' to view cached entries")
         raise SystemExit(0)
 
-    # For stdout mode, use a temporary directory for intermediate files
-    temp_dir: Path | None = None
-    if stdout_mode:
-        import tempfile
-
-        temp_dir = Path(tempfile.mkdtemp(prefix="markitai_"))
-        effective_output_dir = temp_dir
-    else:
-        effective_output_dir = output_dir
-
-    # Create output directory
-    from markitai.security import check_symlink_safety
-
-    check_symlink_safety(effective_output_dir, allow_symlinks=cfg.output.allow_symlinks)
-    ensure_dir(effective_output_dir)
+    # For stdout mode, use a temporary directory for intermediate files;
+    # otherwise create the output directory (with symlink safety check)
+    effective_output_dir = target.create_workdir(
+        ensure=True, allow_symlinks=cfg.output.allow_symlinks
+    )
+    temp_dir = target.temp_dir
 
     from datetime import datetime
 
@@ -624,11 +622,6 @@ async def process_url(
         stages.stop()
 
         if stdout_mode:
-            from markitai.cli.processors.file import (
-                normalize_temp_asset_refs,
-                resolve_asset_references,
-            )
-
             assert temp_dir is not None  # guaranteed when stdout_mode is True
             stdout_content = final_content
             if cfg.llm.enabled:
@@ -670,14 +663,8 @@ async def process_url(
                     store = AssetStore(Path(cfg.image.stdout_persist_dir))
                 except Exception as e:
                     logger.warning(f"Asset store init failed: {e}")
-            else:
-                from markitai.cli.processors.file import (
-                    _ASSET_REF_PATTERN,
-                    _warn_ephemeral_links,
-                )
-
-                if _ASSET_REF_PATTERN.search(stdout_content):
-                    _warn_ephemeral_links()
+            elif ASSET_REF_PATTERN.search(stdout_content):
+                warn_ephemeral_links()
 
             stdout_content = resolve_asset_references(
                 stdout_content,
@@ -757,17 +744,13 @@ async def process_url(
             if not final_output_file.exists() and cfg.llm.enabled:
                 final_output_file = output_file
 
-            # Explicit -o file target: the final content must land exactly at
-            # the requested path. In LLM mode (without --keep-base) the final
-            # file is `<name>.llm.md`; move it onto the requested `.md` path.
-            if (
-                explicit_file_name is not None
-                and final_output_file != output_file
-                and final_output_file.exists()
-                and not output_file.exists()
-            ):
-                final_output_file.replace(output_file)
-                final_output_file = output_file
+            # Explicit -o file target: the final content must land exactly
+            # at the requested path (moves `.llm.md` onto the requested
+            # `.md` path in LLM mode without --keep-base)
+            final_output_file = finalize_explicit_output(
+                final_output_file,
+                output_file if explicit_file_name is not None else None,
+            )
 
             if verbose and not quiet:
                 console.print(f"  {ui.MARK_SUCCESS} Fetched via {used_strategy}")
@@ -796,10 +779,7 @@ async def process_url(
         # Safety net: ensure the stage list is stopped on every exit path
         stages.stop()
         # Cleanup temp directory for stdout mode
-        if stdout_mode and temp_dir is not None:
-            import shutil
-
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        target.cleanup()
 
 
 async def process_url_batch(

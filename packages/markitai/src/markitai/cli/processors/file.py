@@ -6,23 +6,36 @@ converting individual documents to Markdown.
 
 from __future__ import annotations
 
-import re
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 
 from markitai.cli import ui
 from markitai.cli.console import get_console, get_stderr_console
-from markitai.cli.processors import split_output_file_target
 from markitai.cli.ui import MARK_INFO, MARK_TITLE
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
 from markitai.converter import FileFormat, detect_format
 from markitai.json_order import order_report
 from markitai.runs import Outcome, build_single_report, resolve_exit_code
+
+# The stdout asset-reference helpers moved to the runs layer (Phase 4B).
+# Re-imported here — private aliases included — so existing importers and
+# tests keep their anchor at markitai.cli.processors.file.
+from markitai.runs.output import (
+    ASSET_REF_PATTERN as _ASSET_REF_PATTERN,
+)
+from markitai.runs.output import (
+    finalize_explicit_output,
+    normalize_temp_asset_refs,
+    prepare_output_target,
+    resolve_asset_references,
+)
+from markitai.runs.output import (
+    warn_ephemeral_links as _warn_ephemeral_links,
+)
 from markitai.security import atomic_write_json, validate_file_size
 from markitai.utils.cli_helpers import compute_task_hash, get_report_file_path
 from markitai.utils.paths import derive_output_name
@@ -30,114 +43,6 @@ from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import write_images_json
 
 console = get_console()
-
-# Pattern matches markdown image references to .markitai/assets/ or .markitai/screenshots/
-# Supports both forward slash and backslash for Windows compatibility
-# Groups: 1=alt text, 2=subdir (assets|screenshots), 3=filename
-_ASSET_REF_PATTERN = re.compile(
-    r"!\[([^\]]*)\]\(\.markitai[/\\](assets|screenshots)[/\\]([^)]+)\)"
-)
-
-
-def _warn_ephemeral_links() -> None:
-    """Warn on stderr that stdout image links will not outlive the process.
-
-    Used when ``image.stdout_persist`` is explicitly disabled. Writes to
-    stderr directly because the stdout-mode console handler only shows
-    ERROR+, and stdout itself must stay clean for the markdown content.
-    """
-    message = (
-        "Warning: image.stdout_persist is disabled — extracted images are "
-        "deleted at exit, so image links in the output are ephemeral"
-    )
-    print(message, file=sys.stderr)
-    logger.warning(message)
-
-
-def normalize_temp_asset_refs(markdown: str, temp_dir: Path) -> str:
-    """Rewrite absolute temp-dir asset refs to relative ``.markitai/`` refs.
-
-    Some converters emit image refs with absolute paths into the stdout-mode
-    temp directory (e.g. pymupdf4llm canonicalizes macOS ``/var/...`` temp
-    paths to ``/private/var/...``, defeating the converter's own relative
-    rewrite). Normalizing here lets ``resolve_asset_references`` handle them
-    instead of leaking dead temp links to stdout.
-
-    Args:
-        markdown: Markdown content possibly containing absolute asset refs.
-        temp_dir: The stdout-mode temp directory used for conversion.
-
-    Returns:
-        Markdown with absolute temp-dir asset refs rewritten to relative form.
-    """
-    for base in {temp_dir.as_posix(), temp_dir.resolve().as_posix()}:
-        markdown = markdown.replace(f"]({base}/.markitai/", "](.markitai/")
-    return markdown
-
-
-def resolve_asset_references(
-    markdown: str,
-    temp_dir: Path,
-    protocol: Any = None,
-    asset_store: Any = None,
-    source_name: str = "unknown",
-) -> str:
-    """Resolve .markitai/assets/ and .markitai/screenshots/ image references.
-
-    Priority cascade:
-    1. If protocol is set: replace with terminal inline image escape sequence.
-    2. If asset_store is set: persist image, replace with absolute-path URI.
-    3. Fallback: replace with ``![image: filename]()`` placeholder.
-
-    Args:
-        markdown: Markdown content with asset references.
-        temp_dir: Path to the temp directory containing .markitai/ assets.
-        protocol: Detected terminal image protocol, or None.
-        asset_store: Configured asset store, or None.
-        source_name: Source document name for asset store grouping.
-
-    Returns:
-        Markdown with asset references resolved.
-    """
-
-    def _resolve_image_path(subdir: str, filename: str) -> Path:
-        """Resolve the actual image file path from captured regex groups."""
-        filename_normalized = filename.replace("\\", "/")
-        return temp_dir / ".markitai" / subdir / filename_normalized
-
-    def _replace(match: re.Match[str]) -> str:
-        subdir = match.group(2)  # "assets" or "screenshots" — captured group
-        filename = match.group(3)
-
-        if protocol is not None:
-            # Tier 1: terminal inline image
-            image_path = _resolve_image_path(subdir, filename)
-            if image_path.exists():
-                from markitai.utils.terminal_image import render_inline_image
-
-                try:
-                    return render_inline_image(image_path, protocol)
-                except Exception:
-                    pass  # fall through
-
-        if asset_store is not None:
-            # Tier 2: persistent asset store
-            image_path = _resolve_image_path(subdir, filename)
-            if image_path.exists():
-                try:
-                    ref_path = asset_store.save(image_path, source_name)
-                    uri = asset_store.ref_path_to_markdown_uri(ref_path)
-                    # Keep LLM-generated alt text; fall back to the filename
-                    alt_text = match.group(1) or filename
-                    return f"![{alt_text}]({uri})"
-                except Exception as e:
-                    logger.warning(f"Asset store save failed for {filename}: {e}")
-                    # fall through to placeholder
-
-        # Tier 3: placeholder fallback
-        return f"![image: {filename}]()"
-
-    return _ASSET_REF_PATTERN.sub(_replace, markdown)
 
 
 def _file_final_stage_text(active_key: str | None, input_name: str) -> str:
@@ -180,13 +85,13 @@ async def process_single_file(
 
     # `-o out.md` (single-file mode) targets an output FILE, not a directory:
     # the parent becomes the output dir and the name overrides derived naming
-    output_file_name: str | None = None
-    if output_dir is not None:
-        output_dir, output_file_name = split_output_file_target(output_dir)
+    target = prepare_output_target(output_dir)
+    output_dir = target.output_dir
+    output_file_name = target.explicit_file_name
 
     # Diagnostics always go to stderr. Stdout is reserved for Markdown payloads
     # and successful file-mode output paths.
-    stdout_mode = output_dir is None
+    stdout_mode = target.stdout_mode
     diag_console = get_stderr_console()
 
     # Validate file size to prevent DoS
@@ -236,14 +141,9 @@ async def process_single_file(
     # - No output_dir: stdout mode (output content)
     # - With output_dir: file mode (save and show path)
 
-    # For stdout mode, use a temporary directory for conversion
-    if stdout_mode:
-        import tempfile
-
-        temp_dir = Path(tempfile.mkdtemp(prefix="markitai_"))
-        effective_output_dir = temp_dir
-    else:
-        effective_output_dir = output_dir
+    # For stdout mode, use a temporary directory for conversion (output
+    # directory creation itself stays inside convert_document_core)
+    effective_output_dir = target.create_workdir()
 
     # Live multi-stage progress list (stderr). Enabled in BOTH file and
     # stdout modes; suppressed for --quiet and -v/verbose. The stage text
@@ -365,17 +265,13 @@ async def process_single_file(
             if not final_output_file.exists() and cfg.llm.enabled:
                 final_output_file = ctx.output_file
 
-            # Explicit -o file target: the final content must land exactly at
-            # the requested path. In LLM mode (without --keep-base) the final
-            # file is `<name>.llm.md`; move it onto the requested `.md` path.
-            if (
-                output_file_name is not None
-                and final_output_file != ctx.output_file
-                and final_output_file.exists()
-                and not ctx.output_file.exists()
-            ):
-                final_output_file.replace(ctx.output_file)
-                final_output_file = ctx.output_file
+            # Explicit -o file target: the final content must land exactly
+            # at the requested path (moves `.llm.md` onto the requested
+            # `.md` path in LLM mode without --keep-base)
+            final_output_file = finalize_explicit_output(
+                final_output_file,
+                ctx.output_file if output_file_name is not None else None,
+            )
 
         # Output based on mode
         if quiet and not stdout_mode:
@@ -385,6 +281,8 @@ async def process_single_file(
             pass
         elif stdout_mode:
             # stdout mode: output markdown content
+            temp_dir = target.temp_dir
+            assert temp_dir is not None  # guaranteed when stdout_mode is True
             if final_output_file and final_output_file.exists():
                 final_content = final_output_file.read_text(encoding="utf-8")
 
@@ -462,7 +360,4 @@ async def process_single_file(
         if error_msg:
             logger.warning(f"Failed to process {input_path.name}: {error_msg}")
         # Cleanup temp directory for stdout mode
-        if stdout_mode:
-            import shutil
-
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        target.cleanup()
