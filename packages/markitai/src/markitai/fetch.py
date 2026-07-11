@@ -48,6 +48,7 @@ from markitai.constants import (
     LOCAL_STRATEGIES,
 )
 from markitai.fetch_http import get_static_http_client
+from markitai.ports import get_interaction
 
 try:
     from markitai.webextract import (
@@ -161,22 +162,13 @@ def _should_fallback_after_refusal(strategy_name: str, reason: str) -> bool:
     if _explicit_fallback_decision is not None:
         return _explicit_fallback_decision
 
-    import sys
-
-    if _remote_consent_prompt_allowed and sys.stdin.isatty():
-        import click
-
-        from markitai.cli.ui import suspend_active_live
-
-        with suspend_active_live():
-            decision = bool(
-                click.confirm(
-                    f"{strategy_name} cannot fetch this URL ({reason}). "
-                    "Fall back to the auto strategy chain?",
-                    default=True,
-                    err=True,
-                )
-            )
+    interaction = get_interaction()
+    if _remote_consent_prompt_allowed and interaction.can_prompt():
+        decision = interaction.confirm(
+            f"{strategy_name} cannot fetch this URL ({reason}). "
+            "Fall back to the auto strategy chain?",
+            default=True,
+        )
         _explicit_fallback_decision = decision
         return decision
 
@@ -210,8 +202,6 @@ def peek_remote_consent(config: FetchConfig) -> bool | None:
     a remote strategy is actually about to run (lazy consent), so users
     whose URLs are satisfied by local strategies are never asked.
     """
-    import sys
-
     if _env_no_remote_fetch():
         return False
     if _remote_consent_decision is not None:
@@ -221,7 +211,7 @@ def peek_remote_consent(config: FetchConfig) -> bool | None:
         return True
     if consent == "never":
         return False
-    if _remote_consent_prompt_allowed and sys.stdin.isatty():
+    if _remote_consent_prompt_allowed and get_interaction().can_prompt():
         return None  # would need to prompt
     return False
 
@@ -265,14 +255,10 @@ def disclose_remote_use(services: list[str] | None = None) -> None:
         "automatic and config-selected remote use. Private/local/"
         "credential-bearing URLs stay local."
     )
-    # This is a privacy boundary, not diagnostic logging. Write it to stderr
-    # directly so normal INFO filtering and --quiet cannot hide it.
-    import click
-
-    from markitai.cli.ui import suspend_active_live
-
-    with suspend_active_live():
-        click.echo(disclosure, err=True)
+    # This is a privacy boundary, not diagnostic logging. Deliver it via the
+    # interaction port (stderr) so normal INFO filtering and --quiet cannot
+    # hide it.
+    get_interaction().notify(disclosure)
     # Keep the disclosure in diagnostic log files too. The console filter
     # suppresses this copy to avoid duplicating the direct stderr message.
     logger.info(disclosure)
@@ -301,7 +287,6 @@ def resolve_remote_consent(
             cached decision can authorize later in the run.
     """
     global _remote_consent_decision
-    import sys
 
     if _env_no_remote_fetch():
         if _remote_consent_decision is not False:
@@ -328,27 +313,16 @@ def resolve_remote_consent(
         return False
 
     # "ask": prompt once when interactive, otherwise skip (privacy-safe)
-    if _remote_consent_prompt_allowed and sys.stdin.isatty():
-        import click
-
-        from markitai.cli.ui import suspend_active_live
-
-        # Pause any active Live progress display: its stream proxying eats
-        # the prompt's "[y/N]" suffix and the Enter echo desyncs its cursor.
-        with suspend_active_live():
-            click.echo(
+    interaction = get_interaction()
+    if _remote_consent_prompt_allowed and interaction.can_prompt():
+        allowed = interaction.confirm(
+            "Allow sending public URLs to these remote services when needed?",
+            default=False,
+            preamble=(
                 "This run can try remote services for public URLs, one at a "
-                "time (first success "
-                f"wins): {_remote_service_names(services)}.",
-                err=True,
-            )
-            allowed = bool(
-                click.confirm(
-                    "Allow sending public URLs to these remote services when needed?",
-                    default=False,
-                    err=True,
-                )
-            )
+                f"time (first success wins): {_remote_service_names(services)}."
+            ),
+        )
         if not allowed:
             logger.info(
                 "[Fetch] Remote extraction services declined; "

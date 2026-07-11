@@ -124,6 +124,7 @@ source_modules = [
     "markitai.json_order",
     "markitai.llm",
     "markitai.ocr",
+    "markitai.ports",
     "markitai.prompts",
     "markitai.providers",
     "markitai.security",
@@ -135,8 +136,6 @@ source_modules = [
 ]
 forbidden_modules = ["markitai.cli"]
 ignore_imports = [
-    # Phase 1.4: consent prompts pause the live display via direct UI import
-    "markitai.fetch -> markitai.cli.ui",
     # Phase 1.5: batch engine renders progress through cli console/ui/log filter
     "markitai.batch -> markitai.cli.ui",
     "markitai.batch -> markitai.cli.console",
@@ -155,6 +154,7 @@ source_modules = [
     "markitai.fetch_policy",
     "markitai.fetch_types",
     "markitai.json_order",
+    "markitai.ports",
     "markitai.prompts",
     "markitai.security",
     "markitai.types",
