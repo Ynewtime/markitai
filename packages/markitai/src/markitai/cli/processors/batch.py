@@ -20,6 +20,7 @@ from markitai.cli.logging_config import restore_console_handler
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
 from markitai.converter.base import EXTENSION_MAP
+from markitai.runs import resolve_exit_code
 from markitai.security import atomic_write_text
 from markitai.utils.cli_helpers import sanitize_filename, url_to_filename
 from markitai.utils.output import resolve_output_path
@@ -1086,5 +1087,6 @@ async def process_batch(
     total_failed = (state.failed_count if state else 0) + (
         state.failed_urls_count if state else 0
     )
-    if total_failed > 0:
-        raise SystemExit(10)  # PARTIAL_FAILURE
+    exit_code = resolve_exit_code(total_failed, batch=True)
+    if exit_code != 0:
+        raise SystemExit(exit_code)  # PARTIAL_FAILURE

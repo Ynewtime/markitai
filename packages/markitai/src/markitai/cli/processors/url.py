@@ -20,6 +20,12 @@ from markitai.cli.processors import split_output_file_target
 from markitai.config import MarkitaiConfig
 from markitai.constants import SCREENSHOTS_REL_PATH
 from markitai.json_order import order_report
+from markitai.runs import (
+    Outcome,
+    build_single_report,
+    build_url_batch_report,
+    resolve_exit_code,
+)
 from markitai.security import atomic_write_json, atomic_write_text
 from markitai.utils.cli_helpers import (
     compute_task_hash,
@@ -695,10 +701,6 @@ async def process_url(
             # Generate report only when explicitly enabled (output.report=true);
             # single-URL conversions skip reports by default
             if cfg.output.report is True:
-                input_tokens = sum(u.get("input_tokens", 0) for u in llm_usage.values())
-                output_tokens = sum(
-                    u.get("output_tokens", 0) for u in llm_usage.values()
-                )
                 requests = sum(u.get("requests", 0) for u in llm_usage.values())
 
                 task_options = {
@@ -716,53 +718,35 @@ async def process_url(
                 # Determine cache hit status (LLM was enabled but no tokens used)
                 llm_cache_hit = cfg.llm.enabled and requests == 0
 
-                report = {
-                    "version": "1.0",
-                    "generated_at": datetime.now().astimezone().isoformat(),
-                    "log_file": str(log_file_path) if log_file_path else None,
-                    "options": {
+                report = build_single_report(
+                    Outcome(
+                        kind="url",
+                        source=url,
+                        status="completed",
+                        output_path=(
+                            output_file.with_suffix(".llm.md")
+                            if cfg.llm.enabled
+                            else output_file
+                        ),
+                        images=images_count,
+                        screenshots=screenshots_count,
+                        cost_usd=llm_cost,
+                        llm_usage=llm_usage,
+                        fetch_cache_hit=fetch_cache_hit,
+                        llm_cache_hit=llm_cache_hit,
+                        fetch_strategy=used_strategy,
+                        source_file="cli",
+                        duration=duration,
+                    ),
+                    log_file_path=log_file_path,
+                    options={
                         "llm": cfg.llm.enabled,
                         "cache": cfg.cache.enabled,
                         "fetch_strategy": used_strategy,
                         "alt": cfg.image.alt_enabled,
                         "desc": cfg.image.desc_enabled,
                     },
-                    "summary": {
-                        "total_documents": 0,
-                        "completed_documents": 0,
-                        "failed_documents": 0,
-                        "total_urls": 1,
-                        "completed_urls": 1,
-                        "failed_urls": 0,
-                        "duration": duration,
-                    },
-                    "llm_usage": {
-                        "models": llm_usage,
-                        "requests": requests,
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "cost_usd": llm_cost,
-                    },
-                    "urls": {
-                        url: {
-                            "status": "completed",
-                            "source_file": "cli",
-                            "error": None,
-                            "output": str(
-                                output_file.with_suffix(".llm.md")
-                                if cfg.llm.enabled
-                                else output_file
-                            ),
-                            "fetch_strategy": used_strategy,
-                            "fetch_cache_hit": fetch_cache_hit,
-                            "llm_cache_hit": llm_cache_hit,
-                            "images": images_count,
-                            "screenshots": screenshots_count,
-                            "duration": duration,
-                            "llm_usage": llm_usage,
-                        }
-                    },
-                }
+                )
 
                 atomic_write_json(report_path, report, order_func=order_report)
                 logger.debug(f"Report saved: {report_path}")
@@ -807,7 +791,7 @@ async def process_url(
         stages.fail()
         stages.stop()
         _print_url_error(url, str(e), diag_console)
-        raise SystemExit(1)
+        raise SystemExit(resolve_exit_code(1, batch=False))
     finally:
         # Safety net: ensure the stage list is stopped on every exit path
         stages.stop()
@@ -1238,10 +1222,6 @@ async def process_url_batch(
     duration = (finished_at - started_at).total_seconds()
 
     if cfg.output.report is not False:
-        input_tokens = sum(u.get("input_tokens", 0) for u in total_llm_usage.values())
-        output_tokens = sum(u.get("output_tokens", 0) for u in total_llm_usage.values())
-        requests = sum(u.get("requests", 0) for u in total_llm_usage.values())
-
         task_options = {
             "llm": cfg.llm.enabled,
             "alt": cfg.image.alt_enabled,
@@ -1253,28 +1233,16 @@ async def process_url_batch(
         )
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
-        report = {
-            "version": "1.0",
-            "generated_at": datetime.now().astimezone().isoformat(),
-            "log_file": str(log_file_path) if log_file_path else None,
-            "summary": {
-                "total_documents": 0,
-                "completed_documents": 0,
-                "failed_documents": 0,
-                "total_urls": len(url_entries),
-                "completed_urls": completed,
-                "failed_urls": failed,
-                "duration": duration,
-            },
-            "llm_usage": {
-                "models": total_llm_usage,
-                "requests": requests,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cost_usd": total_llm_cost,
-            },
-            "urls": results,
-        }
+        report = build_url_batch_report(
+            results,
+            total_urls=len(url_entries),
+            completed_urls=completed,
+            failed_urls=failed,
+            duration=duration,
+            llm_usage=total_llm_usage,
+            cost_usd=total_llm_cost,
+            log_file_path=log_file_path,
+        )
 
         atomic_write_json(report_path, report, order_func=order_report)
         logger.debug(f"Report saved: {report_path}")
@@ -1296,8 +1264,10 @@ async def process_url_batch(
         out_max = max(ui.term_width(console) - 10, 20)
         console.print(f"\n  Output: {ui.truncate(str(output_dir) + '/', out_max)}")
 
-    if failed > 0:
-        raise SystemExit(10)  # PARTIAL_FAILURE, aligned with directory batch mode
+    # PARTIAL_FAILURE (10), aligned with directory batch mode
+    exit_code = resolve_exit_code(failed, batch=True)
+    if exit_code != 0:
+        raise SystemExit(exit_code)
 
 
 def build_multi_source_content(
