@@ -52,6 +52,9 @@ jobs:
       - name: Run pyright
         run: uv run pyright packages/markitai/src packages/markitai/tests
 
+      - name: Run import-layer contracts
+        run: uv run lint-imports
+
       - name: Run bandit security scan
         run: uv run bandit -r packages/markitai/src -c pyproject.toml
 
