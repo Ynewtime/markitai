@@ -9,7 +9,6 @@ from __future__ import annotations
 import re
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +22,7 @@ from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
 from markitai.converter import FileFormat, detect_format
 from markitai.json_order import order_report
+from markitai.runs import Outcome, build_single_report, resolve_exit_code
 from markitai.security import atomic_write_json, validate_file_size
 from markitai.utils.cli_helpers import compute_task_hash, get_report_file_path
 from markitai.utils.paths import derive_output_name
@@ -312,55 +312,29 @@ async def process_single_file(
 
         # Calculate duration
         duration = time.time() - start_time
-        finished_at = datetime.now()
 
         # Generate report only when explicitly enabled (output.report=true);
         # single-file conversions skip reports by default
         if not stdout_mode and cfg.output.report is True:
             assert output_dir is not None
-            input_tokens = sum(u.get("input_tokens", 0) for u in ctx.llm_usage.values())
-            output_tokens = sum(
-                u.get("output_tokens", 0) for u in ctx.llm_usage.values()
+            report = build_single_report(
+                Outcome(
+                    kind="file",
+                    source=input_path.name,
+                    status="completed",
+                    output_path=(
+                        ctx.output_file.with_suffix(".llm.md")
+                        if cfg.llm.enabled and ctx.output_file
+                        else ctx.output_file
+                    ),
+                    images=ctx.embedded_images_count,
+                    screenshots=ctx.screenshots_count,
+                    cost_usd=ctx.llm_cost,
+                    llm_usage=ctx.llm_usage,
+                    duration=duration,
+                ),
+                log_file_path=log_file_path,
             )
-            requests = sum(u.get("requests", 0) for u in ctx.llm_usage.values())
-
-            report = {
-                "version": "1.0",
-                "generated_at": finished_at.astimezone().isoformat(),
-                "log_file": str(log_file_path) if log_file_path else None,
-                "summary": {
-                    "total_documents": 1,
-                    "completed_documents": 1,
-                    "failed_documents": 0,
-                    "duration": duration,
-                },
-                "llm_usage": {
-                    "models": ctx.llm_usage,
-                    "requests": requests,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "cost_usd": ctx.llm_cost,
-                },
-                "documents": {
-                    input_path.name: {
-                        "status": "completed",
-                        "error": None,
-                        "output": str(
-                            ctx.output_file.with_suffix(".llm.md")
-                            if cfg.llm.enabled and ctx.output_file
-                            else ctx.output_file
-                        ),
-                        "images": ctx.embedded_images_count,
-                        "screenshots": ctx.screenshots_count,
-                        "duration": duration,
-                        "llm_usage": {
-                            "input_tokens": input_tokens,
-                            "output_tokens": output_tokens,
-                            "cost_usd": ctx.llm_cost,
-                        },
-                    }
-                },
-            }
 
             # Generate report file path
             task_options = {
@@ -480,7 +454,7 @@ async def process_single_file(
         stages.fail()
         stages.stop()
         ui.error(error_msg, console=diag_console)
-        sys.exit(1)
+        sys.exit(resolve_exit_code(1, batch=False))
 
     finally:
         # Safety net: ensure the stage list is stopped on every exit path
