@@ -488,7 +488,7 @@ def _create_markitdown() -> object:
     """
     from markitdown import MarkItDown
 
-    from markitai.converter.webextract_html_converter import WebExtractHtmlConverter
+    from markitai.webextract.html_to_markdown import WebExtractHtmlConverter
 
     md = MarkItDown()
     md.register_converter(WebExtractHtmlConverter(), priority=-1)
