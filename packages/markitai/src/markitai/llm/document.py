@@ -12,7 +12,7 @@ import re
 import time
 from collections.abc import Awaitable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast, get_origin
+from typing import TYPE_CHECKING, Any, cast
 
 import instructor
 import yaml
@@ -46,15 +46,23 @@ from markitai.llm.content import (
     restore_image_positions as _shared_restore_image_positions,
 )
 from markitai.llm.degeneration import truncate_degenerate_tail
+
+# Moved to markitai.llm.engine (Phase 2.1); aliases keep internal references
+# (and vision.py / test imports) working unchanged.
+from markitai.llm.engine import (
+    find_non_retryable_provider_error as _find_non_retryable_provider_error,
+)
+from markitai.llm.engine import (
+    try_repair_instructor_response as _try_repair_instructor_response,
+)
 from markitai.llm.models import get_response_cost
 from markitai.llm.types import (
     DocumentProcessResult,
     EnhancedDocumentResult,
     Frontmatter,
 )
-from markitai.providers.errors import ProviderError
 from markitai.utils.mime import get_mime_type
-from markitai.utils.text import format_error_message, repair_json_string
+from markitai.utils.text import format_error_message
 
 # Pre-compiled regex patterns for _remove_uncommented_screenshots hot path
 # Screenshot references (markitai-generated .pageNNNN patterns)
@@ -115,132 +123,6 @@ def _compute_document_fingerprint(
     truncated = content[:DEFAULT_CACHE_CONTENT_TRUNCATE]
     fingerprint_input = f"{truncated}|pages:{','.join(page_names[:50])}"
     return hashlib.sha256(fingerprint_input.encode()).hexdigest()
-
-
-def _try_repair_instructor_response(
-    exc: Exception,
-    response_model: type,
-) -> tuple[Any, Any] | None:
-    """Try to repair JSON from a failed instructor response.
-
-    When instructor's retry mechanism fails (all retries exhausted), the
-    last LLM completion is still available. This function extracts the raw
-    text, attempts JSON repair, and constructs the Pydantic model manually.
-
-    Args:
-        exc: The InstructorRetryException (or compatible exception)
-        response_model: Pydantic model class to validate against
-
-    Returns:
-        Tuple of (parsed_model, raw_response) or None if repair failed
-    """
-    last = getattr(exc, "last_completion", None)
-    if last is None:
-        return None
-
-    # Extract text content from the completion
-    try:
-        content = last.choices[0].message.content
-        if not content:
-            return None
-    except (AttributeError, IndexError):
-        return None
-
-    # Attempt JSON repair
-    repaired = repair_json_string(content)
-    if repaired is None:
-        return None
-
-    import json
-
-    try:
-        data = json.loads(repaired)
-    except Exception:
-        logger.debug(
-            f"[JSON repair] Repair attempt failed for {response_model.__name__}"
-        )
-        return None
-
-    # Valid JSON may still have the wrong shape: small models return the
-    # bare payload without the wrapper object (e.g. one image result
-    # instead of {"images": [...]}). Try the wrapped form as well.
-    candidates: list[Any] = [data]
-    wrapped = _wrap_bare_payload_for_model(data, response_model)
-    if wrapped is not None:
-        candidates.append(wrapped)
-
-    for candidate in candidates:
-        try:
-            result = response_model.model_validate(candidate)
-        except Exception:
-            continue
-        logger.info(
-            f"[JSON repair] Successfully repaired malformed JSON "
-            f"for {response_model.__name__}"
-        )
-        return result, last
-
-    logger.debug(f"[JSON repair] Repair attempt failed for {response_model.__name__}")
-    return None
-
-
-def _wrap_bare_payload_for_model(
-    data: Any, response_model: type
-) -> dict[str, Any] | None:
-    """Wrap a bare item/list into the model's single required list field.
-
-    Only applies to wrapper models like BatchImageAnalysisResult, whose sole
-    required field is a list; returns None for anything else.
-    """
-    fields = getattr(response_model, "model_fields", None)
-    if not fields:
-        return None
-    required = [(name, f) for name, f in fields.items() if f.is_required()]
-    if len(required) != 1:
-        return None
-    field_name, field = required[0]
-    if get_origin(field.annotation) is not list:
-        return None
-    if isinstance(data, list):
-        return {field_name: data}
-    if isinstance(data, dict) and field_name not in data:
-        return {field_name: [data]}
-    return None
-
-
-def _find_non_retryable_provider_error(
-    exc: BaseException,
-    seen: set[int] | None = None,
-) -> ProviderError | None:
-    """Find a wrapped non-retryable ProviderError inside nested exceptions."""
-    if seen is None:
-        seen = set()
-
-    exc_id = id(exc)
-    if exc_id in seen:
-        return None
-    seen.add(exc_id)
-
-    if isinstance(exc, ProviderError) and not exc.retryable:
-        return exc
-
-    for attr_name in ("__cause__", "__context__"):
-        nested = getattr(exc, attr_name, None)
-        if isinstance(nested, BaseException):
-            found = _find_non_retryable_provider_error(nested, seen)
-            if found is not None:
-                return found
-
-    failed_attempts = getattr(exc, "failed_attempts", None)
-    if failed_attempts:
-        for attempt in failed_attempts:
-            attempt_exc = getattr(attempt, "exception", None)
-            if isinstance(attempt_exc, BaseException):
-                found = _find_non_retryable_provider_error(attempt_exc, seen)
-                if found is not None:
-                    return found
-
-    return None
 
 
 def _strip_leaked_markdown_boundaries(content: str) -> str:
