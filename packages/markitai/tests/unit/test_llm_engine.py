@@ -99,11 +99,13 @@ class FakePersistentCache:
 
     def __init__(self) -> None:
         self.store: dict[tuple[str, str], Any] = {}
-        self.get_calls: list[tuple[str, str, str]] = []
+        self.get_calls: list[tuple[str, str, str, str]] = []
         self.set_calls: list[tuple[str, str, Any, str]] = []
 
-    def get(self, key: str, content: str, context: str = "") -> Any | None:
-        self.get_calls.append((key, content, context))
+    def get(
+        self, key: str, content: str, context: str = "", model: str = ""
+    ) -> Any | None:
+        self.get_calls.append((key, content, context, model))
         return self.store.get((key, content))
 
     def set(self, key: str, content: str, value: Any, model: str = "") -> None:
@@ -203,7 +205,9 @@ class TestCacheLayers:
         assert raw is None
         assert result.text == "persisted"
         assert harness.router.calls == []
-        assert harness.persistent.get_calls == [(CACHE_KEY, CACHE_CONTENT, "test.md")]
+        assert harness.persistent.get_calls == [
+            (CACHE_KEY, CACHE_CONTENT, "test.md", "default")
+        ]
         # Backfilled into memory for subsequent lookups
         assert harness.memory.set_calls == [
             (CACHE_KEY, CACHE_CONTENT, {"text": "persisted"})

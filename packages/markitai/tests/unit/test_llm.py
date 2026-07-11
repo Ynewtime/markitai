@@ -279,6 +279,113 @@ class TestLLMProcessorAsync:
                 assert "title: Fallback" in frontmatter
 
 
+class TestCacheModelScope:
+    """Persistent-cache scoping by model-pool fingerprint."""
+
+    @staticmethod
+    def _make_config(model: str) -> LLMConfig:
+        return LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(model=model, api_key="test-key"),
+                )
+            ],
+            concurrency=2,
+        )
+
+    @staticmethod
+    def _mock_instructor_success(cleaned_markdown: str = "# Cleaned"):
+        """Patch instructor to return a fixed document result."""
+        mock_result = DocumentProcessResult(
+            cleaned_markdown=cleaned_markdown,
+            frontmatter=Frontmatter(description="A doc", tags=["tag"]),
+        )
+        raw_response = MagicMock()
+        raw_response.model = "test-model"
+        raw_response.usage = MagicMock(prompt_tokens=10, completion_tokens=5)
+        raw_response.choices = [MagicMock(finish_reason="stop")]
+
+        patcher = patch("markitai.llm.engine.instructor.from_litellm")
+        mock_client = MagicMock()
+        mock_client.chat.completions.create_with_completion = AsyncMock(
+            return_value=(mock_result, raw_response)
+        )
+        return patcher, mock_client
+
+    async def test_different_model_lists_write_different_cache_scopes(
+        self, prompts_config: PromptsConfig
+    ):
+        """Same content processed under different model pools must be cached
+        under different persistent-cache ``model`` scopes."""
+        set_models: dict[str, str] = {}
+
+        for model in ("openai/gpt-4o-mini", "deepseek/deepseek-chat"):
+            processor = LLMProcessor(
+                self._make_config(model), prompts_config, no_cache=True
+            )
+            # Swap in a recording persistent cache before the engine binds it
+            processor._persistent_cache = MagicMock()
+            processor._persistent_cache.get.return_value = None
+            processor._router = MagicMock()
+
+            patcher, mock_client = self._mock_instructor_success()
+            with patcher as mock_from_litellm:
+                mock_from_litellm.return_value = mock_client
+                await processor.documents._process_document_combined(
+                    "# Same content", "doc.md"
+                )
+
+            set_call = processor._persistent_cache.set.call_args
+            assert set_call is not None
+            set_models[model] = set_call.kwargs["model"]
+            assert set_call.kwargs["model"] == processor.cache_model_scope
+            assert set_call.kwargs["model"].startswith("pool:")
+
+        assert set_models["openai/gpt-4o-mini"] != set_models["deepseek/deepseek-chat"]
+
+    async def test_document_process_cache_hits_across_source_rename(
+        self, prompts_config: PromptsConfig, tmp_path
+    ):
+        """Identical markdown under a renamed source file must hit the
+        persistent cache (key is content-addressed, no file name)."""
+        markdown = "# Same document\n\nIdentical content."
+
+        def make_processor() -> LLMProcessor:
+            processor = LLMProcessor(
+                self._make_config("openai/gpt-4o-mini"),
+                prompts_config,
+                cache_global_dir=tmp_path,
+            )
+            processor._router = MagicMock()
+            return processor
+
+        # First run: fresh LLM call, result persisted to the shared SQLite cache
+        processor_a = make_processor()
+        patcher, mock_client = self._mock_instructor_success("# Cleaned once")
+        with patcher as mock_from_litellm:
+            mock_from_litellm.return_value = mock_client
+            await processor_a.documents._process_document_combined(
+                markdown, "original.md"
+            )
+
+        # Second run (fresh processor, fresh in-memory cache): renamed source
+        # with identical content must be served from the persistent cache
+        processor_b = make_processor()
+        patcher, mock_client = self._mock_instructor_success()
+        mock_client.chat.completions.create_with_completion = AsyncMock(
+            side_effect=AssertionError("LLM must not be called on cache hit")
+        )
+        with patcher as mock_from_litellm:
+            mock_from_litellm.return_value = mock_client
+            result = await processor_b.documents._process_document_combined(
+                markdown, "renamed.md"
+            )
+
+        assert result.cleaned_markdown == "# Cleaned once"
+
+
 class TestFormatLLMOutput:
     """Tests for format_llm_output method."""
 

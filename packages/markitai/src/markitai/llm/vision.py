@@ -217,6 +217,9 @@ class VisionAnalyzer:
       cache layers, and usage accounting
     - ``prompt_manager``: prompt template lookup
     - ``config``: LLM configuration (concurrency, retry counts)
+    - ``vision_cache_model_scope``: persistent-cache ``model`` scope for
+      image analysis results (the processor's vision model-pool
+      fingerprint, see ``model_list_fingerprint``)
     - ``get_vision_router``: provider callback for the vision router.
       A callback (not the router instance) because the processor's
       vision router is a lazy property and tests inject doubles after
@@ -234,6 +237,7 @@ class VisionAnalyzer:
         engine: LLMEngine,
         prompt_manager: PromptManager,
         config: LLMConfig,
+        vision_cache_model_scope: str,
         get_vision_router: Callable[[], Any],
         get_cached_image: Callable[[Path], tuple[bytes, str]],
         get_next_call_index: Callable[[str], int],
@@ -241,6 +245,7 @@ class VisionAnalyzer:
         self._engine = engine
         self._prompt_manager = prompt_manager
         self._config = config
+        self._vision_cache_model_scope = vision_cache_model_scope
         self._get_vision_router = get_vision_router
         self._get_cached_image = get_cached_image
         self._get_next_call_index = get_next_call_index
@@ -313,7 +318,10 @@ class VisionAnalyzer:
             image_fingerprint, document_context
         )
         cached = self._engine.persistent_cache.get(
-            cache_key, cache_content_key, context=context
+            cache_key,
+            cache_content_key,
+            context=context,
+            model=self._vision_cache_model_scope,
         )
         if cached is not None:
             logger.debug(f"[{image_path.name}] Persistent cache hit for analyze_image")
@@ -414,7 +422,10 @@ class VisionAnalyzer:
                 "extracted_text": result.extracted_text,
             }
             self._engine.persistent_cache.set(
-                cache_key, cache_content_key, cache_value, model="vision"
+                cache_key,
+                cache_content_key,
+                cache_value,
+                model=self._vision_cache_model_scope,
             )
 
         return result
@@ -582,7 +593,10 @@ class VisionAnalyzer:
             image_cache_content_keys[orig_idx] = cache_content_key
 
             cached = self._engine.persistent_cache.get(
-                cache_key, cache_content_key, context=context
+                cache_key,
+                cache_content_key,
+                context=context,
+                model=self._vision_cache_model_scope,
             )
             if cached is not None:
                 logger.debug(f"[{image_path.name}] Cache hit in batch analysis")
@@ -790,7 +804,10 @@ class VisionAnalyzer:
                         "extracted_text": analysis.extracted_text,
                     }
                     self._engine.persistent_cache.set(
-                        cache_key, content_key, cache_value, model="vision"
+                        cache_key,
+                        content_key,
+                        cache_value,
+                        model=self._vision_cache_model_scope,
                     )
 
             # Merge unsupported, cached and new results in original order

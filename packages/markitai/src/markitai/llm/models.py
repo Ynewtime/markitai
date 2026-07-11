@@ -2,12 +2,14 @@
 
 This module provides utilities for:
 - Model information caching and lookup
+- Model pool fingerprinting for cache scoping
 - Cost calculation for LLM responses
 - LiteLLM callback logging
 """
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import litellm
@@ -19,6 +21,32 @@ from markitai.constants import DEFAULT_MAX_OUTPUT_TOKENS
 
 # Cache for model info to avoid repeated litellm queries
 _model_info_cache: dict[str, dict[str, Any]] = {}
+
+
+def model_list_fingerprint(model_list: list[Any]) -> str:
+    """Stable fingerprint of the configured model pool for cache scoping.
+
+    Persistent LLM cache entries are scoped by the model pool that could
+    have produced them (the router picks the concrete model only after the
+    cache lookup, so a single real model name is not available as a key).
+    Only the real model identifiers (``litellm_params.model``) participate:
+    order and duplicates are normalized away, and credentials/endpoints
+    (api_key, api_base) are deliberately excluded so key rotation does not
+    invalidate the cache.
+
+    Args:
+        model_list: Model configurations (``ModelConfig``-shaped objects
+            exposing a ``litellm_params.model`` attribute).
+
+    Returns:
+        ``"pool:<16-hex-char sha256 prefix>"``, or ``"pool:none"`` for an
+        empty pool.
+    """
+    models = sorted({item.litellm_params.model for item in model_list})
+    if not models:
+        return "pool:none"
+    digest = hashlib.sha256("\n".join(models).encode("utf-8")).hexdigest()[:16]
+    return f"pool:{digest}"
 
 
 def get_model_info_cached(model: str) -> dict[str, Any]:
