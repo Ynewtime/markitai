@@ -207,13 +207,11 @@ class TestConsoleSinkRichRouting:
         from loguru import logger
         from rich.console import Console
 
-        from markitai.cli import console as console_mod
         from markitai.cli.logging_config import setup_logging
+        from markitai.utils import term as term_mod
 
         buf = io.StringIO()
-        monkeypatch.setattr(
-            console_mod, "_stderr_console", Console(file=buf, width=200)
-        )
+        monkeypatch.setattr(term_mod, "_stderr_console", Console(file=buf, width=200))
 
         handler_id, _ = setup_logging(verbose=False, quiet=True, log_dir=None)
         try:
@@ -228,13 +226,11 @@ class TestConsoleSinkRichRouting:
         from loguru import logger
         from rich.console import Console
 
-        from markitai.cli import console as console_mod
         from markitai.cli.logging_config import setup_logging
+        from markitai.utils import term as term_mod
 
         buf = io.StringIO()
-        monkeypatch.setattr(
-            console_mod, "_stderr_console", Console(file=buf, width=200)
-        )
+        monkeypatch.setattr(term_mod, "_stderr_console", Console(file=buf, width=200))
 
         handler_id, _ = setup_logging(verbose=False, quiet=False, log_dir=None)
         try:
