@@ -193,7 +193,7 @@ class TestResolveRemoteConsent:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_jina",
+                "markitai.fetch_strategies.jina.fetch_with_jina",
                 new_callable=AsyncMock,
                 return_value=remote_result,
             ) as remote_fetch,
@@ -231,7 +231,7 @@ class TestResolveRemoteConsent:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_jina",
+                "markitai.fetch_strategies.jina.fetch_with_jina",
                 new_callable=AsyncMock,
                 return_value=remote_result,
             ) as remote_fetch,
@@ -259,7 +259,7 @@ class TestResolveRemoteConsent:
                 return_value=("10.0.0.25",),
             ),
             patch(
-                "markitai.fetch.fetch_with_jina",
+                "markitai.fetch_strategies.jina.fetch_with_jina",
                 new_callable=AsyncMock,
             ) as remote_fetch,
             pytest.raises(FetchError, match="non-public"),
@@ -286,7 +286,7 @@ class TestResolveRemoteConsent:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_jina",
+                "markitai.fetch_strategies.jina.fetch_with_jina",
                 new_callable=AsyncMock,
                 return_value=remote_result,
             ) as remote_fetch,
@@ -337,7 +337,7 @@ class TestResolveRemoteConsent:
                 return_value=("93.184.216.34",),
             ) as resolve_host,
             patch(
-                "markitai.fetch.fetch_with_jina", new_callable=AsyncMock
+                "markitai.fetch_strategies.jina.fetch_with_jina", new_callable=AsyncMock
             ) as remote_fetch,
             pytest.raises(FetchError, match="local-only"),
         ):
@@ -373,7 +373,7 @@ class TestResolveRemoteConsent:
         )
 
         with patch(
-            "markitai.fetch.fetch_with_jina",
+            "markitai.fetch_strategies.jina.fetch_with_jina",
             new_callable=AsyncMock,
             return_value=remote_result,
         ) as remote_fetch:
@@ -401,7 +401,7 @@ class TestResolveRemoteConsent:
         )
 
         with patch(
-            "markitai.fetch.fetch_with_jina",
+            "markitai.fetch_strategies.jina.fetch_with_jina",
             new_callable=AsyncMock,
             return_value=remote_result,
         ) as remote_fetch:
@@ -430,7 +430,7 @@ class TestResolveRemoteConsent:
         )
 
         with patch(
-            "markitai.fetch.fetch_with_jina",
+            "markitai.fetch_strategies.jina.fetch_with_jina",
             new_callable=AsyncMock,
             return_value=remote_result,
         ) as remote_fetch:
@@ -580,15 +580,16 @@ class TestFallbackChainConsentGate:
         with (
             patch("sys.stdin") as mock_stdin,
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 return_value=self._static_result(url),
             ) as mock_static,
             patch(
-                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
+                new_callable=AsyncMock,
             ) as mock_defuddle,
             patch(
-                "markitai.fetch.fetch_with_jina", new_callable=AsyncMock
+                "markitai.fetch_strategies.jina.fetch_with_jina", new_callable=AsyncMock
             ) as mock_jina,
         ):
             mock_stdin.isatty.return_value = False
@@ -607,7 +608,7 @@ class TestFallbackChainConsentGate:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 side_effect=FetchError("static failed"),
             ),
@@ -616,10 +617,11 @@ class TestFallbackChainConsentGate:
                 return_value=False,
             ),
             patch(
-                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
+                new_callable=AsyncMock,
             ) as mock_defuddle,
             patch(
-                "markitai.fetch.fetch_with_jina", new_callable=AsyncMock
+                "markitai.fetch_strategies.jina.fetch_with_jina", new_callable=AsyncMock
             ) as mock_jina,
             pytest.raises(FetchError),
         ):
@@ -642,12 +644,13 @@ class TestFallbackChainConsentGate:
             patch("sys.stdin") as mock_stdin,
             patch("click.confirm", side_effect=_fail_if_prompted),
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 return_value=self._static_result(url),
             ) as mock_static,
             patch(
-                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
+                new_callable=AsyncMock,
             ) as mock_defuddle,
         ):
             mock_stdin.isatty.return_value = True
@@ -671,7 +674,7 @@ class TestFallbackChainConsentGate:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 side_effect=FetchError("static failed"),
             ),
@@ -680,7 +683,7 @@ class TestFallbackChainConsentGate:
                 return_value=False,
             ),
             patch(
-                "markitai.fetch.fetch_with_defuddle",
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
                 new_callable=AsyncMock,
                 return_value=defuddle_result,
             ) as mock_defuddle,
@@ -701,12 +704,13 @@ class TestFallbackChainConsentGate:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 return_value=self._static_result(url),
             ),
             patch(
-                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
+                new_callable=AsyncMock,
             ) as mock_defuddle,
         ):
             result = await _fetch_with_fallback(url, config)
@@ -724,7 +728,7 @@ class TestFallbackChainConsentGate:
         with (
             patch("sys.stdin") as mock_stdin,
             patch(
-                "markitai.fetch.fetch_with_jina",
+                "markitai.fetch_strategies.jina.fetch_with_jina",
                 new_callable=AsyncMock,
                 return_value=jina_result,
             ) as mock_jina,
@@ -747,12 +751,13 @@ class TestFallbackChainConsentGate:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 return_value=self._static_result(url),
             ) as mock_static,
             patch(
-                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
+                new_callable=AsyncMock,
             ) as mock_defuddle,
         ):
             result = await _fetch_with_fallback(url, config)

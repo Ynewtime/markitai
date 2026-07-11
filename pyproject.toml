@@ -122,6 +122,8 @@ source_modules = [
     "markitai.fetch_policy",
     "markitai.fetch_screenshot",
     "markitai.fetch_session",
+    "markitai.fetch_strategies",
+    "markitai.fetch_support",
     "markitai.fetch_types",
     "markitai.image",
     "markitai.json_order",
@@ -165,6 +167,8 @@ forbidden_modules = [
     "markitai.converter",
     "markitai.fetch",
     "markitai.fetch_playwright",
+    "markitai.fetch_strategies",
+    "markitai.fetch_support",
     "markitai.image",
     "markitai.llm",
     "markitai.ocr",
@@ -180,6 +184,8 @@ source_modules = [
     "markitai.converter",
     "markitai.fetch",
     "markitai.fetch_playwright",
+    "markitai.fetch_strategies",
+    "markitai.fetch_support",
     "markitai.image",
     "markitai.llm",
     "markitai.ocr",
@@ -189,10 +195,14 @@ source_modules = [
 forbidden_modules = ["markitai.workflow", "markitai.batch"]
 
 [[tool.importlinter.contracts]]
-name = "fetch_playwright must not import fetch (cycle killed in Phase 3)"
+name = "fetch_playwright must not import fetch layers (cycle killed in Phase 3)"
 type = "forbidden"
 source_modules = ["markitai.fetch_playwright"]
-forbidden_modules = ["markitai.fetch"]
+forbidden_modules = [
+    "markitai.fetch",
+    "markitai.fetch_strategies",
+    "markitai.fetch_support",
+]
 
 [[tool.importlinter.contracts]]
 name = "webextract stays a pure extraction domain"
@@ -204,12 +214,20 @@ forbidden_modules = [
     "markitai.converter",
     "markitai.fetch",
     "markitai.fetch_playwright",
+    "markitai.fetch_strategies",
+    "markitai.fetch_support",
     "markitai.image",
     "markitai.llm",
     "markitai.ocr",
     "markitai.providers",
     "markitai.workflow",
 ]
+
+[[tool.importlinter.contracts]]
+name = "fetch_strategies sits below fetch: strategies never import the orchestrator"
+type = "forbidden"
+source_modules = ["markitai.fetch_strategies", "markitai.fetch_support"]
+forbidden_modules = ["markitai.fetch"]
 
 # NOTE: intentionally duplicated with packages/markitai/pyproject.toml [tool.pyright]
 # (not a drifted leftover): CI (`uv run pyright packages/markitai/src packages/markitai/tests`)
