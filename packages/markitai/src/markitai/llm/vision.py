@@ -25,7 +25,10 @@ from markitai.constants import (
     DEFAULT_MAX_IMAGES_PER_BATCH,
 )
 from markitai.llm.degeneration import truncate_degenerate_tail
-from markitai.llm.document import _try_repair_instructor_response
+from markitai.llm.engine import LLMCall
+from markitai.llm.engine import (
+    try_repair_instructor_response as _try_repair_instructor_response,
+)
 from markitai.llm.models import context_display_name, get_response_cost
 from markitai.llm.types import (
     BatchImageAnalysisResult,
@@ -211,10 +214,13 @@ class VisionMixin:
     # Declare expected attributes from LLMProcessor for type checking
     # Methods still use type: ignore[attr-defined] as they have complex signatures
     if TYPE_CHECKING:
+        from markitai.llm.engine import LLMEngine
+
         semaphore: Semaphore
         vision_router: Router | LocalProviderWrapper | HybridRouter
         _persistent_cache: Any  # PersistentCache from processor.py
         _prompt_manager: PromptManager
+        engine: LLMEngine
 
     async def analyze_image(
         self,
@@ -848,80 +854,54 @@ class VisionMixin:
         model: str,
         context: str = "",
     ) -> ImageAnalysis:
-        """Analyze using Instructor for structured output."""
-        async with self.semaphore:  # type: ignore[attr-defined]
-            # Calculate dynamic max_tokens using minimum across all vision router models
-            max_tokens = self._calculate_dynamic_max_tokens(  # type: ignore[attr-defined]
-                messages,
-                router=self.vision_router,  # type: ignore[attr-defined]
+        """Analyze using Instructor for structured output.
+
+        cache_key=None: caching lives in the callers (analyze_image /
+        analyze_batch), keyed by image fingerprint + document context.
+
+        Any exception (ProviderError, InstructorRetryException, truncation
+        ValueError) must propagate: _analyze_image_with_fallback catches all
+        and moves on to the json_mode / two_calls fallback strategies.
+        """
+        call = LLMCall(
+            purpose="image_analysis",
+            messages=messages,
+            response_model=ImageAnalysisResult,
+            context=context,
+            cache_key=None,
+            router=self.vision_router,  # type: ignore[attr-defined]
+        )
+        response, raw_response = await self.engine.complete_structured(call)  # type: ignore[attr-defined]
+
+        # Build llm_usage dict for this analysis from the raw response
+        # (aggregate usage accounting itself is handled by the engine)
+        actual_model = getattr(raw_response, "model", None) or model
+        input_tokens = 0
+        output_tokens = 0
+        cost = 0.0
+        if hasattr(raw_response, "usage") and raw_response.usage is not None:
+            input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
+            output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
+            cost = get_response_cost(raw_response)
+
+        llm_usage: LLMUsageByModel = {
+            actual_model: cast(
+                "ModelUsageStats",
+                {
+                    "requests": 1,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost_usd": cost,
+                },
             )
+        }
 
-            # Create instructor client from vision router for load balancing
-            # Use MD_JSON mode to handle LLMs that wrap JSON in ```json code blocks
-            client = instructor.from_litellm(
-                self.vision_router.acompletion,
-                mode=instructor.Mode.MD_JSON,  # type: ignore[attr-defined]
-            )
-
-            # Use create_with_completion to get both the model and the raw response
-            # max_retries allows Instructor to retry with validation error
-            # feedback, which helps LLM fix JSON escaping issues
-            try:
-                response, raw_response = await cast(
-                    Awaitable[tuple[ImageAnalysisResult, Any]],
-                    client.chat.completions.create_with_completion(
-                        model=model,
-                        messages=cast(list[ChatCompletionMessageParam], messages),
-                        response_model=ImageAnalysisResult,
-                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                        max_tokens=max_tokens,
-                    ),
-                )
-            except Exception as e:
-                repaired = _try_repair_instructor_response(e, ImageAnalysisResult)
-                if repaired is None:
-                    raise
-                response, raw_response = repaired
-
-            # Check for truncation
-            if hasattr(raw_response, "choices") and raw_response.choices:
-                finish_reason = getattr(raw_response.choices[0], "finish_reason", None)
-                if finish_reason == "length":
-                    raise ValueError("Output truncated due to max_tokens limit")
-
-            # Track usage from raw API response
-            # Get actual model from response for accurate tracking
-            actual_model = getattr(raw_response, "model", None) or model
-            input_tokens = 0
-            output_tokens = 0
-            cost = 0.0
-            if hasattr(raw_response, "usage") and raw_response.usage is not None:
-                input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
-                output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
-                cost = get_response_cost(raw_response)
-                self._track_usage(  # type: ignore[attr-defined]
-                    actual_model, input_tokens, output_tokens, cost, context
-                )
-
-            # Build llm_usage dict for this analysis
-            llm_usage: LLMUsageByModel = {
-                actual_model: cast(
-                    "ModelUsageStats",
-                    {
-                        "requests": 1,
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "cost_usd": cost,
-                    },
-                )
-            }
-
-            return ImageAnalysis(
-                caption=response.caption.strip(),
-                description=response.description,
-                extracted_text=response.extracted_text,
-                llm_usage=llm_usage,
-            )
+        return ImageAnalysis(
+            caption=response.caption.strip(),
+            description=response.description,
+            extracted_text=response.extracted_text,
+            llm_usage=llm_usage,
+        )
 
     async def _analyze_with_json_mode(
         self,

@@ -192,7 +192,7 @@ class TestExtractFromScreenshotDegeneration:
         mock_router.acompletion = AsyncMock()
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -235,7 +235,7 @@ class TestExtractFromScreenshotDegeneration:
         mock_router.acompletion = AsyncMock()
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)

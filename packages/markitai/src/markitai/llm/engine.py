@@ -211,6 +211,10 @@ class LLMCall:
         cache_model: ``model`` parameter passed to the persistent cache
         validate: Optional hook returning the (possibly corrected) result;
             if it raises, nothing is cached and the error propagates
+        cache_if: Optional hook called after ``validate`` and before the
+            cache write; returning False skips both cache layers' writes
+            but the result is still returned normally (e.g. degenerate
+            output that must not poison a clean retry)
         serialize: Result -> cacheable dict (None -> ``result.model_dump()``)
         deserialize: Cached dict -> result
             (None -> ``response_model.model_construct(**cached)``)
@@ -226,6 +230,7 @@ class LLMCall:
     cache_content: str = ""
     cache_model: str = "default"
     validate: Callable[[Any], Any] | None = None
+    cache_if: Callable[[Any], bool] | None = None
     serialize: Callable[[Any], dict[str, Any]] | None = None
     deserialize: Callable[[dict[str, Any]], Any] | None = None
     router: Any | None = None
@@ -378,8 +383,11 @@ class LLMEngine:
             if call.validate is not None:
                 result = call.validate(result)
 
-            # Store in both cache layers
-            if call.cache_key is not None:
+            # Store in both cache layers (unless the cache_if hook vetoes
+            # the write, e.g. for degenerate output)
+            if call.cache_key is not None and (
+                call.cache_if is None or call.cache_if(result)
+            ):
                 if call.serialize is not None:
                     cache_value = call.serialize(result)
                 else:

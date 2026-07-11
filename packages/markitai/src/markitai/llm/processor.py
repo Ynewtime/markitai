@@ -55,6 +55,7 @@ from markitai.constants import (
 from markitai.llm import content
 from markitai.llm.cache import ContentCache, PersistentCache
 from markitai.llm.document import DocumentMixin
+from markitai.llm.engine import LLMEngine
 from markitai.llm.models import (
     MarkitaiLLMLogger,
     get_model_info_cached,
@@ -645,6 +646,7 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         self._vision_router: Router | LocalProviderWrapper | HybridRouter | None = None
         self._semaphore: asyncio.Semaphore | None = None
         self._io_semaphore: asyncio.Semaphore | None = None
+        self._engine: LLMEngine | None = None
         self._prompt_manager = PromptManager(prompts_config)
 
         # Usage tracking (global across all contexts)
@@ -774,6 +776,27 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         if self._io_semaphore is None:
             self._io_semaphore = asyncio.Semaphore(DEFAULT_IO_CONCURRENCY)
         return self._io_semaphore
+
+    @property
+    def engine(self) -> LLMEngine:
+        """Get or create the unified structured LLM call engine (lazy).
+
+        Lazy like ``router``/``semaphore``: creating it eagerly in
+        ``__init__`` would force router creation, which raises when no
+        models are configured (and would pin the router before tests can
+        inject ``_router``/``_vision_router`` doubles).
+        """
+        if self._engine is None:
+            self._engine = LLMEngine(
+                router=self.router,
+                semaphore=self.semaphore,
+                memory_cache=self._cache,
+                persistent_cache=self._persistent_cache,
+                track_usage=self._track_usage,
+                calculate_max_tokens=self._calculate_dynamic_max_tokens,
+                get_primary_model=self._get_router_primary_model,
+            )
+        return self._engine
 
     def _create_router(self) -> Router | LocalProviderWrapper | HybridRouter:
         """Create LiteLLM Router from configuration.

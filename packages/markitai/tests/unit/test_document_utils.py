@@ -675,7 +675,7 @@ class TestSocialPostVerbatimBody:
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -710,7 +710,7 @@ class TestSocialPostVerbatimBody:
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -743,7 +743,7 @@ class TestSocialPostVerbatimBody:
         )
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 side_effect=Exception("Instructor failed")
@@ -780,7 +780,9 @@ class TestTryRepairInstructorResponse:
         return exc
 
     def test_wraps_bare_item_into_single_list_field(self) -> None:
-        from markitai.llm.document import _try_repair_instructor_response
+        from markitai.llm.engine import (
+            try_repair_instructor_response as _try_repair_instructor_response,
+        )
         from markitai.llm.types import BatchImageAnalysisResult
 
         content = '{"image_index": 1, "caption": "cap", "description": "desc"}'
@@ -794,7 +796,9 @@ class TestTryRepairInstructorResponse:
         assert model.images[0].caption == "cap"
 
     def test_wraps_bare_list_into_single_list_field(self) -> None:
-        from markitai.llm.document import _try_repair_instructor_response
+        from markitai.llm.engine import (
+            try_repair_instructor_response as _try_repair_instructor_response,
+        )
         from markitai.llm.types import BatchImageAnalysisResult
 
         content = (
@@ -810,7 +814,9 @@ class TestTryRepairInstructorResponse:
         assert [img.caption for img in model.images] == ["a", "b"]
 
     def test_correct_shape_still_parses(self) -> None:
-        from markitai.llm.document import _try_repair_instructor_response
+        from markitai.llm.engine import (
+            try_repair_instructor_response as _try_repair_instructor_response,
+        )
         from markitai.llm.types import BatchImageAnalysisResult
 
         content = '{"images": [{"image_index": 1, "caption": "c", "description": "d"}]}'
@@ -824,7 +830,9 @@ class TestTryRepairInstructorResponse:
 
     def test_multi_field_model_is_not_coerced(self) -> None:
         """Wrapping only applies to single-required-list-field models."""
-        from markitai.llm.document import _try_repair_instructor_response
+        from markitai.llm.engine import (
+            try_repair_instructor_response as _try_repair_instructor_response,
+        )
         from markitai.llm.types import DocumentProcessResult
 
         content = '{"image_index": 1, "caption": "c", "description": "d"}'
@@ -993,7 +1001,7 @@ class TestProcessDocumentAsync:
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1028,7 +1036,7 @@ class TestProcessDocumentAsync:
         mock_router.acompletion = AsyncMock(return_value=clean_response)
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 side_effect=Exception("Instructor failed")
@@ -1075,7 +1083,7 @@ Original second page.
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1104,7 +1112,7 @@ Original second page.
         processor._router = mock_router
 
         with (
-            patch("markitai.llm.document.instructor.from_litellm") as mock_instr,
+            patch("markitai.llm.engine.instructor.from_litellm") as mock_instr,
             patch("markitai.llm.document.logger") as mock_logger,
         ):
             mock_client = MagicMock()
@@ -1143,7 +1151,7 @@ Original second page.
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1202,7 +1210,7 @@ Gamma
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1280,7 +1288,7 @@ Slide body
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1318,7 +1326,7 @@ Slide body
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1351,7 +1359,7 @@ Slide body
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1391,7 +1399,7 @@ Slide body
         mock_router = MagicMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             # Cache should be checked before instructor is called
             mock_client.chat.completions.create_with_completion = AsyncMock(
@@ -1428,7 +1436,7 @@ Slide body
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1463,7 +1471,7 @@ Slide body
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1572,7 +1580,7 @@ class TestEnhanceDocumentCompleteAsync:
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1608,7 +1616,7 @@ class TestEnhanceDocumentCompleteAsync:
         processor._router = mock_router
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1655,7 +1663,7 @@ class TestEnhanceDocumentCompleteAsync:
         processor._router = mock_router
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1764,7 +1772,7 @@ Tail.
         processor._router = mock_router
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1802,7 +1810,7 @@ Tail.
         processor._router = mock_router
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -1870,7 +1878,7 @@ Tail.
         processor._router = mock_router
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 side_effect=Exception("Combined call failed")
@@ -1926,7 +1934,7 @@ Tail.
         processor._router = mock_router
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(first_result, first_raw)
@@ -2030,7 +2038,7 @@ class TestEnhanceUrlWithVisionAsync:
         mock_router.acompletion = AsyncMock()
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -2068,7 +2076,7 @@ class TestEnhanceUrlWithVisionAsync:
         mock_router.acompletion = AsyncMock()
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -2110,7 +2118,7 @@ class TestEnhanceUrlWithVisionAsync:
         mock_router.acompletion = AsyncMock()
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -2145,7 +2153,7 @@ class TestEnhanceUrlWithVisionAsync:
         mock_router.acompletion = AsyncMock()
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -2215,7 +2223,7 @@ class TestExtractFromScreenshotAsync:
         mock_router.acompletion = AsyncMock()
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -2255,7 +2263,7 @@ class TestProcessDocumentCombinedAsync:
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -2294,7 +2302,7 @@ class TestProcessDocumentCombinedAsync:
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(leaked_result, raw)
@@ -2331,7 +2339,7 @@ class TestProcessDocumentCombinedAsync:
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -2395,7 +2403,7 @@ class TestEnhanceWithFrontmatterAsync:
         mock_router.acompletion = AsyncMock()
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -2432,7 +2440,7 @@ class TestEnhanceWithFrontmatterAsync:
         mock_router.acompletion = AsyncMock()
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 return_value=(result, raw)
@@ -2549,7 +2557,7 @@ class TestErrorHandlingAsync:
         mock_router.acompletion = AsyncMock(side_effect=Exception("All calls fail"))
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 side_effect=Exception("Instructor failed")
@@ -2589,7 +2597,7 @@ class TestErrorHandlingAsync:
         )
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 side_effect=fatal_error
@@ -2636,7 +2644,7 @@ class TestErrorHandlingAsync:
         )
         processor._router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 side_effect=wrapped_error
@@ -2682,7 +2690,7 @@ class TestErrorHandlingAsync:
         processor._router = mock_router
         processor._vision_router = mock_router
 
-        with patch("markitai.llm.document.instructor.from_litellm") as mock_instructor:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 side_effect=Exception("All batches fail")

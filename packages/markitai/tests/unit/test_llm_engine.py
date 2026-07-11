@@ -414,6 +414,40 @@ class TestUsageAndHooks:
         assert harness.memory.set_calls == []
         assert harness.persistent.set_calls == []
 
+    async def test_cache_if_false_skips_cache_writes_but_returns_result(self) -> None:
+        harness = Harness(FakeRouter([make_model_response('{"text": "degenerate"}')]))
+        seen: list[_Doc] = []
+
+        def veto(result: _Doc) -> bool:
+            seen.append(result)
+            return False
+
+        result, raw = await harness.engine.complete_structured(make_call(cache_if=veto))
+
+        # Result is returned normally despite the veto
+        assert result.text == "degenerate"
+        assert raw is not None
+        # cache_if saw the (post-validate) result
+        assert seen == [result]
+        # Neither cache layer was written
+        assert harness.memory.set_calls == []
+        assert harness.persistent.set_calls == []
+
+    async def test_cache_if_true_writes_both_cache_layers(self) -> None:
+        harness = Harness(FakeRouter([make_model_response('{"text": "clean"}')]))
+
+        result, _raw = await harness.engine.complete_structured(
+            make_call(cache_if=lambda _result: True)
+        )
+
+        assert result.text == "clean"
+        assert harness.memory.set_calls == [
+            (CACHE_KEY, CACHE_CONTENT, {"text": "clean"})
+        ]
+        assert harness.persistent.set_calls == [
+            (CACHE_KEY, CACHE_CONTENT, {"text": "clean"}, "default")
+        ]
+
 
 class TestMaxTokens:
     async def test_dynamic_max_tokens_callback_used(self) -> None:
