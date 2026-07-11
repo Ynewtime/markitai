@@ -534,7 +534,7 @@ class TestRemoteFetchHardOptOut:
         self, runner: CliRunner
     ) -> None:
         with patch(
-            "markitai.fetch.fetch_with_jina",
+            "markitai.fetch_strategies.jina.fetch_with_jina",
             new_callable=AsyncMock,
         ) as remote_fetch:
             result = runner.invoke(

@@ -25,45 +25,23 @@ Example usage:
 
 from __future__ import annotations
 
-import asyncio
-import codecs
-import json
 import re
-import tempfile
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from loguru import logger
 
 from markitai.constants import (
-    DEFAULT_DEFUDDLE_BASE_URL,
-    DEFAULT_DEFUDDLE_RPM,
-    DEFAULT_JINA_BASE_URL,
-    DEFAULT_JINA_RPM,
     EXTERNAL_STRATEGIES,
     JS_REQUIRED_PATTERNS,
     LOCAL_STRATEGIES,
 )
-from markitai.fetch_http import get_static_http_client
-
-try:
-    from markitai.webextract import (
-        coerce_source_frontmatter,
-        extract_web_content,
-        is_native_extraction_acceptable,
-    )
-except ImportError:  # pragma: no cover - optional during staged implementation
-    extract_web_content = None  # type: ignore[assignment]
-    coerce_source_frontmatter = None  # type: ignore[assignment]
-    is_native_extraction_acceptable = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from markitai.config import (
         FetchConfig,
         FetchPolicyConfig,
-        PlaywrightConfig,
         ScreenshotConfig,
     )
 
@@ -73,9 +51,11 @@ from markitai.fetch_cache import SPADomainCache as SPADomainCache  # noqa: F401
 
 # Shared mutable fetch state (clients, caches, proxy, consent) lives on the
 # process-wide FetchSession (markitai.fetch_session); consent logic lives in
-# markitai.fetch_consent and screenshot helpers in markitai.fetch_screenshot.
-# They are re-exported here so the public markitai.fetch API (and its test
-# patch points) stays stable.
+# markitai.fetch_consent, screenshot helpers in markitai.fetch_screenshot,
+# per-strategy fetch implementations in markitai.fetch_strategies, and
+# helpers shared between this orchestrator and the strategies in
+# markitai.fetch_support. They are re-exported here so the public
+# markitai.fetch API (and its non-patch import surface) stays stable.
 from markitai.fetch_consent import (
     _REMOTE_SERVICE_LABELS as _REMOTE_SERVICE_LABELS,  # noqa: F401
 )
@@ -112,6 +92,9 @@ from markitai.fetch_consent import (
 from markitai.fetch_consent import (
     set_remote_consent_prompt_allowed as set_remote_consent_prompt_allowed,  # noqa: F401
 )
+from markitai.fetch_http import (
+    get_static_http_client as get_static_http_client,  # noqa: F401
+)
 from markitai.fetch_screenshot import (
     _compress_screenshot as _compress_screenshot,  # noqa: F401
 )
@@ -133,6 +116,78 @@ from markitai.fetch_session import (
 from markitai.fetch_session import (
     reset_default_session as reset_default_session,  # noqa: F401
 )
+from markitai.fetch_strategies import (
+    CloudflareRunner as CloudflareRunner,  # noqa: F401
+)
+from markitai.fetch_strategies import (
+    DefuddleRunner as DefuddleRunner,  # noqa: F401
+)
+from markitai.fetch_strategies import (
+    JinaRunner as JinaRunner,  # noqa: F401
+)
+from markitai.fetch_strategies import (
+    PlaywrightRunner as PlaywrightRunner,  # noqa: F401
+)
+from markitai.fetch_strategies import (
+    StaticRunner as StaticRunner,  # noqa: F401
+)
+from markitai.fetch_strategies import (
+    StrategyContext as StrategyContext,
+)
+from markitai.fetch_strategies import (
+    StrategyRunner as StrategyRunner,  # noqa: F401
+)
+from markitai.fetch_strategies import (
+    fetch_with_cloudflare as fetch_with_cloudflare,  # noqa: F401
+)
+from markitai.fetch_strategies import (
+    fetch_with_defuddle as fetch_with_defuddle,  # noqa: F401
+)
+from markitai.fetch_strategies import (
+    fetch_with_jina as fetch_with_jina,  # noqa: F401
+)
+from markitai.fetch_strategies import (
+    fetch_with_static as fetch_with_static,  # noqa: F401
+)
+from markitai.fetch_strategies import (
+    fetch_with_static_conditional as fetch_with_static_conditional,
+)
+from markitai.fetch_strategies import (
+    get_cf_semaphore as get_cf_semaphore,  # noqa: F401
+)
+from markitai.fetch_strategies import (
+    get_runner as get_runner,
+)
+from markitai.fetch_strategies._shared import (
+    _get_markitdown as _get_markitdown,  # noqa: F401
+)
+from markitai.fetch_strategies.jina import (
+    _extract_jina_error_message as _extract_jina_error_message,  # noqa: F401
+)
+from markitai.fetch_strategies.jina import (
+    _get_jina_client as _get_jina_client,  # noqa: F401
+)
+from markitai.fetch_strategies.jina import (
+    _get_jina_rate_limiter as _get_jina_rate_limiter,  # noqa: F401
+)
+from markitai.fetch_strategies.static import (
+    _extract_markdown_title as _extract_markdown_title,  # noqa: F401
+)
+from markitai.fetch_support import (
+    _detect_proxy as _detect_proxy,
+)
+from markitai.fetch_support import (
+    _get_playwright_advanced_kwargs as _get_playwright_advanced_kwargs,  # noqa: F401
+)
+from markitai.fetch_support import (
+    _get_playwright_fetch_kwargs as _get_playwright_fetch_kwargs,
+)
+from markitai.fetch_support import (
+    _resolve_playwright_profile_overrides as _resolve_playwright_profile_overrides,  # noqa: F401
+)
+from markitai.fetch_support import (
+    _url_to_session_key as _url_to_session_key,  # noqa: F401
+)
 from markitai.fetch_types import (
     CRITICAL_INVALID_REASONS as CRITICAL_INVALID_REASONS,  # noqa: F401
 )
@@ -144,74 +199,6 @@ from markitai.fetch_types import FetchResult as FetchResult  # noqa: F401
 from markitai.fetch_types import FetchStrategy as FetchStrategy  # noqa: F401
 from markitai.fetch_types import JinaAPIError as JinaAPIError  # noqa: F401
 from markitai.fetch_types import JinaRateLimitError as JinaRateLimitError  # noqa: F401
-from markitai.utils.text import format_error_message
-
-
-def get_cf_semaphore() -> asyncio.Semaphore:
-    """Get or create the CF BR rate-limiting semaphore.
-
-    Lazily initialized to avoid binding to a wrong event loop at import time.
-    CF Free plan allows 2 concurrent browser instances.
-    """
-    return get_default_session().get_cf_semaphore()
-
-
-def _extract_markdown_title(content: str) -> str | None:
-    """Extract the first H1 title from markdown content."""
-    match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
-    return match.group(1) if match else None
-
-
-def _get_playwright_advanced_kwargs(pw: PlaywrightConfig) -> dict[str, Any]:
-    """Extract advanced Playwright kwargs from config, omitting None values."""
-    return {
-        k: v
-        for k, v in {
-            "wait_for_selector": pw.wait_for_selector,
-            "cookies": pw.cookies,
-            "reject_resource_patterns": pw.reject_resource_patterns,
-            "extra_http_headers": pw.extra_http_headers,
-            "user_agent": pw.user_agent,
-            "http_credentials": pw.http_credentials,
-        }.items()
-        if v is not None
-    }
-
-
-def _get_playwright_fetch_kwargs(
-    url: str,
-    config: FetchConfig,
-    screenshot_config: Any | None = None,
-    output_dir: Any | None = None,
-    renderer: Any | None = None,
-) -> dict[str, Any]:
-    """Resolve all Playwright fetch arguments including domain profile overrides."""
-    profile_overrides = _resolve_playwright_profile_overrides(
-        url, config.domain_profiles
-    )
-
-    kwargs = {
-        "timeout": config.playwright.timeout,
-        "wait_for": profile_overrides.get("wait_for", config.playwright.wait_for),
-        "extra_wait_ms": profile_overrides.get(
-            "extra_wait_ms", config.playwright.extra_wait_ms
-        ),
-        "proxy": _detect_proxy() if getattr(config, "auto_proxy", True) else None,
-        "screenshot_config": screenshot_config,
-        "output_dir": output_dir,
-        "renderer": renderer,
-    }
-
-    # Session persistence
-    if config.playwright.session_mode == "domain_persistent":
-        kwargs["session_key"] = _url_to_session_key(url)
-        kwargs["persist_context"] = True
-
-    advanced_kwargs = _get_playwright_advanced_kwargs(config.playwright)
-    kwargs.update(advanced_kwargs)
-    kwargs.update(profile_overrides)
-
-    return kwargs
 
 
 def get_spa_domain_cache() -> SPADomainCache:
@@ -239,23 +226,6 @@ def get_fetch_cache(
         FetchCache instance
     """
     return get_default_session().get_fetch_cache(cache_dir, max_size_bytes)
-
-
-def _detect_proxy(force_recheck: bool = False) -> str:
-    """Detect proxy settings from environment, system config, or common local ports.
-
-    Detection order:
-    1. Environment variables: HTTPS_PROXY, HTTP_PROXY, ALL_PROXY
-    2. System proxy settings (Windows registry / macOS scutil)
-    3. Probe common proxy ports on localhost
-
-    Args:
-        force_recheck: Force re-detection even if cached
-
-    Returns:
-        Proxy URL string (e.g., "http://127.0.0.1:7890") or empty string if no proxy
-    """
-    return get_default_session().detect_proxy(force_recheck)
 
 
 def get_proxy_for_url(url: str, auto_proxy: bool = True) -> str:
@@ -293,186 +263,6 @@ def get_proxy_for_url(url: str, auto_proxy: bool = True) -> str:
     return proxy
 
 
-def _get_markitdown() -> Any:
-    """Get or create the shared MarkItDown instance.
-
-    Reusing a single instance avoids repeated initialization overhead.
-    Includes Accept header for CF Markdown for Agents content negotiation.
-    """
-    return get_default_session().get_markitdown()
-
-
-# =============================================================================
-# Defuddle: Free content extraction API (https://defuddle.md)
-# Returns clean Markdown with YAML frontmatter from any URL.
-#
-# NOTE: Rate limit is undocumented — using same conservative limiter as Jina.
-# NOTE: JS rendering capability is unconfirmed. SPA sites may need playwright.
-# TODO: Migrate defuddle's core content extraction logic to markitai native.
-#       Defuddle is open-source (https://github.com/kepano/defuddle) and its
-#       HTML cleaning/article extraction could replace the external API dependency.
-# =============================================================================
-
-
-def _get_defuddle_rate_limiter(rpm: int) -> _SlidingWindowRateLimiter:
-    """Get or create the global Defuddle rate limiter."""
-    return get_default_session().get_defuddle_rate_limiter(rpm)
-
-
-def _get_defuddle_client(timeout: int = 30) -> Any:
-    """Get or create the shared httpx.AsyncClient for Defuddle fetching."""
-    return get_default_session().get_defuddle_client(timeout)
-
-
-async def fetch_with_defuddle(
-    url: str,
-    timeout: int = 30,
-    rpm: int = DEFAULT_DEFUDDLE_RPM,
-) -> FetchResult:
-    """Fetch URL using Defuddle content extraction API.
-
-    Defuddle extracts the main article content from web pages, removing clutter
-    like ads, sidebars, headers, and footers. Returns clean Markdown with rich
-    YAML frontmatter (title, author, published, description, word_count).
-
-    API: GET https://defuddle.md/<url> → Markdown with YAML frontmatter
-
-    NOTE: Rate limit is undocumented — we use a conservative default (20 RPM).
-    NOTE: JS rendering capability of the API is unconfirmed. SPA-heavy sites
-          may still need playwright as a fallback strategy.
-
-    Args:
-        url: URL to fetch
-        timeout: Request timeout in seconds
-        rpm: Requests per minute limit (conservative; actual limit undocumented)
-
-    Returns:
-        FetchResult with clean markdown content and extracted metadata
-
-    Raises:
-        FetchError: If fetch fails or returns empty content
-    """
-    limiter = _get_defuddle_rate_limiter(rpm)
-    await limiter.acquire()
-
-    import httpx
-
-    logger.debug(f"[Defuddle] Fetching: {url}")
-
-    from urllib.parse import quote
-
-    defuddle_url = f"{DEFAULT_DEFUDDLE_BASE_URL}/{quote(url, safe='')}"
-
-    try:
-        client = _get_defuddle_client(timeout)
-        response = await client.get(defuddle_url)
-
-        if response.status_code == 429:
-            raise FetchError(
-                "Defuddle rate limit exceeded. "
-                "Try again later or use --playwright for local rendering."
-            )
-        elif response.status_code >= 400:
-            raise FetchError(
-                f"Defuddle API returned HTTP {response.status_code}: "
-                f"{response.text[:200]}"
-            )
-
-        content = response.text
-        if not content or not content.strip():
-            raise FetchError(f"No content returned from Defuddle: {url}")
-
-        # Parse YAML frontmatter for metadata extraction
-        import yaml
-
-        title: str | None = None
-        metadata: dict[str, Any] = {"api": "defuddle"}
-        source_frontmatter: dict[str, Any] = {}
-
-        frontmatter_match = re.match(
-            r"^\s*---\s*\n(.*?)\n---\s*\n?", content, re.DOTALL
-        )
-        if frontmatter_match:
-            try:
-                fm_data = yaml.safe_load(frontmatter_match.group(1))
-                if isinstance(fm_data, dict):
-                    if fm_data.get("title"):
-                        title = str(fm_data["title"])
-                    # Preserve all source frontmatter fields for output
-                    for key, value in fm_data.items():
-                        if value is not None:
-                            source_frontmatter[key] = value
-            except yaml.YAMLError:
-                logger.debug(
-                    "[Defuddle] Failed to parse YAML frontmatter, using raw content"
-                )
-        if source_frontmatter and frontmatter_match:
-            metadata["source_frontmatter"] = source_frontmatter
-
-            # Strip frontmatter, keep only markdown body
-            content = content[frontmatter_match.end() :].strip()
-
-        if not content:
-            raise FetchError(f"Defuddle returned empty content for: {url}")
-
-        return FetchResult(
-            content=content,
-            strategy_used="defuddle",
-            title=title,
-            url=url,
-            metadata=metadata,
-        )
-
-    except FetchError:
-        raise
-    except httpx.TimeoutException:
-        raise FetchError(f"Defuddle request timed out after {timeout}s: {url}")
-    except Exception as e:
-        raise FetchError(f"Defuddle fetch failed: {format_error_message(e)}")
-
-
-def _extract_jina_error_message(response: Any) -> str:
-    """Extract a human-readable message from a Jina Reader error response.
-
-    Jina returns JSON error envelopes (e.g. HTTP 451 with
-    ``{"code": 451, "message": "Anonymous access to domain ... blocked"}``);
-    surface the message instead of dumping truncated raw JSON.
-    """
-    text = str(getattr(response, "text", "") or "")
-    try:
-        data = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        return text[:200]
-    if isinstance(data, dict):
-        for key in ("readableMessage", "message", "error"):
-            value = data.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()[:300]
-    return text[:200]
-
-
-def _get_jina_rate_limiter(rpm: int) -> _SlidingWindowRateLimiter:
-    """Get or create the global Jina rate limiter."""
-    return get_default_session().get_jina_rate_limiter(rpm)
-
-
-def _get_jina_client(timeout: int = 30, proxy: str = "") -> Any:
-    """Get or create the shared httpx.AsyncClient for Jina fetching.
-
-    Reusing a single client instance avoids repeated connection setup overhead.
-    The client uses connection pooling for better performance.  Rebuilds when
-    ``timeout`` or ``proxy`` change (config-fingerprint check).
-
-    Args:
-        timeout: Request timeout in seconds
-        proxy: Proxy URL
-
-    Returns:
-        httpx.AsyncClient instance
-    """
-    return get_default_session().get_jina_client(timeout, proxy)
-
-
 async def close_shared_clients() -> None:
     """Close shared client instances.
 
@@ -498,42 +288,6 @@ async def _get_playwright_renderer(
     return await get_default_session().get_playwright_renderer(
         proxy=proxy, config=config
     )
-
-
-def _url_to_session_key(url: str) -> str:
-    """Extract session key (domain) from URL."""
-    from urllib.parse import urlparse
-
-    return urlparse(url).netloc.lower()
-
-
-def _resolve_playwright_profile_overrides(
-    url: str, domain_profiles: dict[str, Any]
-) -> dict[str, Any]:
-    """Resolve domain-specific Playwright overrides from config."""
-    from urllib.parse import urlparse
-
-    from markitai.domain_profiles import BUILTIN_DOMAIN_PROFILES
-
-    domain = urlparse(url).netloc.lower()
-    profile = domain_profiles.get(domain)
-    if not profile:
-        profile = BUILTIN_DOMAIN_PROFILES.get(domain)
-    if not profile:
-        return {}
-
-    out: dict[str, Any] = {}
-    if profile.wait_for_selector:
-        out["wait_for_selector"] = profile.wait_for_selector
-    if profile.wait_for:
-        out["wait_for"] = profile.wait_for
-    if profile.extra_wait_ms is not None:
-        out["extra_wait_ms"] = profile.extra_wait_ms
-    if profile.skip_auto_scroll:
-        out["skip_auto_scroll"] = profile.skip_auto_scroll
-    if profile.reject_resource_patterns:
-        out["reject_resource_patterns"] = profile.reject_resource_patterns
-    return out
 
 
 def detect_js_required(content: str) -> bool:
@@ -634,176 +388,6 @@ def should_use_browser_for_domain(url: str, fallback_patterns: list[str]) -> boo
     return False
 
 
-async def fetch_with_static(url: str) -> FetchResult:
-    """Fetch URL using the shared static pipeline.
-
-    Args:
-        url: URL to fetch
-
-    Returns:
-        FetchResult with markdown content
-
-    Raises:
-        FetchError: If fetch fails
-    """
-    logger.debug(f"Fetching URL with static strategy: {url}")
-    cond_result = await fetch_with_static_conditional(url)
-    if cond_result.result is None:
-        raise FetchError(f"No content from conditional fetch: {url}")
-    result = cond_result.result
-    # Stash HTTP validators in metadata so AUTO dispatch can store them
-    # in the cache for future conditional revalidation (popped by
-    # _dispatch_strategy before caching).
-    if cond_result.etag:
-        result.metadata["_markitai_etag"] = cond_result.etag
-    if cond_result.last_modified:
-        result.metadata["_markitai_last_modified"] = cond_result.last_modified
-    return result
-
-
-def _get_header_value(
-    headers: Any, *candidates: str, default: str | None = None
-) -> str | None:
-    """Read a response header across case and separator variants."""
-    getter = getattr(headers, "get", None)
-    if callable(getter):
-        for candidate in candidates:
-            value = getter(candidate, None)
-            if value is not None:
-                return str(value)
-
-    if isinstance(headers, dict):
-        normalized = {str(key).lower(): value for key, value in headers.items()}
-        for candidate in candidates:
-            value = normalized.get(candidate.lower())
-            if value is not None:
-                return value
-
-    return default
-
-
-def _get_response_text(response: Any) -> str:
-    """Decode a static HTTP response body into text."""
-    content = getattr(response, "content", b"")
-    if isinstance(content, bytes | bytearray):
-        declared_encoding = getattr(response, "encoding", None)
-        if not isinstance(declared_encoding, str) or not declared_encoding.strip():
-            content_type = _get_header_value(
-                getattr(response, "headers", {}),
-                "content-type",
-                "content_type",
-            )
-            if isinstance(content_type, str):
-                match = re.search(r"charset=([^\s;]+)", content_type, re.IGNORECASE)
-                if match:
-                    declared_encoding = match.group(1).strip().strip("\"'")
-                else:
-                    declared_encoding = None
-
-        if isinstance(declared_encoding, str) and declared_encoding.strip():
-            try:
-                codecs.lookup(declared_encoding)
-                return bytes(content).decode(declared_encoding)
-            except (LookupError, UnicodeDecodeError):
-                logger.debug(
-                    "Failed to decode response with declared charset "
-                    f"{declared_encoding!r}, falling back"
-                )
-
-        for fallback_encoding in ("utf-8", "utf-8-sig"):
-            try:
-                return bytes(content).decode(fallback_encoding)
-            except UnicodeDecodeError:
-                continue
-
-        return bytes(content).decode("utf-8", errors="replace")
-
-    text = getattr(response, "text", None)
-    if isinstance(text, str):
-        return text
-
-    return str(content)
-
-
-async def _build_native_fetch_result(
-    *,
-    html: str,
-    url: str,
-    final_url: str | None,
-    strategy_used: str,
-    base_metadata: dict[str, Any] | None = None,
-) -> FetchResult | None:
-    """Try native HTML extraction and return a FetchResult when acceptable."""
-    if extract_web_content is None:
-        return None
-    # If extract_web_content is available, the other webextract functions are too
-    assert is_native_extraction_acceptable is not None
-    assert coerce_source_frontmatter is not None
-
-    try:
-        # CPU-bound (BeautifulSoup parsing + deepcopies); run in a thread
-        # to avoid blocking the event loop
-        extracted = await asyncio.to_thread(extract_web_content, html, url)
-    except Exception as exc:
-        logger.debug(f"Native webextract failed, falling back to markitdown: {exc}")
-        return None
-
-    markdown = getattr(extracted, "markdown", "")
-    diagnostics = dict(getattr(extracted, "diagnostics", {}) or {})
-
-    if not is_native_extraction_acceptable(extracted):
-        diagnostics.setdefault("fallback_reason", "native_output_too_short")
-        return None
-
-    # Prefer build_source_frontmatter (typed result with content_profile/word_count)
-    # over coerce_source_frontmatter (metadata-only legacy fallback).
-    if hasattr(extracted, "info") and getattr(extracted, "info", None) is not None:
-        from markitai.webextract.frontmatter import build_source_frontmatter
-
-        source_frontmatter = build_source_frontmatter(extracted)
-    else:
-        source_frontmatter = coerce_source_frontmatter(
-            getattr(extracted, "metadata", None)
-        )
-    merged_metadata = dict(base_metadata or {})
-    merged_metadata.update(
-        {
-            "converter": "native-html",
-            "webextract_diagnostics": diagnostics,
-        }
-    )
-    if source_frontmatter:
-        merged_metadata["source_frontmatter"] = source_frontmatter
-
-    return FetchResult(
-        content=markdown,
-        strategy_used=strategy_used,
-        title=source_frontmatter.get("title"),
-        url=url,
-        final_url=final_url,
-        metadata=merged_metadata,
-    )
-
-
-def _markitdown_convert_bytes(
-    content_bytes: bytes, suffix: str
-) -> tuple[str, str | None]:
-    """Write a temp file and convert with markitdown (CPU-bound).
-
-    Returns:
-        (text_content, title) tuple.
-    """
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False, mode="wb") as f:
-        f.write(content_bytes)
-        temp_path = Path(f.name)
-    try:
-        md = _get_markitdown()
-        md_result = md.convert(str(temp_path))
-        return md_result.text_content or "", md_result.title
-    finally:
-        temp_path.unlink(missing_ok=True)
-
-
 def _merge_screenshot_result(result: FetchResult, pw_result: Any) -> FetchResult:
     """Attach a separately captured screenshot without dropping existing fields."""
     return FetchResult(
@@ -818,516 +402,6 @@ def _merge_screenshot_result(result: FetchResult, pw_result: Any) -> FetchResult
         static_content=result.static_content,
         browser_content=result.browser_content,
     )
-
-
-async def fetch_with_static_conditional(
-    url: str,
-    cached_etag: str | None = None,
-    cached_last_modified: str | None = None,
-) -> ConditionalFetchResult:
-    """Fetch URL with HTTP conditional request (single network roundtrip).
-
-    Uses If-None-Match and If-Modified-Since headers for cache validation.
-    If the server returns 304 Not Modified, the cached content should be used.
-
-    Args:
-        url: URL to fetch
-        cached_etag: ETag from previous fetch (sent as If-None-Match)
-        cached_last_modified: Last-Modified from previous fetch (sent as If-Modified-Since)
-
-    Returns:
-        ConditionalFetchResult with:
-        - not_modified=True if 304 response (use cached content)
-        - result with new content if 200 response
-        - etag/last_modified for future conditional requests
-    """
-    logger.debug(
-        f"[ConditionalFetch] URL: {url}, etag={cached_etag is not None}, "
-        f"last_modified={cached_last_modified is not None}"
-    )
-
-    # Build conditional request headers
-    # CF Markdown for Agents content negotiation
-    headers: dict[str, str] = {
-        "Accept": "text/markdown, text/html;q=0.9, */*;q=0.5",
-    }
-    if cached_etag:
-        headers["If-None-Match"] = cached_etag
-    if cached_last_modified:
-        headers["If-Modified-Since"] = cached_last_modified
-
-    try:
-        # Detect proxy
-        proxy_url = _detect_proxy()
-        client = get_static_http_client()
-        logger.debug(f"Fetching URL with static {client.name} strategy: {url}")
-
-        response = await client.get(
-            url, headers=headers, timeout_s=30.0, proxy=proxy_url
-        )
-
-        # Extract response headers for future conditional requests
-        response_etag = _get_header_value(response.headers, "etag", "ETag")
-        response_last_modified = _get_header_value(
-            response.headers,
-            "last-modified",
-            "Last-Modified",
-            "last_modified",
-            "Last_Modified",
-        )
-
-        # 304 Not Modified - use cached content
-        if response.status_code == 304:
-            return ConditionalFetchResult(
-                result=None,
-                not_modified=True,
-                etag=response_etag or cached_etag,
-                last_modified=response_last_modified or cached_last_modified,
-            )
-
-        # Non-2xx response (except 304)
-        if response.status_code >= 400:
-            raise FetchError(f"HTTP {response.status_code} fetching URL: {url}")
-
-        # 200 OK (or other 2xx) - process new content
-        logger.debug(
-            f"[ConditionalFetch] {response.status_code} response, "
-            f"content-length={len(response.content)}"
-        )
-
-        # Check if server returned markdown directly (CF Markdown for Agents)
-        content_type_header = _get_header_value(
-            response.headers,
-            "content-type",
-            "Content-Type",
-            "content_type",
-            default="",
-        )
-        if content_type_header and "text/markdown" in content_type_header:
-            markdown_content = _get_response_text(response)
-            token_hint = _get_header_value(
-                response.headers,
-                "x-markdown-tokens",
-                "X-Markdown-Tokens",
-            )
-            logger.debug(
-                f"[ConditionalFetch] Server returned markdown directly"
-                f"{f' (~{token_hint} tokens)' if token_hint else ''}"
-            )
-            title = _extract_markdown_title(markdown_content)
-
-            fetch_result = FetchResult(
-                content=markdown_content,
-                strategy_used="static",
-                title=title,
-                url=url,
-                final_url=str(response.url),
-                metadata={
-                    "converter": "server-markdown",
-                    "conditional": True,
-                    "token_hint": int(token_hint) if token_hint else None,
-                    "client": client.name,
-                },
-            )
-
-            return ConditionalFetchResult(
-                result=fetch_result,
-                not_modified=False,
-                etag=response_etag,
-                last_modified=response_last_modified,
-            )
-
-        # Determine file extension from Content-Type or URL
-        content_type = _get_header_value(
-            response.headers,
-            "content-type",
-            "Content-Type",
-            "content_type",
-            default="",
-        )
-        response_text = _get_response_text(response)
-        if content_type and "text/html" in content_type:
-            native_result = await _build_native_fetch_result(
-                html=response_text,
-                url=url,
-                final_url=str(response.url),
-                strategy_used="static",
-                base_metadata={"conditional": True, "client": client.name},
-            )
-            if native_result is not None:
-                return ConditionalFetchResult(
-                    result=native_result,
-                    not_modified=False,
-                    etag=response_etag,
-                    last_modified=response_last_modified,
-                )
-
-        if content_type and "text/html" in content_type:
-            suffix = ".html"
-        elif content_type and "application/pdf" in content_type:
-            suffix = ".pdf"
-        else:
-            # Fallback to URL extension
-            from urllib.parse import urlparse
-
-            path = urlparse(url).path
-            suffix = Path(path).suffix or ".html"
-
-        # Save response to temp file and run sync markitdown in executor
-        # to avoid blocking the event loop
-        loop = asyncio.get_running_loop()
-        text_content, title = await loop.run_in_executor(
-            None, _markitdown_convert_bytes, response.content, suffix
-        )
-
-        if not text_content:
-            raise FetchError(f"No content extracted from URL: {url}")
-
-        fetch_result = FetchResult(
-            content=text_content,
-            strategy_used="static",
-            title=title,
-            url=url,
-            final_url=str(response.url),
-            metadata={"converter": "markitdown", "conditional": True},
-        )
-
-        return ConditionalFetchResult(
-            result=fetch_result,
-            not_modified=False,
-            etag=response_etag,
-            last_modified=response_last_modified,
-        )
-
-    except Exception as e:
-        if isinstance(e, FetchError):
-            raise
-        raise FetchError(
-            f"Failed to fetch URL with conditional request: {format_error_message(e)}"
-        )
-
-
-async def fetch_with_cloudflare(
-    url: str,
-    api_token: str | None = None,
-    account_id: str | None = None,
-    timeout: int = 30000,
-    wait_until: str = "networkidle0",
-    cache_ttl: int = 0,
-    reject_resource_patterns: list[str] | None = None,
-    user_agent: str | None = None,
-    cookies: list[dict[str, str]] | None = None,
-    wait_for_selector: str | None = None,
-    http_credentials: dict[str, str] | None = None,
-) -> FetchResult:
-    """Fetch URL using Cloudflare Browser Rendering /content API.
-
-    Fetches the rendered HTML (not CF's server-side /markdown conversion) so
-    the page goes through the same native webextract pipeline as every other
-    strategy — site-specific extractors included. CF's /markdown endpoint
-    hands back already-converted generic markdown, which bypasses
-    webextract entirely and lets site chrome through (share buttons,
-    stat counters, back-to-top links).
-
-    Args:
-        url: URL to fetch
-        api_token: CF API token
-        account_id: CF account ID
-        timeout: Timeout in milliseconds
-        wait_until: Wait event (load, domcontentloaded, networkidle0)
-        cache_ttl: Cache TTL in seconds (0 = no cache)
-        reject_resource_patterns: JS-style regex patterns to block
-        user_agent: Custom User-Agent string
-        cookies: Cookies to set before navigation
-        wait_for_selector: CSS selector to wait for after page load
-        http_credentials: HTTP Basic Auth credentials {username, password}
-
-    Returns:
-        FetchResult with markdown extracted from the rendered HTML
-        (native webextract preferred, markitdown fallback)
-
-    Raises:
-        FetchError: If fetch fails or credentials missing
-    """
-    import httpx
-
-    if not api_token or not account_id:
-        from markitai.utils.guidance import cloudflare_credentials_error
-
-        raise FetchError(cloudflare_credentials_error())
-
-    endpoint = (
-        f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
-        f"/browser-rendering/content"
-    )
-    # cacheTTL is a query parameter, not a body parameter
-    if cache_ttl > 0:
-        endpoint += f"?cacheTTL={cache_ttl}"
-
-    payload: dict[str, Any] = {
-        "url": url,
-    }
-    # timeout and waitUntil go inside gotoOptions, not at top level
-    goto_options: dict[str, Any] = {}
-    if timeout:
-        goto_options["timeout"] = timeout
-    if wait_until:
-        goto_options["waitUntil"] = wait_until
-    if goto_options:
-        payload["gotoOptions"] = goto_options
-
-    # Resource filtering: use caller's patterns, or sensible defaults.
-    # CF BR uses JS-style regex string literals with leading/trailing slashes
-    # (e.g. "/\.css$/"), consistent with Puppeteer's page.route() patterns.
-    if reject_resource_patterns is not None:
-        payload["rejectRequestPattern"] = reject_resource_patterns
-    else:
-        # Default: skip fonts and stylesheets for faster rendering
-        payload["rejectRequestPattern"] = [
-            "/\\.css$/",
-            "/\\.woff2?$/",
-            "/\\.ttf$/",
-            "/\\.eot$/",
-            "/\\.otf$/",
-        ]
-
-    if user_agent:
-        payload["userAgent"] = user_agent
-    if cookies:
-        payload["cookies"] = cookies
-    if wait_for_selector:
-        payload["waitForSelector"] = {"selector": wait_for_selector}
-    if http_credentials:
-        payload["authenticate"] = http_credentials
-
-    logger.debug(f"Fetching URL with CF Browser Rendering: {url}")
-
-    # CF Free plan: 2 concurrent browser instances.
-    # Serialize requests to avoid 429 rate-limit errors.
-    max_retries = 3
-    retry_base_delay = 2.0  # seconds
-
-    html_content = ""
-    browser_ms_used: str | None = None
-
-    try:
-        # Use _detect_proxy() not get_proxy_for_url(endpoint), because
-        # api.cloudflare.com is not in proxy_domains but may still need
-        # proxy in restricted network environments.
-        proxy_url = _detect_proxy()
-        proxy_config = proxy_url if proxy_url else None
-
-        async with (
-            get_cf_semaphore(),
-            httpx.AsyncClient(
-                timeout=max(timeout / 1000 + 10, 60.0),
-                proxy=proxy_config,
-            ) as client,
-        ):
-            for attempt in range(max_retries):
-                response = await client.post(
-                    endpoint,
-                    headers={
-                        "Authorization": f"Bearer {api_token}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
-
-                if response.status_code == 429:
-                    if attempt < max_retries - 1:
-                        delay = retry_base_delay * (2**attempt)
-                        logger.warning(
-                            f"CF BR rate limited (429), retrying in {delay}s "
-                            f"(attempt {attempt + 1}/{max_retries}): {url}"
-                        )
-                        await asyncio.sleep(delay)
-                        continue
-                    raise FetchError(
-                        f"CF BR rate limit exceeded after {max_retries} retries: {url}"
-                    )
-
-                response.raise_for_status()
-
-                # CF REST API returns JSON envelope
-                data = response.json()
-                if not data.get("success"):
-                    errors = data.get("errors", [])
-                    error_msg = "; ".join(e.get("message", str(e)) for e in errors)
-                    raise FetchError(f"CF BR API error: {error_msg}")
-
-                html_content = data.get("result", "")
-                browser_ms_used = response.headers.get("X-Browser-Ms-Used")
-                # Convert outside the semaphore/client scope below, so the
-                # CF concurrency slot is freed as soon as the fetch is done
-                break
-    except FetchError:
-        raise
-    except Exception as e:
-        raise FetchError(
-            f"Cloudflare BR fetch failed: {format_error_message(e)}"
-        ) from e
-
-    if not html_content:
-        raise FetchError(f"CF BR returned no content: {url}")
-
-    base_metadata: dict[str, Any] = {"browser_ms_used": browser_ms_used}
-
-    # Same native-extraction path as static/playwright HTML, so site-specific
-    # extractors (webextract/extractors/registry.py) apply to CF-fetched pages
-    native_result = await _build_native_fetch_result(
-        html=html_content,
-        url=url,
-        final_url=url,
-        strategy_used="cloudflare",
-        base_metadata=base_metadata,
-    )
-    if native_result is not None:
-        return native_result
-
-    try:
-        loop = asyncio.get_running_loop()
-        text_content, title = await loop.run_in_executor(
-            None, _markitdown_convert_bytes, html_content.encode("utf-8"), ".html"
-        )
-    except Exception as e:
-        raise FetchError(
-            f"Cloudflare BR content conversion failed: {format_error_message(e)}"
-        ) from e
-
-    if not text_content:
-        raise FetchError(f"No content extracted from URL: {url}")
-
-    return FetchResult(
-        content=text_content,
-        strategy_used="cloudflare",
-        title=title,
-        url=url,
-        final_url=url,
-        metadata={**base_metadata, "converter": "markitdown"},
-    )
-
-
-async def fetch_with_jina(
-    url: str,
-    api_key: str | None = None,
-    timeout: int = 30,
-    rpm: int = DEFAULT_JINA_RPM,
-    *,
-    no_cache: bool = False,
-    target_selector: str | None = None,
-    wait_for_selector: str | None = None,
-) -> FetchResult:
-    """Fetch URL using Jina Reader API with JSON mode.
-
-    Uses JSON mode for reliable structured data extraction (title, content).
-
-    Args:
-        url: URL to fetch
-        api_key: Optional Jina API key (for higher rate limits)
-        timeout: Request timeout in seconds
-        rpm: Requests per minute limit
-        no_cache: Skip Jina server-side cache
-        target_selector: CSS selector for content extraction
-        wait_for_selector: Wait for element before extraction
-
-    Returns:
-        FetchResult with markdown content and extracted title
-
-    Raises:
-        JinaRateLimitError: If rate limit exceeded
-        JinaAPIError: If API returns error
-        FetchError: If fetch fails
-    """
-    limiter = _get_jina_rate_limiter(rpm)
-    await limiter.acquire()
-
-    import httpx
-
-    logger.debug(f"Fetching URL with Jina Reader (JSON mode): {url}")
-
-    jina_url = f"{DEFAULT_JINA_BASE_URL}/{url}"
-    headers = {
-        "Accept": "application/json",  # Use JSON mode for structured response
-    }
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    if no_cache:
-        headers["X-No-Cache"] = "true"
-    if target_selector:
-        headers["X-Target-Selector"] = target_selector
-    if wait_for_selector:
-        headers["X-Wait-For-Selector"] = wait_for_selector
-
-    try:
-        client = _get_jina_client(timeout)
-        response = await client.get(jina_url, headers=headers)
-
-        if response.status_code == 429:
-            raise JinaRateLimitError()
-        elif response.status_code >= 400:
-            raise JinaAPIError(
-                response.status_code, _extract_jina_error_message(response)
-            )
-
-        # Parse JSON response
-        try:
-            json_data = response.json()
-        except json.JSONDecodeError as e:
-            logger.warning(f"Jina API returned invalid JSON: {e}")
-            raise FetchError(
-                f"Jina Reader returned invalid JSON response: {format_error_message(e)}"
-            )
-
-        # Extract data from JSON structure
-        # Expected format: {"code": 200, "status": 20000, "data": {...}}
-        if not isinstance(json_data, dict):
-            raise FetchError("Jina Reader returned unexpected response format")
-
-        data = json_data.get("data")
-        if not data or not isinstance(data, dict):
-            # Check if the response indicates an error
-            error_msg = json_data.get("message") or json_data.get("error")
-            if error_msg:
-                raise JinaAPIError(
-                    json_data.get("code", 500),
-                    str(error_msg)[:200],
-                )
-            raise FetchError("Jina Reader returned empty or invalid data structure")
-
-        # Extract title and content from data
-        title = data.get("title")
-        content = data.get("content", "")
-
-        if not content or not content.strip():
-            raise FetchError(f"No content returned from Jina Reader: {url}")
-
-        # Clean up title if present
-        if title:
-            title = title.strip()
-            if not title:
-                title = None
-
-        return FetchResult(
-            content=content,
-            strategy_used="jina",
-            title=title,
-            url=url,
-            metadata={
-                "api": "jina-reader",
-                "mode": "json",
-                "source_url": data.get("url", url),
-            },
-        )
-
-    except (JinaRateLimitError, JinaAPIError):
-        raise
-    except httpx.TimeoutException:
-        raise FetchError(f"Jina Reader request timed out after {timeout}s: {url}")
-    except FetchError:
-        raise
-    except Exception as e:
-        raise FetchError(f"Jina Reader fetch failed: {format_error_message(e)}")
 
 
 async def _ensure_external_strategy_allowed(
@@ -1387,277 +461,6 @@ async def _ensure_external_strategy_allowed(
         )
 
 
-def _playwright_strategy_label(metadata: dict[str, Any]) -> str:
-    """Build ``strategy_used`` label for playwright, including enricher source.
-
-    Returns ``"playwright(fxtwitter)"``, ``"playwright(oembed)"``, or
-    plain ``"playwright"`` when no enricher was used.
-    """
-    source = metadata.get("_enricher_source", "")
-    if source:
-        return f"playwright({source})"
-    return "playwright"
-
-
-@dataclass
-class StrategyContext:
-    """One fetch attempt's shared inputs for strategy runners.
-
-    ``explicit`` distinguishes the two dispatch surfaces: True when a single
-    strategy is dispatched directly (``_dispatch_strategy``), False when the
-    strategy runs as one hop of the AUTO fallback chain
-    (``_fetch_with_fallback``). Runners branch on it where the two surfaces
-    historically diverged (static conditional variant, cloudflare strict
-    credential resolution, playwright availability errors vs. silent skips).
-    """
-
-    config: FetchConfig
-    session: FetchSession
-    explicit: bool
-    screenshot_kwargs: dict[str, Any]
-    cached_etag: str | None = None
-    cached_last_modified: str | None = None
-
-
-class StrategyRunner(Protocol):
-    """Uniform interface over the per-strategy fetch implementations.
-
-    ``unavailable_reason`` returns None when the strategy can run, or a skip
-    reason recorded by the AUTO chain as ``f"{strategy}: {reason}"``; an
-    empty string skips without recording an error (historical silent skip
-    when config has no cloudflare section). Explicit dispatch never skips —
-    runners raise actionable errors from ``fetch`` instead (see
-    ``ctx.explicit`` branches).
-    """
-
-    strategy: FetchStrategy
-    requires_remote_consent: bool
-
-    def unavailable_reason(self, ctx: StrategyContext) -> str | None: ...
-
-    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult: ...
-
-
-# NOTE: runner fetch bodies call the module-level fetch_with_* functions by
-# plain (global) name so test patches on markitai.fetch.fetch_with_* keep
-# intercepting them; do not bind them via local imports.
-
-
-class StaticRunner:
-    """Static HTTP fetch (conditional variant on explicit dispatch)."""
-
-    strategy: FetchStrategy = FetchStrategy.STATIC
-    requires_remote_consent: bool = False
-
-    def unavailable_reason(self, ctx: StrategyContext) -> str | None:
-        return None
-
-    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult:
-        if not ctx.explicit:
-            return await fetch_with_static(url)
-
-        # For fresh explicit fetch, use conditional to capture validators
-        cond_result = await fetch_with_static_conditional(
-            url, ctx.cached_etag, ctx.cached_last_modified
-        )
-        if cond_result.result is None:
-            raise FetchError(f"No content from conditional fetch: {url}")
-        result = cond_result.result
-        # Stash HTTP validators in metadata (same convention as
-        # fetch_with_static) for _dispatch_strategy to pop into the
-        # cache-validators channel.
-        if cond_result.etag:
-            result.metadata["_markitai_etag"] = cond_result.etag
-        if cond_result.last_modified:
-            result.metadata["_markitai_last_modified"] = cond_result.last_modified
-        return result
-
-
-class PlaywrightRunner:
-    """Local headless-browser fetch via Playwright."""
-
-    strategy: FetchStrategy = FetchStrategy.PLAYWRIGHT
-    requires_remote_consent: bool = False
-
-    def unavailable_reason(self, ctx: StrategyContext) -> str | None:
-        if ctx.explicit:
-            # Explicit dispatch raises actionable guidance errors in fetch()
-            return None
-
-        from markitai.fetch_playwright import (
-            is_playwright_available,
-            is_playwright_browser_installed,
-        )
-
-        if not is_playwright_available():
-            logger.debug("playwright not available, trying next strategy")
-            return "playwright package not installed"
-        if not is_playwright_browser_installed():
-            logger.debug(
-                "[Fetch] playwright installed but Chromium browser missing; "
-                "skipping playwright in auto chain "
-                "(run 'markitai doctor --fix' to install it)"
-            )
-            return "Chromium browser missing (run 'markitai doctor --fix')"
-        return None
-
-    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult:
-        from markitai.fetch_playwright import (
-            fetch_with_playwright,
-            is_playwright_available,
-            is_playwright_browser_installed,
-        )
-
-        if ctx.explicit:
-            from markitai.utils.guidance import (
-                playwright_browser_missing_error,
-                playwright_package_missing_error,
-            )
-
-            if not is_playwright_available():
-                raise FetchError(playwright_package_missing_error())
-            if not is_playwright_browser_installed():
-                raise FetchError(playwright_browser_missing_error())
-
-        pw_result = await fetch_with_playwright(
-            url,
-            **_get_playwright_fetch_kwargs(
-                url,
-                ctx.config,
-                screenshot_config=ctx.screenshot_kwargs.get("screenshot_config"),
-                output_dir=ctx.screenshot_kwargs.get("screenshot_dir"),
-                renderer=ctx.screenshot_kwargs.get("renderer"),
-            ),
-            remote_consent=ctx.config.remote_consent,
-        )
-
-        return FetchResult(
-            content=pw_result.content,
-            strategy_used=_playwright_strategy_label(pw_result.metadata),
-            title=pw_result.title,
-            url=url,
-            final_url=pw_result.final_url,
-            metadata=pw_result.metadata,
-            screenshot_path=pw_result.screenshot_path,
-        )
-
-
-class DefuddleRunner:
-    """Defuddle content extraction API fetch."""
-
-    strategy: FetchStrategy = FetchStrategy.DEFUDDLE
-    requires_remote_consent: bool = True
-
-    def unavailable_reason(self, ctx: StrategyContext) -> str | None:
-        return None
-
-    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult:
-        return await fetch_with_defuddle(
-            url,
-            ctx.config.defuddle.timeout,
-            ctx.config.defuddle.rpm,
-        )
-
-
-class JinaRunner:
-    """Jina Reader API fetch."""
-
-    strategy: FetchStrategy = FetchStrategy.JINA
-    requires_remote_consent: bool = True
-
-    def unavailable_reason(self, ctx: StrategyContext) -> str | None:
-        return None
-
-    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult:
-        api_key = ctx.config.jina.get_resolved_api_key()
-        return await fetch_with_jina(
-            url,
-            api_key,
-            ctx.config.jina.timeout,
-            ctx.config.jina.rpm,
-            no_cache=ctx.config.jina.no_cache,
-            target_selector=ctx.config.jina.target_selector,
-            wait_for_selector=ctx.config.jina.wait_for_selector,
-        )
-
-
-class CloudflareRunner:
-    """Cloudflare Browser Rendering API fetch."""
-
-    strategy: FetchStrategy = FetchStrategy.CLOUDFLARE
-    requires_remote_consent: bool = True
-
-    def unavailable_reason(self, ctx: StrategyContext) -> str | None:
-        if ctx.explicit:
-            # Explicit dispatch reports missing credentials via
-            # fetch_with_cloudflare's actionable error instead of skipping.
-            return None
-        cf = getattr(ctx.config, "cloudflare", None)
-        if cf is None:
-            return ""  # historical silent skip: no error recorded
-        token = (
-            cf.get_resolved_api_token()
-            if hasattr(cf, "get_resolved_api_token")
-            else cf.api_token
-        )
-        acct = (
-            cf.get_resolved_account_id()
-            if hasattr(cf, "get_resolved_account_id")
-            else cf.account_id
-        )
-        if not token or not acct:
-            logger.debug("Cloudflare credentials not configured, skipping")
-            return "credentials not configured"
-        return None
-
-    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult:
-        cf = ctx.config.cloudflare
-        if ctx.explicit:
-            token = cf.get_resolved_api_token(strict=True)
-            acct = cf.get_resolved_account_id(strict=True)
-            # Missing credentials are reported by fetch_with_cloudflare with
-            # an actionable error (see markitai.utils.guidance).
-        else:
-            token = (
-                cf.get_resolved_api_token()
-                if hasattr(cf, "get_resolved_api_token")
-                else cf.api_token
-            )
-            acct = (
-                cf.get_resolved_account_id()
-                if hasattr(cf, "get_resolved_account_id")
-                else cf.account_id
-            )
-        return await fetch_with_cloudflare(
-            url=url,
-            api_token=token,
-            account_id=acct,
-            timeout=cf.timeout,
-            wait_until=cf.wait_until,
-            cache_ttl=cf.cache_ttl,
-            reject_resource_patterns=cf.reject_resource_patterns,
-            user_agent=cf.user_agent,
-            cookies=cf.cookies,
-            wait_for_selector=cf.wait_for_selector,
-            http_credentials=cf.http_credentials,
-        )
-
-
-_STRATEGY_RUNNERS: dict[FetchStrategy, StrategyRunner] = {
-    FetchStrategy.STATIC: StaticRunner(),
-    FetchStrategy.PLAYWRIGHT: PlaywrightRunner(),
-    FetchStrategy.DEFUDDLE: DefuddleRunner(),
-    FetchStrategy.JINA: JinaRunner(),
-    FetchStrategy.CLOUDFLARE: CloudflareRunner(),
-}
-
-# AUTO-chain lookup by policy-order strategy name. Unknown names are skipped
-# by the loop, exactly as the old if/elif chain fell through them silently.
-_STRATEGY_RUNNERS_BY_NAME: dict[str, StrategyRunner] = {
-    strategy.value: runner for strategy, runner in _STRATEGY_RUNNERS.items()
-}
-
-
 async def _dispatch_strategy(
     url: str,
     strategy: FetchStrategy,
@@ -1712,7 +515,7 @@ async def _dispatch_strategy(
         if etag or last_modified:
             validators_to_write = (etag, last_modified)
     else:
-        runner = _STRATEGY_RUNNERS.get(strategy)
+        runner = get_runner(strategy)
         if runner is None:
             raise ValueError(f"Unknown fetch strategy: {strategy}")
         ctx = StrategyContext(
@@ -2255,7 +1058,7 @@ async def _fetch_with_fallback(
     )
 
     for strat in strategies:
-        runner = _STRATEGY_RUNNERS_BY_NAME.get(strat)
+        runner = get_runner(strat)
         if runner is None:
             continue
 

@@ -1468,9 +1468,12 @@ class TestFetchWithStatic:
         )()
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
-            patch("markitai.fetch._get_markitdown") as mock_get_md,
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
+            patch("markitai.fetch_strategies._shared._get_markitdown") as mock_get_md,
         ):
             mock_md = type("MockMD", (), {"convert": lambda _self, _url: mock_result})()
             mock_get_md.return_value = mock_md
@@ -1500,9 +1503,12 @@ class TestFetchWithStatic:
         mock_result = type("MockResult", (), {"text_content": "", "title": None})()
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
-            patch("markitai.fetch._get_markitdown") as mock_get_md,
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
+            patch("markitai.fetch_strategies._shared._get_markitdown") as mock_get_md,
         ):
             mock_md = type("MockMD", (), {"convert": lambda _self, _url: mock_result})()
             mock_get_md.return_value = mock_md
@@ -1529,9 +1535,12 @@ class TestFetchWithStatic:
         mock_client.get = AsyncMock(return_value=mock_response)
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
-            patch("markitai.fetch._get_markitdown") as mock_get_md,
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
+            patch("markitai.fetch_strategies._shared._get_markitdown") as mock_get_md,
         ):
             mock_md = type(
                 "MockMD",
@@ -1577,7 +1586,7 @@ class TestFetchWithJina:
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch._get_jina_client") as mock_get_client,
+            patch("markitai.fetch_strategies.jina._get_jina_client") as mock_get_client,
         ):
             mock_client = MagicMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -1605,7 +1614,7 @@ class TestFetchWithJina:
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch._get_jina_client") as mock_get_client,
+            patch("markitai.fetch_strategies.jina._get_jina_client") as mock_get_client,
         ):
             mock_client = MagicMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -1630,7 +1639,7 @@ class TestFetchWithJina:
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch._get_jina_client") as mock_get_client,
+            patch("markitai.fetch_strategies.jina._get_jina_client") as mock_get_client,
         ):
             mock_client = MagicMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -1659,7 +1668,7 @@ class TestFetchWithJina:
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch._get_jina_client") as mock_get_client,
+            patch("markitai.fetch_strategies.jina._get_jina_client") as mock_get_client,
         ):
             mock_client = MagicMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -1687,7 +1696,7 @@ class TestFetchWithJina:
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch._get_jina_client") as mock_get_client,
+            patch("markitai.fetch_strategies.jina._get_jina_client") as mock_get_client,
         ):
             mock_client = MagicMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -1712,7 +1721,7 @@ class TestFetchWithJina:
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch._get_jina_client") as mock_get_client,
+            patch("markitai.fetch_strategies.jina._get_jina_client") as mock_get_client,
         ):
             mock_client = MagicMock()
             mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("Timeout"))
@@ -1744,7 +1753,7 @@ class TestFetchWithJina:
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch._get_jina_client") as mock_get_client,
+            patch("markitai.fetch_strategies.jina._get_jina_client") as mock_get_client,
         ):
             mock_client = MagicMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -1780,7 +1789,7 @@ class TestFetchWithJina:
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch._get_jina_client") as mock_get_client,
+            patch("markitai.fetch_strategies.jina._get_jina_client") as mock_get_client,
         ):
             mock_client = MagicMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -1807,7 +1816,7 @@ class TestFetchWithStaticConditional:
 
         with (
             patch(
-                "markitai.fetch.get_static_http_client",
+                "markitai.fetch_strategies.static.get_static_http_client",
                 side_effect=httpx.ConnectError(""),
             ),
             pytest.raises(FetchError) as exc_info,
@@ -1839,8 +1848,11 @@ class TestFetchWithStaticConditional:
         mock_client.get = AsyncMock(return_value=mock_response)
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
         ):
             result = await fetch_with_static_conditional(
                 "https://example.com",
@@ -1880,13 +1892,16 @@ class TestFetchWithStaticConditional:
         mock_md_result.title = "New Content"
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
             patch(
-                "markitai.fetch.extract_web_content",
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "markitai.fetch_strategies._shared.extract_web_content",
                 side_effect=RuntimeError("native failure"),
             ),
-            patch("markitai.fetch._get_markitdown") as mock_get_md,
+            patch("markitai.fetch_strategies._shared._get_markitdown") as mock_get_md,
         ):
             mock_md = MagicMock()
             mock_md.convert.return_value = mock_md_result
@@ -1918,8 +1933,11 @@ class TestFetchWithStaticConditional:
         mock_client.get = AsyncMock(return_value=mock_response)
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
         ):
             with pytest.raises(FetchError) as exc_info:
                 await fetch_with_static_conditional("https://example.com")
@@ -2201,7 +2219,7 @@ class TestFetchWithFallback:
         )
 
         with patch(
-            "markitai.fetch.fetch_with_static", new_callable=AsyncMock
+            "markitai.fetch_strategies.static.fetch_with_static", new_callable=AsyncMock
         ) as mock_static:
             mock_static.return_value = mock_result
 
@@ -2288,7 +2306,7 @@ class TestFetchWithFallback:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 return_value=captcha_result,
             ),
@@ -2357,7 +2375,7 @@ class TestFetchWithFallback:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 side_effect=FetchError("Static failed"),
             ),
@@ -2365,7 +2383,7 @@ class TestFetchWithFallback:
                 "markitai.fetch_playwright.is_playwright_available", return_value=False
             ),
             patch(
-                "markitai.fetch.fetch_with_jina",
+                "markitai.fetch_strategies.jina.fetch_with_jina",
                 new_callable=AsyncMock,
                 side_effect=FetchError("Jina failed"),
             ),
@@ -2530,16 +2548,17 @@ class TestFetchWithFallback:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 return_value=mock_result,
             ) as mock_static,
             patch("markitai.fetch.detect_js_required", return_value=False),
             patch(
-                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
+                new_callable=AsyncMock,
             ) as mock_defuddle,
             patch(
-                "markitai.fetch.fetch_with_jina", new_callable=AsyncMock
+                "markitai.fetch_strategies.jina.fetch_with_jina", new_callable=AsyncMock
             ) as mock_jina,
         ):
             result = await _fetch_with_fallback(
@@ -2949,12 +2968,12 @@ class TestScreenshotDecoupled:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 return_value=static_result,
             ),
             patch(
-                "markitai.fetch.fetch_with_defuddle",
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
                 new_callable=AsyncMock,
                 return_value=MagicMock(
                     content=self._valid_content("defuddle"),
@@ -3024,17 +3043,17 @@ class TestScreenshotDecoupled:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_defuddle",
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
                 new_callable=AsyncMock,
                 side_effect=defuddle_error,
             ),
             patch(
-                "markitai.fetch.fetch_with_jina",
+                "markitai.fetch_strategies.jina.fetch_with_jina",
                 new_callable=AsyncMock,
                 side_effect=Exception("jina down"),
             ),
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 side_effect=Exception("static down"),
             ),
@@ -3089,7 +3108,7 @@ class TestScreenshotDecoupled:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_defuddle",
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
                 new_callable=AsyncMock,
                 return_value=defuddle_result,
             ),
@@ -3167,7 +3186,8 @@ class TestScreenshotDecoupled:
                 return_value=MagicMock(),
             ),
             patch(
-                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
+                new_callable=AsyncMock,
             ) as mock_defuddle,
         ):
             result = await fetch_url(
@@ -3194,7 +3214,8 @@ class TestScreenshotDecoupled:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_defuddle", new_callable=AsyncMock
+                "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
+                new_callable=AsyncMock,
             ) as mock_defuddle,
             pytest.raises(FetchError, match="private"),
         ):
@@ -3225,7 +3246,7 @@ class TestScreenshotDecoupled:
         )
 
         with patch(
-            "markitai.fetch.fetch_with_cloudflare",
+            "markitai.fetch_strategies.cloudflare.fetch_with_cloudflare",
             new_callable=AsyncMock,
             return_value=cloudflare_result,
         ) as mock_cloudflare:
@@ -3583,7 +3604,7 @@ class TestFetchWithFallbackJsDetection:
 
         with (
             patch(
-                "markitai.fetch.fetch_with_static",
+                "markitai.fetch_strategies.static.fetch_with_static",
                 new_callable=AsyncMock,
                 return_value=static_result,
             ),
@@ -3633,7 +3654,9 @@ class TestJinaResponseParsing:
         mock_response.json.return_value = json_data
         mock_response.text = ""
 
-        with patch("markitai.fetch._get_jina_client") as mock_get_client:
+        with patch(
+            "markitai.fetch_strategies.jina._get_jina_client"
+        ) as mock_get_client:
             mock_client = MagicMock()
             mock_client.get = AsyncMock(return_value=mock_response)
             mock_get_client.return_value = mock_client
@@ -3662,7 +3685,9 @@ class TestJinaResponseParsing:
         mock_response.json.return_value = json_data
         mock_response.text = ""
 
-        with patch("markitai.fetch._get_jina_client") as mock_get_client:
+        with patch(
+            "markitai.fetch_strategies.jina._get_jina_client"
+        ) as mock_get_client:
             mock_client = MagicMock()
             mock_client.get = AsyncMock(return_value=mock_response)
             mock_get_client.return_value = mock_client
@@ -3691,7 +3716,9 @@ class TestJinaResponseParsing:
         mock_response.json.return_value = json_data
         mock_response.text = ""
 
-        with patch("markitai.fetch._get_jina_client") as mock_get_client:
+        with patch(
+            "markitai.fetch_strategies.jina._get_jina_client"
+        ) as mock_get_client:
             mock_client = MagicMock()
             mock_client.get = AsyncMock(return_value=mock_response)
             mock_get_client.return_value = mock_client
@@ -3747,8 +3774,11 @@ class TestContentNegotiation:
         mock_client.get = mock_get
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
         ):
             try:
                 await fetch_with_static_conditional("https://example.com")
@@ -3783,8 +3813,11 @@ class TestContentNegotiation:
         mock_client.get = mock_get
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
         ):
             result = await fetch_with_static_conditional("https://example.com")
 
@@ -3819,8 +3852,11 @@ class TestContentNegotiation:
         mock_client.get = mock_get
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
         ):
             try:
                 await fetch_with_static_conditional("https://non-cf-site.com")
@@ -3862,9 +3898,14 @@ class TestContentNegotiation:
         mock_client.get = mock_get
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
-            patch("markitai.fetch.extract_web_content", create=True) as mock_extract,
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "markitai.fetch_strategies._shared.extract_web_content", create=True
+            ) as mock_extract,
         ):
             mock_extract.return_value = MagicMock(
                 markdown="# Normal HTML\n\nRegular content.",
@@ -3913,9 +3954,14 @@ class TestContentNegotiation:
         mock_client.get = AsyncMock(return_value=response)
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
-            patch("markitai.fetch.get_static_http_client", return_value=mock_client),
-            patch("markitai.fetch.extract_web_content", create=True) as mock_extract,
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "markitai.fetch_strategies._shared.extract_web_content", create=True
+            ) as mock_extract,
         ):
             mock_extract.return_value = MagicMock(
                 markdown="# 中文标题\n\n这是正文内容。",
@@ -3944,7 +3990,9 @@ class TestContentNegotiation:
             metadata={"converter": "native-html"},
         )
 
-        with patch("markitai.fetch.fetch_with_static_conditional") as mock_conditional:
+        with patch(
+            "markitai.fetch_strategies.static.fetch_with_static_conditional"
+        ) as mock_conditional:
             mock_conditional.return_value = type(
                 "MockConditionalFetchResult",
                 (),
@@ -4022,10 +4070,12 @@ class TestCloudflareStrategy:
         )
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.cloudflare._detect_proxy", return_value=""
+            ),
             patch("httpx.AsyncClient") as mock_client_class,
             patch(
-                "markitai.fetch._build_native_fetch_result",
+                "markitai.fetch_strategies.cloudflare._build_native_fetch_result",
                 new_callable=AsyncMock,
                 return_value=native_result,
             ) as mock_native,
@@ -4074,15 +4124,17 @@ class TestCloudflareStrategy:
         mock_client.post = AsyncMock(return_value=mock_response)
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.cloudflare._detect_proxy", return_value=""
+            ),
             patch("httpx.AsyncClient") as mock_client_class,
             patch(
-                "markitai.fetch._build_native_fetch_result",
+                "markitai.fetch_strategies.cloudflare._build_native_fetch_result",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch(
-                "markitai.fetch._markitdown_convert_bytes",
+                "markitai.fetch_strategies.cloudflare._markitdown_convert_bytes",
                 return_value=("Short page.", "Title"),
             ) as mock_convert,
         ):
@@ -4125,7 +4177,9 @@ class TestCloudflareStrategy:
         mock_client.post = AsyncMock(return_value=mock_response)
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.cloudflare._detect_proxy", return_value=""
+            ),
             patch("httpx.AsyncClient") as mock_client_class,
         ):
             mock_ctx = AsyncMock()
@@ -4170,7 +4224,9 @@ class TestCloudflareStrategy:
         mock_client.post = AsyncMock(return_value=mock_response)
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.cloudflare._detect_proxy", return_value=""
+            ),
             patch("httpx.AsyncClient") as mock_client_class,
         ):
             mock_ctx = AsyncMock()
@@ -4212,10 +4268,12 @@ class TestCloudflareStrategy:
 
         custom_patterns = ["/analytics/", "/\\.css$/", "/\\.woff2?$/"]
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.cloudflare._detect_proxy", return_value=""
+            ),
             patch("httpx.AsyncClient") as mock_client_class,
             patch(
-                "markitai.fetch._markitdown_convert_bytes",
+                "markitai.fetch_strategies.cloudflare._markitdown_convert_bytes",
                 return_value=("Reject-pattern test.", None),
             ),
         ):
@@ -4351,16 +4409,18 @@ class TestCloudflareBRRetry:
         mock_client.post = AsyncMock(side_effect=[mock_429, mock_200])
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.cloudflare._detect_proxy", return_value=""
+            ),
             patch("httpx.AsyncClient") as mock_client_class,
             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
             patch(
-                "markitai.fetch._build_native_fetch_result",
+                "markitai.fetch_strategies.cloudflare._build_native_fetch_result",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch(
-                "markitai.fetch._markitdown_convert_bytes",
+                "markitai.fetch_strategies.cloudflare._markitdown_convert_bytes",
                 return_value=("Content after retry.", None),
             ),
         ):
@@ -4392,7 +4452,9 @@ class TestCloudflareBRRetry:
         mock_client.post = AsyncMock(return_value=mock_429)
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.cloudflare._detect_proxy", return_value=""
+            ),
             patch("httpx.AsyncClient") as mock_client_class,
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
@@ -4444,15 +4506,17 @@ class TestCloudflareBRPayload:
         """Context manager to patch httpx and proxy for CF BR tests."""
         mock_client = self._make_mock_client(captured)
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.cloudflare._detect_proxy", return_value=""
+            ),
             patch("httpx.AsyncClient") as mock_client_class,
             patch(
-                "markitai.fetch._build_native_fetch_result",
+                "markitai.fetch_strategies.cloudflare._build_native_fetch_result",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch(
-                "markitai.fetch._markitdown_convert_bytes",
+                "markitai.fetch_strategies.cloudflare._markitdown_convert_bytes",
                 return_value=("Payload test.", None),
             ),
         ):
@@ -4831,8 +4895,13 @@ class TestDefuddleUrlEncoding:
         mock_client.get = AsyncMock(return_value=mock_response)
 
         with (
-            patch("markitai.fetch._get_defuddle_client", return_value=mock_client),
-            patch("markitai.fetch._get_defuddle_rate_limiter") as mock_limiter_fn,
+            patch(
+                "markitai.fetch_strategies.defuddle._get_defuddle_client",
+                return_value=mock_client,
+            ),
+            patch(
+                "markitai.fetch_strategies.defuddle._get_defuddle_rate_limiter"
+            ) as mock_limiter_fn,
         ):
             mock_limiter = AsyncMock()
             mock_limiter_fn.return_value = mock_limiter
@@ -5410,17 +5479,17 @@ class TestAutoStrategyCachesValidators:
         try:
             with (
                 patch(
-                    "markitai.fetch.fetch_with_defuddle",
+                    "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
                     new_callable=AsyncMock,
                     side_effect=Exception("defuddle down"),
                 ),
                 patch(
-                    "markitai.fetch.fetch_with_jina",
+                    "markitai.fetch_strategies.jina.fetch_with_jina",
                     new_callable=AsyncMock,
                     side_effect=Exception("jina down"),
                 ),
                 patch(
-                    "markitai.fetch.fetch_with_static_conditional",
+                    "markitai.fetch_strategies.static.fetch_with_static_conditional",
                     new_callable=AsyncMock,
                     return_value=cond,
                 ),

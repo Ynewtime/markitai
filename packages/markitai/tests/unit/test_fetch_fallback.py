@@ -113,8 +113,7 @@ class TestExplicitStrategyFallback:
         auto_result = FetchResult(content="# ok", strategy_used="static")
 
         monkeypatch.setattr(
-            fetch,
-            "fetch_with_jina",
+            "markitai.fetch_strategies.jina.fetch_with_jina",
             AsyncMock(side_effect=JinaAPIError(451, "Anonymous access blocked")),
         )
         fallback_mock = AsyncMock(return_value=auto_result)
@@ -139,8 +138,7 @@ class TestExplicitStrategyFallback:
         """5xx / network errors from explicit strategies are not intercepted."""
         config = FetchConfig()
         monkeypatch.setattr(
-            fetch,
-            "fetch_with_jina",
+            "markitai.fetch_strategies.jina.fetch_with_jina",
             AsyncMock(side_effect=JinaAPIError(502, "Bad gateway")),
         )
         fallback_mock = AsyncMock()
@@ -162,8 +160,7 @@ class TestExplicitStrategyFallback:
         auto_result = FetchResult(content="# ok", strategy_used="static")
 
         monkeypatch.setattr(
-            fetch,
-            "fetch_with_jina",
+            "markitai.fetch_strategies.jina.fetch_with_jina",
             AsyncMock(side_effect=JinaAPIError(451, "Anonymous access blocked")),
         )
         monkeypatch.setattr(
@@ -196,8 +193,7 @@ class TestExplicitStrategyFallback:
         """Declining the fallback yields an actionable error, not raw JSON."""
         config = FetchConfig()
         monkeypatch.setattr(
-            fetch,
-            "fetch_with_jina",
+            "markitai.fetch_strategies.jina.fetch_with_jina",
             AsyncMock(
                 side_effect=JinaAPIError(
                     451, "Anonymous access to domain github.com blocked"
@@ -236,8 +232,7 @@ class TestExplicitStrategyFallback:
         """If the auto fallback also fails, both failures show compactly."""
         config = FetchConfig()
         monkeypatch.setattr(
-            fetch,
-            "fetch_with_jina",
+            "markitai.fetch_strategies.jina.fetch_with_jina",
             AsyncMock(
                 side_effect=JinaAPIError(
                     451, "Anonymous access to domain github.com blocked"
@@ -345,8 +340,7 @@ class TestPlaywrightActionableErrors:
         pw_mock = AsyncMock()
         monkeypatch.setattr(fp, "fetch_with_playwright", pw_mock)
         monkeypatch.setattr(
-            fetch,
-            "fetch_with_static",
+            "markitai.fetch_strategies.static.fetch_with_static",
             AsyncMock(side_effect=FetchError("HTTP 500 fetching URL")),
         )
 
@@ -493,8 +487,7 @@ class TestAutoChainFxTwitterIntercept:
 
         # Static fails so the chain advances to playwright.
         monkeypatch.setattr(
-            fetch,
-            "fetch_with_static",
+            "markitai.fetch_strategies.static.fetch_with_static",
             AsyncMock(side_effect=FetchError("HTTP 403 fetching URL")),
         )
 
@@ -531,8 +524,7 @@ class TestAutoChainFxTwitterIntercept:
 
         # Static fails so the chain advances to playwright.
         monkeypatch.setattr(
-            fetch,
-            "fetch_with_static",
+            "markitai.fetch_strategies.static.fetch_with_static",
             AsyncMock(side_effect=FetchError("HTTP 403 fetching URL")),
         )
 
