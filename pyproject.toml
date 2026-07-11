@@ -199,10 +199,6 @@ forbidden_modules = [
     "markitai.providers",
     "markitai.workflow",
 ]
-ignore_imports = [
-    # Phase 1.6: html-to-markdown renderer lives in converter/ but belongs here
-    "markitai.webextract.pipeline -> markitai.converter.webextract_html_converter",
-]
 
 # NOTE: intentionally duplicated with packages/markitai/pyproject.toml [tool.pyright]
 # (not a drifted leftover): CI (`uv run pyright packages/markitai/src packages/markitai/tests`)

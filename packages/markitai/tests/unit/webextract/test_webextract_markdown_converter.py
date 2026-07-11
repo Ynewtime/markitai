@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from markitai.converter.webextract_html_converter import (
+from markitai.webextract.html_to_markdown import (
     WebExtractMarkdownConverter,
     _mathml_to_latex,
 )
