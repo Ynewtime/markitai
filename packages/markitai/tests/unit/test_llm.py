@@ -97,7 +97,7 @@ class TestLLMProcessor:
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch("markitai.llm.vision.instructor.from_litellm") as mock_from_litellm:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_from_litellm:
             mock_client = MagicMock()
             # create_with_completion returns (model, raw_response)
             mock_client.chat.completions.create_with_completion = AsyncMock(
@@ -174,9 +174,7 @@ class TestLLMProcessorAsync:
         processor._router = mock_router
 
         # Mock instructor to fail, forcing fallback to parallel mode
-        with patch(
-            "markitai.llm.document.instructor.from_litellm"
-        ) as mock_from_litellm:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_from_litellm:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 side_effect=Exception("Instructor not available")
@@ -219,9 +217,7 @@ class TestLLMProcessorAsync:
         mock_router.acompletion = AsyncMock()
         processor._router = mock_router
 
-        with patch(
-            "markitai.llm.document.instructor.from_litellm"
-        ) as mock_from_litellm:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_from_litellm:
             mock_client = MagicMock()
             # create_with_completion returns (model, raw_response) tuple
             mock_client.chat.completions.create_with_completion = AsyncMock(
@@ -242,9 +238,7 @@ class TestLLMProcessorAsync:
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
         # Mock instructor to fail
-        with patch(
-            "markitai.llm.document.instructor.from_litellm"
-        ) as mock_from_litellm:
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_from_litellm:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
                 side_effect=Exception("Instructor failed")

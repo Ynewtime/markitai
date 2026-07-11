@@ -9,18 +9,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
-import time
-from collections.abc import Awaitable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
-import instructor
 import yaml
 from loguru import logger
-from openai.types.chat import ChatCompletionMessageParam
 
 from markitai.constants import (
-    DEFAULT_INSTRUCTOR_MAX_RETRIES,
     DEFAULT_MAX_CONTENT_CHARS,
     DEFAULT_MAX_PAGES_PER_BATCH,
     SCREENSHOTS_REL_PATH,
@@ -46,16 +41,13 @@ from markitai.llm.content import (
     restore_image_positions as _shared_restore_image_positions,
 )
 from markitai.llm.degeneration import truncate_degenerate_tail
+from markitai.llm.engine import LLMCall
 
-# Moved to markitai.llm.engine (Phase 2.1); aliases keep internal references
-# (and vision.py / test imports) working unchanged.
+# Moved to markitai.llm.engine (Phase 2.1); alias keeps the internal
+# reference in process_document() working unchanged.
 from markitai.llm.engine import (
     find_non_retryable_provider_error as _find_non_retryable_provider_error,
 )
-from markitai.llm.engine import (
-    try_repair_instructor_response as _try_repair_instructor_response,
-)
-from markitai.llm.models import get_response_cost
 from markitai.llm.types import (
     DocumentProcessResult,
     EnhancedDocumentResult,
@@ -125,6 +117,34 @@ def _compute_document_fingerprint(
     return hashlib.sha256(fingerprint_input.encode()).hexdigest()
 
 
+def _document_result_to_cache_value(result: DocumentProcessResult) -> dict[str, Any]:
+    """Serialize a document result to the legacy cache value shape.
+
+    The flat {cleaned_markdown, description, tags} dict predates LLMEngine;
+    it is preserved verbatim so existing cache entries keep hitting.
+    (frontmatter_yaml is intentionally NOT cached: it contains a timestamp.)
+    """
+    return {
+        "cleaned_markdown": result.cleaned_markdown,
+        "description": result.frontmatter.description,
+        "tags": result.frontmatter.tags,
+    }
+
+
+def _document_result_from_cache_value(cached: dict[str, Any]) -> DocumentProcessResult:
+    """Rebuild a document result from the legacy cache value shape.
+
+    Uses model_construct() to bypass validation for cached data.
+    """
+    return DocumentProcessResult.model_construct(
+        cleaned_markdown=cached.get("cleaned_markdown", ""),
+        frontmatter=Frontmatter.model_construct(
+            description=cached.get("description", ""),
+            tags=cached.get("tags", []),
+        ),
+    )
+
+
 def _strip_leaked_markdown_boundaries(content: str) -> str:
     """Remove stray body separators leaked by the LLM.
 
@@ -167,6 +187,8 @@ class DocumentMixin:
 
     # Type hints for mixin - these are provided by LLMProcessor
     if TYPE_CHECKING:
+        from markitai.llm.engine import LLMEngine
+
         _cache: Any
         _persistent_cache: Any
         _cache_hits: int
@@ -175,6 +197,7 @@ class DocumentMixin:
         router: Any
         vision_router: Any
         semaphore: asyncio.Semaphore
+        engine: LLMEngine
 
         def _call_llm(
             self,
@@ -598,32 +621,14 @@ class DocumentMixin:
         Returns:
             Tuple of (extracted_markdown, frontmatter_yaml)
         """
-        start_time = time.perf_counter()
-
         # Load screenshot early so the cache key includes a content fingerprint.
         # A re-fetch of the same URL produces the same filename, so keying by
         # filename alone would return stale results when content changed.
         _, base64_image = self._get_cached_image(screenshot_path)  # type: ignore[attr-defined]
         image_fingerprint = hashlib.sha256(base64_image.encode()).hexdigest()
 
-        # Check persistent cache
         cache_key = f"screenshot_extract:{context}"
         cache_content = f"{screenshot_path.name}|{image_fingerprint}"
-        cached = self._persistent_cache.get(cache_key, cache_content, context=context)
-        if cached is not None:
-            from markitai.utils.frontmatter import (
-                build_frontmatter_dict,
-                frontmatter_to_yaml,
-            )
-
-            fm = build_frontmatter_dict(
-                source=context,
-                description=cached.get("description", ""),
-                tags=cached.get("tags", []),
-                title=original_title,
-                content=cached.get("cleaned_markdown", ""),
-            )
-            return cached.get("cleaned_markdown", ""), frontmatter_to_yaml(fm).strip()
 
         # Use screenshot extraction prompts
         system_prompt = self._prompt_manager.get_prompt(
@@ -649,71 +654,44 @@ class DocumentMixin:
             }
         )
 
-        async with self.semaphore:
-            # Calculate dynamic max_tokens
-            # Build messages as dict for _calculate_dynamic_max_tokens compatibility
-            messages_dict: list[dict[str, Any]] = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content_parts},
-            ]
-            max_tokens = self._calculate_dynamic_max_tokens(  # type: ignore[attr-defined]
-                messages_dict, router=self.vision_router
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content_parts},
+        ]
+
+        # Guard against VLM degeneration (repetition loops) in extracted text.
+        # The truncation correction runs in validate; cache_if skips persisting
+        # degenerate responses so a clean retry isn't poisoned.
+        degenerated = False
+
+        def _guard_degeneration(
+            result: EnhancedDocumentResult,
+        ) -> EnhancedDocumentResult:
+            nonlocal degenerated
+            cleaned, degenerated = truncate_degenerate_tail(
+                result.cleaned_markdown, context=context, stage="screenshot_extract"
+            )
+            return EnhancedDocumentResult(
+                cleaned_markdown=cleaned, frontmatter=result.frontmatter
             )
 
-            # Use MD_JSON mode for structured output
-            client = instructor.from_litellm(
-                self.vision_router.acompletion, mode=instructor.Mode.MD_JSON
-            )
-            # Cast to ChatCompletionMessageParam for instructor API
-            messages = cast(list[ChatCompletionMessageParam], messages_dict)
-            try:
-                response, raw_response = await cast(
-                    Awaitable[tuple[EnhancedDocumentResult, Any]],
-                    client.chat.completions.create_with_completion(
-                        model="default",
-                        response_model=EnhancedDocumentResult,
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                    ),
-                )
-            except Exception as e:
-                repaired = _try_repair_instructor_response(e, EnhancedDocumentResult)
-                if repaired is None:
-                    raise
-                response, raw_response = repaired
-
-            # Track usage and log completion
-            elapsed = time.perf_counter() - start_time
-            actual_model = getattr(raw_response, "model", None) or "default"
-            input_tokens = 0
-            output_tokens = 0
-            cost = 0.0
-
-            if hasattr(raw_response, "usage") and raw_response.usage is not None:
-                input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
-                output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
-                cost = get_response_cost(raw_response)
-                self._track_usage(  # type: ignore[attr-defined]
-                    actual_model,
-                    input_tokens,
-                    output_tokens,
-                    cost,
-                    context,
-                )
-
-            logger.info(
-                f"[LLM:{context}] screenshot_extract: {actual_model} "
-                f"tokens={input_tokens}+{output_tokens} "
-                f"time={int(elapsed * 1000)}ms cost=${cost:.6f}"
-            )
-
-        # Guard against VLM degeneration (repetition loops) in extracted text
-        cleaned_markdown, degenerated = truncate_degenerate_tail(
-            response.cleaned_markdown, context=context, stage="screenshot_extract"
+        call = LLMCall(
+            purpose="screenshot_extract",
+            messages=messages,
+            response_model=EnhancedDocumentResult,
+            context=context,
+            cache_key=cache_key,
+            cache_content=cache_content,
+            cache_model="vision",
+            validate=_guard_degeneration,
+            cache_if=lambda _result: not degenerated,
+            serialize=_document_result_to_cache_value,
+            deserialize=_document_result_from_cache_value,
+            router=self.vision_router,
         )
+        response, _raw_response = await self.engine.complete_structured(call)
 
-        # Build frontmatter using utility function
+        # Build frontmatter using utility function (hit and miss paths)
         from markitai.utils.frontmatter import (
             build_frontmatter_dict,
             frontmatter_to_yaml,
@@ -724,23 +702,11 @@ class DocumentMixin:
             description=response.frontmatter.description,
             tags=response.frontmatter.tags,
             title=original_title,  # Preserve original title if provided
-            content=cleaned_markdown,
+            content=response.cleaned_markdown,
         )
         frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
 
-        # Cache result (store description+tags, not frontmatter_yaml which contains timestamp)
-        # Skip persisting degenerate responses so a clean retry isn't poisoned
-        if not degenerated:
-            cache_value = {
-                "cleaned_markdown": cleaned_markdown,
-                "description": response.frontmatter.description,
-                "tags": response.frontmatter.tags,
-            }
-            self._persistent_cache.set(
-                cache_key, cache_content, cache_value, model="vision"
-            )
-
-        return cleaned_markdown, frontmatter_yaml
+        return response.cleaned_markdown, frontmatter_yaml
 
     async def enhance_url_with_vision(
         self,
@@ -770,38 +736,16 @@ class DocumentMixin:
         Returns:
             Tuple of (cleaned_markdown, frontmatter_yaml)
         """
-        start_time = time.perf_counter()
-
         # Use provided title, or try to extract from content frontmatter
         from markitai.utils.frontmatter import extract_frontmatter_title
 
         if original_title is None:
             original_title = extract_frontmatter_title(content)
 
-        # Check persistent cache
         cache_key = f"enhance_url:{context}"
         cache_content = (
             f"{screenshot_path.name}|{_compute_document_fingerprint(content, [])}"
         )
-        cached = self._persistent_cache.get(cache_key, cache_content, context=context)
-        if cached is not None:
-            from markitai.utils.frontmatter import (
-                build_frontmatter_dict,
-                frontmatter_to_yaml,
-            )
-
-            fm = build_frontmatter_dict(
-                source=context,
-                description=cached.get("description", ""),
-                tags=cached.get("tags", []),
-                title=original_title,
-                content=cached.get("cleaned_markdown", content),
-                fetch_strategy=fetch_strategy,
-                extra_meta=extra_meta,
-            )
-            return cached.get("cleaned_markdown", content), frontmatter_to_yaml(
-                fm
-            ).strip()
 
         # Only protect image references, NOT slide/page markers (URLs don't have them)
         protected_text, img_mapping = self._protect_image_positions(content)
@@ -832,100 +776,81 @@ class DocumentMixin:
             }
         )
 
-        async with self.semaphore:
-            # Calculate dynamic max_tokens using minimum across all vision router models
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content_parts},
-            ]
-            max_tokens = self._calculate_dynamic_max_tokens(  # type: ignore[attr-defined]
-                messages, router=self.vision_router
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content_parts},
+        ]
+
+        # Degeneration guard shared between validate and cache_if: cache_if
+        # skips persisting degenerate responses so a clean retry isn't poisoned
+        degenerated = False
+
+        def _postprocess(result: EnhancedDocumentResult) -> EnhancedDocumentResult:
+            """Post-process a fresh LLM result (runs before the cache write)."""
+            nonlocal degenerated
+
+            # Restore image positions (with fallback to original if placeholders lost)
+            cleaned = self._restore_images_or_fallback(
+                result.cleaned_markdown,
+                content,
+                img_mapping,
+                context,
+                "url_vision_enhance",
             )
 
-            # Use MD_JSON mode to handle LLMs that wrap JSON in ```json code blocks
-            client = instructor.from_litellm(
-                self.vision_router.acompletion, mode=instructor.Mode.MD_JSON
+            # Remove any hallucinated or leaked markers that shouldn't be in URL output
+            # Remove hallucinated slide/page markers (URLs shouldn't have these)
+            cleaned = re.sub(r"<!--\s*Slide\s+number:\s*\d+\s*-->\s*\n?", "", cleaned)
+            cleaned = re.sub(r"<!--\s*Page\s+number:\s*\d+\s*-->\s*\n?", "", cleaned)
+            # Remove source labels that may leak from multi-source content
+            cleaned = re.sub(r"<!--\s*Source:\s*[^>]+-->\s*\n?", "", cleaned)
+            cleaned = re.sub(
+                r"##\s*(Static Content|Browser Content|Screenshot Reference)\s*\n+",
+                "",
+                cleaned,
             )
-            try:
-                response, raw_response = await cast(
-                    Awaitable[tuple[EnhancedDocumentResult, Any]],
-                    client.chat.completions.create_with_completion(
-                        model="default",
-                        messages=cast(
-                            list[ChatCompletionMessageParam],
-                            messages,
-                        ),
-                        response_model=EnhancedDocumentResult,
-                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                        max_tokens=max_tokens,
-                    ),
-                )
-            except Exception as e:
-                repaired = _try_repair_instructor_response(e, EnhancedDocumentResult)
-                if repaired is None:
-                    raise
-                response, raw_response = repaired
+            # Also remove any residual MARKITAI placeholders
+            cleaned = re.sub(r"__MARKITAI_[A-Z_]+_?\d*__\s*\n?", "", cleaned)
 
-            # Track usage and log completion
-            actual_model = getattr(raw_response, "model", None) or "default"
-            input_tokens = 0
-            output_tokens = 0
-            cost = 0.0
-            elapsed = time.perf_counter() - start_time
+            # Fix malformed image refs
+            cleaned = self.fix_malformed_image_refs(cleaned)
 
-            if hasattr(raw_response, "usage") and raw_response.usage is not None:
-                input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
-                output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
-                cost = get_response_cost(raw_response)
-                self._track_usage(  # type: ignore[attr-defined]
-                    actual_model,
-                    input_tokens,
-                    output_tokens,
-                    cost,
-                    context,
-                )
-
-            logger.info(
-                f"[LLM:{context}] url_vision_enhance: {actual_model} "
-                f"tokens={input_tokens}+{output_tokens} "
-                f"time={int(elapsed * 1000)}ms cost=${cost:.6f}"
+            # Guard against VLM degeneration (repetition loops) in enhanced text
+            cleaned, degenerated = truncate_degenerate_tail(
+                cleaned, context=context, stage="url_vision_enhance"
+            )
+            return EnhancedDocumentResult(
+                cleaned_markdown=cleaned, frontmatter=result.frontmatter
             )
 
-        # Restore image positions (with fallback to original if placeholders lost)
-        cleaned_markdown = self._restore_images_or_fallback(
-            response.cleaned_markdown,
-            content,
-            img_mapping,
-            context,
-            "url_vision_enhance",
-        )
+        def _from_cache(cached: dict[str, Any]) -> EnhancedDocumentResult:
+            # Legacy hit-path default: a cached entry without cleaned_markdown
+            # falls back to the original content (not "")
+            return EnhancedDocumentResult.model_construct(
+                cleaned_markdown=cached.get("cleaned_markdown", content),
+                frontmatter=Frontmatter.model_construct(
+                    description=cached.get("description", ""),
+                    tags=cached.get("tags", []),
+                ),
+            )
 
-        # Remove any hallucinated or leaked markers that shouldn't be in URL output
-        # Remove hallucinated slide/page markers (URLs shouldn't have these)
-        cleaned_markdown = re.sub(
-            r"<!--\s*Slide\s+number:\s*\d+\s*-->\s*\n?", "", cleaned_markdown
+        call = LLMCall(
+            purpose="enhance_url",
+            messages=messages,
+            response_model=EnhancedDocumentResult,
+            context=context,
+            cache_key=cache_key,
+            cache_content=cache_content,
+            cache_model="vision",
+            validate=_postprocess,
+            cache_if=lambda _result: not degenerated,
+            serialize=_document_result_to_cache_value,
+            deserialize=_from_cache,
+            router=self.vision_router,
         )
-        cleaned_markdown = re.sub(
-            r"<!--\s*Page\s+number:\s*\d+\s*-->\s*\n?", "", cleaned_markdown
-        )
-        # Remove source labels that may leak from multi-source content
-        cleaned_markdown = re.sub(
-            r"<!--\s*Source:\s*[^>]+-->\s*\n?", "", cleaned_markdown
-        )
-        cleaned_markdown = re.sub(
-            r"##\s*(Static Content|Browser Content|Screenshot Reference)\s*\n+",
-            "",
-            cleaned_markdown,
-        )
-        # Also remove any residual MARKITAI placeholders
-        cleaned_markdown = re.sub(
-            r"__MARKITAI_[A-Z_]+_?\d*__\s*\n?", "", cleaned_markdown
-        )
+        response, _raw_response = await self.engine.complete_structured(call)
 
-        # Fix malformed image refs
-        cleaned_markdown = self.fix_malformed_image_refs(cleaned_markdown)
-
-        # Build frontmatter using utility function for consistent structure
+        # Build frontmatter using utility function (hit and miss paths)
         from markitai.utils.frontmatter import (
             build_frontmatter_dict,
             frontmatter_to_yaml,
@@ -936,23 +861,13 @@ class DocumentMixin:
             description=response.frontmatter.description,
             tags=response.frontmatter.tags,
             title=original_title,  # Preserve original title
-            content=cleaned_markdown,
+            content=response.cleaned_markdown,
             fetch_strategy=fetch_strategy,
             extra_meta=extra_meta,
         )
         frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
 
-        # Cache result (store description+tags, not frontmatter_yaml which contains timestamp)
-        cache_value = {
-            "cleaned_markdown": cleaned_markdown,
-            "description": response.frontmatter.description,
-            "tags": response.frontmatter.tags,
-        }
-        self._persistent_cache.set(
-            cache_key, cache_content, cache_value, model="vision"
-        )
-
-        return cleaned_markdown, frontmatter_yaml
+        return response.cleaned_markdown, frontmatter_yaml
 
     async def enhance_document_with_vision(
         self,
@@ -1252,7 +1167,6 @@ class DocumentMixin:
         Returns:
             Tuple of (cleaned_markdown, frontmatter_yaml)
         """
-        start_time = time.perf_counter()
         from markitai.utils.frontmatter import resolve_document_title
 
         resolved_title = resolve_document_title(
@@ -1261,31 +1175,10 @@ class DocumentMixin:
             content=extracted_text,
         )
 
-        # Check persistent cache first
-        # Use page count + source + text fingerprint as cache key
+        # Cache key: page count + source + text fingerprint
         page_name_list = [p.name for p in page_images[:10]]  # First 10 page names
         cache_key = f"enhance_frontmatter:{source}:{len(page_images)}"
         cache_content = _compute_document_fingerprint(extracted_text, page_name_list)
-        cached = self._persistent_cache.get(cache_key, cache_content, context=source)
-        if cached is not None:
-            from markitai.utils.frontmatter import (
-                build_frontmatter_dict,
-                frontmatter_to_yaml,
-            )
-
-            # Fix malformed image refs and echoed prompt tails even for cached
-            # content (handles old cache entries)
-            cleaned = self.strip_prompt_echo(
-                self.fix_malformed_image_refs(cached.get("cleaned_markdown", ""))
-            )
-            fm = build_frontmatter_dict(
-                source=source,
-                description=cached.get("description", ""),
-                tags=cached.get("tags", []),
-                title=resolved_title,
-                content=cleaned,
-            )
-            return cleaned, frontmatter_to_yaml(fm).strip()
 
         # Extract protected content for fallback restoration
         protected = self.extract_protected_content(extracted_text)
@@ -1351,70 +1244,14 @@ Generate the following fields:
             }
         )
 
-        async with self.semaphore:
-            # Calculate dynamic max_tokens using minimum across all vision router models
-            # This ensures compatibility with any model the router might select
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content_parts},
-            ]
-            max_tokens = self._calculate_dynamic_max_tokens(  # type: ignore[attr-defined]
-                messages, router=self.vision_router
-            )
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content_parts},
+        ]
 
-            # Use MD_JSON mode to handle LLMs that wrap JSON in ```json code blocks
-            client = instructor.from_litellm(
-                self.vision_router.acompletion, mode=instructor.Mode.MD_JSON
-            )
-            # max_retries allows Instructor to retry with validation error
-            # feedback, which helps LLM fix JSON escaping issues
-            try:
-                response, raw_response = await cast(
-                    Awaitable[tuple[EnhancedDocumentResult, Any]],
-                    client.chat.completions.create_with_completion(
-                        model="default",
-                        messages=cast(
-                            list[ChatCompletionMessageParam],
-                            messages,
-                        ),
-                        response_model=EnhancedDocumentResult,
-                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                        max_tokens=max_tokens,
-                    ),
-                )
-            except Exception as e:
-                repaired = _try_repair_instructor_response(e, EnhancedDocumentResult)
-                if repaired is None:
-                    raise
-                response, raw_response = repaired
-
-            # Check for truncation
-            if hasattr(raw_response, "choices") and raw_response.choices:
-                finish_reason = getattr(raw_response.choices[0], "finish_reason", None)
-                if finish_reason == "length":
-                    raise ValueError("Output truncated due to max_tokens limit")
-
-            # Track usage and log completion
-            actual_model = getattr(raw_response, "model", None) or "default"
-            input_tokens = 0
-            output_tokens = 0
-            cost = 0.0
-            if hasattr(raw_response, "usage") and raw_response.usage is not None:
-                input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
-                output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
-                cost = get_response_cost(raw_response)
-                self._track_usage(  # type: ignore[attr-defined]
-                    actual_model, input_tokens, output_tokens, cost, source
-                )
-
-            # Log completion with timing
-            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.info(
-                f"[LLM:{source}] vision_enhance: {actual_model} "
-                f"tokens={input_tokens}+{output_tokens} time={elapsed_ms}ms cost=${cost:.6f}"
-            )
-
-            response_markdown = self.strip_prompt_echo(response.cleaned_markdown)
+        def _postprocess(result: EnhancedDocumentResult) -> EnhancedDocumentResult:
+            """Post-process a fresh LLM result (runs before the cache write)."""
+            response_markdown = self.strip_prompt_echo(result.cleaned_markdown)
             fallback = self._fallback_if_boundary_placeholders_missing(
                 response_markdown,
                 extracted_text,
@@ -1423,46 +1260,58 @@ Generate the following fields:
                 "vision_enhance",
             )
             if fallback is not None:
-                cleaned_markdown = fallback
+                cleaned = fallback
             else:
                 # Restore protected content from placeholders.
                 # Pass protected dict for fallback restoration if LLM removed placeholders.
-                cleaned_markdown = self.unprotect_content(
-                    response_markdown, mapping, protected
-                )
+                cleaned = self.unprotect_content(response_markdown, mapping, protected)
 
             # Fix malformed image references (e.g., extra closing parentheses)
-            cleaned_markdown = self.fix_malformed_image_refs(cleaned_markdown)
-            cleaned_markdown = self._stabilize_paged_markdown(
-                extracted_text, cleaned_markdown, source
+            cleaned = self.fix_malformed_image_refs(cleaned)
+            cleaned = self._stabilize_paged_markdown(extracted_text, cleaned, source)
+            return EnhancedDocumentResult(
+                cleaned_markdown=cleaned, frontmatter=result.frontmatter
             )
 
-            # Build frontmatter YAML using utility function for consistent structure
-            from markitai.utils.frontmatter import (
-                build_frontmatter_dict,
-                frontmatter_to_yaml,
+        call = LLMCall(
+            purpose="enhance_frontmatter",
+            messages=messages,
+            response_model=EnhancedDocumentResult,
+            context=source,
+            cache_key=cache_key,
+            cache_content=cache_content,
+            cache_model="vision",
+            validate=_postprocess,
+            serialize=_document_result_to_cache_value,
+            deserialize=_document_result_from_cache_value,
+            router=self.vision_router,
+        )
+        response, raw_response = await self.engine.complete_structured(call)
+
+        cleaned_markdown = response.cleaned_markdown
+        if raw_response is None:
+            # Cache hit: fix malformed image refs and echoed prompt tails even
+            # for cached content (handles old cache entries)
+            cleaned_markdown = self.strip_prompt_echo(
+                self.fix_malformed_image_refs(cleaned_markdown)
             )
 
-            frontmatter_dict = build_frontmatter_dict(
-                source=source,
-                description=response.frontmatter.description,
-                tags=response.frontmatter.tags,
-                title=resolved_title,
-                content=cleaned_markdown,
-            )
-            frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
+        # Build frontmatter YAML using utility function for consistent structure
+        from markitai.utils.frontmatter import (
+            build_frontmatter_dict,
+            frontmatter_to_yaml,
+        )
 
-            # Store in persistent cache (description+tags, not frontmatter_yaml which contains timestamp)
-            cache_value = {
-                "cleaned_markdown": cleaned_markdown,
-                "description": response.frontmatter.description,
-                "tags": response.frontmatter.tags,
-            }
-            self._persistent_cache.set(
-                cache_key, cache_content, cache_value, model="vision"
-            )
+        frontmatter_dict = build_frontmatter_dict(
+            source=source,
+            description=response.frontmatter.description,
+            tags=response.frontmatter.tags,
+            title=resolved_title,
+            content=cleaned_markdown,
+        )
+        frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
 
-            return cleaned_markdown, frontmatter_yaml
+        return cleaned_markdown, frontmatter_yaml
 
     def _build_fallback_frontmatter(
         self,
@@ -1813,33 +1662,6 @@ Generate the following fields:
         """
         cache_key = f"document_process:{source}"
 
-        # Helper to reconstruct DocumentProcessResult from cached dict
-        # Use model_construct() to bypass validation for cached data
-        def _from_cache(cached: dict) -> DocumentProcessResult:
-            return DocumentProcessResult.model_construct(
-                cleaned_markdown=cached.get("cleaned_markdown", ""),
-                frontmatter=Frontmatter.model_construct(
-                    description=cached.get("description", ""),
-                    tags=cached.get("tags", []),
-                ),
-            )
-
-        # 1. Check in-memory cache first (fastest)
-        cached = self._cache.get(cache_key, markdown)
-        if cached is not None:
-            self._cache_hits += 1
-            return _from_cache(cached)
-
-        # 2. Check persistent cache (cross-session)
-        cached = self._persistent_cache.get(cache_key, markdown, context=source)
-        if cached is not None:
-            self._cache_hits += 1
-            # Also populate in-memory cache for faster subsequent access
-            self._cache.set(cache_key, markdown, cached)
-            return _from_cache(cached)
-
-        self._cache_misses += 1
-
         # Truncate content if needed (with warning)
         original_len = len(markdown)
         truncated_content = self.smart_truncate(markdown, DEFAULT_MAX_CONTENT_CHARS)
@@ -1859,103 +1681,50 @@ Generate the following fields:
             content=truncated_content,
         )
 
-        async with self.semaphore:
-            start_time = time.perf_counter()
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
 
-            # Build messages with separated system and user roles
-            messages = cast(
-                list[ChatCompletionMessageParam],
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-            )
-            # Calculate dynamic max_tokens using main router's model
-            target_model_id = self._get_router_primary_model(self.router)  # type: ignore[attr-defined]
-            max_tokens = self._calculate_dynamic_max_tokens(messages, target_model_id)  # type: ignore[attr-defined]
+        def _validate(response: DocumentProcessResult) -> DocumentProcessResult:
+            """Detect prompt leakage before the cache write.
 
-            # Create instructor client from router for load balancing
-            # Use MD_JSON mode to handle LLMs that wrap JSON in ```json code blocks
-            client = instructor.from_litellm(
-                self.router.acompletion, mode=instructor.Mode.MD_JSON
-            )
-
-            # Use create_with_completion to get both the model and the raw response
-            # Use logical model name for router load balancing
-            # max_retries allows Instructor to retry with validation error
-            # feedback, which helps LLM fix JSON escaping issues
-            try:
-                response, raw_response = await cast(
-                    Awaitable[tuple[DocumentProcessResult, Any]],
-                    client.chat.completions.create_with_completion(
-                        model="default",
-                        messages=messages,
-                        response_model=DocumentProcessResult,
-                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                        max_tokens=max_tokens,
-                    ),
-                )
-            except Exception as e:
-                fatal_provider_error = _find_non_retryable_provider_error(e)
-                if fatal_provider_error is not None:
-                    raise fatal_provider_error
-                repaired = _try_repair_instructor_response(e, DocumentProcessResult)
-                if repaired is None:
-                    raise
-                response, raw_response = repaired
-
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
-
-            # Check for truncation
-            if hasattr(raw_response, "choices") and raw_response.choices:
-                finish_reason = getattr(raw_response.choices[0], "finish_reason", None)
-                if finish_reason == "length":
-                    raise ValueError("Output truncated due to max_tokens limit")
-
-            # Track usage from raw API response
-            # Get actual model from response for accurate tracking
-            actual_model = getattr(raw_response, "model", None) or "default"
-            input_tokens = 0
-            output_tokens = 0
-            cost = 0.0
-            if hasattr(raw_response, "usage") and raw_response.usage is not None:
-                input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
-                output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
-                cost = get_response_cost(raw_response)
-                self._track_usage(  # type: ignore[attr-defined]
-                    actual_model, input_tokens, output_tokens, cost, source
-                )
-
-            # Log detailed timing for performance analysis
-            logger.info(
-                f"[LLM:{source}] document_process: {actual_model} "
-                f"tokens={input_tokens}+{output_tokens} "
-                f"time={elapsed_ms:.0f}ms cost=${cost:.6f}"
-            )
-
-            # Validate and clean prompt leakage
+            Recoverable leakage returns a corrected result; unrecoverable
+            leakage raises ValueError (nothing is cached, error propagates).
+            """
             validated_markdown = self._validate_no_prompt_leakage(
                 response.cleaned_markdown, source
             )
-            # If validation changed the content, update response
             if validated_markdown != response.cleaned_markdown:
-                response = DocumentProcessResult(
+                return DocumentProcessResult(
                     cleaned_markdown=validated_markdown,
                     frontmatter=response.frontmatter,
                 )
-
-            # Store in both cache layers
-            cache_value = {
-                "cleaned_markdown": response.cleaned_markdown,
-                "description": response.frontmatter.description,
-                "tags": response.frontmatter.tags,
-            }
-            self._cache.set(cache_key, markdown, cache_value)
-            self._persistent_cache.set(
-                cache_key, markdown, cache_value, model="default"
-            )
-
             return response
+
+        # router=None: this is the only structured call on the main router
+        call = LLMCall(
+            purpose="document_process",
+            messages=messages,
+            response_model=DocumentProcessResult,
+            context=source,
+            cache_key=cache_key,
+            cache_content=markdown,
+            cache_model="default",
+            validate=_validate,
+            serialize=_document_result_to_cache_value,
+            deserialize=_document_result_from_cache_value,
+        )
+        try:
+            response, raw_response = await self.engine.complete_structured(call)
+        except Exception:
+            self._cache_misses += 1
+            raise
+        if raw_response is None:
+            self._cache_hits += 1
+        else:
+            self._cache_misses += 1
+        return response
 
     def _validate_no_prompt_leakage(self, cleaned: str, source: str) -> str:
         """Detect and handle prompt leakage."""

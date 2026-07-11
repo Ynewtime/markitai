@@ -2120,12 +2120,17 @@ class TestGetJinaClient:
 
         mock_instance = type("MockClient", (), {})()
         fetch._jina_client = mock_instance
+        # Match the fingerprint _get_jina_client computes in this sync
+        # context (timeout=30, proxy="", no running loop): reuse must not
+        # depend on fingerprint state leaked by earlier tests on the worker
+        fetch._jina_client_fingerprint = "30::0"
 
         result = _get_jina_client()
 
         assert result is mock_instance
 
         fetch._jina_client = None
+        fetch._jina_client_fingerprint = ""
 
 
 class TestFetchWithFallback:

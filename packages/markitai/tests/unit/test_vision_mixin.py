@@ -86,6 +86,7 @@ class MockVisionProcessor(VisionMixin):
         """
         self._concurrency = concurrency
         self._semaphore: asyncio.Semaphore | None = None
+        self._engine: Any = None
         self._cache_enabled = cache_enabled
         self._cached_result = cached_result
         self._cache_storage: dict[str, Any] = {}
@@ -109,6 +110,10 @@ class MockVisionProcessor(VisionMixin):
         else:
             self._persistent_cache.get.return_value = None
         self._persistent_cache.set = MagicMock()
+
+        # Mock in-memory cache for the LLMEngine (always miss)
+        self._cache = MagicMock()
+        self._cache.get.return_value = None
 
         # Mock prompt manager
         self._prompt_manager = MagicMock()
@@ -144,6 +149,25 @@ class MockVisionProcessor(VisionMixin):
         if self._semaphore is None:
             self._semaphore = asyncio.Semaphore(self._concurrency)
         return self._semaphore
+
+    @property
+    def engine(self) -> Any:
+        """Real LLMEngine wired to this mock's collaborators (lazy)."""
+        from markitai.llm.engine import LLMEngine
+
+        if self._engine is None:
+            self._engine = LLMEngine(
+                router=self.vision_router,
+                semaphore=self.semaphore,
+                memory_cache=self._cache,
+                persistent_cache=self._persistent_cache,
+                track_usage=self._track_usage,
+                calculate_max_tokens=lambda messages, _model_id=None, router=None: (
+                    self._calculate_dynamic_max_tokens(messages, router=router)
+                ),
+                get_primary_model=lambda _router: "test/vision-model",
+            )
+        return self._engine
 
     def _get_cached_image(self, image_path: Path) -> tuple[bytes, str]:
         """Mock method to get cached image data."""
@@ -1193,7 +1217,7 @@ class TestAnalyzeWithInstructor:
             {"role": "user", "content": [{"type": "text", "text": "Describe"}]},
         ]
 
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
             mock_instructor.Mode.MD_JSON = "MD_JSON"
@@ -1231,7 +1255,7 @@ class TestAnalyzeWithInstructor:
             {"role": "user", "content": [{"type": "text", "text": "Describe"}]},
         ]
 
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
             mock_instructor.Mode.MD_JSON = "MD_JSON"
@@ -1264,7 +1288,7 @@ class TestAnalyzeWithInstructor:
             {"role": "user", "content": [{"type": "text", "text": "Describe"}]},
         ]
 
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
             mock_instructor.Mode.MD_JSON = "MD_JSON"
