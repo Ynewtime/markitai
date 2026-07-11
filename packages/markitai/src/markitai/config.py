@@ -8,7 +8,6 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
-import click
 from loguru import logger
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -837,11 +836,13 @@ def _set_nested_value(data: dict[str, Any], key_path: str, value: Any) -> None:
                 current = current[part]
 
 
-class ConfigFileError(click.ClickException):
+class ConfigFileError(Exception):
     """Raised when a config file contains invalid values.
 
-    Subclasses ClickException so the CLI prints the actionable message
-    instead of a raw ValidationError traceback.
+    Carries an actionable message; the CLI layer (MarkitaiGroup.invoke)
+    translates it into a ClickException so users see the message instead
+    of a raw ValidationError traceback. Kept framework-free so the
+    configuration foundation does not depend on the CLI stack.
     """
 
 
