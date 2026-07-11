@@ -132,7 +132,7 @@ class TestExplicitStrategyFallback:
         assert result.strategy_used == "static"
         fallback_mock.assert_awaited_once()
         # Decision is remembered for the rest of the run
-        assert fetch._explicit_fallback_decision is True
+        assert fetch.get_default_session().consent.explicit_fallback_decision is True
 
     @pytest.mark.asyncio
     async def test_non_refusal_error_propagates_unchanged(self, monkeypatch) -> None:
@@ -229,7 +229,7 @@ class TestExplicitStrategyFallback:
         assert "Config file:" in message
         fallback_mock.assert_not_awaited()
         # Decline is remembered for the rest of the run
-        assert fetch._explicit_fallback_decision is False
+        assert fetch.get_default_session().consent.explicit_fallback_decision is False
 
     @pytest.mark.asyncio
     async def test_fallback_failure_reports_both_errors(self, monkeypatch) -> None:

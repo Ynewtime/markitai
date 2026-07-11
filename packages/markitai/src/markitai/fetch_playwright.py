@@ -805,7 +805,7 @@ class PlaywrightRenderer:
         (``remote_consent="never"``, ``MARKITAI_NO_REMOTE_FETCH``) are
         still honored.
         """
-        from markitai.fetch import (
+        from markitai.fetch_consent import (
             _env_no_remote_fetch,
             disclose_remote_use,
             peek_cached_remote_consent,
@@ -1078,7 +1078,10 @@ async def _capture_screenshot(
     Returns:
         Path to screenshot file, or None on failure
     """
-    from markitai.fetch import _compress_screenshot, _url_to_screenshot_filename
+    from markitai.fetch_screenshot import (
+        _compress_screenshot,
+        _url_to_screenshot_filename,
+    )
 
     try:
         # Generate filename using the same logic as fetch.py

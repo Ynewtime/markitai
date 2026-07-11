@@ -27,11 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import codecs
-import hashlib
 import json
 import re
 import tempfile
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -48,7 +46,6 @@ from markitai.constants import (
     LOCAL_STRATEGIES,
 )
 from markitai.fetch_http import get_static_http_client
-from markitai.ports import get_interaction
 
 try:
     from markitai.webextract import (
@@ -72,6 +69,69 @@ if TYPE_CHECKING:
 
 from markitai.fetch_cache import FetchCache as FetchCache  # noqa: F401
 from markitai.fetch_cache import SPADomainCache as SPADomainCache  # noqa: F401
+
+# Shared mutable fetch state (clients, caches, proxy, consent) lives on the
+# process-wide FetchSession (markitai.fetch_session); consent logic lives in
+# markitai.fetch_consent and screenshot helpers in markitai.fetch_screenshot.
+# They are re-exported here so the public markitai.fetch API (and its test
+# patch points) stays stable.
+from markitai.fetch_consent import (
+    _REMOTE_SERVICE_LABELS as _REMOTE_SERVICE_LABELS,  # noqa: F401
+)
+from markitai.fetch_consent import (
+    _env_no_remote_fetch as _env_no_remote_fetch,
+)
+from markitai.fetch_consent import (
+    _remote_service_names as _remote_service_names,  # noqa: F401
+)
+from markitai.fetch_consent import (
+    _should_fallback_after_refusal as _should_fallback_after_refusal,
+)
+from markitai.fetch_consent import (
+    disclose_remote_use as disclose_remote_use,
+)
+from markitai.fetch_consent import (
+    peek_cached_remote_consent as peek_cached_remote_consent,  # noqa: F401
+)
+from markitai.fetch_consent import (
+    peek_remote_consent as peek_remote_consent,
+)
+from markitai.fetch_consent import (
+    reset_explicit_fallback_decision as reset_explicit_fallback_decision,  # noqa: F401
+)
+from markitai.fetch_consent import (
+    reset_remote_consent as reset_remote_consent,  # noqa: F401
+)
+from markitai.fetch_consent import (
+    resolve_remote_consent as resolve_remote_consent,
+)
+from markitai.fetch_consent import (
+    set_remote_consent as set_remote_consent,  # noqa: F401
+)
+from markitai.fetch_consent import (
+    set_remote_consent_prompt_allowed as set_remote_consent_prompt_allowed,  # noqa: F401
+)
+from markitai.fetch_screenshot import (
+    _compress_screenshot as _compress_screenshot,  # noqa: F401
+)
+from markitai.fetch_screenshot import (
+    _url_to_screenshot_filename as _url_to_screenshot_filename,  # noqa: F401
+)
+from markitai.fetch_session import (
+    FetchSession as FetchSession,  # noqa: F401
+)
+from markitai.fetch_session import (
+    _get_system_proxy as _get_system_proxy,  # noqa: F401
+)
+from markitai.fetch_session import (
+    _SlidingWindowRateLimiter as _SlidingWindowRateLimiter,  # noqa: F401
+)
+from markitai.fetch_session import (
+    get_default_session as get_default_session,
+)
+from markitai.fetch_session import (
+    reset_default_session as reset_default_session,  # noqa: F401
+)
 from markitai.fetch_types import (
     CRITICAL_INVALID_REASONS as CRITICAL_INVALID_REASONS,  # noqa: F401
 )
@@ -85,13 +145,6 @@ from markitai.fetch_types import JinaAPIError as JinaAPIError  # noqa: F401
 from markitai.fetch_types import JinaRateLimitError as JinaRateLimitError  # noqa: F401
 from markitai.utils.text import format_error_message
 
-# Global SPA domain cache instance (initialized lazily)
-_spa_domain_cache: SPADomainCache | None = None
-
-# CF Browser Rendering: Free plan allows 2 concurrent browser instances.
-# Semaphore is lazily initialized to avoid binding to a wrong event loop at import time.
-_cf_br_semaphore: asyncio.Semaphore | None = None
-
 
 def get_cf_semaphore() -> asyncio.Semaphore:
     """Get or create the CF BR rate-limiting semaphore.
@@ -99,245 +152,7 @@ def get_cf_semaphore() -> asyncio.Semaphore:
     Lazily initialized to avoid binding to a wrong event loop at import time.
     CF Free plan allows 2 concurrent browser instances.
     """
-    global _cf_br_semaphore
-    if _cf_br_semaphore is None:
-        _cf_br_semaphore = asyncio.Semaphore(2)
-    return _cf_br_semaphore
-
-
-# Remote-fetch consent (privacy): whether the auto strategy chain may send
-# URLs to remote extraction services (defuddle.md, Jina, Cloudflare BR).
-# Resolved once per process and cached.
-_remote_consent_decision: bool | None = None
-_remote_consent_prompt_allowed: bool = True
-_remote_disclosure_emitted: bool = False
-
-
-def reset_remote_consent() -> None:
-    """Reset the cached remote-fetch consent decision (mainly for tests)."""
-    global _remote_consent_decision, _remote_consent_prompt_allowed
-    global _remote_disclosure_emitted
-    _remote_consent_decision = None
-    _remote_consent_prompt_allowed = True
-    _remote_disclosure_emitted = False
-
-
-def set_remote_consent(allowed: bool) -> None:
-    """Seed the process-wide remote-fetch consent decision.
-
-    Used when the user explicitly selects a remote strategy
-    (e.g. ``-s jina``), which counts as consent for the run unless the
-    process-wide ``MARKITAI_NO_REMOTE_FETCH`` hard opt-out is active.
-    """
-    global _remote_consent_decision
-    _remote_consent_decision = False if _env_no_remote_fetch() else allowed
-
-
-def set_remote_consent_prompt_allowed(allowed: bool) -> None:
-    """Allow or disallow the interactive consent prompt (disabled by --quiet)."""
-    global _remote_consent_prompt_allowed
-    _remote_consent_prompt_allowed = allowed
-
-
-# Fallback decision when an explicitly-selected remote strategy (jina,
-# defuddle, cloudflare) is refused server-side (4xx / auth-required).
-# Cached for the whole process so batch runs prompt at most once,
-# never once per URL.
-_explicit_fallback_decision: bool | None = None
-
-
-def reset_explicit_fallback_decision() -> None:
-    """Reset the cached explicit-strategy fallback decision (mainly for tests)."""
-    global _explicit_fallback_decision
-    _explicit_fallback_decision = None
-
-
-def _should_fallback_after_refusal(strategy_name: str, reason: str) -> bool:
-    """Decide whether to fall back to the auto chain after a service refusal.
-
-    Interactive TTY: prompt once per run (the answer is cached). Otherwise:
-    fall back automatically (the caller logs a clear warning to stderr).
-    """
-    global _explicit_fallback_decision
-    if _explicit_fallback_decision is not None:
-        return _explicit_fallback_decision
-
-    interaction = get_interaction()
-    if _remote_consent_prompt_allowed and interaction.can_prompt():
-        decision = interaction.confirm(
-            f"{strategy_name} cannot fetch this URL ({reason}). "
-            "Fall back to the auto strategy chain?",
-            default=True,
-        )
-        _explicit_fallback_decision = decision
-        return decision
-
-    # Non-interactive: fall back automatically (warned at the call site).
-    _explicit_fallback_decision = True
-    return True
-
-
-def _env_no_remote_fetch() -> bool:
-    """Return True when MARKITAI_NO_REMOTE_FETCH is set to a truthy value."""
-    import os
-
-    value = os.environ.get("MARKITAI_NO_REMOTE_FETCH", "").strip().lower()
-    return value not in ("", "0", "false", "no")
-
-
-def peek_cached_remote_consent() -> bool | None:
-    """Return only the hard opt-out or an explicit/cached process decision."""
-    if _env_no_remote_fetch():
-        return False
-    return _remote_consent_decision
-
-
-def peek_remote_consent(config: FetchConfig) -> bool | None:
-    """Non-prompting view of the remote-consent state.
-
-    Returns True/False when the answer is already determined (cached
-    decision, env override, config "always"/"never", or "ask" in a
-    non-interactive session, which auto-denies). Returns None when an
-    interactive prompt would be needed — callers defer that prompt until
-    a remote strategy is actually about to run (lazy consent), so users
-    whose URLs are satisfied by local strategies are never asked.
-    """
-    if _env_no_remote_fetch():
-        return False
-    if _remote_consent_decision is not None:
-        return _remote_consent_decision
-    consent = getattr(config, "remote_consent", "always")
-    if consent == "always":
-        return True
-    if consent == "never":
-        return False
-    if _remote_consent_prompt_allowed and get_interaction().can_prompt():
-        return None  # would need to prompt
-    return False
-
-
-# Human-readable names for consent-gated remote strategies. Cloudflare runs
-# against the user's own account credentials, hence the qualifier.
-_REMOTE_SERVICE_LABELS = {
-    "defuddle": "defuddle.md",
-    "jina": "Jina",
-    "cloudflare": "Cloudflare (your account)",
-    "fxtwitter": "FxTwitter",
-    "twitter-oembed": "Twitter oEmbed",
-}
-
-
-def _remote_service_names(services: list[str] | None) -> str:
-    """Render every service covered by the process-wide decision.
-
-    Consent and first-use disclosure are cached for the whole process, so the
-    wording must cover services that a later URL may introduce, not only the
-    chain that happened to trigger the first decision.
-    """
-    keys = list(_REMOTE_SERVICE_LABELS)
-    for service in services or []:
-        if service not in keys:
-            keys.append(service)
-    return ", ".join(_REMOTE_SERVICE_LABELS.get(s, s) for s in keys)
-
-
-def disclose_remote_use(services: list[str] | None = None) -> None:
-    """Emit the process-wide first-use privacy disclosure directly to stderr."""
-    global _remote_disclosure_emitted
-    if _remote_disclosure_emitted:
-        return
-
-    disclosure = (
-        "[Fetch] This run's remote extraction services may receive URLs "
-        "when needed, tried one at a time "
-        f"({_remote_service_names(services)}). Disable all remote extraction "
-        "with MARKITAI_NO_REMOTE_FETCH=1; fetch.remote_consent=never disables "
-        "automatic and config-selected remote use. Private/local/"
-        "credential-bearing URLs stay local."
-    )
-    # This is a privacy boundary, not diagnostic logging. Deliver it via the
-    # interaction port (stderr) so normal INFO filtering and --quiet cannot
-    # hide it.
-    get_interaction().notify(disclosure)
-    # Keep the disclosure in diagnostic log files too. The console filter
-    # suppresses this copy to avoid duplicating the direct stderr message.
-    logger.info(disclosure)
-    _remote_disclosure_emitted = True
-
-
-def resolve_remote_consent(
-    config: FetchConfig, services: list[str] | None = None
-) -> bool:
-    """Return True if remote extraction services may receive URLs.
-
-    Precedence: MARKITAI_NO_REMOTE_FETCH env var (truthy behaves as a hard
-    "never", including explicit remote strategies) > cached/explicit decision
-    > ``fetch.remote_consent`` config ("always" / "never" / "ask"). With
-    "always" (the default) the first use is disclosed directly to stderr and
-    retained in the INFO log; with "ask", prompts once on an interactive TTY
-    (unless prompting is disabled, e.g. --quiet), otherwise remote services
-    are skipped. The decision is cached for the whole process.
-    Private/local/credentialed URLs never reach this gate — the policy layer
-    strips remote strategies for them.
-
-    Args:
-        config: Fetch configuration.
-        services: Remote strategy names that triggered the decision. The
-            process-wide disclosure/prompt also names every other service the
-            cached decision can authorize later in the run.
-    """
-    global _remote_consent_decision
-
-    if _env_no_remote_fetch():
-        if _remote_consent_decision is not False:
-            logger.info(
-                "[Fetch] Remote extraction services disabled by "
-                "MARKITAI_NO_REMOTE_FETCH; using local strategies only"
-            )
-        _remote_consent_decision = False
-        return False
-    if _remote_consent_decision is not None:
-        return _remote_consent_decision
-
-    consent = getattr(config, "remote_consent", "always")
-    if consent == "always":
-        disclose_remote_use(services)
-        _remote_consent_decision = True
-        return True
-    if consent == "never":
-        logger.info(
-            "[Fetch] Remote extraction services disabled "
-            "(fetch.remote_consent=never); using local strategies only"
-        )
-        _remote_consent_decision = False
-        return False
-
-    # "ask": prompt once when interactive, otherwise skip (privacy-safe)
-    interaction = get_interaction()
-    if _remote_consent_prompt_allowed and interaction.can_prompt():
-        allowed = interaction.confirm(
-            "Allow sending public URLs to these remote services when needed?",
-            default=False,
-            preamble=(
-                "This run can try remote services for public URLs, one at a "
-                f"time (first success wins): {_remote_service_names(services)}."
-            ),
-        )
-        if not allowed:
-            logger.info(
-                "[Fetch] Remote extraction services declined; "
-                "using local strategies only"
-            )
-        _remote_consent_decision = allowed
-        return allowed
-
-    logger.info(
-        "[Fetch] Skipping remote extraction services (defuddle.md, Jina, Cloudflare): "
-        "no consent (fetch.remote_consent=ask, non-interactive). "
-        "Use -s <strategy> or set fetch.remote_consent=always to enable them."
-    )
-    _remote_consent_decision = False
-    return False
+    return get_default_session().get_cf_semaphore()
 
 
 def _extract_markdown_title(content: str) -> str | None:
@@ -404,15 +219,7 @@ def get_spa_domain_cache() -> SPADomainCache:
     Returns:
         SPADomainCache instance
     """
-    global _spa_domain_cache
-    if _spa_domain_cache is None:
-        _spa_domain_cache = SPADomainCache()
-    return _spa_domain_cache
-
-
-# Global fetch cache instance (initialized lazily)
-_fetch_cache: FetchCache | None = None
-_fetch_cache_fingerprint: str = ""
+    return get_default_session().get_spa_domain_cache()
 
 
 def get_fetch_cache(
@@ -430,179 +237,7 @@ def get_fetch_cache(
     Returns:
         FetchCache instance
     """
-    global _fetch_cache, _fetch_cache_fingerprint
-    fingerprint = f"{cache_dir}:{max_size_bytes}"
-    if _fetch_cache is None or _fetch_cache_fingerprint != fingerprint:
-        if _fetch_cache is not None:
-            _fetch_cache.close()
-            logger.debug(
-                "[FetchCache] Rebuilding: config changed "
-                f"(was {_fetch_cache_fingerprint!r}, now {fingerprint!r})"
-            )
-        db_path = cache_dir / "fetch_cache.db"
-        _fetch_cache = FetchCache(db_path, max_size_bytes)
-        _fetch_cache_fingerprint = fingerprint
-    return _fetch_cache
-
-
-# Global MarkItDown instance (reused for static fetching)
-# Note: MarkItDown's requests.Session is NOT thread-safe. However, since
-# fetch_with_static runs in the asyncio event loop (not in a thread pool),
-# only one md.convert() call executes at a time, avoiding thread safety issues.
-# If fetch_with_static is ever moved to run_in_executor with threads, this
-# should be changed to use threading.local() for thread-local instances.
-_markitdown_instance: Any = None
-
-# Global httpx.AsyncClient for Jina fetching (reused to avoid connection overhead)
-_jina_client: Any = None
-
-# Global Playwright renderer (reused to avoid browser cold starts)
-_playwright_renderer: Any = None
-
-# Cached proxy URL (None = not checked, "" = no proxy, "http://..." = proxy URL)
-_detected_proxy: str | None = None
-
-# Common proxy ports used by popular proxy software.
-# Only HTTP proxy ports are listed: the detected proxy is labeled http://,
-# and SOCKS-only ports (1080 SOCKS5, 10808 V2Ray SOCKS, 9050 Tor) would
-# produce a broken proxy URL (httpx lacks the socks extra).
-_COMMON_PROXY_PORTS = [
-    7897,  # Clash Verge default
-    7890,  # Clash default
-    7891,  # Clash mixed
-    1082,  # Shadowrocket
-    10809,  # V2Ray HTTP
-    8080,  # HTTP proxy common
-    8118,  # Privoxy
-]
-
-
-def _get_system_proxy() -> tuple[str, str]:
-    """Get system proxy settings from OS configuration.
-
-    Returns:
-        Tuple of (proxy_url, bypass_list) where bypass_list is comma-separated hosts
-        The bypass list is normalized to Linux no_proxy compatible format.
-    """
-    import platform
-    import subprocess
-
-    system = platform.system()
-
-    if system == "Windows":
-        try:
-            import winreg  # type: ignore[import-not-found]  # Windows-only module
-
-            with winreg.OpenKey(  # type: ignore[attr-defined]
-                winreg.HKEY_CURRENT_USER,  # type: ignore[attr-defined]
-                r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            ) as key:
-                proxy_enable, _ = winreg.QueryValueEx(key, "ProxyEnable")  # type: ignore[attr-defined]
-                if proxy_enable:
-                    proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")  # type: ignore[attr-defined]
-                    # Handle format: "http=host:port;https=host:port" or "host:port"
-                    if "=" in proxy_server:
-                        # Parse protocol-specific proxies
-                        for part in proxy_server.split(";"):
-                            if part.startswith("https=") or part.startswith("http="):
-                                proxy_addr = part.split("=", 1)[1]
-                                if not proxy_addr.startswith("http"):
-                                    proxy_addr = f"http://{proxy_addr}"
-                                break
-                        else:
-                            proxy_addr = ""
-                    else:
-                        proxy_addr = (
-                            f"http://{proxy_server}"
-                            if not proxy_server.startswith("http")
-                            else proxy_server
-                        )
-
-                    # Get bypass list
-                    try:
-                        bypass, _ = winreg.QueryValueEx(key, "ProxyOverride")  # type: ignore[attr-defined]
-                        # Windows uses semicolon, convert to comma
-                        bypass = bypass.replace(";", ",") if bypass else ""
-                    except FileNotFoundError:
-                        bypass = ""
-
-                    if proxy_addr:
-                        # Silent - system proxy detection is routine
-                        return proxy_addr, bypass  # Return raw, normalize at usage
-        except Exception:
-            # Silent - registry read failure is not critical
-            pass
-
-    elif system == "Darwin":  # macOS
-        try:
-            # Get network service (usually Wi-Fi or Ethernet)
-            result = subprocess.run(
-                ["scutil", "--proxy"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                output = result.stdout
-                # Parse scutil output
-                https_enable = "HTTPSEnable : 1" in output
-                http_enable = "HTTPEnable : 1" in output
-
-                proxy_addr = ""
-                if https_enable:
-                    # Extract HTTPS proxy
-                    host = ""
-                    for line in output.split("\n"):
-                        if "HTTPSProxy :" in line:
-                            host = line.split(":")[1].strip()
-                        elif "HTTPSPort :" in line:
-                            port = line.split(":")[1].strip()
-                            if host:
-                                proxy_addr = f"http://{host}:{port}"
-                            break
-                elif http_enable:
-                    # Extract HTTP proxy
-                    host = ""
-                    for line in output.split("\n"):
-                        if "HTTPProxy :" in line:
-                            host = line.split(":")[1].strip()
-                        elif "HTTPPort :" in line:
-                            port = line.split(":")[1].strip()
-                            if host:
-                                proxy_addr = f"http://{host}:{port}"
-                            break
-
-                # Get exceptions list
-                bypass = ""
-                if "ExceptionsList" in output:
-                    # Parse exception list from scutil output
-                    in_exceptions = False
-                    exceptions = []
-                    for line in output.split("\n"):
-                        if "ExceptionsList" in line:
-                            in_exceptions = True
-                        elif in_exceptions:
-                            if "}" in line:
-                                break
-                            # Extract host from "0 : localhost" format
-                            if ":" in line:
-                                host = line.split(":", 1)[1].strip()
-                                if host:
-                                    exceptions.append(host)
-                    bypass = ",".join(exceptions)
-
-                if proxy_addr:
-                    # Silent - system proxy detection is routine
-                    return proxy_addr, bypass  # Return raw, normalize at usage
-        except Exception:
-            # Silent - scutil failure is not critical
-            pass
-
-    return "", ""
-
-
-# Cache for system proxy bypass list
-_detected_proxy_bypass: str | None = None
+    return get_default_session().get_fetch_cache(cache_dir, max_size_bytes)
 
 
 def _detect_proxy(force_recheck: bool = False) -> str:
@@ -619,60 +254,7 @@ def _detect_proxy(force_recheck: bool = False) -> str:
     Returns:
         Proxy URL string (e.g., "http://127.0.0.1:7890") or empty string if no proxy
     """
-    global _detected_proxy, _detected_proxy_bypass
-
-    if _detected_proxy is not None and not force_recheck:
-        return _detected_proxy
-
-    import os
-    import socket
-
-    # Check environment variables first (highest priority - user explicit config)
-    for var in [
-        "HTTPS_PROXY",
-        "HTTP_PROXY",
-        "ALL_PROXY",
-        "https_proxy",
-        "http_proxy",
-        "all_proxy",
-    ]:
-        proxy = os.environ.get(var, "").strip()
-        if proxy:
-            # Silent - proxy from env is routine, no need to log
-            _detected_proxy = proxy
-            # Also check NO_PROXY env var
-            _detected_proxy_bypass = os.environ.get(
-                "NO_PROXY", os.environ.get("no_proxy", "")
-            )
-            return proxy
-
-    # Check system proxy settings (Windows/macOS)
-    system_proxy, system_bypass = _get_system_proxy()
-    if system_proxy:
-        _detected_proxy = system_proxy
-        _detected_proxy_bypass = system_bypass
-        return system_proxy
-
-    # Probe common proxy ports on localhost (fallback)
-    for port in _COMMON_PROXY_PORTS:
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(0.1)  # 100ms timeout
-            result = sock.connect_ex(("127.0.0.1", port))
-            sock.close()
-            if result == 0:
-                proxy_url = f"http://127.0.0.1:{port}"
-                logger.warning(f"[Proxy] Auto-detected local proxy at port {port}")
-                _detected_proxy = proxy_url
-                _detected_proxy_bypass = ""
-                return proxy_url
-        except Exception as e:
-            logger.debug("[Proxy] Auto-detection failed: {}", e)
-
-    # Silent - no proxy is common, no need to log
-    _detected_proxy = ""
-    _detected_proxy_bypass = ""
-    return ""
+    return get_default_session().detect_proxy(force_recheck)
 
 
 def get_proxy_for_url(url: str, auto_proxy: bool = True) -> str:
@@ -696,7 +278,7 @@ def get_proxy_for_url(url: str, auto_proxy: bool = True) -> str:
         return ""
 
     # Check NO_PROXY bypass patterns
-    bypass = _detected_proxy_bypass
+    bypass = get_default_session().detected_proxy_bypass
     if bypass:
         from urllib.parse import urlparse
 
@@ -716,53 +298,7 @@ def _get_markitdown() -> Any:
     Reusing a single instance avoids repeated initialization overhead.
     Includes Accept header for CF Markdown for Agents content negotiation.
     """
-    global _markitdown_instance
-    if _markitdown_instance is None:
-        from markitdown import MarkItDown
-
-        _markitdown_instance = MarkItDown()
-        # Enable Cloudflare Markdown for Agents content negotiation.
-        # CF-enabled sites return text/markdown directly (higher quality, fewer tokens).
-        # Non-CF sites return text/html as usual — zero impact on existing behavior.
-        #
-        # Note: This patches the singleton's internal requests.Session headers.
-        # Safe because _get_markitdown() is called once per process (guarded by
-        # `if _markitdown_instance is None`), and the session is never internally
-        # rebuilt by MarkItDown. If markitdown ever changes this, the test
-        # `test_markitdown_instance_has_accept_markdown_header` will catch it.
-        _markitdown_instance._requests_session.headers.update(
-            {"Accept": "text/markdown, text/html;q=0.9, */*;q=0.5"}
-        )
-    return _markitdown_instance
-
-
-class _SlidingWindowRateLimiter:
-    """Simple sliding-window rate limiter for API calls."""
-
-    def __init__(self, rpm: int, name: str = "API") -> None:
-        self._rpm = rpm
-        self._name = name
-        self._timestamps: list[float] = []
-        self._lock = asyncio.Lock()
-
-    async def acquire(self) -> None:
-        """Wait until a request slot is available."""
-        while True:
-            async with self._lock:
-                now = time.monotonic()
-                cutoff = now - 60.0
-                self._timestamps = [t for t in self._timestamps if t > cutoff]
-
-                if len(self._timestamps) < self._rpm:
-                    self._timestamps.append(now)
-                    return  # Slot acquired
-
-                wait_time = self._timestamps[0] - cutoff
-
-            # Sleep OUTSIDE the lock so other coroutines can proceed
-            if wait_time > 0:
-                logger.debug(f"[{self._name}] Rate limit: waiting {wait_time:.1f}s")
-                await asyncio.sleep(wait_time)
+    return get_default_session().get_markitdown()
 
 
 # =============================================================================
@@ -776,34 +312,15 @@ class _SlidingWindowRateLimiter:
 #       HTML cleaning/article extraction could replace the external API dependency.
 # =============================================================================
 
-_defuddle_rate_limiter: _SlidingWindowRateLimiter | None = None
-_defuddle_client: Any = None
-
 
 def _get_defuddle_rate_limiter(rpm: int) -> _SlidingWindowRateLimiter:
     """Get or create the global Defuddle rate limiter."""
-    global _defuddle_rate_limiter
-    if _defuddle_rate_limiter is None or _defuddle_rate_limiter._rpm != rpm:
-        _defuddle_rate_limiter = _SlidingWindowRateLimiter(rpm, name="Defuddle")
-    return _defuddle_rate_limiter
+    return get_default_session().get_defuddle_rate_limiter(rpm)
 
 
 def _get_defuddle_client(timeout: int = 30) -> Any:
     """Get or create the shared httpx.AsyncClient for Defuddle fetching."""
-    global _defuddle_client
-    if _defuddle_client is None:
-        import httpx
-
-        effective_proxy = _detect_proxy()
-        client_kwargs: dict[str, Any] = {
-            "timeout": httpx.Timeout(timeout, connect=10),
-            "follow_redirects": True,
-            "limits": httpx.Limits(max_connections=10, max_keepalive_connections=5),
-        }
-        if effective_proxy:
-            client_kwargs["proxy"] = effective_proxy
-        _defuddle_client = httpx.AsyncClient(**client_kwargs)
-    return _defuddle_client
+    return get_default_session().get_defuddle_client(timeout)
 
 
 async def fetch_with_defuddle(
@@ -933,18 +450,9 @@ def _extract_jina_error_message(response: Any) -> str:
     return text[:200]
 
 
-_jina_rate_limiter: _SlidingWindowRateLimiter | None = None
-
-
 def _get_jina_rate_limiter(rpm: int) -> _SlidingWindowRateLimiter:
     """Get or create the global Jina rate limiter."""
-    global _jina_rate_limiter
-    if _jina_rate_limiter is None or _jina_rate_limiter._rpm != rpm:
-        _jina_rate_limiter = _SlidingWindowRateLimiter(rpm, name="Jina")
-    return _jina_rate_limiter
-
-
-_jina_client_fingerprint: str = ""
+    return get_default_session().get_jina_rate_limiter(rpm)
 
 
 def _get_jina_client(timeout: int = 30, proxy: str = "") -> Any:
@@ -961,41 +469,7 @@ def _get_jina_client(timeout: int = 30, proxy: str = "") -> Any:
     Returns:
         httpx.AsyncClient instance
     """
-    global _jina_client, _jina_client_fingerprint
-    # Loop identity is part of the fingerprint: each CLI invocation runs its
-    # own asyncio.run loop, and a client bound to a closed loop raises
-    # "Event loop is closed" when reused
-    try:
-        loop_id = id(asyncio.get_running_loop())
-    except RuntimeError:  # sync/test context
-        loop_id = 0
-    fingerprint = f"{timeout}:{proxy}:{loop_id}"
-    if _jina_client is None or _jina_client_fingerprint != fingerprint:
-        import httpx
-
-        if _jina_client is not None:
-            # Schedule close of old client (best-effort, non-blocking)
-            logger.debug(
-                "[Jina] Rebuilding client: config changed "
-                f"(was {_jina_client_fingerprint!r}, now {fingerprint!r})"
-            )
-            from markitai.fetch_http import schedule_client_close
-
-            schedule_client_close(_jina_client.aclose(), "Jina")
-
-        # Use detected proxy if not explicitly provided
-        effective_proxy = proxy or _detect_proxy()
-        client_kwargs: dict[str, Any] = {
-            "timeout": timeout,
-            "limits": httpx.Limits(max_connections=10, max_keepalive_connections=5),
-        }
-        if effective_proxy:
-            client_kwargs["proxy"] = effective_proxy
-            logger.debug(f"[Jina] Using proxy: {effective_proxy}")
-
-        _jina_client = httpx.AsyncClient(**client_kwargs)
-        _jina_client_fingerprint = fingerprint
-    return _jina_client
+    return get_default_session().get_jina_client(timeout, proxy)
 
 
 async def close_shared_clients() -> None:
@@ -1003,57 +477,7 @@ async def close_shared_clients() -> None:
 
     Call this during cleanup to release resources.
     """
-    global _jina_client, _fetch_cache, _playwright_renderer, _jina_rate_limiter
-    global _defuddle_client, _defuddle_rate_limiter
-    global _fetch_cache_fingerprint, _jina_client_fingerprint
-    global _playwright_renderer_fingerprint
-    global _cf_br_semaphore, _spa_domain_cache
-    global _markitdown_instance, _detected_proxy, _detected_proxy_bypass
-    if _jina_client is not None:
-        try:
-            await _jina_client.aclose()
-        except RuntimeError:
-            # Client bound to a previous (closed) event loop; its
-            # connections died with that loop — just drop it
-            logger.debug("[Fetch] Dropping Jina client bound to a stale loop")
-        _jina_client = None
-    _jina_client_fingerprint = ""
-    if _defuddle_client is not None:
-        try:
-            await _defuddle_client.aclose()
-        except RuntimeError:
-            logger.debug("[Fetch] Dropping Defuddle client bound to a stale loop")
-        _defuddle_client = None
-    if _fetch_cache is not None:
-        _fetch_cache.close()
-        _fetch_cache = None
-    _fetch_cache_fingerprint = ""
-    if _playwright_renderer is not None:
-        await _playwright_renderer.close()
-        _playwright_renderer = None
-    _playwright_renderer_fingerprint = ""
-    _jina_rate_limiter = None
-    _defuddle_rate_limiter = None
-
-    # Reset global state that may be bound to the current event loop
-    _cf_br_semaphore = None
-    _spa_domain_cache = None
-    _markitdown_instance = None
-    _detected_proxy = None
-    _detected_proxy_bypass = None
-
-    # Reset heavy task semaphore (bound to event loop)
-    from markitai.utils.executor import reset_heavy_task_semaphore
-
-    reset_heavy_task_semaphore()
-
-    # Close shared static HTTP clients
-    from markitai.fetch_http import close_static_http_clients
-
-    await close_static_http_clients()
-
-
-_playwright_renderer_fingerprint: str = ""
+    await get_default_session().close()
 
 
 async def _get_playwright_renderer(
@@ -1070,31 +494,9 @@ async def _get_playwright_renderer(
     Returns:
         PlaywrightRenderer instance
     """
-    global _playwright_renderer, _playwright_renderer_fingerprint
-    session_mode = config.playwright.session_mode if config else None
-    fingerprint = f"{proxy}:{session_mode}"
-    if _playwright_renderer is None or _playwright_renderer_fingerprint != fingerprint:
-        if _playwright_renderer is not None:
-            logger.debug(
-                "[Playwright] Rebuilding renderer: config changed "
-                f"(was {_playwright_renderer_fingerprint!r}, now {fingerprint!r})"
-            )
-            await _playwright_renderer.close()
-
-        from markitai.fetch_playwright import PlaywrightRenderer
-
-        _playwright_renderer = PlaywrightRenderer(proxy=proxy)
-
-        # Enable domain-persistent session cache if configured
-        if config and config.playwright.session_mode == "domain_persistent":
-            _playwright_renderer.enable_domain_session_cache(
-                ttl_seconds=config.playwright.session_ttl_seconds,
-                max_contexts=8,  # Default limit
-            )
-
-        _playwright_renderer_fingerprint = fingerprint
-
-    return _playwright_renderer
+    return await get_default_session().get_playwright_renderer(
+        proxy=proxy, config=config
+    )
 
 
 def _url_to_session_key(url: str) -> str:
@@ -1229,117 +631,6 @@ def should_use_browser_for_domain(url: str, fallback_patterns: list[str]) -> boo
         logger.debug("[Fetch] Domain pattern matching failed: {}", e)
 
     return False
-
-
-def _url_to_screenshot_filename(url: str) -> str:
-    """Generate a safe filename for URL screenshot.
-
-    Examples:
-        https://example.com/path → example.com_path.full.jpg
-        https://x.com/user/status/123 → x.com_user_status_123.full.jpg
-
-    Args:
-        url: URL to convert
-
-    Returns:
-        Safe filename with .full.jpg extension
-    """
-    try:
-        parsed = urlparse(url)
-        # Start with domain
-        parts = [parsed.netloc] if parsed.netloc else []
-        # Add path parts
-        if parsed.path and parsed.path != "/":
-            path_parts = parsed.path.strip("/").split("/")
-            parts.extend(path_parts)
-
-        # If no parts, fall back to hash
-        if not parts or not any(parts):
-            url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
-            return f"screenshot_{url_hash}.full.jpg"
-
-        # Join with underscores
-        name = "_".join(p for p in parts if p)
-
-        # Sanitize for filesystem (remove/replace unsafe chars)
-        # Windows-unsafe: < > : " / \ | ? *
-        # Also remove other problematic chars
-        unsafe_chars = r'<>:"/\\|?*\x00-\x1f'
-        name = re.sub(f"[{unsafe_chars}]", "_", name)
-
-        # Collapse multiple underscores
-        name = re.sub(r"_+", "_", name)
-
-        # Strip leading/trailing underscores
-        name = name.strip("_")
-
-        # Limit length (leave room for extension)
-        max_length = 200
-        if len(name) > max_length:
-            name = name[:max_length]
-
-        # Final check for empty name
-        if not name:
-            url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
-            return f"screenshot_{url_hash}.full.jpg"
-
-        return f"{name}.full.jpg"
-    except Exception:
-        # Fallback: hash the URL
-        url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
-        return f"screenshot_{url_hash}.full.jpg"
-
-
-def _compress_screenshot(
-    screenshot_path: Path,
-    quality: int = 85,
-    max_height: int = 10000,
-) -> None:
-    """Compress a screenshot to JPEG with quality and size limits.
-
-    Args:
-        screenshot_path: Path to screenshot file (will be overwritten)
-        quality: JPEG quality (1-100)
-        max_height: Maximum height in pixels (will resize if exceeded)
-    """
-    try:
-        from PIL import Image
-
-        # Quick check: get image info without full decode
-        with Image.open(screenshot_path) as img:
-            width, height = img.size
-            needs_resize = height > max_height
-            needs_convert = img.mode in ("RGBA", "P")
-
-        # Skip re-compression if image doesn't need resize or conversion
-        # Playwright already saves JPEG with specified quality
-        if not needs_resize and not needs_convert:
-            logger.debug(
-                f"Screenshot within limits ({width}x{height}), skipping re-compression"
-            )
-            return
-
-        # Only re-process if needed
-        with Image.open(screenshot_path) as img:
-            if needs_convert:
-                img = img.convert("RGB")
-
-            if needs_resize:
-                ratio = max_height / height
-                new_width = int(width * ratio)
-                img = img.resize((new_width, max_height), Image.Resampling.LANCZOS)
-                logger.debug(
-                    f"Resized screenshot from {width}x{height} to {new_width}x{max_height}"
-                )
-
-            img.save(screenshot_path, "JPEG", quality=quality, optimize=True)
-            logger.debug(
-                f"Compressed screenshot to quality={quality}: {screenshot_path}"
-            )
-    except ImportError:
-        logger.warning("Pillow not installed, skipping screenshot compression")
-    except Exception as e:
-        logger.warning(f"Failed to compress screenshot: {e}")
 
 
 async def fetch_with_static(url: str) -> FetchResult:

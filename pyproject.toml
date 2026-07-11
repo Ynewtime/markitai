@@ -116,9 +116,12 @@ source_modules = [
     "markitai.domain_profiles",
     "markitai.fetch",
     "markitai.fetch_cache",
+    "markitai.fetch_consent",
     "markitai.fetch_http",
     "markitai.fetch_playwright",
     "markitai.fetch_policy",
+    "markitai.fetch_screenshot",
+    "markitai.fetch_session",
     "markitai.fetch_types",
     "markitai.image",
     "markitai.json_order",
@@ -144,8 +147,10 @@ source_modules = [
     "markitai.constants",
     "markitai.domain_profiles",
     "markitai.fetch_cache",
+    "markitai.fetch_consent",
     "markitai.fetch_http",
     "markitai.fetch_policy",
+    "markitai.fetch_screenshot",
     "markitai.fetch_types",
     "markitai.json_order",
     "markitai.ports",
@@ -182,6 +187,12 @@ source_modules = [
     "markitai.webextract",
 ]
 forbidden_modules = ["markitai.workflow", "markitai.batch"]
+
+[[tool.importlinter.contracts]]
+name = "fetch_playwright must not import fetch (cycle killed in Phase 3)"
+type = "forbidden"
+source_modules = ["markitai.fetch_playwright"]
+forbidden_modules = ["markitai.fetch"]
 
 [[tool.importlinter.contracts]]
 name = "webextract stays a pure extraction domain"

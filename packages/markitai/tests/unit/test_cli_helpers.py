@@ -116,8 +116,8 @@ class TestReportGeneration:
         import markitai.fetch as fetch_module
         from markitai.cli import app
 
-        monkeypatch.setattr(fetch_module, "_jina_client", None)
-        monkeypatch.setattr(fetch_module, "_fetch_cache", None)
+        monkeypatch.setattr(fetch_module.get_default_session(), "jina_client", None)
+        monkeypatch.setattr(fetch_module.get_default_session(), "fetch_cache", None)
 
         # Create test file
         test_file = tmp_path / "test.txt"
@@ -153,8 +153,8 @@ class TestReportGeneration:
         import markitai.fetch as fetch_module
         from markitai.cli import app
 
-        monkeypatch.setattr(fetch_module, "_jina_client", None)
-        monkeypatch.setattr(fetch_module, "_fetch_cache", None)
+        monkeypatch.setattr(fetch_module.get_default_session(), "jina_client", None)
+        monkeypatch.setattr(fetch_module.get_default_session(), "fetch_cache", None)
 
         test_file = tmp_path / "test.txt"
         test_file.write_text("Test content")
