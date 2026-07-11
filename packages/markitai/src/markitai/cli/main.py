@@ -123,7 +123,7 @@ from markitai.cli.logging_config import (
 from markitai.cli.processors.validators import (
     check_vision_model_config as _check_vision_model_config,
 )
-from markitai.config import ConfigManager, EnvVarNotFoundError
+from markitai.config import ConfigFileError, ConfigManager, EnvVarNotFoundError
 
 # Import utilities from refactored modules
 from markitai.utils.cli_helpers import (
@@ -169,6 +169,12 @@ def run_interactive_mode(ctx: click.Context) -> None:
         else:
             click.echo("Cancelled.")
             ctx.exit(0)
+    except ConfigFileError as e:
+        # -I is an eager callback: it runs before MarkitaiGroup.invoke, so
+        # that hook's ConfigFileError translation cannot catch errors from
+        # the wizard's own config loads. Translate here for the same clean
+        # message + non-zero exit.
+        raise click.ClickException(str(e)) from e
     except (KeyboardInterrupt, EOFError):
         click.echo("\nCancelled.")
         ctx.exit(0)

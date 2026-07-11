@@ -22,12 +22,19 @@ uv run pytest -q                          # full suite (parallel, excludes slow/
 uv run pytest -m "slow or network"        # opt-in slow/network tests
 uv run ruff check && uv run ruff format   # lint + format
 uv run pyright packages/markitai/src     # type check (0 errors required)
+uv run lint-imports                       # architecture layering contracts (0 broken required)
 uv run bandit -c pyproject.toml -r packages/markitai/src -q   # security lint
 uv run markitai <file>                    # run the CLI from source
 ```
 
 Test markers: `slow`, `network`, `parity` (see `pyproject.toml`). CI runs the
 default selection on Linux/macOS/Windows × Python 3.11–3.14.
+
+Architecture rule: modules below `markitai.cli` must never import it (and the
+other layering contracts in `[tool.importlinter]`, root `pyproject.toml`).
+The contracts' `ignore_imports` allowlist only shrinks — fix the dependency
+direction instead of adding an exemption. When code below the CLI needs the
+user (a prompt, a notice), go through `markitai.ports`.
 
 ## Conversion-quality benchmark
 
