@@ -1,4 +1,4 @@
-"""Unit tests for VisionMixin class in llm/vision.py.
+"""Unit tests for VisionAnalyzer class in llm/vision.py.
 
 Tests cover:
 - analyze_image() - Single image analysis with cache
@@ -31,7 +31,7 @@ from markitai.llm.types import (
     LLMResponse,
     SingleImageResult,
 )
-from markitai.llm.vision import VisionMixin, _vision_cache_content_key
+from markitai.llm.vision import VisionAnalyzer, _vision_cache_content_key
 
 # =============================================================================
 # Test Helper: context_display_name (formerly _context_display_name in vision.py)
@@ -59,15 +59,16 @@ class TestContextDisplayName:
 
 
 # =============================================================================
-# Mock VisionMixin Implementation
+# Mock VisionAnalyzer Implementation
 # =============================================================================
 
 
-class MockVisionProcessor(VisionMixin):
-    """Mock processor that includes VisionMixin for testing.
+class MockVisionProcessor(VisionAnalyzer):
+    """VisionAnalyzer wired to mock dependencies for testing.
 
-    Provides mock implementations of LLMProcessor attributes that
-    VisionMixin expects.
+    Builds the mock collaborators (persistent cache, prompt manager,
+    vision router, real LLMEngine) and injects them through the
+    VisionAnalyzer constructor.
     """
 
     def __init__(
@@ -84,9 +85,10 @@ class MockVisionProcessor(VisionMixin):
             cache_enabled: Whether cache returns hits
             cached_result: Result to return from cache on hit
         """
+        from markitai.llm.engine import LLMEngine
+
         self._concurrency = concurrency
-        self._semaphore: asyncio.Semaphore | None = None
-        self._engine: Any = None
+        self._semaphore = asyncio.Semaphore(concurrency)
         self._cache_enabled = cache_enabled
         self._cached_result = cached_result
         self._cache_storage: dict[str, Any] = {}
@@ -100,6 +102,28 @@ class MockVisionProcessor(VisionMixin):
 
         # Setup mock objects
         self._setup_mocks()
+
+        # Real LLMEngine wired to this mock's collaborators
+        engine = LLMEngine(
+            router=self.vision_router,
+            semaphore=self._semaphore,
+            memory_cache=self._cache,
+            persistent_cache=self._persistent_cache,
+            track_usage=self._track_usage,
+            calculate_max_tokens=lambda messages, _model_id=None, router=None: (
+                self._calculate_dynamic_max_tokens(messages, router=router)
+            ),
+            get_primary_model=lambda _router: "test/vision-model",
+        )
+
+        super().__init__(
+            engine=engine,
+            prompt_manager=self._prompt_manager,
+            config=self.config,
+            get_vision_router=lambda: self.vision_router,
+            get_cached_image=lambda image_path: self._get_cached_image_impl(image_path),
+            get_next_call_index=lambda _context: 0,
+        )
 
     def _setup_mocks(self):
         """Setup mock objects for testing."""
@@ -145,32 +169,11 @@ class MockVisionProcessor(VisionMixin):
 
     @property
     def semaphore(self) -> asyncio.Semaphore:
-        """Get or create semaphore."""
-        if self._semaphore is None:
-            self._semaphore = asyncio.Semaphore(self._concurrency)
+        """Shared semaphore (same object the engine uses)."""
         return self._semaphore
 
-    @property
-    def engine(self) -> Any:
-        """Real LLMEngine wired to this mock's collaborators (lazy)."""
-        from markitai.llm.engine import LLMEngine
-
-        if self._engine is None:
-            self._engine = LLMEngine(
-                router=self.vision_router,
-                semaphore=self.semaphore,
-                memory_cache=self._cache,
-                persistent_cache=self._persistent_cache,
-                track_usage=self._track_usage,
-                calculate_max_tokens=lambda messages, _model_id=None, router=None: (
-                    self._calculate_dynamic_max_tokens(messages, router=router)
-                ),
-                get_primary_model=lambda _router: "test/vision-model",
-            )
-        return self._engine
-
-    def _get_cached_image(self, image_path: Path) -> tuple[bytes, str]:
-        """Mock method to get cached image data."""
+    def _get_cached_image_impl(self, image_path: Path) -> tuple[bytes, str]:
+        """Mock image cache accessor (injected as get_cached_image)."""
         path_str = str(image_path)
         if path_str in self._image_cache:
             return self._image_cache[path_str]

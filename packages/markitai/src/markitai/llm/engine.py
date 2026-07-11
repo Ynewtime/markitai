@@ -251,12 +251,18 @@ class LLMEngine:
       (bound from ``LLMProcessor._calculate_dynamic_max_tokens``)
     - ``get_primary_model``: ``(router) -> model_id | None``
       (bound from ``LLMProcessor._get_router_primary_model``)
+
+    The engine also owns the content-cache hit/miss counters: every
+    structured call with a cache key counts one hit or one miss, and the
+    document service records its manual ``clean_markdown`` cache events
+    via ``record_cache_hit`` / ``record_cache_miss``.
     """
 
     def __init__(
         self,
         *,
-        router: Any,
+        router: Any | None = None,
+        get_router: Callable[[], Any] | None = None,
         semaphore: asyncio.Semaphore,
         memory_cache: Any,
         persistent_cache: Any,
@@ -264,13 +270,70 @@ class LLMEngine:
         calculate_max_tokens: Callable[..., int | None],
         get_primary_model: Callable[[Any], str | None],
     ) -> None:
-        self.router = router
+        """Exactly one of ``router`` / ``get_router`` must be provided.
+
+        ``get_router`` defers default-router resolution to the first actual
+        LLM call: router creation raises for configs without models, and
+        that error must surface inside the callers' fallback handling (as
+        it did when the engine itself was created lazily at call time),
+        not at engine/service construction time.
+        """
+        if (router is None) == (get_router is None):
+            raise ValueError("LLMEngine requires exactly one of router/get_router")
+        self._router = router
+        self._get_router = get_router
         self.semaphore = semaphore
         self.memory_cache = memory_cache
         self.persistent_cache = persistent_cache
-        self._track_usage = track_usage
-        self._calculate_max_tokens = calculate_max_tokens
+        self.track_usage = track_usage
+        self.calculate_max_tokens = calculate_max_tokens
         self._get_primary_model = get_primary_model
+        # Content-cache hit/miss counters (moved here from LLMProcessor in
+        # Phase 2.3). Plain int increments, same as the previous processor
+        # attributes (GIL-safe enough for counters).
+        self._cache_hits = 0
+        self._cache_misses = 0
+
+    @property
+    def router(self) -> Any:
+        """Default router (lazily resolved when built with ``get_router``)."""
+        if self._router is not None:
+            return self._router
+        assert self._get_router is not None
+        return self._get_router()
+
+    def record_cache_hit(self) -> None:
+        """Count one content-cache hit (for call-site managed caches)."""
+        self._cache_hits += 1
+
+    def record_cache_miss(self) -> None:
+        """Count one content-cache miss (for call-site managed caches)."""
+        self._cache_misses += 1
+
+    def reset_cache_counters(self) -> None:
+        """Reset the hit/miss counters (used by cache clearing)."""
+        self._cache_hits = 0
+        self._cache_misses = 0
+
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Get cache statistics.
+
+        Returns:
+            Dict with memory cache stats, persistent cache stats, and
+            combined hit rate (same shape as the historical
+            ``LLMProcessor.get_cache_stats``).
+        """
+        total = self._cache_hits + self._cache_misses
+        hit_rate = self._cache_hits / total if total > 0 else 0.0
+        return {
+            "memory": {
+                "hits": self._cache_hits,
+                "misses": self._cache_misses,
+                "hit_rate": round(hit_rate * 100, 2),
+                "size": self.memory_cache.size,
+            },
+            "persistent": self.persistent_cache.stats(),
+        }
 
     async def complete_structured(self, call: LLMCall) -> tuple[Any, Any]:
         """Run one structured LLM call through the full pipeline.
@@ -286,10 +349,13 @@ class LLMEngine:
             # model_construct() bypasses validation for cached data
             return call.response_model.model_construct(**cached)
 
-        # 1. Cache lookup: in-memory first (fastest), then persistent
+        # 1. Cache lookup: in-memory first (fastest), then persistent.
+        # The miss is counted before the LLM call so that failed calls also
+        # count as misses (matching the historical document_process counting).
         if call.cache_key is not None:
             cached = self.memory_cache.get(call.cache_key, call.cache_content)
             if cached is not None:
+                self._cache_hits += 1
                 return deserialize(cached), None
 
             cached = self.persistent_cache.get(
@@ -298,7 +364,10 @@ class LLMEngine:
             if cached is not None:
                 # Also populate in-memory cache for faster subsequent access
                 self.memory_cache.set(call.cache_key, call.cache_content, cached)
+                self._cache_hits += 1
                 return deserialize(cached), None
+
+            self._cache_misses += 1
 
         # 2. Cache miss: one structured call occupies one concurrency slot
         # for its whole duration (transport retries included), matching the
@@ -312,7 +381,7 @@ class LLMEngine:
             if call.max_tokens is not None:
                 max_tokens = call.max_tokens
             else:
-                max_tokens = self._calculate_max_tokens(
+                max_tokens = self.calculate_max_tokens(
                     call.messages,
                     self._get_primary_model(active_router),
                     router=active_router,
@@ -367,7 +436,7 @@ class LLMEngine:
                 input_tokens = getattr(raw_response.usage, "prompt_tokens", 0) or 0
                 output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
                 cost = get_response_cost(raw_response)
-                self._track_usage(
+                self.track_usage(
                     actual_model, input_tokens, output_tokens, cost, call.context
                 )
 
@@ -436,7 +505,7 @@ class LLMEngine:
         # Calculate dynamic max_tokens based on input size and target model
         # Pass router so the limit is the minimum across the model pool
         target_model_id = self._get_primary_model(active_router)
-        max_tokens = self._calculate_max_tokens(
+        max_tokens = self.calculate_max_tokens(
             messages, target_model_id, router=active_router
         )
 
@@ -589,7 +658,7 @@ class LLMEngine:
                     output_tokens = usage.completion_tokens if usage else 0
 
                     if usage_context is not None:
-                        self._track_usage(
+                        self.track_usage(
                             actual_model,
                             input_tokens,
                             output_tokens,

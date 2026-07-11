@@ -1,6 +1,8 @@
-"""Vision analysis mixin for LLMProcessor.
+"""Vision analysis service for LLMProcessor.
 
-This module provides vision-related methods for image analysis.
+This module provides the VisionAnalyzer service class for image analysis.
+LLMProcessor composes it (lazy ``vision`` property) and exposes thin
+delegates for the public methods.
 """
 
 from __future__ import annotations
@@ -34,8 +36,10 @@ from markitai.llm.types import (
     BatchImageAnalysisResult,
     ImageAnalysis,
     ImageAnalysisResult,
+    LLMResponse,
     SingleImageResult,
 )
+from markitai.providers.common import has_images
 from markitai.utils.mime import (
     get_llm_effective_mime,
     is_llm_supported_image,
@@ -43,11 +47,10 @@ from markitai.utils.mime import (
 from markitai.utils.text import clean_control_characters, format_error_message
 
 if TYPE_CHECKING:
-    from asyncio import Semaphore
+    from collections.abc import Callable
 
-    from litellm.router import Router
-
-    from markitai.llm.processor import HybridRouter, LocalProviderWrapper
+    from markitai.config import LLMConfig
+    from markitai.llm.engine import LLMEngine
     from markitai.prompts import PromptManager
     from markitai.types import LLMUsageByModel, ModelUsageStats
 
@@ -199,28 +202,71 @@ def _guard_degenerate_extracted_text(analysis: ImageAnalysis, context: str) -> b
     return degenerated
 
 
-class VisionMixin:
-    """Vision analysis methods for LLMProcessor.
+class VisionAnalyzer:
+    """Vision analysis service used by LLMProcessor via composition.
 
-    This mixin provides image analysis functionality including:
+    Provides image analysis functionality including:
     - Single image analysis
     - Batch image analysis
     - Page content extraction
 
-    Note: This mixin expects to be used with LLMProcessor which provides
-    the attributes declared below.
+    Dependencies are injected explicitly instead of being reached through a
+    mixin host:
+
+    - ``engine``: transport (text/structured calls), shared semaphore,
+      cache layers, and usage accounting
+    - ``prompt_manager``: prompt template lookup
+    - ``config``: LLM configuration (concurrency, retry counts)
+    - ``get_vision_router``: provider callback for the vision router.
+      A callback (not the router instance) because the processor's
+      vision router is a lazy property and tests inject doubles after
+      construction — holding the instance would pin the pre-injection
+      object.
+    - ``get_cached_image``: processor-owned image cache accessor
+      (the LRU image cache state stays on LLMProcessor)
+    - ``get_next_call_index``: processor-owned per-context call counter
+      (shared with the processor so call ids stay globally sequential)
     """
 
-    # Declare expected attributes from LLMProcessor for type checking
-    # Methods still use type: ignore[attr-defined] as they have complex signatures
-    if TYPE_CHECKING:
-        from markitai.llm.engine import LLMEngine
+    def __init__(
+        self,
+        *,
+        engine: LLMEngine,
+        prompt_manager: PromptManager,
+        config: LLMConfig,
+        get_vision_router: Callable[[], Any],
+        get_cached_image: Callable[[Path], tuple[bytes, str]],
+        get_next_call_index: Callable[[str], int],
+    ) -> None:
+        self._engine = engine
+        self._prompt_manager = prompt_manager
+        self._config = config
+        self._get_vision_router = get_vision_router
+        self._get_cached_image = get_cached_image
+        self._get_next_call_index = get_next_call_index
 
-        semaphore: Semaphore
-        vision_router: Router | LocalProviderWrapper | HybridRouter
-        _persistent_cache: Any  # PersistentCache from processor.py
-        _prompt_manager: PromptManager
-        engine: LLMEngine
+    async def _call_llm(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        context: str = "",
+    ) -> LLMResponse:
+        """Make a text LLM call with smart router selection.
+
+        Mirrors ``LLMProcessor._call_llm``: uses the vision router when the
+        messages contain images, the engine's default router otherwise.
+        """
+        call_index = self._get_next_call_index(context) if context else 0
+        call_id = f"{context}:{call_index}" if context else f"call:{call_index}"
+        router = self._get_vision_router() if has_images(messages) else None
+        return await self._engine.complete_text(
+            model=model,
+            messages=messages,
+            call_id=call_id,
+            context=context,
+            max_retries=self._config.router_settings.num_retries,
+            router=router,
+        )
 
     async def analyze_image(
         self,
@@ -256,7 +302,7 @@ class VisionMixin:
             )
 
         # Get cached image data and base64 encoding
-        _, base64_image = self._get_cached_image(image_path)  # type: ignore[attr-defined]
+        _, base64_image = self._get_cached_image(image_path)
 
         # Check persistent cache using image hash as key
         # Use SHA256 hash of base64 as image fingerprint to avoid collisions
@@ -266,7 +312,7 @@ class VisionMixin:
         cache_content_key = _vision_cache_content_key(
             image_fingerprint, document_context
         )
-        cached = self._persistent_cache.get(  # type: ignore[attr-defined]
+        cached = self._engine.persistent_cache.get(
             cache_key, cache_content_key, context=context
         )
         if cached is not None:
@@ -283,14 +329,14 @@ class VisionMixin:
 
         # Use separated system/user prompts to improve instruction following
         language = _detect_document_language(document_context)
-        system_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
+        system_prompt = self._prompt_manager.get_prompt(
             "image_analysis_system",
             language=language,
         )
         doc_ctx = (
             f"\n\nDocument context: {document_context}" if document_context else ""
         )
-        user_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
+        user_prompt = self._prompt_manager.get_prompt(
             "image_analysis_user",
             document_context=doc_ctx,
             language=language,
@@ -367,7 +413,7 @@ class VisionMixin:
                 "description": result.description,
                 "extracted_text": result.extracted_text,
             }
-            self._persistent_cache.set(  # type: ignore[attr-defined]
+            self._engine.persistent_cache.set(
                 cache_key, cache_content_key, cache_value, model="vision"
             )
 
@@ -416,7 +462,7 @@ class VisionMixin:
         # Limit concurrent batches to avoid memory pressure from loading all images
         # at once. The semaphore controls LLM API calls, but images are loaded
         # before acquiring the semaphore. This batch-level limit prevents that.
-        max_concurrent_batches = min(self.config.concurrency, num_batches)  # type: ignore[attr-defined]
+        max_concurrent_batches = min(self._config.concurrency, num_batches)
         batch_semaphore = asyncio.Semaphore(max_concurrent_batches)
 
         display_name = context_display_name(context) or "batch"
@@ -528,16 +574,16 @@ class VisionMixin:
         image_cache_content_keys: dict[int, str] = {}
 
         for orig_idx, image_path in supported_paths:
-            _, base64_image = self._get_cached_image(image_path)  # type: ignore[attr-defined]
+            _, base64_image = self._get_cached_image(image_path)
             # Use SHA256 hash to avoid collisions (JPEG files share same header)
             fingerprint = hashlib.sha256(base64_image.encode()).hexdigest()
             image_fingerprints[orig_idx] = fingerprint
             cache_content_key = _vision_cache_content_key(fingerprint, document_context)
             image_cache_content_keys[orig_idx] = cache_content_key
 
-            cached = self._persistent_cache.get(
+            cached = self._engine.persistent_cache.get(
                 cache_key, cache_content_key, context=context
-            )  # type: ignore[attr-defined]
+            )
             if cached is not None:
                 logger.debug(f"[{image_path.name}] Cache hit in batch analysis")
                 cached_results[orig_idx] = ImageAnalysis(
@@ -569,7 +615,7 @@ class VisionMixin:
 
         # Use separated system/user prompts to improve instruction following
         language = _detect_document_language(document_context)
-        system_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
+        system_prompt = self._prompt_manager.get_prompt(
             "image_analysis_system",
             language=language,
         )
@@ -592,7 +638,7 @@ class VisionMixin:
         content_parts: list[dict[str, Any]] = [{"type": "text", "text": user_prompt}]
 
         for i, image_path in enumerate(uncached_paths, 1):
-            _, base64_image = self._get_cached_image(image_path)  # type: ignore[attr-defined]
+            _, base64_image = self._get_cached_image(image_path)
             mime_type = get_llm_effective_mime(image_path.suffix)
 
             # Unique image label that won't conflict with document content
@@ -607,21 +653,22 @@ class VisionMixin:
             )
 
         try:
-            async with self.semaphore:  # type: ignore[attr-defined]
+            vision_router = self._get_vision_router()
+            async with self._engine.semaphore:
                 # Calculate dynamic max_tokens using minimum across all vision router models
                 messages = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": content_parts},
                 ]
-                max_tokens = self._calculate_dynamic_max_tokens(  # type: ignore[attr-defined]
+                max_tokens = self._engine.calculate_max_tokens(
                     messages,
-                    router=self.vision_router,  # type: ignore[attr-defined]
+                    router=vision_router,
                 )
 
                 # Use MD_JSON mode to handle LLMs that wrap JSON in ```json code blocks
                 client = instructor.from_litellm(
-                    self.vision_router.acompletion,
-                    mode=instructor.Mode.MD_JSON,  # type: ignore[attr-defined]
+                    vision_router.acompletion,
+                    mode=instructor.Mode.MD_JSON,
                 )
                 # max_retries allows Instructor to retry with validation error
                 # feedback, which helps LLM fix JSON escaping issues
@@ -666,7 +713,7 @@ class VisionMixin:
                         getattr(raw_response.usage, "completion_tokens", 0) or 0
                     )
                     cost = get_response_cost(raw_response)
-                    self._track_usage(  # type: ignore[attr-defined]
+                    self._engine.track_usage(
                         actual_model, input_tokens, output_tokens, cost, context
                     )
 
@@ -742,7 +789,7 @@ class VisionMixin:
                         "description": analysis.description,
                         "extracted_text": analysis.extracted_text,
                     }
-                    self._persistent_cache.set(  # type: ignore[attr-defined]
+                    self._engine.persistent_cache.set(
                         cache_key, content_key, cache_value, model="vision"
                     )
 
@@ -869,9 +916,9 @@ class VisionMixin:
             response_model=ImageAnalysisResult,
             context=context,
             cache_key=None,
-            router=self.vision_router,  # type: ignore[attr-defined]
+            router=self._get_vision_router(),
         )
-        response, raw_response = await self.engine.complete_structured(call)  # type: ignore[attr-defined]
+        response, raw_response = await self._engine.complete_structured(call)
 
         # Build llm_usage dict for this analysis from the raw response
         # (aggregate usage accounting itself is handled by the engine)
@@ -924,15 +971,16 @@ class VisionMixin:
             ],
         }
 
-        async with self.semaphore:  # type: ignore[attr-defined]
+        vision_router = self._get_vision_router()
+        async with self._engine.semaphore:
             # Calculate dynamic max_tokens using minimum across all vision router models
-            max_tokens = self._calculate_dynamic_max_tokens(  # type: ignore[attr-defined]
+            max_tokens = self._engine.calculate_max_tokens(
                 json_messages,
-                router=self.vision_router,  # type: ignore[attr-defined]
+                router=vision_router,
             )
 
             # Use vision_router for image analysis (not main router)
-            response = await self.vision_router.acompletion(  # type: ignore[attr-defined]
+            response = await vision_router.acompletion(
                 model=model,
                 messages=cast(list[AllMessageValues], json_messages),
                 max_tokens=max_tokens,
@@ -949,7 +997,9 @@ class VisionMixin:
             input_tokens = usage.prompt_tokens if usage else 0
             output_tokens = usage.completion_tokens if usage else 0
             cost = get_response_cost(response)
-            self._track_usage(actual_model, input_tokens, output_tokens, cost, context)  # type: ignore[attr-defined]
+            self._engine.track_usage(
+                actual_model, input_tokens, output_tokens, cost, context
+            )
 
             # Clean control characters before JSON parsing to avoid errors
             cleaned_content = clean_control_characters(content or "{}")
@@ -995,19 +1045,19 @@ class VisionMixin:
         language = _detect_document_language(document_context)
 
         # Generate caption using system/user prompts
-        caption_system = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
+        caption_system = self._prompt_manager.get_prompt(
             "image_caption_system",
             language=language,
         )
         doc_ctx = (
             f"\n\nDocument context: {document_context}" if document_context else ""
         )
-        caption_user = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
+        caption_user = self._prompt_manager.get_prompt(
             "image_caption_user",
             document_context=doc_ctx,
             language=language,
         )
-        caption_response = await self._call_llm(  # type: ignore[attr-defined]
+        caption_response = await self._call_llm(
             model="default",
             messages=[
                 {"role": "system", "content": caption_system},
@@ -1023,16 +1073,16 @@ class VisionMixin:
         )
 
         # Generate description using system/user prompts
-        desc_system = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
+        desc_system = self._prompt_manager.get_prompt(
             "image_description_system",
             language=language,
         )
-        desc_user = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
+        desc_user = self._prompt_manager.get_prompt(
             "image_description_user",
             document_context=doc_ctx,
             language=language,
         )
-        desc_response = await self._call_llm(  # type: ignore[attr-defined]
+        desc_response = await self._call_llm(
             model="default",
             messages=[
                 {"role": "system", "content": desc_system},
@@ -1088,7 +1138,7 @@ class VisionMixin:
             rewritten_caption, language
         ):
             try:
-                caption_response = await self._call_llm(  # type: ignore[attr-defined]
+                caption_response = await self._call_llm(
                     model="default",
                     messages=self._build_language_rewrite_messages(
                         content=rewritten_caption,
@@ -1122,7 +1172,7 @@ class VisionMixin:
             rewritten_description, language
         ):
             try:
-                description_response = await self._call_llm(  # type: ignore[attr-defined]
+                description_response = await self._call_llm(
                     model="default",
                     messages=self._build_language_rewrite_messages(
                         content=rewritten_description,
@@ -1203,21 +1253,19 @@ class VisionMixin:
             Extracted markdown content from the page
         """
         # Get cached image data and base64 encoding
-        _, base64_image = self._get_cached_image(image_path)  # type: ignore[attr-defined]
+        _, base64_image = self._get_cached_image(image_path)
 
         # Determine MIME type (converts BMP/TIFF → image/png)
         mime_type = get_llm_effective_mime(image_path.suffix)
 
         # Use separated system/user prompts to improve instruction following
-        system_prompt = self._prompt_manager.get_prompt(  # type: ignore[attr-defined]
-            "page_content_system"
-        )
-        user_prompt = self._prompt_manager.get_prompt("page_content_user")  # type: ignore[attr-defined]
+        system_prompt = self._prompt_manager.get_prompt("page_content_system")
+        user_prompt = self._prompt_manager.get_prompt("page_content_user")
 
         # Use image_path.name as context if not provided
         call_context = context or image_path.name
 
-        response = await self._call_llm(  # type: ignore[attr-defined]
+        response = await self._call_llm(
             model="default",
             messages=[
                 {"role": "system", "content": system_prompt},

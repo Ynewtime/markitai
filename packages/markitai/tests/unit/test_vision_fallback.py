@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from markitai.llm.vision import ImageAnalysis, VisionMixin
+from markitai.llm.vision import ImageAnalysis, VisionAnalyzer
 
 
 class TestVisionFallbackStrategies:
@@ -16,8 +16,8 @@ class TestVisionFallbackStrategies:
 
     @pytest.fixture
     def mixin(self):
-        """Create a minimal VisionMixin with mocked dependencies."""
-        m = VisionMixin.__new__(VisionMixin)
+        """Create a minimal VisionAnalyzer with mocked dependencies."""
+        m = VisionAnalyzer.__new__(VisionAnalyzer)
         m.semaphore = MagicMock()
         m.semaphore.__aenter__ = AsyncMock()
         m.semaphore.__aexit__ = AsyncMock()
@@ -83,7 +83,7 @@ class TestVisionUnsupportedFormat:
 
     @pytest.fixture
     def mixin(self):
-        m = VisionMixin.__new__(VisionMixin)
+        m = VisionAnalyzer.__new__(VisionAnalyzer)
         m.semaphore = MagicMock()
         m.semaphore.__aenter__ = AsyncMock()
         m.semaphore.__aexit__ = AsyncMock()

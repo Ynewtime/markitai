@@ -207,49 +207,50 @@ class TestVisionCacheIncludesDocumentContext:
         assert result["caption"] == "generic caption"
 
 
+def _make_vision_analyzer():
+    """Build a VisionAnalyzer with mock dependencies for cache key tests."""
+    import base64
+    from unittest.mock import MagicMock
+
+    from markitai.llm.vision import VisionAnalyzer
+
+    def get_cached_image(image_path):
+        data = b"test_image_data_xyz"
+        b64 = base64.b64encode(data).decode()
+        return data, b64
+
+    persistent_cache = MagicMock()
+    engine = MagicMock()
+    engine.persistent_cache = persistent_cache
+    prompt_manager = MagicMock()
+    prompt_manager.get_prompt.return_value = "mock prompt"
+    config = MagicMock()
+    config.concurrency = 2
+
+    analyzer = VisionAnalyzer(
+        engine=engine,
+        prompt_manager=prompt_manager,
+        config=config,
+        get_vision_router=lambda: MagicMock(),
+        get_cached_image=get_cached_image,
+        get_next_call_index=lambda _context: 0,
+    )
+    # Expose the cache mock under the historical name for assertions
+    analyzer._persistent_cache = persistent_cache  # type: ignore[attr-defined]
+    return analyzer
+
+
 class TestVisionCacheKeyIntegration:
-    """High-6: VisionMixin.analyze_image should build cache key incorporating document_context."""
+    """High-6: VisionAnalyzer.analyze_image should build cache key incorporating document_context."""
 
     @pytest.mark.asyncio
     async def test_analyze_image_uses_document_context_in_cache_key(
         self, tmp_path: Path
     ) -> None:
         """analyze_image called with different document_context should not share cache."""
-        import asyncio
-        import base64
-        from unittest.mock import MagicMock
-
         from markitai.llm.types import ImageAnalysis
-        from markitai.llm.vision import VisionMixin
 
-        # Create a minimal mock processor
-        class TestProcessor(VisionMixin):
-            def __init__(self):
-                self._semaphore = asyncio.Semaphore(2)
-                self._persistent_cache = MagicMock()
-                self._prompt_manager = MagicMock()
-                self._prompt_manager.get_prompt.return_value = "mock prompt"
-                self.vision_router = MagicMock()
-                self.config = MagicMock()
-                self.config.concurrency = 2
-                self._image_cache: dict = {}
-
-            @property
-            def semaphore(self):
-                return self._semaphore
-
-            def _get_cached_image(self, image_path):
-                data = b"test_image_data_xyz"
-                b64 = base64.b64encode(data).decode()
-                return data, b64
-
-            def _calculate_dynamic_max_tokens(self, messages, router=None):
-                return 4096
-
-            def _track_usage(self, *args, **kwargs):
-                pass
-
-        processor = TestProcessor()
+        processor = _make_vision_analyzer()
 
         # Create a test image
         test_image = tmp_path / "test.png"
@@ -297,40 +298,12 @@ class TestVisionCacheKeyIntegration:
         self, tmp_path: Path
     ) -> None:
         """analyze_image without document_context should use just the image fingerprint."""
-        import asyncio
         import base64
         import hashlib
-        from unittest.mock import MagicMock
 
         from markitai.llm.types import ImageAnalysis
-        from markitai.llm.vision import VisionMixin
 
-        class TestProcessor(VisionMixin):
-            def __init__(self):
-                self._semaphore = asyncio.Semaphore(2)
-                self._persistent_cache = MagicMock()
-                self._prompt_manager = MagicMock()
-                self._prompt_manager.get_prompt.return_value = "mock prompt"
-                self.vision_router = MagicMock()
-                self.config = MagicMock()
-                self.config.concurrency = 2
-
-            @property
-            def semaphore(self):
-                return self._semaphore
-
-            def _get_cached_image(self, image_path):
-                data = b"test_image_data_xyz"
-                b64 = base64.b64encode(data).decode()
-                return data, b64
-
-            def _calculate_dynamic_max_tokens(self, messages, router=None):
-                return 4096
-
-            def _track_usage(self, *args, **kwargs):
-                pass
-
-        processor = TestProcessor()
+        processor = _make_vision_analyzer()
 
         test_image = tmp_path / "test.png"
         test_image.write_bytes(b"test_image_data_xyz")

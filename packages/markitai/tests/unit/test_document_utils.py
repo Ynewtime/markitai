@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 from markitai.llm.document import (
-    DocumentMixin,
+    DocumentEnhancer,
 )
 from markitai.llm.models import get_response_cost
 from markitai.llm.types import (
@@ -23,13 +23,29 @@ if TYPE_CHECKING:
     from markitai.config import LLMConfig, PromptsConfig
 
 
+def _make_enhancer() -> DocumentEnhancer:
+    """Build a DocumentEnhancer with inert mock dependencies.
+
+    For tests exercising methods that do not touch the injected
+    collaborators (fallback frontmatter, stabilization, leakage checks).
+    """
+    return DocumentEnhancer(
+        engine=MagicMock(),
+        prompt_manager=MagicMock(),
+        config=MagicMock(),
+        get_vision_router=lambda: MagicMock(),
+        get_cached_image=lambda _image_path: (b"", ""),
+        get_next_call_index=lambda _context: 0,
+    )
+
+
 class TestProtectImagePositions:
-    """Tests for DocumentMixin._protect_image_positions static method."""
+    """Tests for DocumentEnhancer._protect_image_positions static method."""
 
     def test_single_image(self) -> None:
         """Test protecting a single image reference."""
         text = "Before ![alt text](image.jpg) after"
-        protected, mapping = DocumentMixin._protect_image_positions(text)
+        protected, mapping = DocumentEnhancer._protect_image_positions(text)
 
         assert "![alt text](image.jpg)" not in protected
         assert "__MARKITAI_IMG_0__" in protected
@@ -39,7 +55,7 @@ class TestProtectImagePositions:
     def test_multiple_images(self) -> None:
         """Test protecting multiple image references."""
         text = "![img1](a.jpg) text ![img2](b.png) more ![img3](c.gif)"
-        protected, mapping = DocumentMixin._protect_image_positions(text)
+        protected, mapping = DocumentEnhancer._protect_image_positions(text)
 
         assert len(mapping) == 3
         assert "__MARKITAI_IMG_0__" in protected
@@ -49,7 +65,7 @@ class TestProtectImagePositions:
     def test_no_images(self) -> None:
         """Test with no images in text."""
         text = "Just plain text without images"
-        protected, mapping = DocumentMixin._protect_image_positions(text)
+        protected, mapping = DocumentEnhancer._protect_image_positions(text)
 
         assert protected == text
         assert len(mapping) == 0
@@ -57,7 +73,7 @@ class TestProtectImagePositions:
     def test_screenshots_excluded(self) -> None:
         """Test that screenshots/ paths are excluded from protection."""
         text = "![screenshot](.markitai/screenshots/page.jpg) and ![regular](image.png)"
-        protected, mapping = DocumentMixin._protect_image_positions(text)
+        protected, mapping = DocumentEnhancer._protect_image_positions(text)
 
         # Screenshot should remain, regular image should be protected
         assert "![screenshot](.markitai/screenshots/page.jpg)" in protected
@@ -67,7 +83,7 @@ class TestProtectImagePositions:
     def test_external_url_images(self) -> None:
         """Test protection of external URL images."""
         text = "![logo](https://example.com/logo.png)"
-        _protected, mapping = DocumentMixin._protect_image_positions(text)
+        _protected, mapping = DocumentEnhancer._protect_image_positions(text)
 
         assert len(mapping) == 1
         assert "https://example.com/logo.png" in mapping["__MARKITAI_IMG_0__"]
@@ -75,20 +91,20 @@ class TestProtectImagePositions:
     def test_empty_alt_text(self) -> None:
         """Test image with empty alt text."""
         text = "![](image.jpg)"
-        _protected, mapping = DocumentMixin._protect_image_positions(text)
+        _protected, mapping = DocumentEnhancer._protect_image_positions(text)
 
         assert len(mapping) == 1
         assert mapping["__MARKITAI_IMG_0__"] == "![](image.jpg)"
 
 
 class TestRestoreImagePositions:
-    """Tests for DocumentMixin._restore_image_positions static method."""
+    """Tests for DocumentEnhancer._restore_image_positions static method."""
 
     def test_restore_single_image(self) -> None:
         """Test restoring a single image."""
         mapping = {"__MARKITAI_IMG_0__": "![alt](image.jpg)"}
         text = "Before __MARKITAI_IMG_0__ after"
-        restored = DocumentMixin._restore_image_positions(text, mapping)
+        restored = DocumentEnhancer._restore_image_positions(text, mapping)
 
         assert restored == "Before ![alt](image.jpg) after"
 
@@ -99,7 +115,7 @@ class TestRestoreImagePositions:
             "__MARKITAI_IMG_1__": "![img2](b.png)",
         }
         text = "Start __MARKITAI_IMG_0__ middle __MARKITAI_IMG_1__ end"
-        restored = DocumentMixin._restore_image_positions(text, mapping)
+        restored = DocumentEnhancer._restore_image_positions(text, mapping)
 
         assert "![img1](a.jpg)" in restored
         assert "![img2](b.png)" in restored
@@ -108,15 +124,15 @@ class TestRestoreImagePositions:
     def test_restore_empty_mapping(self) -> None:
         """Test restoration with empty mapping."""
         text = "No images here"
-        restored = DocumentMixin._restore_image_positions(text, {})
+        restored = DocumentEnhancer._restore_image_positions(text, {})
 
         assert restored == text
 
     def test_roundtrip(self) -> None:
         """Test protect -> restore roundtrip."""
         original = "![first](1.jpg) text ![second](2.png) end"
-        protected, mapping = DocumentMixin._protect_image_positions(original)
-        restored = DocumentMixin._restore_image_positions(protected, mapping)
+        protected, mapping = DocumentEnhancer._protect_image_positions(original)
+        restored = DocumentEnhancer._restore_image_positions(protected, mapping)
 
         assert restored == original
 
@@ -163,12 +179,12 @@ class TestGetResponseCost:
 
 
 class TestSplitIntoBatches:
-    """Tests for DocumentMixin._split_into_batches static method."""
+    """Tests for DocumentEnhancer._split_into_batches static method."""
 
     def test_single_batch(self) -> None:
         """Test when all images fit in one batch."""
         images = [Path(f"page{i}.jpg") for i in range(5)]
-        batches = DocumentMixin._split_into_batches(images, batch_size=10)
+        batches = DocumentEnhancer._split_into_batches(images, batch_size=10)
 
         assert len(batches) == 1
         assert batches[0] == images
@@ -176,7 +192,7 @@ class TestSplitIntoBatches:
     def test_exact_batches(self) -> None:
         """Test when images divide evenly into batches."""
         images = [Path(f"page{i}.jpg") for i in range(10)]
-        batches = DocumentMixin._split_into_batches(images, batch_size=5)
+        batches = DocumentEnhancer._split_into_batches(images, batch_size=5)
 
         assert len(batches) == 2
         assert len(batches[0]) == 5
@@ -185,7 +201,7 @@ class TestSplitIntoBatches:
     def test_uneven_batches(self) -> None:
         """Test when last batch has fewer images."""
         images = [Path(f"page{i}.jpg") for i in range(7)]
-        batches = DocumentMixin._split_into_batches(images, batch_size=3)
+        batches = DocumentEnhancer._split_into_batches(images, batch_size=3)
 
         assert len(batches) == 3
         assert len(batches[0]) == 3
@@ -194,14 +210,14 @@ class TestSplitIntoBatches:
 
     def test_empty_list(self) -> None:
         """Test with empty image list."""
-        batches = DocumentMixin._split_into_batches([], batch_size=5)
+        batches = DocumentEnhancer._split_into_batches([], batch_size=5)
 
         assert len(batches) == 0
 
     def test_batch_size_one(self) -> None:
         """Test with batch size of 1."""
         images = [Path(f"page{i}.jpg") for i in range(3)]
-        batches = DocumentMixin._split_into_batches(images, batch_size=1)
+        batches = DocumentEnhancer._split_into_batches(images, batch_size=1)
 
         assert len(batches) == 3
         assert all(len(batch) == 1 for batch in batches)
@@ -209,7 +225,7 @@ class TestSplitIntoBatches:
     def test_batch_larger_than_list(self) -> None:
         """Test when batch size exceeds total images."""
         images = [Path(f"page{i}.jpg") for i in range(3)]
-        batches = DocumentMixin._split_into_batches(images, batch_size=100)
+        batches = DocumentEnhancer._split_into_batches(images, batch_size=100)
 
         assert len(batches) == 1
         assert batches[0] == images
@@ -217,18 +233,18 @@ class TestSplitIntoBatches:
     def test_preserves_path_objects(self) -> None:
         """Test that Path objects are preserved."""
         images = [Path("/tmp/page1.jpg"), Path("/home/user/page2.png")]
-        batches = DocumentMixin._split_into_batches(images, batch_size=1)
+        batches = DocumentEnhancer._split_into_batches(images, batch_size=1)
 
         assert all(isinstance(p, Path) for batch in batches for p in batch)
         assert batches[0][0] == Path("/tmp/page1.jpg")
 
 
 class TestBuildFallbackFrontmatter:
-    """Tests for DocumentMixin._build_fallback_frontmatter method."""
+    """Tests for DocumentEnhancer._build_fallback_frontmatter method."""
 
     def test_basic_frontmatter(self) -> None:
         """Test basic frontmatter generation."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "# Test Document\n\nSome content here."
         result = mixin._build_fallback_frontmatter("test.pdf", content)
 
@@ -238,7 +254,7 @@ class TestBuildFallbackFrontmatter:
 
     def test_title_extraction_from_content(self) -> None:
         """Test that title is extracted from content when not provided."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "# My Document Title\n\nContent here."
         result = mixin._build_fallback_frontmatter("doc.pdf", content)
 
@@ -246,7 +262,7 @@ class TestBuildFallbackFrontmatter:
 
     def test_provided_title_preserved(self) -> None:
         """Test that provided title is preserved."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "# Different Title\n\nContent."
         result = mixin._build_fallback_frontmatter(
             "doc.pdf", content, title="Custom Title"
@@ -256,7 +272,7 @@ class TestBuildFallbackFrontmatter:
 
     def test_empty_content(self) -> None:
         """Test with empty content."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         result = mixin._build_fallback_frontmatter("empty.pdf", "")
 
         assert "source: empty.pdf" in result
@@ -265,7 +281,7 @@ class TestBuildFallbackFrontmatter:
 
     def test_source_preserved(self) -> None:
         """Test that source is preserved in frontmatter."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         result = mixin._build_fallback_frontmatter(
             "path/to/document.docx", "Content", title="Title"
         )
@@ -274,7 +290,7 @@ class TestBuildFallbackFrontmatter:
 
     def test_returns_yaml_without_markers(self) -> None:
         """Test that result doesn't have YAML document markers."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         result = mixin._build_fallback_frontmatter("test.pdf", "Content")
 
         # Should not start with --- (markers are added by format_llm_output)
@@ -282,7 +298,7 @@ class TestBuildFallbackFrontmatter:
 
     def test_uses_extra_meta_description(self) -> None:
         """Fallback should use description from extra_meta when available."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         result = mixin._build_fallback_frontmatter(
             "test.pdf",
             "Content",
@@ -292,7 +308,7 @@ class TestBuildFallbackFrontmatter:
 
     def test_uses_extra_meta_tags(self) -> None:
         """Fallback should use tags from extra_meta when available."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         result = mixin._build_fallback_frontmatter(
             "test.pdf",
             "Content",
@@ -303,7 +319,7 @@ class TestBuildFallbackFrontmatter:
 
     def test_ignores_empty_extra_meta_description(self) -> None:
         """Empty description in extra_meta should not be used."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         result = mixin._build_fallback_frontmatter(
             "test.pdf",
             "Content",
@@ -313,7 +329,7 @@ class TestBuildFallbackFrontmatter:
 
     def test_ignores_non_string_extra_meta_description(self) -> None:
         """Non-string description in extra_meta should not be used."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         result = mixin._build_fallback_frontmatter(
             "test.pdf",
             "Content",
@@ -323,17 +339,17 @@ class TestBuildFallbackFrontmatter:
 
     def test_no_extra_meta_still_works(self) -> None:
         """No extra_meta should produce empty description as before."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         result = mixin._build_fallback_frontmatter("test.pdf", "Content")
         assert "description:" in result
 
 
 class TestStabilizePagedMarkdown:
-    """Tests for DocumentMixin._stabilize_paged_markdown."""
+    """Tests for DocumentEnhancer._stabilize_paged_markdown."""
 
     def test_restores_slide_section_when_body_text_is_dropped(self) -> None:
         """Slide documents should keep short body text that the LLM removes."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         original = """<!-- Slide number: 1 -->
 
 # FREE TEST DATA
@@ -364,7 +380,7 @@ Lorem ipsum
 
     def test_restores_image_only_slide_when_llm_injects_text(self) -> None:
         """Image-only slides should not gain extra OCR prose in the final output."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         original = """<!-- Slide number: 8 -->
 
 ![Logo Description automatically generated](.markitai/assets/sample.pptx.0001.jpg)
@@ -385,11 +401,11 @@ FREE TEST DATA
 
 
 class TestValidateNoPromptLeakage:
-    """Tests for DocumentMixin._validate_no_prompt_leakage method."""
+    """Tests for DocumentEnhancer._validate_no_prompt_leakage method."""
 
     def test_clean_content_unchanged(self) -> None:
         """Test that clean content is returned unchanged."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "# Normal Document\n\nJust regular markdown content."
         result = mixin._validate_no_prompt_leakage(content, "test.md")
 
@@ -397,7 +413,7 @@ class TestValidateNoPromptLeakage:
 
     def test_detects_task_1_english(self) -> None:
         """Test detection of '## Task 1:' marker."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "## Task 1: Clean the markdown\n\nSome leaked prompt"
 
         with pytest.raises(ValueError, match="LLM returned prompt text"):
@@ -405,7 +421,7 @@ class TestValidateNoPromptLeakage:
 
     def test_detects_task_2_english(self) -> None:
         """Test detection of '## Task 2:' marker."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "Some content\n## Task 2: Generate metadata"
 
         with pytest.raises(ValueError, match="LLM returned prompt text"):
@@ -413,7 +429,7 @@ class TestValidateNoPromptLeakage:
 
     def test_detects_task_1_chinese(self) -> None:
         """Test detection of '## 任务 1:' marker."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "## 任务 1: 清理文档\n\n泄漏的提示词"
 
         with pytest.raises(ValueError, match="LLM returned prompt text"):
@@ -421,7 +437,7 @@ class TestValidateNoPromptLeakage:
 
     def test_detects_task_2_chinese(self) -> None:
         """Test detection of '## 任务 2:' marker."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "内容\n## 任务 2: 生成元数据"
 
         with pytest.raises(ValueError, match="LLM returned prompt text"):
@@ -429,7 +445,7 @@ class TestValidateNoPromptLeakage:
 
     def test_detects_core_principles_marker(self) -> None:
         """Test detection of '【核心原则】' marker."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "【核心原则】保持原始内容不变"
 
         with pytest.raises(ValueError, match="LLM returned prompt text"):
@@ -437,7 +453,7 @@ class TestValidateNoPromptLeakage:
 
     def test_detects_cleaning_spec_marker(self) -> None:
         """Test detection of '【清理规范】' marker."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "【清理规范】删除多余空白"
 
         with pytest.raises(ValueError, match="LLM returned prompt text"):
@@ -445,7 +461,7 @@ class TestValidateNoPromptLeakage:
 
     def test_detects_please_process_marker(self) -> None:
         """Test detection of '请处理以下' marker."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "请处理以下 markdown 内容"
 
         with pytest.raises(ValueError, match="LLM returned prompt text"):
@@ -453,7 +469,7 @@ class TestValidateNoPromptLeakage:
 
     def test_detects_you_are_professional_marker(self) -> None:
         """Test detection of '你是一个专业的' marker."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "你是一个专业的 markdown 清理工具"
 
         with pytest.raises(ValueError, match="LLM returned prompt text"):
@@ -461,7 +477,7 @@ class TestValidateNoPromptLeakage:
 
     def test_recovery_with_frontmatter(self) -> None:
         """Test recovery when content has frontmatter structure."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         # Simulates LLM outputting prompt then actual content in frontmatter-like structure
         content = "## Task 1:\n---\nprompt stuff\n---\nActual clean content"
         result = mixin._validate_no_prompt_leakage(content, "test.md")
@@ -470,7 +486,7 @@ class TestValidateNoPromptLeakage:
 
     def test_recovery_extracts_after_second_separator(self) -> None:
         """Test that recovery extracts content after second --- separator."""
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         content = "## Task 1:\n---\nfrontmatter\n---\n\n# Real Document\n\nContent"
         result = mixin._validate_no_prompt_leakage(content, "test.md")
 
@@ -483,7 +499,7 @@ class TestValidateNoPromptLeakage:
         Note: The current implementation does simple string matching,
         so markers will be detected regardless of context.
         """
-        mixin = DocumentMixin()
+        mixin = _make_enhancer()
         # This would be detected as leakage
         content = "```\n## Task 1: example\n```"
 
@@ -498,7 +514,7 @@ class TestRestoreImagePositionsEdgeCases:
         """Test when same marker appears multiple times (shouldn't happen normally)."""
         mapping = {"__MARKITAI_IMG_0__": "![img](a.jpg)"}
         text = "__MARKITAI_IMG_0__ and __MARKITAI_IMG_0__"
-        restored = DocumentMixin._restore_image_positions(text, mapping)
+        restored = DocumentEnhancer._restore_image_positions(text, mapping)
 
         # Both should be replaced
         assert restored == "![img](a.jpg) and ![img](a.jpg)"
@@ -507,7 +523,7 @@ class TestRestoreImagePositionsEdgeCases:
         """Test that partial markers are not replaced."""
         mapping = {"__MARKITAI_IMG_0__": "![img](a.jpg)"}
         text = "__MARKITAI_IMG_ and __MARKITAI_IMG_0__"
-        restored = DocumentMixin._restore_image_positions(text, mapping)
+        restored = DocumentEnhancer._restore_image_positions(text, mapping)
 
         assert "__MARKITAI_IMG_" in restored
         assert "![img](a.jpg)" in restored
@@ -519,7 +535,7 @@ class TestRestoreImagePositionsEdgeCases:
             "__MARKITAI_IMG_1__": "![img2](b.jpg)",
         }
         text = "Only __MARKITAI_IMG_0__ here"
-        restored = DocumentMixin._restore_image_positions(text, mapping)
+        restored = DocumentEnhancer._restore_image_positions(text, mapping)
 
         assert "![img](a.jpg)" in restored
         assert "![img2](b.jpg)" not in restored
@@ -530,7 +546,7 @@ class TestRestoreImagePositionsEdgeCases:
             "__MARKITAI_IMG_0__": "![alt & text](image%20file.jpg?v=1&size=large)"
         }
         text = "Before __MARKITAI_IMG_0__ after"
-        restored = DocumentMixin._restore_image_positions(text, mapping)
+        restored = DocumentEnhancer._restore_image_positions(text, mapping)
 
         assert "![alt & text](image%20file.jpg?v=1&size=large)" in restored
 
@@ -542,7 +558,7 @@ class TestRestoreImagePositionsEdgeCases:
 
 @pytest.fixture
 def mock_processor(llm_config: LLMConfig, prompts_config: PromptsConfig) -> MagicMock:
-    """Create a mock processor with all necessary attributes for DocumentMixin."""
+    """Create a mock processor with all necessary attributes for DocumentEnhancer."""
     from markitai.llm import LLMProcessor
 
     processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
@@ -855,7 +871,7 @@ class TestFallbackFrontmatterDegradation:
     def test_fallback_frontmatter_marks_llm_enhanced_false(
         self, mock_processor: MagicMock
     ) -> None:
-        frontmatter_yaml = mock_processor._build_fallback_frontmatter(
+        frontmatter_yaml = mock_processor.documents._build_fallback_frontmatter(
             "https://example.com/post",
             "# A Title\n\nBody text.",
         )
@@ -868,7 +884,7 @@ class TestFallbackFrontmatterDegradation:
         errors: list[str] = []
         sink_id = logger.add(lambda message: errors.append(str(message)), level="ERROR")
         try:
-            mock_processor._build_fallback_frontmatter(
+            mock_processor.documents._build_fallback_frontmatter(
                 "https://example.com/post",
                 "# A Title\n\nBody text.",
             )
@@ -899,7 +915,7 @@ class TestCleanMarkdownAsync:
         result = await processor.clean_markdown(content, "test.md")
 
         assert result == cached_result
-        assert processor._cache_hits == 1
+        assert processor.engine._cache_hits == 1
 
     @pytest.mark.asyncio
     async def test_clean_markdown_cache_hit_persistent(
@@ -919,7 +935,7 @@ class TestCleanMarkdownAsync:
         result = await processor.clean_markdown(content, "test.md")
 
         assert result == cached_result
-        assert processor._cache_hits == 1
+        assert processor.engine._cache_hits == 1
 
     @pytest.mark.asyncio
     async def test_clean_markdown_cache_miss_calls_llm(
@@ -945,7 +961,7 @@ class TestCleanMarkdownAsync:
         result = await processor.clean_markdown(content, "test.md")
 
         assert result == cleaned_content
-        assert processor._cache_misses == 1
+        assert processor.engine._cache_misses == 1
         mock_router.acompletion.assert_called_once()
 
     @pytest.mark.asyncio
@@ -1408,10 +1424,12 @@ Slide body
             mock_instructor.return_value = mock_client
 
             # The combined call goes through _process_document_combined which checks cache
-            result = await processor._process_document_combined(content, "test.md")
+            result = await processor.documents._process_document_combined(
+                content, "test.md"
+            )
 
         assert result.cleaned_markdown == "# Cached Cleaned"
-        assert processor._cache_hits == 1
+        assert processor.engine._cache_hits == 1
 
     @pytest.mark.asyncio
     async def test_process_document_preserves_image_position_when_llm_moves_image(
@@ -2271,7 +2289,7 @@ class TestProcessDocumentCombinedAsync:
             mock_instructor.return_value = mock_client
 
             # Should not raise, just truncate
-            doc_result = await processor._process_document_combined(
+            doc_result = await processor.documents._process_document_combined(
                 long_content, "test.md"
             )
 
@@ -2309,7 +2327,9 @@ class TestProcessDocumentCombinedAsync:
             )
             mock_instructor.return_value = mock_client
 
-            doc_result = await processor._process_document_combined("# Test", "test.md")
+            doc_result = await processor.documents._process_document_combined(
+                "# Test", "test.md"
+            )
 
         # Should have recovered content after frontmatter
         assert "# Actual Content" in doc_result.cleaned_markdown
@@ -2347,7 +2367,9 @@ class TestProcessDocumentCombinedAsync:
             mock_instructor.return_value = mock_client
 
             with pytest.raises(ValueError, match="truncated"):
-                await processor._process_document_combined("# Test", "test.md")
+                await processor.documents._process_document_combined(
+                    "# Test", "test.md"
+                )
 
 
 class TestEnhanceWithFrontmatterAsync:
@@ -2372,7 +2394,7 @@ class TestEnhanceWithFrontmatterAsync:
         }
         processor._persistent_cache.get = MagicMock(return_value=cached_result)
 
-        cleaned, frontmatter = await processor._enhance_with_frontmatter(
+        cleaned, frontmatter = await processor.documents._enhance_with_frontmatter(
             "# Original",
             [sample_test_image],
             "test.pdf",
@@ -2410,7 +2432,7 @@ class TestEnhanceWithFrontmatterAsync:
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, _ = await processor._enhance_with_frontmatter(
+            cleaned, _ = await processor.documents._enhance_with_frontmatter(
                 "<!-- Slide number: 1 -->\n# Title",
                 [sample_test_image],
                 "test.pptx",
@@ -2447,7 +2469,7 @@ class TestEnhanceWithFrontmatterAsync:
             )
             mock_instructor.return_value = mock_client
 
-            _, frontmatter = await processor._enhance_with_frontmatter(
+            _, frontmatter = await processor.documents._enhance_with_frontmatter(
                 "# Canonical Input Title\n\nOriginal content.",
                 [sample_test_image],
                 "sample.pdf",
@@ -2716,7 +2738,7 @@ class TestRemoveUncommentedScreenshots:
         content = (
             "# Title\n\n![Page 1](.markitai/screenshots/doc.page0001.jpg)\n\nContent"
         )
-        result = DocumentMixin._remove_uncommented_screenshots(content)
+        result = DocumentEnhancer._remove_uncommented_screenshots(content)
 
         assert "![Page 1](.markitai/screenshots/doc.page0001.jpg)" not in result
         assert "# Title" in result
@@ -2727,7 +2749,7 @@ class TestRemoveUncommentedScreenshots:
         content = (
             "# Title\n\n![Screenshot](.markitai/screenshots/regular.jpg)\n\nContent"
         )
-        result = DocumentMixin._remove_uncommented_screenshots(content)
+        result = DocumentEnhancer._remove_uncommented_screenshots(content)
 
         # Regular screenshots without .pageNNNN pattern should be preserved
         assert "![Screenshot](.markitai/screenshots/regular.jpg)" in result
@@ -2735,7 +2757,7 @@ class TestRemoveUncommentedScreenshots:
     def test_removes_markitai_page_labels(self) -> None:
         """Test that MARKITAI page labels are removed."""
         content = "# Title\n__MARKITAI_PAGE_LABEL_1__\nContent"
-        result = DocumentMixin._remove_uncommented_screenshots(content)
+        result = DocumentEnhancer._remove_uncommented_screenshots(content)
 
         assert "__MARKITAI_PAGE_LABEL_1__" not in result
 
@@ -2748,7 +2770,7 @@ Content
 <!-- Page images for reference -->
 ![Page 1](.markitai/screenshots/doc.page0001.jpg)"""
 
-        result = DocumentMixin._remove_uncommented_screenshots(content)
+        result = DocumentEnhancer._remove_uncommented_screenshots(content)
 
         # Should be converted to comment
         assert "<!-- ![Page 1](.markitai/screenshots/doc.page0001.jpg) -->" in result
@@ -2760,7 +2782,7 @@ Content
 <!-- Page images for reference -->
 <!-- ![Page 1](.markitai/screenshots/doc.page0001.jpg) -->"""
 
-        result = DocumentMixin._remove_uncommented_screenshots(content)
+        result = DocumentEnhancer._remove_uncommented_screenshots(content)
 
         assert "<!-- ![Page 1](.markitai/screenshots/doc.page0001.jpg) -->" in result
 
@@ -2770,14 +2792,14 @@ class TestSplitTextIntoBatches:
 
     def test_splits_by_page_markers(self) -> None:
         """Test splitting text by page markers."""
-        mixin = DocumentMixin()
-        # Mock the split_text_by_pages method
-        mixin.split_text_by_pages = MagicMock(
-            return_value=["Page 1", "Page 2", "Page 3", "Page 4", "Page 5"]
-        )
-
-        images = [Path(f"page{i}.jpg") for i in range(5)]
-        batches = mixin._split_text_into_batches("full text", images, batch_size=2)
+        mixin = _make_enhancer()
+        # Mock the content-module split function the service delegates to
+        with patch(
+            "markitai.llm.content.split_text_by_pages",
+            MagicMock(return_value=["Page 1", "Page 2", "Page 3", "Page 4", "Page 5"]),
+        ):
+            images = [Path(f"page{i}.jpg") for i in range(5)]
+            batches = mixin._split_text_into_batches("full text", images, batch_size=2)
 
         assert len(batches) == 3
         assert "Page 1" in batches[0]
@@ -2786,11 +2808,13 @@ class TestSplitTextIntoBatches:
 
     def test_handles_single_batch(self) -> None:
         """Test with content that fits in single batch."""
-        mixin = DocumentMixin()
-        mixin.split_text_by_pages = MagicMock(return_value=["Page 1", "Page 2"])
-
-        images = [Path("page1.jpg"), Path("page2.jpg")]
-        batches = mixin._split_text_into_batches("full text", images, batch_size=10)
+        mixin = _make_enhancer()
+        with patch(
+            "markitai.llm.content.split_text_by_pages",
+            MagicMock(return_value=["Page 1", "Page 2"]),
+        ):
+            images = [Path("page1.jpg"), Path("page2.jpg")]
+            batches = mixin._split_text_into_batches("full text", images, batch_size=10)
 
         assert len(batches) == 1
         assert "Page 1" in batches[0]
@@ -2804,10 +2828,7 @@ class TestFallbackFrontmatterTitle:
     async def test_fallback_uses_cleaned_title_not_original(self) -> None:
         """When structured processing fails but cleaning changes the title,
         fallback frontmatter should reflect the cleaned title."""
-        mixin = DocumentMixin()
-        mixin._config = MagicMock()  # type: ignore[reportAttributeAccessIssue]
-        mixin._config.prompts = MagicMock()  # type: ignore[reportAttributeAccessIssue]
-        mixin._prompts_config = MagicMock()  # type: ignore[reportAttributeAccessIssue]
+        mixin = _make_enhancer()
 
         original_markdown = "# Old Tittle With Typo\n\nSome content here."
         cleaned_markdown = "# Corrected Title\n\nSome content here."
@@ -2821,9 +2842,8 @@ class TestFallbackFrontmatterTitle:
         # Mock clean_markdown to return content with corrected title
         mixin.clean_markdown = AsyncMock(return_value=cleaned_markdown)
 
-        # Mock content protection methods (no-op)
-        mixin.extract_protected_content = MagicMock(return_value={})
-        mixin.protect_content = MagicMock(return_value=(original_markdown, {}))
+        # Content protection runs for real via the content module; it is a
+        # no-op for this markdown (no images or page markers to protect).
 
         cleaned, frontmatter = await mixin.process_document(
             original_markdown,

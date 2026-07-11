@@ -308,7 +308,7 @@ class TestVisionAnalysisDegeneration:
             description="A chart with labels",
             extracted_text=DEGENERATE_MARKDOWN,
         )
-        processor._analyze_image_with_fallback = AsyncMock(  # type: ignore[method-assign]
+        processor.vision._analyze_image_with_fallback = AsyncMock(  # type: ignore[method-assign]
             return_value=analysis
         )
 
@@ -336,7 +336,7 @@ class TestVisionAnalysisDegeneration:
             description="A chart with labels",
             extracted_text="Quarterly revenue: 10, 20, 30",
         )
-        processor._analyze_image_with_fallback = AsyncMock(  # type: ignore[method-assign]
+        processor.vision._analyze_image_with_fallback = AsyncMock(  # type: ignore[method-assign]
             return_value=analysis
         )
 
@@ -355,7 +355,7 @@ class TestVisionAnalysisDegeneration:
         from markitai.llm import LLMProcessor, LLMResponse
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-        processor._call_llm = AsyncMock(  # type: ignore[method-assign]
+        processor.vision._call_llm = AsyncMock(  # type: ignore[method-assign]
             return_value=LLMResponse(
                 content=DEGENERATE_MARKDOWN,
                 model="vision-model",
