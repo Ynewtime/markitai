@@ -522,6 +522,7 @@ class TestResolveRemoteConsent:
         from rich.console import Console
         from rich.file_proxy import FileProxy
 
+        from markitai import ports
         from markitai.cli import ui
 
         stages = ui.StageList(
@@ -537,6 +538,10 @@ class TestResolveRemoteConsent:
             seen["stderr_proxied"] = isinstance(sys.stderr, FileProxy)
             return True
 
+        # The CLI injects the live-display-aware port at startup; mirror that
+        # wiring here — the suspension behavior under test lives in it.
+        previous_port = ports.get_interaction()
+        ports.set_interaction(ui.ConsoleInteraction())
         try:
             stages.advance("render", "Rendering...")
             with (
@@ -556,6 +561,7 @@ class TestResolveRemoteConsent:
                 "Live must resume after the prompt"
             )
         finally:
+            ports.set_interaction(previous_port)
             stages.stop()
 
 

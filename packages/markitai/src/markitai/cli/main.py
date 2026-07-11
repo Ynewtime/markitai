@@ -739,12 +739,17 @@ def app(
         fetch_strategy_name = deprecated_selected[0]
 
     # Determine fetch strategy
+    from markitai.cli.ui import ConsoleInteraction
     from markitai.fetch import (
         FetchStrategy,
         set_remote_consent,
         set_remote_consent_prompt_allowed,
     )
+    from markitai.ports import set_interaction
 
+    # Route consent prompts and privacy notices from lower layers through a
+    # live-display-aware implementation (pauses StageList around prompts)
+    set_interaction(ConsoleInteraction())
     # --quiet suppresses the interactive remote-fetch consent prompt
     set_remote_consent_prompt_allowed(not quiet)
 

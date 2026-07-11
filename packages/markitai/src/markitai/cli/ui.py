@@ -27,6 +27,7 @@ from rich.spinner import Spinner
 from rich.text import Text
 
 from markitai.cli.console import get_console, get_stderr_console
+from markitai.ports import StdioInteraction
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -694,3 +695,23 @@ def suspend_active_live() -> Iterator[None]:
         yield
     finally:
         live.start(refresh=True)
+
+
+class ConsoleInteraction(StdioInteraction):
+    """Interaction port implementation that is live-display aware.
+
+    Injected by the CLI at startup (``ports.set_interaction``) so that code
+    below the presentation layer — fetch consent gates, privacy disclosures —
+    can reach the user without importing markitai.cli. Every touchpoint
+    pauses the active StageList first; see suspend_active_live for why.
+    """
+
+    def notify(self, message: str) -> None:
+        with suspend_active_live():
+            super().notify(message)
+
+    def confirm(
+        self, question: str, *, default: bool = False, preamble: str | None = None
+    ) -> bool:
+        with suspend_active_live():
+            return super().confirm(question, default=default, preamble=preamble)
