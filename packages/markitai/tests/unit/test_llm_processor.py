@@ -1447,8 +1447,8 @@ class TestLLMProcessorCacheManagement:
     ):
         """Test getting cache statistics."""
         processor = LLMProcessor(llm_config, prompts_config)
-        processor._cache_hits = 5
-        processor._cache_misses = 10
+        processor.engine._cache_hits = 5
+        processor.engine._cache_misses = 10
 
         stats = processor.get_cache_stats()
         assert stats["memory"]["hits"] == 5
@@ -1461,15 +1461,15 @@ class TestLLMProcessorCacheManagement:
         """Test clearing memory cache."""
         processor = LLMProcessor(llm_config, prompts_config)
         processor._cache.set("p", "c", "r")
-        processor._cache_hits = 5
-        processor._cache_misses = 10
+        processor.engine._cache_hits = 5
+        processor.engine._cache_misses = 10
 
         result = processor.clear_cache("memory")
 
         assert result["memory"] == 1
         assert processor._cache.size == 0
-        assert processor._cache_hits == 0
-        assert processor._cache_misses == 0
+        assert processor.engine._cache_hits == 0
+        assert processor.engine._cache_misses == 0
 
     def test_clear_image_cache(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig

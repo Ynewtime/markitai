@@ -52,11 +52,11 @@ class TestPatternConsolidation:
         assert restored == original
 
     def test_document_mixin_delegates_to_content(self):
-        """DocumentMixin._protect_image_positions should delegate to content module."""
-        from markitai.llm.document import DocumentMixin
+        """DocumentEnhancer._protect_image_positions should delegate to content module."""
+        from markitai.llm.document import DocumentEnhancer
 
         md = "![alt](.markitai/assets/doc.jpg)\n![Page 1](.markitai/screenshots/page1.jpg)"
-        protected, _mapping = DocumentMixin._protect_image_positions(md)
+        protected, _mapping = DocumentEnhancer._protect_image_positions(md)
         # Should exclude screenshots (like the old behavior)
         assert ".markitai/screenshots/page1.jpg" in protected
         assert ".markitai/assets/doc.jpg" not in protected

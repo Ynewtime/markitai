@@ -105,7 +105,7 @@ class TestLLMProcessor:
             )
             mock_from_litellm.return_value = mock_client
 
-            result = await processor._analyze_with_instructor(
+            result = await processor.vision._analyze_with_instructor(
                 [{"role": "user", "content": "test"}], "vision"
             )
 
@@ -225,7 +225,9 @@ class TestLLMProcessorAsync:
             )
             mock_from_litellm.return_value = mock_client
 
-            result = await processor._process_document_combined("# Raw Test", "test.md")
+            result = await processor.documents._process_document_combined(
+                "# Raw Test", "test.md"
+            )
 
             assert result.cleaned_markdown == "# Cleaned Title\n\nClean content."
             assert result.frontmatter.description == "A test document for testing"
@@ -947,7 +949,7 @@ class TestParallelImageBatchAnalysis:
 
         # Mock analyze_batch
         with patch.object(
-            processor,
+            processor.vision,
             "analyze_batch",
             new=AsyncMock(
                 return_value=[ImageAnalysis(caption="Test", description="Test image")]
@@ -987,7 +989,9 @@ class TestParallelImageBatchAnalysis:
             ]
 
         with patch.object(
-            processor, "analyze_batch", new=AsyncMock(side_effect=mock_analyze_batch)
+            processor.vision,
+            "analyze_batch",
+            new=AsyncMock(side_effect=mock_analyze_batch),
         ):
             results = await processor.analyze_images_batch(
                 image_paths, max_images_per_batch=10, context="test"
@@ -1018,7 +1022,7 @@ class TestParallelImageBatchAnalysis:
 
         # Mock analyze_batch to fail
         with patch.object(
-            processor,
+            processor.vision,
             "analyze_batch",
             new=AsyncMock(side_effect=Exception("API Error")),
         ):
@@ -1147,7 +1151,7 @@ class TestVisionContentPartsReminder:
                 processor, "_get_cached_image", side_effect=fake_get_cached_image
             ),
             patch.object(
-                processor,
+                processor.documents,
                 "_stabilize_paged_markdown",
                 side_effect=fake_stabilize,
             ),
@@ -1198,7 +1202,7 @@ class TestCleanDocumentPure:
             captured_messages.append(messages)
             return MagicMock(content="LLM cleaned output")
 
-        processor._call_llm = capture_call_llm
+        processor.documents._call_llm = capture_call_llm
 
         raw_md = "# Title\n\nSome **raw** content with ![img](path.jpg)"
         result = await processor.clean_document_pure(raw_md, "test.md")

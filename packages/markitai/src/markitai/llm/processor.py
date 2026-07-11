@@ -38,13 +38,15 @@ except (ImportError, OSError):
 
 from markitai.constants import (
     DEFAULT_IO_CONCURRENCY,
+    DEFAULT_MAX_IMAGES_PER_BATCH,
     DEFAULT_MAX_OUTPUT_TOKENS_HARD_CAP,
+    DEFAULT_MAX_PAGES_PER_BATCH,
     DEFAULT_MAX_RETRIES,
     DEFAULT_VISION_MAX_DIMENSION,
 )
 from markitai.llm import content
 from markitai.llm.cache import ContentCache, PersistentCache
-from markitai.llm.document import DocumentMixin
+from markitai.llm.document import DocumentEnhancer
 from markitai.llm.engine import (
     MODEL_LEVEL_ERROR_PATTERNS as _ENGINE_MODEL_LEVEL_ERROR_PATTERNS,
 )
@@ -60,10 +62,11 @@ from markitai.llm.models import (
     get_model_info_cached,
 )
 from markitai.llm.types import (
+    ImageAnalysis,
     LLMResponse,
     LLMRuntime,
 )
-from markitai.llm.vision import VisionMixin
+from markitai.llm.vision import VisionAnalyzer
 from markitai.prompts import PromptManager
 from markitai.providers.common import has_images
 from markitai.utils.text import format_error_message, preview_items_for_log
@@ -586,8 +589,19 @@ litellm.modify_params = True
 _markitai_llm_logger = MarkitaiLLMLogger()
 
 
-class LLMProcessor(VisionMixin, DocumentMixin):
-    """LLM processor using LiteLLM Router for load balancing."""
+class LLMProcessor:
+    """LLM processor using LiteLLM Router for load balancing.
+
+    Facade over two composed services (Phase 2.3, ex-mixins):
+
+    - ``documents`` (:class:`DocumentEnhancer`): document cleaning,
+      frontmatter generation, vision-enhanced document processing
+    - ``vision`` (:class:`VisionAnalyzer`): image analysis and page
+      content extraction
+
+    All historical public methods remain available on the processor as
+    thin delegates, so callers and tests keep working unchanged.
+    """
 
     # Static method proxies to content module
     extract_protected_content = staticmethod(content.extract_protected_content)
@@ -631,6 +645,8 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         self._semaphore: asyncio.Semaphore | None = None
         self._io_semaphore: asyncio.Semaphore | None = None
         self._engine: LLMEngine | None = None
+        self._documents: DocumentEnhancer | None = None
+        self._vision: VisionAnalyzer | None = None
         self._prompt_manager = PromptManager(prompts_config)
 
         # Usage tracking (global across all contexts)
@@ -661,9 +677,8 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         self._usage_lock = threading.Lock()
 
         # In-memory content cache for session-level deduplication (fast, no I/O)
+        # (hit/miss counters live on the LLMEngine since Phase 2.3)
         self._cache = ContentCache()
-        self._cache_hits = 0
-        self._cache_misses = 0
 
         # Persistent cache for cross-session reuse (SQLite-based)
         # no_cache=True: skip reading but still write (Bun semantics)
@@ -765,14 +780,16 @@ class LLMProcessor(VisionMixin, DocumentMixin):
     def engine(self) -> LLMEngine:
         """Get or create the unified structured LLM call engine (lazy).
 
-        Lazy like ``router``/``semaphore``: creating it eagerly in
-        ``__init__`` would force router creation, which raises when no
-        models are configured (and would pin the router before tests can
-        inject ``_router``/``_vision_router`` doubles).
+        Lazy like ``router``/``semaphore``, and built with ``get_router``
+        (a provider, not the router instance): router creation raises when
+        no models are configured, and that error must surface at call time
+        inside the callers' fallback handling — not when the engine or the
+        ``documents``/``vision`` services are constructed. Late binding
+        also keeps ``_router`` test doubles injectable after construction.
         """
         if self._engine is None:
             self._engine = LLMEngine(
-                router=self.router,
+                get_router=lambda: self.router,
                 semaphore=self.semaphore,
                 memory_cache=self._cache,
                 persistent_cache=self._persistent_cache,
@@ -781,6 +798,198 @@ class LLMProcessor(VisionMixin, DocumentMixin):
                 get_primary_model=self._get_router_primary_model,
             )
         return self._engine
+
+    @property
+    def documents(self) -> DocumentEnhancer:
+        """Document enhancement service (lazy, engine-backed).
+
+        Lazy for the same reason as ``engine``: eager creation would force
+        router creation before tests can inject router doubles. Callbacks
+        are late-bound lambdas so instance-level patches on the processor
+        (``_get_cached_image``, ``_get_next_call_index``, ``_vision_router``)
+        keep working after the service exists.
+        """
+        if self._documents is None:
+            self._documents = DocumentEnhancer(
+                engine=self.engine,
+                prompt_manager=self._prompt_manager,
+                config=self.config,
+                get_vision_router=lambda: self.vision_router,
+                get_cached_image=lambda image_path: self._get_cached_image(image_path),
+                get_next_call_index=lambda context: self._get_next_call_index(context),
+            )
+        return self._documents
+
+    @property
+    def vision(self) -> VisionAnalyzer:
+        """Vision analysis service (lazy, engine-backed).
+
+        See ``documents`` for the laziness and late-binding rationale.
+        """
+        if self._vision is None:
+            self._vision = VisionAnalyzer(
+                engine=self.engine,
+                prompt_manager=self._prompt_manager,
+                config=self.config,
+                get_vision_router=lambda: self.vision_router,
+                get_cached_image=lambda image_path: self._get_cached_image(image_path),
+                get_next_call_index=lambda context: self._get_next_call_index(context),
+            )
+        return self._vision
+
+    # =========================================================================
+    # Document facade — thin delegates to DocumentEnhancer
+    # (signatures preserved verbatim for callers and tests)
+    # =========================================================================
+
+    async def clean_markdown(self, content: str, context: str = "") -> str:
+        """Clean and optimize markdown content (see DocumentEnhancer)."""
+        return await self.documents.clean_markdown(content, context)
+
+    async def clean_document_pure(self, markdown: str, source: str) -> str:
+        """Pure cleaning: raw markdown in, LLM response out (see DocumentEnhancer)."""
+        return await self.documents.clean_document_pure(markdown, source)
+
+    async def process_document(
+        self,
+        markdown: str,
+        source: str,
+        fetch_strategy: str | None = None,
+        extra_meta: dict[str, Any] | None = None,
+        title: str | None = None,
+    ) -> tuple[str, str]:
+        """Process a document: clean + frontmatter (see DocumentEnhancer)."""
+        return await self.documents.process_document(
+            markdown,
+            source,
+            fetch_strategy=fetch_strategy,
+            extra_meta=extra_meta,
+            title=title,
+        )
+
+    async def enhance_document_complete(
+        self,
+        extracted_text: str,
+        page_images: list[Path],
+        source: str = "",
+        max_pages_per_batch: int = DEFAULT_MAX_PAGES_PER_BATCH,
+        original_title: str | None = None,
+    ) -> tuple[str, str]:
+        """Vision enhancement + frontmatter (see DocumentEnhancer)."""
+        return await self.documents.enhance_document_complete(
+            extracted_text,
+            page_images,
+            source=source,
+            max_pages_per_batch=max_pages_per_batch,
+            original_title=original_title,
+        )
+
+    async def enhance_document_with_vision(
+        self,
+        extracted_text: str,
+        page_images: list[Path],
+        context: str = "",
+    ) -> str:
+        """Vision-referenced format cleaning (see DocumentEnhancer)."""
+        return await self.documents.enhance_document_with_vision(
+            extracted_text, page_images, context=context
+        )
+
+    async def enhance_url_with_vision(
+        self,
+        content: str,
+        screenshot_path: Path,
+        context: str = "",
+        original_title: str | None = None,
+        fetch_strategy: str | None = None,
+        extra_meta: dict[str, Any] | None = None,
+    ) -> tuple[str, str]:
+        """Enhance URL content with screenshot reference (see DocumentEnhancer)."""
+        return await self.documents.enhance_url_with_vision(
+            content,
+            screenshot_path,
+            context=context,
+            original_title=original_title,
+            fetch_strategy=fetch_strategy,
+            extra_meta=extra_meta,
+        )
+
+    async def extract_from_screenshot(
+        self,
+        screenshot_path: Path,
+        context: str = "",
+        original_title: str | None = None,
+    ) -> tuple[str, str]:
+        """Screenshot-only content extraction (see DocumentEnhancer)."""
+        return await self.documents.extract_from_screenshot(
+            screenshot_path, context=context, original_title=original_title
+        )
+
+    def format_llm_output(self, markdown: str, frontmatter: str) -> str:
+        """Format final output with frontmatter (see DocumentEnhancer)."""
+        return self.documents.format_llm_output(markdown, frontmatter)
+
+    def _stabilize_paged_markdown(
+        self,
+        original_markdown: str,
+        cleaned_markdown: str,
+        source: str,
+    ) -> str:
+        """Protect page-marked documents from LLM structural drift.
+
+        Kept on the facade (not only on the service) because
+        ``workflow.helpers.maybe_stabilize_markdown`` duck-types it on the
+        processor.
+        """
+        return self.documents._stabilize_paged_markdown(
+            original_markdown, cleaned_markdown, source
+        )
+
+    # =========================================================================
+    # Vision facade — thin delegates to VisionAnalyzer
+    # (signatures preserved verbatim for callers and tests)
+    # =========================================================================
+
+    async def analyze_image(
+        self,
+        image_path: Path,
+        context: str = "",
+        document_context: str = "",
+    ) -> ImageAnalysis:
+        """Analyze an image using a vision model (see VisionAnalyzer)."""
+        return await self.vision.analyze_image(
+            image_path, context=context, document_context=document_context
+        )
+
+    async def analyze_images_batch(
+        self,
+        image_paths: list[Path],
+        max_images_per_batch: int = DEFAULT_MAX_IMAGES_PER_BATCH,
+        context: str = "",
+        document_context: str = "",
+    ) -> list[ImageAnalysis]:
+        """Analyze multiple images in parallel batches (see VisionAnalyzer)."""
+        return await self.vision.analyze_images_batch(
+            image_paths,
+            max_images_per_batch=max_images_per_batch,
+            context=context,
+            document_context=document_context,
+        )
+
+    async def analyze_batch(
+        self,
+        image_paths: list[Path],
+        context: str = "",
+        document_context: str = "",
+    ) -> list[ImageAnalysis]:
+        """Batch image analysis via Instructor (see VisionAnalyzer)."""
+        return await self.vision.analyze_batch(
+            image_paths, context=context, document_context=document_context
+        )
+
+    async def extract_page_content(self, image_path: Path, context: str = "") -> str:
+        """Extract text content from a document page image (see VisionAnalyzer)."""
+        return await self.vision.extract_page_content(image_path, context=context)
 
     def _create_router(self) -> Router | LocalProviderWrapper | HybridRouter:
         """Create LiteLLM Router from configuration.
@@ -1504,18 +1713,20 @@ class LLMProcessor(VisionMixin, DocumentMixin):
             self._call_counter.pop(context, None)
 
     def get_cache_stats(self) -> dict[str, Any]:
-        """Get cache statistics.
+        """Get cache statistics (delegates to the engine's counters).
 
         Returns:
             Dict with memory cache stats, persistent cache stats, and combined hit rate
         """
-        total = self._cache_hits + self._cache_misses
-        hit_rate = self._cache_hits / total if total > 0 else 0.0
+        if self._engine is not None:
+            return self._engine.get_cache_stats()
+        # Engine not created yet: no LLM calls have happened, counters are 0.
+        # (Avoids forcing router creation just to read stats.)
         return {
             "memory": {
-                "hits": self._cache_hits,
-                "misses": self._cache_misses,
-                "hit_rate": round(hit_rate * 100, 2),
+                "hits": 0,
+                "misses": 0,
+                "hit_rate": 0.0,
                 "size": self._cache.size,
             },
             "persistent": self._persistent_cache.stats(),
@@ -1535,8 +1746,8 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         if scope in ("memory", "all"):
             result["memory"] = self._cache.size
             self._cache.clear()
-            self._cache_hits = 0
-            self._cache_misses = 0
+            if self._engine is not None:
+                self._engine.reset_cache_counters()
 
         if scope in ("global", "all"):
             result["global"] = self._persistent_cache.clear()

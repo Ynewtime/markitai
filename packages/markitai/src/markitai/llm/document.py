@@ -1,7 +1,8 @@
-"""Document processing mixin for LLMProcessor.
+"""Document processing service for LLMProcessor.
 
-This module contains all document-related methods extracted from processor.py
-to reduce file size and improve maintainability.
+This module contains the DocumentEnhancer service class with all
+document-related LLM functionality. LLMProcessor composes it (lazy
+``documents`` property) and exposes thin delegates for the public methods.
 """
 
 from __future__ import annotations
@@ -34,6 +35,8 @@ PURE_MODE_RULES = """\
 - The document may start with a YAML frontmatter block delimited by `---` lines (e.g., `---\\ntitle: ...\\n---`).
 - You MUST preserve the frontmatter block exactly as-is. Do not modify, reorder, or remove any fields.
 - If no frontmatter is present, do not add one."""
+# Aliased: many methods in this module take a ``content`` parameter
+from markitai.llm import content as content_utils
 from markitai.llm.content import (
     protect_image_positions as _shared_protect_image_positions,
 )
@@ -52,9 +55,18 @@ from markitai.llm.types import (
     DocumentProcessResult,
     EnhancedDocumentResult,
     Frontmatter,
+    LLMResponse,
 )
+from markitai.providers.common import has_images
 from markitai.utils.mime import get_mime_type
 from markitai.utils.text import format_error_message
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from markitai.config import LLMConfig
+    from markitai.llm.engine import LLMEngine
+    from markitai.prompts import PromptManager
 
 # Pre-compiled regex patterns for _remove_uncommented_screenshots hot path
 # Screenshot references (markitai-generated .pageNNNN patterns)
@@ -172,72 +184,72 @@ def _strip_leaked_markdown_boundaries(content: str) -> str:
     return stripped.strip()
 
 
-class DocumentMixin:
-    """Document processing methods for LLMProcessor.
+class DocumentEnhancer:
+    """Document processing service used by LLMProcessor via composition.
 
-    This mixin provides all document-related functionality including:
+    Provides all document-related functionality including:
     - Markdown cleaning
     - Frontmatter generation
     - Vision-enhanced document processing
     - Document output formatting
 
-    Methods access parent class attributes via self, using TYPE_CHECKING
-    to avoid circular imports.
+    Dependencies are injected explicitly instead of being reached through a
+    mixin host:
+
+    - ``engine``: transport (text/structured calls), shared semaphore,
+      cache layers, cache hit/miss counters, and usage accounting
+    - ``prompt_manager``: prompt template lookup
+    - ``config``: LLM configuration (concurrency, retry counts)
+    - ``get_vision_router``: provider callback for the vision router.
+      A callback (not the router instance) because the processor's
+      vision router is a lazy property and tests inject doubles after
+      construction — holding the instance would pin the pre-injection
+      object.
+    - ``get_cached_image``: processor-owned image cache accessor
+      (the LRU image cache state stays on LLMProcessor)
+    - ``get_next_call_index``: processor-owned per-context call counter
+      (shared with the processor so call ids stay globally sequential)
     """
 
-    # Type hints for mixin - these are provided by LLMProcessor
-    if TYPE_CHECKING:
-        from markitai.llm.engine import LLMEngine
+    def __init__(
+        self,
+        *,
+        engine: LLMEngine,
+        prompt_manager: PromptManager,
+        config: LLMConfig,
+        get_vision_router: Callable[[], Any],
+        get_cached_image: Callable[[Path], tuple[bytes, str]],
+        get_next_call_index: Callable[[str], int],
+    ) -> None:
+        self._engine = engine
+        self._prompt_manager = prompt_manager
+        self._config = config
+        self._get_vision_router = get_vision_router
+        self._get_cached_image = get_cached_image
+        self._get_next_call_index = get_next_call_index
 
-        _cache: Any
-        _persistent_cache: Any
-        _cache_hits: int
-        _cache_misses: int
-        _prompt_manager: Any
-        config: Any
-        router: Any
-        vision_router: Any
-        semaphore: asyncio.Semaphore
-        engine: LLMEngine
+    async def _call_llm(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        context: str = "",
+    ) -> LLMResponse:
+        """Make a text LLM call with smart router selection.
 
-        def _call_llm(
-            self,
-            model: str,
-            messages: list[dict[str, Any]],
-            context: str = "",
-        ) -> Any: ...
-
-        def _get_next_call_index(self, context: str) -> int: ...
-
-        def _get_cached_image(self, image_path: Path) -> tuple[bytes, str]: ...
-
-        def _calculate_dynamic_max_tokens(
-            self,
-            messages: list[dict[str, Any]],
-            target_model_id: str | None = None,
-            router: Any | None = None,
-        ) -> int: ...
-
-        def _get_router_primary_model(self, router: Any) -> str: ...
-
-        def _track_usage(
-            self,
-            model: str,
-            input_tokens: int,
-            output_tokens: int,
-            cost: float,
-            context: str,
-        ) -> None: ...
-
-        # Static method references from content module
-        extract_protected_content: Any
-        protect_content: Any
-        unprotect_content: Any
-        fix_malformed_image_refs: Any
-        strip_prompt_echo: Any
-        clean_frontmatter: Any
-        smart_truncate: Any
-        split_text_by_pages: Any
+        Mirrors ``LLMProcessor._call_llm``: uses the vision router when the
+        messages contain images, the engine's default router otherwise.
+        """
+        call_index = self._get_next_call_index(context) if context else 0
+        call_id = f"{context}:{call_index}" if context else f"call:{call_index}"
+        router = self._get_vision_router() if has_images(messages) else None
+        return await self._engine.complete_text(
+            model=model,
+            messages=messages,
+            call_id=call_id,
+            context=context,
+            max_retries=self._config.router_settings.num_retries,
+            router=router,
+        )
 
     async def clean_markdown(self, content: str, context: str = "") -> str:
         """
@@ -264,27 +276,27 @@ class DocumentMixin:
         cache_key = "cleaner"
 
         # 1. Check in-memory cache first (fastest)
-        cached = self._cache.get(cache_key, content)
+        cached = self._engine.memory_cache.get(cache_key, content)
         if cached is not None:
-            self._cache_hits += 1
+            self._engine.record_cache_hit()
             return cached
 
         # 2. Check persistent cache (cross-session)
-        cached = self._persistent_cache.get(cache_key, content, context=context)
+        cached = self._engine.persistent_cache.get(cache_key, content, context=context)
         if cached is not None:
-            self._cache_hits += 1
+            self._engine.record_cache_hit()
             # Also populate in-memory cache for faster subsequent access
-            self._cache.set(cache_key, content, cached)
+            self._engine.memory_cache.set(cache_key, content, cached)
             return cached
 
-        self._cache_misses += 1
+        self._engine.record_cache_miss()
 
         # 3. Protect image positions before any LLM processing
         image_protected, image_mapping = self._protect_image_positions(content)
 
         # 4. Extract and protect content before LLM processing
-        protected = self.extract_protected_content(image_protected)
-        protected_content, mapping = self.protect_content(image_protected)
+        protected = content_utils.extract_protected_content(image_protected)
+        protected_content, mapping = content_utils.protect_content(image_protected)
 
         # Use separated system/user prompts to prevent prompt leakage
         system_prompt = self._prompt_manager.get_prompt(
@@ -294,7 +306,7 @@ class DocumentMixin:
             "cleaner_user", content=protected_content
         )
 
-        response = await self._call_llm(  # type: ignore[attr-defined]
+        response = await self._call_llm(
             model="default",
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -316,7 +328,7 @@ class DocumentMixin:
             # Restore protected content from placeholders, with fallback for removed items
             # Disable "append missing images at end" — image positions are
             # managed by image_mapping, not by unprotect_content fallback
-            result = self.unprotect_content(
+            result = content_utils.unprotect_content(
                 response.content,
                 mapping,
                 protected,
@@ -329,8 +341,8 @@ class DocumentMixin:
         )
 
         # Cache the result in both layers
-        self._cache.set(cache_key, content, result)
-        self._persistent_cache.set(cache_key, content, result, model="default")
+        self._engine.memory_cache.set(cache_key, content, result)
+        self._engine.persistent_cache.set(cache_key, content, result, model="default")
 
         return result
 
@@ -627,7 +639,7 @@ class DocumentMixin:
         # Load screenshot early so the cache key includes a content fingerprint.
         # A re-fetch of the same URL produces the same filename, so keying by
         # filename alone would return stale results when content changed.
-        _, base64_image = self._get_cached_image(screenshot_path)  # type: ignore[attr-defined]
+        _, base64_image = self._get_cached_image(screenshot_path)
         image_fingerprint = hashlib.sha256(base64_image.encode()).hexdigest()
 
         cache_key = f"screenshot_extract:{context}"
@@ -690,9 +702,9 @@ class DocumentMixin:
             cache_if=lambda _result: not degenerated,
             serialize=_document_result_to_cache_value,
             deserialize=_document_result_from_cache_value,
-            router=self.vision_router,
+            router=self._get_vision_router(),
         )
-        response, _raw_response = await self.engine.complete_structured(call)
+        response, _raw_response = await self._engine.complete_structured(call)
 
         # Build frontmatter using utility function (hit and miss paths)
         from markitai.utils.frontmatter import (
@@ -769,7 +781,7 @@ class DocumentMixin:
         ]
 
         # Add screenshot
-        _, base64_image = self._get_cached_image(screenshot_path)  # type: ignore[attr-defined]
+        _, base64_image = self._get_cached_image(screenshot_path)
         mime_type = get_mime_type(screenshot_path.suffix)
         content_parts.append({"type": "text", "text": "\n__MARKITAI_SCREENSHOT__"})
         content_parts.append(
@@ -816,7 +828,7 @@ class DocumentMixin:
             cleaned = re.sub(r"__MARKITAI_[A-Z_]+_?\d*__\s*\n?", "", cleaned)
 
             # Fix malformed image refs
-            cleaned = self.fix_malformed_image_refs(cleaned)
+            cleaned = content_utils.fix_malformed_image_refs(cleaned)
 
             # Guard against VLM degeneration (repetition loops) in enhanced text
             cleaned, degenerated = truncate_degenerate_tail(
@@ -849,9 +861,9 @@ class DocumentMixin:
             cache_if=lambda _result: not degenerated,
             serialize=_document_result_to_cache_value,
             deserialize=_from_cache,
-            router=self.vision_router,
+            router=self._get_vision_router(),
         )
-        response, _raw_response = await self.engine.complete_structured(call)
+        response, _raw_response = await self._engine.complete_structured(call)
 
         # Build frontmatter using utility function (hit and miss paths)
         from markitai.utils.frontmatter import (
@@ -903,15 +915,19 @@ class DocumentMixin:
         page_name_list = [p.name for p in page_images[:10]]  # First 10 page names
         cache_key = f"enhance_vision:{context}:{len(page_images)}"
         cache_content = _compute_document_fingerprint(extracted_text, page_name_list)
-        cached = self._persistent_cache.get(cache_key, cache_content, context=context)
+        cached = self._engine.persistent_cache.get(
+            cache_key, cache_content, context=context
+        )
         if cached is not None:
             # Fix malformed image refs and echoed prompt tails even for cached
             # content (handles old cache entries)
-            return self.strip_prompt_echo(self.fix_malformed_image_refs(cached))
+            return content_utils.strip_prompt_echo(
+                content_utils.fix_malformed_image_refs(cached)
+            )
 
         # Extract and protect content before LLM processing
-        protected = self.extract_protected_content(extracted_text)
-        protected_content, mapping = self.protect_content(extracted_text)
+        protected = content_utils.extract_protected_content(extracted_text)
+        protected_content, mapping = content_utils.protect_content(extracted_text)
 
         # Use unified document_vision prompt (no metadata section for cleaning-only)
         system_prompt = self._prompt_manager.get_prompt(
@@ -930,7 +946,7 @@ class DocumentMixin:
 
         # Add page images (using cache to avoid repeated reads)
         for i, image_path in enumerate(page_images, 1):
-            _, base64_image = self._get_cached_image(image_path)  # type: ignore[attr-defined]
+            _, base64_image = self._get_cached_image(image_path)
             mime_type = get_mime_type(image_path.suffix)
 
             # Unique page label that won't conflict with document content
@@ -963,7 +979,7 @@ class DocumentMixin:
         # pass it explicitly.
         call_index = self._get_next_call_index(context) if context else 0
         call_id = f"{context}:{call_index}" if context else f"call:{call_index}"
-        response = await self.engine.complete_text(
+        response = await self._engine.complete_text(
             model="default",
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -971,17 +987,17 @@ class DocumentMixin:
             ],
             call_id=call_id,
             context=context,
-            max_retries=self.config.router_settings.num_retries,
-            router=self.vision_router,
+            max_retries=self._config.router_settings.num_retries,
+            router=self._get_vision_router(),
         )
 
         # Restore protected content from placeholders, with fallback for removed items
-        result = self.unprotect_content(
-            self.strip_prompt_echo(response.content), mapping, protected
+        result = content_utils.unprotect_content(
+            content_utils.strip_prompt_echo(response.content), mapping, protected
         )
 
         # Fix malformed image references (e.g., extra closing parentheses)
-        result = self.fix_malformed_image_refs(result)
+        result = content_utils.fix_malformed_image_refs(result)
         result = self._stabilize_paged_markdown(extracted_text, result, context)
 
         # Guard against VLM degeneration (repetition loops) in enhanced text
@@ -992,7 +1008,9 @@ class DocumentMixin:
         # Store in persistent cache
         # Skip persisting degenerate responses so a clean retry isn't poisoned
         if not degenerated:
-            self._persistent_cache.set(cache_key, cache_content, result, model="vision")
+            self._engine.persistent_cache.set(
+                cache_key, cache_content, result, model="vision"
+            )
 
         return result
 
@@ -1193,10 +1211,10 @@ class DocumentMixin:
         cache_content = _compute_document_fingerprint(extracted_text, page_name_list)
 
         # Extract protected content for fallback restoration
-        protected = self.extract_protected_content(extracted_text)
+        protected = content_utils.extract_protected_content(extracted_text)
 
         # Protect slide comments and images with placeholders before LLM processing
-        protected_text, mapping = self.protect_content(extracted_text)
+        protected_text, mapping = content_utils.protect_content(extracted_text)
 
         # Metadata section to inject into unified document_vision prompt
         metadata_section = """
@@ -1233,7 +1251,7 @@ Generate the following fields:
 
         # Add page images
         for i, image_path in enumerate(page_images, 1):
-            _, base64_image = self._get_cached_image(image_path)  # type: ignore[attr-defined]
+            _, base64_image = self._get_cached_image(image_path)
             mime_type = get_mime_type(image_path.suffix)
             # Unique page label that won't conflict with document content
             content_parts.append(
@@ -1263,7 +1281,7 @@ Generate the following fields:
 
         def _postprocess(result: EnhancedDocumentResult) -> EnhancedDocumentResult:
             """Post-process a fresh LLM result (runs before the cache write)."""
-            response_markdown = self.strip_prompt_echo(result.cleaned_markdown)
+            response_markdown = content_utils.strip_prompt_echo(result.cleaned_markdown)
             fallback = self._fallback_if_boundary_placeholders_missing(
                 response_markdown,
                 extracted_text,
@@ -1276,10 +1294,12 @@ Generate the following fields:
             else:
                 # Restore protected content from placeholders.
                 # Pass protected dict for fallback restoration if LLM removed placeholders.
-                cleaned = self.unprotect_content(response_markdown, mapping, protected)
+                cleaned = content_utils.unprotect_content(
+                    response_markdown, mapping, protected
+                )
 
             # Fix malformed image references (e.g., extra closing parentheses)
-            cleaned = self.fix_malformed_image_refs(cleaned)
+            cleaned = content_utils.fix_malformed_image_refs(cleaned)
             cleaned = self._stabilize_paged_markdown(extracted_text, cleaned, source)
             return EnhancedDocumentResult(
                 cleaned_markdown=cleaned, frontmatter=result.frontmatter
@@ -1296,16 +1316,16 @@ Generate the following fields:
             validate=_postprocess,
             serialize=_document_result_to_cache_value,
             deserialize=_document_result_from_cache_value,
-            router=self.vision_router,
+            router=self._get_vision_router(),
         )
-        response, raw_response = await self.engine.complete_structured(call)
+        response, raw_response = await self._engine.complete_structured(call)
 
         cleaned_markdown = response.cleaned_markdown
         if raw_response is None:
             # Cache hit: fix malformed image refs and echoed prompt tails even
             # for cached content (handles old cache entries)
-            cleaned_markdown = self.strip_prompt_echo(
-                self.fix_malformed_image_refs(cleaned_markdown)
+            cleaned_markdown = content_utils.strip_prompt_echo(
+                content_utils.fix_malformed_image_refs(cleaned_markdown)
             )
 
         # Build frontmatter YAML using utility function for consistent structure
@@ -1411,7 +1431,7 @@ Generate the following fields:
             List of text chunks, one per batch
         """
         num_pages = len(page_images)
-        page_texts = self.split_text_by_pages(extracted_text, num_pages)
+        page_texts = content_utils.split_text_by_pages(extracted_text, num_pages)
 
         batches: list[str] = []
         for i in range(0, num_pages, batch_size):
@@ -1443,7 +1463,7 @@ Generate the following fields:
         num_batches = (num_pages + batch_size - 1) // batch_size
 
         # Split text by pages
-        page_texts = self.split_text_by_pages(extracted_text, num_pages)
+        page_texts = content_utils.split_text_by_pages(extracted_text, num_pages)
 
         cleaned_parts = []
 
@@ -1517,8 +1537,8 @@ Generate the following fields:
         image_protected, image_mapping = self._protect_image_positions(markdown)
 
         # Extract and protect content before LLM processing
-        protected = self.extract_protected_content(image_protected)
-        protected_content, mapping = self.protect_content(image_protected)
+        protected = content_utils.extract_protected_content(image_protected)
+        protected_content, mapping = content_utils.protect_content(image_protected)
 
         # Try combined approach with Instructor first
         try:
@@ -1544,13 +1564,13 @@ Generate the following fields:
                     # Restore protected content from placeholders, with fallback
                     # Disable "append missing images at end" — image positions are
                     # managed by image_mapping, not by unprotect_content fallback
-                    cleaned = self.unprotect_content(
+                    cleaned = content_utils.unprotect_content(
                         result.cleaned_markdown,
                         mapping,
                         protected,
                         restore_missing_images_at_end=False,
                     )
-                cleaned = self.fix_malformed_image_refs(cleaned)
+                cleaned = content_utils.fix_malformed_image_refs(cleaned)
                 cleaned = self._stabilize_paged_markdown(markdown, cleaned, source)
                 # Restore image positions (or fall back to original if placeholders were lost)
                 cleaned = self._restore_images_or_fallback(
@@ -1642,7 +1662,7 @@ Generate the following fields:
             "cleaner_system", mode_rules=PURE_MODE_RULES
         )
         user_prompt = self._prompt_manager.get_prompt("cleaner_user", content=markdown)
-        response = await self._call_llm(  # type: ignore[attr-defined]
+        response = await self._call_llm(
             model="default",
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -1676,7 +1696,9 @@ Generate the following fields:
 
         # Truncate content if needed (with warning)
         original_len = len(markdown)
-        truncated_content = self.smart_truncate(markdown, DEFAULT_MAX_CONTENT_CHARS)
+        truncated_content = content_utils.smart_truncate(
+            markdown, DEFAULT_MAX_CONTENT_CHARS
+        )
         if len(truncated_content) < original_len:
             logger.warning(
                 f"[LLM:{source}] Content truncated: {original_len} -> {len(truncated_content)} chars "
@@ -1715,6 +1737,7 @@ Generate the following fields:
             return response
 
         # router=None: this is the only structured call on the main router
+        # (cache hit/miss counting happens inside engine.complete_structured)
         call = LLMCall(
             purpose="document_process",
             messages=messages,
@@ -1727,15 +1750,7 @@ Generate the following fields:
             serialize=_document_result_to_cache_value,
             deserialize=_document_result_from_cache_value,
         )
-        try:
-            response, raw_response = await self.engine.complete_structured(call)
-        except Exception:
-            self._cache_misses += 1
-            raise
-        if raw_response is None:
-            self._cache_hits += 1
-        else:
-            self._cache_misses += 1
+        response, _raw_response = await self._engine.complete_structured(call)
         return response
 
     def _validate_no_prompt_leakage(self, cleaned: str, source: str) -> str:
@@ -1783,7 +1798,7 @@ Generate the following fields:
             Complete markdown with frontmatter
         """
         # Clean frontmatter (remove accidental --- markers)
-        frontmatter = self.clean_frontmatter(frontmatter)
+        frontmatter = content_utils.clean_frontmatter(frontmatter)
 
         # Clean markdown content
         markdown = _strip_leaked_markdown_boundaries(markdown)
