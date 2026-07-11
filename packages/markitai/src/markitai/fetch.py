@@ -30,8 +30,9 @@ import codecs
 import json
 import re
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import urlparse
 
 from loguru import logger
@@ -1398,6 +1399,265 @@ def _playwright_strategy_label(metadata: dict[str, Any]) -> str:
     return "playwright"
 
 
+@dataclass
+class StrategyContext:
+    """One fetch attempt's shared inputs for strategy runners.
+
+    ``explicit`` distinguishes the two dispatch surfaces: True when a single
+    strategy is dispatched directly (``_dispatch_strategy``), False when the
+    strategy runs as one hop of the AUTO fallback chain
+    (``_fetch_with_fallback``). Runners branch on it where the two surfaces
+    historically diverged (static conditional variant, cloudflare strict
+    credential resolution, playwright availability errors vs. silent skips).
+    """
+
+    config: FetchConfig
+    session: FetchSession
+    explicit: bool
+    screenshot_kwargs: dict[str, Any]
+    cached_etag: str | None = None
+    cached_last_modified: str | None = None
+
+
+class StrategyRunner(Protocol):
+    """Uniform interface over the per-strategy fetch implementations.
+
+    ``unavailable_reason`` returns None when the strategy can run, or a skip
+    reason recorded by the AUTO chain as ``f"{strategy}: {reason}"``; an
+    empty string skips without recording an error (historical silent skip
+    when config has no cloudflare section). Explicit dispatch never skips —
+    runners raise actionable errors from ``fetch`` instead (see
+    ``ctx.explicit`` branches).
+    """
+
+    strategy: FetchStrategy
+    requires_remote_consent: bool
+
+    def unavailable_reason(self, ctx: StrategyContext) -> str | None: ...
+
+    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult: ...
+
+
+# NOTE: runner fetch bodies call the module-level fetch_with_* functions by
+# plain (global) name so test patches on markitai.fetch.fetch_with_* keep
+# intercepting them; do not bind them via local imports.
+
+
+class StaticRunner:
+    """Static HTTP fetch (conditional variant on explicit dispatch)."""
+
+    strategy: FetchStrategy = FetchStrategy.STATIC
+    requires_remote_consent: bool = False
+
+    def unavailable_reason(self, ctx: StrategyContext) -> str | None:
+        return None
+
+    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult:
+        if not ctx.explicit:
+            return await fetch_with_static(url)
+
+        # For fresh explicit fetch, use conditional to capture validators
+        cond_result = await fetch_with_static_conditional(
+            url, ctx.cached_etag, ctx.cached_last_modified
+        )
+        if cond_result.result is None:
+            raise FetchError(f"No content from conditional fetch: {url}")
+        result = cond_result.result
+        # Stash HTTP validators in metadata (same convention as
+        # fetch_with_static) for _dispatch_strategy to pop into the
+        # cache-validators channel.
+        if cond_result.etag:
+            result.metadata["_markitai_etag"] = cond_result.etag
+        if cond_result.last_modified:
+            result.metadata["_markitai_last_modified"] = cond_result.last_modified
+        return result
+
+
+class PlaywrightRunner:
+    """Local headless-browser fetch via Playwright."""
+
+    strategy: FetchStrategy = FetchStrategy.PLAYWRIGHT
+    requires_remote_consent: bool = False
+
+    def unavailable_reason(self, ctx: StrategyContext) -> str | None:
+        if ctx.explicit:
+            # Explicit dispatch raises actionable guidance errors in fetch()
+            return None
+
+        from markitai.fetch_playwright import (
+            is_playwright_available,
+            is_playwright_browser_installed,
+        )
+
+        if not is_playwright_available():
+            logger.debug("playwright not available, trying next strategy")
+            return "playwright package not installed"
+        if not is_playwright_browser_installed():
+            logger.debug(
+                "[Fetch] playwright installed but Chromium browser missing; "
+                "skipping playwright in auto chain "
+                "(run 'markitai doctor --fix' to install it)"
+            )
+            return "Chromium browser missing (run 'markitai doctor --fix')"
+        return None
+
+    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult:
+        from markitai.fetch_playwright import (
+            fetch_with_playwright,
+            is_playwright_available,
+            is_playwright_browser_installed,
+        )
+
+        if ctx.explicit:
+            from markitai.utils.guidance import (
+                playwright_browser_missing_error,
+                playwright_package_missing_error,
+            )
+
+            if not is_playwright_available():
+                raise FetchError(playwright_package_missing_error())
+            if not is_playwright_browser_installed():
+                raise FetchError(playwright_browser_missing_error())
+
+        pw_result = await fetch_with_playwright(
+            url,
+            **_get_playwright_fetch_kwargs(
+                url,
+                ctx.config,
+                screenshot_config=ctx.screenshot_kwargs.get("screenshot_config"),
+                output_dir=ctx.screenshot_kwargs.get("screenshot_dir"),
+                renderer=ctx.screenshot_kwargs.get("renderer"),
+            ),
+            remote_consent=ctx.config.remote_consent,
+        )
+
+        return FetchResult(
+            content=pw_result.content,
+            strategy_used=_playwright_strategy_label(pw_result.metadata),
+            title=pw_result.title,
+            url=url,
+            final_url=pw_result.final_url,
+            metadata=pw_result.metadata,
+            screenshot_path=pw_result.screenshot_path,
+        )
+
+
+class DefuddleRunner:
+    """Defuddle content extraction API fetch."""
+
+    strategy: FetchStrategy = FetchStrategy.DEFUDDLE
+    requires_remote_consent: bool = True
+
+    def unavailable_reason(self, ctx: StrategyContext) -> str | None:
+        return None
+
+    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult:
+        return await fetch_with_defuddle(
+            url,
+            ctx.config.defuddle.timeout,
+            ctx.config.defuddle.rpm,
+        )
+
+
+class JinaRunner:
+    """Jina Reader API fetch."""
+
+    strategy: FetchStrategy = FetchStrategy.JINA
+    requires_remote_consent: bool = True
+
+    def unavailable_reason(self, ctx: StrategyContext) -> str | None:
+        return None
+
+    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult:
+        api_key = ctx.config.jina.get_resolved_api_key()
+        return await fetch_with_jina(
+            url,
+            api_key,
+            ctx.config.jina.timeout,
+            ctx.config.jina.rpm,
+            no_cache=ctx.config.jina.no_cache,
+            target_selector=ctx.config.jina.target_selector,
+            wait_for_selector=ctx.config.jina.wait_for_selector,
+        )
+
+
+class CloudflareRunner:
+    """Cloudflare Browser Rendering API fetch."""
+
+    strategy: FetchStrategy = FetchStrategy.CLOUDFLARE
+    requires_remote_consent: bool = True
+
+    def unavailable_reason(self, ctx: StrategyContext) -> str | None:
+        if ctx.explicit:
+            # Explicit dispatch reports missing credentials via
+            # fetch_with_cloudflare's actionable error instead of skipping.
+            return None
+        cf = getattr(ctx.config, "cloudflare", None)
+        if cf is None:
+            return ""  # historical silent skip: no error recorded
+        token = (
+            cf.get_resolved_api_token()
+            if hasattr(cf, "get_resolved_api_token")
+            else cf.api_token
+        )
+        acct = (
+            cf.get_resolved_account_id()
+            if hasattr(cf, "get_resolved_account_id")
+            else cf.account_id
+        )
+        if not token or not acct:
+            logger.debug("Cloudflare credentials not configured, skipping")
+            return "credentials not configured"
+        return None
+
+    async def fetch(self, url: str, ctx: StrategyContext) -> FetchResult:
+        cf = ctx.config.cloudflare
+        if ctx.explicit:
+            token = cf.get_resolved_api_token(strict=True)
+            acct = cf.get_resolved_account_id(strict=True)
+            # Missing credentials are reported by fetch_with_cloudflare with
+            # an actionable error (see markitai.utils.guidance).
+        else:
+            token = (
+                cf.get_resolved_api_token()
+                if hasattr(cf, "get_resolved_api_token")
+                else cf.api_token
+            )
+            acct = (
+                cf.get_resolved_account_id()
+                if hasattr(cf, "get_resolved_account_id")
+                else cf.account_id
+            )
+        return await fetch_with_cloudflare(
+            url=url,
+            api_token=token,
+            account_id=acct,
+            timeout=cf.timeout,
+            wait_until=cf.wait_until,
+            cache_ttl=cf.cache_ttl,
+            reject_resource_patterns=cf.reject_resource_patterns,
+            user_agent=cf.user_agent,
+            cookies=cf.cookies,
+            wait_for_selector=cf.wait_for_selector,
+            http_credentials=cf.http_credentials,
+        )
+
+
+_STRATEGY_RUNNERS: dict[FetchStrategy, StrategyRunner] = {
+    FetchStrategy.STATIC: StaticRunner(),
+    FetchStrategy.PLAYWRIGHT: PlaywrightRunner(),
+    FetchStrategy.DEFUDDLE: DefuddleRunner(),
+    FetchStrategy.JINA: JinaRunner(),
+    FetchStrategy.CLOUDFLARE: CloudflareRunner(),
+}
+
+# AUTO-chain lookup by policy-order strategy name. Unknown names are skipped
+# by the loop, exactly as the old if/elif chain fell through them silently.
+_STRATEGY_RUNNERS_BY_NAME: dict[str, StrategyRunner] = {
+    strategy.value: runner for strategy, runner in _STRATEGY_RUNNERS.items()
+}
+
+
 async def _dispatch_strategy(
     url: str,
     strategy: FetchStrategy,
@@ -1431,90 +1691,7 @@ async def _dispatch_strategy(
                 "or set fetch.remote_consent=always."
             )
 
-    if strategy == FetchStrategy.PLAYWRIGHT:
-        from markitai.fetch_playwright import (
-            fetch_with_playwright,
-            is_playwright_available,
-            is_playwright_browser_installed,
-        )
-        from markitai.utils.guidance import (
-            playwright_browser_missing_error,
-            playwright_package_missing_error,
-        )
-
-        if not is_playwright_available():
-            raise FetchError(playwright_package_missing_error())
-        if not is_playwright_browser_installed():
-            raise FetchError(playwright_browser_missing_error())
-
-        pw_result = await fetch_with_playwright(
-            url,
-            **_get_playwright_fetch_kwargs(
-                url,
-                config,
-                screenshot_config=screenshot_config,
-                output_dir=screenshot_dir,
-                renderer=renderer,
-            ),
-            remote_consent=config.remote_consent,
-        )
-
-        result = FetchResult(
-            content=pw_result.content,
-            strategy_used=_playwright_strategy_label(pw_result.metadata),
-            title=pw_result.title,
-            url=url,
-            final_url=pw_result.final_url,
-            metadata=pw_result.metadata,
-            screenshot_path=pw_result.screenshot_path,
-        )
-    elif strategy == FetchStrategy.CLOUDFLARE:
-        cf = config.cloudflare
-        token = cf.get_resolved_api_token(strict=True)
-        acct = cf.get_resolved_account_id(strict=True)
-        # Missing credentials are reported by fetch_with_cloudflare with an
-        # actionable error (see markitai.utils.guidance).
-        result = await fetch_with_cloudflare(
-            url=url,
-            api_token=token,
-            account_id=acct,
-            timeout=cf.timeout,
-            wait_until=cf.wait_until,
-            cache_ttl=cf.cache_ttl,
-            reject_resource_patterns=cf.reject_resource_patterns,
-            user_agent=cf.user_agent,
-            cookies=cf.cookies,
-            wait_for_selector=cf.wait_for_selector,
-            http_credentials=cf.http_credentials,
-        )
-    elif strategy == FetchStrategy.JINA:
-        api_key = config.jina.get_resolved_api_key()
-        result = await fetch_with_jina(
-            url,
-            api_key,
-            config.jina.timeout,
-            config.jina.rpm,
-            no_cache=config.jina.no_cache,
-            target_selector=config.jina.target_selector,
-            wait_for_selector=config.jina.wait_for_selector,
-        )
-    elif strategy == FetchStrategy.DEFUDDLE:
-        result = await fetch_with_defuddle(
-            url,
-            config.defuddle.timeout,
-            config.defuddle.rpm,
-        )
-    elif strategy == FetchStrategy.STATIC:
-        # For fresh fetch, use conditional to capture validators
-        cond_result = await fetch_with_static_conditional(url)
-        if cond_result.result is None:
-            raise FetchError(f"No content from conditional fetch: {url}")
-        result = cond_result.result
-        validators_to_write = (
-            cond_result.etag,
-            cond_result.last_modified,
-        )
-    elif strategy == FetchStrategy.AUTO:
+    if strategy == FetchStrategy.AUTO:
         # Determine if browser should be tried first
         use_browser_first = False
         if not explicit_strategy:
@@ -1535,7 +1712,27 @@ async def _dispatch_strategy(
         if etag or last_modified:
             validators_to_write = (etag, last_modified)
     else:
-        raise ValueError(f"Unknown fetch strategy: {strategy}")
+        runner = _STRATEGY_RUNNERS.get(strategy)
+        if runner is None:
+            raise ValueError(f"Unknown fetch strategy: {strategy}")
+        ctx = StrategyContext(
+            config=config,
+            session=get_default_session(),
+            explicit=True,
+            screenshot_kwargs={
+                "renderer": renderer,
+                "screenshot_config": screenshot_config,
+                "screenshot_dir": screenshot_dir,
+            },
+        )
+        result = await runner.fetch(url, ctx)
+        if strategy == FetchStrategy.STATIC:
+            # Fresh fetch went through the conditional variant; hand its
+            # validators (possibly None) to the caching layer.
+            validators_to_write = (
+                result.metadata.pop("_markitai_etag", None),
+                result.metadata.pop("_markitai_last_modified", None),
+            )
 
     # AUTO already rejects anti-bot/CAPTCHA challenge pages internally and
     # tries the next strategy (_fetch_with_fallback calls _is_invalid_content
@@ -2046,8 +2243,29 @@ async def _fetch_with_fallback(
     # Resolve domain profile for telemetry
     domain_profile_applied = decision.reason == "spa_or_pattern"
 
+    ctx = StrategyContext(
+        config=config,
+        session=get_default_session(),
+        explicit=False,
+        screenshot_kwargs={
+            "renderer": renderer,
+            "screenshot_config": screenshot_kwargs.get("screenshot_config"),
+            "screenshot_dir": screenshot_kwargs.get("screenshot_dir"),
+        },
+    )
+
     for strat in strategies:
-        if strat in EXTERNAL_STRATEGIES:
+        runner = _STRATEGY_RUNNERS_BY_NAME.get(strat)
+        if runner is None:
+            continue
+
+        skip_reason = runner.unavailable_reason(ctx)
+        if skip_reason is not None:
+            if skip_reason:
+                errors.append(f"{strat}: {skip_reason}")
+            continue
+
+        if runner.requires_remote_consent:
             try:
                 await _ensure_external_strategy_allowed(url, strat, config=config)
             except FetchError as e:
@@ -2055,208 +2273,46 @@ async def _fetch_with_fallback(
                 errors.append(f"{strat}: {e}")
                 continue
 
-        # Lazy consent: only when the chain actually reaches a remote
-        # strategy (local ones failed) do we resolve — and possibly
-        # prompt for — remote-fetch consent
-        if (
-            _consent_gated
-            and strat in EXTERNAL_STRATEGIES
-            and not resolve_remote_consent(
+            # Lazy consent: only when the chain actually reaches a remote
+            # strategy (local ones failed) do we resolve — and possibly
+            # prompt for — remote-fetch consent
+            if _consent_gated and not resolve_remote_consent(
                 config,
                 services=[s for s in strategies if s in EXTERNAL_STRATEGIES],
-            )
-        ):
-            logger.debug(f"[Fetch] Skipping {strat}: no remote-fetch consent")
-            errors.append(f"{strat}: skipped (no remote-fetch consent)")
-            continue
-        if strat in EXTERNAL_STRATEGIES:
+            ):
+                logger.debug(f"[Fetch] Skipping {strat}: no remote-fetch consent")
+                errors.append(f"{strat}: skipped (no remote-fetch consent)")
+                continue
             disclose_remote_use([s for s in strategies if s in EXTERNAL_STRATEGIES])
+
         try:
-            if strat == "static":
-                result = await fetch_with_static(url)
-                # Check if JS is required
-                if detect_js_required(result.content):
-                    # Learn this domain for future requests
-                    spa_cache = get_spa_domain_cache()
-                    spa_cache.record_spa_domain(url)
-                    errors.append(f"{strat}: page requires JavaScript rendering")
-                    continue
-                # Validate content quality before accepting
-                is_invalid, reason = _is_invalid_content(result.content)
-                if is_invalid:
-                    logger.debug(f"Strategy {strat} returned invalid content: {reason}")
-                    errors.append(f"{strat}: invalid content ({reason})")
-                    continue
+            result = await runner.fetch(url, ctx)
 
-                # Add telemetry
-                result.metadata.update(
-                    {
-                        "policy_reason": decision.reason,
-                        "policy_order": strategies,
-                        "profile_applied": domain_profile_applied,
-                    }
-                )
-                return result
+            # Static-only follow-up: a JS-rendered page can look like a
+            # successful static fetch — learn the domain for future
+            # browser-first requests and fall through to the next strategy.
+            if strat == "static" and detect_js_required(result.content):
+                spa_cache = get_spa_domain_cache()
+                spa_cache.record_spa_domain(url)
+                errors.append(f"{strat}: page requires JavaScript rendering")
+                continue
 
-            elif strat == "defuddle":
-                result = await fetch_with_defuddle(
-                    url,
-                    config.defuddle.timeout,
-                    config.defuddle.rpm,
-                )
-                # Validate content quality before accepting
-                is_invalid, reason = _is_invalid_content(result.content)
-                if is_invalid:
-                    logger.debug(f"Strategy {strat} returned invalid content: {reason}")
-                    errors.append(f"{strat}: invalid content ({reason})")
-                    continue
+            # Validate content quality before accepting
+            is_invalid, reason = _is_invalid_content(result.content)
+            if is_invalid:
+                logger.debug(f"Strategy {strat} returned invalid content: {reason}")
+                errors.append(f"{strat}: invalid content ({reason})")
+                continue
 
-                # Add telemetry
-                result.metadata.update(
-                    {
-                        "policy_reason": decision.reason,
-                        "policy_order": strategies,
-                        "profile_applied": domain_profile_applied,
-                    }
-                )
-                return result
-
-            elif strat == "playwright":
-                from markitai.fetch_playwright import (
-                    fetch_with_playwright,
-                    is_playwright_available,
-                    is_playwright_browser_installed,
-                )
-
-                if not is_playwright_available():
-                    logger.debug("playwright not available, trying next strategy")
-                    errors.append(f"{strat}: playwright package not installed")
-                    continue
-                if not is_playwright_browser_installed():
-                    logger.debug(
-                        "[Fetch] playwright installed but Chromium browser missing; "
-                        "skipping playwright in auto chain "
-                        "(run 'markitai doctor --fix' to install it)"
-                    )
-                    errors.append(
-                        f"{strat}: Chromium browser missing "
-                        "(run 'markitai doctor --fix')"
-                    )
-                    continue
-
-                pw_result = await fetch_with_playwright(
-                    url,
-                    **_get_playwright_fetch_kwargs(
-                        url,
-                        config,
-                        screenshot_config=screenshot_kwargs.get("screenshot_config"),
-                        output_dir=screenshot_kwargs.get("screenshot_dir"),
-                        renderer=renderer,
-                    ),
-                    remote_consent=config.remote_consent,
-                )
-
-                result = FetchResult(
-                    content=pw_result.content,
-                    strategy_used=_playwright_strategy_label(pw_result.metadata),
-                    title=pw_result.title,
-                    url=url,
-                    final_url=pw_result.final_url,
-                    metadata=pw_result.metadata,
-                    screenshot_path=pw_result.screenshot_path,
-                )
-                # Validate content quality before accepting
-                is_invalid, reason = _is_invalid_content(result.content)
-                if is_invalid:
-                    logger.debug(f"Strategy {strat} returned invalid content: {reason}")
-                    errors.append(f"{strat}: invalid content ({reason})")
-                    continue
-
-                # Add telemetry
-                result.metadata.update(
-                    {
-                        "policy_reason": decision.reason,
-                        "policy_order": strategies,
-                        "profile_applied": domain_profile_applied,
-                    }
-                )
-                return result
-
-            elif strat == "cloudflare":
-                cf = getattr(config, "cloudflare", None)
-                if cf is None:
-                    continue
-                token = (
-                    cf.get_resolved_api_token()
-                    if hasattr(cf, "get_resolved_api_token")
-                    else cf.api_token
-                )
-                acct = (
-                    cf.get_resolved_account_id()
-                    if hasattr(cf, "get_resolved_account_id")
-                    else cf.account_id
-                )
-                if not token or not acct:
-                    logger.debug("Cloudflare credentials not configured, skipping")
-                    errors.append(f"{strat}: credentials not configured")
-                    continue
-                result = await fetch_with_cloudflare(
-                    url=url,
-                    api_token=token,
-                    account_id=acct,
-                    timeout=cf.timeout,
-                    wait_until=cf.wait_until,
-                    cache_ttl=cf.cache_ttl,
-                    reject_resource_patterns=cf.reject_resource_patterns,
-                    user_agent=cf.user_agent,
-                    cookies=cf.cookies,
-                    wait_for_selector=cf.wait_for_selector,
-                    http_credentials=cf.http_credentials,
-                )
-                # Validate content quality before accepting
-                is_invalid, reason = _is_invalid_content(result.content)
-                if is_invalid:
-                    logger.debug(f"Strategy {strat} returned invalid content: {reason}")
-                    errors.append(f"{strat}: invalid content ({reason})")
-                    continue
-
-                # Add telemetry
-                result.metadata.update(
-                    {
-                        "policy_reason": decision.reason,
-                        "policy_order": strategies,
-                        "profile_applied": domain_profile_applied,
-                    }
-                )
-                return result
-
-            elif strat == "jina":
-                api_key = config.jina.get_resolved_api_key()
-                result = await fetch_with_jina(
-                    url,
-                    api_key,
-                    config.jina.timeout,
-                    config.jina.rpm,
-                    no_cache=config.jina.no_cache,
-                    target_selector=config.jina.target_selector,
-                    wait_for_selector=config.jina.wait_for_selector,
-                )
-                # Validate content quality before accepting
-                is_invalid, reason = _is_invalid_content(result.content)
-                if is_invalid:
-                    logger.debug(f"Strategy {strat} returned invalid content: {reason}")
-                    errors.append(f"{strat}: invalid content ({reason})")
-                    continue
-
-                # Add telemetry
-                result.metadata.update(
-                    {
-                        "policy_reason": decision.reason,
-                        "policy_order": strategies,
-                        "profile_applied": domain_profile_applied,
-                    }
-                )
-                return result
+            # Add telemetry
+            result.metadata.update(
+                {
+                    "policy_reason": decision.reason,
+                    "policy_order": strategies,
+                    "profile_applied": domain_profile_applied,
+                }
+            )
+            return result
 
         except JinaRateLimitError as e:
             errors.append(str(e))
