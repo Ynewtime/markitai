@@ -128,6 +128,22 @@ SUPPRESSED_WARNINGS = [
 ]
 
 
+def restore_console_handler(verbose: bool) -> int:
+    """Re-add the standard console log handler and return its handler id.
+
+    The single definition of the console handler spec (sink, format, filter)
+    for every "a Live display released the terminal" restoration point.
+    Injected into engines below the CLI (e.g. BatchProcessor) so they never
+    import this module.
+    """
+    return logger.add(
+        sys.stderr,
+        level="INFO",
+        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+        filter=lambda record: _should_show_log(record, verbose),
+    )
+
+
 class LoggingContext:
     """Context manager for temporarily disabling/re-enabling console logging.
 
@@ -170,12 +186,7 @@ class LoggingContext:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Resume console logging."""
         if self._suspended:
-            self._current_handler_id = logger.add(
-                sys.stderr,
-                level="INFO",
-                format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
-                filter=lambda record: _should_show_log(record, self.verbose),
-            )
+            self._current_handler_id = restore_console_handler(self.verbose)
             self._suspended = False
 
 

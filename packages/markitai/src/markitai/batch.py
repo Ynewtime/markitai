@@ -26,11 +26,11 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-from markitai.cli import ui
-from markitai.cli.console import get_console
 from markitai.constants import REPORTS_REL_PATH, STATES_REL_PATH
 from markitai.json_order import order_report, order_state
 from markitai.security import atomic_write_json
+from markitai.utils import term
+from markitai.utils.term import get_console
 from markitai.utils.text import format_error_message
 
 if TYPE_CHECKING:
@@ -476,6 +476,7 @@ class BatchProcessor:
         log_file: Path | str | None = None,
         on_conflict: str = "rename",
         task_options: dict[str, Any] | None = None,
+        console_log_restorer: Callable[[bool], int] | None = None,
     ) -> None:
         """
         Initialize batch processor.
@@ -487,6 +488,11 @@ class BatchProcessor:
             log_file: Path to the log file for this run
             on_conflict: Conflict resolution strategy ("skip", "overwrite", "rename")
             task_options: Task options dict (used for computing task hash)
+            console_log_restorer: Callback that re-adds the console log handler
+                (given the verbose flag, returns the new handler id) after a
+                Live display releases the terminal. Injected by the CLI, which
+                owns the handler layout; None skips restoration (library use,
+                where no CLI console handler exists to restore).
         """
         self.config = config
         self.output_dir = Path(output_dir)
@@ -499,6 +505,7 @@ class BatchProcessor:
         self.report_file = self._get_report_file_path()
         self.state: BatchState | None = None
         self.console = get_console()
+        self._console_log_restorer = console_log_restorer
         # Collect image analysis results for JSON aggregation
         self.image_analysis_results: list[ImageAnalysisResult] = []
         # Throttle tracking for periodic state saves
@@ -672,7 +679,6 @@ class BatchProcessor:
 
     def stop_live_display(self) -> None:
         """Stop Live display and restore console handler."""
-        import sys
 
         # Stop Live display
         if self._live is not None:
@@ -681,15 +687,10 @@ class BatchProcessor:
 
         # Re-add console handler (restore original state)
         if self._console_handler_id is not None:
-            from markitai.cli.logging_config import _should_show_log
-
-            new_handler_id = logger.add(
-                sys.stderr,
-                level="INFO",
-                format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
-                filter=lambda record: _should_show_log(record, self._verbose),
-            )
-            self._restored_console_handler_id = new_handler_id
+            if self._console_log_restorer is not None:
+                self._restored_console_handler_id = self._console_log_restorer(
+                    self._verbose
+                )
             self._console_handler_id = None
 
     def update_progress_total(self, total: int) -> None:
@@ -700,7 +701,7 @@ class BatchProcessor:
 
     def _render_active_items(self, items: dict[str, str]) -> str:
         """Render active item labels for a compact progress suffix."""
-        summary = ui.summarize_active_items(
+        summary = term.summarize_active_items(
             list(items.values()),
             max_items=3,
             max_len=max(self.console.width // 2, 40),
@@ -1476,18 +1477,12 @@ class BatchProcessor:
                     await _run_with_workers(files, concurrency)
             finally:
                 # Re-add console handler (restore original state)
-                if console_handler_id is not None:
-                    import sys
-
-                    from markitai.cli.logging_config import _should_show_log
-
-                    new_handler_id = logger.add(
-                        sys.stderr,
-                        level="INFO",
-                        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
-                        filter=lambda record: _should_show_log(record, verbose),
+                if console_handler_id is not None and (
+                    self._console_log_restorer is not None
+                ):
+                    self._restored_console_handler_id = self._console_log_restorer(
+                        verbose
                     )
-                    self._restored_console_handler_id = new_handler_id
 
         # Final save — compact WAL into base state
         self.compact_state()
@@ -1611,7 +1606,7 @@ class BatchProcessor:
 
         cost_str = f", ${total_cost:.3f}" if total_cost > 0 else ""
         summary_text = f"Done: {', '.join(parts)} ({wall_duration_str}{cost_str})"
-        ui.summary(summary_text, console=self.console)
+        term.summary(summary_text, console=self.console)
 
         # Detail lines
         if files_completed > 0:
@@ -1623,14 +1618,14 @@ class BatchProcessor:
             cache_str = f"  Cache: {cache_hits}" if cache_hits > 0 else ""
             skip_str = f"  {files_skipped} skipped" if files_skipped > 0 else ""
             self.console.print(
-                f"  {ui.MARK_INFO} Files: {files_actually_converted}/{self.state.total} "
-                f"[green]{ui.MARK_SUCCESS}[/]{cache_str}{skip_str}"
+                f"  {term.MARK_INFO} Files: {files_actually_converted}/{self.state.total} "
+                f"[green]{term.MARK_SUCCESS}[/]{cache_str}{skip_str}"
             )
         if url_completed > 0 or url_failed > 0:
             total_urls = url_completed + url_failed
             self.console.print(
-                f"  {ui.MARK_INFO} URLs:  {url_completed}/{total_urls} "
-                f"[green]{ui.MARK_SUCCESS}[/]"
+                f"  {term.MARK_INFO} URLs:  {url_completed}/{total_urls} "
+                f"[green]{term.MARK_SUCCESS}[/]"
             )
 
         # Skipped file warnings — group by reason for concise output
@@ -1657,16 +1652,16 @@ class BatchProcessor:
 
         # Warnings (failed and skipped items)
         if warnings:
-            width = ui.term_width(self.console)
+            width = term.term_width(self.console)
             warn_max = max(width - 4, 20)
             self.console.print()
             for warning in warnings:
                 self.console.print(
-                    f"  [yellow]{ui.MARK_WARNING}[/] {ui.truncate(warning, warn_max)}"
+                    f"  [yellow]{term.MARK_WARNING}[/] {term.truncate(warning, warn_max)}"
                 )
 
         self.console.print()
-        out_max = max(ui.term_width(self.console) - 10, 20)
+        out_max = max(term.term_width(self.console) - 10, 20)
         self.console.print(
-            f"  Output: {ui.truncate(str(self.output_dir) + '/', out_max)}"
+            f"  Output: {term.truncate(str(self.output_dir) + '/', out_max)}"
         )

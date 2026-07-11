@@ -1,7 +1,8 @@
 """Centralized Rich Console instances for Markitai CLI.
 
-This module provides singleton Console instances to ensure consistent
-output formatting and prevent multiple Console instances from conflicting.
+The singletons now live in :mod:`markitai.utils.term` (terminal output is
+foundation infrastructure, usable below the presentation layer); this module
+re-exports them for existing CLI callers.
 
 Usage:
     from markitai.cli.console import get_console, get_stderr_console
@@ -12,32 +13,6 @@ Usage:
 
 from __future__ import annotations
 
-from rich.console import Console
+from markitai.utils.term import get_console, get_stderr_console
 
-# Singleton instances
-_console: Console | None = None
-_stderr_console: Console | None = None
-
-
-def get_console() -> Console:
-    """Get the shared stdout Console instance.
-
-    Returns:
-        The singleton Console instance for stdout output.
-    """
-    global _console
-    if _console is None:
-        _console = Console()
-    return _console
-
-
-def get_stderr_console() -> Console:
-    """Get the shared stderr Console instance.
-
-    Returns:
-        The singleton Console instance for stderr output.
-    """
-    global _stderr_console
-    if _stderr_console is None:
-        _stderr_console = Console(stderr=True)
-    return _stderr_console
+__all__ = ["get_console", "get_stderr_console"]
