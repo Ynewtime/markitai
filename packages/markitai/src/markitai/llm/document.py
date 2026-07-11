@@ -194,6 +194,7 @@ class DocumentMixin:
         _cache_hits: int
         _cache_misses: int
         _prompt_manager: Any
+        config: Any
         router: Any
         vision_router: Any
         semaphore: asyncio.Semaphore
@@ -205,6 +206,8 @@ class DocumentMixin:
             messages: list[dict[str, Any]],
             context: str = "",
         ) -> Any: ...
+
+        def _get_next_call_index(self, context: str) -> int: ...
 
         def _get_cached_image(self, image_path: Path) -> tuple[bytes, str]: ...
 
@@ -954,13 +957,22 @@ class DocumentMixin:
             }
         )
 
-        response = await self._call_llm(  # type: ignore[attr-defined]
+        # Direct engine call (Phase 2.3): this point is only reached with
+        # page_images non-empty, so the messages always contain images and
+        # _call_llm's has_images check would always pick the vision router —
+        # pass it explicitly.
+        call_index = self._get_next_call_index(context) if context else 0
+        call_id = f"{context}:{call_index}" if context else f"call:{call_index}"
+        response = await self.engine.complete_text(
             model="default",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": content_parts},
             ],
+            call_id=call_id,
             context=context,
+            max_retries=self.config.router_settings.num_retries,
+            router=self.vision_router,
         )
 
         # Restore protected content from placeholders, with fallback for removed items
