@@ -135,12 +135,6 @@ source_modules = [
     "markitai.workflow",
 ]
 forbidden_modules = ["markitai.cli"]
-ignore_imports = [
-    # Phase 1.5: batch engine renders progress through cli console/ui/log filter
-    "markitai.batch -> markitai.cli.ui",
-    "markitai.batch -> markitai.cli.console",
-    "markitai.batch -> markitai.cli.logging_config",
-]
 
 [[tool.importlinter.contracts]]
 name = "foundation layer knows no domain or orchestration"

@@ -16,6 +16,7 @@ from loguru import logger
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.logging_config import restore_console_handler
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
 from markitai.converter.base import EXTENSION_MAP
@@ -623,6 +624,7 @@ async def process_batch(
         log_file=log_file_path,
         on_conflict=cfg.output.on_conflict,
         task_options=task_options,
+        console_log_restorer=restore_console_handler,
     )
     files = batch.discover_files(input_dir, extensions, glob_patterns=normalized_globs)
 

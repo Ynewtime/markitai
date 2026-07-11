@@ -29,64 +29,44 @@ from rich.text import Text
 from markitai.cli.console import get_console, get_stderr_console
 from markitai.ports import StdioInteraction
 
+# Terminal glyphs and text helpers now live in the foundation layer so
+# engines below the CLI can render without importing markitai.cli;
+# re-exported here (import-as-same-name) for existing callers.
+from markitai.utils.term import (
+    MARK_ERROR as MARK_ERROR,
+)
+from markitai.utils.term import (
+    MARK_INFO as MARK_INFO,
+)
+from markitai.utils.term import (
+    MARK_LINE as MARK_LINE,
+)
+from markitai.utils.term import (
+    MARK_SUCCESS as MARK_SUCCESS,
+)
+from markitai.utils.term import (
+    MARK_TITLE as MARK_TITLE,
+)
+from markitai.utils.term import (
+    MARK_WARNING as MARK_WARNING,
+)
+from markitai.utils.term import (
+    summarize_active_items as summarize_active_items,
+)
+from markitai.utils.term import (
+    summary as summary,
+)
+from markitai.utils.term import (
+    term_width as term_width,
+)
+from markitai.utils.term import (
+    truncate as truncate,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from markitai.config import MarkitaiConfig
-
-# Symbol constants for visual markers
-MARK_SUCCESS = "\u2713"  # Checkmark
-MARK_ERROR = "\u2717"  # Cross
-MARK_WARNING = "!"  # Exclamation
-MARK_INFO = "\u2022"  # Bullet
-MARK_TITLE = "\u25c6"  # Diamond
-MARK_LINE = "\u2502"  # Vertical line
-
-
-def term_width(console: Console | None = None) -> int:
-    """Return current terminal width."""
-    c = console or get_console()
-    return c.width
-
-
-def truncate(text: str, max_len: int) -> str:
-    """Truncate text to max_len, appending '...' if trimmed."""
-    if max_len < 4:
-        return text[:max_len]
-    if len(text) <= max_len:
-        return text
-    return text[: max_len - 3] + "..."
-
-
-def summarize_active_items(
-    items: list[str],
-    *,
-    max_items: int = 3,
-    max_len: int | None = None,
-) -> str:
-    """Summarize active concurrent items for compact progress displays.
-
-    Args:
-        items: Active item labels in display order.
-        max_items: Maximum number of labels to show before collapsing the rest.
-        max_len: Optional maximum display length.
-
-    Returns:
-        Compact summary string such as ``"a.txt, b.txt +2"``.
-    """
-    unique_items = [item.strip() for item in items if item and item.strip()]
-    unique_items = list(dict.fromkeys(unique_items))
-    if not unique_items:
-        return ""
-
-    shown = unique_items[:max_items]
-    remaining = len(unique_items) - len(shown)
-    summary = ", ".join(shown)
-    if remaining > 0:
-        summary = f"{summary} +{remaining}"
-    if max_len is not None:
-        summary = truncate(summary, max_len)
-    return summary
 
 
 def title(text: str, *, console: Console | None = None) -> None:
@@ -175,27 +155,6 @@ def section(text: str, *, console: Console | None = None) -> None:
     """
     c = console or get_console()
     c.print(f"[bold]{text}[/]")
-
-
-def summary(
-    text: str, *, ok: bool | None = True, console: Console | None = None
-) -> None:
-    """Display a summary message with a status glyph and leading blank line.
-
-    Args:
-        text: The summary message to display.
-        ok: True renders a green checkmark, False a red cross, and None a
-            yellow warning mark.
-        console: Optional console for output (defaults to shared console).
-    """
-    c = console or get_console()
-    c.print()
-    if ok is True:
-        c.print(f"[green]{MARK_SUCCESS}[/] {text}")
-    elif ok is False:
-        c.print(f"[red]{MARK_ERROR}[/] {text}")
-    else:
-        c.print(f"[yellow]{MARK_WARNING}[/] {text}")
 
 
 def build_feature_str(cfg: MarkitaiConfig) -> str:
