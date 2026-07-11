@@ -32,6 +32,9 @@ from markitai.ports import StdioInteraction
 # Terminal glyphs and text helpers now live in the foundation layer so
 # engines below the CLI can render without importing markitai.cli;
 # re-exported here (import-as-same-name) for existing callers.
+# NOTE for tests: patching "markitai.cli.ui.<name>" only rebinds this
+# namespace — callers below the CLI import from markitai.utils.term, so
+# patch the term module to intercept them.
 from markitai.utils.term import (
     MARK_ERROR as MARK_ERROR,
 )

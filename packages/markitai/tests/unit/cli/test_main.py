@@ -37,6 +37,29 @@ class TestInteractiveFlag:
         assert result.exit_code == 0
         assert "Usage:" in result.output or "usage:" in result.output.lower()
 
+    def test_invalid_config_shows_message_not_traceback(self) -> None:
+        """A bad config in interactive mode must report cleanly, not crash.
+
+        -I is an eager callback and runs before MarkitaiGroup.invoke, so its
+        ConfigFileError translation lives in run_interactive_mode itself.
+        """
+        from markitai.config import ConfigFileError
+
+        runner = CliRunner()
+        with patch(
+            "markitai.cli.interactive.run_interactive",
+            side_effect=ConfigFileError(
+                "Invalid configuration in markitai.json:\n"
+                "  llm.concurrency: Input should be greater than or equal to 1"
+            ),
+        ):
+            result = runner.invoke(app, ["-I"])
+
+        assert result.exit_code != 0
+        assert "llm.concurrency" in result.output
+        assert "Traceback" not in result.output
+        assert not isinstance(result.exception, ConfigFileError)  # translated
+
 
 class TestInteractiveModeExitCode:
     """Tests for interactive mode exit code propagation."""
