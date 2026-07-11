@@ -368,13 +368,13 @@ class TestProxyDetection:
         """Reset proxy cache before each test."""
         from markitai import fetch
 
-        fetch._detected_proxy = None
+        fetch.get_default_session().detected_proxy = None
 
     def teardown_method(self) -> None:
         """Reset proxy cache after each test."""
         from markitai import fetch
 
-        fetch._detected_proxy = None
+        fetch.get_default_session().detected_proxy = None
 
     def test_detects_https_proxy_env(self) -> None:
         """Test detection from HTTPS_PROXY environment variable."""
@@ -1400,14 +1400,14 @@ class TestGlobalCacheInstances:
         from markitai.fetch import get_fetch_cache
 
         # Reset global instance
-        fetch._fetch_cache = None
+        fetch.get_default_session().fetch_cache = None
 
         cache = get_fetch_cache(tmp_path)
         assert cache is not None
         cache.close()
 
         # Reset for other tests
-        fetch._fetch_cache = None
+        fetch.get_default_session().fetch_cache = None
 
 
 class TestFetchCacheConnection:
@@ -1560,7 +1560,7 @@ class TestFetchWithJina:
         from markitai.fetch import fetch_with_jina
 
         # Reset global client
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         json_data = {
             "code": 200,
@@ -1589,7 +1589,7 @@ class TestFetchWithJina:
             assert result.strategy_used == "jina"
             assert result.title == "Test Page"
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
     @pytest.mark.asyncio
     async def test_fetch_with_jina_rate_limit(self) -> None:
@@ -1597,7 +1597,7 @@ class TestFetchWithJina:
         from markitai import fetch
         from markitai.fetch import JinaRateLimitError, fetch_with_jina
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         mock_response = MagicMock()
         mock_response.status_code = 429
@@ -1614,7 +1614,7 @@ class TestFetchWithJina:
             with pytest.raises(JinaRateLimitError):
                 await fetch_with_jina("https://example.com")
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
     @pytest.mark.asyncio
     async def test_fetch_with_jina_api_error(self) -> None:
@@ -1622,7 +1622,7 @@ class TestFetchWithJina:
         from markitai import fetch
         from markitai.fetch import JinaAPIError, fetch_with_jina
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         mock_response = MagicMock()
         mock_response.status_code = 500
@@ -1641,7 +1641,7 @@ class TestFetchWithJina:
 
             assert exc_info.value.status_code == 500
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
     @pytest.mark.asyncio
     async def test_fetch_with_jina_empty_content(self) -> None:
@@ -1649,7 +1649,7 @@ class TestFetchWithJina:
         from markitai import fetch
         from markitai.fetch import FetchError, fetch_with_jina
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         json_data = {"code": 200, "data": {"title": "Test", "content": ""}}
         mock_response = MagicMock()
@@ -1670,7 +1670,7 @@ class TestFetchWithJina:
 
             assert "No content returned" in str(exc_info.value)
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
     @pytest.mark.asyncio
     async def test_fetch_with_jina_invalid_json(self) -> None:
@@ -1678,7 +1678,7 @@ class TestFetchWithJina:
         from markitai import fetch
         from markitai.fetch import FetchError, fetch_with_jina
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -1698,7 +1698,7 @@ class TestFetchWithJina:
 
             assert "invalid JSON" in str(exc_info.value)
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
     @pytest.mark.asyncio
     async def test_fetch_with_jina_timeout(self) -> None:
@@ -1708,7 +1708,7 @@ class TestFetchWithJina:
         from markitai import fetch
         from markitai.fetch import FetchError, fetch_with_jina
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         with (
             patch("markitai.fetch._detect_proxy", return_value=""),
@@ -1723,7 +1723,7 @@ class TestFetchWithJina:
 
             assert "timed out" in str(exc_info.value)
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
     @pytest.mark.asyncio
     async def test_fetch_with_jina_with_api_key(self) -> None:
@@ -1731,7 +1731,7 @@ class TestFetchWithJina:
         from markitai import fetch
         from markitai.fetch import fetch_with_jina
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         json_data = {
             "code": 200,
@@ -1758,7 +1758,7 @@ class TestFetchWithJina:
             # Verify get was called (API key would be in headers)
             mock_client.get.assert_called_once()
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
     @pytest.mark.asyncio
     async def test_fetch_with_jina_error_message_in_response(self) -> None:
@@ -1766,7 +1766,7 @@ class TestFetchWithJina:
         from markitai import fetch
         from markitai.fetch import JinaAPIError, fetch_with_jina
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         json_data = {
             "code": 400,
@@ -1791,7 +1791,7 @@ class TestFetchWithJina:
 
             assert "Invalid URL" in str(exc_info.value)
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
 
 class TestFetchWithStaticConditional:
@@ -1939,12 +1939,12 @@ class TestCloseSharedClients:
         # Create a mock client
         mock_client = AsyncMock()
         mock_client.aclose = AsyncMock()
-        fetch._jina_client = mock_client
+        fetch.get_default_session().jina_client = mock_client
 
         await close_shared_clients()
 
         mock_client.aclose.assert_called_once()
-        assert fetch._jina_client is None
+        assert fetch.get_default_session().jina_client is None
 
     @pytest.mark.asyncio
     async def test_close_shared_clients_with_fetch_cache(self) -> None:
@@ -1954,11 +1954,11 @@ class TestCloseSharedClients:
 
         # Create a mock cache
         mock_cache = type("MockCache", (), {"close": lambda _self: None})()
-        fetch._fetch_cache = mock_cache
+        fetch.get_default_session().fetch_cache = mock_cache
 
         await close_shared_clients()
 
-        assert fetch._fetch_cache is None
+        assert fetch.get_default_session().fetch_cache is None
 
     @pytest.mark.asyncio
     async def test_close_shared_clients_with_playwright_renderer(self) -> None:
@@ -1969,12 +1969,12 @@ class TestCloseSharedClients:
         # Create a mock renderer
         mock_renderer = AsyncMock()
         mock_renderer.close = AsyncMock()
-        fetch._playwright_renderer = mock_renderer
+        fetch.get_default_session().playwright_renderer = mock_renderer
 
         await close_shared_clients()
 
         mock_renderer.close.assert_called_once()
-        assert fetch._playwright_renderer is None
+        assert fetch.get_default_session().playwright_renderer is None
 
     @pytest.mark.asyncio
     async def test_close_shared_clients_none_clients(self) -> None:
@@ -1982,9 +1982,9 @@ class TestCloseSharedClients:
         from markitai import fetch
         from markitai.fetch import close_shared_clients
 
-        fetch._jina_client = None
-        fetch._fetch_cache = None
-        fetch._playwright_renderer = None
+        fetch.get_default_session().jina_client = None
+        fetch.get_default_session().fetch_cache = None
+        fetch.get_default_session().playwright_renderer = None
 
         # Should not raise any errors
         await close_shared_clients()
@@ -2006,7 +2006,7 @@ class TestCloseSharedClients:
         await close_shared_clients()
 
         # Should be reset
-        assert fetch._cf_br_semaphore is None
+        assert fetch.get_default_session().cf_br_semaphore is None
         # New call should create a fresh instance
         new_sem = get_cf_semaphore()
         assert new_sem is not sem
@@ -2017,11 +2017,11 @@ class TestCloseSharedClients:
         from markitai import fetch
         from markitai.fetch import close_shared_clients
 
-        fetch._spa_domain_cache = MagicMock()
+        fetch.get_default_session().spa_domain_cache = MagicMock()
 
         await close_shared_clients()
 
-        assert fetch._spa_domain_cache is None
+        assert fetch.get_default_session().spa_domain_cache is None
 
 
 class TestGetMarkitdown:
@@ -2033,8 +2033,8 @@ class TestGetMarkitdown:
         from markitai.fetch import _get_markitdown
 
         # Save original value
-        original = fetch._markitdown_instance
-        fetch._markitdown_instance = None
+        original = fetch.get_default_session().markitdown_instance
+        fetch.get_default_session().markitdown_instance = None
 
         try:
             with patch.dict("sys.modules", {"markitdown": MagicMock()}):
@@ -2050,7 +2050,7 @@ class TestGetMarkitdown:
                 # Should have created an instance
                 assert result is not None
         finally:
-            fetch._markitdown_instance = original
+            fetch.get_default_session().markitdown_instance = original
 
     def test_get_markitdown_reuses_instance(self) -> None:
         """Test that _get_markitdown reuses existing instance."""
@@ -2058,17 +2058,17 @@ class TestGetMarkitdown:
         from markitai.fetch import _get_markitdown
 
         # Save original value
-        original = fetch._markitdown_instance
+        original = fetch.get_default_session().markitdown_instance
 
         try:
             mock_instance = MagicMock()
-            fetch._markitdown_instance = mock_instance
+            fetch.get_default_session().markitdown_instance = mock_instance
 
             result = _get_markitdown()
 
             assert result is mock_instance
         finally:
-            fetch._markitdown_instance = original
+            fetch.get_default_session().markitdown_instance = original
 
 
 class TestGetJinaClient:
@@ -2079,10 +2079,10 @@ class TestGetJinaClient:
         from markitai import fetch
         from markitai.fetch import _get_jina_client
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value=""),
+            patch.object(fetch.get_default_session(), "detect_proxy", return_value=""),
             patch("httpx.AsyncClient") as mock_client_class,
         ):
             mock_instance = type("MockClient", (), {})()
@@ -2093,17 +2093,21 @@ class TestGetJinaClient:
             assert result is mock_instance
             mock_client_class.assert_called_once()
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
     def test_get_jina_client_with_proxy(self) -> None:
         """Test that _get_jina_client uses proxy."""
         from markitai import fetch
         from markitai.fetch import _get_jina_client
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         with (
-            patch("markitai.fetch._detect_proxy", return_value="http://proxy:8080"),
+            patch.object(
+                fetch.get_default_session(),
+                "detect_proxy",
+                return_value="http://proxy:8080",
+            ),
             patch("httpx.AsyncClient") as mock_client_class,
         ):
             _get_jina_client()
@@ -2111,7 +2115,7 @@ class TestGetJinaClient:
             call_kwargs = mock_client_class.call_args.kwargs
             assert call_kwargs.get("proxy") == "http://proxy:8080"
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
     def test_get_jina_client_reuses_instance(self) -> None:
         """Test that _get_jina_client reuses existing instance."""
@@ -2119,18 +2123,18 @@ class TestGetJinaClient:
         from markitai.fetch import _get_jina_client
 
         mock_instance = type("MockClient", (), {})()
-        fetch._jina_client = mock_instance
+        fetch.get_default_session().jina_client = mock_instance
         # Match the fingerprint _get_jina_client computes in this sync
         # context (timeout=30, proxy="", no running loop): reuse must not
         # depend on fingerprint state leaked by earlier tests on the worker
-        fetch._jina_client_fingerprint = "30::0"
+        fetch.get_default_session().jina_client_fingerprint = "30::0"
 
         result = _get_jina_client()
 
         assert result is mock_instance
 
-        fetch._jina_client = None
-        fetch._jina_client_fingerprint = ""
+        fetch.get_default_session().jina_client = None
+        fetch.get_default_session().jina_client_fingerprint = ""
 
 
 class TestFetchWithFallback:
@@ -3243,15 +3247,15 @@ class TestDetectProxyAdditional:
         """Reset proxy cache before each test."""
         from markitai import fetch
 
-        fetch._detected_proxy = None
-        fetch._detected_proxy_bypass = None
+        fetch.get_default_session().detected_proxy = None
+        fetch.get_default_session().detected_proxy_bypass = None
 
     def teardown_method(self) -> None:
         """Reset proxy cache after each test."""
         from markitai import fetch
 
-        fetch._detected_proxy = None
-        fetch._detected_proxy_bypass = None
+        fetch.get_default_session().detected_proxy = None
+        fetch.get_default_session().detected_proxy_bypass = None
 
     def test_detect_proxy_lowercase_env_vars(self) -> None:
         """Test detection from lowercase environment variables."""
@@ -3278,11 +3282,11 @@ class TestDetectProxyAdditional:
         from markitai import fetch
         from markitai.fetch import _detect_proxy
 
-        fetch._detected_proxy = None
+        fetch.get_default_session().detected_proxy = None
 
         with (
             patch.dict("os.environ", {}, clear=True),
-            patch("markitai.fetch._get_system_proxy", return_value=("", "")),
+            patch("markitai.fetch_session._get_system_proxy", return_value=("", "")),
             patch("socket.socket") as mock_socket,
         ):
             # Make all port probes fail
@@ -3298,11 +3302,11 @@ class TestDetectProxyAdditional:
         from markitai import fetch
         from markitai.fetch import _detect_proxy
 
-        fetch._detected_proxy = None
+        fetch.get_default_session().detected_proxy = None
 
         with (
             patch.dict("os.environ", {}, clear=True),
-            patch("markitai.fetch._get_system_proxy", return_value=("", "")),
+            patch("markitai.fetch_session._get_system_proxy", return_value=("", "")),
             patch("socket.socket") as mock_socket,
         ):
             # First port probe succeeds
@@ -3410,8 +3414,8 @@ class TestGetPlaywrightRenderer:
         from markitai import fetch
         from markitai.fetch import _get_playwright_renderer
 
-        fetch._playwright_renderer = None
-        fetch._playwright_renderer_fingerprint = ""
+        fetch.get_default_session().playwright_renderer = None
+        fetch.get_default_session().playwright_renderer_fingerprint = ""
 
         with patch(
             "markitai.fetch_playwright.PlaywrightRenderer"
@@ -3424,8 +3428,8 @@ class TestGetPlaywrightRenderer:
             assert result is mock_instance
             mock_renderer_class.assert_called_once_with(proxy="http://proxy:8080")
 
-        fetch._playwright_renderer = None
-        fetch._playwright_renderer_fingerprint = ""
+        fetch.get_default_session().playwright_renderer = None
+        fetch.get_default_session().playwright_renderer_fingerprint = ""
 
     @pytest.mark.asyncio
     async def test_get_playwright_renderer_reuses_instance(self) -> None:
@@ -3434,16 +3438,16 @@ class TestGetPlaywrightRenderer:
         from markitai.fetch import _get_playwright_renderer
 
         mock_instance = MagicMock()
-        fetch._playwright_renderer = mock_instance
+        fetch.get_default_session().playwright_renderer = mock_instance
         # Set fingerprint to match default call args (proxy=None, config=None)
-        fetch._playwright_renderer_fingerprint = "None:None"
+        fetch.get_default_session().playwright_renderer_fingerprint = "None:None"
 
         result = await _get_playwright_renderer()
 
         assert result is mock_instance
 
-        fetch._playwright_renderer = None
-        fetch._playwright_renderer_fingerprint = ""
+        fetch.get_default_session().playwright_renderer = None
+        fetch.get_default_session().playwright_renderer_fingerprint = ""
 
 
 class TestUrlToScreenshotFilenameEdgeCases:
@@ -3621,7 +3625,7 @@ class TestJinaResponseParsing:
         from markitai import fetch
         from markitai.fetch import FetchError, fetch_with_jina
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         json_data = {"code": 200, "data": {}}
         mock_response = MagicMock()
@@ -3642,7 +3646,7 @@ class TestJinaResponseParsing:
                 or "empty" in str(exc_info.value).lower()
             )
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
     @pytest.mark.asyncio
     async def test_jina_whitespace_only_content(self) -> None:
@@ -3650,7 +3654,7 @@ class TestJinaResponseParsing:
         from markitai import fetch
         from markitai.fetch import FetchError, fetch_with_jina
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         json_data = {"code": 200, "data": {"content": "   \n\t  "}}
         mock_response = MagicMock()
@@ -3668,7 +3672,7 @@ class TestJinaResponseParsing:
 
             assert "No content" in str(exc_info.value)
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
     @pytest.mark.asyncio
     async def test_jina_whitespace_title_cleaned(self) -> None:
@@ -3676,7 +3680,7 @@ class TestJinaResponseParsing:
         from markitai import fetch
         from markitai.fetch import fetch_with_jina
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
         json_data = {
             "code": 200,
@@ -3697,7 +3701,7 @@ class TestJinaResponseParsing:
             # Whitespace-only title should be None
             assert result.title is None
 
-        fetch._jina_client = None
+        fetch.get_default_session().jina_client = None
 
 
 class TestContentNegotiation:
@@ -3709,8 +3713,8 @@ class TestContentNegotiation:
         from markitai.fetch import _get_markitdown
 
         # Reset singleton to force re-creation
-        old = fetch_module._markitdown_instance
-        fetch_module._markitdown_instance = None
+        old = fetch_module.get_default_session().markitdown_instance
+        fetch_module.get_default_session().markitdown_instance = None
         try:
             md = _get_markitdown()
             accept = md._requests_session.headers.get("Accept", "")
@@ -3718,7 +3722,7 @@ class TestContentNegotiation:
             # text/html should be lower priority
             assert "text/html" in accept
         finally:
-            fetch_module._markitdown_instance = old
+            fetch_module.get_default_session().markitdown_instance = old
 
     @pytest.mark.asyncio
     async def test_conditional_fetch_sends_accept_markdown_header(self):
@@ -4777,29 +4781,29 @@ class TestSlidingWindowRateLimiter:
         """Global limiter should be created once."""
         import markitai.fetch as fetch_mod
 
-        old_limiter = fetch_mod._jina_rate_limiter
-        fetch_mod._jina_rate_limiter = None
+        old_limiter = fetch_mod.get_default_session().jina_rate_limiter
+        fetch_mod.get_default_session().jina_rate_limiter = None
         try:
             limiter1 = fetch_mod._get_jina_rate_limiter(20)
             limiter2 = fetch_mod._get_jina_rate_limiter(20)
             assert limiter1 is limiter2
         finally:
-            fetch_mod._jina_rate_limiter = old_limiter
+            fetch_mod.get_default_session().jina_rate_limiter = old_limiter
 
     @pytest.mark.asyncio
     async def test_global_limiter_recreates_on_rpm_change(self):
         """Global limiter should recreate when rpm changes."""
         import markitai.fetch as fetch_mod
 
-        old_limiter = fetch_mod._jina_rate_limiter
-        fetch_mod._jina_rate_limiter = None
+        old_limiter = fetch_mod.get_default_session().jina_rate_limiter
+        fetch_mod.get_default_session().jina_rate_limiter = None
         try:
             limiter1 = fetch_mod._get_jina_rate_limiter(20)
             limiter2 = fetch_mod._get_jina_rate_limiter(100)
             assert limiter1 is not limiter2
             assert limiter2._rpm == 100
         finally:
-            fetch_mod._jina_rate_limiter = old_limiter
+            fetch_mod.get_default_session().jina_rate_limiter = old_limiter
 
 
 class TestDefuddleUrlEncoding:
@@ -4974,9 +4978,9 @@ class TestFetchCacheSingletonConfigSensitivity:
         """get_fetch_cache should return a new instance when config changes."""
         import markitai.fetch as fetch_mod
 
-        old_cache = fetch_mod._fetch_cache
+        old_cache = fetch_mod.get_default_session().fetch_cache
         try:
-            fetch_mod._fetch_cache = None
+            fetch_mod.get_default_session().fetch_cache = None
 
             dir1 = tmp_path / "cache1"
             dir1.mkdir()
@@ -4991,14 +4995,14 @@ class TestFetchCacheSingletonConfigSensitivity:
             cache1.close()
             cache2.close()
         finally:
-            fetch_mod._fetch_cache = old_cache
+            fetch_mod.get_default_session().fetch_cache = old_cache
 
     def test_get_fetch_cache_reuses_on_same_config(self, tmp_path: Path) -> None:
         """get_fetch_cache should return same instance when config is identical."""
         import markitai.fetch as fetch_mod
 
         try:
-            fetch_mod._fetch_cache = None
+            fetch_mod.get_default_session().fetch_cache = None
 
             cache1 = fetch_mod.get_fetch_cache(
                 tmp_path, max_size_bytes=100 * 1024 * 1024
@@ -5010,15 +5014,15 @@ class TestFetchCacheSingletonConfigSensitivity:
             assert cache1 is cache2
             cache1.close()
         finally:
-            fetch_mod._fetch_cache = None
+            fetch_mod.get_default_session().fetch_cache = None
 
     def test_jina_client_rebuilds_on_different_config(self) -> None:
         """_get_jina_client should rebuild when timeout/proxy changes."""
         import markitai.fetch as fetch_mod
 
-        old_client = fetch_mod._jina_client
+        old_client = fetch_mod.get_default_session().jina_client
         try:
-            fetch_mod._jina_client = None
+            fetch_mod.get_default_session().jina_client = None
 
             client1 = fetch_mod._get_jina_client(timeout=30, proxy="")
             client2 = fetch_mod._get_jina_client(timeout=60, proxy="http://proxy:8080")
@@ -5028,16 +5032,18 @@ class TestFetchCacheSingletonConfigSensitivity:
             # Clean up
             import asyncio
 
-            if fetch_mod._jina_client is not None:
+            if fetch_mod.get_default_session().jina_client is not None:
                 try:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
                         pass
                     else:
-                        loop.run_until_complete(fetch_mod._jina_client.aclose())
+                        loop.run_until_complete(
+                            fetch_mod.get_default_session().jina_client.aclose()
+                        )
                 except Exception:
                     pass
-            fetch_mod._jina_client = old_client
+            fetch_mod.get_default_session().jina_client = old_client
 
 
 class TestFetchCacheStrategyKey:
@@ -5299,8 +5305,8 @@ class TestProxyAutoProxyRespected:
         from markitai import fetch
         from markitai.fetch import get_proxy_for_url
 
-        fetch._detected_proxy = "http://proxy:8080"
-        fetch._detected_proxy_bypass = "example.com,internal.corp"
+        fetch.get_default_session().detected_proxy = "http://proxy:8080"
+        fetch.get_default_session().detected_proxy_bypass = "example.com,internal.corp"
 
         try:
             result = get_proxy_for_url("https://example.com/page", auto_proxy=True)
@@ -5309,8 +5315,8 @@ class TestProxyAutoProxyRespected:
             result = get_proxy_for_url("https://other.com/page", auto_proxy=True)
             assert result == "http://proxy:8080"
         finally:
-            fetch._detected_proxy = None
-            fetch._detected_proxy_bypass = None
+            fetch.get_default_session().detected_proxy = None
+            fetch.get_default_session().detected_proxy_bypass = None
 
 
 class TestSPABrowserFirstOrdering:

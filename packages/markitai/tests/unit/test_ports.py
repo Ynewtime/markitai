@@ -131,14 +131,14 @@ class TestFetchUsesThePort:
 
         fake = FakeInteraction()
         ports.set_interaction(fake)
-        original = fetch_mod._remote_disclosure_emitted
-        fetch_mod._remote_disclosure_emitted = False
+        original = fetch_mod.get_default_session().consent.disclosure_emitted
+        fetch_mod.get_default_session().consent.disclosure_emitted = False
         try:
             disclose_remote_use(["jina"])
             assert len(fake.notices) == 1
             assert "remote extraction services" in fake.notices[0]
         finally:
-            fetch_mod._remote_disclosure_emitted = original
+            fetch_mod.get_default_session().consent.disclosure_emitted = original
 
     def test_explicit_fallback_refusal_prompt_uses_injected_port(self) -> None:
         from markitai.fetch import (

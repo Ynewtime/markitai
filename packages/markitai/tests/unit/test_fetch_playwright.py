@@ -1472,10 +1472,10 @@ class TestCaptureScreenshot:
         # Patch the imported function in fetch module
         with (
             patch(
-                "markitai.fetch._url_to_screenshot_filename",
+                "markitai.fetch_screenshot._url_to_screenshot_filename",
                 return_value="screenshot.jpg",
             ),
-            patch("markitai.fetch._compress_screenshot") as mock_compress,
+            patch("markitai.fetch_screenshot._compress_screenshot") as mock_compress,
         ):
             result = await _capture_screenshot(
                 mock_page,
@@ -1503,7 +1503,7 @@ class TestCaptureScreenshot:
         mock_config.max_height = 10000
 
         with patch(
-            "markitai.fetch._url_to_screenshot_filename",
+            "markitai.fetch_screenshot._url_to_screenshot_filename",
             return_value="screenshot.jpg",
         ):
             result = await _capture_screenshot(
@@ -1533,10 +1533,10 @@ class TestCaptureScreenshot:
 
         with (
             patch(
-                "markitai.fetch._url_to_screenshot_filename",
+                "markitai.fetch_screenshot._url_to_screenshot_filename",
                 return_value="test.jpg",
             ),
-            patch("markitai.fetch._compress_screenshot"),
+            patch("markitai.fetch_screenshot._compress_screenshot"),
         ):
             await _capture_screenshot(
                 mock_page,
