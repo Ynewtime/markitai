@@ -1,17 +1,17 @@
-"""Unified structured LLM call engine.
+"""Unified LLM call engine.
 
-This module is the single pipeline for structured (instructor-based) LLM
-calls: two-layer cache lookup, prompt-agnostic transport retries, instructor
-validation retries, JSON repair, length checking, usage accounting, and
-cache write-back.
+This module is the single transport layer for LLM calls. It provides two
+entry points:
 
-Phase 2.1 of the LLM refactor: prior to this module, each structured call
-site (document/vision mixins) wired ``instructor.from_litellm`` directly to
-``router.acompletion``, bypassing the transport retry loop in
-``LLMProcessor._call_llm_with_retry`` (backoff, quota short-circuit, empty
-response retry). ``LLMEngine`` closes that gap by handing instructor a
-retrying acompletion adapter, so every instructor attempt goes through the
-full transport retry loop.
+- ``complete_text``: plain text completions with the full transport retry
+  loop (backoff, quota short-circuit, empty response retry) and per-attempt
+  usage accounting.
+- ``complete_structured``: structured (instructor-based) calls with
+  two-layer cache lookup, transport retries, instructor validation retries,
+  JSON repair, length checking, usage accounting, and cache write-back.
+
+Both entry points share one retry loop (``_acompletion_with_retries``);
+``LLMProcessor._call_llm_with_retry`` delegates here since Phase 2.3.
 
 This module must not import ``markitai.llm.processor`` (circular import:
 processor -> document -> engine).
@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, cast, get_origin
 
@@ -42,12 +43,12 @@ from markitai.constants import (
     DEFAULT_RETRY_MAX_DELAY,
 )
 from markitai.llm.models import get_response_cost
+from markitai.llm.types import LLMResponse
 from markitai.providers.errors import ProviderError
 from markitai.utils.text import format_error_message, repair_json_string
 
-# Retryable transport exceptions. Rebuilt here from litellm types because the
-# canonical tuple lives in markitai.llm.processor, which this module cannot
-# import (circular). Single source will converge in Phase 2.3.
+# Retryable transport exceptions (canonical definition; markitai.llm.processor
+# re-exports this tuple, since processor imports engine and not vice versa).
 RETRYABLE_ERRORS = (
     RateLimitError,
     APIConnectionError,
@@ -56,10 +57,8 @@ RETRYABLE_ERRORS = (
 )
 
 # Model-level error patterns that indicate the model itself is unavailable
-# (not a content/request issue). Copied verbatim from
-# HybridRouter.MODEL_LEVEL_ERROR_PATTERNS in markitai.llm.processor, which
-# this module cannot import (circular). Single source will converge in
-# Phase 2.3.
+# (not a content/request issue). These warrant long cooldown. Canonical
+# definition; HybridRouter.MODEL_LEVEL_ERROR_PATTERNS aliases this tuple.
 MODEL_LEVEL_ERROR_PATTERNS = (
     "user location is not supported",
     "failed_precondition",
@@ -402,6 +401,79 @@ class LLMEngine:
 
         return result, raw_response
 
+    async def complete_text(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        call_id: str,
+        context: str = "",
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        router: Any | None = None,
+    ) -> LLMResponse:
+        """Make a plain text LLM call with the transport retry loop.
+
+        Ported verbatim from ``LLMProcessor._call_llm_with_retry`` (Phase
+        2.3): acquires one concurrency slot per attempt (backoff sleeps
+        happen with the slot released), tracks usage on every successful
+        attempt, and calculates dynamic max_tokens for the active router's
+        model pool.
+
+        Args:
+            model: Logical model name (e.g., "default")
+            messages: Chat messages
+            call_id: Unique identifier for this call (for logging)
+            context: Context identifier for usage tracking (e.g., filename)
+            max_retries: Maximum number of retry attempts
+            router: Router override (None -> engine default router)
+
+        Returns:
+            LLMResponse with content and usage info
+        """
+        # Use provided router or default to main router
+        active_router = router or self.router
+
+        # Calculate dynamic max_tokens based on input size and target model
+        # Pass router so the limit is the minimum across the model pool
+        target_model_id = self._get_primary_model(active_router)
+        max_tokens = self._calculate_max_tokens(
+            messages, target_model_id, router=active_router
+        )
+
+        def build_llm_response(
+            response: Any,
+            actual_model: str,
+            input_tokens: int,
+            output_tokens: int,
+            cost: float,
+        ) -> LLMResponse:
+            # litellm returns Choices (not StreamingChoices) for non-streaming
+            content = response.choices[0].message.content or ""
+            return LLMResponse(
+                content=content,
+                model=actual_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+            )
+
+        return cast(
+            LLMResponse,
+            await self._acompletion_with_retries(
+                active_router=active_router,
+                call_id=call_id,
+                kwargs={
+                    "model": model,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                },
+                max_retries=max_retries,
+                own_semaphore=True,
+                usage_context=context,
+                finalize=build_llm_response,
+            ),
+        )
+
     def _make_retrying_acompletion(
         self,
         active_router: Any,
@@ -414,8 +486,8 @@ class LLMEngine:
         (``model=..., messages=..., **kwargs``) and returns the raw
         ModelResponse, so it can be handed to ``instructor.from_litellm``.
 
-        The loop is adapted from ``LLMProcessor._call_llm_with_retry``
-        (markitai.llm.processor), with two deliberate differences:
+        Two deliberate differences from ``complete_text`` (both expressed
+        as parameters of the shared ``_acompletion_with_retries`` loop):
 
         - It does NOT acquire the engine semaphore: instructor invokes the
           adapter while ``complete_structured`` already holds a slot
@@ -424,22 +496,67 @@ class LLMEngine:
           structured call from the final raw response, which instructor
           accumulates across its own retries.
         """
-        get_primary_model = self._get_primary_model
 
         async def retrying_acompletion(*args: Any, **kwargs: Any) -> Any:
-            model = kwargs.get("model", "default")
-            last_exception: Exception | None = None
+            return await self._acompletion_with_retries(
+                active_router=active_router,
+                call_id=call_id,
+                args=args,
+                kwargs=kwargs,
+                max_retries=max_retries,
+                own_semaphore=False,
+                usage_context=None,
+            )
 
-            # Backoff sleeps happen at the top of the next iteration; the
-            # semaphore is held by the caller for the whole structured call
-            retry_delay = 0.0
+        return retrying_acompletion
 
-            for attempt in range(max_retries + 1):
-                if retry_delay > 0:
-                    await asyncio.sleep(retry_delay)
-                    retry_delay = 0.0
-                start_time = time.perf_counter()
+    async def _acompletion_with_retries(
+        self,
+        *,
+        active_router: Any,
+        call_id: str,
+        args: tuple[Any, ...] = (),
+        kwargs: dict[str, Any],
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        own_semaphore: bool,
+        usage_context: str | None = None,
+        finalize: Callable[[Any, str, int, int, float], Any] | None = None,
+    ) -> Any:
+        """Shared transport retry loop behind ``complete_text`` and
+        ``_make_retrying_acompletion``.
 
+        The two call modes differ on exactly three axes, expressed as
+        parameters:
+
+        - ``own_semaphore``: when True (text calls), each attempt acquires
+          the engine semaphore and backoff sleeps happen OUTSIDE it —
+          sleeping while holding a slot would freeze the whole pool during
+          a rate-limit burst. When False (instructor adapter), no slot is
+          acquired here: the caller (``complete_structured``) holds one for
+          the whole structured call, so backoff sleeps keep it.
+        - ``usage_context``: when not None (text calls), every successful
+          attempt is recorded via ``track_usage``. None for the instructor
+          adapter: usage is tracked once per structured call from the final
+          raw response, which instructor accumulates across its own retries.
+        - ``finalize``: maps the successful raw response (plus derived
+          model/tokens/cost) to the return value; None returns the raw
+          ModelResponse (instructor needs the raw object).
+        """
+        model = kwargs.get("model", "default")
+        last_exception: Exception | None = None
+
+        # Backoff sleeps happen at the top of the next iteration, OUTSIDE the
+        # semaphore when own_semaphore is set (see docstring above)
+        retry_delay = 0.0
+        semaphore_ctx = self.semaphore if own_semaphore else nullcontext()
+
+        for attempt in range(max_retries + 1):
+            if retry_delay > 0:
+                await asyncio.sleep(retry_delay)
+                retry_delay = 0.0
+            start_time = time.perf_counter()
+
+            async with semaphore_ctx:
                 try:
                     # Log request start
                     if attempt == 0:
@@ -471,6 +588,15 @@ class LLMEngine:
                     input_tokens = usage.prompt_tokens if usage else 0
                     output_tokens = usage.completion_tokens if usage else 0
 
+                    if usage_context is not None:
+                        self._track_usage(
+                            actual_model,
+                            input_tokens,
+                            output_tokens,
+                            cost,
+                            usage_context,
+                        )
+
                     # Log result
                     logger.info(
                         f"[LLM:{call_id}] {actual_model} "
@@ -495,9 +621,13 @@ class LLMEngine:
                         else:
                             logger.error(
                                 f"[LLM:{call_id}] Empty response after "
-                                f"{max_retries + 1} attempts, returning as-is"
+                                f"{max_retries + 1} attempts, returning empty content"
                             )
 
+                    if finalize is not None:
+                        return finalize(
+                            response, actual_model, input_tokens, output_tokens, cost
+                        )
                     return response
 
                 except RETRYABLE_ERRORS as e:
@@ -601,7 +731,7 @@ class LLMEngine:
                         "incorrect api key",
                     )
                     if any(p in error_msg_lower for p in auth_patterns):
-                        target = get_primary_model(active_router)
+                        target = self._get_primary_model(active_router)
                         logger.error(
                             f"[LLM:{call_id}] Authentication failed for model "
                             f"'{target}':\n"
@@ -617,7 +747,5 @@ class LLMEngine:
                         )
                     raise
 
-            # Should not reach here, but just in case
-            raise RuntimeError(f"[LLM:{call_id}] Unexpected state in retry loop")
-
-        return retrying_acompletion
+        # Should not reach here, but just in case
+        raise RuntimeError(f"[LLM:{call_id}] Unexpected state in retry loop")

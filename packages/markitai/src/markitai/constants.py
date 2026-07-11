@@ -60,8 +60,8 @@ DEFAULT_SUBPROCESS_TIMEOUT = 30  # seconds — LibreOffice/external tool timeout
 DEFAULT_LLM_READY_TIMEOUT = 300.0  # seconds — wait for LLM provider readiness
 DEFAULT_VISION_MAX_DIMENSION = 2048  # pixels — max dimension for vision input images
 
-# Note: RETRYABLE_ERRORS tuple is defined in llm.py as it contains
-# actual exception classes from litellm that cannot be imported here
+# Note: RETRYABLE_ERRORS tuple is defined in markitai.llm.engine as it
+# contains actual exception classes from litellm that cannot be imported here
 
 # =============================================================================
 # Image Processing

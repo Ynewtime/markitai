@@ -1115,10 +1115,12 @@ class TestVisionContentPartsReminder:
         fake_image = tmp_path / "page1.png"
         fake_image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
 
-        # Capture the messages passed to _call_llm
+        # Capture the messages passed to engine.complete_text
+        # (enhance_document_with_vision calls the engine directly since
+        # Phase 2.3, bypassing _call_llm)
         captured: dict = {}
 
-        async def fake_call_llm(model, messages, context=""):
+        async def fake_complete_text(*, model, messages, **kwargs):
             captured["messages"] = messages
             mock_response = MagicMock()
             mock_response.content = "cleaned content"
@@ -1138,7 +1140,9 @@ class TestVisionContentPartsReminder:
         processor._persistent_cache.set = MagicMock()
 
         with (
-            patch.object(processor, "_call_llm", side_effect=fake_call_llm),
+            patch.object(
+                processor.engine, "complete_text", side_effect=fake_complete_text
+            ),
             patch.object(
                 processor, "_get_cached_image", side_effect=fake_get_cached_image
             ),

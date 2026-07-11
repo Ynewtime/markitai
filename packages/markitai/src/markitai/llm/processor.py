@@ -11,7 +11,7 @@ import time
 import warnings
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 # Suppress LiteLLM's async logging warnings (coroutine never awaited)
 warnings.filterwarnings(
@@ -24,15 +24,7 @@ import litellm
 
 # Suppress LiteLLM's "Provider List" debug messages for custom providers
 litellm.suppress_debug_info = True
-from litellm.exceptions import (
-    APIConnectionError,
-    RateLimitError,
-    ServiceUnavailableError,
-    Timeout,
-)
 from litellm.router import Router
-from litellm.types.llms.openai import AllMessageValues
-from litellm.types.utils import Choices
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -48,18 +40,24 @@ from markitai.constants import (
     DEFAULT_IO_CONCURRENCY,
     DEFAULT_MAX_OUTPUT_TOKENS_HARD_CAP,
     DEFAULT_MAX_RETRIES,
-    DEFAULT_RETRY_BASE_DELAY,
-    DEFAULT_RETRY_MAX_DELAY,
     DEFAULT_VISION_MAX_DIMENSION,
 )
 from markitai.llm import content
 from markitai.llm.cache import ContentCache, PersistentCache
 from markitai.llm.document import DocumentMixin
+from markitai.llm.engine import (
+    MODEL_LEVEL_ERROR_PATTERNS as _ENGINE_MODEL_LEVEL_ERROR_PATTERNS,
+)
+
+# Canonical definition lives in markitai.llm.engine (processor imports engine,
+# not vice versa); re-exported here for backwards compatibility.
+from markitai.llm.engine import (
+    RETRYABLE_ERRORS as RETRYABLE_ERRORS,
+)
 from markitai.llm.engine import LLMEngine
 from markitai.llm.models import (
     MarkitaiLLMLogger,
     get_model_info_cached,
-    get_response_cost,
 )
 from markitai.llm.types import (
     LLMResponse,
@@ -334,15 +332,9 @@ class HybridRouter:
 
     # Model-level error patterns that indicate the model itself is unavailable
     # (not a content/request issue). These warrant long cooldown.
-    MODEL_LEVEL_ERROR_PATTERNS = (
-        "user location is not supported",
-        "failed_precondition",
-        "model is not available",
-        "model not found",
-        "model_not_available",
-        "region is not supported",
-        "not available in your region",
-    )
+    # Canonical definition lives in markitai.llm.engine; the class attribute
+    # keeps the HybridRouter.MODEL_LEVEL_ERROR_PATTERNS access path working.
+    MODEL_LEVEL_ERROR_PATTERNS = _ENGINE_MODEL_LEVEL_ERROR_PATTERNS
 
     def __init__(
         self,
@@ -588,14 +580,6 @@ class HybridRouter:
 # When user-specified max_tokens exceeds model's max_output_tokens,
 # LiteLLM will automatically cap it to the model's limit
 litellm.modify_params = True
-
-# Retryable exceptions (kept here as they depend on litellm types)
-RETRYABLE_ERRORS = (
-    RateLimitError,
-    APIConnectionError,
-    Timeout,
-    ServiceUnavailableError,
-)
 
 
 # Global callback instance (uses MarkitaiLLMLogger from models.py)
@@ -1403,6 +1387,10 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         """
         Make an LLM call with custom retry logic and detailed logging.
 
+        Thin delegate: the transport retry loop lives in
+        ``LLMEngine.complete_text`` (Phase 2.3). This wrapper keeps the
+        historical signature for existing callers and tests.
+
         Args:
             model: Logical model name (e.g., "default")
             messages: Chat messages
@@ -1414,228 +1402,14 @@ class LLMProcessor(VisionMixin, DocumentMixin):
         Returns:
             LLMResponse with content and usage info
         """
-        # Use provided router or default to main router
-        active_router = router or self.router
-        last_exception: Exception | None = None
-
-        # Calculate dynamic max_tokens based on input size and target model
-        # Pass router so the limit is the minimum across the model pool
-        target_model_id = self._get_router_primary_model(active_router)
-        max_tokens = self._calculate_dynamic_max_tokens(
-            messages, target_model_id, router=active_router
+        return await self.engine.complete_text(
+            model=model,
+            messages=messages,
+            call_id=call_id,
+            context=context,
+            max_retries=max_retries,
+            router=router,
         )
-
-        # Backoff sleeps happen at the top of the next iteration, OUTSIDE the
-        # semaphore: sleeping while holding a slot would freeze the whole pool
-        # during a rate-limit burst instead of letting other requests proceed
-        retry_delay = 0.0
-
-        for attempt in range(max_retries + 1):
-            if retry_delay > 0:
-                await asyncio.sleep(retry_delay)
-                retry_delay = 0.0
-            start_time = time.perf_counter()
-
-            async with self.semaphore:
-                try:
-                    # Log request start
-                    if attempt == 0:
-                        logger.debug(f"[LLM:{call_id}] Request to {model}")
-                    else:
-                        # Log retry attempt
-                        error_type = (
-                            type(last_exception).__name__
-                            if last_exception
-                            else "Unknown"
-                        )
-                        status_code = getattr(last_exception, "status_code", "N/A")
-                        logger.warning(
-                            f"[LLM:{call_id}] Retry #{attempt}: {error_type} "
-                            f"status={status_code}"
-                        )
-
-                    response = await active_router.acompletion(
-                        model=model,
-                        messages=cast(list[AllMessageValues], messages),
-                        max_tokens=max_tokens,
-                        metadata={"call_id": call_id, "attempt": attempt},
-                    )
-
-                    elapsed_ms = (time.perf_counter() - start_time) * 1000
-                    # litellm returns Choices (not StreamingChoices) for non-streaming
-                    choice = cast(Choices, response.choices[0])
-                    content = choice.message.content or ""
-                    actual_model = response.model or model
-
-                    # Calculate cost (uses _hidden_params for local providers)
-                    cost = get_response_cost(response)
-
-                    # Track usage (usage attr exists at runtime but not in type stubs)
-                    usage = getattr(response, "usage", None)
-                    input_tokens = usage.prompt_tokens if usage else 0
-                    output_tokens = usage.completion_tokens if usage else 0
-
-                    self._track_usage(
-                        actual_model, input_tokens, output_tokens, cost, context
-                    )
-
-                    # Log result
-                    logger.info(
-                        f"[LLM:{call_id}] {actual_model} "
-                        f"tokens={input_tokens}+{output_tokens} "
-                        f"time={elapsed_ms:.0f}ms cost=${cost:.6f}"
-                    )
-
-                    # Detect empty response (0 output tokens with substantial input)
-                    # This usually indicates a model failure that should be retried
-                    if output_tokens == 0 and input_tokens > 100:
-                        if attempt < max_retries:
-                            logger.warning(
-                                f"[LLM:{call_id}] Empty response (0 output tokens), "
-                                f"retrying with different model..."
-                            )
-                            # Treat as retryable error
-                            retry_delay = min(
-                                DEFAULT_RETRY_BASE_DELAY * (2**attempt),
-                                DEFAULT_RETRY_MAX_DELAY,
-                            )
-                            continue
-                        else:
-                            logger.error(
-                                f"[LLM:{call_id}] Empty response after {max_retries + 1} "
-                                f"attempts, returning empty content"
-                            )
-
-                    return LLMResponse(
-                        content=content,
-                        model=actual_model,
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        cost_usd=cost,
-                    )
-
-                except RETRYABLE_ERRORS as e:
-                    elapsed_ms = (time.perf_counter() - start_time) * 1000
-                    last_exception = e
-
-                    # Check for quota/billing errors that should NOT be retried
-                    # These errors are wrapped by LiteLLM as APIConnectionError but
-                    # are actually non-recoverable without user action.
-                    # Genuine rate limits (RateLimitError) often mention "quota"
-                    # in provider text (e.g. "quota will reset after 30s") but ARE
-                    # retryable: the router cooldown recorded for the failing
-                    # model routes the retry to another model.
-                    error_msg_lower = str(e).lower()
-                    if isinstance(e, RateLimitError):
-                        non_retryable_patterns = (
-                            "billing",
-                            "payment",
-                            "402",
-                            "insufficient_quota",
-                            "exceeded your current quota",
-                        )
-                    else:
-                        non_retryable_patterns = (
-                            "quota",
-                            "billing",
-                            "payment",
-                            "subscription",
-                            "402",
-                            "insufficient_quota",
-                            "exceeded your current quota",
-                        )
-                    if any(
-                        pattern in error_msg_lower for pattern in non_retryable_patterns
-                    ):
-                        status_code = getattr(e, "status_code", "N/A")
-                        logger.error(
-                            f"[LLM:{call_id}] Quota/billing error (not retrying): "
-                            f"status={status_code} {format_error_message(e)} "
-                            f"time={elapsed_ms:.0f}ms"
-                        )
-                        raise
-
-                    if attempt == max_retries:
-                        # Final failure after all retries
-                        error_type = type(e).__name__
-                        status_code = getattr(e, "status_code", "N/A")
-                        provider = getattr(e, "llm_provider", "N/A")
-                        logger.error(
-                            f"[LLM:{call_id}] Failed after {max_retries + 1} attempts: "
-                            f"{error_type} status={status_code} provider={provider} "
-                            f"time={elapsed_ms:.0f}ms"
-                        )
-                        raise
-
-                    # Calculate exponential backoff delay
-                    retry_delay = min(
-                        DEFAULT_RETRY_BASE_DELAY * (2**attempt), DEFAULT_RETRY_MAX_DELAY
-                    )
-
-                except Exception as e:
-                    elapsed_ms = (time.perf_counter() - start_time) * 1000
-                    error_msg_lower = str(e).lower()
-
-                    # Model-level errors are retryable (HybridRouter cooldown
-                    # ensures the next attempt picks a different model)
-                    if any(
-                        p in error_msg_lower
-                        for p in HybridRouter.MODEL_LEVEL_ERROR_PATTERNS
-                    ):
-                        last_exception = e
-                        status_code = getattr(e, "status_code", "N/A")
-                        if attempt < max_retries:
-                            logger.warning(
-                                f"[LLM:{call_id}] Model-level error "
-                                f"(status={status_code}), retrying: "
-                                f"{format_error_message(e)} "
-                                f"time={elapsed_ms:.0f}ms"
-                            )
-                            retry_delay = min(
-                                DEFAULT_RETRY_BASE_DELAY * (2**attempt),
-                                DEFAULT_RETRY_MAX_DELAY,
-                            )
-                            continue
-                        else:
-                            logger.error(
-                                f"[LLM:{call_id}] Model-level error after "
-                                f"{max_retries + 1} attempts: "
-                                f"{format_error_message(e)} "
-                                f"time={elapsed_ms:.0f}ms"
-                            )
-                            raise
-
-                    # Check for authentication errors and provide friendly hints
-                    status_code = getattr(e, "status_code", "N/A")
-                    auth_patterns = (
-                        "authentication",
-                        "api_key",
-                        "api key",
-                        "unauthorized",
-                        "401",
-                        "403",
-                        "invalid x-api-key",
-                        "incorrect api key",
-                    )
-                    if any(p in error_msg_lower for p in auth_patterns):
-                        target = self._get_router_primary_model(active_router)
-                        logger.error(
-                            f"[LLM:{call_id}] Authentication failed for model "
-                            f"'{target}':\n"
-                            f"  {format_error_message(e)}\n\n"
-                            f"  Hint: Use MODEL=<provider/model> with the "
-                            f"corresponding API key env var,\n"
-                            f"  or run 'markitai init' to configure interactively."
-                        )
-                    else:
-                        logger.error(
-                            f"[LLM:{call_id}] Failed: status={status_code} "
-                            f"{format_error_message(e)} time={elapsed_ms:.0f}ms"
-                        )
-                    raise
-
-        # Should not reach here, but just in case
-        raise RuntimeError(f"[LLM:{call_id}] Unexpected state in retry loop")
 
     def _track_usage(
         self,
