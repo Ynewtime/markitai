@@ -45,6 +45,7 @@ dev = [
     "bandit>=1.8.0",
     "lxml-stubs>=0.5.1",
     "rapidfuzz>=3.9",
+    "import-linter>=2.13",
 ]
 
 [tool.pytest.ini_options]
@@ -96,6 +97,117 @@ skips = [
     "B404",  # subprocess import - required for system integration
     "B603",  # subprocess calls - validated inputs from config
     "B607",  # partial path - system commands (powershell, scutil)
+]
+
+# Architecture layering contracts (docs/redesign/02-execution-plan.md Phase 1).
+# ignore_imports entries are a shrink-only allowlist of pre-existing violations:
+# never add to them — fix the dependency direction instead.
+[tool.importlinter]
+root_packages = ["markitai"]
+
+[[tool.importlinter.contracts]]
+name = "cli is the top layer: nothing below may import it"
+type = "forbidden"
+source_modules = [
+    "markitai.batch",
+    "markitai.config",
+    "markitai.constants",
+    "markitai.converter",
+    "markitai.domain_profiles",
+    "markitai.fetch",
+    "markitai.fetch_cache",
+    "markitai.fetch_http",
+    "markitai.fetch_playwright",
+    "markitai.fetch_policy",
+    "markitai.fetch_types",
+    "markitai.image",
+    "markitai.json_order",
+    "markitai.llm",
+    "markitai.ocr",
+    "markitai.prompts",
+    "markitai.providers",
+    "markitai.security",
+    "markitai.types",
+    "markitai.urls",
+    "markitai.utils",
+    "markitai.webextract",
+    "markitai.workflow",
+]
+forbidden_modules = ["markitai.cli"]
+ignore_imports = [
+    # Phase 1.4: consent prompts pause the live display via direct UI import
+    "markitai.fetch -> markitai.cli.ui",
+    # Phase 1.5: batch engine renders progress through cli console/ui/log filter
+    "markitai.batch -> markitai.cli.ui",
+    "markitai.batch -> markitai.cli.console",
+    "markitai.batch -> markitai.cli.logging_config",
+]
+
+[[tool.importlinter.contracts]]
+name = "foundation layer knows no domain or orchestration"
+type = "forbidden"
+source_modules = [
+    "markitai.config",
+    "markitai.constants",
+    "markitai.domain_profiles",
+    "markitai.fetch_cache",
+    "markitai.fetch_http",
+    "markitai.fetch_policy",
+    "markitai.fetch_types",
+    "markitai.json_order",
+    "markitai.prompts",
+    "markitai.security",
+    "markitai.types",
+    "markitai.urls",
+    "markitai.utils",
+]
+forbidden_modules = [
+    "markitai.batch",
+    "markitai.converter",
+    "markitai.fetch",
+    "markitai.fetch_playwright",
+    "markitai.image",
+    "markitai.llm",
+    "markitai.ocr",
+    "markitai.providers",
+    "markitai.webextract",
+    "markitai.workflow",
+]
+
+[[tool.importlinter.contracts]]
+name = "domain subsystems know no orchestration"
+type = "forbidden"
+source_modules = [
+    "markitai.converter",
+    "markitai.fetch",
+    "markitai.fetch_playwright",
+    "markitai.image",
+    "markitai.llm",
+    "markitai.ocr",
+    "markitai.providers",
+    "markitai.webextract",
+]
+forbidden_modules = ["markitai.workflow", "markitai.batch"]
+
+[[tool.importlinter.contracts]]
+name = "webextract stays a pure extraction domain"
+type = "forbidden"
+source_modules = ["markitai.webextract"]
+forbidden_modules = [
+    "markitai.batch",
+    "markitai.config",
+    "markitai.converter",
+    "markitai.fetch",
+    "markitai.fetch_playwright",
+    "markitai.image",
+    "markitai.llm",
+    "markitai.ocr",
+    "markitai.providers",
+    "markitai.workflow",
+]
+ignore_imports = [
+    # Phase 1.6: html-to-markdown renderer lives in converter/ but belongs here
+    "markitai.webextract.pipeline -> markitai.converter.webextract_html_converter",
 ]
 
 # NOTE: intentionally duplicated with packages/markitai/pyproject.toml [tool.pyright]
