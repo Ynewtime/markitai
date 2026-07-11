@@ -553,15 +553,29 @@ class TestConfigFileError:
         assert config_file.exists()
         assert json.loads(config_file.read_text()) == {"image": {"quality": 500}}
 
-    def test_error_is_click_exception(self, tmp_path: Path) -> None:
-        """ClickException means the CLI prints the message, not a traceback."""
-        import click
+    def test_cli_prints_message_not_traceback(self, tmp_path: Path) -> None:
+        """The CLI surfaces the actionable message, exits non-zero, no traceback.
+
+        ConfigFileError itself is framework-free (the config foundation must
+        not depend on click); MarkitaiGroup.invoke performs the translation.
+        """
+        from click.testing import CliRunner
+
+        from markitai.cli import app
 
         config_file = tmp_path / "markitai.json"
         config_file.write_text(json.dumps({"llm": {"concurrency": 0}}))
+        input_file = tmp_path / "doc.txt"
+        input_file.write_text("hello")
 
-        with pytest.raises(click.ClickException):
-            ConfigManager().load(config_path=config_file)
+        result = CliRunner().invoke(
+            app, [str(input_file), "--config", str(config_file)]
+        )
+
+        assert result.exit_code != 0
+        assert "llm.concurrency" in result.output
+        assert "Traceback" not in result.output
+        assert not isinstance(result.exception, ConfigFileError)  # translated
 
 
 class TestExplicitConfigPathWarnings:

@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+from typing import Any
 
 import rich_click as click
 from click import Context
+
+from markitai.config import ConfigFileError
 
 # Mapping of command name -> (module_path, attribute_name, short_help)
 # This allows list_commands() and get_command() to work without importing
@@ -77,6 +80,19 @@ class MarkitaiGroup(click.RichGroup):
         "-s",
         "--strategy",
     }
+
+    def invoke(self, ctx: Context) -> Any:
+        """Translate foundation-layer errors into user-facing CLI errors.
+
+        ConfigFileError is framework-free (the config foundation must not
+        depend on click); converting it here keeps the CLI behavior — print
+        the actionable message, exit non-zero, no traceback — for every
+        command and subcommand.
+        """
+        try:
+            return super().invoke(ctx)
+        except ConfigFileError as e:
+            raise click.ClickException(str(e)) from e
 
     def list_commands(self, ctx: Context) -> list[str]:
         """Return sorted list of all command names (lazy + eagerly registered)."""
