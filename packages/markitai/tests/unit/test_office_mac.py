@@ -99,6 +99,48 @@ class TestScriptBuilding:
         assert "set update links at open of settings to false" in script
         assert "set update links at open of settings to previousExtraSetting" in script
 
+    def test_word_poll_stall_falls_back_to_plain_open(self) -> None:
+        # Regression lock (post-update first-launch state, verified live
+        # 2026-07-12): Word silently drops the parametered open on its first
+        # scripted launch after an Office update, while a plain open goes
+        # through. The script must retry mid-poll with a plain open and
+        # report the recovery through the marker.
+        script = office_mac._build_legacy_script(
+            "Microsoft Word", Path("/tmp/in.doc"), Path("/tmp/out.docx")
+        )
+        assert script.count("open (POSIX file") == 2
+        assert 'open (POSIX file "/tmp/in.doc")\n' in script + "\n"
+        assert "if waitCount = 25 then" in script
+        assert "set usedFallbackOpen to true" in script
+        assert office_mac._FALLBACK_MARKER in script
+        # The fallback must run before the stall error can fire.
+        assert script.index("if waitCount = 25 then") < script.index("number 6001")
+
+    def test_powerpoint_scripts_have_no_fallback_open(self) -> None:
+        # PowerPoint's open is already parameterless and fails the
+        # first-launch state with -9074 instead of a silent drop; a retry
+        # cannot help (state persists), so its scripts stay fallback-free.
+        for script in (
+            office_mac._build_legacy_script(
+                "Microsoft PowerPoint", Path("/tmp/in.ppt"), Path("/tmp/out.pptx")
+            ),
+            office_mac._build_pdf_script(Path("/tmp/in.pptx"), Path("/tmp/out.pdf")),
+        ):
+            assert script.count("open (POSIX file") == 1
+            assert "usedFallbackOpen to true" not in script
+            assert office_mac._FALLBACK_MARKER not in script
+
+    def test_stall_error_guides_manual_launch(self) -> None:
+        # The stalled-open state is not "stuck or overloaded" (main thread
+        # idles) and quit-and-retry does not clear it; the only verified
+        # remedy is opening the app manually once.
+        for app in ("Microsoft Word", "Microsoft PowerPoint"):
+            script = office_mac._build_legacy_script(
+                app, Path("/tmp/in.doc"), Path("/tmp/out.docx")
+            )
+            assert f"open {app} manually once" in script
+            assert "stuck or overloaded" not in script
+
     def test_security_is_restored_before_save(self) -> None:
         script = office_mac._build_pdf_script(
             Path("/tmp/in.pptx"), Path("/tmp/out.pdf")
@@ -169,6 +211,37 @@ class TestRunAppleScript:
             pytest.raises(RuntimeError, match="dialog"),
         ):
             office_mac._run_applescript("s", timeout=10, app="Microsoft Word")
+
+    def test_9074_guides_manual_launch_not_quit_and_retry(self) -> None:
+        refused = MagicMock(
+            returncode=1, stdout="", stderr="execution error: ... (-9074)"
+        )
+        with (
+            patch("markitai.utils.office_mac.subprocess.run", return_value=refused),
+            pytest.raises(RuntimeError, match="manually once") as excinfo,
+        ):
+            office_mac._run_applescript("s", timeout=10, app="Microsoft PowerPoint")
+        assert "bad state" not in str(excinfo.value)
+
+    def test_fallback_marker_logs_recovery(self) -> None:
+        used = MagicMock(
+            returncode=0, stdout=f"{office_mac._FALLBACK_MARKER}\n", stderr=""
+        )
+        with (
+            patch("markitai.utils.office_mac.subprocess.run", return_value=used),
+            patch("markitai.utils.office_mac.logger.info") as info_mock,
+        ):
+            office_mac._run_applescript("s", timeout=10, app="Microsoft Word")
+        assert "fallback" in info_mock.call_args.args[0]
+
+    def test_no_marker_logs_nothing(self) -> None:
+        clean = MagicMock(returncode=0, stdout="", stderr="")
+        with (
+            patch("markitai.utils.office_mac.subprocess.run", return_value=clean),
+            patch("markitai.utils.office_mac.logger.info") as info_mock,
+        ):
+            office_mac._run_applescript("s", timeout=10, app="Microsoft Word")
+        info_mock.assert_not_called()
 
 
 class TestConvertLegacy:

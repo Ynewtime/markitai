@@ -16,6 +16,18 @@ Automation (TCC) note: the first Apple Event sent to each Office app
 triggers a one-time "wants to control" consent dialog for the host app.
 A denial surfaces as osascript error -1743, mapped to an actionable
 message below.
+
+Cold-start note (verified live 2026-07-12, Office 16.110): on an app's
+first scripted launch after an Office update, the app answers Apple
+Events normally but silently drops ``open`` requests that carry labeled
+parameters, while sitting hidden at its startup gallery with an idle
+main thread. A parameterless ``open`` goes through instantly and heals
+the instance for the rest of its lifetime. Word's script therefore
+retries with a plain ``open`` when the existence poll stalls; PowerPoint
+fails that state differently (its ``open`` raises -9074 outright), so
+its script has no in-poll fallback and the error message carries the
+recovery steps instead. Quitting and retrying does NOT clear the state —
+opening the app manually once does.
 """
 
 from __future__ import annotations
@@ -50,6 +62,10 @@ _STALE_STAGING_AGE_SECONDS = 24 * 60 * 60
 
 # osascript error code for a denied/unanswered TCC automation prompt
 _ERR_NOT_AUTHORIZED = "-1743"
+
+# Script result marking that the mid-poll plain-open fallback ran
+# (see _wrap_office_script); surfaced on stdout for logging only.
+_FALLBACK_MARKER = "markitai:fallback-open-used"
 
 APP_BY_SUFFIX: dict[str, str] = {
     ".doc": "Microsoft Word",
@@ -163,6 +179,7 @@ def _wrap_office_script(
     in_name: str,
     out_name: str,
     extra_setting: tuple[str, str] | None = None,
+    fallback_open_line: str | None = None,
 ) -> str:
     """Wrap one conversion in safe Office automation state handling.
 
@@ -178,11 +195,21 @@ def _wrap_office_script(
     bound by its staged file name (unique uuid hex per conversion, so user
     documents are never referenced), and cleanup closes by name with no
     variable dependency, so the original error always propagates.
+
+    ``fallback_open_line`` is a parameterless ``open`` retried mid-poll when
+    the document has not registered after 5s: an app's first scripted launch
+    after an Office update silently drops parametered opens but accepts plain
+    ones (see the module cold-start note). The fallback trades the primary
+    open's side-effect guards for getting the document open at all — the
+    staged copy stays safe (chmod 0400), but it may land in the app's recent
+    files. When the fallback ran, the script returns a marker string so the
+    caller can log the recovery.
     """
     container = _CONTAINER_BY_APP[app]
     lines = [
         f'tell application "{app}"',
         "    set previousAutomationSecurity to automation security",
+        "    set usedFallbackOpen to false",
     ]
     if extra_setting is not None:
         setting, _disabled_value = extra_setting
@@ -207,13 +234,31 @@ def _wrap_office_script(
             f'        repeat until (exists {container} "{in_name}") or waitCount ≥ 150',
             "            delay 0.2",
             "            set waitCount to waitCount + 1",
+        ]
+    )
+    if fallback_open_line is not None:
+        # 25 * 0.2s = 5s of silence; healthy opens register in well under
+        # 2s even across a cold app launch (measured).
+        lines.extend(
+            [
+                "            if waitCount = 25 then",
+                "                set usedFallbackOpen to true",
+                "                try",
+                f"                    {fallback_open_line}",
+                "                end try",
+                "            end if",
+            ]
+        )
+    lines.extend(
+        [
             "        end repeat",
             # Surface the stall explicitly: without this the bind grabs
             # missing value and dies later at save with an inscrutable -1708.
             f'        if not (exists {container} "{in_name}") then',
-            f'            error "{app} accepted the open request but the '
-            f"{container} never registered (app stuck or overloaded). "
-            f'Quit {app} and retry." number 6001',
+            f'            error "{app} accepted the open request but no '
+            f"{container} appeared. This is typical of the first scripted "
+            f"launch after an Office update: open {app} manually once, let "
+            f'it finish first-run setup, then retry." number 6001',
             "        end if",
             f'        set openedItem to {container} "{in_name}"',
         ]
@@ -226,6 +271,8 @@ def _wrap_office_script(
     lines.extend(
         f"        {line}" for line in _close_by_name_lines(app, in_name, out_name)
     )
+    if fallback_open_line is not None:
+        lines.append(f'        if usedFallbackOpen then return "{_FALLBACK_MARKER}"')
     lines.extend(
         [
             "    on error errorMessage number errorNumber",
@@ -265,7 +312,6 @@ def _wrap_office_script(
 def _build_legacy_script(app: str, staged_in: Path, staged_out: Path) -> str:
     inp = _as_quote(staged_in)
     out = _as_quote(staged_out)
-    names = {"in_name": staged_in.name, "out_name": staged_out.name}
     if app == "Microsoft Word":
         return _wrap_office_script(
             app,
@@ -277,9 +323,13 @@ def _build_legacy_script(app: str, staged_in: Path, staged_out: Path) -> str:
                 "save as openedItem file name outPath "
                 "file format format document default",
             ],
+            in_name=staged_in.name,
+            out_name=staged_out.name,
             # Word otherwise updates embedded OLE links while opening.
             extra_setting=("update links at open of settings", "false"),
-            **names,
+            # Word's post-update first launch drops the parametered open
+            # above; a plain open penetrates that state (verified live).
+            fallback_open_line=f'open (POSIX file "{inp}")',
         )
     if app == "Microsoft PowerPoint":
         return _wrap_office_script(
@@ -289,7 +339,8 @@ def _build_legacy_script(app: str, staged_in: Path, staged_out: Path) -> str:
                 f'save openedItem in (POSIX file "{out}") '
                 "as save as Open XML presentation"
             ],
-            **names,
+            in_name=staged_in.name,
+            out_name=staged_out.name,
         )
     raise ValueError(f"Unsupported Office app: {app}")
 
@@ -332,15 +383,23 @@ def _run_applescript(script: str, *, timeout: int, app: str) -> None:
                 "Automation, then retry."
             )
         if "-9074" in stderr:
-            # PowerPoint's catch-all open failure; observed when the app is
-            # in a wedged state (e.g. after a force kill). A normal restart
-            # clears it.
+            # PowerPoint's catch-all open refusal; observed on the first
+            # scripted launch after an Office update (see the module
+            # cold-start note). Quitting and retrying does not clear it.
             raise RuntimeError(
-                f"{app} refused to open the document (error -9074), which "
-                f"usually means the app is in a bad state. Quit {app} "
-                "completely and retry."
+                f"{app} refused to open the document (error -9074). This is "
+                f"typical of the first scripted launch after an Office "
+                f"update: open {app} manually once, let it finish first-run "
+                "setup, then retry."
             )
         raise RuntimeError(f"{app} automation failed: {stderr[:300]}")
+
+    if _FALLBACK_MARKER in result.stdout:
+        logger.info(
+            f"[OfficeMac] {app} dropped the parametered open request "
+            "(post-update first-launch state); recovered via the plain "
+            "open fallback."
+        )
 
 
 def _staging_base() -> Path:
