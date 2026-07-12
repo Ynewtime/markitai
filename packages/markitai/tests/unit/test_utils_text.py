@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from markitai.utils.text import (
     clean_control_characters,
+    extract_asset_image_names,
     format_error_message,
     preview_items_for_log,
 )
@@ -330,3 +331,52 @@ class TestPreviewItemsForLog:
             preview_items_for_log(["a", "b", "c", "d", "e"], max_items=3)
             == "a, b, c, +2 more"
         )
+
+
+class TestExtractAssetImageNames:
+    """Tests for extract_asset_image_names helper."""
+
+    def test_extracts_names_in_document_order(self) -> None:
+        """Names should come back in the order they appear."""
+        markdown = (
+            "Intro\n"
+            "![](.markitai/assets/doc.pdf-0001-00.jpg)\n"
+            "Middle\n"
+            "![Figure 2](.markitai/assets/doc.pdf-0002-01.jpg)\n"
+        )
+        assert extract_asset_image_names(markdown) == [
+            "doc.pdf-0001-00.jpg",
+            "doc.pdf-0002-01.jpg",
+        ]
+
+    def test_deduplicates_repeated_refs(self) -> None:
+        """The same asset referenced twice should appear once."""
+        markdown = (
+            "![](.markitai/assets/a.png)\n"
+            "![](.markitai/assets/a.png)\n"
+            "![](.markitai/assets/b.png)\n"
+        )
+        assert extract_asset_image_names(markdown) == ["a.png", "b.png"]
+
+    def test_handles_sanitized_names_with_spaces_in_source(self) -> None:
+        """Sanitized asset names (spaces -> underscores) are returned as-is."""
+        markdown = "![](.markitai/assets/My_Paper_v7.pdf-0003-00.jpg)"
+        assert extract_asset_image_names(markdown) == ["My_Paper_v7.pdf-0003-00.jpg"]
+
+    def test_ignores_non_asset_refs(self) -> None:
+        """External URLs and other relative paths are not asset names."""
+        markdown = (
+            "![](https://example.com/x.png)\n"
+            "![](images/local.png)\n"
+            "![](.markitai/screenshots/doc.pdf.page0001.jpg)\n"
+        )
+        assert extract_asset_image_names(markdown) == []
+
+    def test_supports_backslash_separator(self) -> None:
+        """Windows-style separators after the assets prefix are accepted."""
+        markdown = "![](.markitai/assets\\win.png)"
+        assert extract_asset_image_names(markdown) == ["win.png"]
+
+    def test_empty_markdown(self) -> None:
+        """No refs means an empty list."""
+        assert extract_asset_image_names("") == []

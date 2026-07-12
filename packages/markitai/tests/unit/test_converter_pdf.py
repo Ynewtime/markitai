@@ -201,6 +201,40 @@ class TestCollectEmbeddedImages:
             assert isinstance(img, ExtractedImage)
             assert "test.pdf" in img.original_name
 
+    def test_collect_via_markdown_refs_with_sanitized_names(
+        self, tmp_path: Path
+    ) -> None:
+        """Sanitized asset names (spaced source name) resolve via markdown refs.
+
+        pymupdf4llm rewrites spaces to underscores in asset names, so the
+        raw input-name pattern never matches; the refs in the converted
+        markdown are authoritative.
+        """
+        converter = PdfConverter()
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+
+        (assets_dir / "My_Doc.pdf-0001-00.png").touch()
+        (assets_dir / "My_Doc.pdf-0002-01.jpg").touch()
+        markdown = (
+            "![](.markitai/assets/My_Doc.pdf-0001-00.png)\n"
+            "![](.markitai/assets/My_Doc.pdf-0002-01.jpg)\n"
+        )
+
+        mock_pymupdf = create_pymupdf_mock()
+        with patch.dict(sys.modules, {"pymupdf": mock_pymupdf}):
+            images = converter._collect_embedded_images(  # type: ignore[reportAttributeAccessIssue]
+                assets_dir, "My Doc.pdf", markdown
+            )
+
+        assert len(images) == 2
+        assert {img.original_name for img in images} == {
+            "My_Doc.pdf-0001-00.png",
+            "My_Doc.pdf-0002-01.jpg",
+        }
+        # Page/image indices decoded from the zero-padded suffix
+        assert {img.index for img in images} == {100, 201}
+
     def test_ignore_non_matching_images(self, tmp_path: Path) -> None:
         """Test that non-matching images are ignored."""
         converter = PdfConverter()
@@ -333,6 +367,40 @@ class TestConvertBasic:
         # Verify pymupdf4llm was called with correct image_path
         call_args = mock_pymupdf4llm.to_markdown.call_args
         assert str(assets_dir) in call_args[1]["image_path"]
+
+    @patch("markitai.converter.pdf.pymupdf4llm")
+    def test_convert_collects_images_for_spaced_filename(
+        self, mock_pymupdf4llm: Mock, tmp_path: Path
+    ) -> None:
+        """Images are collected when the source filename contains spaces.
+
+        pymupdf4llm sanitizes the source name when writing assets
+        (spaces -> underscores), so collection must follow the markdown
+        refs instead of globbing on the raw input name.
+        """
+        from PIL import Image
+
+        pdf_file = tmp_path / "My Paper v7.pdf"
+        pdf_file.touch()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        sanitized_name = "My_Paper_v7.pdf-0001-00.png"
+
+        def fake_to_markdown(path: str, **kwargs: object) -> list[dict[str, str]]:
+            image_dir = Path(str(kwargs["image_path"]))
+            Image.new("RGB", (8, 8)).save(image_dir / sanitized_name)
+            return [{"text": f"![]({image_dir.as_posix()}/{sanitized_name})"}]
+
+        mock_pymupdf4llm.to_markdown.side_effect = fake_to_markdown
+
+        converter = PdfConverter()
+        result = converter.convert(pdf_file, output_dir)
+
+        assert f"![](.markitai/assets/{sanitized_name})" in result.markdown
+        assert len(result.images) == 1
+        assert result.images[0].path.name == sanitized_name
+        assert result.metadata["images"] == 1
 
     @patch("markitai.converter.pdf.pymupdf4llm")
     def test_convert_uses_temp_dir_when_no_output(

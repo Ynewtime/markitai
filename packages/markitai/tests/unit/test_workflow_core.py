@@ -490,6 +490,115 @@ class TestGetSavedImages:
         assert len(images) == 1
         assert images[0].suffix == ".png"
 
+    def test_finds_sanitized_names_via_markdown_refs(
+        self, tmp_path: Path, default_config: MarkitaiConfig
+    ) -> None:
+        """Assets named with a sanitized source prefix resolve via markdown refs.
+
+        pymupdf4llm rewrites spaces to underscores when naming extracted
+        images, so a prefix glob on the original input name finds nothing.
+        The refs written into the markdown must be used instead.
+        """
+        from markitai.converter.base import ConvertResult
+        from markitai.workflow.core import ConversionContext, get_saved_images
+
+        input_file = tmp_path / "My Paper v7.pdf"
+        input_file.write_text("dummy")
+        output_dir = tmp_path / "output"
+        assets_dir = output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+
+        (assets_dir / "My_Paper_v7.pdf-0001-00.jpg").touch()
+        (assets_dir / "My_Paper_v7.pdf-0002-01.jpg").touch()
+        (assets_dir / "unrelated.png").touch()
+
+        markdown = (
+            "![](.markitai/assets/My_Paper_v7.pdf-0001-00.jpg)\n"
+            "![](.markitai/assets/My_Paper_v7.pdf-0002-01.jpg)\n"
+        )
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=output_dir,
+            config=default_config,
+        )
+        ctx.conversion_result = ConvertResult(markdown=markdown)
+
+        images = get_saved_images(ctx)
+
+        assert [p.name for p in images] == [
+            "My_Paper_v7.pdf-0001-00.jpg",
+            "My_Paper_v7.pdf-0002-01.jpg",
+        ]
+
+    def test_includes_reference_images_metadata(
+        self, tmp_path: Path, default_config: MarkitaiConfig
+    ) -> None:
+        """Demoted reference images (metadata only) are also collected."""
+        from markitai.converter.base import ConvertResult
+        from markitai.workflow.core import ConversionContext, get_saved_images
+
+        input_file = tmp_path / "My Paper v7.pdf"
+        input_file.write_text("dummy")
+        output_dir = tmp_path / "output"
+        assets_dir = output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+
+        (assets_dir / "My_Paper_v7.pdf-0001-00.jpg").touch()
+        (assets_dir / "My_Paper_v7.pdf-0009-00.jpg").touch()
+
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=output_dir,
+            config=default_config,
+        )
+        ctx.conversion_result = ConvertResult(
+            markdown="![](.markitai/assets/My_Paper_v7.pdf-0001-00.jpg)\n",
+            metadata={
+                "reference_images": [
+                    {
+                        "page": 9,
+                        "name": "My_Paper_v7.pdf-0009-00.jpg",
+                        "rel_path": ".markitai/assets/My_Paper_v7.pdf-0009-00.jpg",
+                    }
+                ]
+            },
+        )
+
+        images = get_saved_images(ctx)
+
+        assert [p.name for p in images] == [
+            "My_Paper_v7.pdf-0001-00.jpg",
+            "My_Paper_v7.pdf-0009-00.jpg",
+        ]
+
+    def test_falls_back_to_glob_when_refs_missing_on_disk(
+        self, tmp_path: Path, default_config: MarkitaiConfig
+    ) -> None:
+        """Refs that resolve to nothing fall back to the input-name glob."""
+        from markitai.converter.base import ConvertResult
+        from markitai.workflow.core import ConversionContext, get_saved_images
+
+        input_file = tmp_path / "doc.pdf"
+        input_file.write_text("dummy")
+        output_dir = tmp_path / "output"
+        assets_dir = output_dir / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+
+        (assets_dir / "doc.pdf.image1.png").touch()
+
+        ctx = ConversionContext(
+            input_path=input_file,
+            output_dir=output_dir,
+            config=default_config,
+        )
+        ctx.conversion_result = ConvertResult(
+            markdown="![](.markitai/assets/deleted-by-postprocessing.png)\n"
+        )
+
+        images = get_saved_images(ctx)
+
+        assert [p.name for p in images] == ["doc.pdf.image1.png"]
+
 
 class TestWriteBaseMarkdown:
     """Tests for write_base_markdown function."""

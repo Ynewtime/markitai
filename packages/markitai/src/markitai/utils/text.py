@@ -364,6 +364,35 @@ def fix_malformed_image_refs(content: str) -> str:
     return content
 
 
+def extract_asset_image_names(markdown: str) -> list[str]:
+    """Extract basenames of ``.markitai/assets/`` image refs from markdown.
+
+    Returns names in document order, deduplicated. This is the reliable way
+    to discover which asset files belong to a document: refs are written by
+    the converter itself, so they always match on-disk names even when the
+    extractor sanitizes the source filename (e.g. pymupdf4llm rewrites
+    spaces and parentheses, so a prefix glob on the input name matches
+    nothing).
+
+    Args:
+        markdown: Markdown content with image references
+
+    Returns:
+        List of asset file basenames referenced in the markdown
+    """
+    from markitai.constants import ASSETS_REL_PATH
+
+    pattern = re.compile(rf"!\[[^\]]*\]\({re.escape(ASSETS_REL_PATH)}[/\\]([^)]+)\)")
+    seen: set[str] = set()
+    names: list[str] = []
+    for match in pattern.finditer(markdown):
+        name = match.group(1).strip()
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
 def fix_broken_markdown_links(content: str) -> str:
     """Fix broken markdown links where text and URL are split by newlines.
 

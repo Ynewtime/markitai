@@ -24,12 +24,14 @@ from markitai.converter.base import (
 )
 from markitai.image import ImageProcessor
 from markitai.ocr import is_likely_garbled
+from markitai.security import escape_glob_pattern
 from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.paths import (
     create_tracked_temp_dir,
     ensure_assets_dir,
     ensure_screenshots_dir,
 )
+from markitai.utils.text import extract_asset_image_names
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -549,16 +551,36 @@ class PdfConverter(BaseConverter):
             # we need relative paths (assets/xxx.jpg)
             markdown = self._fix_image_paths(markdown, image_path)
 
-            # Collect extracted images (only for current file)
+            # Collect extracted images (only for current file). Resolve the
+            # refs the converter wrote into the markdown (plus demoted
+            # reference images) — pymupdf4llm sanitizes the source filename
+            # when naming assets (spaces → "_", parens → "-"), so a prefix
+            # glob on the input name misses them.
             if write_images and image_path.exists():
-                # Use input filename as prefix to filter images from this file only
-                file_prefix = input_path.name
+                ref_names = extract_asset_image_names(markdown)
+                for ref in reference_images:
+                    ref_name = ref.get("name")
+                    if (
+                        isinstance(ref_name, str)
+                        and ref_name
+                        and ref_name not in ref_names
+                    ):
+                        ref_names.append(ref_name)
+                img_files = [
+                    image_path / name
+                    for name in ref_names
+                    if (image_path / name).is_file()
+                ]
+                if not img_files:
+                    # Legacy fallback: prefix glob on the input file name
+                    file_prefix = escape_glob_pattern(input_path.name)
+                    img_files = sorted(
+                        image_path.glob(f"{file_prefix}*.{image_format}")
+                    )
                 image_processor = ImageProcessor(
                     self.config.image if self.config else None
                 )
-                for idx, img_file in enumerate(
-                    sorted(image_path.glob(f"{file_prefix}*.{image_format}"))
-                ):
+                for idx, img_file in enumerate(img_files):
                     suffix = img_file.suffix.lower().lstrip(".")
                     width = 0
                     height = 0
@@ -910,32 +932,47 @@ class PdfConverter(BaseConverter):
         return markdown.replace(f"]({posix_path}/", f"]({ASSETS_REL_PATH}/")
 
     def _collect_embedded_images(
-        self, assets_dir: Path, input_name: str
+        self, assets_dir: Path, input_name: str, markdown: str = ""
     ) -> list[ExtractedImage]:
         """Collect embedded images extracted by pymupdf4llm.
 
         pymupdf4llm extracts embedded images with names like: filename.pdf-0-0.png
-        (page index - image index on that page)
+        (page index - image index on that page). The name prefix is a
+        sanitized form of the source filename (spaces → "_"), so files are
+        resolved from the markdown refs first; matching on the raw input
+        name is kept as a fallback for markdown without asset refs.
 
         Args:
             assets_dir: Directory where images were extracted
             input_name: Original PDF filename
+            markdown: Converted markdown whose asset refs name the files
 
         Returns:
             List of ExtractedImage for embedded images
         """
         embedded_images: list[ExtractedImage] = []
-        # Pattern: filename.pdf-{page}-{index}.{ext}
-        pattern = re.compile(
-            rf"^{re.escape(input_name)}-(\d+)-(\d+)\.(png|jpg|jpeg|webp)$"
-        )
+        # Suffix pattern: ...-{page}-{index}.{ext}
+        index_pattern = re.compile(r"-(\d+)-(\d+)\.(png|jpg|jpeg|webp)$", re.IGNORECASE)
 
-        for image_file in assets_dir.iterdir():
-            match = pattern.match(image_file.name)
+        image_files = [
+            assets_dir / name
+            for name in extract_asset_image_names(markdown)
+            if (assets_dir / name).is_file()
+        ]
+        if not image_files:
+            legacy_pattern = re.compile(
+                rf"^{re.escape(input_name)}-(\d+)-(\d+)\.(png|jpg|jpeg|webp)$"
+            )
+            image_files = [
+                f for f in assets_dir.iterdir() if legacy_pattern.match(f.name)
+            ]
+
+        for image_file in image_files:
+            match = index_pattern.search(image_file.name)
             if match:
                 page_idx = int(match.group(1))
                 img_idx = int(match.group(2))
-                ext = match.group(3)
+                ext = match.group(3).lower()
 
                 # Get image dimensions
                 try:
@@ -1239,7 +1276,9 @@ class PdfConverter(BaseConverter):
         extracted_text = self._fix_image_paths(extracted_text, assets_dir)
 
         # Collect embedded images extracted by pymupdf4llm
-        embedded_images = self._collect_embedded_images(assets_dir, input_path.name)
+        embedded_images = self._collect_embedded_images(
+            assets_dir, input_path.name, extracted_text
+        )
 
         images: list[ExtractedImage] = list(embedded_images)
         page_images: list[dict] = []
