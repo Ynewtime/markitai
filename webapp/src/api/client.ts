@@ -137,6 +137,31 @@ export function fetchItemResult(
   );
 }
 
+/** R4: retry a terminal item as a new single-item job. No body — the new
+ * job inherits the original job's options server-side. 409 = item not
+ * terminal; 404 = job/item gone or the upload was cleaned up. */
+export async function retryJobItem(
+  jobId: string,
+  itemId: string,
+): Promise<CreateJobResponse> {
+  const res = await fetch(
+    `/api/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/retry`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(await errorDetail(res));
+  return (await res.json()) as CreateJobResponse;
+}
+
+/** Fetch one artifact as text (diff view pulls .md and .llm.md). */
+export async function fetchJobFileText(
+  jobId: string,
+  relpath: string,
+): Promise<string> {
+  const res = await fetch(jobFileUrl(jobId, relpath));
+  if (!res.ok) throw new Error(await errorDetail(res));
+  return await res.text();
+}
+
 export function jobEventsUrl(jobId: string): string {
   return `/api/jobs/${encodeURIComponent(jobId)}/events`;
 }

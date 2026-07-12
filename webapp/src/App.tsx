@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchCapabilities, fetchJobSnapshot, jobArchiveUrl } from "./api/client";
-import type { Capabilities, JobOptions, Preset } from "./api/types";
+import { MAX_JOB_ITEMS, type Capabilities, type JobOptions, type Preset } from "./api/types";
 import type { SessionItem } from "./hooks/useJobs";
 import { AppHeader } from "./components/AppHeader";
 import { CapabilityHint } from "./components/CapabilityHint";
@@ -122,6 +122,7 @@ export default function App() {
     activeCount,
     now,
     submit,
+    retry,
     submitError,
     clear,
     openArchived,
@@ -176,6 +177,22 @@ export default function App() {
     setView((v) => (v === "history" ? (prevCountRef.current > 0 ? "workspace" : "home") : "history"));
   }, []);
 
+  // The URL draft lives here so the CLI-command line can mirror it live
+  // (the home and composer inputs are never mounted at the same time).
+  const [urlText, setUrlText] = useState("");
+  const urlList = useMemo(
+    () =>
+      urlText
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    [urlText],
+  );
+
+  // Folder drops explain themselves on one neutral mono line (truncation
+  // against the job limit, or nothing left after junk filtering).
+  const [dropNotice, setDropNotice] = useState<string | null>(null);
+
   // Drops always use the options as currently set; any new conversion
   // brings the workspace forward.
   const optionsRef = useRef<JobOptions>({ preset, llm });
@@ -183,12 +200,23 @@ export default function App() {
     optionsRef.current = { preset, llm };
   }, [preset, llm]);
   const submitFiles = useCallback(
-    (files: File[]) => {
-      void submit(files, [], optionsRef.current).then((ok) => {
+    (files: File[], fromFolder = false) => {
+      let notice: string | null = null;
+      let send = files;
+      if (fromFolder) {
+        if (files.length === 0) notice = t.dropEmptyFolder;
+        else if (files.length > MAX_JOB_ITEMS) {
+          send = files.slice(0, MAX_JOB_ITEMS);
+          notice = t.dropTruncated(MAX_JOB_ITEMS, files.length);
+        }
+      }
+      setDropNotice(notice);
+      if (send.length === 0) return;
+      void submit(send, [], optionsRef.current).then((ok) => {
         if (ok) setView("workspace");
       });
     },
-    [submit],
+    [submit, t],
   );
   const submitUrls = useCallback(
     async (urls: string[]) => {
@@ -266,6 +294,7 @@ export default function App() {
   const handleClear = useCallback(() => {
     clear();
     setSelectedKey(null);
+    setDropNotice(null);
     setView("home");
   }, [clear]);
 
@@ -357,15 +386,22 @@ export default function App() {
               {activeCount > 0 ? t.sessProgress(activeCount) : t.sessResults(items.length)}
             </button>
           )}
-          <UrlInput t={t} onConvert={submitUrls} />
+          <UrlInput t={t} text={urlText} onText={setUrlText} onConvert={submitUrls} />
           {submitError !== null && (
             <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />
+          )}
+          {dropNotice !== null && (
+            <p className="notice" role="status">
+              {dropNotice}
+            </p>
           )}
           <OptionsBar
             t={t}
             preset={preset}
             llm={llm}
             llmConfigured={llmConfigured}
+            urls={urlList}
+            announce={announce}
             onPreset={setPreset}
             onLlm={setLlm}
           />
@@ -411,17 +447,25 @@ export default function App() {
                 selectedKey={selected?.key ?? null}
                 onSelect={handleSelect}
                 onOpenSettings={openSettings}
+                onRetry={retry}
               />
               {submitError !== null && (
                 <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />
               )}
+              {dropNotice !== null && (
+                <p className="notice" role="status">
+                  {dropNotice}
+                </p>
+              )}
               <div className="composer">
-                <UrlInput t={t} onConvert={submitUrls} compact />
+                <UrlInput t={t} text={urlText} onText={setUrlText} onConvert={submitUrls} compact />
                 <OptionsBar
                   t={t}
                   preset={preset}
                   llm={llm}
                   llmConfigured={llmConfigured}
+                  urls={urlList}
+                  announce={announce}
                   onPreset={setPreset}
                   onLlm={setLlm}
                 />

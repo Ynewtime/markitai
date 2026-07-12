@@ -161,6 +161,26 @@ export function XIcon({ size = 16 }: IconProps) {
   );
 }
 
+/** Lucide "terminal" — copy-as-CLI-command toggle in the options row. */
+export function TerminalIcon({ size = 15 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...strokeProps} aria-hidden="true">
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" x2="20" y1="19" y2="19" />
+    </svg>
+  );
+}
+
+/** Lucide "rotate-ccw" — per-row retry on failed items. */
+export function RotateCcwIcon({ size = 13 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...strokeProps} aria-hidden="true">
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+    </svg>
+  );
+}
+
 /** Lucide "settings" gear — header entry for the LLM settings panel. */
 export function SettingsIcon({ size = 16 }: IconProps) {
   return (

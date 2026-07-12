@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { encodeRelPath, fetchItemResult, jobFileUrl } from "../api/client";
+import {
+  encodeRelPath,
+  fetchItemResult,
+  fetchJobFileText,
+  jobFileUrl,
+} from "../api/client";
 import type { ItemResult } from "../api/types";
 import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
+import { diffLines, MAX_DIFF_LINES, type DiffLine } from "../lib/diff";
 import { countWords, fmtBytes, fmtDate, utf8Bytes } from "../lib/format";
 import { DownloadIcon, EyeOffIcon } from "./icons";
 
-type Tab = "rendered" | "source";
+type Tab = "rendered" | "source" | "diff";
 
 /** True for URLs with a scheme, absolute paths, fragments and queries. */
 const ABSOLUTE_RE = /^([a-z][a-z0-9+.-]*:|\/|#|\?)/i;
@@ -22,6 +28,22 @@ function splitFrontmatter(md: string): { fm: string | null; body: string } {
 function basename(relpath: string): string {
   return relpath.split("/").pop() ?? relpath;
 }
+
+/** Diff tab precondition: the item's artifacts hold BOTH the base `.md` and
+ * the `.llm.md` (the server keeps the base via keep_base in web jobs). */
+function findDiffPair(result: ItemResult | null): { base: string; llm: string } | null {
+  if (result === null) return null;
+  const rels = result.artifacts.map((a) => a.relpath);
+  const llm = rels.find((r) => r.endsWith(".llm.md"));
+  if (llm === undefined) return null;
+  const base = `${llm.slice(0, -".llm.md".length)}.md`;
+  return rels.includes(base) ? { base, llm } : null;
+}
+
+type DiffState =
+  | { kind: "lines"; lines: DiffLine[]; adds: number; dels: number }
+  | { kind: "toolarge" }
+  | { kind: "error"; message: string };
 
 /** Right panel: rendered/source tabs over the selected item's markdown.
  * Source lives in the brand's always-dark terminal card. Both panes scroll
@@ -51,6 +73,7 @@ export function MarkdownPreview({
   const cacheRef = useRef<Map<string, ItemResult>>(new Map());
   const renderedTabRef = useRef<HTMLButtonElement>(null);
   const sourceTabRef = useRef<HTMLButtonElement>(null);
+  const diffTabRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const cached = cacheRef.current.get(item.key);
@@ -76,6 +99,62 @@ export function MarkdownPreview({
       stale = true;
     };
   }, [item.key, item.jobId, item.itemId]);
+
+  // ---- diff tab (only when the artifacts hold both .md and .llm.md).
+  const pair = useMemo(() => findDiffPair(result), [result]);
+  const [diff, setDiff] = useState<DiffState | null>(null);
+  const diffCacheRef = useRef<Map<string, DiffState>>(new Map());
+
+  // Item switches land on rendered — the next item may not have a pair, and
+  // `result` (so `pair`) lags one fetch behind the selection.
+  useEffect(() => {
+    setTab((v) => (v === "diff" ? "rendered" : v));
+  }, [item.key]);
+  useEffect(() => {
+    if (tab === "diff" && pair === null) setTab("rendered");
+  }, [tab, pair]);
+
+  useEffect(() => {
+    if (tab !== "diff" || pair === null) return;
+    const cached = diffCacheRef.current.get(item.key);
+    if (cached !== undefined) {
+      setDiff(cached);
+      return;
+    }
+    let stale = false;
+    setDiff(null);
+    Promise.all([
+      fetchJobFileText(item.jobId, pair.base),
+      fetchJobFileText(item.jobId, pair.llm),
+    ]).then(
+      ([baseText, llmText]) => {
+        if (stale) return;
+        let st: DiffState;
+        if (baseText.split("\n").length + llmText.split("\n").length > MAX_DIFF_LINES) {
+          st = { kind: "toolarge" };
+        } else {
+          const lines = diffLines(baseText, llmText);
+          let adds = 0;
+          let dels = 0;
+          for (const l of lines) {
+            if (l.type === "add") adds += 1;
+            else if (l.type === "del") dels += 1;
+          }
+          st = { kind: "lines", lines, adds, dels };
+        }
+        diffCacheRef.current.set(item.key, st);
+        setDiff(st);
+      },
+      (e: unknown) => {
+        if (!stale) {
+          setDiff({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+        }
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  }, [tab, pair, item.key, item.jobId]);
 
   useEffect(() => {
     if (!copied) return;
@@ -152,12 +231,22 @@ export function MarkdownPreview({
     );
   };
 
+  const tabOrder: Tab[] = pair !== null ? ["rendered", "source", "diff"] : ["rendered", "source"];
+  const tabRefs: Record<Tab, React.RefObject<HTMLButtonElement | null>> = {
+    rendered: renderedTabRef,
+    source: sourceTabRef,
+    diff: diffTabRef,
+  };
   const onTabKey = (e: React.KeyboardEvent) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
-    const next: Tab = tab === "rendered" ? "source" : "rendered";
+    const idx = tabOrder.indexOf(tab);
+    const next =
+      tabOrder[
+        (idx + (e.key === "ArrowRight" ? 1 : tabOrder.length - 1)) % tabOrder.length
+      ] ?? "rendered";
     setTab(next);
-    (next === "rendered" ? renderedTabRef : sourceTabRef).current?.focus();
+    tabRefs[next].current?.focus();
   };
 
   const docDate = createdAt !== null ? fmtDate(createdAt) : null;
@@ -196,6 +285,22 @@ export function MarkdownPreview({
           >
             {t.source}
           </button>
+          {pair !== null && (
+            <button
+              ref={diffTabRef}
+              type="button"
+              role="tab"
+              id="tab-diff"
+              aria-selected={tab === "diff"}
+              aria-controls="pane-diff"
+              tabIndex={tab === "diff" ? 0 : -1}
+              className={tab === "diff" ? "tab on" : "tab"}
+              onClick={() => setTab("diff")}
+              onKeyDown={onTabKey}
+            >
+              {t.diffTab}
+            </button>
+          )}
         </div>
         <div className="side">
           {meta !== null && (
@@ -299,6 +404,50 @@ export function MarkdownPreview({
           </div>
         )}
       </div>
+
+      {pair !== null && (
+        <div
+          id="pane-diff"
+          role="tabpanel"
+          aria-labelledby="tab-diff"
+          className="pane"
+          tabIndex={0}
+          hidden={tab !== "diff"}
+        >
+          {diff === null ? (
+            <p className="pane-note">{t.loading}</p>
+          ) : diff.kind === "error" ? (
+            <p className="pane-note errline">{diff.message}</p>
+          ) : diff.kind === "toolarge" ? (
+            <p className="pane-note">{t.diffTooLarge}</p>
+          ) : (
+            <div className="diffview" aria-label={t.diffAria}>
+              <p className="docmeta diffmeta">
+                {basename(pair.base)} → {basename(pair.llm)} · +{diff.adds} -{diff.dels}
+              </p>
+              {diff.lines.map((l, i) => (
+                <div
+                  key={i}
+                  className={
+                    l.type === "add" ? "dline add" : l.type === "del" ? "dline del" : "dline"
+                  }
+                >
+                  <span className="dno" aria-hidden="true">
+                    {l.aNo ?? ""}
+                  </span>
+                  <span className="dno" aria-hidden="true">
+                    {l.bNo ?? ""}
+                  </span>
+                  <span className="dmark" aria-hidden="true">
+                    {l.type === "add" ? "+" : l.type === "del" ? "-" : " "}
+                  </span>
+                  <span className="dtext">{l.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

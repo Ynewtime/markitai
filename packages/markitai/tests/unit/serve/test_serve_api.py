@@ -325,6 +325,22 @@ class TestJobConfigMapping:
         self._build(base, preset="rich")
         assert base.llm.enabled is False
 
+    def test_llm_enabled_forces_keep_base(self) -> None:
+        """Web semantics: LLM jobs always keep the base .md (diff view)."""
+        base = self._base_with_model()
+        cfg = self._build(base, llm=True)
+        assert cfg.llm.enabled is True
+        assert cfg.llm.keep_base is True
+        assert base.llm.keep_base is False  # base config untouched
+
+    def test_keep_base_not_forced_when_llm_disabled(self) -> None:
+        base = self._base_with_model()
+        assert self._build(base).llm.keep_base is False
+        assert self._build(base, llm=False).llm.keep_base is False
+        assert self._build(base, preset="minimal").llm.keep_base is False
+        # llm=True without configured models degrades to disabled: no keep_base
+        assert self._build(MarkitaiConfig(), llm=True).llm.keep_base is False
+
 
 class TestJobLifecycle:
     """Job execution, SSE, results and downloads with a stubbed converter."""
@@ -892,6 +908,323 @@ class TestUrlPipeline:
             text_b = (job.out_dir / "index.html (2).md").read_text(encoding="utf-8")
             assert "# Doc A" in text_a
             assert "# Doc B" in text_b
+
+
+class TestRetry:
+    """POST /api/jobs/{job_id}/items/{item_id}/retry."""
+
+    @staticmethod
+    def _stub_converter(gate: asyncio.Event | None = None):
+        """Stub converter writing '<name>.md' (optionally gated)."""
+
+        async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            from markitai.batch import ProcessResult
+
+            if gate is not None:
+                await gate.wait()
+            out = out_dir / f"{file_path.name}.md"
+            out.write_text(f"# converted {file_path.name}\n", encoding="utf-8")
+            return ProcessResult(success=True, output_path=str(out))
+
+        return convert
+
+    async def test_retry_failed_file_item_copies_upload_and_runs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[Path] = []
+
+        async def flaky(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            from markitai.batch import ProcessResult
+
+            calls.append(file_path)
+            if len(calls) == 1:
+                return ProcessResult(success=False, error="converter exploded")
+            out = out_dir / f"{file_path.name}.md"
+            out.write_text(f"# converted {file_path.name}\n", encoding="utf-8")
+            return ProcessResult(success=True, output_path=str(out))
+
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", flaky)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs", files=_multipart(files=[("doc.txt", b"hello")])
+            )
+            job_id = created.json()["job_id"]
+            first = await _wait_job_done(client, job_id)
+            assert first["items"][0]["status"] == "error"
+
+            resp = await client.post(f"/api/jobs/{job_id}/items/i1/retry")
+            assert resp.status_code == 201
+            body = resp.json()
+            assert body["job_id"] != job_id  # a new job, POST /api/jobs shape
+            assert body["items"] == [
+                {"item_id": "i1", "name": "doc.txt", "kind": "file"}
+            ]
+            # The original upload was copied into the new job's uploads dir.
+            copied = tmp_path / "jobs" / body["job_id"] / "uploads" / "doc.txt"
+            assert copied.read_bytes() == b"hello"
+
+            second = await _wait_job_done(client, body["job_id"])
+            assert second["done"] == 1 and second["failed"] == 0
+            assert second["items"][0]["output"] == "doc.txt.md"
+            # The source job's ledger is untouched by the retry.
+            source = (await client.get(f"/api/jobs/{job_id}")).json()
+            assert source["items"][0]["status"] == "error"
+            # Both terminal jobs surface in history (normal runner applies).
+            history = (await client.get("/api/history")).json()
+            assert {h["job_id"] for h in history} == {job_id, body["job_id"]}
+        # Second run consumed the copy, not the source job's upload.
+        assert [p.name for p in calls] == ["doc.txt", "doc.txt"]
+        assert calls[1] == copied
+
+    async def test_retry_url_item_reenters_cascade(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str | None]] = []
+
+        async def flaky_url(
+            url: str,
+            cfg: Any,
+            out_dir: Path,
+            shared: Any,
+            url_ctx: Any,
+            output_name: str | None = None,
+        ):
+            from markitai.batch import ProcessResult
+
+            calls.append((url, output_name))
+            if len(calls) == 1:
+                return ProcessResult(success=False, error="fetch failed")
+            out = out_dir / (output_name or "x.md")
+            out.write_text(f"# fetched {url}\n", encoding="utf-8")
+            return ProcessResult(success=True, output_path=str(out))
+
+        monkeypatch.setattr("markitai.serve.jobs.process_url_item", flaky_url)
+        url = "https://example.com/page.html"
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post("/api/jobs", files=_multipart(urls=[url]))
+            job_id = created.json()["job_id"]
+            first = await _wait_job_done(client, job_id)
+            assert first["items"][0]["status"] == "error"
+
+            resp = await client.post(f"/api/jobs/{job_id}/items/i1/retry")
+            assert resp.status_code == 201
+            body = resp.json()
+            assert body["items"] == [{"item_id": "i1", "name": url, "kind": "url"}]
+            second = await _wait_job_done(client, body["job_id"])
+            assert second["items"][0]["status"] == "done"
+            assert second["items"][0]["output"] == "page.html.md"
+        assert calls == [(url, "page.html.md"), (url, "page.html.md")]
+
+    async def test_retry_non_terminal_item_is_409(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gate = asyncio.Event()
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item", self._stub_converter(gate)
+        )
+        app = _make_app(tmp_path)
+        async with _serve_client(app) as client:
+            created = await client.post(
+                "/api/jobs", files=_multipart(files=[("doc.txt", b"hi")])
+            )
+            job_id = created.json()["job_id"]
+            resp = await client.post(f"/api/jobs/{job_id}/items/i1/retry")
+            assert resp.status_code == 409
+            # No retry job was created for the rejected request.
+            assert set(app.state.markitai.registry.jobs) == {job_id}
+            gate.set()
+            await _wait_job_done(client, job_id)
+            # done items are retryable too (terminal = done or error)
+            done = await client.post(f"/api/jobs/{job_id}/items/i1/retry")
+            assert done.status_code == 201
+            await _wait_job_done(client, done.json()["job_id"])
+
+    async def test_retry_unknown_job_or_item_is_404(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item", self._stub_converter()
+        )
+        async with _serve_client(_make_app(tmp_path)) as client:
+            missing_job = await client.post("/api/jobs/nope/items/i1/retry")
+            assert missing_job.status_code == 404
+            created = await client.post(
+                "/api/jobs", files=_multipart(files=[("doc.txt", b"hi")])
+            )
+            job_id = created.json()["job_id"]
+            await _wait_job_done(client, job_id)
+            missing_item = await client.post(f"/api/jobs/{job_id}/items/i99/retry")
+            assert missing_item.status_code == 404
+
+    async def test_retry_missing_upload_is_404(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item", self._stub_converter()
+        )
+        app = _make_app(tmp_path)
+        async with _serve_client(app) as client:
+            created = await client.post(
+                "/api/jobs", files=_multipart(files=[("doc.txt", b"hi")])
+            )
+            job_id = created.json()["job_id"]
+            await _wait_job_done(client, job_id)
+            (tmp_path / "jobs" / job_id / "uploads" / "doc.txt").unlink()
+
+            resp = await client.post(f"/api/jobs/{job_id}/items/i1/retry")
+            assert resp.status_code == 404
+            assert "no longer on disk" in resp.json()["detail"]
+            assert set(app.state.markitai.registry.jobs) == {job_id}
+
+    async def test_retry_inherits_and_overrides_options(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item", self._stub_converter()
+        )
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(
+                    files=[("doc.txt", b"hi")], options={"preset": "minimal"}
+                ),
+            )
+            job_id = created.json()["job_id"]
+            await _wait_job_done(client, job_id)
+
+            # No body: the source job's options are inherited.
+            inherited = await client.post(f"/api/jobs/{job_id}/items/i1/retry")
+            assert inherited.status_code == 201
+            inherited_id = inherited.json()["job_id"]
+            snap = (await client.get(f"/api/jobs/{inherited_id}")).json()
+            assert snap["options"] == {"preset": "minimal", "llm": None}
+
+            # Body options replace the inherited ones as a whole.
+            overridden = await client.post(
+                f"/api/jobs/{job_id}/items/i1/retry",
+                json={"options": {"preset": "standard", "llm": False}},
+            )
+            assert overridden.status_code == 201
+            overridden_id = overridden.json()["job_id"]
+            snap = (await client.get(f"/api/jobs/{overridden_id}")).json()
+            assert snap["options"] == {"preset": "standard", "llm": False}
+
+            # Same validation as POST /api/jobs.
+            bad_key = await client.post(
+                f"/api/jobs/{job_id}/items/i1/retry", json={"options": {"bogus": 1}}
+            )
+            assert bad_key.status_code == 422
+            bad_preset = await client.post(
+                f"/api/jobs/{job_id}/items/i1/retry",
+                json={"options": {"preset": "nope"}},
+            )
+            assert bad_preset.status_code == 422
+
+            await _wait_job_done(client, inherited_id)
+            await _wait_job_done(client, overridden_id)
+
+    async def test_retry_archived_job_after_restart(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item", self._stub_converter()
+        )
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs", files=_multipart(files=[("doc.txt", b"hello")])
+            )
+            source_id = created.json()["job_id"]
+            await _wait_job_done(client, source_id)
+
+        # "Restart": a fresh app over the same jobs root rehydrates the job.
+        async with _serve_client(_make_app(tmp_path)) as client:
+            resp = await client.post(f"/api/jobs/{source_id}/items/i1/retry")
+            assert resp.status_code == 201
+            new_id = resp.json()["job_id"]
+            assert (tmp_path / "jobs" / new_id / "uploads" / "doc.txt").is_file()
+            data = await _wait_job_done(client, new_id)
+            assert data["done"] == 1 and data["failed"] == 0
+            assert data["items"][0]["output"] == "doc.txt.md"
+
+
+class TestKeepBase:
+    """serve forces llm.keep_base: LLM jobs keep .md next to .llm.md."""
+
+    def _make_llm_app(self, tmp_path: Path) -> FastAPI:
+        from markitai.config import LiteLLMParams, ModelConfig
+
+        cfg = MarkitaiConfig()
+        cfg.cache.enabled = False
+        cfg.cache.global_dir = str(tmp_path / "cache")
+        cfg.llm.model_list = [
+            ModelConfig(
+                model_name="default",
+                litellm_params=LiteLLMParams(model="openai/gpt-4o-mini"),
+            )
+        ]
+        return create_app(
+            static_dir=tmp_path / "no-static",
+            jobs_root=tmp_path / "jobs",
+            config=cfg,
+            configure_logging=False,
+        )
+
+    async def test_llm_job_produces_base_and_llm_artifacts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Real .txt conversion with a fake LLM step: keep_base is forced, so
+        write_base_markdown keeps the .md the diff view needs."""
+        from unittest.mock import MagicMock
+
+        from markitai.workflow.core import ConversionStepResult
+
+        async def fake_standard_llm(ctx: Any) -> ConversionStepResult:
+            llm_out = ctx.output_file.with_suffix(".llm.md")
+            llm_out.write_text("# llm enhanced\n", encoding="utf-8")
+            return ConversionStepResult(success=True)
+
+        monkeypatch.setattr(
+            "markitai.workflow.helpers.create_llm_processor",
+            lambda *_args, **_kwargs: MagicMock(),
+        )
+        monkeypatch.setattr(
+            "markitai.workflow.core.process_with_standard_llm", fake_standard_llm
+        )
+        async with _serve_client(self._make_llm_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(
+                    files=[("keep.txt", b"# body")], options={"llm": True}
+                ),
+            )
+            assert created.status_code == 201
+            job_id = created.json()["job_id"]
+            data = await _wait_job_done(client, job_id)
+            item = data["items"][0]
+            assert item["status"] == "done"
+            assert item["output"] == "keep.txt.llm.md"
+            result = await client.get(f"/api/jobs/{job_id}/items/i1/result")
+        assert result.status_code == 200
+        payload = result.json()
+        assert payload["variant"] == "llm"
+        relpaths = {a["relpath"] for a in payload["artifacts"]}
+        assert relpaths == {"keep.txt.md", "keep.txt.llm.md"}
+
+    async def test_llm_disabled_job_keeps_base_only(self, tmp_path: Path) -> None:
+        async with _serve_client(self._make_llm_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(
+                    files=[("keep.txt", b"# body")], options={"llm": False}
+                ),
+            )
+            job_id = created.json()["job_id"]
+            data = await _wait_job_done(client, job_id)
+            assert data["items"][0]["output"] == "keep.txt.md"
+            result = await client.get(f"/api/jobs/{job_id}/items/i1/result")
+        payload = result.json()
+        assert payload["variant"] == "base"
+        assert {a["relpath"] for a in payload["artifacts"]} == {"keep.txt.md"}
 
 
 class TestSkipSemantics:

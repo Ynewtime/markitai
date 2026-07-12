@@ -3,7 +3,7 @@ import type { ItemStatus } from "../api/types";
 import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
 import { fmtBytes, fmtCost, fmtDur, shortError } from "../lib/format";
-import { FileTextIcon, GlobeIcon } from "./icons";
+import { FileTextIcon, GlobeIcon, RotateCcwIcon } from "./icons";
 
 /** CLI status words — lowercase mono, identical in both locales. */
 const STATUS_TEXT: Record<ItemStatus | "skipped", string> = {
@@ -21,6 +21,8 @@ const NAME_TAIL_CHARS = 12;
 
 /** CLI word for history-merged rows — stays English in both locales. */
 const ARCHIVED_TEXT = "archived";
+/** CLI word for rows re-run as a new job — the ledger keeps the original. */
+const RETRIED_TEXT = "retried";
 
 function liveDuration(item: SessionItem, now: number): string | null {
   if (item.startedAt === null) return null;
@@ -81,6 +83,7 @@ export function ItemRow({
   onSelect,
   onOpenSettings,
   onRowFocus,
+  onRetry,
 }: {
   t: Dict;
   item: SessionItem;
@@ -94,13 +97,27 @@ export function ItemRow({
   onSelect: (key: string) => void;
   onOpenSettings: () => void;
   onRowFocus: (key: string) => void;
+  onRetry: (item: SessionItem) => Promise<string | null>;
 }) {
   const [errExpanded, setErrExpanded] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
+  const [retryErr, setRetryErr] = useState<string | null>(null);
 
   const running = item.status === "running";
   const failed = item.status === "error";
   const skipped = item.status === "done" && item.skipped;
   const previewable = item.status === "done" && item.output !== null && !item.skipped;
+  // Failed rows (archived ones too) can be re-run; once retried the button
+  // yields to the neutral marker (the new row carries its own retry).
+  const canRetry = failed && !item.retried;
+  const doRetry = async () => {
+    if (retryBusy) return;
+    setRetryBusy(true);
+    setRetryErr(null);
+    const err = await onRetry(item);
+    setRetryBusy(false);
+    if (err !== null) setRetryErr(err);
+  };
 
   const live = running ? liveDuration(item, now) : null;
   const timeText = skipped
@@ -127,6 +144,12 @@ export function ItemRow({
   // "image input — configure llm …" points at the settings panel while llm
   // is unconfigured; the row click opens it.
   const skipNeedsConfig = skipped && item.skipReason === "image_only" && !llmConfigured;
+  // aria-disabled marks rows with no interaction at all (queued/running/plain
+  // skips). Failed rows toggle their error text and host the enabled retry
+  // button, and unconfigured image-skips open settings - announcing those as
+  // disabled would contradict their working controls. Selection-follows-focus
+  // is gated on the item data in ItemList, not on this attribute.
+  const inert = !previewable && !failed && !skipNeedsConfig;
   const skipText =
     item.skipReason === "image_only"
       ? t.skipImageOnly
@@ -142,6 +165,7 @@ export function ItemRow({
   // Column context for screen readers ("sample.txt, 12 KB, 0.3 seconds, done").
   const ariaParts = [displayName];
   if (item.archived) ariaParts.push(ARCHIVED_TEXT);
+  if (item.retried) ariaParts.push(RETRIED_TEXT);
   if (sizeText !== null) ariaParts.push(sizeText);
   if (!skipped && item.durationMs !== null)
     ariaParts.push(`${(item.durationMs / 1000).toFixed(1)} ${t.ariaSeconds}`);
@@ -158,7 +182,7 @@ export function ItemRow({
       role="option"
       id={`opt-${item.key.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
       aria-selected={selected}
-      aria-disabled={previewable ? undefined : true}
+      aria-disabled={inert ? true : undefined}
       aria-label={ariaParts.join(", ")}
       aria-describedby={detailId}
       tabIndex={tabbable ? 0 : -1}
@@ -167,6 +191,8 @@ export function ItemRow({
       onClick={activate}
       onFocus={() => onRowFocus(item.key)}
       onKeyDown={(e) => {
+        // Keys on nested controls (the retry button) act on the control only.
+        if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           activate();
@@ -178,6 +204,7 @@ export function ItemRow({
         {item.kind === "file" ? <FileTextIcon /> : <GlobeIcon />}
         <MidName name={displayName} title={nameTitle} />
         {item.archived && <span className="minibadge">{ARCHIVED_TEXT}</span>}
+        {item.retried && <span className="minibadge">{RETRIED_TEXT}</span>}
       </span>
       <span className={running ? "c-time live" : "c-time"}>{timeText}</span>
       {showCost && <span className="c-cost">{costText}</span>}
@@ -185,9 +212,40 @@ export function ItemRow({
         <StatusCell item={item} />
       </span>
       {metaParts.length > 0 && <span className="rowmeta">{metaParts.join(" · ")}</span>}
-      {failed && item.error !== null && (
-        <span className="c-err" id={detailId} title={t.errExpandTitle}>
-          {errExpanded ? <span className="err-full">{item.error}</span> : shortError(item.error)}
+      {failed && (item.error !== null || canRetry) && (
+        <span className="c-err" id={detailId}>
+          <span className="errtext" title={t.errExpandTitle}>
+            {item.error === null ? null : errExpanded ? (
+              <span className="err-full">{item.error}</span>
+            ) : (
+              shortError(item.error)
+            )}
+          </span>
+          {canRetry && (
+            <button
+              type="button"
+              className="rowact retry"
+              aria-label={t.retryAria(displayName)}
+              title={t.retryAria(displayName)}
+              disabled={retryBusy}
+              aria-busy={retryBusy || undefined}
+              onClick={(e) => {
+                e.stopPropagation(); // the row click toggles the error text
+                void doRetry();
+              }}
+            >
+              {retryBusy ? (
+                <span className="spin" aria-hidden="true" />
+              ) : (
+                <RotateCcwIcon size={13} />
+              )}
+            </button>
+          )}
+        </span>
+      )}
+      {failed && retryErr !== null && (
+        <span className="c-err retryerr" role="alert">
+          {t.retryFailed}: {retryErr}
         </span>
       )}
       {skipped && (

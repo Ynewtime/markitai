@@ -753,3 +753,196 @@ class TestLLMSettingsProbe:
         assert resp.status_code == 200
         assert data["ok"] is False
         assert "claude-agent SDK is not installed" in data["detail"]
+
+    async def test_probe_without_key_uses_stored_credentials(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A saved-row test posts no api_key (the UI only has the mask);
+        the probe must resolve the stored entry's credentials itself."""
+        captured: dict[str, Any] = {}
+
+        async def fake_acompletion(**kwargs: Any) -> dict[str, str]:
+            captured.update(kwargs)
+            return {"id": "ok"}
+
+        monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry(
+                "openai/gpt-test",
+                api_key="sk-stored-1234567890",
+                api_base="https://proxy.example/v1",
+            )
+        ]
+        async with _serve_client(_make_app(tmp_path, cfg=cfg)) as client:
+            resp = await client.post(
+                "/api/settings/llm/test",
+                json={
+                    "model": "openai/gpt-test",
+                    "api_base": "https://proxy.example/v1",
+                },
+            )
+        data = resp.json()
+        assert resp.status_code == 200
+        assert data["ok"] is True
+        assert captured["api_key"] == "sk-stored-1234567890"
+        assert captured["api_base"] == "https://proxy.example/v1"
+        assert "sk-stored-1234567890" not in resp.text
+
+    async def test_probe_explicit_key_wins_over_stored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        async def fake_acompletion(**kwargs: Any) -> dict[str, str]:
+            captured.update(kwargs)
+            return {"id": "ok"}
+
+        monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [_model_entry("openai/gpt-test", api_key="sk-stored-1111")]
+        async with _serve_client(_make_app(tmp_path, cfg=cfg)) as client:
+            resp = await client.post(
+                "/api/settings/llm/test",
+                json={"model": "openai/gpt-test", "api_key": "sk-explicit-2222"},
+            )
+        assert resp.json()["ok"] is True
+        assert captured["api_key"] == "sk-explicit-2222"
+
+    async def test_probe_stored_key_failure_is_scrubbed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The resolved stored key must be scrubbed from failure details."""
+
+        async def exploding_acompletion(**kwargs: Any) -> Any:
+            raise RuntimeError(f"Incorrect API key provided: {kwargs['api_key']}")
+
+        monkeypatch.setattr("litellm.acompletion", exploding_acompletion)
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry("openai/gpt-test", api_key="sk-stored-1234567890")
+        ]
+        async with _serve_client(_make_app(tmp_path, cfg=cfg)) as client:
+            resp = await client.post(
+                "/api/settings/llm/test", json={"model": "openai/gpt-test"}
+            )
+        data = resp.json()
+        assert resp.status_code == 200
+        assert data["ok"] is False
+        assert "sk-stored-1234567890" not in resp.text
+
+    async def test_probe_unknown_model_stays_keyless(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        async def fake_acompletion(**kwargs: Any) -> dict[str, str]:
+            captured.update(kwargs)
+            return {"id": "ok"}
+
+        monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [_model_entry("openai/other-model", api_key="sk-other-1")]
+        async with _serve_client(_make_app(tmp_path, cfg=cfg)) as client:
+            resp = await client.post(
+                "/api/settings/llm/test", json={"model": "openai/gpt-test"}
+            )
+        assert resp.json()["ok"] is True
+        assert "api_key" not in captured
+
+    async def test_probe_model_name_reference_uses_stored_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A saved-row test posts only model_name; the probe must run with
+        that entry's full stored params (the UI never has the real key)."""
+        captured: dict[str, Any] = {}
+
+        async def fake_acompletion(**kwargs: Any) -> dict[str, str]:
+            captured.update(kwargs)
+            return {"id": "ok"}
+
+        monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry(
+                "openai/gpt-test",
+                api_key="sk-stored-1234567890",
+                api_base="https://proxy.example/v1",
+                model_name="primary",
+            )
+        ]
+        async with _serve_client(_make_app(tmp_path, cfg=cfg)) as client:
+            resp = await client.post(
+                "/api/settings/llm/test", json={"model_name": "primary"}
+            )
+        data = resp.json()
+        assert resp.status_code == 200
+        assert data["ok"] is True
+        assert "openai/gpt-test" in data["detail"]
+        assert captured["model"] == "openai/gpt-test"
+        assert captured["api_key"] == "sk-stored-1234567890"
+        assert captured["api_base"] == "https://proxy.example/v1"
+        assert "sk-stored-1234567890" not in resp.text
+
+    async def test_probe_model_name_reference_resolves_env_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MARKITAI_TEST_REF_KEY", "sk-ref-resolved-42")
+        captured: dict[str, Any] = {}
+
+        async def fake_acompletion(**kwargs: Any) -> dict[str, str]:
+            captured.update(kwargs)
+            return {"id": "ok"}
+
+        monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry(
+                "openai/gpt-test",
+                api_key="env:MARKITAI_TEST_REF_KEY",
+                model_name="primary",
+            )
+        ]
+        async with _serve_client(_make_app(tmp_path, cfg=cfg)) as client:
+            resp = await client.post(
+                "/api/settings/llm/test", json={"model_name": "primary"}
+            )
+        assert resp.json()["ok"] is True
+        assert captured["api_key"] == "sk-ref-resolved-42"
+        assert "sk-ref-resolved-42" not in resp.text
+
+    async def test_probe_unknown_model_name_is_422(self, tmp_path: Path) -> None:
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [_model_entry("openai/gpt-test", model_name="primary")]
+        async with _serve_client(_make_app(tmp_path, cfg=cfg)) as client:
+            resp = await client.post(
+                "/api/settings/llm/test", json={"model_name": "nope"}
+            )
+        assert resp.status_code == 422
+        assert "nope" in resp.json()["detail"]
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"model_name": "primary", "model": "openai/gpt-test"},  # ambiguous
+            {"model_name": "primary", "api_key": "sk-x"},  # mixed forms
+            {},  # neither form
+            {"model_name": "   "},  # blank reference
+        ],
+    )
+    async def test_probe_body_form_validation_is_422(
+        self, tmp_path: Path, payload: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[Any] = []
+
+        async def fake_acompletion(**kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return {"id": "ok"}
+
+        monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [_model_entry("openai/gpt-test", model_name="primary")]
+        async with _serve_client(_make_app(tmp_path, cfg=cfg)) as client:
+            resp = await client.post("/api/settings/llm/test", json=payload)
+        assert resp.status_code == 422
+        assert calls == []  # rejected before any probe runs

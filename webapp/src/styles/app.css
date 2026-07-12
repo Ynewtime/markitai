@@ -52,6 +52,10 @@
   /* row hover underlay — weaker than --sel so selection stays distinct */
   --row-hover: color-mix(in srgb, var(--strip) 45%, var(--bg));
 
+  /* diff view: low-saturation washes of the brand green / printed red */
+  --diff-add-bg: color-mix(in srgb, var(--t-green) 28%, var(--surface));
+  --diff-del-bg: color-mix(in srgb, var(--t-red) 20%, var(--surface));
+
   /* brand ::selection — inverted monochrome pair, swapped per theme */
   --selection-bg: #18181b;
   --selection-fg: #fafafa;
@@ -87,6 +91,8 @@
     --selection-bg: #fafafa;
     --selection-fg: #18181b;
     --logo-edge: #27272a;
+    --diff-add-bg: color-mix(in srgb, var(--t-green) 12%, var(--surface));
+    --diff-del-bg: color-mix(in srgb, var(--t-red) 11%, var(--surface));
   }
 }
 :root[data-theme="dark"] {
@@ -110,6 +116,8 @@
   --selection-bg: #fafafa;
   --selection-fg: #18181b;
   --logo-edge: #27272a;
+  --diff-add-bg: color-mix(in srgb, var(--t-green) 12%, var(--surface));
+  --diff-del-bg: color-mix(in srgb, var(--t-red) 11%, var(--surface));
 }
 
 @theme inline {
@@ -407,6 +415,7 @@
   .themetoggle button:focus-visible,
   .langtoggle button:focus-visible,
   .gearbtn:focus-visible,
+  .clibtn:focus-visible,
   .linklike:focus-visible,
   .flist [role="option"]:focus-visible,
   .hdr-links a:focus-visible,
@@ -625,6 +634,94 @@
     color: var(--text-3);
   }
 
+  /* neutral informational line (folder-drop truncation / empty notices) */
+  .notice {
+    margin-top: 16px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .composer .notice {
+    margin-top: 0;
+  }
+
+  /* ---------- copy as CLI command (options-row disclosure) ---------- */
+  .clibtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--r-sm);
+    color: var(--text-2);
+    cursor: pointer;
+    position: relative;
+    transition: color 120ms ease, background-color 120ms ease,
+      transform 140ms var(--ease-out);
+  }
+  .clibtn:active {
+    transform: scale(0.97);
+  }
+  .clibtn.on {
+    color: var(--text-1);
+    background: var(--strip);
+  }
+  /* the expanded strip wraps onto its own full-width line of the flex row */
+  .cliwrap {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+  .drop-main .cliwrap {
+    max-width: min(600px, 100%);
+  }
+  /* one-line always-dark mini terminal — same constants as the Source card */
+  .clicmd {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 8px 7px 14px;
+    background: var(--t-bg);
+    border: 1px solid var(--t-border);
+    border-radius: var(--r-sm);
+    color-scheme: dark;
+  }
+  .clitext {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 20px;
+    color: var(--t-text);
+    white-space: pre;
+    overflow-x: auto;
+    text-align: left;
+    padding: 4px 0;
+    font-variant-numeric: tabular-nums;
+    scrollbar-width: thin;
+    scrollbar-color: var(--t-border) transparent;
+  }
+  .clitext:focus-visible {
+    outline: 2px solid var(--t-focus);
+    outline-offset: -2px;
+  }
+  .clidollar {
+    color: var(--t-dim);
+    user-select: none;
+  }
+  .clicmd .badge {
+    flex: none;
+  }
+  .clicmd .badge:focus-visible {
+    outline-color: var(--t-focus);
+  }
+  .clihint {
+    margin-top: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-3);
+    text-align: left;
+  }
+
   /* ---------- job header ---------- */
   .jobhead {
     display: flex;
@@ -735,6 +832,9 @@
   }
   .c-err {
     grid-column: 2 / -1;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--err);
@@ -742,10 +842,28 @@
     padding-left: 22px; /* aligns with filename text: 14px icon + 8px gap */
     text-align: left;
   }
+  .c-err .errtext {
+    flex: 1;
+    min-width: 0;
+  }
   .c-err .err-full {
     display: block;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  /* per-row retry: rowact voice, icon-only square, busy swaps in the spin */
+  .rowact.retry {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    padding: 0;
+    margin-top: -4px;
+    flex: none;
+    position: relative;
+  }
+  .rowact.retry:disabled {
+    cursor: progress;
   }
   .c-skip {
     grid-column: 2 / -1;
@@ -822,6 +940,99 @@
     50% {
       opacity: 0.35;
     }
+  }
+
+  /* ---------- result filter (view-layer, appears above 10 items) ---------- */
+  .filterrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 0 12px 14px;
+  }
+  .fin {
+    width: 180px;
+    height: 28px;
+    padding: 0 10px;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-1);
+    transition: border-color 120ms ease;
+  }
+  .fin::placeholder {
+    color: var(--text-3);
+  }
+  .fin:focus {
+    border-color: var(--accent);
+    outline: none;
+  }
+  .fin:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .fchips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  /* chip vocabulary as a toggle: quiet outline off, always-dark pill on */
+  .fchip {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid var(--hairline-strong);
+    background: transparent;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-3);
+    cursor: pointer;
+    position: relative;
+    transition: color 120ms ease, border-color 120ms ease,
+      background-color 120ms ease, transform 140ms var(--ease-out);
+  }
+  .fchip:active {
+    transform: scale(0.97);
+  }
+  .fchip.on {
+    background: var(--t-bg);
+    border-color: var(--t-border);
+    color: var(--t-badge-text);
+  }
+  .fchip.on.done {
+    color: var(--t-green);
+  }
+  .fchip.on.failed {
+    color: var(--t-red);
+  }
+  .fchip.on.skipped {
+    color: var(--t-dim);
+  }
+  .fchip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .fempty {
+    padding: 20px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+    border-bottom: 1px solid var(--hairline);
+  }
+  /* "n of m shown" rider on the TOTAL label — plain mono, not an eyebrow */
+  .t-shownote {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: normal;
+    text-transform: none;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
   }
 
   /* ---------- workspace: stable two-column grid from the first item on */
@@ -961,6 +1172,14 @@
     border-radius: var(--r-panel);
     background: var(--surface);
     overflow: hidden;
+    container-type: inline-size;
+  }
+  /* three tabs + actions outgrow a narrow panel — drop the words/bytes meta
+     first (it is the only purely informational member of the bar) */
+  @container (max-width: 640px) {
+    .panelbar .meta {
+      display: none;
+    }
   }
   /* quiet placeholder while nothing is previewable */
   .panel-empty {
@@ -1253,6 +1472,56 @@
   }
   .term .fm {
     color: var(--t-dim);
+  }
+
+  /* ---------- diff view (base vs llm) — theme-aware mono line view ---------- */
+  .diffview {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.7;
+    padding: 16px 0 28px;
+    font-variant-numeric: tabular-nums;
+  }
+  .diffview .diffmeta {
+    padding: 4px 20px 16px;
+    margin-bottom: 0;
+  }
+  .dline {
+    display: flex;
+    align-items: baseline;
+  }
+  .dline.add {
+    background: var(--diff-add-bg);
+  }
+  .dline.del {
+    background: var(--diff-del-bg);
+  }
+  .dno {
+    flex: none;
+    width: 42px;
+    padding-right: 10px;
+    text-align: right;
+    color: var(--text-4);
+    user-select: none;
+  }
+  .dmark {
+    flex: none;
+    width: 16px;
+    color: var(--text-3);
+    user-select: none;
+    white-space: pre;
+  }
+  .dtext {
+    flex: 1;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--text-2);
+    padding-right: 20px;
+  }
+  .dline.add .dtext,
+  .dline.del .dtext {
+    color: var(--text-1);
   }
 
   /* ---------- header pills: theme + language (inside the header landmark) */
@@ -1640,6 +1909,14 @@
       color: var(--text-1);
       background: var(--strip);
     }
+    .clibtn:hover {
+      color: var(--text-1);
+      background: var(--strip);
+    }
+    .fchip:not(.on):hover {
+      border-color: var(--text-3);
+      color: var(--text-1);
+    }
     .btn.primary:not(:disabled):hover {
       background: var(--accent-hover);
     }
@@ -1814,10 +2091,19 @@
     .gearbtn {
       position: relative;
     }
-    .gearbtn::before {
+    .gearbtn::before,
+    .clibtn::before,
+    .rowact.retry::before,
+    .fchip::before {
       content: "";
       position: absolute;
       inset: -8px;
+    }
+    .fchip::before {
+      inset: -10px -3px;
+    }
+    .fin {
+      width: 100%;
     }
   }
 }
