@@ -173,8 +173,16 @@ def create_url_processor(
     explicit_fetch_strategy: bool,
     shared_processor: LLMProcessor | None = None,
     renderer: Any | None = None,
+    *,
+    honor_screenshot_only: bool = False,
+    localized_base_md: bool = False,
+    fetch_error_max_length: int = 200,
 ) -> Callable:
     """Create a URL processing function for batch processing.
+
+    This is the single shared fetch->images->base .md->LLM cascade for one
+    URL; both the directory batch (.urls files discovered in a directory)
+    and the URL-list batch (`markitai list.urls`) build their workers on it.
 
     Args:
         cfg: Configuration
@@ -183,6 +191,18 @@ def create_url_processor(
         explicit_fetch_strategy: Whether strategy was explicitly specified
         shared_processor: Optional shared LLMProcessor
         renderer: Optional shared PlaywrightRenderer
+        honor_screenshot_only: Handle --screenshot-only like the single-URL
+            path (without LLM: record the screenshot and skip .md output;
+            with LLM: extract content purely from the screenshot). Off by
+            default: the directory-batch path historically ignores
+            screenshot-only mode and keeps doing so.
+        localized_base_md: Write the base .md from the image-localized
+            markdown (URL-list batch behavior) instead of the original
+            fetched markdown (directory-batch behavior).
+        fetch_error_max_length: Max length for formatted FetchError messages.
+            The default matches format_error_message's own 200-char limit;
+            the URL-list batch passes 800 to keep actionable multi-line
+            error blocks intact in logs/report.
 
     Returns:
         Async function that processes a single URL and returns ProcessResult
@@ -195,6 +215,7 @@ def create_url_processor(
     )
     from markitai.cli.processors.url import (
         build_multi_source_content,
+        process_url_screenshot_only,
         process_url_with_vision,
     )
     from markitai.fetch import (
@@ -223,7 +244,7 @@ def create_url_processor(
 
     async def process_url(
         url: str,
-        source_file: Path,
+        source_file: Path | None = None,
         custom_name: str | None = None,
     ) -> tuple[ProcessResult, dict[str, Any]]:
         """Process a single URL.
@@ -231,6 +252,7 @@ def create_url_processor(
         Args:
             url: URL to process
             source_file: Path to the .urls file containing this URL
+                (caller-side bookkeeping only; unused here)
             custom_name: Optional custom output name
 
         Returns:
@@ -288,7 +310,7 @@ def create_url_processor(
                     error="Jina Reader rate limit exceeded (20 RPM)",
                 ), extra_info
             except FetchError as e:
-                err_msg = format_error_message(e)
+                err_msg = format_error_message(e, max_length=fetch_error_max_length)
                 logger.error(
                     f"[URL] Fetch failed {redact_url(url)}: "
                     f"{redact_urls_in_text(err_msg)}"
@@ -324,6 +346,24 @@ def create_url_processor(
 
             if has_screenshot and screenshot_path:
                 logger.debug(f"[URL] Screenshot captured: {screenshot_path.name}")
+
+            # --screenshot-only without LLM (single-URL parity, opt-in):
+            # just record the screenshot, no image download, no .md output
+            if (
+                honor_screenshot_only
+                and cfg.screenshot.screenshot_only
+                and not cfg.llm.enabled
+            ):
+                if has_screenshot and screenshot_path is not None:
+                    logger.debug(
+                        f"[URL] Screenshot-only (no LLM): {screenshot_path.name}"
+                    )
+                return ProcessResult(
+                    success=True,
+                    output_path=(str(screenshot_path) if has_screenshot else None),
+                    screenshots=screenshots_count,
+                ), extra_info
+
             if cfg.image.alt_enabled or cfg.image.desc_enabled:
                 download_result = await download_url_images(
                     markdown=original_markdown,
@@ -350,15 +390,18 @@ def create_url_processor(
                     error="skipped (exists)",
                 ), extra_info
 
-            # Write base .md file (respect --llm, --pure, --keep-base)
+            # Write base .md file (respect --llm, --pure, --keep-base).
+            # localized_base_md: URL-list batch writes the base .md from the
+            # image-localized markdown; directory batch keeps the original.
+            base_source = markdown_for_llm if localized_base_md else original_markdown
             should_write_base = not cfg.llm.enabled or cfg.llm.keep_base
             if should_write_base:
                 if cfg.llm.pure and not cfg.llm.enabled:
                     # Pure mode without LLM: write raw markdown, no frontmatter
-                    atomic_write_text(output_file, original_markdown)
+                    atomic_write_text(output_file, base_source)
                 else:
                     base_content = _add_basic_frontmatter(
-                        original_markdown,
+                        base_source,
                         url,
                         fetch_strategy=fetch_result.strategy_used
                         if fetch_result
@@ -386,7 +429,42 @@ def create_url_processor(
                     has_multi_source and has_screenshot and screenshot_path
                 )
 
-                if use_vision_enhancement:
+                # --screenshot-only with LLM (single-URL parity, opt-in):
+                # extract content purely from the screenshot
+                if (
+                    honor_screenshot_only
+                    and cfg.screenshot.screenshot_only
+                    and has_screenshot
+                    and screenshot_path is not None
+                    and not cfg.llm.pure
+                ):
+                    _, cost, url_llm_usage = await process_url_screenshot_only(
+                        screenshot_path=screenshot_path,
+                        url=url,
+                        cfg=cfg,
+                        output_file=output_file,
+                        processor=shared_processor,
+                        original_title=fetch_result.title if fetch_result else None,
+                    )
+                    llm_cost = cost
+
+                    if should_analyze_images:
+                        (
+                            _,
+                            image_cost,
+                            image_usage,
+                            img_analysis,
+                        ) = await analyze_images_with_llm(
+                            downloaded_images,
+                            markdown_for_llm,
+                            output_file,
+                            cfg,
+                            Path(url),
+                            processor=shared_processor,
+                        )
+                        _merge_llm_usage(url_llm_usage, image_usage)
+                        llm_cost += image_cost
+                elif use_vision_enhancement:
                     # Multi-source URL with screenshot: use vision LLM for better content extraction
                     # Build multi-source markdown content for LLM
                     multi_source_content = build_multi_source_content(
@@ -895,6 +973,7 @@ async def process_batch(
                 url_state.output = result.output_path
                 url_state.fetch_strategy = extra_info.get("fetch_strategy")
                 url_state.images = result.images
+                url_state.screenshots = result.screenshots
                 url_state.cost_usd = result.cost_usd
                 url_state.llm_usage = result.llm_usage
                 url_state.cache_hit = result.cache_hit

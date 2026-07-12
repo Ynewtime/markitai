@@ -230,10 +230,11 @@ class TestBatchScreenshotFrontmatter:
             return _make_fetch_result(url, screenshot_path=fake_screenshot)
 
         # We patch _add_basic_frontmatter to capture the screenshot_path arg
+        # (the batch worker delegates to create_url_processor in processors/batch)
         with (
             patch("markitai.fetch.fetch_url", side_effect=mock_fetch),
             patch(
-                "markitai.cli.processors.url._add_basic_frontmatter",
+                "markitai.cli.processors.batch._add_basic_frontmatter",
                 return_value="---\nsource: test\n---\n\n# Content",
             ) as mock_frontmatter,
         ):
