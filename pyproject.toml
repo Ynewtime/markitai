@@ -15,6 +15,7 @@ extra-fetch = ["markitai[extra-fetch]"]
 kreuzberg = ["markitai[kreuzberg]"]
 svg = ["markitai[svg]"]
 heif = ["markitai[heif]"]
+serve = ["markitai[serve]"]
 all = ["markitai[all]"]
 
 [tool.uv]
@@ -131,6 +132,7 @@ source_modules = [
     "markitai.providers",
     "markitai.runs",
     "markitai.security",
+    "markitai.serve",
     "markitai.types",
     "markitai.urls",
     "markitai.utils",
@@ -172,6 +174,7 @@ forbidden_modules = [
     "markitai.ocr",
     "markitai.providers",
     "markitai.runs",
+    "markitai.serve",
     "markitai.webextract",
     "markitai.workflow",
 ]
@@ -191,7 +194,7 @@ source_modules = [
     "markitai.providers",
     "markitai.webextract",
 ]
-forbidden_modules = ["markitai.workflow", "markitai.batch"]
+forbidden_modules = ["markitai.workflow", "markitai.batch", "markitai.serve"]
 
 [[tool.importlinter.contracts]]
 name = "fetch_playwright must not import fetch layers (cycle killed in Phase 3)"
@@ -219,6 +222,7 @@ forbidden_modules = [
     "markitai.llm",
     "markitai.ocr",
     "markitai.providers",
+    "markitai.serve",
     "markitai.workflow",
 ]
 

@@ -381,6 +381,31 @@ def _check_playwright(*, check_runtime: bool = True) -> dict[str, Any]:
         }
 
 
+def _check_serve() -> dict[str, Any]:
+    """Check serve extra (web UI server) installation status.
+
+    Returns:
+        Result dict with name, description, status, message, install_hint.
+    """
+    from markitai.serve import is_serve_available
+
+    if is_serve_available():
+        return {
+            "name": "Serve",
+            "description": "Web UI server (markitai serve)",
+            "status": "ok",
+            "message": "fastapi + uvicorn installed",
+            "install_hint": "",
+        }
+    return {
+        "name": "Serve",
+        "description": "Web UI server (markitai serve)",
+        "status": "missing",
+        "message": "serve extra not installed",
+        "install_hint": 'uv tool install "markitai[serve]"',
+    }
+
+
 def _check_libreoffice(macos_fallback: bool = True) -> dict[str, Any]:
     """Check LibreOffice installation status.
 
@@ -608,6 +633,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     results["libreoffice"] = future_libreoffice.result()
     results["ffmpeg"] = future_ffmpeg.result()
     results["rapidocr"] = future_rapidocr.result()
+    results["serve"] = _check_serve()
 
     # 5. Check LLM API configuration (check model_list for configured models)
     configured_models = cfg.llm.model_list if cfg.llm.model_list else []
@@ -889,7 +915,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     # Unified UI output
     ui.title(t("doctor.title"))
-    optional_deps = ["playwright", "libreoffice", "ffmpeg"]
+    optional_deps = ["playwright", "libreoffice", "ffmpeg", "serve"]
     llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
     auth_keys = ["claude-agent-auth", "copilot-auth", "chatgpt-auth"]
 

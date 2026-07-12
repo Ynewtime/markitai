@@ -1,0 +1,208 @@
+import { useState } from "react";
+import type { ItemStatus } from "../api/types";
+import type { SessionItem } from "../hooks/useJobs";
+import type { Dict } from "../i18n";
+import { fmtBytes, fmtCost, fmtDur, shortError } from "../lib/format";
+import { FileTextIcon, GlobeIcon } from "./icons";
+
+/** CLI status words — lowercase mono, identical in both locales. */
+const STATUS_TEXT: Record<ItemStatus | "skipped", string> = {
+  queued: "queued",
+  running: "converting",
+  done: "done",
+  error: "failed",
+  skipped: "skipped",
+};
+
+/** Empty-cell placeholder — a plain hyphen (visible copy bans em/en dashes). */
+const DASH = "-";
+/** Kept tail of middle-truncated names — preserves “….txt” endings. */
+const NAME_TAIL_CHARS = 12;
+
+/** CLI word for history-merged rows — stays English in both locales. */
+const ARCHIVED_TEXT = "archived";
+
+function liveDuration(item: SessionItem, now: number): string | null {
+  if (item.startedAt === null) return null;
+  return fmtDur(Math.max(0, now - item.startedAt));
+}
+
+/** Middle truncation: head span ellipsizes, tail (extension) stays visible.
+ * CSS alone can only end-truncate, so the split happens here. */
+function MidName({ name, title }: { name: string; title: string }) {
+  if (name.length <= NAME_TAIL_CHARS + 4) {
+    return (
+      <span className="fname" title={title}>
+        {name}
+      </span>
+    );
+  }
+  return (
+    <span className="fname mid" title={title}>
+      <span className="fhead">{name.slice(0, -NAME_TAIL_CHARS)}</span>
+      <span className="ftail">{name.slice(-NAME_TAIL_CHARS)}</span>
+    </span>
+  );
+}
+
+function StatusCell({ item }: { item: SessionItem }) {
+  switch (item.status) {
+    case "done":
+      // Skips complete as "done" but carry no fresh result — neutral chip.
+      return item.skipped ? (
+        <span className="chip skip">{STATUS_TEXT.skipped}</span>
+      ) : (
+        <span className="chip ok">{STATUS_TEXT.done}</span>
+      );
+    case "error":
+      return <span className="chip err">{STATUS_TEXT.error}</span>;
+    case "running":
+      // The compact column is too narrow for the word — spinner only.
+      return (
+        <span className="runstat" title={STATUS_TEXT.running}>
+          <span className="spin" aria-hidden="true" />
+          <span className="sr-only">{STATUS_TEXT.running}</span>
+        </span>
+      );
+    case "queued":
+      return <span className="runstat queued">{STATUS_TEXT.queued}</span>;
+  }
+}
+
+export function ItemRow({
+  t,
+  item,
+  index,
+  showCost,
+  now,
+  selected,
+  tabbable,
+  llmConfigured,
+  onSelect,
+  onOpenSettings,
+  onRowFocus,
+}: {
+  t: Dict;
+  item: SessionItem;
+  index: number;
+  showCost: boolean;
+  now: number;
+  selected: boolean;
+  /** Roving tabindex: exactly one row in the listbox is tabbable. */
+  tabbable: boolean;
+  llmConfigured: boolean;
+  onSelect: (key: string) => void;
+  onOpenSettings: () => void;
+  onRowFocus: (key: string) => void;
+}) {
+  const [errExpanded, setErrExpanded] = useState(false);
+
+  const running = item.status === "running";
+  const failed = item.status === "error";
+  const skipped = item.status === "done" && item.skipped;
+  const previewable = item.status === "done" && item.output !== null && !item.skipped;
+
+  const live = running ? liveDuration(item, now) : null;
+  const timeText = skipped
+    ? DASH
+    : item.durationMs !== null
+      ? fmtDur(item.durationMs)
+      : (live ?? DASH);
+  const sizeText = item.sizeBytes !== null ? fmtBytes(item.sizeBytes) : null;
+  const costText =
+    item.costUsd !== null && item.costUsd > 0 ? fmtCost(item.costUsd) : DASH;
+  // The mock strips the protocol from URLs in the compact list.
+  const displayName = item.name.replace(/^https?:\/\//, "");
+  const nameTitle = sizeText !== null ? `${item.name} · ${sizeText}` : item.name;
+
+  // Size lost its column — it lives in the name title and the meta line.
+  const metaParts: string[] = [];
+  if (sizeText !== null) metaParts.push(sizeText);
+  if (running) metaParts.push(`running ${live ?? DASH}`);
+  else if (!skipped && item.durationMs !== null) metaParts.push(fmtDur(item.durationMs));
+  if (showCost && item.costUsd !== null && item.costUsd > 0)
+    metaParts.push(fmtCost(item.costUsd));
+  if (item.status === "queued") metaParts.push(STATUS_TEXT.queued);
+
+  // "image input — configure llm …" points at the settings panel while llm
+  // is unconfigured; the row click opens it.
+  const skipNeedsConfig = skipped && item.skipReason === "image_only" && !llmConfigured;
+  const skipText =
+    item.skipReason === "image_only"
+      ? t.skipImageOnly
+      : item.skipReason === "exists"
+        ? t.skipExists
+        : item.skipReason === null
+          ? STATUS_TEXT.skipped
+          : `${STATUS_TEXT.skipped} (${item.skipReason})`;
+
+  const detailId =
+    failed || skipped ? `d-${item.key.replace(/[^a-zA-Z0-9_-]/g, "-")}` : undefined;
+
+  // Column context for screen readers ("sample.txt, 12 KB, 0.3 seconds, done").
+  const ariaParts = [displayName];
+  if (item.archived) ariaParts.push(ARCHIVED_TEXT);
+  if (sizeText !== null) ariaParts.push(sizeText);
+  if (!skipped && item.durationMs !== null)
+    ariaParts.push(`${(item.durationMs / 1000).toFixed(1)} ${t.ariaSeconds}`);
+  ariaParts.push(skipped ? STATUS_TEXT.skipped : STATUS_TEXT[item.status]);
+
+  const activate = () => {
+    if (previewable) onSelect(item.key);
+    else if (failed) setErrExpanded((v) => !v);
+    else if (skipNeedsConfig) onOpenSettings();
+  };
+
+  return (
+    <div
+      role="option"
+      id={`opt-${item.key.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
+      aria-selected={selected}
+      aria-disabled={previewable ? undefined : true}
+      aria-label={ariaParts.join(", ")}
+      aria-describedby={detailId}
+      tabIndex={tabbable ? 0 : -1}
+      className={`lrow${selected ? " sel" : ""}${failed || skipNeedsConfig ? " actionable" : ""}`}
+      title={failed ? (item.error ?? undefined) : undefined}
+      onClick={activate}
+      onFocus={() => onRowFocus(item.key)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          activate();
+        }
+      }}
+    >
+      <span className="c-num">{String(index + 1).padStart(2, "0")}</span>
+      <span className="c-name">
+        {item.kind === "file" ? <FileTextIcon /> : <GlobeIcon />}
+        <MidName name={displayName} title={nameTitle} />
+        {item.archived && <span className="minibadge">{ARCHIVED_TEXT}</span>}
+      </span>
+      <span className={running ? "c-time live" : "c-time"}>{timeText}</span>
+      {showCost && <span className="c-cost">{costText}</span>}
+      <span className="c-status">
+        <StatusCell item={item} />
+      </span>
+      {metaParts.length > 0 && <span className="rowmeta">{metaParts.join(" · ")}</span>}
+      {failed && item.error !== null && (
+        <span className="c-err" id={detailId} title={t.errExpandTitle}>
+          {errExpanded ? <span className="err-full">{item.error}</span> : shortError(item.error)}
+        </span>
+      )}
+      {skipped && (
+        <span className="c-skip" id={detailId}>
+          {skipNeedsConfig ? (
+            <>
+              {t.skipCfgPre}
+              <span className="linkish">{t.skipCfgLink}</span>
+              {t.skipCfgPost}
+            </>
+          ) : (
+            skipText
+          )}
+        </span>
+      )}
+    </div>
+  );
+}

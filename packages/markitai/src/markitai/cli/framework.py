@@ -42,6 +42,11 @@ _LAZY_COMMANDS: dict[str, tuple[str, str, str]] = {
         "init",
         "Initialize Markitai configuration.",
     ),
+    "serve": (
+        "markitai.cli.commands.serve",
+        "serve",
+        "Run the Markitai web UI server.",
+    ),
 }
 
 

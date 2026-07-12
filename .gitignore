@@ -98,3 +98,5 @@ website/node_modules/
 website/.vitepress/cache/
 website/.vitepress/dist/
 website/changelog.md
+
+webapp/node_modules/
