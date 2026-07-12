@@ -86,7 +86,7 @@ i18n() {
             confirm_continue_as_root)   echo "以 root 身份继续?" ;;
 
             # Info messages
-            info_libreoffice_purpose)   echo "LibreOffice 用于将 Office 文档 (docx/xlsx/pptx) 转换为 Markdown" ;;
+            info_libreoffice_purpose)   echo "LibreOffice 用于转换旧版 Office 文档 (.doc/.ppt) 并渲染幻灯片截图" ;;
             info_ffmpeg_purpose)        echo "FFmpeg 用于处理音频和视频文件" ;;
             info_playwright_purpose)    echo "Playwright 用于获取 JavaScript 渲染的网页内容" ;;
             info_project_dir)           echo "项目目录" ;;
@@ -200,7 +200,7 @@ i18n() {
             confirm_continue_as_root)   echo "Continue as root?" ;;
 
             # Info messages
-            info_libreoffice_purpose)   echo "LibreOffice converts Office documents (docx/xlsx/pptx) to Markdown" ;;
+            info_libreoffice_purpose)   echo "LibreOffice converts legacy Office files (.doc/.ppt) and renders slide screenshots" ;;
             info_ffmpeg_purpose)        echo "FFmpeg processes audio and video files" ;;
             info_playwright_purpose)    echo "Playwright fetches JavaScript-rendered web pages" ;;
             info_project_dir)           echo "Project directory" ;;
