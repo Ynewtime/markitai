@@ -3,7 +3,7 @@ name = "markitai"
 description = "Opinionated Markdown converter with native LLM enhancement support"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.11,<3.15"
+requires-python = ">=3.11,<3.14"
 authors = [
     { name = "Ynewtime", email = "longqiliuye@gmail.com" }
 ]
@@ -19,7 +19,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
     "Topic :: Text Processing :: Markup :: Markdown",
     "Topic :: Utilities",
 ]

@@ -2,7 +2,7 @@
 
 ## Development setup
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.11–3.14.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.11–3.13.
 
 ```bash
 git clone https://github.com/Ynewtime/markitai.git
@@ -28,7 +28,8 @@ uv run markitai <file>                    # run the CLI from source
 ```
 
 Test markers: `slow`, `network`, `parity` (see `pyproject.toml`). CI runs the
-default selection on Linux/macOS/Windows × Python 3.11–3.14.
+default selection and an isolated built-wheel install smoke test on
+Linux/macOS/Windows × Python 3.11–3.13.
 
 Architecture rule: modules below `markitai.cli` must never import it (and the
 other layering contracts in `[tool.importlinter]`, root `pyproject.toml`).

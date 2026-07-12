@@ -117,6 +117,17 @@ def test_setup_ps1_preserves_existing_config() -> None:
     assert 0 <= guard < init, "existing-config guard must run before markitai init"
 
 
+def test_setup_scripts_only_select_supported_python_versions() -> None:
+    """Installers must not select a Python version excluded by package metadata."""
+    shell_text = _SETUP_SH.read_text(encoding="utf-8")
+    powershell_text = _SETUP_PS1.read_text(encoding="utf-8")
+
+    assert "uv python find '>=3.11,<3.14'" in shell_text
+    assert 'uv python find ">=3.11,<3.14"' in powershell_text
+    assert ">=3.11,<3.15" not in shell_text
+    assert ">=3.11,<3.15" not in powershell_text
+
+
 def test_setup_sh_honors_version_pin_for_existing_tool() -> None:
     """A pinned repeat install must bypass the receipt-based generic upgrade."""
     body = _shell_function("install_markitai")
