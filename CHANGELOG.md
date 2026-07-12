@@ -5,19 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.21.0] - 2026-07-12
 
 ### Changed
 
 - **Legacy `.xls` files now convert in pure Python** (xlrd via MarkItDown, same engine as `.xlsx`): no Office application or LibreOffice is launched or required, on any platform. Cell content is identical to the previous Excel-automation output (verified live); conversion is also faster and no longer serialized behind an app lock
+- **The persistent LLM cache is now scoped to your model pool**: switching model configuration stops serving results produced by the old models, while rotating an API key keeps every hit; document cleanups also keep hitting after a file is renamed (identical content, different name). Existing cache entries miss once after upgrading — the old entries were unreachable anyway (see Fixed)
+- **Structured LLM calls now go through the full transport retry loop** (exponential backoff, quota/billing short-circuit, empty-response retry) that plain-text calls always had; they previously bypassed it entirely. With a persistently degenerate model the worst-case attempt count is accordingly higher — that is the cost of actually retrying
+- **Standalone `.urls` batches gain vision enhancement** in the `--screenshot` multi-source corner, matching what a single-URL conversion of the same page produces
+- **Internal: the fetch, LLM, and CLI subsystems were restructured** behind unchanged behavior — machine-enforced import-layering contracts now run in CI, fetch.py shrank from ~3000 to ~1100 lines with per-strategy modules, the LLM pipeline is a single engine instead of five hand-rolled copies, and report/exit-code/output handling is single-sourced across all input paths. A 43-item regression matrix over every 0.15–0.20 fix verified nothing regressed
 
 ### Removed
 
+- **Python 3.14 support**: `requires-python` narrows to `>=3.11,<3.14` across the package and installers, and the CI/publish matrices no longer test 3.14. The platform-conditional ONNX Runtime constraint that existed only to keep 3.14 resolvable is gone with it
 - Excel COM automation (Windows) and Excel AppleScript automation (macOS), together with the `.xls` entries in the batch pre-conversion and heavy-task paths — `.xls` no longer needs them
 
 ### Fixed
 
+- **The cross-session LLM cache never actually hit**: the persistent cache's reads and writes disagreed on the cache key's model column, so no run ever saw a previous run's results — every rerun of an already-processed document paid the full LLM cost again. Reads and writes now agree (locked by a regression test), and reprocessing an unchanged document is near-instant and free
+- **macOS `.doc`/`.ppt` conversion via Microsoft Office was broken end to end**: Word's and PowerPoint's AppleScript `open` returns nothing, so the script's document binding was never established — the first reference died, the error handler's own reference to the same variable masked the real error behind an inscrutable "variable openedItem is not defined", the document was never closed, and the stranded zombie documents degraded the app further with every retry. The script now binds the document by its unique staged name, closes it under both its pre- and post-save names, and always propagates the original error. Excel's "Parameter error -50" had the same root and is fixed the same way (now moot for `.xls` — see Removed — but the fix also covers the PPTX-to-PDF export path)
 - **macOS: `.doc`/`.ppt` conversion failing on an Office app's first scripted launch after an Office update** ("the document never registered" / PowerPoint error -9074). In that state the app silently drops Word's parametered `open` request while answering everything else; Word's script now retries with a plain `open` mid-poll (verified to penetrate and heal the state) and logs the recovery. Error messages for the stall and for -9074 now carry the verified remedy — open the app manually once so it finishes first-run setup — instead of the misleading "app stuck or overloaded, quit and retry"
+- **Truncated or degenerate LLM output no longer poisons the cache**: screenshot extraction and URL enhancement now reject length-truncated responses like every other call site, and URL enhancement no longer caches output whose degenerate tail had to be cut
+- **`markitai -I` no longer crashes with a raw traceback when a config file is invalid**: the interactive wizard now reports the same actionable message as every other command
+- **Directory-batch reports no longer drop screenshot counts for URL entries**
+- **The defuddle HTTP client now rebuilds when proxy or timeout settings change** (it previously kept the first client for the whole process, like jina always did correctly)
+- **Disabled models (`weight: 0`) no longer affect cache scoping**: disabling a model stops serving its old cached results, and adding or removing a disabled entry no longer invalidates the pool's cache
+- **Copilot authentication status reads correctly with current Copilot CLIs**: newer CLI versions write JSONC-style comments and renamed the login key, which made `doctor` and `auth copilot status` report a parse error as "not logged in". Both formats are now accepted, an unparseable config reports as indeterminate rather than unauthenticated, and a login the CLI itself reports as successful is never vetoed by the follow-up config read
 
 ## [0.20.0] - 2026-07-10
 
