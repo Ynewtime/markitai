@@ -81,7 +81,7 @@ function i18n {
             "confirm_continue_as_admin" { return "以管理员身份继续?" }
 
             # Info messages
-            "info_libreoffice_purpose"  { return "LibreOffice 用于将 Office 文档 (docx/xlsx/pptx) 转换为 Markdown" }
+            "info_libreoffice_purpose"  { return "LibreOffice 用于转换旧版 Office 文档 (.doc/.ppt) 并渲染幻灯片截图" }
             "info_ffmpeg_purpose"       { return "FFmpeg 用于处理音频和视频文件" }
             "info_playwright_purpose"   { return "Playwright 用于获取 JavaScript 渲染的网页内容" }
             "info_project_dir"          { return "项目目录" }
@@ -197,7 +197,7 @@ function i18n {
             "confirm_continue_as_admin" { return "Continue as administrator?" }
 
             # Info messages
-            "info_libreoffice_purpose"  { return "LibreOffice converts Office documents (docx/xlsx/pptx) to Markdown" }
+            "info_libreoffice_purpose"  { return "LibreOffice converts legacy Office files (.doc/.ppt) and renders slide screenshots" }
             "info_ffmpeg_purpose"       { return "FFmpeg processes audio and video files" }
             "info_playwright_purpose"   { return "Playwright fetches JavaScript-rendered web pages" }
             "info_project_dir"          { return "Project directory" }
