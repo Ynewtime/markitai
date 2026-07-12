@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
+## [0.21.1] - 2026-07-12
+
+### 修复
+
+- **macOS 与 Windows 全新安装不再尝试从源码编译 litellm**：litellm 1.92.0 只发布了 Linux 平台的 wheel，其他平台的 `uv tool install markitai` 会退回从 sdist 构建其新增的 Rust 扩展——没有 Rust 工具链时直接失败，构建环境选中不受支持的 Python（如系统默认的 3.14）时则报出大段 pyo3 错误。现已排除该版本，依赖解析会落在各平台均有 wheel 的版本上
+
 ## [0.21.0] - 2026-07-12
 
 ### 变更
