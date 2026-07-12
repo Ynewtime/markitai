@@ -8,6 +8,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: lint-imports
+        name: import-layer contracts
+        entry: uv run lint-imports
+        language: system
+        files: ^(packages/markitai/src/.*\.py|pyproject\.toml)$
+        pass_filenames: false
+
       - id: pyright
         name: pyright
         entry: uv run pyright
