@@ -20,7 +20,8 @@ class FileFormat(Enum):
     PPTX = "pptx"
     XLSX = "xlsx"
 
-    # Legacy Office formats (97-2003), requires LibreOffice
+    # Legacy Office formats (97-2003); doc/ppt need MS Office or LibreOffice,
+    # xls converts in pure Python (xlrd via markitdown)
     DOC = "doc"
     PPT = "ppt"
     XLS = "xls"

@@ -54,7 +54,6 @@ _ERR_NOT_AUTHORIZED = "-1743"
 APP_BY_SUFFIX: dict[str, str] = {
     ".doc": "Microsoft Word",
     ".ppt": "Microsoft PowerPoint",
-    ".xls": "Microsoft Excel",
 }
 
 # Office apps are single-instance and expose process-global automation
@@ -63,12 +62,10 @@ APP_BY_SUFFIX: dict[str, str] = {
 _APP_LOCKS: dict[str, threading.Lock] = {
     "Microsoft Word": threading.Lock(),
     "Microsoft PowerPoint": threading.Lock(),
-    "Microsoft Excel": threading.Lock(),
 }
 _APP_LOCK_NAMES: dict[str, str] = {
     "Microsoft Word": "word.lock",
     "Microsoft PowerPoint": "powerpoint.lock",
-    "Microsoft Excel": "excel.lock",
 }
 
 
@@ -115,7 +112,6 @@ def _as_quote(path: Path) -> str:
 _CONTAINER_BY_APP: dict[str, str] = {
     "Microsoft Word": "document",
     "Microsoft PowerPoint": "presentation",
-    "Microsoft Excel": "workbook",
 }
 
 
@@ -264,8 +260,7 @@ def _wrap_office_script(
 # to the Windows COM format codes used in converter/legacy.py:
 #   Word  "format document default"        == wdFormatDocumentDefault (16)
 #   PPT   "save as Open XML presentation"  == ppSaveAsOpenXMLPresentation (24)
-#   Excel "Excel XML file format"          == xlOpenXMLWorkbook (51)
-# Word/Excel take a text path ("POSIX file ... as string" -> HFS text);
+# Word takes a text path ("POSIX file ... as string" -> HFS text);
 # PowerPoint takes the file object directly (verified live).
 def _build_legacy_script(app: str, staged_in: Path, staged_out: Path) -> str:
     inp = _as_quote(staged_in)
@@ -293,22 +288,6 @@ def _build_legacy_script(app: str, staged_in: Path, staged_out: Path) -> str:
             action_lines=[
                 f'save openedItem in (POSIX file "{out}") '
                 "as save as Open XML presentation"
-            ],
-            **names,
-        )
-    if app == "Microsoft Excel":
-        return _wrap_office_script(
-            app,
-            open_lines=[
-                f'set inPath to (POSIX file "{inp}") as string',
-                "open workbook workbook file name inPath "
-                "update links do not update links read only true "
-                "ignore read only recommended true add to mru false",
-            ],
-            action_lines=[
-                f'set outPath to (POSIX file "{out}") as string',
-                "save workbook as openedItem filename outPath "
-                "file format Excel XML file format",
             ],
             **names,
         )
@@ -507,11 +486,11 @@ def _convert_via_staging(
 
 
 def convert_legacy(input_path: Path, target_format: str, output_dir: Path) -> Path:
-    """Convert a legacy Office file (.doc/.ppt/.xls) to its modern format.
+    """Convert a legacy Office file (.doc/.ppt) to its modern format.
 
     Args:
         input_path: Path to the legacy file.
-        target_format: Target extension without dot (docx, pptx, xlsx).
+        target_format: Target extension without dot (docx, pptx).
         output_dir: Directory for the converted file.
 
     Returns:

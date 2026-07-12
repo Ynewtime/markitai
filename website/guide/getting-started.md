@@ -27,7 +27,7 @@ Add `-o output/` when you want a file instead. Continue below for the guided ins
 
 ### Required
 
-- **Python 3.11-3.14** - Required runtime
+- **Python 3.11-3.13** - Required runtime
 - **[uv](https://docs.astral.sh/uv/)** - Package manager (recommended)
 
 ### Optional Dependencies
@@ -77,7 +77,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 :::
 
 The script will:
-- Check for / auto-install Python 3.11-3.14 (no prompt)
+- Check for / auto-install Python 3.11-3.13 (no prompt)
 - Install [uv](https://docs.astral.sh/uv/) package manager (confirmation, defaults to Yes)
 - Install markitai itself, plus its pip-only extras (browser automation, `extra-fetch`, `kreuzberg`, `svg`, `heif`), with no further prompts; LibreOffice, FFmpeg, and the Claude/Copilot CLIs are offered afterward with their own confirmation (defaults to No)
 
@@ -103,7 +103,7 @@ This example pins the release documented here. Omit `MARKITAI_VERSION` to instal
 
 ### Manual Installation
 
-If you already have Python 3.11-3.14 and prefer a minimal install:
+If you already have Python 3.11-3.13 and prefer a minimal install:
 
 ```bash
 # Using uv (recommended, isolated environment)
@@ -292,7 +292,8 @@ Some features have platform-specific behavior or limitations:
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.xls`, `.ppt`) | ✅ Full | Uses COM automation |
+| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Uses COM automation |
+| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python, no Office needed) |
 | PPTX Slide Rendering | ✅ Full | MS Office preferred, LibreOffice fallback |
 | EMF/WMF Images | ✅ Full | Native support |
 | Browser Automation | ✅ Full | Hidden window mode |
@@ -301,7 +302,8 @@ Some features have platform-specific behavior or limitations:
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.xls`, `.ppt`) | ✅ Full | Requires LibreOffice (Windows uses COM, LibreOffice as fallback) |
+| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Requires LibreOffice (Windows uses COM, LibreOffice as fallback) |
+| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python, no LibreOffice needed) |
 | PPTX Slide Rendering | ✅ Full | Requires LibreOffice |
 | EMF/WMF Images | ❌ No | Windows-only format |
 | Browser Automation | ✅ Full | Requires system dependencies |
@@ -326,7 +328,8 @@ markitai doctor --fix
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.xls`, `.ppt`) | ✅ Full | LibreOffice preferred; falls back to installed MS Office |
+| Legacy Office (`.doc`, `.ppt`) | ✅ Full | LibreOffice preferred; falls back to installed MS Office |
+| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python, no Office needed) |
 | PPTX Slide Rendering | ✅ Full | LibreOffice preferred; falls back to installed MS PowerPoint |
 | EMF/WMF Images | ❌ No | Windows-only format |
 | Browser Automation | ✅ Full | - |

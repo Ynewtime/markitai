@@ -399,7 +399,7 @@ def _check_libreoffice(macos_fallback: bool = True) -> dict[str, Any]:
         # Running soffice --version can hang on Windows in non-interactive mode
         return {
             "name": "LibreOffice",
-            "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
+            "description": "Legacy Office conversion (doc, ppt) and PPTX slide rendering",
             "status": "ok",
             "message": "installed",
             "path": soffice_path,
@@ -413,13 +413,13 @@ def _check_libreoffice(macos_fallback: bool = True) -> dict[str, Any]:
 
             office_apps = [
                 app.removeprefix("Microsoft ")
-                for app in ("Microsoft Word", "Microsoft PowerPoint", "Microsoft Excel")
+                for app in ("Microsoft Word", "Microsoft PowerPoint")
                 if office_mac.find_ms_office_app(app)
             ]
             if office_apps:
                 return {
                     "name": "LibreOffice",
-                    "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
+                    "description": "Legacy Office conversion (doc, ppt) and PPTX slide rendering",
                     "status": "warning",
                     "message": (
                         "not found; MS Office fallback available "
@@ -430,7 +430,7 @@ def _check_libreoffice(macos_fallback: bool = True) -> dict[str, Any]:
                 }
         return {
             "name": "LibreOffice",
-            "description": "Office document conversion (doc, docx, xls, xlsx, ppt, pptx)",
+            "description": "Legacy Office conversion (doc, ppt) and PPTX slide rendering",
             "status": "missing",
             "message": "soffice/libreoffice command not found",
             "install_hint": get_install_hint("libreoffice"),

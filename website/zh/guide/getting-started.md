@@ -27,7 +27,7 @@ mkai https://markitai.dev/zh/guide/getting-started --pure
 
 ### 必需依赖
 
-- **Python 3.11-3.14** - 运行时环境
+- **Python 3.11-3.13** - 运行时环境
 - **[uv](https://docs.astral.sh/uv/)** - 包管理器（推荐）
 
 ### 可选依赖
@@ -77,7 +77,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 :::
 
 脚本会：
-- 检测 / 自动安装 Python 3.11-3.14（无需确认）
+- 检测 / 自动安装 Python 3.11-3.13（无需确认）
 - 安装 [uv](https://docs.astral.sh/uv/) 包管理器（需确认，默认 Yes）
 - 安装 markitai 本体及其纯 pip 依赖的可选组件（浏览器自动化、`extra-fetch`、`kreuzberg`、`svg`、`heif`），无需额外确认；LibreOffice、FFmpeg 和 Claude/Copilot CLI 会在随后单独询问确认（默认 No）
 
@@ -103,7 +103,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 
 ### 手动安装
 
-如果你已有 Python 3.11-3.14，只想要最小安装：
+如果你已有 Python 3.11-3.13，只想要最小安装：
 
 ```bash
 # 使用 uv（推荐，隔离环境）
@@ -288,7 +288,8 @@ output/
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ✅ 完全支持 | 使用 COM 自动化 |
+| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 使用 COM 自动化 |
+| 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置支持（纯 Python，无需 Office） |
 | PPTX 幻灯片渲染 | ✅ 完全支持 | 优先使用 MS Office，LibreOffice 备选 |
 | EMF/WMF 图片 | ✅ 完全支持 | 原生支持 |
 | 浏览器自动化 | ✅ 完全支持 | 隐藏窗口模式 |
@@ -297,7 +298,8 @@ output/
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ✅ 完全支持 | 需要 LibreOffice（Windows 使用 COM，LibreOffice 作为备选） |
+| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 需要 LibreOffice（Windows 使用 COM，LibreOffice 作为备选） |
+| 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置支持（纯 Python，无需 LibreOffice） |
 | PPTX 幻灯片渲染 | ✅ 完全支持 | 需要 LibreOffice |
 | EMF/WMF 图片 | ❌ 不支持 | Windows 专有格式 |
 | 浏览器自动化 | ✅ 完全支持 | 需要系统依赖 |
@@ -322,7 +324,8 @@ markitai doctor --fix
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.xls`、`.ppt`） | ✅ 完全支持 | 优先 LibreOffice；未安装时回退到已装的 MS Office |
+| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 优先 LibreOffice；未安装时回退到已装的 MS Office |
+| 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置支持（纯 Python，无需 Office） |
 | PPTX 幻灯片渲染 | ✅ 完全支持 | 优先 LibreOffice；未安装时回退到已装的 MS PowerPoint |
 | EMF/WMF 图片 | ❌ 不支持 | Windows 专有格式 |
 | 浏览器自动化 | ✅ 完全支持 | - |

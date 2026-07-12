@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Legacy `.xls` files now convert in pure Python** (xlrd via MarkItDown, same engine as `.xlsx`): no Office application or LibreOffice is launched or required, on any platform. Cell content is identical to the previous Excel-automation output (verified live); conversion is also faster and no longer serialized behind an app lock
+
+### Removed
+
+- Excel COM automation (Windows) and Excel AppleScript automation (macOS), together with the `.xls` entries in the batch pre-conversion and heavy-task paths — `.xls` no longer needs them
+
 ## [0.20.0] - 2026-07-10
 
 ### Added

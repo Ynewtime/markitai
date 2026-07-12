@@ -53,13 +53,18 @@ class TestDetection:
     def test_legacy_app_available_unknown_suffix(self) -> None:
         assert office_mac.legacy_app_available(".txt") is False
 
+    def test_xls_is_not_an_automation_format(self) -> None:
+        # .xls converts in pure Python (xlrd via markitdown); Excel
+        # automation was removed and must not come back silently.
+        assert ".xls" not in office_mac.APP_BY_SUFFIX
+        assert office_mac.legacy_app_available(".xls") is False
+
 
 class TestScriptBuilding:
     def test_legacy_scripts_use_verified_enums(self) -> None:
         cases = {
             "Microsoft Word": "format document default",
             "Microsoft PowerPoint": "save as Open XML presentation",
-            "Microsoft Excel": "Excel XML file format",
         }
         for app, enum in cases.items():
             script = office_mac._build_legacy_script(
@@ -76,12 +81,10 @@ class TestScriptBuilding:
             assert "set openedItem to open" not in script
             assert 'set openedItem to document "' in script or (
                 'set openedItem to presentation "' in script
-                or 'set openedItem to workbook "' in script
             )
             assert "repeat until (exists" in script
             assert "active document" not in script
             assert "active presentation" not in script
-            assert "active workbook" not in script
             assert "on error errorMessage number errorNumber" in script
             assert "if openedItem is not missing value then" not in script
             # ForceDisable must never survive a cold-launch missing value read
@@ -95,16 +98,6 @@ class TestScriptBuilding:
         assert "add to recent files false" in script
         assert "set update links at open of settings to false" in script
         assert "set update links at open of settings to previousExtraSetting" in script
-
-    def test_excel_opens_read_only_without_updating_links(self) -> None:
-        script = office_mac._build_legacy_script(
-            "Microsoft Excel", Path("/tmp/in.xls"), Path("/tmp/out.xlsx")
-        )
-        assert "open workbook" in script
-        assert "update links do not update links" in script
-        assert "read only true" in script
-        assert "ignore read only recommended true" in script
-        assert "add to mru false" in script
 
     def test_security_is_restored_before_save(self) -> None:
         script = office_mac._build_pdf_script(
@@ -491,7 +484,8 @@ class TestDoctorFallbackMessage:
 
         assert result["status"] == "warning"
         assert "MS Office fallback available" in result["message"]
-        assert "Word, PowerPoint, Excel" in result["message"]
+        assert "Word, PowerPoint" in result["message"]
+        assert "Excel" not in result["message"]
 
     def test_darwin_without_office_stays_missing(self) -> None:
         from markitai.cli.commands.doctor import _check_libreoffice

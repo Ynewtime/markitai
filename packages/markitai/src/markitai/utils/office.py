@@ -109,12 +109,6 @@ def check_ms_word_available() -> bool:
     return _check_ms_office_app("Word.Application", "WINWORD", "MS Word")
 
 
-@lru_cache(maxsize=1)
-def check_ms_excel_available() -> bool:
-    """Check if MS Office Excel is installed (Windows only)."""
-    return _check_ms_office_app("Excel.Application", "EXCEL", "MS Excel")
-
-
 import threading
 
 # Thread-safe cache for has_ms_office result

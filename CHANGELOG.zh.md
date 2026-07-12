@@ -5,6 +5,16 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
+## [Unreleased]
+
+### 变更
+
+- **旧版 `.xls` 文件改为纯 Python 转换**（经 MarkItDown 的 xlrd 路径，与 `.xlsx` 同引擎）：任何平台都不再启动或依赖 Office 应用与 LibreOffice。单元格内容与此前 Excel 自动化的输出完全一致（真机验证）；转换更快，也不再受应用级锁串行化影响
+
+### 移除
+
+- Excel COM 自动化（Windows）与 Excel AppleScript 自动化（macOS），以及批量预转换、重任务调度中的 `.xls` 条目——`.xls` 不再需要它们
+
 ## [0.20.0] - 2026-07-10
 
 ### Added
