@@ -58,6 +58,40 @@ class TestCopilotAuthCLI:
 
         assert result.exit_code == 1
 
+    def test_copilot_status_current_cli_config_format(self, tmp_path: Path) -> None:
+        """auth copilot status parses the JSONC + camelCase config format."""
+        runner = CliRunner()
+
+        config_dir = tmp_path / ".copilot"
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text(
+            "// This file is managed automatically.\n"
+            '{"loggedInUsers": [{"host": "https://github.com", "login": "ghuser"}]}'
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            result = runner.invoke(app, ["auth", "copilot", "status"])
+
+        assert result.exit_code == 0
+        assert "ghuser" in result.output
+
+    def test_copilot_status_unparseable_config_shows_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        """An unreadable config renders as unknown state, not "Not logged in"."""
+        runner = CliRunner()
+
+        config_dir = tmp_path / ".copilot"
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text("not json at all")
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            result = runner.invoke(app, ["auth", "copilot", "status"])
+
+        assert result.exit_code == 1
+        assert "Login state unknown" in result.output
+        assert "Not logged in" not in result.output
+
     def test_copilot_status_json(self, tmp_path: Path) -> None:
         """auth copilot status --json outputs valid JSON."""
         runner = CliRunner()

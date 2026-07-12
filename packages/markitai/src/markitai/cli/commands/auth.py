@@ -252,6 +252,8 @@ def _render_status_card(
 
     if status.authenticated:
         ui.success(f"Logged in: {_display_user(status)}")
+    elif (status.details or {}).get("indeterminate"):
+        ui.warning("Login state unknown", detail=status.error)
     else:
         ui.error("Not logged in", detail=status.error)
 
@@ -279,7 +281,11 @@ def _print_login_result(provider_label: str, status: AuthStatus) -> None:
     """Print login attempt result, raise SystemExit(1) on failure."""
     console = get_console()
     if status.authenticated:
-        ui.summary(f"{provider_label} login successful: {_display_user(status)}")
+        user_label = _display_user(status)
+        msg = f"{provider_label} login successful"
+        if user_label:
+            msg += f": {user_label}"
+        ui.summary(msg)
         console.print(f"  [dim]{_next_step_hint(status.provider)}[/]")
     else:
         ui.summary(f"{provider_label} login failed: {status.error}", ok=False)
