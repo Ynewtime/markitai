@@ -28,7 +28,7 @@ curl -fsSL https://markitai.dev/setup.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 
-**Minimal (uv / pip)**, if you already have Python 3.11-3.14 and just want the package:
+**Minimal (uv / pip)**, if you already have Python 3.11-3.13 and just want the package:
 
 ```bash
 uv tool install markitai     # isolated environment (recommended)

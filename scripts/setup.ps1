@@ -93,7 +93,7 @@ function i18n {
 
             # Error messages
             "error_uv_required"         { return "需要安装 uv 包管理器" }
-            "error_python_required"     { return "需要安装 Python 3.11-3.14" }
+            "error_python_required"     { return "需要安装 Python 3.11-3.13" }
             "error_setup_failed"        { return "安装失败" }
 
             # Install source (repo detection)
@@ -209,7 +209,7 @@ function i18n {
 
             # Error messages
             "error_uv_required"         { return "uv package manager is required" }
-            "error_python_required"     { return "Python 3.11-3.14 is required" }
+            "error_python_required"     { return "Python 3.11-3.13 is required" }
             "error_setup_failed"        { return "Setup failed" }
 
             # Install source (repo detection)
@@ -776,8 +776,8 @@ function Install-Python {
         return $false
     }
 
-    # Try to find any supported Python (3.11-3.14)
-    $uvPython = & uv python find ">=3.11,<3.15" 2>$null
+    # Try to find any supported Python (3.11-3.13)
+    $uvPython = & uv python find ">=3.11,<3.14" 2>$null
     if ($uvPython -and (Test-Path $uvPython)) {
         $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
         if ($version) {
