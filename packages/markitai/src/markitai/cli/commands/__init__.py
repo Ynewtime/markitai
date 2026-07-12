@@ -8,6 +8,7 @@ Available command groups:
 - cache: Cache management commands
 - doctor: System health and dependency checking command
 - init: Initialize Markitai configuration
+- serve: Run the Markitai web UI server
 
 Commands are lazily loaded by MarkitaiGroup in cli/framework.py.
 Direct imports (e.g., ``from markitai.cli.commands import cache``)
@@ -25,9 +26,10 @@ _LAZY_MAP: dict[str, tuple[str, str]] = {
     "config": ("markitai.cli.commands.config", "config"),
     "doctor": ("markitai.cli.commands.doctor", "doctor"),
     "init": ("markitai.cli.commands.init", "init"),
+    "serve": ("markitai.cli.commands.serve", "serve"),
 }
 
-__all__ = ["auth", "cache", "config", "doctor", "init"]  # pyright: ignore[reportUnsupportedDunderAll]
+__all__ = ["auth", "cache", "config", "doctor", "init", "serve"]  # pyright: ignore[reportUnsupportedDunderAll]
 
 
 def __getattr__(name: str) -> Any:

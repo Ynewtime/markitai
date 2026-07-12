@@ -1,0 +1,1848 @@
+/* markitai web ui — tokens + component language.
+ * Every value traces to scratchpad/mocks/ledger/index.html (the winning mock)
+ * and DESIGN_BRIEF.md. Palette = Tailwind zinc + one green (#bbf7d0, success
+ * output only). No other hue except restrained printed red for errors.
+ */
+
+@import "@fontsource-variable/inter";
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------- tokens */
+
+:root {
+  color-scheme: light;
+
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --strip: #f4f4f5;
+  --sel: #f4f4f5;
+  --text-1: #18181b;
+  --text-2: #52525b;
+  --text-3: #71717a;
+  --text-4: #a1a1aa;
+  --hairline: #e4e4e7;
+  --hairline-strong: #d4d4d8;
+  --accent: #18181b;
+  --accent-hover: #27272a;
+  --accent-contrast: #ffffff;
+  --err: #b91c1c;
+  --g1: #18181b;
+  --g2: #52525b;
+
+  /* always-dark terminal constants (identical in both themes) */
+  --t-bg: #18181b;
+  --t-border: #3f3f46;
+  --t-text: #fafafa;
+  --t-dim: #a1a1aa;
+  --t-badge: #71717a;
+  --t-badge-text: #d4d4d8;
+  --t-green: #bbf7d0;
+  --t-red: #fca5a5;
+  /* theme-invariant focus ring for members of the always-dark card */
+  --t-focus: #f4f4f5;
+
+  /* geometry family: 8 (small) / 14 (terminal) / 16 (outer panel) */
+  --r-sm: 8px;
+  --r-term: 14px;
+  --r-panel: 16px;
+
+  /* motion: press/entrance easing (colors keep plain 120ms ease) */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* row hover underlay — weaker than --sel so selection stays distinct */
+  --row-hover: color-mix(in srgb, var(--strip) 45%, var(--bg));
+
+  /* brand ::selection — inverted monochrome pair, swapped per theme */
+  --selection-bg: #18181b;
+  --selection-fg: #fafafa;
+
+  /* logo tile keyline: invisible on light, zinc-800 on dark page bg */
+  --logo-edge: transparent;
+
+  /* workspace preview geometry: sticky offset + internal pane scroll cap */
+  --sticky-top: 24px;
+  --panelbar-h: 49px;
+  --pane-cap: calc(100dvh - 2 * var(--sticky-top) - var(--panelbar-h));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #09090b;
+    --surface: #18181b;
+    --strip: #18181b;
+    --sel: #18181b;
+    --text-1: #fafafa;
+    --text-2: #a1a1aa;
+    --text-3: #a1a1aa;
+    --text-4: #71717a;
+    --hairline: #27272a;
+    --hairline-strong: #3f3f46;
+    --accent: #fafafa;
+    --accent-hover: #e4e4e7;
+    --accent-contrast: #18181b;
+    --err: #fca5a5;
+    --g1: #fafafa;
+    --g2: #a1a1aa;
+    --selection-bg: #fafafa;
+    --selection-fg: #18181b;
+    --logo-edge: #27272a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #09090b;
+  --surface: #18181b;
+  --strip: #18181b;
+  --sel: #18181b;
+  --text-1: #fafafa;
+  --text-2: #a1a1aa;
+  --text-3: #a1a1aa;
+  --text-4: #71717a;
+  --hairline: #27272a;
+  --hairline-strong: #3f3f46;
+  --accent: #fafafa;
+  --accent-hover: #e4e4e7;
+  --accent-contrast: #18181b;
+  --err: #fca5a5;
+  --g1: #fafafa;
+  --g2: #a1a1aa;
+  --selection-bg: #fafafa;
+  --selection-fg: #18181b;
+  --logo-edge: #27272a;
+}
+
+@theme inline {
+  --font-sans:
+    "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "Menlo", "Monaco", "Consolas", "Liberation Mono",
+    "Courier New", monospace;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-strip: var(--strip);
+  --color-sel: var(--sel);
+  --color-fg-1: var(--text-1);
+  --color-fg-2: var(--text-2);
+  --color-fg-3: var(--text-3);
+  --color-fg-4: var(--text-4);
+  --color-line: var(--hairline);
+  --color-line-strong: var(--hairline-strong);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-err: var(--err);
+  --color-term-bg: var(--t-bg);
+  --color-term-border: var(--t-border);
+  --color-term-fg: var(--t-text);
+  --color-term-dim: var(--t-dim);
+  --color-term-badge: var(--t-badge);
+  --color-term-badge-fg: var(--t-badge-text);
+  --color-ok: var(--t-green);
+  --color-term-err: var(--t-red);
+
+  --radius-sm: var(--r-sm);
+  --radius-term: var(--r-term);
+  --radius-panel: var(--r-panel);
+}
+
+/* ------------------------------------------------------------------ base */
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--text-1);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  svg {
+    display: block;
+    flex: none;
+  }
+  /* brand selection: inverted monochrome, swapped per theme */
+  ::selection {
+    background: var(--selection-bg);
+    color: var(--selection-fg);
+  }
+  /* the always-dark card needs a bright selection in both themes */
+  .term ::selection {
+    background: var(--t-text);
+    color: var(--t-bg);
+  }
+}
+
+/* ------------------------------------------------------- component language */
+
+@layer components {
+  .shell {
+    max-width: 1152px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+  .mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .eyebrow {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  /* ---------- app header ---------- */
+  .apphdr {
+    border-bottom: 1px solid var(--hairline);
+  }
+  .apphdr .shell {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 56px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  /* logo + wordmark → home (SPA view switch; href="/" for middle-click) */
+  .homelink {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: inherit;
+    border-radius: var(--r-sm);
+  }
+  .brand .wordmark {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    transition: opacity 120ms ease;
+  }
+  .brand .ver {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+    margin-top: 1px;
+  }
+  .hdr-ctl {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .hdr-links {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .hdr-links a {
+    font-size: 13px;
+    color: var(--text-2);
+    transition: color 120ms ease;
+  }
+  .hdr-links .ext {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    margin-left: 3px;
+    color: var(--text-3);
+  }
+  .gearbtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--r-sm);
+    color: var(--text-2);
+    cursor: pointer;
+    transition: color 120ms ease, background-color 120ms ease,
+      transform 140ms var(--ease-out);
+  }
+  .gearbtn:active {
+    transform: scale(0.97);
+  }
+  .gearbtn.on {
+    color: var(--text-1);
+    background: var(--strip);
+  }
+
+  /* ---------- state 1 · drop ---------- */
+  .drop-main {
+    min-height: calc(100dvh - 57px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding-top: 72px;
+    padding-bottom: 88px;
+  }
+  .drop-main .logo-lg {
+    margin-bottom: 28px;
+  }
+  h1.hero {
+    font-size: clamp(32px, 4.5vw, 42px);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.12;
+    background: linear-gradient(135deg, var(--g1) 0%, var(--g2) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    margin-bottom: 16px;
+    text-wrap: balance;
+  }
+  .hero-sub {
+    font-size: 15px;
+    line-height: 1.65;
+    color: var(--text-2);
+    max-width: 46ch;
+    margin-bottom: 44px;
+    /* balance, not pretty: Chromium's `pretty` ignores CJK orphans and the
+       zh copy left 增强。alone on line two */
+    text-wrap: balance;
+  }
+
+  .urlrow {
+    display: flex;
+    gap: 8px;
+    width: min(600px, 100%);
+  }
+  /* textarea styled as the mock's 40px input; grows one line per pasted URL */
+  .urlrow .urlin {
+    flex: 1;
+    min-width: 0;
+    min-height: 40px;
+    padding: 9px 14px;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 20px;
+    color: var(--text-1);
+    outline: none;
+    resize: none;
+    text-align: left;
+  }
+  .urlrow .urlin::placeholder {
+    color: var(--text-3);
+  }
+  .urlrow .urlin:focus {
+    border-color: var(--accent);
+  }
+  .urlrow .urlin:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  /* slim-composer variant: same voice, tighter metrics */
+  .urlrow.compact .urlin {
+    min-height: 36px;
+    padding: 7px 12px;
+  }
+  .urlrow.compact .btn {
+    height: 36px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease,
+      transform 140ms var(--ease-out);
+  }
+  .btn:not(:disabled):active {
+    transform: scale(0.97);
+  }
+  .btn.lg {
+    height: 40px;
+    padding: 0 20px;
+  }
+  .btn.sm {
+    height: 28px;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+  /* square icon-only variant (28px, pairs with .sm text buttons) */
+  .btn.sm.icon {
+    width: 28px;
+    padding: 0;
+  }
+  .btn.primary {
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+  .btn.primary:disabled {
+    background: var(--accent);
+    color: var(--accent-contrast);
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .btn.ghost {
+    border: 1px solid var(--hairline-strong);
+    color: var(--text-1);
+  }
+  .btn:focus-visible,
+  .tab:focus-visible,
+  .seg button:focus-visible,
+  .switch:focus-visible,
+  .badge:focus-visible,
+  .themetoggle button:focus-visible,
+  .langtoggle button:focus-visible,
+  .gearbtn:focus-visible,
+  .linklike:focus-visible,
+  .flist [role="option"]:focus-visible,
+  .hdr-links a:focus-visible,
+  .md a:focus-visible,
+  .md pre:focus-visible,
+  .tablewrap:focus-visible,
+  .homelink:focus-visible,
+  .sesslink:focus-visible,
+  .rowact:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  /* scroll panes clip outward outlines (.panel overflow hidden) — draw inside */
+  .pane:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  /* members of the always-dark terminal card need a theme-invariant ring:
+     the accent ring is #18181b in light theme — invisible on the card */
+  .term .badge:focus-visible {
+    outline-color: var(--t-focus);
+  }
+  .term pre:focus-visible {
+    outline: 2px solid var(--t-focus);
+    outline-offset: -2px; /* the card clips outward rings */
+  }
+
+  .options {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    row-gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+  }
+  .opt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .opt .lbl {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  .seg {
+    display: inline-flex;
+    height: 32px;
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+    background: var(--surface);
+  }
+  .seg button {
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-2);
+    cursor: pointer;
+    position: relative;
+    transition: background-color 120ms ease, transform 140ms var(--ease-out);
+  }
+  .seg button:not(:disabled):active {
+    transform: scale(0.97);
+  }
+  .seg button + button {
+    border-left: 1px solid var(--hairline);
+  }
+  .seg button.on {
+    background: var(--accent);
+    color: var(--accent-contrast);
+    font-weight: 600;
+  }
+  .seg button:disabled {
+    color: var(--text-4);
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .switch {
+    width: 34px;
+    height: 20px;
+    border-radius: 999px;
+    /* off-state boundary must clear 3:1 in both themes (WCAG 1.4.11) */
+    border: 1px solid var(--text-3);
+    background: var(--surface);
+    position: relative;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease,
+      transform 140ms var(--ease-out);
+  }
+  .switch:not(:disabled):active {
+    transform: scale(0.97);
+  }
+  /* invisible hit-area extension: 20px pill → ≥36px target */
+  .switch::before {
+    content: "";
+    position: absolute;
+    inset: -8px;
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text-3);
+    transition: transform 140ms var(--ease-out), background-color 120ms ease;
+  }
+  .switch.on {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .switch.on::after {
+    transform: translateX(14px); /* slides — left/right swaps cannot animate */
+    background: var(--accent-contrast);
+  }
+  .switch:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .drop-hint {
+    margin-top: 32px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  /* home → workspace status link (only when the session holds items) */
+  .sesslink {
+    font-size: 12px;
+    color: var(--text-2);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    margin: -24px 0 36px;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+    transition: color 120ms ease;
+  }
+
+  /* keyboard-usable file picker (hidden input inside a label) */
+  .browse {
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    color: var(--text-3);
+    transition: color 120ms ease;
+  }
+  .browse:has(input:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* mono inline link — opens the settings panel from hint lines */
+  .linklike {
+    font: inherit;
+    color: var(--text-2);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+    transition: color 120ms ease;
+  }
+  /* non-interactive twin inside option rows (the row itself handles clicks) */
+  .linkish {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  /* full-page drag veil: bg wash quiets the page, accent hairline frames it,
+     pill sits in the upper third so it never masks the copy it covers */
+  .dropveil {
+    position: fixed;
+    inset: 8px;
+    z-index: 40;
+    pointer-events: none;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 28vh;
+    border: 1px solid var(--accent);
+    border-radius: var(--r-term);
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+  }
+  .dropveil .veillbl {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--bg);
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    padding: 8px 16px;
+  }
+
+  /* inline (printed-red) error line — no toasts, no modals */
+  .errline {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--err);
+    margin-top: 16px;
+  }
+
+  /* capability hint — one mono line, links to the settings panel */
+  .caphint {
+    margin-top: 16px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  /* ---------- job header ---------- */
+  .jobhead {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding-top: 36px;
+    padding-bottom: 20px;
+  }
+  .jobhead .stats {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-2);
+    margin-top: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .jobhead .stats strong {
+    color: var(--text-1);
+    font-weight: 600;
+  }
+  .jobhead .actions {
+    display: flex;
+    gap: 8px;
+  }
+  .jobhead-r {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* ---------- session ledger (one compact shape for the whole workspace) */
+  .lrow {
+    display: grid;
+    column-gap: 12px;
+    align-items: center;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .lrow.lhead {
+    border-bottom: 1px solid var(--accent);
+  }
+  .lrow.lhead > span {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-3); /* one eyebrow grey — matches DONE/CONVERTING */
+  }
+  .c-num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .c-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .c-name .fname {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+  }
+  /* middle truncation: head ellipsizes, tail (extension) never disappears */
+  .fname.mid {
+    display: flex;
+  }
+  .fname.mid .fhead {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fname.mid .ftail {
+    flex: none;
+    white-space: nowrap;
+  }
+  .c-name svg {
+    color: var(--text-4);
+  }
+  .c-time,
+  .c-cost {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-2);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .c-time.live {
+    color: var(--text-4);
+  }
+  .c-status {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .lhead .c-time,
+  .lhead .c-cost {
+    font-family: var(--font-sans);
+  }
+  .lhead .c-status {
+    justify-content: flex-end;
+  }
+  .c-err {
+    grid-column: 2 / -1;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--err);
+    margin-top: 8px;
+    padding-left: 22px; /* aligns with filename text: 14px icon + 8px gap */
+    text-align: left;
+  }
+  .c-err .err-full {
+    display: block;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .c-skip {
+    grid-column: 2 / -1;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3); /* neutral zinc: informational, not an error */
+    margin-top: 8px;
+    padding-left: 22px; /* same alignment as .c-err */
+    text-align: left;
+  }
+  .rowmeta {
+    display: none;
+  }
+
+  /* status chips — always-dark, 28px badge language */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: var(--t-bg);
+    border: 1px solid var(--t-border);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--t-badge-text);
+  }
+  .chip.ok {
+    color: var(--t-green);
+  }
+  .chip.err {
+    color: var(--t-red);
+  }
+  .chip.skip {
+    color: var(--t-dim); /* neutral zinc — a skip is not a success */
+  }
+
+  .runstat {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .runstat.queued {
+    color: var(--text-3);
+  }
+  .spin {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1.5px solid var(--hairline-strong);
+    border-top-color: var(--accent);
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes rowin {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+  }
+  /* reduced-motion: rotation is replaced by a gentle opacity pulse (a frozen
+     quarter-ring reads as broken; zero cues read as nothing happening) */
+  @keyframes spin-pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  /* ---------- workspace: stable two-column grid from the first item on */
+  .work-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.04fr;
+    gap: 44px;
+    align-items: start;
+    padding-bottom: 72px;
+  }
+  /* expand = full-width reading mode: list column hidden (kept mounted) */
+  .work-grid.expanded {
+    grid-template-columns: 1fr;
+  }
+  .work-grid.expanded .work-list {
+    display: none;
+  }
+  /* hidden = full-width ledger: preview column hidden (kept mounted) */
+  .work-grid.nopanel {
+    grid-template-columns: 1fr;
+  }
+  .work-grid.nopanel .work-preview {
+    display: none;
+  }
+  .work-preview {
+    position: sticky;
+    top: var(--sticky-top);
+    min-width: 0;
+  }
+  .work-grid.expanded .work-preview {
+    position: static;
+  }
+  .work-list {
+    min-width: 0;
+  }
+  .flist .lrow {
+    grid-template-columns: 28px minmax(0, 1fr) 52px 68px 76px;
+    position: relative;
+    padding: 16px 12px;
+  }
+  .flist.nocost .lrow {
+    grid-template-columns: 28px minmax(0, 1fr) 52px 76px;
+  }
+  .flist [role="option"] {
+    cursor: pointer;
+    transition: background-color 120ms ease;
+    animation: rowin 150ms var(--ease-out); /* soft entrance, no stagger */
+  }
+  .flist [role="option"][aria-disabled="true"] {
+    cursor: default;
+  }
+  .flist [role="option"].actionable {
+    cursor: pointer;
+  }
+  .flist .lrow.lhead {
+    padding: 0 12px 10px;
+    cursor: default;
+  }
+  .flist .lrow.sel {
+    background: var(--sel);
+  }
+  .flist .lrow.sel::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: -1px;
+    bottom: -1px;
+    width: 2px;
+    background: var(--accent);
+  }
+  /* accounting double rule under TOTAL */
+  .lrow.totals {
+    border-top: 1px solid var(--accent);
+    border-bottom: 1px solid var(--accent);
+    margin-top: -1px;
+    position: relative;
+    cursor: default;
+  }
+  .lrow.totals::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -4px;
+    height: 1px;
+    background: var(--accent);
+  }
+  .totals .c-time,
+  .totals .c-cost {
+    color: var(--text-1);
+    font-weight: 600;
+  }
+  .totals .t-lbl {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .totals .t-note {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .totmeta {
+    display: none;
+  }
+
+  /* ---------- slim composer (persistent under the ledger) ---------- */
+  .composer {
+    margin-top: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .composer .urlrow {
+    width: 100%;
+  }
+  .composer .options {
+    justify-content: flex-start;
+    gap: 24px;
+    margin-top: 0;
+  }
+  .composer .caphint {
+    margin-top: 0;
+  }
+  .composer .drop-hint {
+    margin-top: 0;
+    padding-bottom: 24px;
+  }
+
+  /* ---------- preview panel ---------- */
+  .panel {
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-panel);
+    background: var(--surface);
+    overflow: hidden;
+  }
+  /* quiet placeholder while nothing is previewable */
+  .panel-empty {
+    min-height: 220px;
+    display: flex;
+    align-items: center;
+  }
+  .panelbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    height: 48px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .tabs {
+    display: flex;
+    gap: 24px;
+    height: 100%;
+  }
+  .tab {
+    position: relative;
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-3);
+    padding: 0 2px;
+    cursor: pointer;
+    transition: color 120ms ease, transform 140ms var(--ease-out);
+  }
+  .tab:active {
+    transform: scale(0.97);
+  }
+  .tab.on {
+    color: var(--text-1);
+  }
+  .tab.on::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--accent);
+  }
+  .panelbar .side {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  /* expand + hide sit as one small group */
+  .panelbar .pgroup {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .panelbar .meta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* both panes scroll internally under a viewport cap (like the Source
+     card): tabs/list/downloads stay reachable, tab switches keep one page
+     height. Reading mode (.expanded) lifts the cap. */
+  .pane {
+    max-height: var(--pane-cap);
+    overflow-y: auto;
+  }
+  .work-grid.expanded .pane {
+    max-height: none;
+  }
+  .work-grid.expanded .term pre {
+    max-height: none;
+  }
+  .pane[hidden] {
+    display: none;
+  }
+  .pane-note {
+    padding: 40px 44px 48px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  /* rendered markdown (type ramp from the mock, extended to full md surface) */
+  .md {
+    padding: 40px 44px 48px;
+  }
+  .docmeta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+    margin-bottom: 20px;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .md h1 {
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    margin-bottom: 16px;
+  }
+  .md h2 {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 28px 0 12px;
+  }
+  .md h3,
+  .md h4,
+  .md h5,
+  .md h6 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 20px 0 8px;
+  }
+  .md p {
+    font-size: 14px;
+    line-height: 1.75;
+    color: var(--text-2);
+    margin-bottom: 16px;
+    overflow-wrap: break-word;
+  }
+  .md a {
+    color: var(--text-1);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .md .tablewrap {
+    overflow-x: auto;
+  }
+  .md table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 8px;
+  }
+  .md th {
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    padding: 0 12px 8px 0;
+    border-bottom: 1px solid var(--accent);
+  }
+  .md td {
+    font-size: 13.5px;
+    color: var(--text-2);
+    padding: 9px 12px 9px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .md ul {
+    list-style: none;
+    margin: 12px 0 16px;
+  }
+  .md ul li {
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text-2);
+    padding-left: 20px;
+    position: relative;
+    margin-bottom: 6px;
+  }
+  .md ul li::before {
+    content: "-";
+    position: absolute;
+    left: 2px;
+    color: var(--text-4);
+  }
+  .md ol {
+    list-style: decimal;
+    margin: 12px 0 16px;
+    padding-left: 22px;
+  }
+  .md ol li {
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text-2);
+    margin-bottom: 6px;
+  }
+  .md blockquote {
+    border-left: 2px solid var(--hairline-strong);
+    padding: 2px 0 2px 16px;
+    margin: 16px 0;
+  }
+  .md blockquote p {
+    margin: 0;
+    color: var(--text-3);
+  }
+  .md code {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    background: var(--strip);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    padding: 1px 5px;
+  }
+  .md pre {
+    background: var(--strip);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-sm);
+    padding: 16px;
+    margin: 16px 0;
+    overflow-x: auto;
+  }
+  .md pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 12.5px;
+    line-height: 1.8;
+  }
+  .md img {
+    max-width: 100%;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-sm);
+    margin: 16px 0;
+  }
+  .md hr {
+    border: none;
+    border-top: 1px solid var(--hairline);
+    margin: 24px 0;
+  }
+
+  /* source — always-dark terminal card (signature component) */
+  .srcwrap {
+    padding: 16px;
+  }
+  .term {
+    background: var(--t-bg);
+    border: 1px solid var(--t-border);
+    border-radius: var(--r-term);
+    overflow: hidden;
+    color-scheme: dark; /* dark scrollbars on the dark card in light theme */
+  }
+  .term-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--t-border);
+  }
+  .term-head .tname {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--t-dim);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    min-width: 72px; /* fits copy/copied (en+zh) — no width jump on action */
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid var(--t-badge);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--t-badge-text);
+    background: transparent;
+    cursor: pointer;
+    transition: border-color 120ms ease, transform 140ms var(--ease-out);
+  }
+  .badge:active {
+    transform: scale(0.97);
+  }
+  .term pre {
+    padding: 20px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.8;
+    color: var(--t-green);
+    overflow-x: auto;
+    max-height: 70vh;
+    font-variant-numeric: tabular-nums;
+    scrollbar-width: thin;
+    scrollbar-color: var(--t-border) transparent;
+  }
+  .term .fm {
+    color: var(--t-dim);
+  }
+
+  /* ---------- header pills: theme + language (inside the header landmark) */
+  .themetoggle,
+  .langtoggle {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--surface);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 999px;
+  }
+  .langtoggle button {
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-2);
+    cursor: pointer;
+    position: relative;
+    transition: background-color 120ms ease, color 120ms ease,
+      transform 140ms var(--ease-out);
+  }
+  /* Vercel-style icon radios: ≥24px square, checked one on a round backing */
+  .themetoggle button {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    cursor: pointer;
+    position: relative;
+    transition: background-color 120ms ease, color 120ms ease,
+      transform 140ms var(--ease-out);
+  }
+  .themetoggle button:active,
+  .langtoggle button:active {
+    transform: scale(0.97);
+  }
+  .themetoggle button.on,
+  .langtoggle button.on {
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+
+  /* ---------- llm settings modal (headless, centered, terminal-card radius) */
+  .mdl-veil {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgb(9 9 11 / 0.5); /* zinc-950/50 in both themes */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    animation: mdl-fade-in 160ms var(--ease-out);
+  }
+  .mdl {
+    width: min(512px, 100%);
+    max-height: calc(100dvh - 48px);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-term);
+    transform-origin: center;
+    animation: mdl-card-in 160ms var(--ease-out);
+    outline: none;
+  }
+  .mdl-veil.out {
+    animation: mdl-fade-out 120ms ease forwards;
+    pointer-events: none;
+  }
+  .mdl-veil.out .mdl {
+    animation: mdl-card-out 120ms ease forwards;
+  }
+  @keyframes mdl-fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes mdl-fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes mdl-card-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+  @keyframes mdl-card-out {
+    to {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+  .mdl-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--hairline);
+    flex: none;
+  }
+  .mdl-body {
+    padding: 18px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  .mdl-dim {
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .mdl-src {
+    font-size: 11px;
+    color: var(--text-3);
+    overflow-wrap: anywhere;
+  }
+  .mdl-err {
+    margin-top: 0;
+  }
+
+  /* provider rows */
+  .provlist {
+    display: flex;
+    flex-direction: column;
+  }
+  .prov {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .prov:first-child {
+    padding-top: 0;
+  }
+  .prov-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0; /* one line — the model span truncates, never wraps */
+  }
+  .prov-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-1);
+    flex: none;
+  }
+  .prov-model {
+    font-size: 12px;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .prov-key {
+    font-size: 12px;
+    color: var(--text-3);
+    flex: none;
+  }
+  .prov-acts {
+    display: flex;
+    gap: 2px;
+    margin-left: auto;
+    flex: none;
+  }
+  .prov-detail {
+    font-size: 12px;
+    color: var(--text-2);
+    padding-top: 6px;
+    overflow-wrap: anywhere;
+  }
+  .prov-detail.fail {
+    color: var(--err);
+  }
+
+  /* mini text actions inside rows (test / edit / delete, history open) */
+  .rowact {
+    height: 24px;
+    padding: 0 8px;
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-2);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 120ms ease, color 120ms ease,
+      transform 140ms var(--ease-out);
+  }
+  .rowact:not(:disabled):active {
+    transform: scale(0.97);
+  }
+  .rowact.warn {
+    color: var(--err);
+  }
+  .rowact:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  /* detected local provider quick-add */
+  .detlist {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .det-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+
+  /* neutral mini badge: `local` key stand-in, `archived` ledger rows */
+  .minibadge {
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 7px;
+    border: 1px solid var(--hairline-strong);
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-3);
+    flex: none;
+  }
+
+  /* add/edit form (collapsible, inside the modal body) */
+  .mdl-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--hairline);
+  }
+  .fld {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .fld .lbl {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .mdl input {
+    width: 100%;
+    min-width: 0;
+    height: 36px;
+    padding: 0 12px;
+    background: var(--bg);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-1);
+    transition: border-color 120ms ease;
+  }
+  .mdl input::placeholder {
+    color: var(--text-3);
+  }
+  .mdl input:focus {
+    border-color: var(--accent);
+    outline: none;
+  }
+  .mdl input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .mdl input:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .keyrow {
+    display: flex;
+    gap: 8px;
+  }
+  .keyrow .btn {
+    flex: none;
+    height: 36px;
+  }
+  .fld-hint {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .set-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .set-note {
+    font-size: 12px;
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+  }
+  .set-note.fail {
+    color: var(--err);
+  }
+
+  /* ---------- conversion history view ---------- */
+  .histmain {
+    padding-bottom: 72px;
+  }
+  .hgroup {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    padding: 24px 12px 10px;
+    border-bottom: 1px solid var(--accent);
+  }
+  .hrow {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) auto 72px auto;
+    column-gap: 16px;
+    align-items: center;
+    padding: 14px 12px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .h-time {
+    font-size: 12px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .h-names {
+    font-size: 13px;
+    color: var(--text-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .h-stats {
+    font-size: 12px;
+    color: var(--text-2);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .h-size {
+    font-size: 12px;
+    color: var(--text-3);
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .h-acts {
+    display: flex;
+    gap: 2px;
+    justify-content: flex-end;
+  }
+  .h-err {
+    grid-column: 2 / -1;
+    margin-top: 6px;
+  }
+  .hist-empty {
+    padding: 48px 12px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  /* ---------- hover voice: one 120ms fade, pointer-only (touch devices
+     otherwise keep sticky hover states after a tap) ---------- */
+  @media (hover: hover) and (pointer: fine) {
+    .hdr-links a:hover {
+      color: var(--text-1);
+    }
+    .gearbtn:hover {
+      color: var(--text-1);
+      background: var(--strip);
+    }
+    .btn.primary:not(:disabled):hover {
+      background: var(--accent-hover);
+    }
+    .btn.ghost:not(:disabled):hover {
+      border-color: var(--text-3);
+    }
+    .seg button:not(:disabled):not(.on):hover {
+      background: var(--strip);
+    }
+    .switch:not(:disabled):not(.on):hover {
+      border-color: var(--text-2);
+    }
+    .browse:hover {
+      color: var(--text-1);
+    }
+    .linklike:hover {
+      color: var(--text-1);
+    }
+    .tab:hover {
+      color: var(--text-1);
+    }
+    .badge:hover {
+      border-color: var(--t-badge-text);
+    }
+    .themetoggle button:not(.on):hover,
+    .langtoggle button:not(.on):hover {
+      background: var(--strip);
+      color: var(--text-1);
+    }
+    .flist [role="option"]:not(.sel):not([aria-disabled="true"]):hover,
+    .flist [role="option"].actionable:not(.sel):hover {
+      background: var(--row-hover);
+    }
+    .homelink:hover .wordmark {
+      opacity: 0.7;
+    }
+    .sesslink:hover {
+      color: var(--text-1);
+    }
+    .rowact:not(:disabled):hover {
+      background: var(--strip);
+      color: var(--text-1);
+    }
+    .rowact.warn:not(:disabled):hover {
+      color: var(--err);
+    }
+  }
+  .flist [role="option"]:not(.sel):not([aria-disabled="true"]):active {
+    background: var(--sel);
+  }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 1024px) {
+    .work-grid {
+      grid-template-columns: 1fr;
+      gap: 36px;
+    }
+    .work-preview {
+      position: static;
+    }
+  }
+  @media (max-width: 780px) {
+    .shell {
+      padding: 0 20px;
+    }
+    .apphdr .shell {
+      height: auto;
+      min-height: 56px;
+      flex-wrap: wrap;
+      padding-top: 10px;
+      padding-bottom: 10px;
+      row-gap: 8px;
+    }
+    .lrow,
+    .flist .lrow,
+    .flist.nocost .lrow {
+      grid-template-columns: 24px minmax(0, 1fr) auto;
+    }
+    .c-time,
+    .c-cost,
+    .lhead .c-time,
+    .lhead .c-cost {
+      display: none;
+    }
+    .rowmeta {
+      display: block;
+      grid-column: 2 / -1;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-3);
+      margin-top: 5px;
+      font-variant-numeric: tabular-nums;
+      text-align: left;
+    }
+    .totals .t-note {
+      display: none;
+    }
+    .totmeta {
+      display: flex;
+      justify-content: flex-end;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-1);
+      font-variant-numeric: tabular-nums;
+    }
+    .urlrow {
+      flex-direction: column;
+    }
+    .urlrow .btn {
+      width: 100%;
+    }
+    .md {
+      padding: 28px 24px 32px;
+    }
+    .pane-note {
+      padding: 28px 24px 32px;
+    }
+    .panelbar {
+      padding: 0 16px;
+    }
+    .panelbar .meta {
+      display: none;
+    }
+    .mdl-veil {
+      padding: 16px;
+    }
+    .mdl-head {
+      padding: 12px 16px;
+    }
+    .mdl-body {
+      padding: 16px;
+    }
+    .hrow {
+      grid-template-columns: 44px minmax(0, 1fr) auto;
+      row-gap: 4px;
+    }
+    .h-stats {
+      grid-column: 2 / -1;
+      grid-row: 2;
+    }
+    .h-size {
+      display: none;
+    }
+    .drop-main {
+      min-height: 0;
+      padding-top: 64px;
+      padding-bottom: 72px;
+    }
+    .jobhead {
+      padding-top: 28px;
+    }
+    /* touch targets ≥44px — hit areas grow via padding/pseudo, visuals stay */
+    .browse {
+      padding: 15px 8px;
+      margin: -15px -8px;
+    }
+    .switch::before {
+      inset: -12px;
+    }
+    .seg button::before,
+    .themetoggle button::before,
+    .langtoggle button::before {
+      content: "";
+      position: absolute;
+      inset: -7px 0;
+    }
+    .themetoggle button::before,
+    .langtoggle button::before {
+      inset: -10px 0;
+    }
+    .gearbtn {
+      position: relative;
+    }
+    .gearbtn::before {
+      content: "";
+      position: absolute;
+      inset: -8px;
+    }
+  }
+}
+
+/* ------------------------------------------------- reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  /* rotation is gone; keep a gentle non-motion progress cue instead of a
+     frozen quarter-ring */
+  .spin {
+    animation: spin-pulse 1.5s ease-in-out infinite !important;
+  }
+  /* modal drops the scale — enter/exit become pure opacity fades */
+  .mdl-veil,
+  .mdl {
+    animation: mdl-fade-in 160ms ease-out !important;
+  }
+  .mdl-veil.out,
+  .mdl-veil.out .mdl {
+    animation: mdl-fade-out 120ms ease forwards !important;
+  }
+}
