@@ -111,23 +111,81 @@ def _as_quote(path: Path) -> str:
     return str(path).replace("\\", "\\\\").replace('"', '\\"')
 
 
+# AppleScript container class for "the document we opened", per app.
+_CONTAINER_BY_APP: dict[str, str] = {
+    "Microsoft Word": "document",
+    "Microsoft PowerPoint": "presentation",
+    "Microsoft Excel": "workbook",
+}
+
+
+def _restore_security_lines(indent: str = "") -> list[str]:
+    """Restore automation security without ever leaving ForceDisable behind.
+
+    A cold-launching app (observed with PowerPoint) can answer the initial
+    ``automation security`` read with missing value; restoring that literal
+    raises and — worse — silently strands the app in ForceDisable. Fall back
+    to msoAutomationSecurityByUI, the factory default, in that case.
+    """
+    return [
+        f"{indent}if previousAutomationSecurity is not missing value then",
+        f"{indent}    set automation security to previousAutomationSecurity",
+        f"{indent}else",
+        f"{indent}    set automation security to msoAutomationSecurityByUI",
+        f"{indent}end if",
+    ]
+
+
+def _close_by_name_lines(app: str, in_name: str, out_name: str) -> list[str]:
+    """Best-effort close of the staged document under either of its names.
+
+    Save-as renames the open document to the output file name (verified live
+    for Word and PowerPoint), so the staged document may be known by its
+    input or its output name at close time. Both closes are individually
+    try-wrapped: whichever name no longer resolves is a silent no-op. The
+    staged names are unique per conversion (uuid hex), so no user document
+    can ever match.
+    """
+    container = _CONTAINER_BY_APP[app]
+    lines = []
+    for name in (out_name, in_name):
+        lines.extend(
+            [
+                "try",
+                f'    close {container} "{name}" saving no',
+                "end try",
+            ]
+        )
+    return lines
+
+
 def _wrap_office_script(
     app: str,
     *,
     open_lines: list[str],
     action_lines: list[str],
+    in_name: str,
+    out_name: str,
     extra_setting: tuple[str, str] | None = None,
 ) -> str:
     """Wrap one conversion in safe Office automation state handling.
 
     ``automation security`` is an application-global setting, so it is
     restored immediately after the staged file opens and again on every error
-    path. The exact object returned by ``open`` is retained throughout; user
-    documents and whichever window happens to be active are never referenced.
+    path.
+
+    The opened document is never taken from ``open``'s return value: Word's
+    and PowerPoint's AppleScript ``open`` returns nothing (verified live), so
+    ``set openedItem to open ...`` leaves the variable undefined and every
+    later reference dies with -2753 — with the real error masked by the
+    handler's own reference to the same variable. Instead the document is
+    bound by its staged file name (unique uuid hex per conversion, so user
+    documents are never referenced), and cleanup closes by name with no
+    variable dependency, so the original error always propagates.
     """
+    container = _CONTAINER_BY_APP[app]
     lines = [
         f'tell application "{app}"',
-        "    set openedItem to missing value",
         "    set previousAutomationSecurity to automation security",
     ]
     if extra_setting is not None:
@@ -144,17 +202,32 @@ def _wrap_office_script(
         setting, disabled_value = extra_setting
         lines.append(f"        set {setting} to {disabled_value}")
     lines.extend(f"        {line}" for line in open_lines)
-    lines.append("        set automation security to previousAutomationSecurity")
+    # Bind by name, not by open's (absent) return value. The no-result
+    # open is asynchronous in practice: poll until the document registers
+    # (~30s ceiling) so the bind cannot grab missing value mid-load.
+    lines.extend(
+        [
+            "        set waitCount to 0",
+            f'        repeat until (exists {container} "{in_name}") or waitCount ≥ 150',
+            "            delay 0.2",
+            "            set waitCount to waitCount + 1",
+            "        end repeat",
+            f'        set openedItem to {container} "{in_name}"',
+        ]
+    )
+    lines.extend(f"        {line}" for line in _restore_security_lines())
     if extra_setting is not None:
         setting, _disabled_value = extra_setting
         lines.append(f"        set {setting} to previousExtraSetting")
     lines.extend(f"        {line}" for line in action_lines)
     lines.extend(
+        f"        {line}" for line in _close_by_name_lines(app, in_name, out_name)
+    )
+    lines.extend(
         [
-            "        close openedItem saving no",
             "    on error errorMessage number errorNumber",
             "        try",
-            "            set automation security to previousAutomationSecurity",
+            *(f"        {line}" for line in _restore_security_lines(indent="    ")),
             "        end try",
         ]
     )
@@ -168,12 +241,10 @@ def _wrap_office_script(
             ]
         )
     lines.extend(
+        f"        {line}" for line in _close_by_name_lines(app, in_name, out_name)
+    )
+    lines.extend(
         [
-            "        if openedItem is not missing value then",
-            "            try",
-            "                close openedItem saving no",
-            "            end try",
-            "        end if",
             "        error errorMessage number errorNumber",
             "    end try",
             "end tell",
@@ -192,12 +263,12 @@ def _wrap_office_script(
 def _build_legacy_script(app: str, staged_in: Path, staged_out: Path) -> str:
     inp = _as_quote(staged_in)
     out = _as_quote(staged_out)
+    names = {"in_name": staged_in.name, "out_name": staged_out.name}
     if app == "Microsoft Word":
         return _wrap_office_script(
             app,
             open_lines=[
-                f'set openedItem to open (POSIX file "{inp}") '
-                "read only true add to recent files false"
+                f'open (POSIX file "{inp}") read only true add to recent files false'
             ],
             action_lines=[
                 f'set outPath to (POSIX file "{out}") as string',
@@ -206,22 +277,24 @@ def _build_legacy_script(app: str, staged_in: Path, staged_out: Path) -> str:
             ],
             # Word otherwise updates embedded OLE links while opening.
             extra_setting=("update links at open of settings", "false"),
+            **names,
         )
     if app == "Microsoft PowerPoint":
         return _wrap_office_script(
             app,
-            open_lines=[f'set openedItem to open (POSIX file "{inp}")'],
+            open_lines=[f'open (POSIX file "{inp}")'],
             action_lines=[
                 f'save openedItem in (POSIX file "{out}") '
                 "as save as Open XML presentation"
             ],
+            **names,
         )
     if app == "Microsoft Excel":
         return _wrap_office_script(
             app,
             open_lines=[
                 f'set inPath to (POSIX file "{inp}") as string',
-                "set openedItem to open workbook workbook file name inPath "
+                "open workbook workbook file name inPath "
                 "update links do not update links read only true "
                 "ignore read only recommended true add to mru false",
             ],
@@ -230,6 +303,7 @@ def _build_legacy_script(app: str, staged_in: Path, staged_out: Path) -> str:
                 "save workbook as openedItem filename outPath "
                 "file format Excel XML file format",
             ],
+            **names,
         )
     raise ValueError(f"Unsupported Office app: {app}")
 
@@ -239,8 +313,10 @@ def _build_pdf_script(staged_in: Path, staged_out: Path) -> str:
     out = _as_quote(staged_out)
     return _wrap_office_script(
         "Microsoft PowerPoint",
-        open_lines=[f'set openedItem to open (POSIX file "{inp}")'],
+        open_lines=[f'open (POSIX file "{inp}")'],
         action_lines=[f'save openedItem in (POSIX file "{out}") as save as PDF'],
+        in_name=staged_in.name,
+        out_name=staged_out.name,
     )
 
 
@@ -395,7 +471,7 @@ def _convert_via_staging(
         # from modifying the original conversion input.
         shutil.copyfile(input_path, staged_in)
         staged_in.chmod(0o400)
-        staged_out = work / f"output{output_file.suffix}"
+        staged_out = work / f"{work.name}{output_file.suffix}"
 
         script = build_script(staged_in, staged_out)
         with _office_app_lock(app, root=work.parent):
