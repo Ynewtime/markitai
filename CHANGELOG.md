@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Excel COM automation (Windows) and Excel AppleScript automation (macOS), together with the `.xls` entries in the batch pre-conversion and heavy-task paths — `.xls` no longer needs them
 
+### Fixed
+
+- **macOS: `.doc`/`.ppt` conversion failing on an Office app's first scripted launch after an Office update** ("the document never registered" / PowerPoint error -9074). In that state the app silently drops Word's parametered `open` request while answering everything else; Word's script now retries with a plain `open` mid-poll (verified to penetrate and heal the state) and logs the recovery. Error messages for the stall and for -9074 now carry the verified remedy — open the app manually once so it finishes first-run setup — instead of the misleading "app stuck or overloaded, quit and retry"
+
 ## [0.20.0] - 2026-07-10
 
 ### Added
