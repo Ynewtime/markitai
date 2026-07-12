@@ -27,7 +27,7 @@ dependencies = [
     "markitdown[docx,pptx,xlsx,xls,outlook]>=0.1.5",  # office formats only; pdf handled by pymupdf4llm, audio/youtube/azure unused
     "httpx>=0.27.0",  # unconditional imports: providers/chatgpt.py, image.py, fetch_http.py default backend
     "lxml>=5.0.0",  # converter/_patches.py python-pptx fix + webextract/dom.py fast parser
-    "litellm>=1.83.0",  # >=1.83.0 excludes compromised 1.82.7/1.82.8 (March 2026 supply-chain attack); releases signed since 1.83.0
+    "litellm>=1.83.0,!=1.92.0",  # >=1.83.0 excludes compromised 1.82.7/1.82.8 (March 2026 supply-chain attack); !=1.92.0 shipped manylinux-only wheels — macOS/Windows installs fall back to building its Rust extension from sdist (fails without cargo, or with pyo3-unsupported default Pythons)
     "instructor>=1.14.5",
     "rapidocr>=3.7.0",
     "click>=8.3.0",

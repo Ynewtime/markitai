@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.1] - 2026-07-12
+
+### Fixed
+
+- **Fresh installs on macOS and Windows no longer try to compile litellm from source**: litellm 1.92.0 shipped Linux-only wheels, so `uv tool install markitai` on other platforms fell back to building its new Rust extension from the sdist — failing outright without a Rust toolchain, or with a wall of pyo3 errors when the build environment picked an unsupported Python (e.g. a system-default 3.14). That release is excluded; dependency resolution lands on a version with wheels for every supported platform
+
 ## [0.21.0] - 2026-07-12
 
 ### Changed
