@@ -11,6 +11,7 @@ from collections.abc import Callable, Coroutine, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -28,6 +29,7 @@ from rich.progress import (
 
 from markitai.constants import REPORTS_REL_PATH, STATES_REL_PATH
 from markitai.json_order import order_report, order_state
+from markitai.runs.report import build_llm_usage_block, build_report_shell
 from markitai.security import atomic_write_json
 from markitai.utils import term
 from markitai.utils.term import get_console
@@ -1182,10 +1184,9 @@ class BatchProcessor:
 
         # Aggregate LLM usage by model (from both files and URLs)
         models_usage: dict[str, dict[str, Any]] = {}
-
-        # Aggregate from files
-        for f in self.state.files.values():
-            for model, usage in f.llm_usage.items():
+        items = chain(self.state.files.values(), self.state.urls.values())
+        for item in items:
+            for model, usage in item.llm_usage.items():
                 if model not in models_usage:
                     models_usage[model] = {
                         "requests": 0,
@@ -1198,36 +1199,12 @@ class BatchProcessor:
                 models_usage[model]["output_tokens"] += usage.get("output_tokens", 0)
                 models_usage[model]["cost_usd"] += usage.get("cost_usd", 0.0)
 
-        # Aggregate from URLs
-        for u in self.state.urls.values():
-            for model, usage in u.llm_usage.items():
-                if model not in models_usage:
-                    models_usage[model] = {
-                        "requests": 0,
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "cost_usd": 0.0,
-                    }
-                models_usage[model]["requests"] += usage.get("requests", 0)
-                models_usage[model]["input_tokens"] += usage.get("input_tokens", 0)
-                models_usage[model]["output_tokens"] += usage.get("output_tokens", 0)
-                models_usage[model]["cost_usd"] += usage.get("cost_usd", 0.0)
-
-        # Calculate totals (files + URLs)
+        # Run cost is summed per item (files + URLs), not per model
         total_cost = sum(f.cost_usd for f in self.state.files.values()) + sum(
             u.cost_usd for u in self.state.urls.values()
         )
-        input_tokens = sum(m["input_tokens"] for m in models_usage.values())
-        output_tokens = sum(m["output_tokens"] for m in models_usage.values())
-        requests = sum(m["requests"] for m in models_usage.values())
 
-        return {
-            "models": models_usage,
-            "requests": requests,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "cost_usd": total_cost,
-        }
+        return build_llm_usage_block(models_usage, cost_usd=total_cost)
 
     def init_state(
         self,
@@ -1506,7 +1483,12 @@ class BatchProcessor:
         report = self.state.to_dict()
         report["summary"] = self._compute_summary()
         report["llm_usage"] = self._compute_llm_usage()
-        report["generated_at"] = datetime.now().astimezone().isoformat()
+        # Shared top-level shell: rewrites version/log_file in place with the
+        # state-derived values already in the dict and appends generated_at
+        # last, preserving the historical key insertion order.
+        report.update(
+            build_report_shell(log_file=report["log_file"], version=self.state.version)
+        )
 
         return report
 

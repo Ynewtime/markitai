@@ -34,18 +34,12 @@ from markitai.workflow.helpers import (
     create_llm_processor,
     write_images_json,
 )
-from markitai.workflow.helpers import (
-    merge_llm_usage as _merge_llm_usage,
-)
 
 if TYPE_CHECKING:
     from markitai.fetch import FetchStrategy
     from markitai.llm import LLMProcessor
 
 console = get_console()
-
-# Re-export from package for backwards compatibility
-from markitai.cli.processors import run_parallel_llm_tasks as _run_parallel_llm_tasks
 
 
 def _file_output_dir(file_path: Path, input_dir: Path, output_dir: Path) -> Path:
@@ -209,14 +203,12 @@ def create_url_processor(
     """
     from markitai import fetch as fetch_module
     from markitai.batch import ProcessResult
-    from markitai.cli.processors.llm import (
-        analyze_images_with_llm,
-        process_with_llm,
-    )
     from markitai.cli.processors.url import (
         build_multi_source_content,
-        process_url_screenshot_only,
         process_url_with_vision,
+        run_url_document_llm,
+        run_url_llm_with_images,
+        run_url_screenshot_only_llm,
     )
     from markitai.fetch import (
         FetchError,
@@ -438,32 +430,20 @@ def create_url_processor(
                     and screenshot_path is not None
                     and not cfg.llm.pure
                 ):
-                    _, cost, url_llm_usage = await process_url_screenshot_only(
-                        screenshot_path=screenshot_path,
-                        url=url,
-                        cfg=cfg,
-                        output_file=output_file,
+                    (
+                        llm_cost,
+                        url_llm_usage,
+                        img_analysis,
+                    ) = await run_url_screenshot_only_llm(
+                        screenshot_path,
+                        url,
+                        cfg,
+                        output_file,
+                        fetch_result,
+                        downloaded_images=downloaded_images,
+                        image_context=markdown_for_llm,
                         processor=shared_processor,
-                        original_title=fetch_result.title if fetch_result else None,
                     )
-                    llm_cost = cost
-
-                    if should_analyze_images:
-                        (
-                            _,
-                            image_cost,
-                            image_usage,
-                            img_analysis,
-                        ) = await analyze_images_with_llm(
-                            downloaded_images,
-                            markdown_for_llm,
-                            output_file,
-                            cfg,
-                            Path(url),
-                            processor=shared_processor,
-                        )
-                        _merge_llm_usage(url_llm_usage, image_usage)
-                        llm_cost += image_cost
                 elif use_vision_enhancement:
                     # Multi-source URL with screenshot: use vision LLM for better content extraction
                     # Build multi-source markdown content for LLM
@@ -483,55 +463,10 @@ def create_url_processor(
                         screenshot_path is not None
                     )  # Guaranteed by use_vision_enhancement check
 
-                    if should_analyze_images:
-                        # Run vision enhancement and image analysis in parallel
-                        llm_ready_event = asyncio.Event()
-
-                        async def _vision_with_signal():
-                            try:
-                                return await process_url_with_vision(
-                                    multi_source_content,
-                                    screenshot_path,
-                                    url,
-                                    cfg,
-                                    output_file,
-                                    processor=shared_processor,
-                                    original_title=fetch_result.title
-                                    if fetch_result
-                                    else None,
-                                    fetch_strategy=fetch_result.strategy_used
-                                    if fetch_result
-                                    else None,
-                                    extra_meta=source_extra_meta,
-                                )
-                            finally:
-                                llm_ready_event.set()
-
-                        img_task = analyze_images_with_llm(
-                            downloaded_images,
-                            multi_source_content,
-                            output_file,
-                            cfg,
-                            Path(url),
-                            processor=shared_processor,
-                            llm_ready_event=llm_ready_event,
-                        )
-
-                        # Execute in parallel
-                        vision_result, img_result = await _run_parallel_llm_tasks(
-                            _vision_with_signal(),
-                            img_task,
-                            llm_ready_event,
-                        )
-
-                        # Unpack results
-                        _, cost, url_llm_usage = vision_result
-                        _, image_cost, image_usage, img_analysis = img_result
-
-                        _merge_llm_usage(url_llm_usage, image_usage)
-                        llm_cost = cost + image_cost
-                    else:
-                        _, cost, url_llm_usage = await process_url_with_vision(
+                    async def _vision_task() -> tuple[
+                        str, float, dict[str, dict[str, Any]]
+                    ]:
+                        return await process_url_with_vision(
                             multi_source_content,
                             screenshot_path,
                             url,
@@ -544,68 +479,66 @@ def create_url_processor(
                             else None,
                             extra_meta=source_extra_meta,
                         )
-                        llm_cost = cost
+
+                    if should_analyze_images:
+                        # Run vision enhancement and image analysis in parallel
+                        (
+                            llm_cost,
+                            url_llm_usage,
+                            img_analysis,
+                        ) = await run_url_llm_with_images(
+                            _vision_task,
+                            downloaded_images=downloaded_images,
+                            image_context=multi_source_content,
+                            output_file=output_file,
+                            cfg=cfg,
+                            url=url,
+                            processor=shared_processor,
+                        )
+                    else:
+                        _, llm_cost, url_llm_usage = await _vision_task()
                 elif should_analyze_images:
-                    # Standard processing with image analysis
-                    llm_ready_event = asyncio.Event()
+                    # Standard processing with image analysis, in parallel
 
-                    async def _doc_with_signal():
-                        try:
-                            return await process_with_llm(
-                                markdown_for_llm,
-                                url,
-                                cfg,
-                                output_file,
-                                screenshot_path=screenshot_path,
-                                processor=shared_processor,
-                                fetch_strategy=fetch_result.strategy_used
-                                if fetch_result
-                                else None,
-                                extra_meta=source_extra_meta,
-                                title=fetch_result.title if fetch_result else None,
-                            )
-                        finally:
-                            llm_ready_event.set()
+                    async def _doc_task() -> tuple[
+                        str, float, dict[str, dict[str, Any]]
+                    ]:
+                        return await run_url_document_llm(
+                            markdown_for_llm,
+                            url,
+                            cfg,
+                            output_file,
+                            fetch_result,
+                            screenshot_path=screenshot_path,
+                            extra_meta=source_extra_meta,
+                            processor=shared_processor,
+                        )
 
-                    img_task = analyze_images_with_llm(
-                        downloaded_images,
-                        markdown_for_llm,
-                        output_file,
-                        cfg,
-                        Path(url),  # Use URL as source path
+                    (
+                        llm_cost,
+                        url_llm_usage,
+                        img_analysis,
+                    ) = await run_url_llm_with_images(
+                        _doc_task,
+                        downloaded_images=downloaded_images,
+                        image_context=markdown_for_llm,
+                        output_file=output_file,
+                        cfg=cfg,
+                        url=url,
                         processor=shared_processor,
-                        llm_ready_event=llm_ready_event,
                     )
-
-                    # Execute in parallel
-                    doc_result, img_result = await _run_parallel_llm_tasks(
-                        _doc_with_signal(),
-                        img_task,
-                        llm_ready_event,
-                    )
-
-                    # Unpack results
-                    _, cost, url_llm_usage = doc_result
-                    _, image_cost, image_usage, img_analysis = img_result
-
-                    _merge_llm_usage(url_llm_usage, image_usage)
-                    llm_cost = cost + image_cost
                 else:
                     # Only document processing
-                    _, cost, url_llm_usage = await process_with_llm(
+                    _, llm_cost, url_llm_usage = await run_url_document_llm(
                         markdown_for_llm,
                         url,
                         cfg,
                         output_file,
+                        fetch_result,
                         screenshot_path=screenshot_path,
-                        processor=shared_processor,
-                        fetch_strategy=fetch_result.strategy_used
-                        if fetch_result
-                        else None,
                         extra_meta=source_extra_meta,
-                        title=fetch_result.title if fetch_result else None,
+                        processor=shared_processor,
                     )
-                    llm_cost = cost
 
             # Track cache hit: LLM enabled but no usage means cache hit
             is_cache_hit = cfg.llm.enabled and not url_llm_usage
