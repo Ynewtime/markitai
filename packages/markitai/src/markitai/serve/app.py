@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import sys
 import uuid
 import zipfile
@@ -37,6 +38,7 @@ from markitai.serve.jobs import (
 )
 from markitai.serve.schemas import (
     JobOptions,
+    JobRetryBody,
     LLMModelCreate,
     LLMModelUpdate,
     LLMSettingsUpdate,
@@ -325,7 +327,10 @@ async def _save_upload(upload: UploadFile, dest_dir: Path) -> Path:
 
 
 def _build_job_config(base: MarkitaiConfig, opts: JobOptions) -> MarkitaiConfig:
-    """Deep-copy the base config and apply preset + explicit llm override."""
+    """Deep-copy the base config and apply preset + explicit llm override.
+
+    When LLM ends up enabled, ``keep_base`` is forced on (web semantics).
+    """
     from markitai.config import get_preset
 
     cfg = base.model_copy(deep=True)
@@ -345,6 +350,10 @@ def _build_job_config(base: MarkitaiConfig, opts: JobOptions) -> MarkitaiConfig:
             "running without LLM enhancement"
         )
         cfg.llm.enabled = False
+    if cfg.llm.enabled:
+        # Web semantics (CLI untouched): the UI diff view needs the base .md
+        # variant alongside .llm.md.
+        cfg.llm.keep_base = True
     return cfg
 
 
@@ -515,6 +524,67 @@ def _sanitize_probe_error(exc: BaseException, body: LLMSettingsUpdate) -> str:
     return detail[:300]
 
 
+def _fill_stored_credentials(
+    state: ServeState, body: LLMSettingsUpdate
+) -> LLMSettingsUpdate:
+    """Fill a keyless probe body with the stored credentials for its model.
+
+    The settings UI only ever sees stored api_keys masked, so a saved-row
+    test posts ``{model, api_base}`` without the key; resolve it from the
+    running config exactly like a job run would. An explicit ``api_key``
+    always wins, local providers never take one, and nothing is persisted.
+    """
+    from markitai.providers import is_local_provider_model
+
+    if (
+        body.api_key is not None
+        or body.model is None
+        or is_local_provider_model(body.model)
+    ):
+        return body
+    stored = [
+        m.litellm_params
+        for m in state.config.llm.model_list
+        if m.litellm_params.model == body.model
+    ]
+    if body.api_base is not None:
+        # Two entries may share a model string; prefer the same-base one.
+        same_base = [p for p in stored if p.api_base == body.api_base]
+        stored = same_base or stored
+    if not stored:
+        return body
+    params = stored[0]
+    return body.model_copy(
+        update={
+            "api_key": params.api_key,
+            "api_base": body.api_base if body.api_base is not None else params.api_base,
+        }
+    )
+
+
+def _stored_probe_body(state: ServeState, model_name: str) -> LLMSettingsUpdate:
+    """Build an ad-hoc probe body from the stored entry named *model_name*.
+
+    The reference form of ``POST /api/settings/llm/test`` names a saved
+    ``llm.model_list`` entry; probe it with its full stored params (the
+    ``env:VAR`` indirection resolves inside the probe, like a job run).
+
+    Raises:
+        HTTPException: 422 when no entry has that ``model_name``.
+    """
+    for m in state.config.llm.model_list:
+        if m.model_name == model_name:
+            return LLMSettingsUpdate(
+                model=m.litellm_params.model,
+                api_key=m.litellm_params.api_key,
+                api_base=m.litellm_params.api_base,
+            )
+    raise HTTPException(
+        status_code=422,
+        detail=f"model_name '{model_name}' not found in llm.model_list",
+    )
+
+
 async def _probe_llm(body: LLMSettingsUpdate) -> str:
     """Run a minimal one-token completion against the given model.
 
@@ -536,6 +606,8 @@ async def _probe_llm(body: LLMSettingsUpdate) -> str:
         register_providers,
     )
 
+    if body.model is None:  # the endpoint resolves model_name references first
+        raise ValueError("probe body carries no model")
     params = LiteLLMParams(
         model=body.model, api_key=body.api_key, api_base=body.api_base
     )
@@ -835,7 +907,13 @@ def create_app(
         return payload
 
     @app.post("/api/settings/llm/test")
-    async def test_llm_settings(body: LLMSettingsUpdate) -> dict[str, Any]:
+    async def test_llm_settings(
+        request: Request, body: LLMSettingsUpdate
+    ) -> dict[str, Any]:
+        if body.model_name is not None:
+            body = _stored_probe_body(_state(request), body.model_name)
+        else:
+            body = _fill_stored_credentials(_state(request), body)
         try:
             detail = await asyncio.wait_for(
                 _probe_llm(body), timeout=_LLM_TEST_BACKSTOP_S
@@ -952,6 +1030,114 @@ def create_app(
             job.job_id,
             len(files),
             len(url_list),
+        )
+        return {
+            "job_id": job.job_id,
+            "items": [
+                {"item_id": i.item_id, "name": i.name, "kind": i.kind}
+                for i in job.items
+            ],
+        }
+
+    @app.post("/api/jobs/{job_id}/items/{item_id}/retry", status_code=201)
+    async def retry_job_item(
+        request: Request,
+        job_id: str,
+        item_id: str,
+        body: JobRetryBody | None = None,
+    ) -> dict[str, Any]:
+        """Create a new single-item job re-running a terminal item.
+
+        File items copy the original from the source job's uploads dir; URL
+        items re-enter the URL cascade. Options are inherited from the source
+        job unless the body overrides them. The new job runs through the
+        normal runner (SSE, meta.json and history all apply); archived
+        (rehydrated) jobs can be retried too because their uploads survive
+        on disk.
+        """
+        state = _state(request)
+        source_job = _get_job(request, job_id)
+        source_item = source_job.get_item(item_id)
+        if source_item is None:
+            raise HTTPException(status_code=404, detail="item not found")
+        if source_item.status not in ("done", "error"):
+            raise HTTPException(
+                status_code=409,
+                detail="item has not reached a terminal state yet; retry when done",
+            )
+
+        if body is not None and body.options is not None:
+            opts = body.options
+        else:
+            opts = JobOptions.model_validate(
+                {k: source_job.options.get(k) for k in ("preset", "llm")}
+            )
+
+        if opts.preset is not None:
+            from markitai.config import get_preset
+
+            if get_preset(opts.preset.lower(), state.config) is None:
+                raise HTTPException(
+                    status_code=422, detail=f"unknown preset '{opts.preset}'"
+                )
+
+        upload_src: Path | None = None
+        if source_item.kind == "file":
+            uploads_dir = source_job.uploads_dir.resolve()
+            upload_src = (uploads_dir / source_item.name).resolve()
+            # meta.json is plain on-disk state: a tampered item name must not
+            # reach outside the source job's uploads directory.
+            if not upload_src.is_relative_to(uploads_dir) or not upload_src.is_file():
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"original upload '{source_item.name}' is no longer on "
+                        "disk (job files may have been cleaned up)"
+                    ),
+                )
+
+        cfg = _build_job_config(state.config, opts)
+        job = state.registry.create_job(options=opts.model_dump(), cfg=cfg)
+        cfg.output.dir = str(job.out_dir)
+
+        from markitai.serve.jobs import JobItem
+        from markitai.utils.cli_helpers import url_to_filename
+
+        # Same rollback semantics as POST /api/jobs: any failure below must
+        # not leave a zombie "running" job behind.
+        try:
+            if upload_src is not None:
+                copied = job.uploads_dir / source_item.name
+                await asyncio.to_thread(shutil.copyfile, upload_src, copied)
+                job.items.append(
+                    JobItem(
+                        item_id="i1", name=source_item.name, kind="file", source=copied
+                    )
+                )
+            else:
+                url = source_item.name
+                job.items.append(
+                    JobItem(
+                        item_id="i1",
+                        name=url,
+                        kind="url",
+                        source=url,
+                        output_name=url_to_filename(url),
+                    )
+                )
+            job.task = asyncio.create_task(run_job(state.registry, job))
+        except Exception as e:
+            state.registry.discard_job(job)
+            logger.exception("[Serve] Retry job {} creation failed: {}", job.job_id, e)
+            raise HTTPException(
+                status_code=500, detail="internal error while creating the retry job"
+            ) from e
+        logger.info(
+            "[Serve] Job {} created: retry of item {}/{} ({})",
+            job.job_id,
+            source_job.job_id,
+            item_id,
+            source_item.kind,
         )
         return {
             "job_id": job.job_id,

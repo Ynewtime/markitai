@@ -1,5 +1,8 @@
 /** Mirror of the `markitai serve` API contract (scratchpad/API_CONTRACT.md). */
 
+/** Server-side per-job item cap (folder drops truncate against it). */
+export const MAX_JOB_ITEMS = 50;
+
 export type ItemKind = "file" | "url";
 export type ItemStatus = "queued" | "running" | "done" | "error";
 export type JobStatus = "running" | "done";
@@ -85,12 +88,12 @@ export interface LLMSettingsPayload {
   models: LLMSettingsModel[];
 }
 
-/** Body of `POST /api/settings/llm/test`. */
-export interface LLMSettingsUpdate {
-  model: string;
-  api_key?: string;
-  api_base?: string;
-}
+/** Body of `POST /api/settings/llm/test` — either ad-hoc values (unsaved
+ * form values) or a `model_name` reference to a stored entry, which the
+ * backend probes with its stored credentials (masked keys are never sent). */
+export type LLMSettingsUpdate =
+  | { model: string; api_key?: string; api_base?: string }
+  | { model_name: string };
 
 /** `POST /api/settings/llm/test` — always 200, `ok` flags the result. */
 export interface LLMTestResult {

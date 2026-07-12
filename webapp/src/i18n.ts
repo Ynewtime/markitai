@@ -141,6 +141,22 @@ const en = {
   announceItem: (name: string, status: string, settled: number, total: number) =>
     `${name} ${status} · ${settled} of ${total} complete`,
   figureFrom: (name: string) => `figure from ${name}`,
+  cliToggle: "copy as CLI command",
+  cliAria: "CLI command",
+  cliHint: "replace <your-files> with your local file paths",
+  retryAria: (name: string) => `retry ${name}`,
+  retryFailed: "retry failed",
+  dropTruncated: (kept: number, total: number) =>
+    `${kept} of ${total} files added (job limit)`,
+  dropEmptyFolder: "no convertible files in the dropped folder",
+  filterPh: "filter...",
+  filterAria: "filter items by name",
+  filterStatusAria: "filter by status",
+  filterShown: (n: number, m: number) => `${n} of ${m} shown`,
+  filterNoMatch: "no items match the filter",
+  diffTab: "diff",
+  diffTooLarge: "document too large to diff",
+  diffAria: "line diff of base and llm markdown",
 };
 
 export type Dict = typeof en;
@@ -252,6 +268,22 @@ const zh: Dict = {
   announceItem: (name: string, status: string, settled: number, total: number) =>
     `${name} ${status} · 已完成 ${settled}/${total}`,
   figureFrom: (name: string) => `来自 ${name} 的图片`,
+  cliToggle: "复制为 CLI 命令",
+  cliAria: "CLI 命令",
+  cliHint: "把 <your-files> 替换为本地文件路径",
+  retryAria: (name: string) => `重试 ${name}`,
+  retryFailed: "重试失败",
+  dropTruncated: (kept: number, total: number) =>
+    `已添加 ${kept}/${total} 个文件 (任务上限)`,
+  dropEmptyFolder: "文件夹中没有可转换的文件",
+  filterPh: "筛选...",
+  filterAria: "按名称筛选",
+  filterStatusAria: "按状态筛选",
+  filterShown: (n: number, m: number) => `显示 ${n}/${m}`,
+  filterNoMatch: "没有匹配的条目",
+  diffTab: "对比",
+  diffTooLarge: "文档过大，无法对比",
+  diffAria: "base 与 LLM Markdown 的行级对比",
 };
 
 export const dicts: Record<Locale, Dict> = { en, zh };

@@ -1,3 +1,6 @@
 node_modules/
 dist/
 *.tsbuildinfo
+# the root .gitignore excludes lib/ (Python build artifacts); re-include the
+# webapp source directory so src/lib/*.ts can actually be committed
+!src/lib/

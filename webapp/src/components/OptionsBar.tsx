@@ -1,15 +1,20 @@
 import type { Preset } from "../api/types";
 import type { Dict } from "../i18n";
+import { CliCommand } from "./CliCommand";
 
 const PRESETS: Preset[] = ["minimal", "standard", "rich"];
 
 /** Preset segmented control + LLM switch. When llm is not configured the
- * switch and the standard/rich presets are disabled (CapabilityHint explains). */
+ * switch and the standard/rich presets are disabled (CapabilityHint explains).
+ * The row ends with the copy-as-CLI-command toggle; its expanded strip wraps
+ * onto a full-width line below (flex-basis 100% inside this wrapping row). */
 export function OptionsBar({
   t,
   preset,
   llm,
   llmConfigured,
+  urls,
+  announce,
   onPreset,
   onLlm,
 }: {
@@ -17,6 +22,8 @@ export function OptionsBar({
   preset: Preset;
   llm: boolean;
   llmConfigured: boolean;
+  urls: string[];
+  announce: (msg: string) => void;
   onPreset: (p: Preset) => void;
   onLlm: (v: boolean) => void;
 }) {
@@ -62,6 +69,7 @@ export function OptionsBar({
           onClick={() => onLlm(!llm)}
         />
       </div>
+      <CliCommand t={t} urls={urls} preset={preset} llm={llm} announce={announce} />
     </div>
   );
 }

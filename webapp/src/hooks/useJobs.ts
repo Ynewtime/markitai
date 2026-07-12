@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createJob, fetchJobSnapshot, jobEventsUrl } from "../api/client";
+import { createJob, fetchJobSnapshot, jobEventsUrl, retryJobItem } from "../api/client";
 import type {
+  CreateJobResponse,
   ItemKind,
   ItemPayload,
   ItemStatus,
@@ -9,6 +10,7 @@ import type {
   JobSnapshot,
   JobStatus,
 } from "../api/types";
+import { notifyJobDone, requestNotifyPermission } from "../lib/notify";
 
 /** sessionStorage seeds so an F5 mid-job can rebuild the ledger and re-attach
  * to still-running jobs (the server replays a snapshot on connect). */
@@ -19,6 +21,8 @@ interface StoredSeed {
   name: string;
   kind: ItemKind;
   sizeBytes: number | null;
+  /** The row was retried as a new job (ledger keeps the original row). */
+  retried?: boolean;
 }
 
 interface StoredJob {
@@ -66,6 +70,7 @@ function seedItem(jobId: string, seed: StoredSeed, archived: boolean): SessionIt
     sizeBytes: seed.sizeBytes,
     startedAt: null,
     archived,
+    retried: seed.retried === true,
   };
 }
 
@@ -90,6 +95,8 @@ export interface SessionItem {
   startedAt: number | null;
   /** Merged from the conversion history — rows carry a neutral badge. */
   archived: boolean;
+  /** Retried into a new job — the original row keeps a neutral marker. */
+  retried: boolean;
 }
 
 export interface SessionJob {
@@ -138,6 +145,9 @@ export function useJobs() {
   const [jobs, setJobs] = useState<Record<string, SessionJob>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const sourcesRef = useRef<Map<string, EventSource>>(new Map());
+  // One completion notification per job; both the snapshot and the final
+  // `job` frame can report the terminal state, so terminality is latched.
+  const notifiedRef = useRef<Set<string>>(new Set());
 
   const closeEvents = useCallback((jobId: string) => {
     const es = sourcesRef.current.get(jobId);
@@ -145,6 +155,15 @@ export function useJobs() {
       es.close();
       sourcesRef.current.delete(jobId);
     }
+  }, []);
+
+  /** Terminal state observed on a live event stream (submitted or re-attached
+   * running jobs only — history merges never open a stream, so old archived
+   * jobs cannot notify). notifyJobDone itself checks hidden + permission. */
+  const notifyTerminal = useCallback((jobId: string, done: number, failed: number) => {
+    if (notifiedRef.current.has(jobId)) return;
+    notifiedRef.current.add(jobId);
+    notifyJobDone(failed > 0 ? `${done} done · ${failed} failed` : `${done} done`);
   }, []);
 
   const openEvents = useCallback(
@@ -173,7 +192,10 @@ export function useJobs() {
             return p === undefined ? item : mergeItem(item, p, now);
           }),
         );
-        if (snap.status !== "running") closeEvents(jobId);
+        if (snap.status !== "running") {
+          notifyTerminal(jobId, snap.done, snap.failed);
+          closeEvents(jobId);
+        }
       });
 
       es.addEventListener("item", (e) => {
@@ -196,40 +218,96 @@ export function useJobs() {
             ? prev
             : { ...prev, [jobId]: { ...job, status: p.status } };
         });
-        if (p.status !== "running") closeEvents(jobId);
+        if (p.status !== "running") {
+          notifyTerminal(jobId, p.done, p.failed);
+          closeEvents(jobId);
+        }
       });
     },
-    [closeEvents],
+    [closeEvents, notifyTerminal],
+  );
+
+  /** Merge a freshly created job (POST /api/jobs or retry) into the session:
+   * seed rows, persist the seeds, attach the event stream. */
+  const adopt = useCallback(
+    (res: CreateJobResponse, sizes: (number | null)[], options: JobOptions) => {
+      const jobId = res.job_id;
+      setJobs((prev) => ({
+        ...prev,
+        [jobId]: { jobId, status: "running", createdAt: null, options, archived: false },
+      }));
+      const seeds: StoredSeed[] = res.items.map((it, idx) => ({
+        itemId: it.item_id,
+        name: it.name,
+        kind: it.kind,
+        sizeBytes: sizes[idx] ?? null,
+      }));
+      setItems((prev) => [...prev, ...seeds.map((s) => seedItem(jobId, s, false))]);
+      writeStoredJobs([...readStoredJobs(), { jobId, items: seeds }]);
+      openEvents(jobId);
+    },
+    [openEvents],
   );
 
   /** POST a new job. Returns true when created (errors land in submitError). */
   const submit = useCallback(
     async (files: File[], urls: string[], options: JobOptions): Promise<boolean> => {
+      requestNotifyPermission(); // first submit is the moment to ask, never load
       setSubmitError(null);
       try {
         const res = await createJob(files, urls, options);
-        const jobId = res.job_id;
-        setJobs((prev) => ({
-          ...prev,
-          [jobId]: { jobId, status: "running", createdAt: null, options, archived: false },
-        }));
         // Backend item order is files-then-urls, matching our FormData order.
-        const seeds: StoredSeed[] = res.items.map((it, idx) => ({
-          itemId: it.item_id,
-          name: it.name,
-          kind: it.kind,
-          sizeBytes: it.kind === "file" ? (files[idx]?.size ?? null) : null,
-        }));
-        setItems((prev) => [...prev, ...seeds.map((s) => seedItem(jobId, s, false))]);
-        writeStoredJobs([...readStoredJobs(), { jobId, items: seeds }]);
-        openEvents(jobId);
+        adopt(
+          res,
+          res.items.map((it, idx) =>
+            it.kind === "file" ? (files[idx]?.size ?? null) : null,
+          ),
+          options,
+        );
         return true;
       } catch (e) {
         setSubmitError(e instanceof Error ? e.message : String(e));
         return false;
       }
     },
-    [openEvents],
+    [adopt],
+  );
+
+  /** Retry a failed (terminal) item as a new single-item job. The new job is
+   * adopted through the normal submit path; the original row is only marked
+   * `retried` — the ledger does not rewrite history. Returns the inline
+   * error text (409/404 detail) or null on success. */
+  const retry = useCallback(
+    async (item: SessionItem): Promise<string | null> => {
+      requestNotifyPermission();
+      try {
+        const res = await retryJobItem(item.jobId, item.itemId);
+        adopt(
+          res,
+          res.items.map((it) => (it.kind === "file" ? item.sizeBytes : null)),
+          jobs[item.jobId]?.options ?? { preset: null, llm: null },
+        );
+        setItems((prev) =>
+          prev.map((i) => (i.key === item.key ? { ...i, retried: true } : i)),
+        );
+        writeStoredJobs(
+          readStoredJobs().map((j) =>
+            j.jobId === item.jobId
+              ? {
+                  ...j,
+                  items: j.items.map((s) =>
+                    s.itemId === item.itemId ? { ...s, retried: true } : s,
+                  ),
+                }
+              : j,
+          ),
+        );
+        return null;
+      } catch (e) {
+        return e instanceof Error ? e.message : String(e);
+      }
+    },
+    [adopt, jobs],
   );
 
   const clear = useCallback(() => {
@@ -456,6 +534,7 @@ export function useJobs() {
     activeCount,
     now,
     submit,
+    retry,
     submitError,
     clear,
     openArchived,

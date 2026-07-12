@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 class JobOptions(BaseModel):
@@ -18,27 +18,64 @@ class JobOptions(BaseModel):
     llm: bool | None = None
 
 
-class LLMSettingsUpdate(BaseModel):
-    """Body of ``POST /api/settings/llm/test``.
+class JobRetryBody(BaseModel):
+    """Optional body of ``POST /api/jobs/{job_id}/items/{item_id}/retry``.
 
-    ``model`` is usually ``provider/model-id`` but bare model names are
-    accepted too (litellm resolves some); only non-blank is required.
-    ``api_key``/``api_base`` support the ``env:VAR`` indirection syntax.
+    ``options`` replaces the inherited source-job options as a whole when
+    provided (same shape as the ``options`` field of ``POST /api/jobs``);
+    omitted or null inherits the source job's options.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str
+    options: JobOptions | None = None
+
+
+class LLMSettingsUpdate(BaseModel):
+    """Body of ``POST /api/settings/llm/test``. Two mutually exclusive forms.
+
+    Ad-hoc form ``{model, api_key?, api_base?}`` probes unsaved values:
+    ``model`` is usually ``provider/model-id`` but bare model names are
+    accepted too (litellm resolves some); ``api_key``/``api_base`` support
+    the ``env:VAR`` indirection syntax.
+
+    Reference form ``{model_name}`` probes the stored ``llm.model_list``
+    entry with that name using its full stored params — the UI only ever
+    sees stored keys masked, so saved rows are tested by name.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_name: str | None = None
+    model: str | None = None
     api_key: str | None = None
     api_base: str | None = None
 
-    @field_validator("model")
+    @field_validator("model_name", "model")
     @classmethod
-    def _require_non_blank_model(cls, value: str) -> str:
+    def _require_non_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = value.strip()
         if not value:
-            raise ValueError("model must be a non-empty string")
+            raise ValueError("must be a non-empty string")
         return value
+
+    @model_validator(mode="after")
+    def _one_form_only(self) -> LLMSettingsUpdate:
+        if self.model_name is not None:
+            if (
+                self.model is not None
+                or self.api_key is not None
+                or self.api_base is not None
+            ):
+                raise ValueError(
+                    "model_name references a stored entry and cannot be "
+                    "combined with model/api_key/api_base"
+                )
+        elif self.model is None:
+            raise ValueError("either model or model_name is required")
+        return self
 
 
 def _reject_mask_char(value: str | None) -> str | None:

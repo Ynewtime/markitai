@@ -1,8 +1,26 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionItem, SessionStats } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
 import { fmtCost, fmtDur } from "../lib/format";
 import { ItemRow } from "./ItemRow";
+
+/** Status facets share the chip vocabulary (mono words, English in both
+ * locales — they mirror the status chips). */
+const STATUS_FILTERS = ["all", "done", "failed", "skipped"] as const;
+type StatusFilter = (typeof STATUS_FILTERS)[number];
+
+function matchesStatus(i: SessionItem, f: StatusFilter): boolean {
+  switch (f) {
+    case "all":
+      return true;
+    case "done":
+      return i.status === "done" && !i.skipped;
+    case "failed":
+      return i.status === "error";
+    case "skipped":
+      return i.status === "done" && i.skipped;
+  }
+}
 
 /** The session ledger — one compact shape for the whole workspace lifetime
  * (converting and done states share it, so the grid never reflows mid-run).
@@ -10,7 +28,11 @@ import { ItemRow } from "./ItemRow";
  * Real listbox contract: roving tabindex, ArrowUp/Down/Home/End move focus
  * through every row (failed/skipped rows stay reachable); selection follows
  * focus onto previewable rows. The accounting TOTAL double-rule appears only
- * once the session has settled. */
+ * once the session has settled.
+ *
+ * Above 10 items a compact filter row appears (name substring + status
+ * chips). Filtering is pure view: row numbers and the TOTAL line keep the
+ * full session; keyboard navigation walks the visible subset only. */
 export function ItemList({
   t,
   items,
@@ -22,6 +44,7 @@ export function ItemList({
   selectedKey,
   onSelect,
   onOpenSettings,
+  onRetry,
 }: {
   t: Dict;
   items: SessionItem[];
@@ -33,14 +56,47 @@ export function ItemList({
   selectedKey: string | null;
   onSelect: (key: string) => void;
   onOpenSettings: () => void;
+  onRetry: (item: SessionItem) => Promise<string | null>;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
+
+  // ---- view-layer filter (session-scoped; resets when the ledger shrinks
+  // back under the threshold so a stale query can never hide fresh rows).
+  const [query, setQuery] = useState("");
+  const [statusF, setStatusF] = useState<StatusFilter>("all");
+  const filterable = items.length > 10;
+  useEffect(() => {
+    if (!filterable) {
+      setQuery("");
+      setStatusF("all");
+    }
+  }, [filterable]);
+  const filterOn = filterable && (query.trim() !== "" || statusF !== "all");
+  const visible = useMemo(() => {
+    if (!filterOn) return items;
+    const q = query.trim().toLowerCase();
+    return items.filter(
+      (i) =>
+        matchesStatus(i, statusF) &&
+        (q === "" || i.name.replace(/^https?:\/\//, "").toLowerCase().includes(q)),
+    );
+  }, [items, filterOn, query, statusF]);
+
+  // Ledger numbering stays positional in the full session, filtered or not.
+  const indexByKey = useMemo(() => {
+    const m = new Map<string, number>();
+    items.forEach((it, i) => m.set(it.key, i));
+    return m;
+  }, [items]);
+
   // Roving tabindex: the last-focused row stays the single Tab stop.
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const effectiveActive =
-    (activeKey !== null && items.some((i) => i.key === activeKey) ? activeKey : null) ??
-    selectedKey ??
-    items[0]?.key ??
+    (activeKey !== null && visible.some((i) => i.key === activeKey) ? activeKey : null) ??
+    (selectedKey !== null && visible.some((i) => i.key === selectedKey)
+      ? selectedKey
+      : null) ??
+    visible[0]?.key ??
     null;
 
   const onListKeyDown = (e: React.KeyboardEvent) => {
@@ -50,7 +106,10 @@ export function ItemList({
     if (list === null) return;
     const options = Array.from(list.querySelectorAll<HTMLElement>('[role="option"]'));
     if (options.length === 0) return;
-    const current = options.findIndex((el) => el === document.activeElement);
+    // Arrows also work from nested controls (retry) — walk from their row.
+    const current = options.findIndex(
+      (el) => el === document.activeElement || el.contains(document.activeElement),
+    );
     let next: number;
     if (e.key === "Home") next = 0;
     else if (e.key === "End") next = options.length - 1;
@@ -60,8 +119,9 @@ export function ItemList({
     const el = options[next];
     if (el === undefined) return;
     el.focus();
-    // Selection follows focus onto previewable rows only.
-    const item = items[next];
+    // Selection follows focus onto previewable rows only. The DOM option
+    // order is the visible (filtered) order.
+    const item = visible[next];
     if (item !== undefined && el.getAttribute("aria-disabled") !== "true") {
       onSelect(item.key);
     }
@@ -71,6 +131,38 @@ export function ItemList({
   const totalTime = fmtDur(stats.doneDurationMs);
   return (
     <div className={`flist${showCost ? "" : " nocost"}`}>
+      {filterable && (
+        <div className="filterrow">
+          <input
+            type="text"
+            className="fin"
+            value={query}
+            placeholder={t.filterPh}
+            aria-label={t.filterAria}
+            spellCheck={false}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setQuery("");
+              }
+            }}
+          />
+          <div className="fchips" role="group" aria-label={t.filterStatusAria}>
+            {STATUS_FILTERS.map((f) => (
+              <button
+                key={f}
+                type="button"
+                className={statusF === f ? `fchip on ${f}` : "fchip"}
+                aria-pressed={statusF === f}
+                onClick={() => setStatusF(f)}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="lrow lhead" aria-hidden="true">
         <span />
         <span>{t.colName}</span>
@@ -84,12 +176,12 @@ export function ItemList({
         aria-label={t.itemsAria}
         onKeyDown={onListKeyDown}
       >
-        {items.map((item, i) => (
+        {visible.map((item) => (
           <ItemRow
             key={item.key}
             t={t}
             item={item}
-            index={i}
+            index={indexByKey.get(item.key) ?? 0}
             showCost={showCost}
             now={now}
             selected={item.key === selectedKey}
@@ -98,13 +190,25 @@ export function ItemList({
             onSelect={onSelect}
             onOpenSettings={onOpenSettings}
             onRowFocus={setActiveKey}
+            onRetry={onRetry}
           />
         ))}
       </div>
+      {filterOn && visible.length === 0 && (
+        <p className="fempty">{t.filterNoMatch}</p>
+      )}
       {settled && (
         <div className="lrow totals">
           <span />
-          <span className="t-lbl">{t.total}</span>
+          <span className="t-lbl">
+            {t.total}
+            {filterOn && (
+              <span className="t-shownote">
+                {" · "}
+                {t.filterShown(visible.length, items.length)}
+              </span>
+            )}
+          </span>
           <span className="c-time">{totalTime}</span>
           {showCost && <span className="c-cost">{fmtCost(stats.costTotal)}</span>}
           <span className="t-note">{totalNote}</span>

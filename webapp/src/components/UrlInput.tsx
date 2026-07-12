@@ -22,17 +22,21 @@ function useNarrow(): boolean {
 /** URL entry: a textarea styled as the mock's single input — pasting
  * multi-line text grows it one row per URL. Enter converts (the placeholder
  * says so); Shift+Enter inserts a newline; Cmd/Ctrl+Enter still works.
- * `compact` is the slim-composer variant that lives in the workspace. */
+ * `compact` is the slim-composer variant that lives in the workspace.
+ * The draft is owned by App (the CLI-command line mirrors it live). */
 export function UrlInput({
   t,
+  text,
+  onText,
   onConvert,
   compact = false,
 }: {
   t: Dict;
+  text: string;
+  onText: (text: string) => void;
   onConvert: (urls: string[]) => Promise<boolean>;
   compact?: boolean;
 }) {
-  const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const narrow = useNarrow();
 
@@ -51,7 +55,7 @@ export function UrlInput({
     setBusy(true);
     const created = await onConvert(urls);
     setBusy(false);
-    if (created) setText("");
+    if (created) onText("");
   };
 
   return (
@@ -63,7 +67,7 @@ export function UrlInput({
         placeholder={narrow ? t.urlPlaceholderShort : t.urlPlaceholder}
         spellCheck={false}
         aria-label={t.urlPlaceholder}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => onText(e.target.value)}
         onKeyDown={(e) => {
           if (e.key !== "Enter" || e.shiftKey) return;
           if (e.nativeEvent.isComposing) return; // IME confirm, not submit

@@ -13,7 +13,6 @@ import type {
   LLMModelUpdate,
   LLMSettingsModel,
   LLMSettingsPayload,
-  LLMSettingsUpdate,
 } from "../api/types";
 import type { Dict } from "../i18n";
 import { XIcon } from "./icons";
@@ -255,11 +254,9 @@ export function SettingsModal({
   const runRowTest = async (m: LLMSettingsModel) => {
     setRowTest((prev) => ({ ...prev, [m.model_name]: { state: "busy" } }));
     try {
-      // Stored keys only exist masked — never sent; the backend resolves
-      // credentials for saved entries (env/config) itself.
-      const body: LLMSettingsUpdate = { model: m.model };
-      if (m.api_base !== null) body.api_base = m.api_base;
-      const res = await testLLMSettings(body);
+      // Stored keys only exist masked — never sent; reference the saved
+      // entry by name and the backend probes its stored credentials.
+      const res = await testLLMSettings({ model_name: m.model_name });
       setRowTest((prev) => ({
         ...prev,
         [m.model_name]: { state: res.ok ? "ok" : "fail", detail: res.detail },

@@ -78,6 +78,21 @@ def sample_config_dict() -> dict:
     }
 
 
+@pytest.fixture(autouse=True)
+def _isolate_global_cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Keep the default PersistentCache out of the real ``~/.markitai``.
+
+    Many tests build ``LLMProcessor`` without ``cache_global_dir``; the
+    default would open — and write test entries into — the user's real
+    ``~/.markitai/cache.db``. Explicit ``global_dir`` arguments are
+    unaffected.
+    """
+    monkeypatch.setattr(
+        "markitai.llm.cache.DEFAULT_GLOBAL_CACHE_DIR",
+        str(tmp_path / "global-cache"),
+    )
+
+
 # =============================================================================
 # Fetch Fixtures
 # =============================================================================

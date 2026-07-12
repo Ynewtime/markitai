@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState } from "react";
+import { collectFromEntries } from "../lib/fileTree";
 
 function dragHasFiles(e: DragEvent): boolean {
   return e.dataTransfer !== null && Array.from(e.dataTransfer.types).includes("Files");
 }
 
 /** Full-page drop target: window-level drag listeners + a hairline veil while
- * dragging. Dropping anywhere creates a new job with the current options. */
+ * dragging. Dropping anywhere creates a new job with the current options.
+ * Plain file drops keep the direct path; drops that include a directory go
+ * through the webkitGetAsEntry() traversal (`fromFolder` tells App to apply
+ * the 50-item truncation / empty-folder notices). */
 export function DropOverlay({
   label,
   onFiles,
 }: {
   label: string;
-  onFiles: (files: File[]) => void;
+  onFiles: (files: File[], fromFolder?: boolean) => void;
 }) {
   const [active, setActive] = useState(false);
   const depthRef = useRef(0);
@@ -41,7 +45,20 @@ export function DropOverlay({
       e.preventDefault();
       depthRef.current = 0;
       setActive(false);
-      const files = e.dataTransfer === null ? [] : Array.from(e.dataTransfer.files);
+      const dt = e.dataTransfer;
+      if (dt === null) return;
+      // webkitGetAsEntry() must be read synchronously — the item list is
+      // neutered once the drop handler returns.
+      const entries = Array.from(dt.items ?? []).map((it) =>
+        typeof it.webkitGetAsEntry === "function" ? it.webkitGetAsEntry() : null,
+      );
+      if (entries.some((en) => en !== null && en.isDirectory)) {
+        void collectFromEntries(entries).then((files) =>
+          onFilesRef.current(files, true),
+        );
+        return;
+      }
+      const files = Array.from(dt.files);
       if (files.length > 0) onFilesRef.current(files);
     };
     window.addEventListener("dragenter", onEnter);
