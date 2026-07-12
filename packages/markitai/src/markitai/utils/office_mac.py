@@ -212,6 +212,13 @@ def _wrap_office_script(
             "            delay 0.2",
             "            set waitCount to waitCount + 1",
             "        end repeat",
+            # Surface the stall explicitly: without this the bind grabs
+            # missing value and dies later at save with an inscrutable -1708.
+            f'        if not (exists {container} "{in_name}") then',
+            f'            error "{app} accepted the open request but the '
+            f"{container} never registered (app stuck or overloaded). "
+            f'Quit {app} and retry." number 6001',
+            "        end if",
             f'        set openedItem to {container} "{in_name}"',
         ]
     )
@@ -344,6 +351,15 @@ def _run_applescript(script: str, *, timeout: int, app: str) -> None:
                 f"Not authorized to automate {app}. Allow your terminal to "
                 f"control {app} in System Settings > Privacy & Security > "
                 "Automation, then retry."
+            )
+        if "-9074" in stderr:
+            # PowerPoint's catch-all open failure; observed when the app is
+            # in a wedged state (e.g. after a force kill). A normal restart
+            # clears it.
+            raise RuntimeError(
+                f"{app} refused to open the document (error -9074), which "
+                f"usually means the app is in a bad state. Quit {app} "
+                "completely and retry."
             )
         raise RuntimeError(f"{app} automation failed: {stderr[:300]}")
 
