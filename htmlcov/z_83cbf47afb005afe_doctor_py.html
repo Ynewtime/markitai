@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_83cbf47afb005afe_init_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.3">coverage.py v7.14.3</a>,
-            created at 2026-07-10 09:42 +0000
+            created at 2026-07-12 06:13 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -483,7 +483,7 @@
     <p class="pln"><span class="n"><a id="t399" href="#t399">399</a></span><span class="t">        <span class="com"># Running soffice --version can hang on Windows in non-interactive mode</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t400" href="#t400">400</a></span><span class="t">        <span class="key">return</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t401" href="#t401">401</a></span><span class="t">            <span class="str">"name"</span><span class="op">:</span> <span class="str">"LibreOffice"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t402" href="#t402">402</a></span><span class="t">            <span class="str">"description"</span><span class="op">:</span> <span class="str">"Office document conversion (doc, docx, xls, xlsx, ppt, pptx)"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t402" href="#t402">402</a></span><span class="t">            <span class="str">"description"</span><span class="op">:</span> <span class="str">"Legacy Office conversion (doc, ppt) and PPTX slide rendering"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t403" href="#t403">403</a></span><span class="t">            <span class="str">"status"</span><span class="op">:</span> <span class="str">"ok"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t404" href="#t404">404</a></span><span class="t">            <span class="str">"message"</span><span class="op">:</span> <span class="str">"installed"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t405" href="#t405">405</a></span><span class="t">            <span class="str">"path"</span><span class="op">:</span> <span class="nam">soffice_path</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -497,13 +497,13 @@
     <p class="pln"><span class="n"><a id="t413" href="#t413">413</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t414" href="#t414">414</a></span><span class="t">            <span class="nam">office_apps</span> <span class="op">=</span> <span class="op">[</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t415" href="#t415">415</a></span><span class="t">                <span class="nam">app</span><span class="op">.</span><span class="nam">removeprefix</span><span class="op">(</span><span class="str">"Microsoft "</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t416" href="#t416">416</a></span><span class="t">                <span class="key">for</span> <span class="nam">app</span> <span class="key">in</span> <span class="op">(</span><span class="str">"Microsoft Word"</span><span class="op">,</span> <span class="str">"Microsoft PowerPoint"</span><span class="op">,</span> <span class="str">"Microsoft Excel"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t416" href="#t416">416</a></span><span class="t">                <span class="key">for</span> <span class="nam">app</span> <span class="key">in</span> <span class="op">(</span><span class="str">"Microsoft Word"</span><span class="op">,</span> <span class="str">"Microsoft PowerPoint"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t417" href="#t417">417</a></span><span class="t">                <span class="key">if</span> <span class="nam">office_mac</span><span class="op">.</span><span class="nam">find_ms_office_app</span><span class="op">(</span><span class="nam">app</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t418" href="#t418">418</a></span><span class="t">            <span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t419" href="#t419">419</a></span><span class="t">            <span class="key">if</span> <span class="nam">office_apps</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t420" href="#t420">420</a></span><span class="t">                <span class="key">return</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t421" href="#t421">421</a></span><span class="t">                    <span class="str">"name"</span><span class="op">:</span> <span class="str">"LibreOffice"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t422" href="#t422">422</a></span><span class="t">                    <span class="str">"description"</span><span class="op">:</span> <span class="str">"Office document conversion (doc, docx, xls, xlsx, ppt, pptx)"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t422" href="#t422">422</a></span><span class="t">                    <span class="str">"description"</span><span class="op">:</span> <span class="str">"Legacy Office conversion (doc, ppt) and PPTX slide rendering"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t423" href="#t423">423</a></span><span class="t">                    <span class="str">"status"</span><span class="op">:</span> <span class="str">"warning"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t424" href="#t424">424</a></span><span class="t">                    <span class="str">"message"</span><span class="op">:</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t425" href="#t425">425</a></span><span class="t">                        <span class="str">"not found; MS Office fallback available "</span>&nbsp;</span><span class="r"></span></p>
@@ -514,7 +514,7 @@
     <p class="run run2"><span class="n"><a id="t430" href="#t430">430</a></span><span class="t">                <span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t431" href="#t431">431</a></span><span class="t">        <span class="key">return</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t432" href="#t432">432</a></span><span class="t">            <span class="str">"name"</span><span class="op">:</span> <span class="str">"LibreOffice"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t433" href="#t433">433</a></span><span class="t">            <span class="str">"description"</span><span class="op">:</span> <span class="str">"Office document conversion (doc, docx, xls, xlsx, ppt, pptx)"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t433" href="#t433">433</a></span><span class="t">            <span class="str">"description"</span><span class="op">:</span> <span class="str">"Legacy Office conversion (doc, ppt) and PPTX slide rendering"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t434" href="#t434">434</a></span><span class="t">            <span class="str">"status"</span><span class="op">:</span> <span class="str">"missing"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t435" href="#t435">435</a></span><span class="t">            <span class="str">"message"</span><span class="op">:</span> <span class="str">"soffice/libreoffice command not found"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t436" href="#t436">436</a></span><span class="t">            <span class="str">"install_hint"</span><span class="op">:</span> <span class="nam">get_install_hint</span><span class="op">(</span><span class="str">"libreoffice"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -1227,7 +1227,7 @@
             <a class="nav" href="z_83cbf47afb005afe_init_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.3">coverage.py v7.14.3</a>,
-            created at 2026-07-10 09:42 +0000
+            created at 2026-07-12 06:13 +0000
         </p>
     </div>
 </footer>
