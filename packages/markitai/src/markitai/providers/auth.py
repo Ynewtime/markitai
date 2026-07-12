@@ -163,7 +163,12 @@ def _check_copilot_config_auth() -> AuthStatus:
 
     Checks (in order, matching `copilot login --help`'s own documented
     precedence): COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN, then
-    ~/.copilot/config.json for logged_in_users.
+    ~/.copilot/config.json for logged-in users.
+
+    The config file is the CLI's own machine-managed state, not a
+    documented interface — this check is best-effort. When the file
+    cannot be parsed, the result carries ``details={"indeterminate":
+    True}`` meaning "could not determine", not "not logged in".
 
     Returns:
         AuthStatus with authentication result
@@ -199,8 +204,17 @@ def _check_copilot_config_auth() -> AuthStatus:
         )
 
     try:
-        config: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
-        logged_in_users = config.get("logged_in_users", [])
+        raw = config_path.read_text(encoding="utf-8")
+        # Copilot CLI (>= ~1.0.x) writes JSONC-style `//` header comments
+        # ("This file is managed automatically.") that json.loads rejects.
+        json_text = "\n".join(
+            line for line in raw.splitlines() if not line.lstrip().startswith("//")
+        )
+        config: dict[str, Any] = json.loads(json_text)
+        # Newer CLI versions renamed logged_in_users -> loggedInUsers.
+        logged_in_users = config.get("loggedInUsers") or config.get(
+            "logged_in_users", []
+        )
 
         if logged_in_users:
             # Get first logged in user
@@ -228,7 +242,11 @@ def _check_copilot_config_auth() -> AuthStatus:
             authenticated=False,
             user=None,
             expires_at=None,
-            error=f"Failed to read config: {e}",
+            error=(
+                "Cannot determine login state: could not parse "
+                f"~/.copilot/config.json ({e})"
+            ),
+            details={"indeterminate": True},
         )
 
 
@@ -637,7 +655,7 @@ class AuthManager:
     def _check_copilot(self) -> AuthStatus:
         """Check authentication status for Copilot provider.
 
-        Checks ~/.copilot/config.json for logged_in_users.
+        Checks ~/.copilot/config.json for logged-in users.
 
         Returns:
             AuthStatus with authentication result
@@ -673,6 +691,11 @@ async def _login_copilot() -> AuthStatus:
     Always runs with inherited stdio so the CLI sees a real TTY —
     required for credential storage to work correctly.
 
+    The CLI's exit code is the authoritative success signal. The
+    config-file read afterwards is enrichment only (username for
+    display) — it may fail (keychain-only storage, format changes)
+    and must never veto a login the CLI itself reported as successful.
+
     Returns:
         AuthStatus after the login attempt.
     """
@@ -707,7 +730,14 @@ async def _login_copilot() -> AuthStatus:
             expires_at=None,
             error=f"Login failed (exit code {returncode})",
         )
-    return config_status
+    return AuthStatus(
+        provider="copilot",
+        authenticated=True,
+        user=None,
+        expires_at=None,
+        error=None,
+        details={"source": "cli-exit", "verification": "credentials-only"},
+    )
 
 
 async def _login_claude_agent() -> AuthStatus:

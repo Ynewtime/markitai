@@ -610,6 +610,57 @@ class TestConfigFileAuth:
 
         assert status.authenticated is False
 
+    def test_check_copilot_config_auth_jsonc_camel_case(self, tmp_path: Path) -> None:
+        """Parses the current CLI format: `//` header comments + camelCase.
+
+        Fixture mirrors the real config written by GitHub Copilot CLI 1.0.69.
+        """
+        from markitai.providers.auth import _check_copilot_config_auth
+
+        config_dir = tmp_path / ".copilot"
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text(
+            "// User settings belong in settings.json.\n"
+            "// This file is managed automatically.\n"
+            "{\n"
+            '  "firstLaunchAt": "2026-07-08T04:06:16.174Z",\n'
+            '  "appTipShown": true,\n'
+            '  "lastLoggedInUser": {\n'
+            '    "host": "https://github.com",\n'
+            '    "login": "testuser"\n'
+            "  },\n"
+            '  "loggedInUsers": [\n'
+            "    {\n"
+            '      "host": "https://github.com",\n'
+            '      "login": "testuser"\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_copilot_config_auth()
+
+        assert status.authenticated is True
+        assert status.user == "testuser"
+
+    def test_check_copilot_config_auth_unparseable_is_indeterminate(
+        self, tmp_path: Path
+    ) -> None:
+        """An unreadable config means "cannot determine", not "not logged in"."""
+        from markitai.providers.auth import _check_copilot_config_auth
+
+        config_dir = tmp_path / ".copilot"
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text("not json at all")
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            status = _check_copilot_config_auth()
+
+        assert status.authenticated is False
+        assert (status.details or {}).get("indeterminate") is True
+        assert "Cannot determine login state" in (status.error or "")
+
     def test_check_claude_credentials_auth_authenticated(self, tmp_path: Path) -> None:
         """Test _check_claude_credentials_auth when authenticated."""
         from markitai.providers.auth import _check_claude_credentials_auth
@@ -1101,6 +1152,80 @@ class TestAttemptLogin:
 
         assert result.authenticated is False
         assert "not found" in (result.error or "").lower()
+
+    async def test_copilot_login_exit_zero_wins_over_unreadable_config(self) -> None:
+        """A config parse failure must never veto a successful CLI login.
+
+        The CLI's exit code 0 is the authoritative signal; the config
+        read is enrichment only (guards against future format changes).
+        """
+        from markitai.providers.auth import attempt_login
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.wait.return_value = 0
+
+        with (
+            patch(
+                "markitai.providers.auth._resolve_cli_path",
+                return_value="/usr/bin/copilot",
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ),
+            patch(
+                "markitai.providers.auth._check_copilot_config_auth",
+                return_value=AuthStatus(
+                    provider="copilot",
+                    authenticated=False,
+                    user=None,
+                    expires_at=None,
+                    error="Cannot determine login state: could not parse ...",
+                    details={"indeterminate": True},
+                ),
+            ),
+        ):
+            result = await attempt_login("copilot")
+
+        assert result.authenticated is True
+        assert result.error is None
+        assert (result.details or {}).get("source") == "cli-exit"
+
+    async def test_copilot_login_nonzero_exit_fails(self) -> None:
+        """A non-zero CLI exit code is reported as a login failure."""
+        from markitai.providers.auth import attempt_login
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.wait.return_value = 1
+
+        with (
+            patch(
+                "markitai.providers.auth._resolve_cli_path",
+                return_value="/usr/bin/copilot",
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ),
+            patch(
+                "markitai.providers.auth._check_copilot_config_auth",
+                return_value=AuthStatus(
+                    provider="copilot",
+                    authenticated=False,
+                    user=None,
+                    expires_at=None,
+                    error="No logged in users found",
+                ),
+            ),
+        ):
+            result = await attempt_login("copilot")
+
+        assert result.authenticated is False
+        assert "exit code 1" in (result.error or "")
 
     async def test_claude_login_calls_subprocess(self) -> None:
         """attempt_login('claude-agent') shells out to 'claude auth login'."""
