@@ -69,12 +69,23 @@ class TestScriptBuilding:
             assert 'tell application "' + app + '"' in script
             assert "close" in script and "saving no" in script
             assert "msoAutomationSecurityForceDisable" in script
-            assert "set openedItem to" in script
+            # Regression lock (openedItem-not-defined cascade): Word's and
+            # PowerPoint's `open` returns nothing, so the script must never
+            # bind from open's return value — it binds by staged name after
+            # an existence poll, and cleanup never references the variable.
+            assert "set openedItem to open" not in script
+            assert 'set openedItem to document "' in script or (
+                'set openedItem to presentation "' in script
+                or 'set openedItem to workbook "' in script
+            )
+            assert "repeat until (exists" in script
             assert "active document" not in script
             assert "active presentation" not in script
             assert "active workbook" not in script
             assert "on error errorMessage number errorNumber" in script
-            assert "if openedItem is not missing value then" in script
+            assert "if openedItem is not missing value then" not in script
+            # ForceDisable must never survive a cold-launch missing value read
+            assert "msoAutomationSecurityByUI" in script
 
     def test_word_opens_without_links_or_recent_file_side_effects(self) -> None:
         script = office_mac._build_legacy_script(
@@ -100,12 +111,13 @@ class TestScriptBuilding:
             Path("/tmp/in.pptx"), Path("/tmp/out.pdf")
         )
         force = script.index("msoAutomationSecurityForceDisable")
-        opened = script.index("set openedItem to open")
+        opened = script.index("open (POSIX file")
+        bound = script.index("set openedItem to presentation ", opened)
         restored = script.index(
-            "set automation security to previousAutomationSecurity", opened
+            "set automation security to previousAutomationSecurity", bound
         )
         saved = script.index("save openedItem", restored)
-        assert force < opened < restored < saved
+        assert force < opened < bound < restored < saved
 
     def test_pdf_script_uses_save_as_pdf(self) -> None:
         script = office_mac._build_pdf_script(
@@ -180,7 +192,7 @@ class TestConvertLegacy:
             assert len(staged_inputs) == 1
             assert staged_inputs[0].name == f"{staging.name}.doc"
             assert staged_inputs[0].stat().st_mode & 0o777 == 0o400
-            (staging / "output.docx").write_bytes(b"PK")
+            (staging / f"{staging.name}.docx").write_bytes(b"PK")
 
         monkeypatch.setattr(office_mac, "_run_applescript", fake_run)
 
@@ -227,7 +239,7 @@ class TestPptxToPdf:
 
         def fake_run(script: str, *, timeout: int, app: str) -> None:
             assert app == "Microsoft PowerPoint"
-            (staging / "output.pdf").write_bytes(b"%PDF")
+            (staging / f"{staging.name}.pdf").write_bytes(b"%PDF")
 
         monkeypatch.setattr(office_mac, "_run_applescript", fake_run)
 
