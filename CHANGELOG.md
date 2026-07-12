@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **PDFs with spaces or parentheses in the filename now get embedded-image analysis**: pymupdf4llm sanitizes the source name when writing extracted images (`My Paper.pdf` → `My_Paper.pdf-0001-00.jpg`), but embedded images were collected by globbing on the raw input name — matching nothing, so `--alt`/`--desc`/`rich` silently skipped every embedded image (no alt text, no `images.json`, no compression) while page screenshots kept working. Collection now resolves the image refs the converter itself wrote into the markdown (plus demoted reference images), with the previous prefix glob kept as a fallback, and a warning is logged when referenced assets are missing from disk
+
 ## [0.21.1] - 2026-07-12
 
 ### Fixed

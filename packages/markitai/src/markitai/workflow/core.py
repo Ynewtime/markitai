@@ -503,8 +503,13 @@ def get_saved_images(ctx: ConversionContext) -> list[Path]:
     """Get list of saved images for this file from assets directory.
 
     Handles transcoded formats (e.g. BMP/TIFF→PNG) by checking the
-    ``asset_path`` metadata from the converter before falling back
-    to a glob on the original file name.
+    ``asset_path`` metadata from the converter first. Otherwise resolves
+    the image refs found in the converted markdown (plus demoted
+    ``reference_images`` metadata): refs are written by the converter, so
+    they always match on-disk names even when the extractor sanitizes the
+    source filename (pymupdf4llm rewrites spaces/parentheses, so a prefix
+    glob on the input name would match nothing). Falls back to the legacy
+    input-name prefix glob when the markdown references no assets.
 
     Args:
         ctx: Conversion context
@@ -521,6 +526,31 @@ def get_saved_images(ctx: ConversionContext) -> list[Path]:
         asset_path = ctx.output_dir / ctx.conversion_result.metadata["asset_path"]
         if asset_path.exists() and asset_path.suffix.lower() in IMAGE_EXTENSIONS:
             return [asset_path]
+
+    if ctx.conversion_result is not None:
+        from markitai.utils.text import extract_asset_image_names
+
+        ref_names = extract_asset_image_names(ctx.conversion_result.markdown)
+        reference_images = ctx.conversion_result.metadata.get("reference_images")
+        if isinstance(reference_images, list):
+            for ref in reference_images:
+                name = ref.get("name") if isinstance(ref, dict) else None
+                if isinstance(name, str) and name and name not in ref_names:
+                    ref_names.append(name)
+        if ref_names:
+            found = [
+                assets_dir / name
+                for name in ref_names
+                if (assets_dir / name).is_file()
+                and Path(name).suffix.lower() in IMAGE_EXTENSIONS
+            ]
+            if found:
+                return found
+            logger.warning(
+                f"[Image] {ctx.input_path.name}: markdown references "
+                f"{len(ref_names)} asset image(s) but none were found in "
+                f"{assets_dir}"
+            )
 
     escaped_name = escape_glob_pattern(ctx.input_path.name)
     saved_images = list(assets_dir.glob(f"{escaped_name}*"))
@@ -1023,6 +1053,7 @@ async def analyze_embedded_images(ctx: ConversionContext) -> ConversionStepResul
 
     saved_images = get_saved_images(ctx)
     if not saved_images:
+        logger.debug(f"[LLM] {ctx.input_path.name}: no embedded images to analyze")
         return ConversionStepResult(success=True)
 
     # Filter out page/slide screenshots, only analyze embedded images
