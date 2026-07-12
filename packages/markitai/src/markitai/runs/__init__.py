@@ -25,6 +25,8 @@ from markitai.runs.output import (
 )
 from markitai.runs.report import (
     REPORT_VERSION,
+    build_llm_usage_block,
+    build_report_shell,
     build_single_report,
     build_url_batch_report,
     resolve_exit_code,
@@ -36,6 +38,8 @@ __all__ = [
     "REPORT_VERSION",
     "Outcome",
     "OutputTarget",
+    "build_llm_usage_block",
+    "build_report_shell",
     "build_single_report",
     "build_url_batch_report",
     "finalize_explicit_output",

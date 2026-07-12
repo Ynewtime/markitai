@@ -28,6 +28,57 @@ def _llm_usage_totals(models: dict[str, dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def build_report_shell(
+    *,
+    log_file: str | None,
+    version: str = REPORT_VERSION,
+) -> dict[str, Any]:
+    """Build the top-level shell shared by every report shape.
+
+    All report builders (single file/URL, URL batch, and
+    ``BatchProcessor.generate_report``) start from the same
+    version/generated_at/log_file trio; only how ``log_file`` is derived
+    differs per caller, so it is passed in pre-rendered.
+
+    Args:
+        log_file: Pre-rendered log file path string, or None.
+        version: Report schema version (batch reports carry their
+            state's version; defaults to ``REPORT_VERSION``).
+
+    Returns:
+        Dict with the shared top-level keys, ready to be extended.
+    """
+    return {
+        "version": version,
+        "generated_at": datetime.now().astimezone().isoformat(),
+        "log_file": log_file,
+    }
+
+
+def build_llm_usage_block(
+    models: dict[str, dict[str, Any]],
+    *,
+    cost_usd: float,
+) -> dict[str, Any]:
+    """Build the ``llm_usage`` report block shared by every report shape.
+
+    Args:
+        models: Per-model usage stats
+            ``{model: {requests, input_tokens, output_tokens, ...}}``.
+        cost_usd: Total run cost (summed per item, not per model, so it is
+            supplied by the caller rather than derived from ``models``).
+
+    Returns:
+        ``{"models": ..., "requests": ..., "input_tokens": ...,
+        "output_tokens": ..., "cost_usd": ...}``
+    """
+    return {
+        "models": models,
+        **_llm_usage_totals(models),
+        "cost_usd": cost_usd,
+    }
+
+
 def build_single_report(
     outcome: Outcome,
     *,
@@ -47,19 +98,15 @@ def build_single_report(
     """
     totals = _llm_usage_totals(outcome.llm_usage)
 
-    report: dict[str, Any] = {
-        "version": REPORT_VERSION,
-        "generated_at": datetime.now().astimezone().isoformat(),
-        "log_file": str(log_file_path) if log_file_path else None,
-    }
+    report: dict[str, Any] = build_report_shell(
+        log_file=str(log_file_path) if log_file_path else None,
+    )
     if options is not None:
         report["options"] = options
 
-    llm_usage_block = {
-        "models": outcome.llm_usage,
-        **totals,
-        "cost_usd": outcome.cost_usd,
-    }
+    llm_usage_block = build_llm_usage_block(
+        outcome.llm_usage, cost_usd=outcome.cost_usd
+    )
 
     if outcome.kind == "file":
         report["summary"] = {
@@ -141,11 +188,10 @@ def build_url_batch_report(
     Returns:
         Report dict ready for ``atomic_write_json(..., order_func=order_report)``.
     """
-    totals = _llm_usage_totals(llm_usage)
     return {
-        "version": REPORT_VERSION,
-        "generated_at": datetime.now().astimezone().isoformat(),
-        "log_file": str(log_file_path) if log_file_path else None,
+        **build_report_shell(
+            log_file=str(log_file_path) if log_file_path else None,
+        ),
         "summary": {
             "total_documents": 0,
             "completed_documents": 0,
@@ -155,11 +201,7 @@ def build_url_batch_report(
             "failed_urls": failed_urls,
             "duration": duration,
         },
-        "llm_usage": {
-            "models": llm_usage,
-            **totals,
-            "cost_usd": cost_usd,
-        },
+        "llm_usage": build_llm_usage_block(llm_usage, cost_usd=cost_usd),
         "urls": results,
     }
 
