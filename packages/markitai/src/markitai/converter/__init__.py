@@ -17,7 +17,7 @@ from markitai.converter.base import (
 from markitai.converter.eml import EmlConverter
 from markitai.converter.image import ImageConverter
 from markitai.converter.kreuzberg import register_kreuzberg_converters
-from markitai.converter.legacy import DocConverter, PptConverter, XlsConverter
+from markitai.converter.legacy import DocConverter, PptConverter
 
 # Import converters to register them (markitdown-based)
 from markitai.converter.markitdown_ext import (
@@ -30,7 +30,12 @@ from markitai.converter.markitdown_ext import (
     NumbersConverter,
     XhtmlConverter,
 )
-from markitai.converter.office import DocxConverter, PptxConverter, XlsxConverter
+from markitai.converter.office import (
+    DocxConverter,
+    PptxConverter,
+    XlsConverter,
+    XlsxConverter,
+)
 from markitai.converter.pdf import PdfConverter
 from markitai.converter.text import MarkdownConverter, TxtConverter
 

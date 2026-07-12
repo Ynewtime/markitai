@@ -1,4 +1,4 @@
-"""Office document converters (DOCX, PPTX, XLSX)."""
+"""Office document converters (DOCX, PPTX, XLSX, XLS)."""
 
 from __future__ import annotations
 
@@ -565,3 +565,16 @@ class XlsxConverter(OfficeConverter):
     """
 
     supported_formats = [FileFormat.XLSX]
+
+
+@register_converter(FileFormat.XLS)
+class XlsConverter(OfficeConverter):
+    """Converter for legacy XLS (Excel 97-2003) documents.
+
+    Uses MarkItDown directly (via xlrd) - cross-platform, no Office
+    application or LibreOffice involved. Cell content is identical to
+    upgrading through Excel first (verified live); embedded images and
+    charts are not extracted, matching the XLSX path.
+    """
+
+    supported_formats = [FileFormat.XLS]

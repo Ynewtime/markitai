@@ -701,7 +701,7 @@ RapidOCR 已作为依赖包含，开箱即用，无需额外安装。
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `macos_fallback` | `true` | macOS 上未安装 LibreOffice 时，通过 AppleScript 驱动已装的 MS Office 应用（Word/PowerPoint/Excel）完成旧版 `.doc`/`.ppt`/`.xls` 转换和 PPTX 幻灯片渲染 |
+| `macos_fallback` | `true` | macOS 上未安装 LibreOffice 时，通过 AppleScript 驱动已装的 MS Office 应用（Word/PowerPoint）完成旧版 `.doc`/`.ppt` 转换和 PPTX 幻灯片渲染 |
 
 ::: tip
 首次转换会触发每个应用一次性的 macOS 自动化授权弹窗。无头环境（SSH、CI）无法响应弹窗，建议关闭此备选。

@@ -701,7 +701,7 @@ Control the macOS MS Office fallback used when LibreOffice is not installed.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `macos_fallback` | `true` | On macOS without LibreOffice, drive installed MS Office apps (Word/PowerPoint/Excel) via AppleScript for legacy `.doc`/`.ppt`/`.xls` conversion and PPTX slide rendering |
+| `macos_fallback` | `true` | On macOS without LibreOffice, drive installed MS Office apps (Word/PowerPoint) via AppleScript for legacy `.doc`/`.ppt` conversion and PPTX slide rendering |
 
 ::: tip
 The first conversion triggers a one-time macOS Automation consent dialog per app. Disable this fallback in headless sessions (SSH, CI) where the dialog cannot be answered.

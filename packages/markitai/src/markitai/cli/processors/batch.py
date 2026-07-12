@@ -781,7 +781,8 @@ async def process_batch(
 
     # Pre-convert legacy Office files using batch COM (Windows only)
     # This reduces overhead by starting each Office app only once
-    legacy_suffixes = {".doc", ".ppt", ".xls"}
+    # (.xls converts in pure Python via xlrd and needs no pre-conversion)
+    legacy_suffixes = {".doc", ".ppt"}
     legacy_files = [f for f in files_to_process if f.suffix.lower() in legacy_suffixes]
     preconverted_map: dict[Path, Path] = {}
     preconvert_temp_dir: tempfile.TemporaryDirectory | None = None

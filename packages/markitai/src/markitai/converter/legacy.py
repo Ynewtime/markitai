@@ -1,10 +1,13 @@
-"""Legacy Office format converters (DOC, PPT, XLS - Office 97-2003).
+"""Legacy Office format converters (DOC, PPT - Office 97-2003).
 
 These formats require conversion to modern formats first.
 Conversion priority:
 1. MS Office COM (Windows) - faster and more accurate
 2. LibreOffice CLI (cross-platform) - fallback
 3. MS Office AppleScript (macOS) - fallback when LibreOffice is absent
+
+Legacy XLS is not handled here: it converts directly through MarkItDown's
+xlrd path (converter/office.py), with no Office application involved.
 """
 
 from __future__ import annotations
@@ -29,7 +32,6 @@ from markitai.converter.base import (
 from markitai.converter.office import OfficeConverter, PptxConverter
 from markitai.utils import office_mac
 from markitai.utils.office import (
-    check_ms_excel_available,
     check_ms_powerpoint_available,
     check_ms_word_available,
     find_libreoffice,
@@ -91,26 +93,10 @@ WORD_CONFIG = COMAppConfig(
     availability_check=check_ms_word_available,
 )
 
-# Excel configuration
-EXCEL_CONFIG = COMAppConfig(
-    name="Excel",
-    com_class="Excel.Application",
-    input_ext=".xls",
-    output_ext=".xlsx",
-    save_format=51,  # xlOpenXMLWorkbook
-    init_script="$app.Visible = $false\n$app.DisplayAlerts = $false",
-    open_script="$doc = $app.Workbooks.Open('{input}')",
-    save_script="$doc.SaveAs('{output}', {format})",
-    close_script="$doc.Close($false)",
-    cleanup_script="",
-    availability_check=check_ms_excel_available,
-)
-
 # Map extension to config
 COM_CONFIGS: dict[str, COMAppConfig] = {
     ".ppt": POWERPOINT_CONFIG,
     ".doc": WORD_CONFIG,
-    ".xls": EXCEL_CONFIG,
 }
 
 
@@ -357,11 +343,11 @@ def batch_convert_legacy_files(
     This significantly reduces overhead by:
     - Starting each Office application only once
     - Processing all files of the same type in one session
-    - Running Word, PowerPoint, and Excel conversions in parallel
+    - Running Word and PowerPoint conversions in parallel
     - Reducing PowerShell process spawn overhead
 
     Args:
-        files: List of legacy format files (.doc, .ppt, .xls)
+        files: List of legacy format files (.doc, .ppt)
         output_dir: Directory for converted files
 
     Returns:
@@ -385,7 +371,7 @@ def batch_convert_legacy_files(
     results: dict[Path, Path] = {}
 
     # Run conversions for different Office apps in parallel
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         futures = []
 
         for ext, file_list in files_by_ext.items():
@@ -414,7 +400,7 @@ def batch_convert_legacy_files(
 
 
 class LegacyOfficeConverter(BaseConverter):
-    """Base converter for legacy Office documents (DOC, PPT, XLS).
+    """Base converter for legacy Office documents (DOC, PPT).
 
     Conversion priority:
     1. MS Office COM (Windows) - faster and more accurate
@@ -426,7 +412,6 @@ class LegacyOfficeConverter(BaseConverter):
     TARGET_FORMAT: dict[str, str] = {
         ".doc": "docx",
         ".ppt": "pptx",
-        ".xls": "xlsx",
     }
 
     def __init__(self, config: MarkitaiConfig | None = None) -> None:
@@ -678,10 +663,3 @@ class PptConverter(LegacyOfficeConverter):
     """Converter for legacy PPT (PowerPoint 97-2003) documents."""
 
     supported_formats = [FileFormat.PPT]
-
-
-@register_converter(FileFormat.XLS)
-class XlsConverter(LegacyOfficeConverter):
-    """Converter for legacy XLS (Excel 97-2003) documents."""
-
-    supported_formats = [FileFormat.XLS]

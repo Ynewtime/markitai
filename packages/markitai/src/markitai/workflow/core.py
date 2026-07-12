@@ -245,12 +245,13 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
     try:
         # Determine if this is a heavy conversion task
         # Heavy tasks include:
-        # - Legacy formats (.ppt, .doc, .xls) that need LibreOffice conversion
+        # - Legacy formats (.ppt, .doc) that need an Office app or LibreOffice
+        #   (.xls converts in-process via xlrd and is not heavy)
         # - PDF/PPTX/DOCX with screenshots enabled (page rendering)
         # - PDF with OCR+LLM (renders page images for Vision analysis)
         # - PPTX with OCR (renders slide images)
         ext = ctx.input_path.suffix.lower()
-        legacy_formats = {".ppt", ".doc", ".xls"}
+        legacy_formats = {".ppt", ".doc"}
         heavy_extensions = {".ppt", ".pptx", ".pdf", ".doc", ".docx"}
         use_ocr = ctx.config.ocr.enabled
         use_llm = ctx.config.llm.enabled
