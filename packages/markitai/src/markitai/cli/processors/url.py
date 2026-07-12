@@ -37,7 +37,6 @@ from markitai.security import atomic_write_json, atomic_write_text
 from markitai.utils.cli_helpers import (
     compute_task_hash,
     get_report_file_path,
-    sanitize_filename,
     url_to_filename,
 )
 from markitai.utils.output import resolve_output_path
@@ -832,15 +831,8 @@ async def process_url_batch(
     )
 
     from markitai.cli.logging_config import LoggingContext
-    from markitai.cli.processors.llm import analyze_images_with_llm, process_with_llm
-    from markitai.fetch import (
-        FetchError,
-        FetchStrategy,
-        JinaRateLimitError,
-        fetch_url,
-        get_fetch_cache,
-    )
-    from markitai.image import download_url_images
+    from markitai.cli.processors.batch import create_url_processor
+    from markitai.fetch import FetchStrategy
     from markitai.security import check_symlink_safety
 
     # Default to auto strategy if not specified
@@ -881,15 +873,20 @@ async def process_url_batch(
     check_symlink_safety(output_dir, allow_symlinks=cfg.output.allow_symlinks)
     ensure_dir(output_dir)
 
-    # Initialize fetch cache if caching is enabled
-    fetch_cache = None
-    if cfg.cache.enabled:
-        cache_dir = Path(cfg.cache.global_dir).expanduser()
-        fetch_cache = get_fetch_cache(cache_dir, cfg.cache.max_size_bytes)
-
-    # Prepare screenshot options if enabled (shared across all batch workers)
-    screenshot_dir = (
-        ensure_screenshots_dir(output_dir) if cfg.screenshot.enabled else None
+    # Single-URL processing cascade shared with the directory batch
+    # (fetch -> images -> base .md -> LLM -> ProcessResult). The factory
+    # also initializes the fetch cache and the screenshots directory.
+    # Flags preserve URL-list batch behavior: --screenshot-only handling,
+    # base .md written from the image-localized markdown, and actionable
+    # multi-line fetch errors kept intact (800 chars instead of 200).
+    process_one_url = create_url_processor(
+        cfg=cfg,
+        output_dir=output_dir,
+        fetch_strategy=fetch_strategy,
+        explicit_fetch_strategy=explicit_fetch_strategy,
+        honor_screenshot_only=True,
+        localized_base_md=True,
+        fetch_error_max_length=800,
     )
 
     started_at = datetime.now()
@@ -925,21 +922,13 @@ async def process_url_batch(
         progress_obj.update(progress_task, description=description)
 
     async def process_single_url(entry, progress_task, progress_obj) -> None:
-        """Process a single URL."""
+        """Run one URL through the shared cascade and record its report entry."""
         nonlocal completed, failed, total_llm_cost
 
         url = entry.url
-        custom_name = entry.output_name
-        url_fetch_strategy = "unknown"
 
         async with semaphore:
             try:
-                # Generate filename (sanitize custom names to prevent path traversal)
-                if custom_name:
-                    filename = f"{sanitize_filename(custom_name)}.md"
-                else:
-                    filename = url_to_filename(url)
-
                 logger.info(
                     f"Processing URL: {_safe_url_for_display(url)} "
                     f"(strategy: {fetch_strategy.value})"
@@ -947,212 +936,33 @@ async def process_url_batch(
                 active_urls[url] = format_url_label(url)
                 update_progress_label(progress_obj, progress_task)
 
-                # Fetch URL using the configured strategy
-                try:
-                    fetch_result = await fetch_url(
-                        url,
-                        fetch_strategy,
-                        cfg.fetch,
-                        explicit_strategy=explicit_fetch_strategy,
-                        cache=fetch_cache,
-                        skip_read_cache=cfg.cache.no_cache,
-                        screenshot=cfg.screenshot.enabled,
-                        screenshot_dir=screenshot_dir,
-                        screenshot_config=(
-                            cfg.screenshot if cfg.screenshot.enabled else None
-                        ),
-                    )
-                    url_fetch_strategy = fetch_result.strategy_used
-                    markdown_content = fetch_result.content
-                    screenshot_path = fetch_result.screenshot_path
-                    source_extra_meta = fetch_result.metadata.get("source_frontmatter")
-                    cache_status = " [cache]" if fetch_result.cache_hit else ""
-                    logger.info(
-                        f"Fetched via {url_fetch_strategy}{cache_status}: "
-                        f"{_safe_url_for_display(url)}"
-                    )
-                except JinaRateLimitError:
-                    err_msg = "Jina Reader rate limit exceeded (20 RPM)"
-                    logger.error(
-                        "Jina Reader rate limit exceeded for: "
-                        f"{_safe_url_for_display(url)}"
-                    )
-                    results[url] = {
-                        "status": "failed",
-                        "error": err_msg,
-                    }
-                    _print_url_error(url, err_msg, diag_console)
-                    failed += 1
-                    return
-                except FetchError as e:
-                    # Actionable fetch errors are multi-line blocks; keep them
-                    # intact in logs/report instead of truncating at 200 chars.
-                    err_msg = format_error_message(e, max_length=800)
-                    logger.error(
-                        f"Failed to fetch {_safe_url_for_display(url)}: "
-                        f"{_redact_urls_in_message(err_msg)}"
-                    )
-                    results[url] = {"status": "failed", "error": err_msg}
-                    _print_url_error(url, err_msg, diag_console)
-                    failed += 1
-                    return
-
-                if not markdown_content.strip():
-                    logger.warning(
-                        f"No content extracted from URL: {_safe_url_for_display(url)}"
-                    )
-                    results[url] = {
-                        "status": "failed",
-                        "error": "No content extracted",
-                    }
-                    _print_url_error(url, "No content extracted", diag_console)
-                    failed += 1
-                    return
-
-                has_screenshot = (
-                    screenshot_path is not None and screenshot_path.exists()
+                result, extra_info = await process_one_url(
+                    url, custom_name=entry.output_name
                 )
-                screenshots_count = 1 if has_screenshot else 0
+                url_fetch_strategy = extra_info.get("fetch_strategy", "unknown")
 
-                # Log screenshot capture if successful
-                if has_screenshot:
-                    logger.info(f"Screenshot saved: {screenshot_path}")
-
-                # Handle screenshot-only mode without LLM:
-                # just record the screenshot, no .md output
-                if cfg.screenshot.screenshot_only and not cfg.llm.enabled:
-                    if has_screenshot and screenshot_path is not None:
-                        logger.info(f"Screenshot-only (no LLM): {screenshot_path.name}")
-                    results[url] = {
-                        "status": "completed",
-                        "error": None,
-                        "output": (str(screenshot_path) if has_screenshot else None),
-                        "fetch_strategy": url_fetch_strategy,
-                        "images": 0,
-                        "screenshots": screenshots_count,
-                    }
-                    completed += 1
+                if not result.success:
+                    results[url] = {"status": "failed", "error": result.error}
+                    _print_url_error(url, result.error or "Unknown error", diag_console)
+                    failed += 1
                     return
 
-                # Download images if --alt or --desc is enabled
-                images_count = 0
-                downloaded_images: list[Path] = []
-                if cfg.image.alt_enabled or cfg.image.desc_enabled:
-                    download_result = await download_url_images(
-                        markdown=markdown_content,
-                        output_dir=output_dir,
-                        base_url=url,
-                        config=cfg.image,
-                        source_name=filename.replace(".md", ""),
-                        concurrency=5,
-                        timeout=30,
-                    )
-                    markdown_content = download_result.updated_markdown
-                    downloaded_images = download_result.downloaded_paths
-                    images_count = len(downloaded_images)
-
-                # Generate output path with conflict resolution
-                base_output_file = output_dir / filename
-                output_file = resolve_output_path(
-                    base_output_file, cfg.output.on_conflict
-                )
-
-                if output_file is None:
-                    logger.info(f"[SKIP] Output exists: {base_output_file}")
+                if result.error and result.error.startswith("skipped ("):
                     results[url] = {"status": "skipped", "error": "Output exists"}
                     return
 
-                # Write base .md file (respect --llm, --pure, --keep-base)
-                should_write_base = not cfg.llm.enabled or cfg.llm.keep_base
-                if should_write_base:
-                    if cfg.llm.pure and not cfg.llm.enabled:
-                        # Pure mode without LLM: write raw markdown, no frontmatter
-                        atomic_write_text(output_file, markdown_content)
-                    else:
-                        base_content = _add_basic_frontmatter(
-                            markdown_content,
-                            url,
-                            fetch_strategy=url_fetch_strategy,
-                            screenshot_path=screenshot_path,
-                            output_dir=output_dir,
-                            title=fetch_result.title,
-                            extra_meta=source_extra_meta,
-                        )
-                        atomic_write_text(output_file, base_content)
-
-                llm_cost = 0.0
-                llm_usage: dict[str, dict[str, Any]] = {}
-
-                # Handle screenshot-only mode with LLM:
-                # extract content purely from screenshot
-                if (
-                    cfg.screenshot.screenshot_only
-                    and cfg.llm.enabled
-                    and has_screenshot
-                    and screenshot_path is not None
-                    and not cfg.llm.pure
-                ):
-                    _, doc_cost, doc_usage = await process_url_screenshot_only(
-                        screenshot_path=screenshot_path,
-                        url=url,
-                        cfg=cfg,
-                        output_file=output_file,
-                        original_title=fetch_result.title,
-                    )
-                    llm_cost += doc_cost
-                    _merge_llm_usage(llm_usage, doc_usage)
-
-                # Standard LLM processing (if enabled and not screenshot-only)
-                elif cfg.llm.enabled:
-                    _, doc_cost, doc_usage = await process_with_llm(
-                        markdown_content,
-                        url,
-                        cfg,
-                        output_file,
-                        screenshot_path=screenshot_path,
-                        fetch_strategy=url_fetch_strategy,
-                        extra_meta=source_extra_meta,
-                        title=fetch_result.title,
-                    )
-                    llm_cost += doc_cost
-                    _merge_llm_usage(llm_usage, doc_usage)
-
-                # Analyze downloaded images (alt/desc) — parity with the
-                # single-URL path: updates alt text in .llm.md and collects
-                # descriptions for images.json (the batch path used to skip
-                # image analysis entirely)
-                if cfg.llm.enabled and downloaded_images:
-                    (
-                        _,
-                        image_cost,
-                        image_usage,
-                        img_analysis,
-                    ) = await analyze_images_with_llm(
-                        downloaded_images,
-                        markdown_content,
-                        output_file,
-                        cfg,
-                        Path(url),
-                    )
-                    llm_cost += image_cost
-                    _merge_llm_usage(llm_usage, image_usage)
-                    if img_analysis is not None:
-                        image_analyses.append(img_analysis)
-
-                total_llm_cost += llm_cost
-                _merge_llm_usage(total_llm_usage, llm_usage)
+                total_llm_cost += result.cost_usd
+                _merge_llm_usage(total_llm_usage, result.llm_usage)
+                if result.image_analysis_result is not None:
+                    image_analyses.append(result.image_analysis_result)
 
                 results[url] = {
                     "status": "completed",
                     "error": None,
-                    "output": str(
-                        output_file.with_suffix(".llm.md")
-                        if cfg.llm.enabled
-                        else output_file
-                    ),
+                    "output": result.output_path,
                     "fetch_strategy": url_fetch_strategy,
-                    "images": images_count,
-                    "screenshots": screenshots_count,
+                    "images": result.images,
+                    "screenshots": result.screenshots,
                 }
                 completed += 1
                 logger.info(

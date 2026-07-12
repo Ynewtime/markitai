@@ -141,6 +141,7 @@ class UrlState:
         error: Error message if status is FAILED
         fetch_strategy: The fetch strategy that was used (static/browser/jina)
         images: Count of images downloaded from the URL
+        screenshots: Count of page screenshots captured for the URL
         started_at: ISO timestamp when processing started
         completed_at: ISO timestamp when processing completed
         duration: Total processing time in seconds
@@ -156,6 +157,7 @@ class UrlState:
     error: str | None = None
     fetch_strategy: str | None = None
     images: int = 0
+    screenshots: int = 0
     started_at: str | None = None
     completed_at: str | None = None
     duration: float | None = None
@@ -292,6 +294,7 @@ class BatchState:
                 "error": state.error,
                 "fetch_strategy": state.fetch_strategy,
                 "images": state.images,
+                "screenshots": state.screenshots,
                 "started_at": state.started_at,
                 "completed_at": state.completed_at,
                 "duration": state.duration,
@@ -423,6 +426,7 @@ class BatchState:
                 error=url_data.get("error"),
                 fetch_strategy=url_data.get("fetch_strategy"),
                 images=url_data.get("images", 0),
+                screenshots=url_data.get("screenshots", 0),
                 started_at=url_data.get("started_at"),
                 completed_at=url_data.get("completed_at"),
                 duration=url_data.get("duration"),
