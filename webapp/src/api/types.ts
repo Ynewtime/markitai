@@ -52,6 +52,7 @@ export interface JobPayload {
 export interface JobSnapshot extends JobPayload {
   job_id: string;
   created_at: string;
+  finished_at: string | null;
   options: JobOptions;
   items: ItemPayload[];
 }
@@ -65,35 +66,76 @@ export interface ItemResult {
 
 export interface Capabilities {
   version: string;
-  llm: { configured: boolean; models: string[] };
+  llm: {
+    configured: boolean;
+    routable: boolean;
+    effective: boolean;
+    models: string[];
+  };
   presets: string[];
   extras: { browser: boolean; svg: boolean; kreuzberg: boolean };
 }
 
-/** `GET /api/settings/llm` — masked view of the LLM configuration. */
+/** `GET /api/settings/llm` — secret-free deployment and session detection view. */
 export type LLMSource = "config" | "detected" | "none";
 
-export interface LLMSettingsModel {
-  model_name: string;
+export interface LLMDeployment {
+  deployment_id: string;
+  routing_group: string;
   model: string;
-  /** null | verbatim "env:VAR" | masked plaintext like "sk…f3ab". */
-  api_key_masked: string | null;
+  weight: number;
+  api_key_configured: boolean;
+  api_base_configured: boolean;
+  /** Sanitized scheme + host + port only. */
   api_base: string | null;
+  persisted: boolean;
 }
 
 export interface LLMSettingsPayload {
   configured: boolean;
+  routable: boolean;
   source: LLMSource;
   config_path: string;
-  models: LLMSettingsModel[];
+  config_origin: "explicit" | "environment" | "project" | "user" | "default";
+  revision: string;
+  deployments: LLMDeployment[];
+  detected: LLMDeployment[];
 }
 
-/** Body of `POST /api/settings/llm/test` — either ad-hoc values (unsaved
- * form values) or a `model_name` reference to a stored entry, which the
- * backend probes with its stored credentials (masked keys are never sent). */
 export type LLMSettingsUpdate =
   | { model: string; api_key?: string; api_base?: string }
-  | { model_name: string };
+  | { deployment_id: string };
+
+export interface ProviderConnection {
+  id: string;
+  deployment_id?: string;
+  provider: string;
+  label: string;
+  kind: "local_cli" | "oauth" | "environment" | "configured" | "common";
+  status: string;
+  source: string;
+  default_model?: string;
+  credential?: string;
+  api_base_configured?: boolean;
+  supports_discovery: boolean;
+}
+
+export interface ModelCandidate {
+  model: string;
+  label: string;
+  supports_vision: boolean;
+}
+
+export interface ModelDiscoveryResult {
+  provider: string;
+  status: "ok" | "partial" | "unavailable";
+  source: string;
+  authoritative: boolean;
+  cached: boolean;
+  stale: boolean;
+  models: ModelCandidate[];
+  detail?: string;
+}
 
 /** `POST /api/settings/llm/test` — always 200, `ok` flags the result. */
 export interface LLMTestResult {
@@ -107,30 +149,30 @@ export interface LLMModelCreate {
   model: string;
   api_key?: string;
   api_base?: string;
+  weight?: number;
+  credential_deployment_id?: string;
 }
 
-/** Body of `PUT /api/settings/llm/models/{model_name}` — omitted field keeps
- * the stored value, explicit null clears it, a new string replaces it. */
 export interface LLMModelUpdate {
+  model_name?: string;
   model?: string;
   api_key?: string | null;
   api_base?: string | null;
+  weight?: number;
+  expected_revision: string;
 }
 
-/** `GET /api/settings/llm/detected` — local CLI provider candidates. */
-export interface DetectedProvider {
-  provider: string;
-  model: string;
-  label: string;
-  requires_api_key: boolean;
+export interface LLMDeploymentBatch {
+  expected_revision: string;
+  deployments: LLMModelCreate[];
 }
 
 /** One entry of `GET /api/history` (time-descending). */
 export interface HistoryEntry {
   job_id: string;
   created_at: string;
-  finished_at: string;
-  status: string;
+  finished_at: string | null;
+  status: JobStatus;
   total: number;
   done: number;
   failed: number;

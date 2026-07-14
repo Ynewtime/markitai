@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchCapabilities, fetchJobSnapshot, jobArchiveUrl } from "./api/client";
+import { fetchCapabilities, jobArchiveUrl } from "./api/client";
 import { MAX_JOB_ITEMS, type Capabilities, type JobOptions, type Preset } from "./api/types";
 import type { SessionItem } from "./hooks/useJobs";
 import { AppHeader } from "./components/AppHeader";
+import { ArchivedJobRows } from "./components/ArchivedJobsSection";
 import { CapabilityHint } from "./components/CapabilityHint";
 import { DownloadActions } from "./components/DownloadActions";
 import { DropOverlay, FilePicker } from "./components/DropZone";
 import { ErrorInline } from "./components/ErrorInline";
-import { HistoryView } from "./components/HistoryView";
 import { ItemList } from "./components/ItemList";
 import { JobStats } from "./components/JobStats";
-import { EyeIcon, LogoMark } from "./components/icons";
-import { MarkdownPreview } from "./components/MarkdownPreview";
+import { LogoMark } from "./components/icons";
+import { PreviewModal } from "./components/PreviewModal";
 import { OptionsBar } from "./components/OptionsBar";
 import { SettingsModal } from "./components/SettingsModal";
 import { UrlInput } from "./components/UrlInput";
+import { useArchivedJobs } from "./hooks/useArchivedJobs";
 import { useJobs } from "./hooks/useJobs";
 import { detectLocale, dicts, storeLocale, type Locale } from "./i18n";
 
@@ -28,22 +29,14 @@ function settledWord(i: SessionItem): string {
   return i.skipped ? "skipped" : "done";
 }
 
-/** Explicit navigation state — settings is a modal and owns no view. */
-type View = "home" | "workspace" | "history";
-type PanelMode = "normal" | "expanded" | "hidden";
-
-const PANEL_KEY = "markitai.panelMode";
-const OPTIONS_KEY = "markitai.options";
-
-function readPanelMode(): PanelMode {
-  try {
-    const v = localStorage.getItem(PANEL_KEY);
-    if (v === "normal" || v === "expanded" || v === "hidden") return v;
-  } catch {
-    /* localStorage unavailable */
-  }
-  return "normal";
+function optionDomId(key: string): string {
+  return `opt-${key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
+
+/** Explicit navigation state — settings and previews are modal overlays. */
+type View = "home" | "workspace";
+
+const OPTIONS_KEY = "markitai.options";
 
 function readStoredOptions(): { preset: Preset | null; llm: boolean | null } {
   try {
@@ -86,7 +79,7 @@ export default function App() {
   useEffect(() => {
     refreshCaps();
   }, [refreshCaps]);
-  const llmConfigured = caps === null ? true : caps.llm.configured;
+  const llmConfigured = caps === null ? true : caps.llm.routable;
 
   // Options remembered across visits (restored before caps arrive; the
   // downgrade effect below still applies when llm turns out unconfigured).
@@ -100,7 +93,7 @@ export default function App() {
     }
   }, [preset, llm]);
   useEffect(() => {
-    if (caps !== null && !caps.llm.configured) {
+    if (caps !== null && !caps.llm.routable) {
       setPreset("minimal");
       setLlm(false);
     }
@@ -125,9 +118,11 @@ export default function App() {
     retry,
     submitError,
     clear,
-    openArchived,
-    removeJob,
+    clearSettled,
+    terminalJobCount,
   } = useJobs();
+
+  const archived = useArchivedJobs(jobs);
 
   const prevSettledRef = useRef<Map<string, boolean>>(new Map());
   useEffect(() => {
@@ -156,27 +151,26 @@ export default function App() {
     gearRef.current?.focus();
   }, []);
 
-  // ---- view state machine: home | workspace | history. Switches are pure
-  // UI state — jobs, event streams, selection and panel mode all survive.
+  // ---- view state machine: a reload always starts at home. Restored jobs
+  // remain reachable through the session link/history button without forcing
+  // a navigation during hydration.
   const [view, setView] = useState<View>("home");
-  // A workspace with nothing in it renders as home (e.g. session restore
-  // dropped every job) — the state machine never shows an empty ledger.
-  const effectiveView: View = view === "workspace" && items.length === 0 ? "home" : view;
+  const hasTaskRows = items.length > 0 || (archived.entries?.length ?? 0) > 0;
+  const effectiveView: View = view === "workspace" && !hasTaskRows ? "home" : view;
 
-  // Session restore lands mid-conversion: jump from home into the workspace
-  // exactly when the ledger goes from empty to populated.
-  const prevCountRef = useRef(0);
-  useEffect(() => {
-    const prev = prevCountRef.current;
-    prevCountRef.current = items.length;
-    if (prev === 0 && items.length > 0 && view === "home") setView("workspace");
-  }, [items.length, view]);
-
-  const goHome = useCallback(() => setView("home"), []);
-  const toggleHistory = useCallback(() => {
-    setView((v) => (v === "history" ? (prevCountRef.current > 0 ? "workspace" : "home") : "history"));
+  const [focusItemKey, setFocusItemKey] = useState<string | null>(null);
+  const handleFocusItem = useCallback(() => setFocusItemKey(null), []);
+  const goHome = useCallback(() => {
+    setFocusItemKey(null);
+    setView("home");
   }, []);
-
+  const openTaskList = useCallback(() => {
+    if (!hasTaskRows) return;
+    setView("workspace");
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('.flist [role="listbox"] [role="option"]')?.focus();
+    });
+  }, [hasTaskRows]);
   // The URL draft lives here so the CLI-command line can mirror it live
   // (the home and composer inputs are never mounted at the same time).
   const [urlText, setUrlText] = useState("");
@@ -227,17 +221,6 @@ export default function App() {
     [submit],
   );
 
-  // ---- preview panel mode (normal | expanded | hidden), persisted.
-  const [panelMode, setPanelModeRaw] = useState<PanelMode>(readPanelMode);
-  const setPanelMode = useCallback((m: PanelMode) => {
-    setPanelModeRaw(m);
-    try {
-      localStorage.setItem(PANEL_KEY, m);
-    } catch {
-      /* localStorage unavailable */
-    }
-  }, []);
-
   // Previewable = done with an output; skips complete as "done" but carry
   // no fresh result and stay non-selectable.
   const previewable = useCallback(
@@ -256,73 +239,96 @@ export default function App() {
     if (key !== selectedKey) setSelectedKey(key);
   }, [selected, selectedKey]);
 
-  // Picking an item while the panel is hidden brings it back.
-  const handleSelect = useCallback(
-    (key: string) => {
-      setSelectedKey(key);
-      if (panelMode === "hidden") setPanelMode("normal");
-    },
-    [panelMode, setPanelMode],
-  );
-
-  // Hiding removes the focused toggle; showing removes the show button.
-  // Hand focus to the counterpart after the commit (effect, not rAF — the
-  // DOM must already hold the target).
-  const panelFocusRef = useRef<"show" | "panel" | null>(null);
-  const hidePreview = useCallback(() => {
-    panelFocusRef.current = "show";
-    setPanelMode("hidden");
-  }, [setPanelMode]);
-  const showPreview = useCallback(() => {
-    panelFocusRef.current = "panel";
-    setPanelMode("normal");
-  }, [setPanelMode]);
-  useEffect(() => {
-    const target = panelFocusRef.current;
-    if (target === null) return;
-    panelFocusRef.current = null;
-    if (target === "show") {
-      document.querySelector<HTMLElement>(".showpv")?.focus();
-    } else {
-      const el =
-        document.querySelector<HTMLElement>(".work-preview .tab.on") ??
-        document.querySelector<HTMLElement>('.work-list [role="option"][tabindex="0"]');
-      el?.focus();
-    }
-  }, [panelMode]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [archivedPreview, setArchivedPreview] = useState<{
+    item: SessionItem;
+    createdAt: string | null;
+  } | null>(null);
+  const previewItem = archivedPreview?.item ?? selected;
+  const previewOpenerRef = useRef<HTMLElement | null>(null);
+  const previewReturnKeyRef = useRef<string | null>(null);
+  const handleSelect = useCallback((key: string) => setSelectedKey(key), []);
+  const openPreview = useCallback((key: string, opener: HTMLElement) => {
+    setArchivedPreview(null);
+    setSelectedKey(key);
+    previewOpenerRef.current = opener;
+    previewReturnKeyRef.current = key;
+    setPreviewOpen(true);
+  }, []);
+  const closePreview = useCallback(() => {
+    setPreviewOpen(false);
+    setArchivedPreview(null);
+    const opener = previewOpenerRef.current;
+    const returnKey = previewReturnKeyRef.current;
+    previewOpenerRef.current = null;
+    previewReturnKeyRef.current = null;
+    window.requestAnimationFrame(() => {
+      const fallback =
+        returnKey === null ? null : document.getElementById(optionDomId(returnKey));
+      (opener?.isConnected ? opener : fallback)?.focus();
+    });
+  }, []);
 
   const handleClear = useCallback(() => {
-    clear();
+    if (running) {
+      if (terminalJobCount === 0) return;
+      clearSettled();
+    } else {
+      clear();
+      setView("home");
+    }
     setSelectedKey(null);
+    setPreviewOpen(false);
+    previewOpenerRef.current = null;
+    previewReturnKeyRef.current = null;
+    setFocusItemKey(null);
     setDropNotice(null);
-    setView("home");
-  }, [clear]);
+    void archived.refresh();
+  }, [archived, clear, clearSettled, running, terminalJobCount]);
 
-  // ---- history → session: merge the archived job, then show the workspace.
-  const openHistoryJob = useCallback(
-    async (jobId: string): Promise<string | null> => {
-      if (jobs[jobId] === undefined) {
-        try {
-          const snap = await fetchJobSnapshot(jobId);
-          if (snap === null) return t.histGone;
-          openArchived(snap);
-        } catch (e) {
-          return e instanceof Error ? e.message : String(e);
-        }
-      }
-      setView("workspace");
-      return null;
+  // Persisted rows open in place. They never enter the current-session store,
+  // so previewing one cannot move it between list regions or rewrite sessionStorage.
+  const openArchivedJob = useCallback(
+    async (jobId: string, opener: HTMLElement) => {
+      const snapshot = await archived.openJob(jobId);
+      if (snapshot === null) return null;
+      const item = snapshot.items.find(
+        (candidate) =>
+          candidate.status === "done" &&
+          candidate.output !== null &&
+          !candidate.skipped,
+      );
+      if (item === undefined) return snapshot;
+      setArchivedPreview({
+        createdAt: snapshot.created_at,
+        item: {
+          key: `${snapshot.job_id}/${item.item_id}`,
+          jobId: snapshot.job_id,
+          itemId: item.item_id,
+          name: item.name,
+          kind: item.kind,
+          status: item.status,
+          error: item.error,
+          output: item.output,
+          durationMs: item.duration_ms,
+          costUsd: item.cost_usd,
+          skipped: item.skipped,
+          skipReason: item.skip_reason,
+          sizeBytes: null,
+          startedAt: null,
+          archived: true,
+          retried: false,
+        },
+      });
+      previewOpenerRef.current = opener;
+      previewReturnKeyRef.current = null;
+      setPreviewOpen(true);
+      return snapshot;
     },
-    [jobs, openArchived, t],
+    [archived],
   );
 
   const showCost = stats.hasCost;
-  const gridClass =
-    panelMode === "hidden"
-      ? "work-grid nopanel"
-      : panelMode === "expanded" && selected !== null
-        ? "work-grid expanded"
-        : "work-grid";
 
   // Focus anchors on view transitions: the content under the reader is
   // replaced wholesale, so move focus onto the new view's anchor.
@@ -332,31 +338,25 @@ export default function App() {
     prevViewRef.current = effectiveView;
     const id = window.requestAnimationFrame(() => {
       if (effectiveView === "workspace") {
-        document
-          .querySelector<HTMLElement>('.work-list [role="option"][tabindex="0"]')
-          ?.focus();
-      } else if (effectiveView === "home") {
-        document.querySelector<HTMLElement>(".drop-main .urlin")?.focus();
+        if (focusItemKey === null) {
+          document
+            .querySelector<HTMLElement>('.work-list [role="option"][tabindex="0"]')
+            ?.focus();
+        }
       } else {
-        document.querySelector<HTMLElement>(".histmain .eyebrow")?.focus();
+        document.querySelector<HTMLElement>(".drop-main .urlin")?.focus();
       }
     });
     return () => window.cancelAnimationFrame(id);
-  }, [effectiveView]);
+  }, [effectiveView, focusItemKey]);
 
   const selectedJobRunning =
     selected !== null && jobs[selected.jobId]?.status === "running";
 
   const capHint =
-    caps !== null && !caps.llm.configured ? (
+    caps !== null && !caps.llm.routable ? (
       <CapabilityHint t={t} onOpenSettings={openSettings} />
     ) : null;
-
-  const previewPlaceholder = running
-    ? t.previewWaiting
-    : stats.failed > 0
-      ? t.previewAllFailed
-      : t.previewEmptySelect;
 
   return (
     <>
@@ -365,15 +365,25 @@ export default function App() {
         version={caps?.version ?? null}
         locale={locale}
         onLocale={handleLocale}
-        historyActive={effectiveView === "history"}
         onHome={goHome}
-        onHistory={toggleHistory}
+        onHistory={openTaskList}
         settingsOpen={settingsOpen}
         onToggleSettings={() => (settingsOpen ? closeSettings() : openSettings())}
         gearRef={gearRef}
       />
       {settingsOpen && (
         <SettingsModal t={t} onClose={closeSettings} onSaved={refreshCaps} announce={announce} />
+      )}
+      {previewOpen && previewItem !== null && (
+        <PreviewModal
+          t={t}
+          item={previewItem}
+          createdAt={
+            archivedPreview?.createdAt ?? jobs[previewItem.jobId]?.createdAt ?? null
+          }
+          onClose={closePreview}
+          announce={announce}
+        />
       )}
 
       {effectiveView === "home" && (
@@ -416,98 +426,84 @@ export default function App() {
         <main className="shell workspace">
           <div className="jobhead">
             <JobStats t={t} running={running} stats={stats} />
-            <div className="jobhead-r">
-              {panelMode === "hidden" && (
-                <button type="button" className="btn ghost showpv" onClick={showPreview}>
-                  <EyeIcon size={14} />
-                  {t.showPreview}
-                </button>
-              )}
-              <DownloadActions
-                t={t}
-                multiJob={jobCount > 1}
-                zipHref={selected !== null ? jobArchiveUrl(selected.jobId) : null}
-                jobRunning={selectedJobRunning}
-                activeCount={activeCount}
-                onClear={handleClear}
-              />
-            </div>
+            {items.length > 0 && (
+              <div className="jobhead-r">
+                <DownloadActions
+                  t={t}
+                  multiJob={jobCount > 1}
+                  zipHref={selected !== null ? jobArchiveUrl(selected.jobId) : null}
+                  jobRunning={selectedJobRunning}
+                  activeCount={activeCount}
+                  clearableJobCount={terminalJobCount}
+                  onClear={handleClear}
+                />
+              </div>
+            )}
           </div>
 
-          <div className={gridClass}>
-            <div className="work-list">
-              <ItemList
-                t={t}
-                items={items}
-                showCost={showCost}
-                now={now}
-                stats={stats}
-                settled={!running}
-                llmConfigured={llmConfigured}
-                selectedKey={selected?.key ?? null}
-                onSelect={handleSelect}
-                onOpenSettings={openSettings}
-                onRetry={retry}
-              />
-              {submitError !== null && (
-                <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />
-              )}
-              {dropNotice !== null && (
-                <p className="notice" role="status">
-                  {dropNotice}
-                </p>
-              )}
-              <div className="composer">
-                <UrlInput t={t} text={urlText} onText={setUrlText} onConvert={submitUrls} compact />
-                <OptionsBar
+          <div className="conversion-workspace">
+            <div className="work-grid">
+              <div className="work-list">
+                <div className="composer">
+                  <UrlInput t={t} text={urlText} onText={setUrlText} onConvert={submitUrls} compact />
+                  {submitError !== null && (
+                    <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />
+                  )}
+                  {dropNotice !== null && (
+                    <p className="notice" role="status">
+                      {dropNotice}
+                    </p>
+                  )}
+                  <OptionsBar
+                    t={t}
+                    preset={preset}
+                    llm={llm}
+                    llmConfigured={llmConfigured}
+                    urls={urlList}
+                    announce={announce}
+                    onPreset={setPreset}
+                    onLlm={setLlm}
+                  />
+                  {capHint}
+                  <p className="drop-hint">
+                    {t.dropMore} · <FilePicker label={t.browse} onFiles={submitFiles} />
+                  </p>
+                </div>
+                <ItemList
                   t={t}
-                  preset={preset}
-                  llm={llm}
+                  items={items}
+                  showCost={showCost}
+                  now={now}
+                  stats={stats}
+                  settled={!running}
                   llmConfigured={llmConfigured}
-                  urls={urlList}
-                  announce={announce}
-                  onPreset={setPreset}
-                  onLlm={setLlm}
+                  selectedKey={selected?.key ?? null}
+                  onSelect={handleSelect}
+                  onPreview={openPreview}
+                  focusKey={focusItemKey}
+                  onFocusKeyHandled={handleFocusItem}
+                  onOpenSettings={openSettings}
+                  onRetry={retry}
+                  hasArchivedRows={(archived.entries?.length ?? 0) > 0 || archived.error !== null}
+                  archivedRows={
+                    <ArchivedJobRows
+                      t={t}
+                      entries={archived.entries}
+                      error={archived.error}
+                      actions={archived.actions}
+                      rowErrors={archived.rowErrors}
+                      showCost={showCost}
+                      startIndex={items.length}
+                      onRefresh={archived.refresh}
+                      onOpen={openArchivedJob}
+                      onDelete={archived.deleteJob}
+                      announce={announce}
+                    />
+                  }
                 />
-                {capHint}
-                <p className="drop-hint">
-                  {t.dropMore} · <FilePicker label={t.browse} onFiles={submitFiles} />
-                </p>
               </div>
             </div>
-            <div className="work-preview">
-              {selected !== null ? (
-                <MarkdownPreview
-                  t={t}
-                  item={selected}
-                  createdAt={jobs[selected.jobId]?.createdAt ?? null}
-                  expanded={panelMode === "expanded"}
-                  onToggleExpand={() =>
-                    setPanelMode(panelMode === "expanded" ? "normal" : "expanded")
-                  }
-                  onHide={hidePreview}
-                  announce={announce}
-                />
-              ) : (
-                <div className="panel panel-empty">
-                  <p className="pane-note">{previewPlaceholder}</p>
-                </div>
-              )}
-            </div>
           </div>
-        </main>
-      )}
-
-      {effectiveView === "history" && (
-        <main className="shell histmain">
-          <div className="jobhead">
-            <div>
-              <h2 className="eyebrow" tabIndex={-1}>
-                {t.histTitle}
-              </h2>
-            </div>
-          </div>
-          <HistoryView t={t} onOpen={openHistoryJob} onDeleted={removeJob} />
         </main>
       )}
 

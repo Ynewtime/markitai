@@ -12,9 +12,10 @@ import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
 import { diffLines, MAX_DIFF_LINES, type DiffLine } from "../lib/diff";
 import { countWords, fmtBytes, fmtDate, utf8Bytes } from "../lib/format";
-import { DownloadIcon, EyeOffIcon } from "./icons";
+import { DownloadIcon } from "./icons";
 
 type Tab = "rendered" | "source" | "diff";
+type RehypeHighlight = typeof import("rehype-highlight").default;
 
 /** True for URLs with a scheme, absolute paths, fragments and queries. */
 const ABSOLUTE_RE = /^([a-z][a-z0-9+.-]*:|\/|#|\?)/i;
@@ -45,35 +46,40 @@ type DiffState =
   | { kind: "toolarge" }
   | { kind: "error"; message: string };
 
-/** Right panel: rendered/source tabs over the selected item's markdown.
- * Source lives in the brand's always-dark terminal card. Both panes scroll
- * internally under a viewport-height cap; `expanded` lifts the cap and hides
- * the list column for full-width reading. */
+/** Rendered/source/diff preview for one completed conversion. */
 export function MarkdownPreview({
   t,
   item,
   createdAt,
-  expanded,
-  onToggleExpand,
-  onHide,
   announce,
 }: {
   t: Dict;
   item: SessionItem;
   createdAt: string | null;
-  expanded: boolean;
-  onToggleExpand: () => void;
-  onHide: () => void;
   announce: (msg: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>("rendered");
   const [result, setResult] = useState<ItemResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [rehypeHighlight, setRehypeHighlight] = useState<RehypeHighlight | null>(null);
   const cacheRef = useRef<Map<string, ItemResult>>(new Map());
   const renderedTabRef = useRef<HTMLButtonElement>(null);
   const sourceTabRef = useRef<HTMLButtonElement>(null);
   const diffTabRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    let stale = false;
+    void import("rehype-highlight").then(
+      ({ default: plugin }) => {
+        if (!stale) setRehypeHighlight(() => plugin);
+      },
+      () => undefined,
+    );
+    return () => {
+      stale = true;
+    };
+  }, []);
 
   useEffect(() => {
     const cached = cacheRef.current.get(item.key);
@@ -308,25 +314,6 @@ export function MarkdownPreview({
               {meta.words.toLocaleString("en-US")} {t.words} · {fmtBytes(meta.bytes)}
             </span>
           )}
-          <span className="pgroup">
-            <button
-              type="button"
-              className="btn ghost sm"
-              aria-pressed={expanded}
-              onClick={onToggleExpand}
-            >
-              {expanded ? t.collapse : t.expand}
-            </button>
-            <button
-              type="button"
-              className="btn ghost sm icon"
-              aria-label={t.hidePreview}
-              title={t.hidePreview}
-              onClick={onHide}
-            >
-              <EyeOffIcon size={14} />
-            </button>
-          </span>
           {item.output !== null && (
             <a
               className="btn ghost sm"
@@ -361,6 +348,11 @@ export function MarkdownPreview({
             </p>
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
+              rehypePlugins={
+                rehypeHighlight === null
+                  ? []
+                  : [[rehypeHighlight, { detect: false, ignoreMissing: true }]]
+              }
               urlTransform={urlTransform}
               components={mdComponents}
               skipHtml // raw HTML (e.g. page-marker comments) stays in Source

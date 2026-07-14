@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dict } from "../i18n";
 
 /** App's mobile breakpoint (matches app.css) — below it the full en
@@ -38,6 +38,7 @@ export function UrlInput({
   compact?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const narrow = useNarrow();
 
   const urls = useMemo(
@@ -53,14 +54,19 @@ export function UrlInput({
   const submit = async () => {
     if (urls.length === 0 || busy) return;
     setBusy(true);
-    const created = await onConvert(urls);
-    setBusy(false);
-    if (created) onText("");
+    try {
+      const created = await onConvert(urls);
+      if (created) onText("");
+    } finally {
+      setBusy(false);
+      inputRef.current?.focus({ preventScroll: true });
+    }
   };
 
   return (
     <div className={compact ? "urlrow compact" : "urlrow"}>
       <textarea
+        ref={inputRef}
         className="urlin"
         rows={rows}
         value={text}

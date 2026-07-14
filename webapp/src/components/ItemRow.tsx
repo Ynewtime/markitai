@@ -80,7 +80,7 @@ export function ItemRow({
   selected,
   tabbable,
   llmConfigured,
-  onSelect,
+  onPreview,
   onOpenSettings,
   onRowFocus,
   onRetry,
@@ -94,7 +94,7 @@ export function ItemRow({
   /** Roving tabindex: exactly one row in the listbox is tabbable. */
   tabbable: boolean;
   llmConfigured: boolean;
-  onSelect: (key: string) => void;
+  onPreview: (key: string, opener: HTMLElement) => void;
   onOpenSettings: () => void;
   onRowFocus: (key: string) => void;
   onRetry: (item: SessionItem) => Promise<string | null>;
@@ -171,8 +171,8 @@ export function ItemRow({
     ariaParts.push(`${(item.durationMs / 1000).toFixed(1)} ${t.ariaSeconds}`);
   ariaParts.push(skipped ? STATUS_TEXT.skipped : STATUS_TEXT[item.status]);
 
-  const activate = () => {
-    if (previewable) onSelect(item.key);
+  const activate = (opener: HTMLElement) => {
+    if (previewable) onPreview(item.key, opener);
     else if (failed) setErrExpanded((v) => !v);
     else if (skipNeedsConfig) onOpenSettings();
   };
@@ -181,6 +181,7 @@ export function ItemRow({
     <div
       role="option"
       id={`opt-${item.key.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
+      data-session-key={item.key}
       aria-selected={selected}
       aria-disabled={inert ? true : undefined}
       aria-label={ariaParts.join(", ")}
@@ -188,14 +189,14 @@ export function ItemRow({
       tabIndex={tabbable ? 0 : -1}
       className={`lrow${selected ? " sel" : ""}${failed || skipNeedsConfig ? " actionable" : ""}`}
       title={failed ? (item.error ?? undefined) : undefined}
-      onClick={activate}
+      onClick={(e) => activate(e.currentTarget)}
       onFocus={() => onRowFocus(item.key)}
       onKeyDown={(e) => {
         // Keys on nested controls (the retry button) act on the control only.
         if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          activate();
+          activate(e.currentTarget);
         }
       }}
     >
