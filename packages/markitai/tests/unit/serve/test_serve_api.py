@@ -113,7 +113,12 @@ class TestCapabilitiesAndRoot:
         assert resp.status_code == 200
         data = resp.json()
         assert data["version"] == __version__
-        assert data["llm"] == {"configured": False, "models": []}
+        assert data["llm"] == {
+            "configured": False,
+            "routable": False,
+            "effective": False,
+            "models": [],
+        }
         assert data["presets"] == ["minimal", "standard", "rich"]
         assert set(data["extras"]) == {"browser", "svg", "kreuzberg"}
         assert all(isinstance(v, bool) for v in data["extras"].values())
@@ -134,7 +139,12 @@ class TestCapabilitiesAndRoot:
         )
         async with _serve_client(app) as client:
             data = (await client.get("/api/capabilities")).json()
-        assert data["llm"] == {"configured": True, "models": ["openai/gpt-4o-mini"]}
+        assert data["llm"] == {
+            "configured": True,
+            "routable": False,  # no key is available for this deployment
+            "effective": False,
+            "models": ["openai/gpt-4o-mini"],
+        }
 
     async def test_root_returns_json_hint_without_static(self, tmp_path: Path) -> None:
         from markitai import __version__

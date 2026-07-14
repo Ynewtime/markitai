@@ -7,6 +7,8 @@ Requires the ``markitai[serve]`` extra (fastapi, uvicorn, python-multipart).
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -19,9 +21,10 @@ from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import ValidationError
@@ -39,7 +42,9 @@ from markitai.serve.jobs import (
 from markitai.serve.schemas import (
     JobOptions,
     JobRetryBody,
+    LLMDeploymentBatch,
     LLMModelCreate,
+    LLMModelDiscoveryRequest,
     LLMModelUpdate,
     LLMSettingsUpdate,
 )
@@ -105,6 +110,10 @@ class ServeState:
     registry: JobRegistry
     llm_source: Literal["config", "detected", "none"]
     config_path: Path
+    config_origin: Literal["explicit", "environment", "project", "user", "default"]
+    configured_models: list[ModelConfig]
+    detected_models: list[ModelConfig]
+    settings_revision: str
     settings_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -114,63 +123,14 @@ class ServeState:
 
 
 async def _detect_provider_candidates() -> list[dict[str, Any]]:
-    """Auto-detect available LLM providers (async mirror of the CLI detector).
+    """Return conservative defaults from the shared provider detector."""
+    from markitai.providers.discovery import (
+        detect_provider_connections,
+        startup_model_candidates,
+    )
 
-    Kept in serve because ``markitai.serve`` must not import ``markitai.cli``
-    (import-linter top-layer contract); the CLI variant also relies on
-    ``asyncio.run``, which is unavailable inside a running event loop.
-
-    Returns:
-        Candidates in CLI-detector priority order, each shaped as the
-        ``GET /api/settings/llm/detected`` payload: ``{provider, model,
-        label, requires_api_key}``. ``requires_api_key`` is always False —
-        a provider is only detected when its auth already exists (CLI/OAuth
-        login or an API key environment variable).
-    """
-    import shutil
-
-    from markitai.providers.auth import AuthManager
-
-    candidates: list[dict[str, Any]] = []
-
-    def add(provider: str, model: str, label: str) -> None:
-        candidates.append(
-            {
-                "provider": provider,
-                "model": model,
-                "label": label,
-                "requires_api_key": False,
-            }
-        )
-
-    auth = AuthManager()
-    for binary, provider, model, label in (
-        ("claude", "claude-agent", "claude-agent/sonnet", "Claude Code CLI"),
-        ("copilot", "copilot", "copilot/claude-haiku-4.5", "GitHub Copilot CLI"),
-    ):
-        if shutil.which(binary):
-            try:
-                status = await auth.check_auth(provider)
-            except Exception:
-                continue
-            if status.authenticated:
-                add(provider, model, label)
-    try:
-        chatgpt = await auth.check_auth("chatgpt")
-        if chatgpt.authenticated:
-            add("chatgpt", "chatgpt/gpt-5.4-mini", "ChatGPT (Codex OAuth)")
-    except Exception:
-        logger.debug("[Serve] ChatGPT auth detection failed")
-    for env_var, provider, model in (
-        ("ANTHROPIC_API_KEY", "anthropic", "anthropic/claude-haiku-4-5"),
-        ("OPENAI_API_KEY", "openai", "openai/gpt-5.4-nano"),
-        ("GEMINI_API_KEY", "gemini", "gemini/gemini-3.1-flash-lite-preview"),
-        ("DEEPSEEK_API_KEY", "deepseek", "deepseek/deepseek-v4-flash"),
-        ("OPENROUTER_API_KEY", "openrouter", "openrouter/google/gemini-3.1-flash-lite"),
-    ):
-        if os.environ.get(env_var):
-            add(provider, model, f"{env_var} (environment)")
-    return candidates
+    connections = await detect_provider_connections()
+    return startup_model_candidates(connections)
 
 
 async def _backfill_llm_models(cfg: MarkitaiConfig) -> None:
@@ -389,62 +349,193 @@ def _display_config_path(path: Path) -> str:
         return str(path)
 
 
-def _llm_settings_payload(state: ServeState) -> dict[str, Any]:
-    """Build the masked ``GET /api/settings/llm`` response body.
+def _model_list_revision(entries: list[Any]) -> str:
+    """Return a canonical optimistic-concurrency revision for model_list."""
+    canonical = json.dumps(
+        entries, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
 
-    Local-provider entries (claude-agent/, copilot/, chatgpt/) always render
-    ``api_key_masked`` as null: their auth comes from the CLI/OAuth session,
-    so any stored key is meaningless and must not look configurable.
-    """
+
+def _model_to_raw(model: ModelConfig) -> dict[str, Any]:
+    return model.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+
+
+def _legacy_deployment_id(entry: Any, index: int) -> str:
+    """Stable session token for an entry that predates ``model_info.id``."""
+    if isinstance(entry, dict):
+        routing_group = entry.get("model_name")
+        params = entry.get("litellm_params")
+        params = params if isinstance(params, dict) else {}
+        visible = {
+            "routing_group": routing_group,
+            "model": params.get("model"),
+            "api_base": params.get("api_base"),
+            "weight": params.get("weight", 1),
+            "index": index,
+        }
+    else:
+        visible = {
+            "routing_group": entry.model_name,
+            "model": entry.litellm_params.model,
+            "api_base": entry.litellm_params.api_base,
+            "weight": entry.litellm_params.weight,
+            "index": index,
+        }
+    digest = hashlib.sha256(
+        json.dumps(visible, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:20]
+    return f"legacy-{digest}"
+
+
+def _deployment_id(entry: Any, index: int) -> str:
+    if isinstance(entry, dict):
+        info = entry.get("model_info")
+        candidate = info.get("id") if isinstance(info, dict) else None
+    else:
+        candidate = entry.model_info.id if entry.model_info is not None else None
+    return (
+        candidate
+        if isinstance(candidate, str) and candidate
+        else _legacy_deployment_id(entry, index)
+    )
+
+
+def _backfill_raw_deployment_ids(entries: list[Any]) -> dict[str, str]:
+    """Assign UUIDs to legacy entries and return legacy-token → UUID."""
+    mapped: dict[str, str] = {}
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        info = entry.get("model_info")
+        if not isinstance(info, dict):
+            info = {}
+            entry["model_info"] = info
+        if not isinstance(info.get("id"), str) or not info["id"]:
+            legacy_id = _legacy_deployment_id(entry, index)
+            deployment_id = str(uuid.uuid4())
+            info["id"] = deployment_id
+            mapped[legacy_id] = deployment_id
+    return mapped
+
+
+def _sanitized_api_origin(api_base: str | None) -> str | None:
+    """Return scheme + host + port only; never userinfo, path, query, fragment."""
+    if not api_base:
+        return None
+    from markitai.config import resolve_env_value
+
+    resolved = resolve_env_value(api_base, strict=False)
+    if not resolved:
+        return None
+    try:
+        parsed = urlsplit(resolved)
+        if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+            return None
+        host = parsed.hostname
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        netloc = f"{host}:{parsed.port}" if parsed.port is not None else host
+        return urlunsplit((parsed.scheme, netloc, "", "", ""))
+    except ValueError:
+        return None
+
+
+def _deployment_view(
+    model: ModelConfig, index: int, *, persisted: bool
+) -> dict[str, Any]:
     from markitai.providers import is_local_provider_model
 
+    local = is_local_provider_model(model.litellm_params.model)
     return {
-        "configured": bool(state.config.llm.model_list),
+        "deployment_id": _deployment_id(model, index),
+        "routing_group": model.model_name,
+        "model": model.litellm_params.model,
+        "weight": model.litellm_params.weight,
+        "api_key_configured": bool(model.litellm_params.api_key) and not local,
+        "api_base_configured": bool(model.litellm_params.api_base) and not local,
+        "api_base": (
+            None if local else _sanitized_api_origin(model.litellm_params.api_base)
+        ),
+        "persisted": persisted,
+    }
+
+
+def _effective_models(
+    configured: list[ModelConfig], detected: list[ModelConfig]
+) -> list[ModelConfig]:
+    """Configured deployments win; session-detected duplicates are omitted."""
+    seen: set[tuple[str, str | None, str]] = set()
+    effective: list[ModelConfig] = []
+    for model in [*configured, *detected]:
+        key = (
+            model.litellm_params.model,
+            model.litellm_params.api_base,
+            model.model_name,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        effective.append(model)
+    return effective
+
+
+def _is_deployment_routable(model: ModelConfig) -> bool:
+    if model.litellm_params.weight <= 0:
+        return False
+    from markitai.providers import (
+        is_local_provider_available,
+        is_local_provider_model,
+    )
+
+    model_id = model.litellm_params.model
+    if is_local_provider_model(model_id):
+        return is_local_provider_available(model_id)
+    provider = model_id.split("/", 1)[0].lower()
+    if provider in {"ollama", "lm_studio", "vllm"}:
+        return True
+    if model.litellm_params.get_resolved_api_key(strict=False):
+        return True
+    env_keys = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+    env_key = env_keys.get(provider)
+    return env_key is not None and bool(os.environ.get(env_key))
+
+
+def _llm_settings_payload(state: ServeState) -> dict[str, Any]:
+    effective = _effective_models(state.configured_models, state.detected_models)
+    return {
+        "configured": bool(state.configured_models),
+        "routable": any(_is_deployment_routable(model) for model in effective),
         "source": state.llm_source,
         "config_path": _display_config_path(state.config_path),
-        "models": [
-            {
-                "model_name": m.model_name,
-                "model": m.litellm_params.model,
-                "api_key_masked": (
-                    None
-                    if is_local_provider_model(m.litellm_params.model)
-                    else _mask_api_key(m.litellm_params.api_key)
-                ),
-                "api_base": m.litellm_params.api_base,
-            }
-            for m in state.config.llm.model_list
+        "config_origin": state.config_origin,
+        "revision": state.settings_revision,
+        "deployments": [
+            _deployment_view(model, index, persisted=True)
+            for index, model in enumerate(state.configured_models)
+        ],
+        "detected": [
+            _deployment_view(model, index, persisted=False)
+            for index, model in enumerate(state.detected_models)
         ],
     }
 
 
 def _mutate_config_model_list(
-    config_path: Path, mutate: Callable[[list[Any]], list[Any]]
-) -> list[ModelConfig]:
-    """Apply *mutate* to the raw ``llm.model_list`` of the user's config file.
-
-    The existing file is loaded as raw JSON so keys unknown to
-    ``MarkitaiConfig`` (top-level, inside ``llm``, and inside each entry)
-    survive untouched; only ``llm.model_list`` is replaced with the mutated
-    list. The file is written atomically with owner-only permissions
-    (mkstemp temp file + rename, matching how ``markitai init`` writes it),
-    and only after the mutated list validates — a bad merge never lands on
-    disk.
-
-    Args:
-        config_path: Target config file (created when missing).
-        mutate: Callback receiving the raw entry list; returns the new list.
-            May raise ``HTTPException`` for request-level errors (409/404).
-
-    Returns:
-        The validated mutated model list, mirroring exactly what a fresh
-        startup would load from the file (for the running-config hot update).
-
-    Raises:
-        ValueError: When the existing file is not valid JSON / not a JSON
-            object, or the mutated model list fails validation.
-        OSError: When reading or writing the file fails.
-    """
+    config_path: Path,
+    mutate: Callable[[list[Any], dict[str, str]], list[Any]],
+    *,
+    fallback: list[ModelConfig],
+    expected_revision: str | None,
+    backfill_ids: bool,
+) -> tuple[list[ModelConfig], str]:
+    """Atomically mutate raw model_list with revision and identity checks."""
     from markitai.config import ModelConfig
     from markitai.security import atomic_write_json
 
@@ -460,20 +551,43 @@ def _mutate_config_model_list(
         llm = {}
     model_list = llm.get("model_list")
     if not isinstance(model_list, list):
-        model_list = []
-    model_list = mutate(model_list)
+        model_list = [_model_to_raw(model) for model in fallback]
+
+    current_revision = _model_list_revision(model_list)
+    if expected_revision is not None and expected_revision != current_revision:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "stale_revision",
+                "current_revision": current_revision,
+            },
+        )
+
+    legacy_mapping = _backfill_raw_deployment_ids(model_list) if backfill_ids else {}
+    model_list = mutate(model_list, legacy_mapping)
     llm["model_list"] = model_list
     data["llm"] = llm
 
-    merged = [ModelConfig.model_validate(m) for m in model_list]
+    merged = [ModelConfig.model_validate(model) for model in model_list]
+    revision = _model_list_revision(model_list)
     atomic_write_json(config_path, data)
-    return merged
+    return merged, revision
 
 
-def _find_raw_entry(entries: list[Any], model_name: str) -> dict[str, Any] | None:
-    """Return the first raw model_list entry with *model_name*, or None."""
-    for entry in entries:
-        if isinstance(entry, dict) and entry.get("model_name") == model_name:
+def _find_raw_entries(entries: list[Any], model_name: str) -> list[dict[str, Any]]:
+    return [
+        entry
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("model_name") == model_name
+    ]
+
+
+def _find_raw_deployment(
+    entries: list[Any], deployment_id: str, legacy_mapping: dict[str, str]
+) -> dict[str, Any] | None:
+    target_id = legacy_mapping.get(deployment_id, deployment_id)
+    for index, entry in enumerate(entries):
+        if isinstance(entry, dict) and _deployment_id(entry, index) == target_id:
             return entry
     return None
 
@@ -512,15 +626,34 @@ def _scrub_secret(text: str, secret: str) -> str:
 
 
 def _sanitize_probe_error(exc: BaseException, body: LLMSettingsUpdate) -> str:
-    """Build a terse, key-free probe failure detail (class + first line)."""
+    """Build a terse failure without keys, auth headers, or credentialed URLs."""
     from markitai.config import resolve_env_value
 
     message = str(exc).strip()
     first_line = message.splitlines()[0] if message else ""
     detail = type(exc).__name__ + (f": {first_line}" if first_line else "")
-    secret = resolve_env_value(body.api_key, strict=False) if body.api_key else None
-    if secret:
+    secrets = [
+        value
+        for value in (
+            body.api_key,
+            resolve_env_value(body.api_key, strict=False) if body.api_key else None,
+        )
+        if value and not value.startswith("env:")
+    ]
+    for secret in secrets:
         detail = _scrub_secret(detail, secret)
+    detail = re.sub(
+        r"(?i)\b(?:authorization|x-api-key|api[_-]?key)\s*[:=]\s*\S+",
+        "credential: …",
+        detail,
+    )
+    detail = re.sub(r"(?i)\bBearer\s+\S+", "Bearer …", detail)
+    detail = re.sub(
+        r"https?://[^\s]+",
+        lambda match: _sanitized_api_origin(match.group(0)) or "<url>",
+        detail,
+    )
+    detail = re.sub(r"\bsk-[A-Za-z0-9._-]{4,}\b", "sk-…", detail)
     return detail[:300]
 
 
@@ -562,26 +695,52 @@ def _fill_stored_credentials(
     )
 
 
-def _stored_probe_body(state: ServeState, model_name: str) -> LLMSettingsUpdate:
-    """Build an ad-hoc probe body from the stored entry named *model_name*.
+def _configured_deployment_by_id(
+    state: ServeState, deployment_id: str
+) -> ModelConfig | None:
+    return next(
+        (
+            model
+            for index, model in enumerate(state.configured_models)
+            if _deployment_id(model, index) == deployment_id
+        ),
+        None,
+    )
 
-    The reference form of ``POST /api/settings/llm/test`` names a saved
-    ``llm.model_list`` entry; probe it with its full stored params (the
-    ``env:VAR`` indirection resolves inside the probe, like a job run).
 
-    Raises:
-        HTTPException: 422 when no entry has that ``model_name``.
-    """
-    for m in state.config.llm.model_list:
-        if m.model_name == model_name:
-            return LLMSettingsUpdate(
-                model=m.litellm_params.model,
-                api_key=m.litellm_params.api_key,
-                api_base=m.litellm_params.api_base,
+def _stored_probe_body(
+    state: ServeState, *, deployment_id: str | None, model_name: str | None
+) -> LLMSettingsUpdate:
+    """Build an ad-hoc probe body from a persisted deployment reference."""
+    candidates: list[ModelConfig]
+    if deployment_id is not None:
+        candidates = [
+            model
+            for models in (state.configured_models, state.detected_models)
+            for index, model in enumerate(models)
+            if _deployment_id(model, index) == deployment_id
+        ]
+        label = f"deployment_id '{deployment_id}'"
+    else:
+        candidates = [
+            model for model in state.configured_models if model.model_name == model_name
+        ]
+        label = f"model_name '{model_name}'"
+        if len(candidates) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "ambiguous_legacy_model_name",
+                    "model_name": model_name,
+                },
             )
-    raise HTTPException(
-        status_code=422,
-        detail=f"model_name '{model_name}' not found in llm.model_list",
+    if not candidates:
+        raise HTTPException(status_code=422, detail=f"{label} not found")
+    params = candidates[0].litellm_params
+    return LLMSettingsUpdate(
+        model=params.model,
+        api_key=params.api_key,
+        api_base=params.api_base,
     )
 
 
@@ -654,6 +813,33 @@ def _sse_frame(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _config_origin(
+    path: Path, *, explicit: bool
+) -> Literal["explicit", "environment", "project", "user", "default"]:
+    if explicit:
+        return "explicit"
+    env_path = os.environ.get("MARKITAI_CONFIG")
+    if env_path and path == Path(env_path).expanduser():
+        return "environment"
+    if path == Path.cwd() / "markitai.json":
+        return "project"
+    if path == DEFAULT_CONFIG_PATH:
+        return "user" if path.exists() else "default"
+    return "default"
+
+
+def _initial_settings_revision(path: Path, models: list[ModelConfig]) -> str:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        llm = data.get("llm") if isinstance(data, dict) else None
+        entries = llm.get("model_list") if isinstance(llm, dict) else None
+        if isinstance(entries, list):
+            return _model_list_revision(entries)
+    except (OSError, ValueError):
+        pass
+    return _model_list_revision([_model_to_raw(model) for model in models])
+
+
 class _SPAStaticFiles(StaticFiles):
     """Static files with SPA fallback: unknown paths serve index.html."""
 
@@ -717,17 +903,34 @@ def create_app(
         llm_source: Literal["config", "detected", "none"]
         if config is not None:
             cfg = config
-            llm_source = "config" if cfg.llm.model_list else "none"
+            configured_models = list(cfg.llm.model_list)
+            detected_models: list[ModelConfig] = []
+            llm_source = "config" if configured_models else "none"
+            resolved_config_path = (
+                config_path if config_path is not None else DEFAULT_CONFIG_PATH
+            )
         else:
             from markitai.config import ConfigManager
 
-            cfg = ConfigManager().load()
-            if cfg.llm.model_list:
+            manager = ConfigManager()
+            cfg = manager.load()
+            configured_models = list(cfg.llm.model_list)
+            detected_models = []
+            if configured_models:
                 llm_source = "config"
             else:
                 await _backfill_llm_models(cfg)
-                llm_source = "detected" if cfg.llm.model_list else "none"
+                detected_models = list(cfg.llm.model_list)
+                llm_source = "detected" if detected_models else "none"
+            env_path = os.environ.get("MARKITAI_CONFIG")
+            resolved_config_path = (
+                config_path
+                if config_path is not None
+                else manager.config_path
+                or (Path(env_path).expanduser() if env_path else DEFAULT_CONFIG_PATH)
+            )
 
+        cfg.llm.model_list = _effective_models(configured_models, detected_models)
         root = (jobs_root if jobs_root is not None else DEFAULT_JOBS_ROOT).resolve()
         root.mkdir(parents=True, exist_ok=True)
         removed = cleanup_stale_jobs(root)
@@ -738,7 +941,15 @@ def create_app(
             config=cfg,
             registry=JobRegistry(root),
             llm_source=llm_source,
-            config_path=config_path if config_path is not None else DEFAULT_CONFIG_PATH,
+            config_path=resolved_config_path,
+            config_origin=_config_origin(
+                resolved_config_path, explicit=config_path is not None
+            ),
+            configured_models=configured_models,
+            detected_models=detected_models,
+            settings_revision=_initial_settings_revision(
+                resolved_config_path, configured_models
+            ),
         )
         app.state.markitai = state
         restored = rehydrate_jobs(state.registry, cfg)
@@ -767,16 +978,39 @@ def create_app(
     app = FastAPI(title="markitai serve", version=__version__, lifespan=lifespan)
     app.add_middleware(_BodyLimitMiddleware)
 
+    @app.middleware("http")
+    async def protect_local_settings(request: Request, call_next: Any) -> Response:
+        if request.url.path.startswith("/api/settings/llm"):
+            host = request.client.host if request.client is not None else "127.0.0.1"
+            try:
+                loopback = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                loopback = host == "localhost"
+            if not loopback:
+                return JSONResponse(
+                    {"detail": "LLM settings are available on loopback only"},
+                    status_code=403,
+                    headers={"Cache-Control": "no-store"},
+                )
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        return await call_next(request)
+
     # ------------------------------------------------------------------ API
 
     @app.get("/api/capabilities")
     async def get_capabilities(request: Request) -> dict[str, Any]:
-        cfg = _state(request).config
+        state = _state(request)
+        effective = _effective_models(state.configured_models, state.detected_models)
+        routable = any(_is_deployment_routable(model) for model in effective)
         return {
             "version": __version__,
             "llm": {
-                "configured": bool(cfg.llm.model_list),
-                "models": [m.litellm_params.model for m in cfg.llm.model_list],
+                "configured": bool(state.configured_models),
+                "routable": routable,
+                "effective": routable,
+                "models": [model.litellm_params.model for model in effective],
             },
             "presets": ["minimal", "standard", "rich"],
             "extras": {
@@ -792,30 +1026,97 @@ def create_app(
 
     @app.get("/api/settings/llm/detected")
     async def get_detected_providers() -> list[dict[str, Any]]:
+        """Legacy quick-add candidates; provider cards use the v2 endpoint."""
         return await _detect_provider_candidates()
 
-    async def _apply_model_list_mutation(
-        state: ServeState, mutate: Callable[[list[Any]], list[Any]]
+    @app.get("/api/settings/llm/providers")
+    async def get_llm_providers(
+        request: Request, refresh: bool = False
     ) -> dict[str, Any]:
-        """Run one settings write: file mutation + running-config hot update."""
+        from markitai.providers.discovery import detect_provider_connections
+
+        state = _state(request)
+        providers = await detect_provider_connections(
+            state.configured_models, refresh=refresh
+        )
+        providers = [card for card in providers if card.get("kind") != "configured"]
+        for index, model in enumerate(state.configured_models):
+            provider = model.litellm_params.model.split("/", 1)[0]
+            providers.append(
+                {
+                    "id": f"deployment:{_deployment_id(model, index)}",
+                    "deployment_id": _deployment_id(model, index),
+                    "provider": provider,
+                    "label": provider.replace("_", " ").title(),
+                    "kind": "configured",
+                    "status": "ready"
+                    if model.litellm_params.weight > 0
+                    else "disabled",
+                    "source": "config",
+                    "api_base_configured": bool(model.litellm_params.api_base),
+                    "supports_discovery": True,
+                }
+            )
+        return {"providers": providers}
+
+    @app.post("/api/settings/llm/model-discovery")
+    async def discover_llm_models(
+        request: Request, body: LLMModelDiscoveryRequest
+    ) -> dict[str, Any]:
+        from markitai.config import resolve_env_value
+        from markitai.providers.discovery import discover_models
+
+        stored = (
+            _configured_deployment_by_id(_state(request), body.deployment_id)
+            if body.deployment_id is not None
+            else None
+        )
+        if body.deployment_id is not None and stored is None:
+            raise HTTPException(status_code=404, detail="deployment not found")
+        raw_key = body.api_key or (
+            stored.litellm_params.api_key if stored is not None else None
+        )
+        raw_base = body.api_base or (
+            stored.litellm_params.api_base if stored is not None else None
+        )
+        api_key = resolve_env_value(raw_key, strict=False) if raw_key else None
+        api_base = resolve_env_value(raw_base, strict=False) if raw_base else None
+        return await discover_models(
+            body.provider,
+            api_key=api_key,
+            api_base=api_base,
+            refresh=body.refresh,
+        )
+
+    async def _apply_model_list_mutation(
+        state: ServeState,
+        mutate: Callable[[list[Any], dict[str, str]], list[Any]],
+        *,
+        expected_revision: str | None = None,
+        backfill_ids: bool = False,
+    ) -> dict[str, Any]:
+        """Run one settings write: atomic file mutation + hot update."""
         async with state.settings_lock:
             try:
-                merged = await asyncio.to_thread(
-                    _mutate_config_model_list, state.config_path, mutate
+                merged, revision = await asyncio.to_thread(
+                    _mutate_config_model_list,
+                    state.config_path,
+                    mutate,
+                    fallback=state.configured_models,
+                    expected_revision=expected_revision,
+                    backfill_ids=backfill_ids,
                 )
             except OSError as e:
                 logger.error(
                     "[Serve] LLM settings write failed for {}: {}",
                     state.config_path,
-                    e,
+                    type(e).__name__,
                 )
                 raise HTTPException(
                     status_code=500,
                     detail=f"failed to update config file: {type(e).__name__}",
                 )
             except ValueError as e:
-                # Not logged with str(e): a ValidationError repr can echo input
-                # values of pre-existing file entries (potentially key material).
                 logger.error(
                     "[Serve] LLM settings update failed for {}: {}",
                     state.config_path,
@@ -825,31 +1126,84 @@ def create_app(
                     status_code=500,
                     detail=f"failed to update config file: {type(e).__name__}",
                 )
-            # Hot-update the running base config to exactly what a fresh
-            # startup would now load from the file; capabilities reads it per
-            # request.
-            state.config.llm.model_list = merged
-            state.llm_source = "config" if merged else "none"
+            state.configured_models = merged
+            state.settings_revision = revision
+            state.config.llm.model_list = _effective_models(
+                merged, state.detected_models
+            )
+            state.llm_source = (
+                "config" if merged else "detected" if state.detected_models else "none"
+            )
         return _llm_settings_payload(state)
+
+    def raw_deployment(state: ServeState, body: LLMModelCreate) -> dict[str, Any]:
+        credential_source = (
+            _configured_deployment_by_id(state, body.credential_deployment_id)
+            if body.credential_deployment_id is not None
+            else None
+        )
+        if body.credential_deployment_id is not None and credential_source is None:
+            raise HTTPException(
+                status_code=404, detail="credential deployment not found"
+            )
+        params: dict[str, Any] = {"model": body.model}
+        api_key = body.api_key or (
+            credential_source.litellm_params.api_key
+            if credential_source is not None
+            else None
+        )
+        api_base = body.api_base or (
+            credential_source.litellm_params.api_base
+            if credential_source is not None
+            else None
+        )
+        if api_key is not None:
+            params["api_key"] = api_key
+        if api_base is not None:
+            params["api_base"] = api_base
+        if body.weight != 1:
+            params["weight"] = body.weight
+        _strip_ignored_local_params(params)
+        return {
+            "model_name": body.model_name,
+            "litellm_params": params,
+            "model_info": {"id": str(uuid.uuid4())},
+        }
+
+    def update_raw_deployment(entry: dict[str, Any], body: LLMModelUpdate) -> None:
+        params = entry.get("litellm_params")
+        if not isinstance(params, dict):
+            params = {}
+        if "model_name" in body.model_fields_set and body.model_name is not None:
+            entry["model_name"] = body.model_name
+        if "model" in body.model_fields_set and body.model is not None:
+            params["model"] = body.model
+        if "api_key" in body.model_fields_set:
+            if body.api_key is None:
+                params.pop("api_key", None)
+            else:
+                params["api_key"] = body.api_key
+        if "api_base" in body.model_fields_set:
+            if body.api_base is None:
+                params.pop("api_base", None)
+            else:
+                params["api_base"] = body.api_base
+        if "weight" in body.model_fields_set and body.weight is not None:
+            params["weight"] = body.weight
+        _strip_ignored_local_params(params)
+        entry["litellm_params"] = params
 
     @app.post("/api/settings/llm/models")
     async def add_llm_model(request: Request, body: LLMModelCreate) -> dict[str, Any]:
-        def mutate(entries: list[Any]) -> list[Any]:
-            if _find_raw_entry(entries, body.model_name) is not None:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"model_name '{body.model_name}' already exists",
-                )
-            params: dict[str, Any] = {"model": body.model}
-            if body.api_key is not None:
-                params["api_key"] = body.api_key
-            if body.api_base is not None:
-                params["api_base"] = body.api_base
-            _strip_ignored_local_params(params)
-            entries.append({"model_name": body.model_name, "litellm_params": params})
+        state = _state(request)
+
+        def mutate(entries: list[Any], _legacy_mapping: dict[str, str]) -> list[Any]:
+            entries.append(raw_deployment(state, body))
             return entries
 
-        payload = await _apply_model_list_mutation(_state(request), mutate)
+        payload = await _apply_model_list_mutation(
+            state, mutate, expected_revision=body.expected_revision
+        )
         logger.info("[Serve] LLM model added: {} ({})", body.model_name, body.model)
         return payload
 
@@ -857,61 +1211,119 @@ def create_app(
     async def update_llm_model(
         request: Request, model_name: str, body: LLMModelUpdate
     ) -> dict[str, Any]:
-        def mutate(entries: list[Any]) -> list[Any]:
-            entry = _find_raw_entry(entries, model_name)
-            if entry is None:
+        def mutate(entries: list[Any], _legacy_mapping: dict[str, str]) -> list[Any]:
+            matches = _find_raw_entries(entries, model_name)
+            if not matches:
                 raise HTTPException(
                     status_code=404, detail=f"model_name '{model_name}' not found"
                 )
-            params = entry.get("litellm_params")
-            if not isinstance(params, dict):
-                params = {}
-            # Omitted field = keep the current raw value (env: references and
-            # literal keys survive untouched); explicit null clears it.
-            if "model" in body.model_fields_set and body.model is not None:
-                params["model"] = body.model
-            if "api_key" in body.model_fields_set:
-                if body.api_key is None:
-                    params.pop("api_key", None)
-                else:
-                    params["api_key"] = body.api_key
-            if "api_base" in body.model_fields_set:
-                if body.api_base is None:
-                    params.pop("api_base", None)
-                else:
-                    params["api_base"] = body.api_base
-            _strip_ignored_local_params(params)
-            entry["litellm_params"] = params
+            if len(matches) > 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "ambiguous_legacy_model_name",
+                        "model_name": model_name,
+                    },
+                )
+            update_raw_deployment(matches[0], body)
             return entries
 
-        payload = await _apply_model_list_mutation(_state(request), mutate)
-        logger.info("[Serve] LLM model updated: {}", model_name)
+        payload = await _apply_model_list_mutation(
+            _state(request), mutate, expected_revision=body.expected_revision
+        )
+        logger.info("[Serve] LLM model updated through legacy route: {}", model_name)
         return payload
 
     @app.delete("/api/settings/llm/models/{model_name}")
     async def delete_llm_model(request: Request, model_name: str) -> dict[str, Any]:
-        def mutate(entries: list[Any]) -> list[Any]:
-            kept = [
-                e
-                for e in entries
-                if not (isinstance(e, dict) and e.get("model_name") == model_name)
-            ]
-            if len(kept) == len(entries):
+        def mutate(entries: list[Any], _legacy_mapping: dict[str, str]) -> list[Any]:
+            matches = _find_raw_entries(entries, model_name)
+            if not matches:
                 raise HTTPException(
                     status_code=404, detail=f"model_name '{model_name}' not found"
                 )
-            return kept
+            if len(matches) > 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "ambiguous_legacy_model_name",
+                        "model_name": model_name,
+                    },
+                )
+            target = matches[0]
+            return [entry for entry in entries if entry is not target]
 
         payload = await _apply_model_list_mutation(_state(request), mutate)
-        logger.info("[Serve] LLM model deleted: {}", model_name)
+        logger.info("[Serve] LLM model deleted through legacy route: {}", model_name)
         return payload
+
+    @app.post("/api/settings/llm/deployments/batch")
+    async def add_llm_deployments_batch(
+        request: Request, body: LLMDeploymentBatch
+    ) -> dict[str, Any]:
+        state = _state(request)
+
+        def mutate(entries: list[Any], _legacy_mapping: dict[str, str]) -> list[Any]:
+            entries.extend(
+                raw_deployment(state, deployment) for deployment in body.deployments
+            )
+            return entries
+
+        return await _apply_model_list_mutation(
+            state,
+            mutate,
+            expected_revision=body.expected_revision,
+            backfill_ids=True,
+        )
+
+    @app.patch("/api/settings/llm/deployments/{deployment_id}")
+    async def update_llm_deployment(
+        request: Request, deployment_id: str, body: LLMModelUpdate
+    ) -> dict[str, Any]:
+        if body.expected_revision is None:
+            raise HTTPException(status_code=422, detail="expected_revision is required")
+
+        def mutate(entries: list[Any], legacy_mapping: dict[str, str]) -> list[Any]:
+            entry = _find_raw_deployment(entries, deployment_id, legacy_mapping)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="deployment not found")
+            update_raw_deployment(entry, body)
+            return entries
+
+        return await _apply_model_list_mutation(
+            _state(request),
+            mutate,
+            expected_revision=body.expected_revision,
+            backfill_ids=True,
+        )
+
+    @app.delete("/api/settings/llm/deployments/{deployment_id}")
+    async def delete_llm_deployment(
+        request: Request, deployment_id: str, expected_revision: str
+    ) -> dict[str, Any]:
+        def mutate(entries: list[Any], legacy_mapping: dict[str, str]) -> list[Any]:
+            entry = _find_raw_deployment(entries, deployment_id, legacy_mapping)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="deployment not found")
+            return [candidate for candidate in entries if candidate is not entry]
+
+        return await _apply_model_list_mutation(
+            _state(request),
+            mutate,
+            expected_revision=expected_revision,
+            backfill_ids=True,
+        )
 
     @app.post("/api/settings/llm/test")
     async def test_llm_settings(
         request: Request, body: LLMSettingsUpdate
     ) -> dict[str, Any]:
-        if body.model_name is not None:
-            body = _stored_probe_body(_state(request), body.model_name)
+        if body.deployment_id is not None or body.model_name is not None:
+            body = _stored_probe_body(
+                _state(request),
+                deployment_id=body.deployment_id,
+                model_name=body.model_name,
+            )
         else:
             body = _fill_stored_credentials(_state(request), body)
         try:

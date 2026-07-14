@@ -56,7 +56,8 @@ def serve(host: str, port: int, no_open: bool) -> None:
     from markitai.serve import create_app
 
     if not no_open:
-        browser_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+        # This only maps a wildcard bind to a browser-safe URL; it does not bind.
+        browser_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host  # nosec B104
         url = f"http://{browser_host}:{port}"
 
         def _open_browser() -> None:

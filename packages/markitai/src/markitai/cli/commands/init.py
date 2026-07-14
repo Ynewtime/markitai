@@ -378,42 +378,21 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
 
 
 def _detect_providers() -> list[tuple[str, bool]]:
-    """Detect available LLM providers.
+    """Adapt the shared CLI detector to the init wizard's status rows."""
+    from markitai.cli.providers_detect import detect_all_providers
 
-    Checks local CLI providers, OAuth-authenticated providers,
-    and API key environment variables.
-
-    Returns:
-        List of (provider_name, is_available) tuples.
-    """
-    import os
-
-    providers: list[tuple[str, bool]] = []
-
-    # Local CLI providers
-    claude_available = shutil.which("claude") is not None
-    providers.append(("Claude CLI", claude_available))
-
-    copilot_available = shutil.which("copilot") is not None
-    providers.append(("GitHub Copilot CLI", copilot_available))
-
-    # OAuth-authenticated providers (no CLI binary needed)
-    from markitai.cli.providers_detect import _check_chatgpt_auth
-
-    providers.append(("ChatGPT", _check_chatgpt_auth()))
-
-    # API key providers
-    api_keys = [
-        ("DeepSeek API", "DEEPSEEK_API_KEY"),
-        ("Google Gemini API", "GEMINI_API_KEY"),
-        ("OpenAI API", "OPENAI_API_KEY"),
-        ("Anthropic API", "ANTHROPIC_API_KEY"),
-        ("OpenRouter API", "OPENROUTER_API_KEY"),
-    ]
-    for name, env_var in api_keys:
-        providers.append((name, bool(os.environ.get(env_var))))
-
-    return providers
+    detected = {result.provider for result in detect_all_providers()}
+    provider_rows = (
+        ("Claude CLI", "claude-agent"),
+        ("GitHub Copilot CLI", "copilot"),
+        ("ChatGPT", "chatgpt"),
+        ("DeepSeek API", "deepseek"),
+        ("Google Gemini API", "gemini"),
+        ("OpenAI API", "openai"),
+        ("Anthropic API", "anthropic"),
+        ("OpenRouter API", "openrouter"),
+    )
+    return [(label, provider in detected) for label, provider in provider_rows]
 
 
 def _build_config(

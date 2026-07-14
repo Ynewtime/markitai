@@ -227,6 +227,9 @@ class LiteLLMParams(BaseModel):
 class ModelInfo(BaseModel):
     """Model metadata. All fields are optional and auto-detected from litellm if not set."""
 
+    # LiteLLM's deployment identity. Routing groups (``model_name``) are not
+    # unique: several deployments may legitimately share ``default``.
+    id: str | None = None
     supports_vision: bool | None = None
     max_tokens: int | None = None
     max_input_tokens: int | None = None

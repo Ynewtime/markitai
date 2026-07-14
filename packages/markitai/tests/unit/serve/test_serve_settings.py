@@ -117,38 +117,37 @@ class TestGetLLMSettings:
         data = resp.json()
         assert data["configured"] is True
         assert data["source"] == "config"
-        assert data["models"] == [
-            {
-                "model_name": "default",
-                "model": "gemini/gemini-2.5-flash",
-                "api_key_masked": "env:GEMINI_API_KEY",
-                "api_base": None,
-            },
-            {
-                "model_name": "default",
-                "model": "openai/gpt-4o-mini",
-                "api_key_masked": "sk…cdef",
-                "api_base": "https://proxy.local/v1",
-            },
-            {
-                "model_name": "default",
-                "model": "claude-agent/sonnet",
-                "api_key_masked": None,
-                "api_base": None,
-            },
+        deployments = data["deployments"]
+        assert [entry["routing_group"] for entry in deployments] == [
+            "default",
+            "default",
+            "default",
         ]
-        assert "sk-1234567890abcdef" not in resp.text  # never the plaintext key
+        assert [entry["model"] for entry in deployments] == [
+            "gemini/gemini-2.5-flash",
+            "openai/gpt-4o-mini",
+            "claude-agent/sonnet",
+        ]
+        assert [entry["api_key_configured"] for entry in deployments] == [
+            True,
+            True,
+            False,
+        ]
+        assert deployments[1]["api_base"] == "https://proxy.local"
+        assert all(entry["deployment_id"] for entry in deployments)
+        assert "sk-1234567890abcdef" not in resp.text
+        assert "env:GEMINI_API_KEY" not in resp.text
 
     async def test_source_none_for_empty_config(self, tmp_path: Path) -> None:
         async with _serve_client(_make_app(tmp_path)) as client:
             resp = await client.get("/api/settings/llm")
         data = resp.json()
-        assert data == {
-            "configured": False,
-            "source": "none",
-            "config_path": data["config_path"],
-            "models": [],
-        }
+        assert data["configured"] is False
+        assert data["routable"] is False
+        assert data["source"] == "none"
+        assert data["deployments"] == []
+        assert data["detected"] == []
+        assert len(data["revision"]) == 64
         assert data["config_path"].endswith("config.json")
 
     async def test_source_detected_after_startup_backfill(
@@ -179,9 +178,10 @@ class TestGetLLMSettings:
         )
         async with _serve_client(app) as client:
             data = (await client.get("/api/settings/llm")).json()
-        assert data["configured"] is True
+        assert data["configured"] is False
         assert data["source"] == "detected"
-        assert [m["model"] for m in data["models"]] == ["openai/gpt-detected"]
+        assert data["deployments"] == []
+        assert [model["model"] for model in data["detected"]] == ["openai/gpt-detected"]
 
     async def test_local_provider_entry_with_stored_key_masks_null(
         self, tmp_path: Path
@@ -193,7 +193,8 @@ class TestGetLLMSettings:
         ]
         async with _serve_client(_make_app(tmp_path, cfg)) as client:
             data = (await client.get("/api/settings/llm")).json()
-        assert data["models"][0]["api_key_masked"] is None
+        assert data["deployments"][0]["api_key_configured"] is False
+        assert "sk-legacy-1234567890" not in json.dumps(data)
 
 
 class TestAddLLMModel:
@@ -215,30 +216,21 @@ class TestAddLLMModel:
         data = resp.json()
         assert data["configured"] is True
         assert data["source"] == "config"
-        assert data["models"] == [
-            {
-                "model_name": "primary",
-                "model": "openai/gpt-test",
-                "api_key_masked": "sk…cdef",
-                "api_base": None,
-            }
-        ]
+        entry = data["deployments"][0]
+        assert entry["routing_group"] == "primary"
+        assert entry["model"] == "openai/gpt-test"
+        assert entry["api_key_configured"] is True
+        assert entry["deployment_id"]
         assert "sk-1234567890abcdef" not in resp.text
 
         on_disk = json.loads(config_path.read_text(encoding="utf-8"))
-        assert on_disk == {
-            "llm": {
-                "model_list": [
-                    {
-                        "model_name": "primary",
-                        "litellm_params": {
-                            "model": "openai/gpt-test",
-                            "api_key": "sk-1234567890abcdef",
-                        },
-                    }
-                ]
-            }
+        stored = on_disk["llm"]["model_list"][0]
+        assert stored["model_name"] == "primary"
+        assert stored["litellm_params"] == {
+            "model": "openai/gpt-test",
+            "api_key": "sk-1234567890abcdef",
         }
+        assert stored["model_info"]["id"] == entry["deployment_id"]
         if os.name == "posix":
             assert (config_path.stat().st_mode & 0o777) == 0o600
 
@@ -283,24 +275,22 @@ class TestAddLLMModel:
         assert on_disk["custom_top"] == {"keep": True}
         assert on_disk["llm"]["enabled"] is True  # llm.enabled untouched
         assert on_disk["llm"]["concurrency"] == 3
-        assert on_disk["llm"]["model_list"] == [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "old/model", "weight": 2},
-                "custom_entry_key": "keep-me",  # unknown entry keys survive
-            },
-            {
-                "model_name": "extra",
-                "litellm_params": {
-                    "model": "openai/gpt-new",
-                    "api_base": "env:MY_BASE",
-                },
-            },
-        ]
+        stored_models = on_disk["llm"]["model_list"]
+        assert stored_models[0] == {
+            "model_name": "default",
+            "litellm_params": {"model": "old/model", "weight": 2},
+            "custom_entry_key": "keep-me",
+        }
+        assert stored_models[1]["model_name"] == "extra"
+        assert stored_models[1]["litellm_params"] == {
+            "model": "openai/gpt-new",
+            "api_base": "env:MY_BASE",
+        }
+        assert stored_models[1]["model_info"]["id"]
         if os.name == "posix":  # rewrite tightens permissions to owner-only
             assert (config_path.stat().st_mode & 0o777) == 0o600
 
-    async def test_add_duplicate_model_name_is_409(self, tmp_path: Path) -> None:
+    async def test_add_duplicate_routing_group_is_allowed(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config.json"
         app = _make_app(tmp_path, config_path=config_path)
         async with _serve_client(app) as client:
@@ -309,15 +299,20 @@ class TestAddLLMModel:
                 json={"model_name": "primary", "model": "openai/first"},
             )
             assert first.status_code == 200
-            before = config_path.read_text(encoding="utf-8")
             dup = await client.post(
                 "/api/settings/llm/models",
                 json={"model_name": "primary", "model": "openai/second"},
             )
             settings = (await client.get("/api/settings/llm")).json()
-        assert dup.status_code == 409
-        assert config_path.read_text(encoding="utf-8") == before  # nothing written
-        assert [m["model"] for m in settings["models"]] == ["openai/first"]
+        assert dup.status_code == 200
+        assert [model["routing_group"] for model in settings["deployments"]] == [
+            "primary",
+            "primary",
+        ]
+        assert [model["model"] for model in settings["deployments"]] == [
+            "openai/first",
+            "openai/second",
+        ]
 
     async def test_add_local_provider_ignores_key_and_base(
         self, tmp_path: Path
@@ -335,16 +330,15 @@ class TestAddLLMModel:
                 },
             )
         assert resp.status_code == 200
-        entry = resp.json()["models"][0]
-        assert entry["api_key_masked"] is None
+        entry = resp.json()["deployments"][0]
+        assert entry["api_key_configured"] is False
+        assert entry["api_base_configured"] is False
         assert entry["api_base"] is None
         on_disk = json.loads(config_path.read_text(encoding="utf-8"))
-        assert on_disk["llm"]["model_list"] == [
-            {
-                "model_name": "local",
-                "litellm_params": {"model": "claude-agent/haiku"},
-            }
-        ]
+        stored = on_disk["llm"]["model_list"][0]
+        assert stored["model_name"] == "local"
+        assert stored["litellm_params"] == {"model": "claude-agent/haiku"}
+        assert stored["model_info"]["id"]
         assert "sk-should-be-ignored" not in config_path.read_text(encoding="utf-8")
 
     @pytest.mark.parametrize(
@@ -373,14 +367,24 @@ class TestAddLLMModel:
     async def test_add_hot_updates_capabilities(self, tmp_path: Path) -> None:
         async with _serve_client(_make_app(tmp_path)) as client:
             before = (await client.get("/api/capabilities")).json()
-            assert before["llm"] == {"configured": False, "models": []}
+            assert before["llm"] == {
+                "configured": False,
+                "routable": False,
+                "effective": False,
+                "models": [],
+            }
             resp = await client.post(
                 "/api/settings/llm/models",
                 json={"model_name": "primary", "model": "openai/gpt-test"},
             )
             assert resp.status_code == 200
             after = (await client.get("/api/capabilities")).json()
-        assert after["llm"] == {"configured": True, "models": ["openai/gpt-test"]}
+        assert after["llm"] == {
+            "configured": True,
+            "routable": False,
+            "effective": False,
+            "models": ["openai/gpt-test"],
+        }
 
 
 class TestUpdateLLMModel:
@@ -412,14 +416,11 @@ class TestUpdateLLMModel:
             )
             settings = (await client.get("/api/settings/llm")).json()
         assert resp.status_code == 200
-        assert settings["models"] == [
-            {
-                "model_name": "primary",
-                "model": "openai/gpt-next",
-                "api_key_masked": "sk…cdef",  # mask unchanged -> key kept
-                "api_base": "https://proxy.local/v1",
-            }
-        ]
+        entry = settings["deployments"][0]
+        assert entry["routing_group"] == "primary"
+        assert entry["model"] == "openai/gpt-next"
+        assert entry["api_key_configured"] is True
+        assert entry["api_base"] == "https://proxy.local"
         params = json.loads(config_path.read_text(encoding="utf-8"))["llm"][
             "model_list"
         ][0]["litellm_params"]
@@ -439,8 +440,8 @@ class TestUpdateLLMModel:
                 json={"api_key": None, "api_base": None},
             )
         assert resp.status_code == 200
-        entry = resp.json()["models"][0]
-        assert entry["api_key_masked"] is None
+        entry = resp.json()["deployments"][0]
+        assert entry["api_key_configured"] is False
         assert entry["api_base"] is None
         params = json.loads(config_path.read_text(encoding="utf-8"))["llm"][
             "model_list"
@@ -457,7 +458,7 @@ class TestUpdateLLMModel:
                 json={"api_key": "env:NEW_KEY_VAR"},
             )
         assert resp.status_code == 200
-        assert resp.json()["models"][0]["api_key_masked"] == "env:NEW_KEY_VAR"
+        assert resp.json()["deployments"][0]["api_key_configured"] is True
         params = json.loads(config_path.read_text(encoding="utf-8"))["llm"][
             "model_list"
         ][0]["litellm_params"]
@@ -470,11 +471,10 @@ class TestUpdateLLMModel:
         async with _serve_client(app) as client:
             await self._seed(client)
             before = config_path.read_text(encoding="utf-8")
-            masked = (await client.get("/api/settings/llm")).json()["models"][0][
-                "api_key_masked"
-            ]
+            settings = (await client.get("/api/settings/llm")).json()
+            assert "sk-1234567890abcdef" not in json.dumps(settings)
             resp = await client.put(
-                "/api/settings/llm/models/primary", json={"api_key": masked}
+                "/api/settings/llm/models/primary", json={"api_key": "sk…cdef"}
             )
         assert resp.status_code == 422
         assert config_path.read_text(encoding="utf-8") == before
@@ -498,9 +498,9 @@ class TestUpdateLLMModel:
                 json={"model": "claude-agent/sonnet"},
             )
         assert resp.status_code == 200
-        entry = resp.json()["models"][0]
+        entry = resp.json()["deployments"][0]
         assert entry["model"] == "claude-agent/sonnet"
-        assert entry["api_key_masked"] is None
+        assert entry["api_key_configured"] is False
         params = json.loads(config_path.read_text(encoding="utf-8"))["llm"][
             "model_list"
         ][0]["litellm_params"]
@@ -543,7 +543,7 @@ class TestDeleteLLMModel:
             resp = await client.delete("/api/settings/llm/models/a")
         assert resp.status_code == 200
         data = resp.json()
-        assert [m["model_name"] for m in data["models"]] == ["b"]
+        assert [model["routing_group"] for model in data["deployments"]] == ["b"]
         on_disk = json.loads(config_path.read_text(encoding="utf-8"))
         assert [e["model_name"] for e in on_disk["llm"]["model_list"]] == ["b"]
 
@@ -561,8 +561,13 @@ class TestDeleteLLMModel:
         data = resp.json()
         assert data["configured"] is False
         assert data["source"] == "none"
-        assert data["models"] == []
-        assert capabilities["llm"] == {"configured": False, "models": []}
+        assert data["deployments"] == []
+        assert capabilities["llm"] == {
+            "configured": False,
+            "routable": False,
+            "effective": False,
+            "models": [],
+        }
         on_disk = json.loads(config_path.read_text(encoding="utf-8"))
         assert on_disk["llm"]["model_list"] == []
 
@@ -946,3 +951,342 @@ class TestLLMSettingsProbe:
             resp = await client.post("/api/settings/llm/test", json=payload)
         assert resp.status_code == 422
         assert calls == []  # rejected before any probe runs
+
+
+class TestDeploymentIdentityAndRevision:
+    """V2 deployment routes use stable ids and optimistic concurrency."""
+
+    async def test_duplicate_routing_group_crud_is_per_deployment(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            revision = (await client.get("/api/settings/llm")).json()["revision"]
+            created = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": revision,
+                    "deployments": [
+                        {"model_name": "default", "model": "openai/first"},
+                        {"model_name": "default", "model": "openai/second"},
+                    ],
+                },
+            )
+            assert created.status_code == 200
+            payload = created.json()
+            first, second = payload["deployments"]
+            assert first["deployment_id"] != second["deployment_id"]
+
+            updated = await client.patch(
+                f"/api/settings/llm/deployments/{first['deployment_id']}",
+                json={
+                    "model": "openai/first-updated",
+                    "expected_revision": payload["revision"],
+                },
+            )
+            assert updated.status_code == 200
+            updated_payload = updated.json()
+            assert [item["model"] for item in updated_payload["deployments"]] == [
+                "openai/first-updated",
+                "openai/second",
+            ]
+
+            deleted = await client.delete(
+                f"/api/settings/llm/deployments/{second['deployment_id']}",
+                params={"expected_revision": updated_payload["revision"]},
+            )
+        assert deleted.status_code == 200
+        assert [item["model"] for item in deleted.json()["deployments"]] == [
+            "openai/first-updated"
+        ]
+
+    async def test_first_v2_mutation_backfills_all_legacy_ids(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = tmp_path / "legacy.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "llm": {
+                        "model_list": [
+                            {
+                                "model_name": "default",
+                                "litellm_params": {"model": "openai/first"},
+                            },
+                            {
+                                "model_name": "default",
+                                "litellm_params": {"model": "openai/second"},
+                            },
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("MARKITAI_CONFIG", str(config_path))
+        app = create_app(
+            static_dir=tmp_path / "no-static",
+            jobs_root=tmp_path / "jobs",
+            configure_logging=False,
+        )
+        async with _serve_client(app) as client:
+            before = (await client.get("/api/settings/llm")).json()
+            assert all(
+                item["deployment_id"].startswith("legacy-")
+                for item in before["deployments"]
+            )
+            response = await client.patch(
+                f"/api/settings/llm/deployments/{before['deployments'][0]['deployment_id']}",
+                json={"weight": 2, "expected_revision": before["revision"]},
+            )
+        assert response.status_code == 200
+        after = response.json()
+        assert all(
+            not item["deployment_id"].startswith("legacy-")
+            for item in after["deployments"]
+        )
+        stored = json.loads(config_path.read_text(encoding="utf-8"))["llm"][
+            "model_list"
+        ]
+        assert all(entry["model_info"]["id"] for entry in stored)
+
+    async def test_legacy_name_route_rejects_ambiguous_group(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            for model in ("openai/first", "openai/second"):
+                assert (
+                    await client.post(
+                        "/api/settings/llm/models",
+                        json={"model_name": "default", "model": model},
+                    )
+                ).status_code == 200
+            update = await client.put(
+                "/api/settings/llm/models/default", json={"weight": 2}
+            )
+            delete = await client.delete("/api/settings/llm/models/default")
+        assert update.status_code == 409
+        assert update.json()["detail"]["code"] == "ambiguous_legacy_model_name"
+        assert delete.status_code == 409
+
+    async def test_stale_revision_rejects_without_writing(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            revision = (await client.get("/api/settings/llm")).json()["revision"]
+            first = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": revision,
+                    "deployments": [{"model_name": "default", "model": "openai/first"}],
+                },
+            )
+            before = config_path.read_text(encoding="utf-8")
+            stale = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": revision,
+                    "deployments": [{"model_name": "default", "model": "openai/stale"}],
+                },
+            )
+        assert first.status_code == 200
+        assert stale.status_code == 409
+        assert stale.json()["detail"]["code"] == "stale_revision"
+        assert config_path.read_text(encoding="utf-8") == before
+
+
+class TestSettingsOriginAndSecurity:
+    async def test_markitai_config_is_the_write_target(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = tmp_path / "from-env.json"
+        config_path.write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("MARKITAI_CONFIG", str(config_path))
+        app = create_app(
+            static_dir=tmp_path / "no-static",
+            jobs_root=tmp_path / "jobs",
+            configure_logging=False,
+        )
+        async with _serve_client(app) as client:
+            settings = (await client.get("/api/settings/llm")).json()
+            assert settings["config_origin"] == "environment"
+            response = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": settings["revision"],
+                    "deployments": [{"model_name": "default", "model": "openai/test"}],
+                },
+            )
+        assert response.status_code == 200
+        assert (
+            json.loads(config_path.read_text(encoding="utf-8"))["llm"]["model_list"][0][
+                "litellm_params"
+            ]["model"]
+            == "openai/test"
+        )
+
+    async def test_api_base_and_key_are_secret_free(self, tmp_path: Path) -> None:
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry(
+                "openai/test",
+                api_key="sk-super-secret-value",
+                api_base="https://user:pass@proxy.example/v1?token=secret#frag",
+            )
+        ]
+        async with _serve_client(_make_app(tmp_path, cfg)) as client:
+            response = await client.get("/api/settings/llm")
+        deployment = response.json()["deployments"][0]
+        assert deployment["api_key_configured"] is True
+        assert deployment["api_base"] == "https://proxy.example"
+        assert "super-secret" not in response.text
+        assert "user:pass" not in response.text
+        assert "token=secret" not in response.text
+        assert response.headers["cache-control"] == "no-store"
+
+    async def test_settings_are_loopback_only(self, tmp_path: Path) -> None:
+        app = _make_app(tmp_path)
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app, client=("203.0.113.9", 1234))
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                response = await client.get("/api/settings/llm")
+        assert response.status_code == 403
+        assert response.headers["cache-control"] == "no-store"
+
+
+class TestDetectedRuntimeSeparation:
+    async def test_persisting_one_model_keeps_other_detected_models_effective(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = tmp_path / "detected.json"
+        monkeypatch.setenv("MARKITAI_CONFIG", str(config_path))
+        monkeypatch.delenv("MODEL", raising=False)
+
+        async def fake_detect() -> list[dict[str, Any]]:
+            return [
+                {
+                    "provider": "openai",
+                    "model": "openai/detected",
+                    "label": "OpenAI",
+                    "requires_api_key": False,
+                }
+            ]
+
+        monkeypatch.setattr(
+            "markitai.serve.app._detect_provider_candidates", fake_detect
+        )
+        app = create_app(
+            static_dir=tmp_path / "no-static",
+            jobs_root=tmp_path / "jobs",
+            configure_logging=False,
+        )
+        async with _serve_client(app) as client:
+            before = (await client.get("/api/settings/llm")).json()
+            added = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": before["revision"],
+                    "deployments": [{"model_name": "default", "model": "ollama/local"}],
+                },
+            )
+            capabilities = (await client.get("/api/capabilities")).json()
+        assert added.status_code == 200
+        payload = added.json()
+        assert [item["model"] for item in payload["deployments"]] == ["ollama/local"]
+        assert [item["model"] for item in payload["detected"]] == ["openai/detected"]
+        assert capabilities["llm"]["models"] == [
+            "ollama/local",
+            "openai/detected",
+        ]
+
+    async def test_model_discovery_does_not_echo_draft_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fake_discover(
+            provider: str,
+            *,
+            api_key: str | None,
+            api_base: str | None,
+            refresh: bool,
+        ) -> dict[str, Any]:
+            assert provider == "openai"
+            assert api_key == "sk-draft-secret"
+            assert api_base is None
+            assert refresh is True
+            return {
+                "provider": provider,
+                "status": "ok",
+                "source": "live_api",
+                "authoritative": True,
+                "cached": False,
+                "stale": False,
+                "models": [],
+            }
+
+        monkeypatch.setattr(
+            "markitai.providers.discovery.discover_models", fake_discover
+        )
+        async with _serve_client(_make_app(tmp_path)) as client:
+            response = await client.post(
+                "/api/settings/llm/model-discovery",
+                json={
+                    "provider": "openai",
+                    "api_key": "sk-draft-secret",
+                    "refresh": True,
+                },
+            )
+        assert response.status_code == 200
+        assert "sk-draft-secret" not in response.text
+        assert response.headers["cache-control"] == "no-store"
+
+
+class TestConfiguredConnectionReuse:
+    async def test_batch_can_reuse_stored_credentials_without_returning_them(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            seeded = await client.post(
+                "/api/settings/llm/models",
+                json={
+                    "model_name": "default",
+                    "model": "openai/first",
+                    "api_key": "sk-stored-secret",
+                    "api_base": "https://proxy.example/v1",
+                },
+            )
+            payload = seeded.json()
+            source_id = payload["deployments"][0]["deployment_id"]
+            added = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": payload["revision"],
+                    "deployments": [
+                        {
+                            "model_name": "default",
+                            "model": "openai/second",
+                            "credential_deployment_id": source_id,
+                        }
+                    ],
+                },
+            )
+        assert added.status_code == 200
+        assert "sk-stored-secret" not in added.text
+        stored = json.loads(config_path.read_text(encoding="utf-8"))["llm"][
+            "model_list"
+        ]
+        assert stored[1]["litellm_params"] == {
+            "model": "openai/second",
+            "api_key": "sk-stored-secret",
+            "api_base": "https://proxy.example/v1",
+        }
