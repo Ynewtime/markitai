@@ -6,6 +6,7 @@ on:
     paths:
       - 'packages/markitai/**'
       - 'webapp/**'
+      - 'scripts/sync_webapp_static.sh'
       - 'README.md'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'packages/markitai/**'
       - 'webapp/**'
+      - 'scripts/sync_webapp_static.sh'
       - 'README.md'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -53,8 +55,8 @@ jobs:
       - name: Run tests
         run: pnpm --dir webapp test
 
-      - name: Build webapp
-        run: pnpm --dir webapp build
+      - name: Build webapp and verify packaged assets
+        run: scripts/sync_webapp_static.sh --check
 
   lint:
     name: Lint & Type Check
@@ -174,6 +176,23 @@ jobs:
           uv build --package markitai --wheel --out-dir wheel-smoke --clear
           wheel="$(find wheel-smoke -name 'markitai-*.whl' -print -quit)"
           test -n "$wheel"
+          python - "$wheel" <<'PY'
+          import sys
+          import zipfile
+
+          with zipfile.ZipFile(sys.argv[1]) as wheel_file:
+              names = set(wheel_file.namelist())
+          required = {
+              "markitai/serve/static/index.html",
+              "markitai/serve/static/favicon.ico",
+              "markitai/serve/static/logo.svg",
+          }
+          missing = required - names
+          if missing or not any(
+              name.startswith("markitai/serve/static/assets/") for name in names
+          ):
+              raise SystemExit(f"wheel is missing packaged webapp files: {sorted(missing)}")
+          PY
           uv tool run --isolated --python '${{ matrix.python-version }}' --from "$wheel" markitai --version
           uv tool run --isolated --python '${{ matrix.python-version }}' --from "$wheel" markitai --help >/dev/null
 

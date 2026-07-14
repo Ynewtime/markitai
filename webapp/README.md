@@ -14,14 +14,15 @@ pnpm dev                                      # Vite proxies /api -> 127.0.0.1:3
 
 ## Build
 
+From the repository root, build the app and sync it into the Python package:
+
 ```sh
-pnpm build   # tsc + vite build -> dist/
+scripts/sync_webapp_static.sh
 ```
 
-`markitai serve` auto-detects the built UI: it serves the package's bundled
-`serve/static/` if present, else this repo's `webapp/dist/`. So after
-`pnpm build`, plain `uv run markitai serve` hosts the app on its own port —
-no proxy needed.
+Use `scripts/sync_webapp_static.sh --check` to fail when the committed package
+assets are stale. `markitai serve` serves the bundled `serve/static/` directory
+when installed, or falls back to this repo's `webapp/dist/` during development.
 
 ## Layout
 

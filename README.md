@@ -12,6 +12,7 @@ Opinionated Markdown converter with native LLM enhancement support.
 - **Batch processing**: concurrent conversion with progress display and `--resume` for interrupted jobs
 - **OCR**: scanned PDFs and images via RapidOCR
 - **Web fetching**: static HTTP with cache revalidation, or Playwright rendering for JS-heavy pages
+- **Local web workspace**: upload files or folders, submit URLs, configure LLM providers, compare results, retry failures, and revisit conversion history
 
 Docs: <https://markitai.dev>
 
@@ -63,8 +64,16 @@ have a different `mkai` on your PATH, use the full `markitai` to avoid ambiguity
 | `copilot` | GitHub Copilot SDK as an LLM provider |
 | `extra-fetch` | curl-cffi HTTP client (better anti-bot compatibility) |
 | `kreuzberg` | Kreuzberg extraction backend |
+| `serve` | Local web workspace and REST API |
 | `svg` | SVG rasterization via cairosvg |
 | `all` | Everything above |
+
+Launch the local web workspace with:
+
+```bash
+uv tool install "markitai[serve]" --force
+markitai serve
+```
 
 ## Quick start
 
