@@ -345,20 +345,20 @@ wheels = [
 
 [[package]]
 name = "claude-agent-sdk"
-version = "0.2.115"
+version = "0.2.117"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "mcp" },
     { name = "sniffio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/b8/c1898153ffb0c75cfc5504c18d892d3c57a080073c9ede3df7addb8fc4a0/claude_agent_sdk-0.2.115.tar.gz", hash = "sha256:230017fbba74fb3aa1a1d86b2986277c7fe26dd2e33eea865c90553d93f4e26d", size = 268644, upload-time = "2026-07-09T23:46:43.739Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/b3/514c334e6a42fde70a7fe493c5124858e4ced7299edac3aa32b18daf3336/claude_agent_sdk-0.2.117.tar.gz", hash = "sha256:390ccc34d2427443b3ebf9f762f08fd7c0f21606d55c9077e9703acc86b9e43c", size = 268647, upload-time = "2026-07-14T01:22:08.358Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/43/609755e7ec7c8031c05f89442154d86f55856a64d234f90845b8035c7ffb/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_arm64.whl", hash = "sha256:8ca9eea21ed6b1b7d6b35c5bac368210214b36028c68046231ca4ea545854e80", size = 71306972, upload-time = "2026-07-09T23:46:49.581Z" },
-    { url = "https://files.pythonhosted.org/packages/f9/e7/8a3b68f30fdebb0fa59dd96be142443a5fffbed2f2a16a6fbd7259b49b9b/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:23fc46eadafbf9315c63a6959a7677c4e2325339e09f6caf820e81ef905b51da", size = 74824573, upload-time = "2026-07-09T23:46:55.73Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/92/0cb1e45004a2f3738c77bb33281ad919beb203e1f49353c120ae75f79e55/claude_agent_sdk-0.2.115-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:c662fe2f618aa19e9ea1c161b490b2f67ec0c8e15a75d96b5b14cbb8a7301e86", size = 79850093, upload-time = "2026-07-09T23:47:02.72Z" },
-    { url = "https://files.pythonhosted.org/packages/b8/2c/63c9545875abb4ed1563fcf7bd52277b3556fc894816d42bb2e723f17b6b/claude_agent_sdk-0.2.115-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:946f8b3240e9c0e79a7f87bab14eb079d283ab564a0503923aa81648351b8c6f", size = 80878895, upload-time = "2026-07-09T23:47:11.93Z" },
-    { url = "https://files.pythonhosted.org/packages/c0/64/efe0f2ad2e1ae39690c7345d6da651be6af1350ef25bc20209171896a4bf/claude_agent_sdk-0.2.115-py3-none-win_amd64.whl", hash = "sha256:9bff5ef9932747ce41982a7c955fb144220ada80e6931bd5f5ee5da74f454990", size = 80391369, upload-time = "2026-07-09T23:47:19.837Z" },
+    { url = "https://files.pythonhosted.org/packages/13/54/061e4501d10eef1c3261b5fb4f82b02447fe835a07ffb4367f5d836e9a77/claude_agent_sdk-0.2.117-py3-none-macosx_11_0_arm64.whl", hash = "sha256:aaded67c774a2a7243063b5e78c76f28c0c161b6b0ee5397619e39c80a2efddd", size = 70554409, upload-time = "2026-07-14T01:22:11.705Z" },
+    { url = "https://files.pythonhosted.org/packages/11/83/3edda453b5a3a3bfb3b9cea800e2c99c5504c2a43dad395215ef3072abd7/claude_agent_sdk-0.2.117-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:fee05f9c61d793d75500646c63437046cbdb5f75b3a4bb11abb4d6d38490997f", size = 75517905, upload-time = "2026-07-14T01:22:15.424Z" },
+    { url = "https://files.pythonhosted.org/packages/32/56/7e6024ea19bc1c0a6a366814200ca3f2922c493ed3243910e907c9a9f3a5/claude_agent_sdk-0.2.117-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:0793cecf6b1dc7d1e0c3d6513d7f46add0e018253d36d3b2591a622a4724e6d5", size = 80479853, upload-time = "2026-07-14T01:22:19.658Z" },
+    { url = "https://files.pythonhosted.org/packages/99/95/864c40ce76ebadf47462cbfe62b064ab59958600151a7c3f080d108a18c4/claude_agent_sdk-0.2.117-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:61f1be259d29f38bebbe0fa1b73f0abe39f820acaee1721774c93c046e2ff626", size = 81532483, upload-time = "2026-07-14T01:22:23.923Z" },
+    { url = "https://files.pythonhosted.org/packages/af/c8/b49d7bcebfb8abfd57d773ab45d4b0e2aa0cc6cb934d9c44c9d204e94e75/claude_agent_sdk-0.2.117-py3-none-win_amd64.whl", hash = "sha256:2eb434ab12d7f153c0ad22aa2417cfa5385845cb8254cd21ebb260a2bfcc9119", size = 81417779, upload-time = "2026-07-14T01:22:28.172Z" },
 ]
 
 [[package]]
@@ -396,7 +396,7 @@ name = "coloredlogs"
 version = "15.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "humanfriendly" },
+    { name = "humanfriendly", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cc/c7/eed8f27100517e8c0e6b923d5f0845d0cb99763da6fdee00478f91db7325/coloredlogs-15.0.1.tar.gz", hash = "sha256:7c991aa71a4577af2f82600d8f8f3a89f936baeaf9b50a9c197da014e5bf16b0", size = 278520, upload-time = "2021-06-11T10:22:45.202Z" }
 wheels = [
@@ -971,7 +971,7 @@ name = "humanfriendly"
 version = "10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyreadline3" },
+    { name = "pyreadline3", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cc/3f/2c29224acb2e2df4d2046e4c73ee2662023c58ff5b113c4c1adac0886c43/humanfriendly-10.0.tar.gz", hash = "sha256:6b0b831ce8f15f7300721aa49829fc4e83921a9a301cc7f606be6686a2288ddc", size = 360702, upload-time = "2021-09-17T21:40:43.31Z" }
 wheels = [
@@ -1416,8 +1416,8 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "cairosvg", marker = "extra == 'all'", specifier = ">=2.9.0" },
     { name = "cairosvg", marker = "extra == 'svg'", specifier = ">=2.9.0" },
-    { name = "claude-agent-sdk", marker = "extra == 'all'", specifier = ">=0.1.50" },
-    { name = "claude-agent-sdk", marker = "extra == 'claude-agent'", specifier = ">=0.1.50" },
+    { name = "claude-agent-sdk", marker = "extra == 'all'", specifier = ">=0.2.117" },
+    { name = "claude-agent-sdk", marker = "extra == 'claude-agent'", specifier = ">=0.2.117" },
     { name = "click", specifier = ">=8.3.0" },
     { name = "curl-cffi", marker = "extra == 'all'", specifier = ">=0.14.0" },
     { name = "curl-cffi", marker = "extra == 'extra-fetch'", specifier = ">=0.14.0" },
@@ -1908,13 +1908,13 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform == 'win32'",
 ]
 dependencies = [
-    { name = "coloredlogs" },
-    { name = "flatbuffers" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "packaging" },
-    { name = "protobuf" },
-    { name = "sympy" },
+    { name = "coloredlogs", marker = "sys_platform == 'win32'" },
+    { name = "flatbuffers", marker = "sys_platform == 'win32'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' and sys_platform == 'win32'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' and sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
+    { name = "protobuf", marker = "sys_platform == 'win32'" },
+    { name = "sympy", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/f1/cefacac137f7bb7bfba57c50c478150fcd3c54aca72762ac2c05ce0532c1/onnxruntime-1.20.1-cp311-cp311-win32.whl", hash = "sha256:a19bc6e8c70e2485a1725b3d517a2319603acc14c1f1a017dda0afe6d4665b41", size = 9813977, upload-time = "2024-11-21T00:49:00.519Z" },
@@ -1934,11 +1934,11 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "flatbuffers" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "packaging" },
-    { name = "protobuf" },
+    { name = "flatbuffers", marker = "sys_platform != 'win32'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' and sys_platform != 'win32'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' and sys_platform != 'win32'" },
+    { name = "packaging", marker = "sys_platform != 'win32'" },
+    { name = "protobuf", marker = "sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d4/e4/5353d7e09ced4a8f473f843223fc75d726b2b5519dcefc12f22a6c92852d/onnxruntime-1.27.0-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:8ba14a38c570087f3cdb8cfba33f7a38a1e826c1e5b29e17c28ceda0cc910016", size = 18416484, upload-time = "2026-06-15T22:43:43.894Z" },
@@ -3137,7 +3137,7 @@ name = "sympy"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mpmath" },
+    { name = "mpmath", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/83/d3/803453b36afefb7c2bb238361cd4ae6125a569b4db67cd9e79846ba2d68c/sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517", size = 7793921, upload-time = "2025-04-27T18:05:01.611Z" }
 wheels = [
