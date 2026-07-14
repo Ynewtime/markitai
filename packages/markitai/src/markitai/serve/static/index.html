@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/favicon.ico" sizes="32x32" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>markitai</title>
+    <script>
+      // Apply an explicitly chosen theme before first paint; "auto" keeps no
+      // attribute so the prefers-color-scheme media query decides (mock model).
+      (function () {
+        try {
+          var t = localStorage.getItem("markitai-theme");
+          if (t === "light" || t === "dark") {
+            document.documentElement.setAttribute("data-theme", t);
+          }
+        } catch (e) {
+          /* localStorage unavailable - fall back to auto */
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-CMzR27HW.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-ClfESqBB.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
