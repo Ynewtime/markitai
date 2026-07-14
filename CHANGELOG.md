@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-14
+
+### Added
+
+- **`markitai serve` adds a local web workspace for conversion**: install the `serve` extra to upload files or folders, submit URLs, watch live progress, preview and download results, and revisit seven days of on-disk history from a bilingual, accessible interface
+- **LLM setup moves into the web workspace**: discover available local and API-backed providers, browse live model lists, configure weighted deployments, test connections without exposing stored credentials, and use the same settings for conversion jobs
+- **Web jobs gain recovery and comparison tools**: retry failed file or URL items, filter large result sets, receive background completion notifications, copy an equivalent CLI command, and compare the base Markdown with its LLM-enhanced variant
+
 ### Fixed
 
-- **PDFs with spaces or parentheses in the filename now get embedded-image analysis**: pymupdf4llm sanitizes the source name when writing extracted images (`My Paper.pdf` → `My_Paper.pdf-0001-00.jpg`), but embedded images were collected by globbing on the raw input name — matching nothing, so `--alt`/`--desc`/`rich` silently skipped every embedded image (no alt text, no `images.json`, no compression) while page screenshots kept working. Collection now resolves the image refs the converter itself wrote into the markdown (plus demoted reference images), with the previous prefix glob kept as a fallback, and a warning is logged when referenced assets are missing from disk
+- **PDFs with spaces or parentheses in the filename now get embedded-image analysis**: pymupdf4llm sanitizes the source name when writing extracted images (`My Paper.pdf` → `My_Paper.pdf-0001-00.jpg`), but embedded images were collected by globbing on the raw input name, so `--alt`/`--desc`/`rich` silently skipped every embedded image while page screenshots kept working. Collection now resolves the image refs written into the Markdown, keeps the previous prefix match as a fallback, and warns when a referenced asset is missing from disk
+- **Web result downloads work with nested artifacts on Windows**: API paths use URL separators instead of filesystem backslashes, so images and other generated assets open through the same links on every supported OS
 
 ## [0.21.1] - 2026-07-12
 
