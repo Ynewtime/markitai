@@ -63,6 +63,7 @@ function i18n {
             "uv"                        { return "uv 包管理器" }
             "python"                    { return "Python" }
             "markitai"                  { return "markitai" }
+            "serve"                     { return "Web UI (markitai serve)" }
             "playwright"                { return "Playwright 浏览器" }
             "libreoffice"               { return "LibreOffice" }
             "ffmpeg"                    { return "FFmpeg" }
@@ -72,6 +73,7 @@ function i18n {
             "python_deps"               { return "Python 依赖" }
 
             # Confirmations
+            "confirm_serve"             { return "安装 Web UI 依赖? (启用 markitai serve)" }
             "confirm_playwright"        { return "安装 Playwright 浏览器? (用于 JS 渲染页面)" }
             "confirm_libreoffice"       { return "安装 LibreOffice? (用于 Office 文档转换)" }
             "confirm_ffmpeg"            { return "安装 FFmpeg? (用于音视频处理)" }
@@ -179,6 +181,7 @@ function i18n {
             "uv"                        { return "uv package manager" }
             "python"                    { return "Python" }
             "markitai"                  { return "markitai" }
+            "serve"                     { return "Web UI (markitai serve)" }
             "playwright"                { return "Playwright browser" }
             "libreoffice"               { return "LibreOffice" }
             "ffmpeg"                    { return "FFmpeg" }
@@ -188,6 +191,7 @@ function i18n {
             "python_deps"               { return "Python dependencies" }
 
             # Confirmations
+            "confirm_serve"             { return "Install Web UI dependencies? (enables markitai serve)" }
             "confirm_playwright"        { return "Install Playwright browser? (for JS-rendered pages)" }
             "confirm_libreoffice"       { return "Install LibreOffice? (for Office document conversion)" }
             "confirm_ffmpeg"            { return "Install FFmpeg? (for audio/video processing)" }
@@ -806,30 +810,17 @@ function Install-Python {
     return $false
 }
 
-# Install markitai (User mode)
-function Install-Markitai {
-    # Detect existing extras from uv receipt to preserve on upgrade
+function Get-MarkitaiToolsDir {
     $uvToolsDir = $null
     try { $uvToolsDir = & uv tool dir 2>$null } catch {}
-    if (-not $uvToolsDir) {
-        if ($env:WSL_DISTRO_NAME) {
-            $uvToolsDir = "$HOME/.local/share/uv/tools"
-        } else {
-            $uvToolsDir = "$env:APPDATA\uv\tools"
-        }
-    }
-    # Detect existing extras from uv receipt to preserve on upgrade.
-    # Generic parsing — automatically preserves any extras, future-proof.
-    $receiptFile = Join-Path $uvToolsDir "markitai\uv-receipt.toml"
-    if (Test-Path $receiptFile) {
-        $receipt = Get-Content $receiptFile -Raw -ErrorAction SilentlyContinue
-        if ($receipt -match 'extras\s*=\s*\[([^\]]*)\]') {
-            $extrasStr = $Matches[1] -replace '"', '' -replace '\s', ''
-            foreach ($extra in ($extrasStr -split ',')) {
-                if ($extra) { Install-MarkitaiExtra -ExtraName $extra }
-            }
-        }
-    }
+    if ($uvToolsDir) { return $uvToolsDir }
+    if ($env:WSL_DISTRO_NAME) { return "$HOME/.local/share/uv/tools" }
+    return "$env:APPDATA\uv\tools"
+}
+
+# Install markitai (User mode)
+function Install-Markitai {
+    $uvToolsDir = Get-MarkitaiToolsDir
 
     # Build package spec with all tracked extras
     $pkg = Get-MarkitaiPkgSpec -Extras $script:MARKITAI_EXTRAS
@@ -852,7 +843,10 @@ function Install-Markitai {
     if (Test-Path $markitaiToolDir) {
         # Only an unpinned PyPI install can use the receipt-based upgrade path.
         # Explicit versions and local sources must apply the exact spec below.
-        if ($script:MARKITAI_SOURCE -ne "local" -and -not $script:MarkitaiVersion) {
+        if (
+            $script:MARKITAI_SOURCE -ne "local" -and -not $script:MarkitaiVersion -and
+            -not (Test-MarkitaiExtrasNeedUpdate)
+        ) {
             try {
                 $null = & uv tool upgrade markitai 2>&1
                 $exitCode = $LASTEXITCODE
@@ -906,21 +900,92 @@ function Install-Markitai {
 # Global variable tracking all needed extras (comma-separated). A fresh
 # non-interactive install starts with core only unless explicitly opted in.
 $script:MARKITAI_EXTRAS = ""
+$script:MARKITAI_RECEIPT_EXTRAS = @()
+$script:MARKITAI_ALL_FALLBACK_EXTRAS = "browser,extra-fetch,kreuzberg,svg,heif,serve"
 if ((Test-InteractiveInput) -or (Test-OptionalInstallRequested)) {
     $script:MARKITAI_EXTRAS = "browser"
 }
 
-# Track a markitai extra for deferred installation
-# Extras are accumulated and installed once via Finalize-MarkitaiExtras
+# Return true when an extra is covered by the combined spec. `all` is
+# canonical and includes every individual extra, including `serve`.
+function Test-MarkitaiExtraEnabled {
+    param([string]$ExtraName)
+
+    if ($script:MARKITAI_EXTRAS -eq "all") { return $true }
+    return (($script:MARKITAI_EXTRAS -split ",") -contains $ExtraName)
+}
+
+# Track a markitai extra for the next combined installation.
 function Install-MarkitaiExtra {
     param([string]$ExtraName)
 
-    # Check if already tracked
-    $extras = $script:MARKITAI_EXTRAS -split ","
-    if ($extras -contains $ExtraName) {
+    if ([string]::IsNullOrWhiteSpace($ExtraName)) { return }
+    if ($ExtraName -eq "all") {
+        $script:MARKITAI_EXTRAS = "all"
         return
     }
-    $script:MARKITAI_EXTRAS = "$($script:MARKITAI_EXTRAS),$ExtraName"
+    if (Test-MarkitaiExtraEnabled -ExtraName $ExtraName) { return }
+    if ([string]::IsNullOrEmpty($script:MARKITAI_EXTRAS)) {
+        $script:MARKITAI_EXTRAS = $ExtraName
+    } else {
+        $script:MARKITAI_EXTRAS = "$($script:MARKITAI_EXTRAS),$ExtraName"
+    }
+}
+
+# Preserve every extra recorded by uv before asking for new capabilities.
+function Import-MarkitaiReceiptExtras {
+    $uvToolsDir = Get-MarkitaiToolsDir
+    $receiptFile = Join-Path $uvToolsDir "markitai\uv-receipt.toml"
+    $script:MARKITAI_RECEIPT_EXTRAS = @()
+    if (-not (Test-Path $receiptFile)) { return }
+
+    $receipt = Get-Content $receiptFile -Raw -ErrorAction SilentlyContinue
+    if ($receipt -match 'extras\s*=\s*\[([^\]]*)\]') {
+        $extrasStr = $Matches[1] -replace '"', '' -replace '\s', ''
+        $script:MARKITAI_RECEIPT_EXTRAS = @(
+            $extrasStr -split ',' | Where-Object { $_ }
+        )
+        foreach ($extra in $script:MARKITAI_RECEIPT_EXTRAS) {
+            Install-MarkitaiExtra -ExtraName $extra
+        }
+    }
+}
+
+function Test-MarkitaiReceiptHasExtra {
+    param([string]$ExtraName)
+
+    return (
+        ($script:MARKITAI_RECEIPT_EXTRAS -contains "all") -or
+        ($script:MARKITAI_RECEIPT_EXTRAS -contains $ExtraName)
+    )
+}
+
+# A generic `uv tool upgrade` only reuses the old receipt. Return true when
+# the combined target has a newly selected extra and needs an exact reinstall.
+function Test-MarkitaiExtrasNeedUpdate {
+    foreach ($extra in ($script:MARKITAI_EXTRAS -split ",")) {
+        if ($extra -and -not (Test-MarkitaiReceiptHasExtra -ExtraName $extra)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+# Resolve Web UI support before installing markitai so `serve` joins the same
+# package spec as browser/all/existing extras instead of replacing them later.
+function Select-MarkitaiServe {
+    if (Test-MarkitaiExtraEnabled -ExtraName "serve") { return }
+    if (Confirm-OptionalInstall (i18n "confirm_serve") "y") {
+        Install-MarkitaiExtra -ExtraName "serve"
+    }
+}
+
+function Track-MarkitaiServe {
+    if (Test-MarkitaiExtraEnabled -ExtraName "serve") {
+        Track-Install -Component "serve" -Status "installed"
+    } else {
+        Track-Install -Component "serve" -Status "skipped"
+    }
 }
 
 # Finalize markitai extras after all optional components are resolved.
@@ -941,32 +1006,10 @@ function Finalize-MarkitaiExtras {
         }
     } catch {}
 
-    # Read current receipt to check if extras changed
-    $uvToolsDir = $null
-    try { $uvToolsDir = & uv tool dir 2>$null } catch {}
-    if (-not $uvToolsDir) {
-        if ($env:WSL_DISTRO_NAME) {
-            $uvToolsDir = "$HOME/.local/share/uv/tools"
-        } else {
-            $uvToolsDir = "$env:APPDATA\uv\tools"
-        }
-    }
-    $receiptFile = Join-Path $uvToolsDir "markitai\uv-receipt.toml"
-    $current = ""
-    if (Test-Path $receiptFile) {
-        $current = Get-Content $receiptFile -Raw -ErrorAction SilentlyContinue
-    }
-
-    # Check if new extras need to be added
-    $needsUpdate = $false
-    foreach ($extra in ($script:MARKITAI_EXTRAS -split ",")) {
-        if ($current -notmatch [regex]::Escape($extra)) {
-            $needsUpdate = $true
-            break
-        }
-    }
-
-    if (-not $needsUpdate) { return }
+    # Refresh the receipt after the initial install, then compare exact extra
+    # names (with `all` treated as a superset).
+    Import-MarkitaiReceiptExtras
+    if (-not (Test-MarkitaiExtrasNeedUpdate)) { return }
 
     # Reinstall with all extras (progressive fallback on failure)
     $pkg = Get-MarkitaiPkgSpec -Extras $script:MARKITAI_EXTRAS
@@ -986,8 +1029,14 @@ function Finalize-MarkitaiExtras {
         $safeExtras = @()
         $skipped = @()
         foreach ($e in ($script:MARKITAI_EXTRAS -split ",")) {
-            if ($sdkExtras -contains $e) { $skipped += $e }
-            else { $safeExtras += $e }
+            if ($e -eq "all") {
+                $safeExtras += ($script:MARKITAI_ALL_FALLBACK_EXTRAS -split ",")
+                $skipped += $sdkExtras
+            } elseif ($sdkExtras -contains $e) {
+                $skipped += $e
+            } else {
+                $safeExtras += $e
+            }
         }
         if ($safeExtras.Count -gt 0) {
             $safeList = $safeExtras -join ","
@@ -1567,7 +1616,10 @@ function Run-UserSetup {
     Clack-Section (i18n "section_core")
     if (-not (Install-UV)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
     if (-not (Install-Python)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
+    Import-MarkitaiReceiptExtras
+    Select-MarkitaiServe
     if (-not (Install-Markitai)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
+    Track-MarkitaiServe
 
     Clack-Section (i18n "section_optional")
     Install-OptionalPlaywright | Out-Null

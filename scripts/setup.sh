@@ -68,6 +68,7 @@ i18n() {
             uv)                         echo "uv 包管理器" ;;
             python)                     echo "Python" ;;
             markitai)                   echo "markitai" ;;
+            serve)                      echo "Web UI (markitai serve)" ;;
             playwright)                 echo "Playwright 浏览器" ;;
             libreoffice)                echo "LibreOffice" ;;
             ffmpeg)                     echo "FFmpeg" ;;
@@ -77,6 +78,7 @@ i18n() {
             python_deps)                echo "Python 依赖" ;;
 
             # Confirmations
+            confirm_serve)              echo "安装 Web UI 依赖? (启用 markitai serve)" ;;
             confirm_playwright)         echo "安装 Playwright 浏览器? (用于 JS 渲染页面)" ;;
             confirm_libreoffice)        echo "安装 LibreOffice? (用于 Office 文档转换)" ;;
             confirm_ffmpeg)             echo "安装 FFmpeg? (用于音视频处理)" ;;
@@ -182,6 +184,7 @@ i18n() {
             uv)                         echo "uv package manager" ;;
             python)                     echo "Python" ;;
             markitai)                   echo "markitai" ;;
+            serve)                      echo "Web UI (markitai serve)" ;;
             playwright)                 echo "Playwright browser" ;;
             libreoffice)                echo "LibreOffice" ;;
             ffmpeg)                     echo "FFmpeg" ;;
@@ -191,6 +194,7 @@ i18n() {
             python_deps)                echo "Python dependencies" ;;
 
             # Confirmations
+            confirm_serve)              echo "Install Web UI dependencies? (enables markitai serve)" ;;
             confirm_playwright)         echo "Install Playwright browser? (for JS-rendered pages)" ;;
             confirm_libreoffice)        echo "Install LibreOffice? (for Office document conversion)" ;;
             confirm_ffmpeg)             echo "Install FFmpeg? (for audio/video processing)" ;;
@@ -879,21 +883,7 @@ detect_python() {
 # Requires: PYTHON_CMD to be set
 # Returns: 0 on success, 1 on failure
 install_markitai() {
-    # Detect existing extras from uv receipt to preserve on upgrade.
-    # Generic parsing — automatically preserves any extras, future-proof.
-    _uv_tools_dir=$(uv tool dir 2>/dev/null || echo "$HOME/.local/share/uv/tools")
-    _receipt_file="$_uv_tools_dir/markitai/uv-receipt.toml"
-    if [ -f "$_receipt_file" ]; then
-        # Extract extras array: extras = ["browser", "copilot", ...]
-        # Use [^]]* (non-greedy) to stop at first ], avoiding TOML outer brackets
-        _extras_raw=$(grep -o 'extras = \[[^]]*\]' "$_receipt_file" 2>/dev/null \
-            | sed 's/extras = \[//;s/\]//;s/"//g;s/ //g')
-        _old_ifs="$IFS"; IFS=','
-        for _e in $_extras_raw; do
-            [ -n "$_e" ] && install_markitai_extra "$_e"
-        done
-        IFS="$_old_ifs"
-    fi
+    _uv_tools_dir=$(markitai_tools_dir)
 
     # Build package spec with all tracked extras
     _mi_pkg=$(markitai_pkg_spec "$MARKITAI_EXTRAS")
@@ -909,7 +899,8 @@ install_markitai() {
         # An unpinned PyPI install can use the receipt-based upgrade path.
         # Explicit versions and local sources must replace the receipt with
         # the exact package spec assembled above.
-        if [ "$MARKITAI_SOURCE" != "local" ] && [ -z "$MARKITAI_VERSION" ]; then
+        if [ "$MARKITAI_SOURCE" != "local" ] && [ -z "$MARKITAI_VERSION" ] \
+            && ! markitai_extras_need_update; then
             if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool upgrade markitai; then
                 export PATH="$HOME/.local/bin:$PATH"
                 _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
@@ -959,19 +950,103 @@ install_markitai() {
 # headless installs start with the core package; the explicit opt-in flag or
 # an interactive session keeps the guided browser-extra default.
 MARKITAI_EXTRAS=""
+MARKITAI_RECEIPT_EXTRAS=""
+MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,kreuzberg,svg,heif,serve"
 if has_interactive_tty || optional_install_requested; then
     MARKITAI_EXTRAS="browser"
 fi
 
-# Track a markitai extra for deferred installation
+markitai_tools_dir() {
+    uv tool dir 2>/dev/null || echo "$HOME/.local/share/uv/tools"
+}
+
+# Return success when an extra is already covered by the combined spec.
+# `all` is canonical and is a superset of every individual extra, including
+# `serve`; never generate redundant requirements such as `markitai[all,serve]`.
+markitai_extra_enabled() {
+    _extra_name="$1"
+    [ "$MARKITAI_EXTRAS" = "all" ] && return 0
+    case ",$MARKITAI_EXTRAS," in
+        *",$_extra_name,"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Track a markitai extra for the next combined installation.
 # Usage: install_markitai_extra "claude-agent"
-# Extras are accumulated and installed once via finalize_markitai_extras()
 install_markitai_extra() {
     _extra_name="$1"
-    case ",$MARKITAI_EXTRAS," in
-        *",$_extra_name,"*) return 0 ;;  # Already tracked
+    [ -z "$_extra_name" ] && return 0
+    if [ "$_extra_name" = "all" ]; then
+        MARKITAI_EXTRAS="all"
+        return 0
+    fi
+    markitai_extra_enabled "$_extra_name" && return 0
+    if [ -z "$MARKITAI_EXTRAS" ]; then
+        MARKITAI_EXTRAS="$_extra_name"
+    else
+        MARKITAI_EXTRAS="${MARKITAI_EXTRAS},$_extra_name"
+    fi
+}
+
+# Preserve every extra recorded by uv before asking for new capabilities.
+load_existing_markitai_extras() {
+    _uv_tools_dir=$(markitai_tools_dir)
+    _receipt_file="$_uv_tools_dir/markitai/uv-receipt.toml"
+    MARKITAI_RECEIPT_EXTRAS=""
+    if [ ! -f "$_receipt_file" ]; then
+        return 0
+    fi
+
+    # Extract extras array: extras = ["browser", "copilot", ...]
+    MARKITAI_RECEIPT_EXTRAS=$(grep -o 'extras = \[[^]]*\]' "$_receipt_file" 2>/dev/null \
+        | head -n 1 | sed 's/extras = \[//;s/\]//;s/"//g;s/ //g')
+    _old_ifs="$IFS"; IFS=','
+    for _e in $MARKITAI_RECEIPT_EXTRAS; do
+        [ -n "$_e" ] && install_markitai_extra "$_e"
+    done
+    IFS="$_old_ifs"
+}
+
+markitai_receipt_has_extra() {
+    _extra_name="$1"
+    [ "$MARKITAI_RECEIPT_EXTRAS" = "all" ] && return 0
+    case ",$MARKITAI_RECEIPT_EXTRAS," in
+        *",$_extra_name,"*) return 0 ;;
+        *) return 1 ;;
     esac
-    MARKITAI_EXTRAS="${MARKITAI_EXTRAS},$_extra_name"
+}
+
+# Return success when the combined target contains an extra absent from the
+# current uv receipt. In that case `uv tool upgrade` is insufficient because
+# it only upgrades the old receipt and ignores newly selected extras.
+markitai_extras_need_update() {
+    _old_ifs="$IFS"; IFS=','
+    for _extra in $MARKITAI_EXTRAS; do
+        if [ -n "$_extra" ] && ! markitai_receipt_has_extra "$_extra"; then
+            IFS="$_old_ifs"
+            return 0
+        fi
+    done
+    IFS="$_old_ifs"
+    return 1
+}
+
+# Resolve Web UI support before installing markitai so `serve` joins the same
+# package spec as browser/all/existing extras instead of replacing them later.
+select_markitai_serve() {
+    markitai_extra_enabled "serve" && return 0
+    if clack_confirm_optional "$(i18n confirm_serve)" "y"; then
+        install_markitai_extra "serve"
+    fi
+}
+
+track_markitai_serve() {
+    if markitai_extra_enabled "serve"; then
+        track_install "serve" "installed"
+    else
+        track_install "serve" "skipped"
+    fi
 }
 
 # Finalize markitai extras after all optional components are resolved.
@@ -993,24 +1068,12 @@ finalize_markitai_extras() {
         IFS="$_old_ifs"
     fi
 
-    # Read current receipt to check if extras changed
-    _uv_tools_dir=$(uv tool dir 2>/dev/null || echo "$HOME/.local/share/uv/tools")
-    _receipt_file="$_uv_tools_dir/markitai/uv-receipt.toml"
-    _current=""
-    if [ -f "$_receipt_file" ]; then
-        _current=$(cat "$_receipt_file" 2>/dev/null || true)
+    # Refresh the receipt after the initial install, then compare exact extra
+    # names (with `all` treated as a superset).
+    load_existing_markitai_extras
+    if ! markitai_extras_need_update; then
+        return 0
     fi
-
-    # Check if any tracked extra is missing from current receipt
-    _needs_update=false
-    _old_ifs="$IFS"
-    IFS=','
-    for _extra in $MARKITAI_EXTRAS; do
-        case "$_current" in *"$_extra"*) ;; *) _needs_update=true ;; esac
-    done
-    IFS="$_old_ifs"
-
-    [ "$_needs_update" = "false" ] && return 0
 
     # Reinstall with all extras (progressive fallback on failure)
     _mi_pkg=$(markitai_pkg_spec "$MARKITAI_EXTRAS")
@@ -1022,6 +1085,10 @@ finalize_markitai_extras() {
         _old_ifs="$IFS"; IFS=','
         for _e in $MARKITAI_EXTRAS; do
             case "$_e" in
+                all)
+                    _safe_extras="$MARKITAI_ALL_FALLBACK_EXTRAS"
+                    _skipped="claude-agent, copilot"
+                    ;;
                 claude-agent|copilot) _skipped="${_skipped:+$_skipped, }$_e" ;;
                 *) _safe_extras="${_safe_extras:+$_safe_extras,}$_e" ;;
             esac
@@ -1565,7 +1632,10 @@ run_user_setup() {
     clack_section "$(i18n section_core)"
     install_uv || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
     detect_python || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
+    load_existing_markitai_extras
+    select_markitai_serve
     install_markitai || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
+    track_markitai_serve
 
     clack_section "$(i18n section_optional)"
     install_optional_playwright || true

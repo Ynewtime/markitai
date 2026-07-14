@@ -1,6 +1,6 @@
-"""Regression guard for scripts/setup.sh set -e safety.
+"""Regression guards for the cross-platform setup scripts.
 
-Root cause of the bug this guards against: setup.sh runs under `set -eu`,
+One root cause guarded here: setup.sh runs under `set -eu`,
 and its optional-component installers return non-zero to signal a
 declined/failed OPTIONAL step (skip → `return 2`, fail → `return 1`).
 When such a call is unguarded, `set -e` treats the non-zero return as
@@ -14,12 +14,14 @@ test fails if any of them regresses back to a bare call.
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
 
 _SETUP_SH = Path(__file__).resolve().parents[4] / "scripts" / "setup.sh"
 _SETUP_PS1 = Path(__file__).resolve().parents[4] / "scripts" / "setup.ps1"
+_MARKITAI_PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
 # Non-fatal orchestration calls: declining/failing these must NOT abort setup.
 # (install_uv / install_markitai are intentionally fatal and use their own
@@ -197,3 +199,89 @@ def test_noninteractive_core_install_does_not_seed_browser_extra() -> None:
     assert "optional_install_requested" in shell_text
     assert '$script:MARKITAI_EXTRAS = ""' in ps_text
     assert "Test-OptionalInstallRequested" in ps_text
+
+
+def test_user_install_selects_serve_before_installing_markitai() -> None:
+    """Serve must join the first combined requirement, never replace it later."""
+    shell_flow = _shell_function("run_user_setup")
+    shell_load = shell_flow.find("load_existing_markitai_extras")
+    shell_select = shell_flow.find("select_markitai_serve")
+    shell_install = shell_flow.find("install_markitai ||")
+    shell_track = shell_flow.find("track_markitai_serve")
+    assert 0 <= shell_load < shell_select < shell_install < shell_track
+
+    ps_flow = _powershell_function("Run-UserSetup")
+    ps_load = ps_flow.find("Import-MarkitaiReceiptExtras")
+    ps_select = ps_flow.find("Select-MarkitaiServe")
+    ps_install = ps_flow.find("Install-Markitai))")
+    ps_track = ps_flow.find("Track-MarkitaiServe")
+    assert 0 <= ps_load < ps_select < ps_install < ps_track
+
+    shell_select_body = _shell_function("select_markitai_serve")
+    assert "clack_confirm_optional" in shell_select_body
+    assert 'install_markitai_extra "serve"' in shell_select_body
+
+    ps_select_body = _powershell_function("Select-MarkitaiServe")
+    assert "Confirm-OptionalInstall" in ps_select_body
+    assert 'Install-MarkitaiExtra -ExtraName "serve"' in ps_select_body
+
+    shell_text = _SETUP_SH.read_text(encoding="utf-8")
+    ps_text = _SETUP_PS1.read_text(encoding="utf-8")
+    assert "confirm_serve)" in shell_text and "serve)" in shell_text
+    assert '"confirm_serve"' in ps_text and '"serve"' in ps_text
+
+
+def test_combined_extra_install_bypasses_receipt_upgrade_when_extras_changed() -> None:
+    """A newly selected extra must be applied by the combined package spec."""
+    shell_body = _shell_function("install_markitai")
+    changed_guard = shell_body.find("! markitai_extras_need_update")
+    generic_upgrade = shell_body.find("uv tool upgrade markitai")
+    combined_install = shell_body.find(
+        'uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force'
+    )
+    assert 0 <= changed_guard < generic_upgrade < combined_install
+
+    ps_body = _powershell_function("Install-Markitai")
+    changed_guard = ps_body.find("-not (Test-MarkitaiExtrasNeedUpdate)")
+    generic_upgrade = ps_body.find("uv tool upgrade markitai")
+    combined_install = ps_body.find("uv tool install $pkg --python $pythonArg --force")
+    assert 0 <= changed_guard < generic_upgrade < combined_install
+
+
+def test_extra_accumulators_treat_all_as_a_superset() -> None:
+    """`all` must remain canonical instead of becoming `all,serve` or `,all`."""
+    shell_body = _shell_function("install_markitai_extra")
+    assert '[ "$_extra_name" = "all" ]' in shell_body
+    assert 'MARKITAI_EXTRAS="all"' in shell_body
+    assert 'if [ -z "$MARKITAI_EXTRAS" ]; then' in shell_body
+    assert "markitai_extra_enabled" in shell_body
+
+    ps_body = _powershell_function("Install-MarkitaiExtra")
+    assert '$ExtraName -eq "all"' in ps_body
+    assert '$script:MARKITAI_EXTRAS = "all"' in ps_body
+    assert "[string]::IsNullOrEmpty($script:MARKITAI_EXTRAS)" in ps_body
+    assert "Test-MarkitaiExtraEnabled" in ps_body
+
+
+def test_all_extra_and_its_fallback_include_serve() -> None:
+    """The public `all` contract and installer fallback both include Web UI."""
+    metadata = tomllib.loads(_MARKITAI_PYPROJECT.read_text(encoding="utf-8"))
+    extras = metadata["project"]["optional-dependencies"]
+
+    def package_name(requirement: str) -> str:
+        return re.split(r"[<>=!~ ]", requirement, maxsplit=1)[0].lower()
+
+    serve_packages = {package_name(requirement) for requirement in extras["serve"]}
+    all_packages = {package_name(requirement) for requirement in extras["all"]}
+    assert serve_packages <= all_packages
+
+    shell_text = _SETUP_SH.read_text(encoding="utf-8")
+    ps_text = _SETUP_PS1.read_text(encoding="utf-8")
+    assert (
+        'MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,kreuzberg,svg,heif,serve"'
+        in shell_text
+    )
+    assert (
+        '$script:MARKITAI_ALL_FALLBACK_EXTRAS = "browser,extra-fetch,kreuzberg,svg,heif,serve"'
+        in ps_text
+    )
