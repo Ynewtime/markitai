@@ -17,8 +17,10 @@ Usage:
 from __future__ import annotations
 
 import base64
+import getpass
 import importlib.util
 import json
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -348,6 +350,94 @@ def _check_claude_cli_login() -> AuthStatus | None:
             "auth_method": auth_method if isinstance(auth_method, str) else None,
         },
     )
+
+
+def _claude_oauth_credentials() -> dict[str, Any] | None:
+    """Read Claude Code OAuth credentials without returning them to callers/UI."""
+    credentials_path = Path.home() / ".claude" / ".credentials.json"
+    if credentials_path.exists():
+        try:
+            data: Any = json.loads(credentials_path.read_text(encoding="utf-8"))
+            oauth = data.get("claudeAiOauth") if isinstance(data, dict) else None
+            if isinstance(oauth, dict) and oauth.get("accessToken"):
+                return oauth
+        except Exception:
+            pass
+
+    if sys.platform != "darwin":
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "/usr/bin/security",
+                "find-generic-password",
+                "-s",
+                "Claude Code-credentials",
+                "-w",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if proc.returncode != 0:
+            return None
+        data = json.loads(proc.stdout)
+        oauth = data.get("claudeAiOauth") if isinstance(data, dict) else None
+        return oauth if isinstance(oauth, dict) and oauth.get("accessToken") else None
+    except Exception:
+        return None
+
+
+def _store_claude_oauth_credentials(credentials: dict[str, Any]) -> bool:
+    """Persist refreshed Claude Code OAuth credentials to its native store."""
+    credentials_path = Path.home() / ".claude" / ".credentials.json"
+    if credentials_path.exists():
+        try:
+            current: Any = json.loads(credentials_path.read_text(encoding="utf-8"))
+            payload = current if isinstance(current, dict) else {}
+            payload["claudeAiOauth"] = credentials
+            from markitai.security import atomic_write_json
+
+            atomic_write_json(credentials_path, payload)
+            return True
+        except Exception:
+            return False
+
+    if sys.platform != "darwin":
+        return False
+    try:
+        payload = json.dumps({"claudeAiOauth": credentials}, separators=(",", ":"))
+        proc = subprocess.run(
+            [
+                "/usr/bin/security",
+                "add-generic-password",
+                "-U",
+                "-a",
+                getpass.getuser(),
+                "-s",
+                "Claude Code-credentials",
+                "-w",
+                payload,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def _chatgpt_oauth_credentials() -> dict[str, Any] | None:
+    """Read LiteLLM ChatGPT OAuth credentials for account-scoped discovery."""
+    auth_path = Path.home() / ".config" / "litellm" / "chatgpt" / "auth.json"
+    if not auth_path.exists():
+        return None
+    try:
+        data: Any = json.loads(auth_path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) and data.get("access_token") else None
+    except Exception:
+        return None
 
 
 def _check_claude_credentials_auth() -> AuthStatus:
@@ -908,4 +998,7 @@ __all__ = [
     "_check_copilot_config_auth",
     "_check_claude_credentials_auth",
     "_check_chatgpt_auth",
+    "_claude_oauth_credentials",
+    "_store_claude_oauth_credentials",
+    "_chatgpt_oauth_credentials",
 ]
