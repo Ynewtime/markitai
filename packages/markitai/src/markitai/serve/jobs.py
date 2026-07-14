@@ -593,8 +593,11 @@ def _apply_result(job: Job, item: JobItem, result: ProcessResult) -> None:
     item.cost_usd = result.cost_usd
     if result.output_path:
         try:
-            item.output = str(
-                Path(result.output_path).resolve().relative_to(job.out_dir.resolve())
+            item.output = (
+                Path(result.output_path)
+                .resolve()
+                .relative_to(job.out_dir.resolve())
+                .as_posix()
             )
         except ValueError:
             item.output = None

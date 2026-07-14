@@ -365,7 +365,7 @@ class TestJobLifecycle:
             if gate is not None:
                 await gate.wait()
             out = out_dir / f"{file_path.name}.md"
-            out.write_text(f"# converted {file_path.name}\n", encoding="utf-8")
+            out.write_bytes(f"# converted {file_path.name}\n".encode())
             return ProcessResult(success=True, output_path=str(out), cost_usd=cost)
 
         return fake_process_file_item

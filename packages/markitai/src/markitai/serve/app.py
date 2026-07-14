@@ -1636,7 +1636,7 @@ def create_app(
                 seen.add(path)
                 artifacts.append(
                     {
-                        "relpath": str(path.relative_to(out_dir)),
+                        "relpath": path.relative_to(out_dir).as_posix(),
                         "size": path.stat().st_size,
                     }
                 )
