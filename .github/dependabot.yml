@@ -22,6 +22,10 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     ignore:
+      # Dependabot's uv updater still selects this explicitly excluded release
+      # as a candidate, then reports the workspace constraint as unresolvable.
+      - dependency-name: "litellm"
+        versions: ["1.92.0"]
       # Avoid major version updates that may break compatibility
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
