@@ -22,7 +22,6 @@ export function AppHeader({
   version,
   locale,
   onLocale,
-  historyActive,
   onHome,
   onHistory,
   settingsOpen,
@@ -33,7 +32,6 @@ export function AppHeader({
   version: string | null;
   locale: Locale;
   onLocale: (l: Locale) => void;
-  historyActive: boolean;
   onHome: () => void;
   onHistory: () => void;
   settingsOpen: boolean;
@@ -71,9 +69,8 @@ export function AppHeader({
           <ThemeToggle t={t} label={t.themeAria} />
           <button
             type="button"
-            className={historyActive ? "gearbtn on" : "gearbtn"}
+            className="gearbtn"
             aria-label={t.historyAria}
-            aria-pressed={historyActive}
             title={t.historyAria}
             onClick={onHistory}
           >

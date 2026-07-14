@@ -319,9 +319,27 @@ export function useJobs() {
     writeStoredJobs([]);
   }, []);
 
+  /** Keep running jobs reachable; remove only whole terminal jobs. */
+  const clearSettled = useCallback(() => {
+    const terminalIds = new Set(
+      Object.values(jobs)
+        .filter((job) => job.status !== "running")
+        .map((job) => job.jobId),
+    );
+    if (terminalIds.size === 0) return;
+    setItems((previous) => previous.filter((item) => !terminalIds.has(item.jobId)));
+    setJobs((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(([jobId]) => !terminalIds.has(jobId)),
+      ),
+    );
+    setSubmitError(null);
+    writeStoredJobs(readStoredJobs().filter((job) => !terminalIds.has(job.jobId)));
+  }, [jobs]);
+
   /** Merge an archived (terminal) job from the history into the session.
    * No event stream — the snapshot already is the final state. */
-  const openArchived = useCallback((snap: JobSnapshot) => {
+  const openArchived = useCallback((snap: JobSnapshot): string | null => {
     const jobId = snap.job_id;
     const now = Date.now();
     setJobs((prev) =>
@@ -372,22 +390,11 @@ export function useJobs() {
         },
       ]);
     }
+    const first = snap.items.find(
+      (item) => item.status === "done" && item.output !== null && !item.skipped,
+    );
+    return first === undefined ? null : `${jobId}/${first.item_id}`;
   }, []);
-
-  /** Drop one job (and its rows) from the session, e.g. after the history
-   * entry backing it was deleted. */
-  const removeJob = useCallback(
-    (jobId: string) => {
-      closeEvents(jobId);
-      setItems((prev) => prev.filter((i) => i.jobId !== jobId));
-      setJobs((prev) => {
-        const { [jobId]: _gone, ...rest } = prev;
-        return rest;
-      });
-      writeStoredJobs(readStoredJobs().filter((j) => j.jobId !== jobId));
-    },
-    [closeEvents],
-  );
 
   // ---- session restore (F5 mid-job): seed the ledger from sessionStorage,
   // then reconcile each job against the server. 404 (server restarted) drops
@@ -514,6 +521,10 @@ export function useJobs() {
     () => Object.values(jobs).some((j) => j.status === "running"),
     [jobs],
   );
+  const terminalJobCount = useMemo(
+    () => Object.values(jobs).filter((job) => job.status !== "running").length,
+    [jobs],
+  );
 
   /** Items still queued or running (drives the clear-confirm step). */
   const activeCount = useMemo(
@@ -537,7 +548,8 @@ export function useJobs() {
     retry,
     submitError,
     clear,
+    clearSettled,
+    terminalJobCount,
     openArchived,
-    removeJob,
   };
 }

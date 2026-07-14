@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SessionItem, SessionStats } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
 import { fmtCost, fmtDur } from "../lib/format";
@@ -43,8 +43,13 @@ export function ItemList({
   llmConfigured,
   selectedKey,
   onSelect,
+  onPreview,
+  focusKey,
+  onFocusKeyHandled,
   onOpenSettings,
   onRetry,
+  archivedRows,
+  hasArchivedRows = false,
 }: {
   t: Dict;
   items: SessionItem[];
@@ -55,8 +60,13 @@ export function ItemList({
   llmConfigured: boolean;
   selectedKey: string | null;
   onSelect: (key: string) => void;
+  onPreview: (key: string, opener: HTMLElement) => void;
+  focusKey: string | null;
+  onFocusKeyHandled: () => void;
   onOpenSettings: () => void;
   onRetry: (item: SessionItem) => Promise<string | null>;
+  archivedRows?: ReactNode;
+  hasArchivedRows?: boolean;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -99,6 +109,23 @@ export function ItemList({
     visible[0]?.key ??
     null;
 
+  useEffect(() => {
+    if (focusKey === null) return;
+    setQuery("");
+    setStatusF("all");
+    const id = window.requestAnimationFrame(() => {
+      const optionId = `opt-${focusKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+      const option = document.getElementById(optionId);
+      if (option !== null) {
+        setActiveKey(focusKey);
+        onSelect(focusKey);
+        option.focus();
+      }
+      onFocusKeyHandled();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [focusKey, onFocusKeyHandled, onSelect]);
+
   const onListKeyDown = (e: React.KeyboardEvent) => {
     const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
     if (!keys.includes(e.key)) return;
@@ -119,9 +146,10 @@ export function ItemList({
     const el = options[next];
     if (el === undefined) return;
     el.focus();
-    // Selection follows focus onto previewable rows only. The DOM option
-    // order is the visible (filtered) order.
-    const item = visible[next];
+    // Selection follows focus for current-session rows. Archived options
+    // own their activation and remain in place when opened.
+    const sessionKey = el.dataset.sessionKey;
+    const item = sessionKey === undefined ? undefined : visible.find((entry) => entry.key === sessionKey);
     if (item !== undefined && el.getAttribute("aria-disabled") !== "true") {
       onSelect(item.key);
     }
@@ -187,17 +215,18 @@ export function ItemList({
             selected={item.key === selectedKey}
             tabbable={item.key === effectiveActive}
             llmConfigured={llmConfigured}
-            onSelect={onSelect}
+            onPreview={onPreview}
             onOpenSettings={onOpenSettings}
             onRowFocus={setActiveKey}
             onRetry={onRetry}
           />
         ))}
+        {archivedRows}
       </div>
       {filterOn && visible.length === 0 && (
         <p className="fempty">{t.filterNoMatch}</p>
       )}
-      {settled && (
+      {settled && !hasArchivedRows && (
         <div className="lrow totals">
           <span />
           <span className="t-lbl">
