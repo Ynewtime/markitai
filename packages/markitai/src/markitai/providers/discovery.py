@@ -1,8 +1,8 @@
 """Provider-neutral connection and model discovery for CLI and serve UIs.
 
-No provider SDK is required except the optional GitHub Copilot SDK. Remote
-catalog calls use HTTP directly so importing this module never pulls in an
-Anthropic or OpenAI SDK.
+Remote catalog calls use HTTP directly, so importing this module never loads
+provider SDKs. Local connection readiness still verifies that the optional
+runtime package is installed in the current Markitai environment.
 """
 
 from __future__ import annotations
@@ -44,8 +44,43 @@ _connection_cache: dict[str, _CacheEntry] = {}
 _locks: dict[str, asyncio.Lock] = {}
 
 
+def _local_runtime_available(provider: str) -> bool:
+    """Whether this runtime can execute an authenticated local provider."""
+    dependency = {
+        "claude-agent": "claude_agent_sdk",
+        "copilot": "copilot",
+    }.get(provider)
+    return dependency is None or importlib.util.find_spec(dependency) is not None
+
+
 def _provider_of(model: str) -> str:
     return model.split("/", 1)[0].lower() if "/" in model else "custom"
+
+
+def provider_label(provider: str) -> str:
+    """Return the conventional display casing for a provider identifier."""
+    return {
+        "claude-agent": "Claude Agent",
+        "deepseek": "DeepSeek",
+        "openai": "OpenAI",
+        "openrouter": "OpenRouter",
+    }.get(provider, provider.replace("_", " ").title())
+
+
+_PROVIDER_DEFAULT_API_BASES = {
+    "anthropic": "https://api.anthropic.com/v1",
+    "claude-agent": "https://api.anthropic.com/v1",
+    "deepseek": "https://api.deepseek.com",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta",
+    "ollama": "http://127.0.0.1:11434",
+    "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+}
+
+
+def provider_default_api_base(provider: str) -> str | None:
+    """Return the effective built-in API base for a known provider."""
+    return _PROVIDER_DEFAULT_API_BASES.get(provider.lower())
 
 
 def _credential_identity(api_key: str | None) -> str:
@@ -143,17 +178,23 @@ async def detect_provider_connections(
             )
         except Exception:
             status = None
+        authenticated = status is not None and status.authenticated
+        runtime_ready = _local_runtime_available(provider)
         return {
             "id": provider,
             "provider": provider,
             "label": label,
             "kind": "local_cli",
-            "status": "ready"
-            if status is not None and status.authenticated
-            else "needs_auth",
+            "status": (
+                "ready"
+                if authenticated and runtime_ready
+                else "missing_dependency"
+                if authenticated
+                else "needs_auth"
+            ),
             "source": "cli",
             "default_model": default_model,
-            "supports_discovery": True,
+            "supports_discovery": runtime_ready,
         }
 
     async def chatgpt_card() -> dict[str, Any] | None:
@@ -207,6 +248,11 @@ async def detect_provider_connections(
                 }
             )
 
+    local_connections = {
+        str(card["provider"])
+        for card in cards
+        if card.get("kind") in {"local_cli", "oauth"}
+    }
     seen_configured: set[tuple[str, str | None]] = set()
     for model in configured or []:
         provider = _provider_of(model.litellm_params.model)
@@ -214,11 +260,15 @@ async def detect_provider_connections(
         if connection in seen_configured:
             continue
         seen_configured.add(connection)
+        # A saved local model is not a second connection. The detected card
+        # remains the one entry and can still discover/add further models.
+        if provider in local_connections and model.litellm_params.api_base is None:
+            continue
         cards.append(
             {
                 "id": f"configured:{len(seen_configured)}",
                 "provider": provider,
-                "label": provider.replace("_", " ").title(),
+                "label": provider_label(provider),
                 "kind": "configured",
                 "status": "ready" if model.litellm_params.weight > 0 else "disabled",
                 "source": "config",
@@ -442,17 +492,14 @@ async def _http_models(
     headers: dict[str, str] = {}
     params: dict[str, str] = {}
     if provider in {"openai", "deepseek", "openrouter"}:
-        default_base = {
-            "openai": "https://api.openai.com/v1",
-            "deepseek": "https://api.deepseek.com",
-            "openrouter": "https://openrouter.ai/api/v1",
-        }[provider]
+        default_base = provider_default_api_base(provider)
+        assert default_base is not None
         url = urljoin((api_base or default_base).rstrip("/") + "/", "models")
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
     elif provider in {"anthropic", "claude-agent"}:
         url = urljoin(
-            (api_base or "https://api.anthropic.com/v1").rstrip("/") + "/",
+            (api_base or provider_default_api_base(provider) or "").rstrip("/") + "/",
             "models",
         )
         if api_key:
@@ -472,7 +519,7 @@ async def _http_models(
             headers["ChatGPT-Account-Id"] = account_id
     elif provider == "gemini":
         url = urljoin(
-            (api_base or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+            (api_base or provider_default_api_base(provider) or "").rstrip("/")
             + "/",
             "models",
         )
@@ -481,7 +528,7 @@ async def _http_models(
         params["pageSize"] = "1000"
     elif provider == "ollama":
         url = urljoin(
-            (api_base or "http://127.0.0.1:11434").rstrip("/") + "/",
+            (api_base or provider_default_api_base(provider) or "").rstrip("/") + "/",
             "api/tags",
         )
     elif provider == "azure":

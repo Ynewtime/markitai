@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { collectFromEntries } from "../lib/fileTree";
 
 function dragHasFiles(e: DragEvent): boolean {
@@ -85,13 +85,18 @@ export function DropOverlay({
 export function FilePicker({
   label,
   onFiles,
+  icon,
+  className = "browse",
 }: {
   label: string;
   onFiles: (files: File[]) => void;
+  icon?: ReactNode;
+  className?: string;
 }) {
   return (
-    <label className="browse">
-      {label}
+    <label className={className}>
+      {icon}
+      <span>{label}</span>
       <input
         type="file"
         multiple

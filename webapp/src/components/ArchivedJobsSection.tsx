@@ -1,32 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { HistoryEntry, JobSnapshot } from "../api/types";
 import type { Dict } from "../i18n";
-import { fmtBytes } from "../lib/format";
-import { FileTextIcon } from "./icons";
-
-const CONFIRM_RESET_MS = 4000;
-
-function localYmd(date: Date): string {
-  return `${String(date.getFullYear())}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate(),
-  ).padStart(2, "0")}`;
-}
-
-function dayLabel(iso: string, t: Dict): string {
-  const date = new Date(iso);
-  const now = new Date();
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  const ymd = localYmd(date);
-  if (ymd === localYmd(now)) return t.histToday;
-  if (ymd === localYmd(yesterday)) return t.histYesterday;
-  return ymd;
-}
-
-function hhmm(iso: string): string {
-  const date = new Date(iso);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
+import { fmtBytes, fmtCost, fmtDateTime, fmtDur } from "../lib/format";
+import { ConfirmDeletePopover } from "./ConfirmDeletePopover";
+import {
+  FileTextIcon,
+  GlobeIcon,
+  MagicWandIcon,
+  RotateCcwIcon,
+  WarningIcon,
+} from "./icons";
 
 function statsLine(entry: HistoryEntry, t: Dict): string {
   const succeeded = Math.max(0, entry.done - entry.skipped);
@@ -36,7 +19,7 @@ function statsLine(entry: HistoryEntry, t: Dict): string {
   return parts.join(" · ");
 }
 
-/** Persisted jobs rendered as rows inside the main conversion ledger. */
+/** Persisted jobs use the same ledger row and terminal status language. */
 export function ArchivedJobRows({
   t,
   entries,
@@ -47,8 +30,11 @@ export function ArchivedJobRows({
   startIndex,
   onRefresh,
   onOpen,
+  onRetry,
+  onEnhance = async () => null,
   onDelete,
   announce,
+  llmAvailable = false,
 }: {
   t: Dict;
   entries: HistoryEntry[] | null;
@@ -59,53 +45,65 @@ export function ArchivedJobRows({
   startIndex: number;
   onRefresh: () => Promise<void>;
   onOpen: (jobId: string, opener: HTMLElement) => Promise<JobSnapshot | null>;
+  onRetry: (jobId: string) => Promise<string | null>;
+  onEnhance?: (jobId: string) => Promise<string | null>;
   onDelete: (jobId: string) => Promise<boolean>;
   announce: (message: string) => void;
+  llmAvailable?: boolean;
 }) {
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const confirmTimerRef = useRef<number | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const [enhancing, setEnhancing] = useState<string | null>(null);
+  const [retryErrors, setRetryErrors] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    return () => {
-      if (confirmTimerRef.current !== null) window.clearTimeout(confirmTimerRef.current);
-    };
-  }, []);
+  const retry = async (entry: HistoryEntry) => {
+    if (retrying !== null) return;
+    setRetrying(entry.job_id);
+    setRetryErrors((previous) => {
+      const next = { ...previous };
+      delete next[entry.job_id];
+      return next;
+    });
+    const error = await onRetry(entry.job_id);
+    if (error !== null) {
+      setRetryErrors((previous) => ({
+        ...previous,
+        [entry.job_id]: `${t.retryFailed}: ${error}`,
+      }));
+      setRetrying(null);
+    }
+  };
 
-  useEffect(() => {
-    if (confirmDelete === null) return;
-    const cancel = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      setConfirmDelete(null);
-    };
-    document.addEventListener("keydown", cancel, true);
-    return () => document.removeEventListener("keydown", cancel, true);
-  }, [confirmDelete]);
+  const enhance = async (entry: HistoryEntry) => {
+    if (retrying !== null || enhancing !== null) return;
+    setEnhancing(entry.job_id);
+    setRetryErrors((previous) => {
+      const next = { ...previous };
+      delete next[entry.job_id];
+      return next;
+    });
+    const error = await onEnhance(entry.job_id);
+    if (error !== null) {
+      setRetryErrors((previous) => ({
+        ...previous,
+        [entry.job_id]: `${t.llmEnhanceFailed}: ${error}`,
+      }));
+      setEnhancing(null);
+    }
+  };
 
   const requestDelete = async (entry: HistoryEntry, index: number) => {
     const jobId = entry.job_id;
-    if (confirmDelete !== jobId) {
-      setConfirmDelete(jobId);
-      if (confirmTimerRef.current !== null) window.clearTimeout(confirmTimerRef.current);
-      confirmTimerRef.current = window.setTimeout(
-        () => setConfirmDelete(null),
-        CONFIRM_RESET_MS,
-      );
-      return;
-    }
-
-    if (confirmTimerRef.current !== null) window.clearTimeout(confirmTimerRef.current);
-    setConfirmDelete(null);
     const nextId = entries?.[index + 1]?.job_id ?? entries?.[index - 1]?.job_id ?? null;
     const deleted = await onDelete(jobId);
-    if (!deleted) return;
+    if (!deleted) return false;
 
     announce(t.histDeleted(entry.names_preview[0] ?? jobId));
     window.requestAnimationFrame(() => {
       const nextRow = nextId === null ? null : rowRefs.current.get(nextId);
       nextRow?.focus();
     });
+    return true;
   };
 
   if (error !== null) {
@@ -131,17 +129,52 @@ export function ArchivedJobRows({
     <>
       {entries.map((entry, index) => {
         const more = entry.total - entry.names_preview.length;
+        const displayNames = entry.names_preview.map((name) =>
+          name.replace(/^https?:\/\//, ""),
+        );
         const names =
-          entry.names_preview.join(", ") + (more > 0 ? ` ${t.histMore(more)}` : "");
+          displayNames.join(", ") + (more > 0 ? ` ${t.histMore(more)}` : "");
         const firstName = entry.names_preview[0] ?? entry.job_id;
+        const firstKind = entry.kinds_preview[0] ?? "file";
         const busy = actions[entry.job_id];
-        const confirming = confirmDelete === entry.job_id;
+        const enhanceable =
+          entry.total === 1 &&
+          entry.done === 1 &&
+          entry.failed === 0 &&
+          entry.skipped === 0 &&
+          entry.llm_enhanced === 0;
+        const hasLlm =
+          entry.llm_enhanced > 0 ||
+          (entry.cost_usd !== null && entry.cost_usd > 0);
+        const llmLabel =
+          !hasLlm
+            ? "Base"
+            : entry.llm_enhanced === 0 || entry.llm_enhanced === entry.total
+              ? "LLM"
+              : `LLM ${entry.llm_enhanced}/${entry.total}`;
+        const duration =
+          entry.duration_ms === null ? "-" : fmtDur(entry.duration_ms);
+        const finished = fmtDateTime(entry.finished_at);
+        const singleResult =
+          entry.total === 1
+            ? entry.failed > 0
+              ? "error"
+              : entry.skipped > 0
+                ? "skip"
+                : "ok"
+            : null;
+        const statusClass =
+          entry.failed > 0
+            ? "chip err history-result"
+            : entry.skipped === entry.total
+              ? "chip skip history-result"
+              : "chip ok history-result";
         const activate = (opener: HTMLElement) => {
           if (busy === undefined) void onOpen(entry.job_id, opener);
         };
         return (
           <div
-            className="lrow archived-row"
+            className="lrow actionable"
             role="option"
             aria-selected={false}
             aria-disabled={busy !== undefined ? true : undefined}
@@ -152,7 +185,10 @@ export function ArchivedJobRows({
               if (element === null) rowRefs.current.delete(entry.job_id);
               else rowRefs.current.set(entry.job_id, element);
             }}
-            onClick={(event) => activate(event.currentTarget)}
+            onClick={(event) => {
+              event.currentTarget.focus({ preventScroll: true });
+              activate(event.currentTarget);
+            }}
             onKeyDown={(event) => {
               if (event.target !== event.currentTarget) return;
               if (event.key === "Enter" || event.key === " ") {
@@ -163,42 +199,144 @@ export function ArchivedJobRows({
           >
             <span className="c-num">{String(startIndex + index + 1).padStart(2, "0")}</span>
             <span className="c-name" title={names}>
-              <FileTextIcon />
-              <span className="archive-name">{names}</span>
-              <span className="minibadge">archived</span>
+              {firstKind === "url" ? <GlobeIcon /> : <FileTextIcon />}
+              <span className="fname">{names}</span>
             </span>
-            <span className="c-time" title={dayLabel(entry.created_at, t)}>
-              {hhmm(entry.created_at)}
+            <span className="c-duration">{duration}</span>
+            <span className="c-finished" title={entry.finished_at ?? undefined}>
+              {finished}
             </span>
-            {showCost && <span className="c-cost">—</span>}
+            {showCost && (
+              <span className="c-cost llm-cell">
+                <span
+                  className={hasLlm ? "llm-tag on" : "llm-tag"}
+                >
+                  {llmLabel}
+                </span>
+                {hasLlm && entry.cost_usd !== null && (
+                  <span className="llm-price">{fmtCost(entry.cost_usd)}</span>
+                )}
+              </span>
+            )}
             <span className="c-status archive-actions">
-              <span className="minibadge archive-result">{statsLine(entry, t)}</span>
-              <button
-                type="button"
-                className={confirming ? "rowact warn" : "rowact"}
-                disabled={busy !== undefined}
-                aria-label={
-                  confirming
-                    ? t.histConfirmDeleteAria(firstName)
-                    : t.histDeleteAria(firstName)
+              {singleResult === null ? (
+                <span className={statusClass}>{statsLine(entry, t)}</span>
+              ) : (
+                <span
+                  className={`item-result ${singleResult}${singleResult === "skip" ? " tooltip" : ""}`}
+                  title={
+                    singleResult === "error"
+                      ? t.statFailed
+                      : singleResult === "skip"
+                        ? t.statSkipped
+                        : t.done
+                  }
+                  data-tooltip={singleResult === "skip" ? t.statSkipped : undefined}
+                  aria-label={
+                    singleResult === "error"
+                      ? t.statFailed
+                      : singleResult === "skip"
+                        ? t.statSkipped
+                        : t.done
+                  }
+                  tabIndex={singleResult === "skip" ? 0 : undefined}
+                >
+                  <span aria-hidden="true">
+                    {singleResult === "error" ? (
+                      "×"
+                    ) : singleResult === "skip" ? (
+                      <WarningIcon size={17} />
+                    ) : (
+                      "✓"
+                    )}
+                  </span>
+                  <span className="sr-only">
+                    {singleResult === "error"
+                      ? t.statFailed
+                      : singleResult === "skip"
+                        ? t.statSkipped
+                        : t.done}
+                  </span>
+                </span>
+              )}
+              {enhanceable && (
+                <button
+                  type="button"
+                  className={
+                    retryErrors[entry.job_id] === undefined
+                      ? "rowicon enhance"
+                      : "rowicon enhance fail tooltip"
+                  }
+                  aria-label={t.enhanceWithLlm(firstName)}
+                  title={
+                    retryErrors[entry.job_id] ??
+                    (llmAvailable
+                      ? t.enhanceWithLlm(firstName)
+                      : t.llmEnhanceUnavailable)
+                  }
+                  data-tooltip={retryErrors[entry.job_id]}
+                  disabled={
+                    !llmAvailable ||
+                    busy !== undefined ||
+                    retrying !== null ||
+                    enhancing !== null
+                  }
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void enhance(entry);
+                  }}
+                >
+                  {enhancing === entry.job_id ? (
+                    <span className="spin" aria-hidden="true" />
+                  ) : (
+                    <MagicWandIcon />
+                  )}
+                </button>
+              )}
+              {entry.total === 1 && (entry.failed === 1 || entry.skipped === 1) && (
+                <button
+                  type="button"
+                  className="rowicon retry"
+                  aria-label={t.retryAria(firstName)}
+                  title={t.retryAria(firstName)}
+                  disabled={
+                    busy !== undefined || retrying !== null || enhancing !== null
+                  }
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void retry(entry);
+                  }}
+                >
+                  {retrying === entry.job_id ? (
+                    <span className="spin" aria-hidden="true" />
+                  ) : (
+                    <RotateCcwIcon />
+                  )}
+                </button>
+              )}
+              <ConfirmDeletePopover
+                triggerLabel={t.histDeleteAria(firstName)}
+                title={t.deleteItemTitle(firstName)}
+                description={t.deleteItemDescription}
+                confirmLabel={t.deletePermanently}
+                cancelLabel={t.cancel}
+                busyLabel={t.deleting}
+                disabled={
+                  busy !== undefined || retrying !== null || enhancing !== null
                 }
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void requestDelete(entry, index);
-                }}
-              >
-                {busy === "delete"
-                  ? t.deleting
-                  : confirming
-                    ? t.histConfirm
-                    : t.histDelete}
-              </button>
+                onConfirm={() => requestDelete(entry, index)}
+              />
             </span>
             <span className="rowmeta">
-              {statsLine(entry, t)} · {t.histStorageSize(fmtBytes(entry.size_bytes))}
+              {duration} / {finished} / {llmLabel}
+              {hasLlm && entry.cost_usd !== null && ` ${fmtCost(entry.cost_usd)}`} /{" "}
+              {t.histStorageSize(fmtBytes(entry.size_bytes))}
             </span>
-            {rowErrors[entry.job_id] !== undefined && (
-              <span className="c-err errline">{rowErrors[entry.job_id]}</span>
+            {(rowErrors[entry.job_id] !== undefined ||
+              retryErrors[entry.job_id] !== undefined) && (
+              <span className="c-err errline">
+                {retryErrors[entry.job_id] ?? rowErrors[entry.job_id]}
+              </span>
             )}
           </div>
         );

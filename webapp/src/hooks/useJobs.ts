@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createJob, fetchJobSnapshot, jobEventsUrl, retryJobItem } from "../api/client";
+import {
+  createJob,
+  deleteJobItem,
+  enhanceJobItem,
+  fetchJobSnapshot,
+  jobEventsUrl,
+  retryJobItem,
+} from "../api/client";
 import type {
   CreateJobResponse,
   ItemKind,
@@ -21,15 +28,60 @@ interface StoredSeed {
   name: string;
   kind: ItemKind;
   sizeBytes: number | null;
-  /** The row was retried as a new job (ledger keeps the original row). */
+  /** Pre-in-place-retry clients marked the superseded source seed this way. */
   retried?: boolean;
 }
 
 interface StoredJob {
   jobId: string;
   items: StoredSeed[];
-  /** Job was merged from the conversion history (server-side archive). */
-  archived?: boolean;
+}
+
+interface LegacyRetryRemoval {
+  jobId: string;
+  itemId: string;
+}
+
+/** Collapse session seeds written by the old "retry creates a job" client.
+ * The marker is authoritative: it was only persisted after the replacement
+ * job had been created and appended. New retries never write this marker. */
+export function migrateLegacyRetrySeeds(stored: StoredJob[]): {
+  jobs: StoredJob[];
+  removals: LegacyRetryRemoval[];
+  suppressedJobIds: Set<string>;
+} {
+  const removed = new Set<string>();
+  const removals: LegacyRetryRemoval[] = [];
+
+  stored.forEach((job, jobIndex) => {
+    for (const seed of job.items) {
+      if (seed.retried !== true) continue;
+      const replacementExists = stored.slice(jobIndex + 1).some(
+        (candidate) =>
+          candidate.items.length === 1 &&
+          candidate.items.some(
+            (next) =>
+              next.name === seed.name &&
+              next.kind === seed.kind &&
+              next.sizeBytes === seed.sizeBytes,
+          ),
+      );
+      if (!replacementExists) continue;
+      removed.add(`${job.jobId}/${seed.itemId}`);
+      removals.push({ jobId: job.jobId, itemId: seed.itemId });
+    }
+  });
+
+  const suppressedJobIds = new Set<string>();
+  const jobs = stored.flatMap((job) => {
+    const items = job.items.filter(
+      (seed) => !removed.has(`${job.jobId}/${seed.itemId}`),
+    );
+    if (items.length > 0) return [{ ...job, items }];
+    if (job.items.length > 0) suppressedJobIds.add(job.jobId);
+    return [];
+  });
+  return { jobs, removals, suppressedJobIds };
 }
 
 function readStoredJobs(): StoredJob[] {
@@ -53,7 +105,7 @@ function writeStoredJobs(jobs: StoredJob[]): void {
   }
 }
 
-function seedItem(jobId: string, seed: StoredSeed, archived: boolean): SessionItem {
+function seedItem(jobId: string, seed: StoredSeed): SessionItem {
   return {
     key: `${jobId}/${seed.itemId}`,
     jobId,
@@ -64,13 +116,14 @@ function seedItem(jobId: string, seed: StoredSeed, archived: boolean): SessionIt
     error: null,
     output: null,
     durationMs: null,
+    finishedAt: null,
     costUsd: null,
+    llmEnhanced: false,
+    operation: "convert",
     skipped: false,
     skipReason: null,
     sizeBytes: seed.sizeBytes,
     startedAt: null,
-    archived,
-    retried: seed.retried === true,
   };
 }
 
@@ -85,7 +138,11 @@ export interface SessionItem {
   error: string | null;
   output: string | null;
   durationMs: number | null;
+  /** Completion timestamp reported by the server. */
+  finishedAt: string | null;
   costUsd: number | null;
+  llmEnhanced: boolean;
+  operation: "convert" | "retry" | "enhance";
   /** Completed as a skip (neutral chip, non-selectable). */
   skipped: boolean;
   skipReason: string | null;
@@ -93,10 +150,6 @@ export interface SessionItem {
   sizeBytes: number | null;
   /** Wall-clock ms when we first observed the item running (live timer). */
   startedAt: number | null;
-  /** Merged from the conversion history — rows carry a neutral badge. */
-  archived: boolean;
-  /** Retried into a new job — the original row keeps a neutral marker. */
-  retried: boolean;
 }
 
 export interface SessionJob {
@@ -104,7 +157,63 @@ export interface SessionJob {
   status: JobStatus;
   createdAt: string | null;
   options: JobOptions;
-  archived: boolean;
+}
+
+/** Parse the server's offset-aware ISO timestamp without browser Date.parse quirks.
+ * Safari rejects some valid six-digit fractional timestamps emitted by Python. */
+export function serverTimestampMs(value: string): number | null {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(
+      value,
+    );
+  if (match === null) return null;
+  const [, year, month, day, hour, minute, second, fraction = "", zone, sign, zoneHour, zoneMinute] =
+    match;
+  const milliseconds = Number((fraction + "000").slice(0, 3));
+  const utc = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+    milliseconds,
+  );
+  if (!Number.isFinite(utc)) return null;
+  if (zone === "Z") return utc;
+  const offset = (Number(zoneHour) * 60 + Number(zoneMinute)) * 60_000;
+  return sign === "+" ? utc - offset : utc + offset;
+}
+
+/** Keep each job's input order, but place the most recently created job first. */
+export function newestSessionItemsFirst(
+  items: SessionItem[],
+  jobs: Record<string, SessionJob>,
+): SessionItem[] {
+  const itemPosition = new Map(items.map((item, index) => [item.key, index]));
+  const firstJobPosition = new Map<string, number>();
+  items.forEach((item, index) => {
+    if (!firstJobPosition.has(item.jobId)) firstJobPosition.set(item.jobId, index);
+  });
+  const jobTime = (jobId: string) => {
+    const createdAt = jobs[jobId]?.createdAt;
+    if (createdAt === null || createdAt === undefined) return Number.POSITIVE_INFINITY;
+    return serverTimestampMs(createdAt) ?? 0;
+  };
+
+  return [...items].sort((left, right) => {
+    if (left.jobId === right.jobId) {
+      return (itemPosition.get(left.key) ?? 0) - (itemPosition.get(right.key) ?? 0);
+    }
+    const leftTime = jobTime(left.jobId);
+    const rightTime = jobTime(right.jobId);
+    if (leftTime > rightTime) return -1;
+    if (leftTime < rightTime) return 1;
+    return (
+      (firstJobPosition.get(right.jobId) ?? 0) -
+      (firstJobPosition.get(left.jobId) ?? 0)
+    );
+  });
 }
 
 export interface SessionStats {
@@ -127,11 +236,32 @@ function mergeItem(prev: SessionItem, p: ItemPayload, now: number): SessionItem 
     error: p.error,
     output: p.output,
     durationMs: p.duration_ms,
+    finishedAt: p.finished_at,
     costUsd: p.cost_usd,
+    llmEnhanced: p.llm_enhanced,
+    operation: p.operation,
     skipped: p.skipped,
     skipReason: p.skip_reason,
-    startedAt: p.status === "running" ? (prev.startedAt ?? now) : prev.startedAt,
+    startedAt:
+      p.status === "running"
+        ? prev.status === "running"
+          ? (prev.startedAt ?? now)
+          : now
+        : null,
   };
+}
+
+function itemFromPayload(jobId: string, payload: ItemPayload, now: number): SessionItem {
+  return mergeItem(
+    seedItem(jobId, {
+      itemId: payload.item_id,
+      name: payload.name,
+      kind: payload.kind,
+      sizeBytes: null,
+    }),
+    payload,
+    now,
+  );
 }
 
 /**
@@ -144,6 +274,10 @@ export function useJobs() {
   const [items, setItems] = useState<SessionItem[]>([]);
   const [jobs, setJobs] = useState<Record<string, SessionJob>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [suppressedHistoryIds, setSuppressedHistoryIds] = useState(
+    () => new Set<string>(),
+  );
+  const [historyRevision, setHistoryRevision] = useState(0);
   const sourcesRef = useRef<Map<string, EventSource>>(new Map());
   // One completion notification per job; both the snapshot and the final
   // `job` frame can report the terminal state, so terminality is latched.
@@ -158,8 +292,8 @@ export function useJobs() {
   }, []);
 
   /** Terminal state observed on a live event stream (submitted or re-attached
-   * running jobs only — history merges never open a stream, so old archived
-   * jobs cannot notify). notifyJobDone itself checks hidden + permission. */
+   * running jobs only; persisted history never opens a stream and cannot
+   * notify. notifyJobDone itself checks hidden + permission. */
   const notifyTerminal = useCallback((jobId: string, done: number, failed: number) => {
     if (notifiedRef.current.has(jobId)) return;
     notifiedRef.current.add(jobId);
@@ -182,7 +316,6 @@ export function useJobs() {
             status: snap.status,
             createdAt: snap.created_at,
             options: snap.options,
-            archived: prev[jobId]?.archived ?? false,
           },
         }));
         setItems((prev) =>
@@ -227,14 +360,14 @@ export function useJobs() {
     [closeEvents, notifyTerminal],
   );
 
-  /** Merge a freshly created job (POST /api/jobs or retry) into the session:
+  /** Merge a freshly created POST /api/jobs response into the session:
    * seed rows, persist the seeds, attach the event stream. */
   const adopt = useCallback(
     (res: CreateJobResponse, sizes: (number | null)[], options: JobOptions) => {
       const jobId = res.job_id;
       setJobs((prev) => ({
         ...prev,
-        [jobId]: { jobId, status: "running", createdAt: null, options, archived: false },
+        [jobId]: { jobId, status: "running", createdAt: null, options },
       }));
       const seeds: StoredSeed[] = res.items.map((it, idx) => ({
         itemId: it.item_id,
@@ -242,7 +375,7 @@ export function useJobs() {
         kind: it.kind,
         sizeBytes: sizes[idx] ?? null,
       }));
-      setItems((prev) => [...prev, ...seeds.map((s) => seedItem(jobId, s, false))]);
+      setItems((prev) => [...prev, ...seeds.map((s) => seedItem(jobId, s))]);
       writeStoredJobs([...readStoredJobs(), { jobId, items: seeds }]);
       openEvents(jobId);
     },
@@ -273,41 +406,258 @@ export function useJobs() {
     [adopt],
   );
 
-  /** Retry a failed (terminal) item as a new single-item job. The new job is
-   * adopted through the normal submit path; the original row is only marked
-   * `retried` — the ledger does not rewrite history. Returns the inline
-   * error text (409/404 detail) or null on success. */
+  /** Queue a failed or skipped item in place, reset its row, and reattach to
+   * the same job's SSE stream. No duplicate seed or session job is created. */
   const retry = useCallback(
-    async (item: SessionItem): Promise<string | null> => {
+    async (item: SessionItem, options?: JobOptions): Promise<string | null> => {
       requestNotifyPermission();
       try {
-        const res = await retryJobItem(item.jobId, item.itemId);
-        adopt(
-          res,
-          res.items.map((it) => (it.kind === "file" ? item.sizeBytes : null)),
-          jobs[item.jobId]?.options ?? { preset: null, llm: null },
-        );
+        if (options === undefined) await retryJobItem(item.jobId, item.itemId);
+        else await retryJobItem(item.jobId, item.itemId, options);
+        notifiedRef.current.delete(item.jobId);
+        setJobs((prev) => {
+          const job = prev[item.jobId];
+          return job === undefined
+            ? prev
+            : { ...prev, [item.jobId]: { ...job, status: "running" } };
+        });
         setItems((prev) =>
-          prev.map((i) => (i.key === item.key ? { ...i, retried: true } : i)),
-        );
-        writeStoredJobs(
-          readStoredJobs().map((j) =>
-            j.jobId === item.jobId
+          prev.map((candidate) =>
+            candidate.key === item.key
               ? {
-                  ...j,
-                  items: j.items.map((s) =>
-                    s.itemId === item.itemId ? { ...s, retried: true } : s,
-                  ),
+                  ...candidate,
+                  status: "queued",
+                  error: null,
+                  output: null,
+                  durationMs: null,
+                  finishedAt: null,
+                  costUsd: null,
+                  llmEnhanced: false,
+                  operation: "retry",
+                  skipped: false,
+                  skipReason: null,
+                  startedAt: null,
                 }
-              : j,
+              : candidate,
           ),
+        );
+        openEvents(item.jobId);
+        return null;
+      } catch (e) {
+        return e instanceof Error ? e.message : String(e);
+      }
+    },
+    [openEvents],
+  );
+
+  /** Re-run a completed base result with LLM required, in the same row. */
+  const enhance = useCallback(
+    async (item: SessionItem, options: JobOptions): Promise<string | null> => {
+      requestNotifyPermission();
+      try {
+        await enhanceJobItem(item.jobId, item.itemId, options);
+        notifiedRef.current.delete(item.jobId);
+        setJobs((previous) => {
+          const job = previous[item.jobId];
+          return job === undefined
+            ? previous
+            : { ...previous, [item.jobId]: { ...job, status: "running" } };
+        });
+        setItems((previous) =>
+          previous.map((candidate) =>
+            candidate.key === item.key
+              ? {
+                  ...candidate,
+                  status: "queued",
+                  error: null,
+                  output: null,
+                  durationMs: null,
+                  finishedAt: null,
+                  costUsd: null,
+                  llmEnhanced: false,
+                  operation: "enhance",
+                  skipped: false,
+                  skipReason: null,
+                  startedAt: null,
+                }
+              : candidate,
+          ),
+        );
+        openEvents(item.jobId);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+    [openEvents],
+  );
+
+  /** Reattach one archived failed/skipped item to the current ledger before
+   * retrying it in place. The whole snapshot keeps sibling rows visible. */
+  const retryArchived = useCallback(
+    async (
+      snapshot: JobSnapshot,
+      itemId: string,
+      retryOptions?: JobOptions,
+    ): Promise<string | null> => {
+      requestNotifyPermission();
+      try {
+        if (retryOptions === undefined) {
+          await retryJobItem(snapshot.job_id, itemId);
+        } else {
+          await retryJobItem(snapshot.job_id, itemId, retryOptions);
+        }
+        const now = Date.now();
+        const restored = snapshot.items.map((payload) => {
+          const item = itemFromPayload(snapshot.job_id, payload, now);
+          return payload.item_id === itemId
+            ? {
+                ...item,
+                status: "queued" as const,
+                error: null,
+                output: null,
+                durationMs: null,
+                finishedAt: null,
+                costUsd: null,
+                llmEnhanced: false,
+                operation: "retry" as const,
+                skipped: false,
+                skipReason: null,
+                startedAt: null,
+              }
+            : item;
+        });
+        const options: JobOptions = retryOptions ?? {
+          preset: snapshot.options.preset ?? null,
+          llm: snapshot.options.llm ?? null,
+          ocr: snapshot.options.ocr ?? null,
+        };
+        notifiedRef.current.delete(snapshot.job_id);
+        setJobs((previous) => ({
+          ...previous,
+          [snapshot.job_id]: {
+            jobId: snapshot.job_id,
+            status: "running",
+            createdAt: snapshot.created_at,
+            options,
+          },
+        }));
+        setItems((previous) => [
+          ...previous.filter((item) => item.jobId !== snapshot.job_id),
+          ...restored,
+        ]);
+        const seeds: StoredSeed[] = restored.map((item) => ({
+          itemId: item.itemId,
+          name: item.name,
+          kind: item.kind,
+          sizeBytes: null,
+        }));
+        writeStoredJobs([
+          ...readStoredJobs().filter((job) => job.jobId !== snapshot.job_id),
+          { jobId: snapshot.job_id, items: seeds },
+        ]);
+        openEvents(snapshot.job_id);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+    [openEvents],
+  );
+
+  /** Adopt an archived base result, then enhance it in place with LLM. */
+  const enhanceArchived = useCallback(
+    async (
+      snapshot: JobSnapshot,
+      itemId: string,
+      options: JobOptions,
+    ): Promise<string | null> => {
+      requestNotifyPermission();
+      try {
+        await enhanceJobItem(snapshot.job_id, itemId, options);
+        const now = Date.now();
+        const restored = snapshot.items.map((payload) => {
+          const item = itemFromPayload(snapshot.job_id, payload, now);
+          return payload.item_id === itemId
+            ? {
+                ...item,
+                status: "queued" as const,
+                error: null,
+                output: null,
+                durationMs: null,
+                finishedAt: null,
+                costUsd: null,
+                llmEnhanced: false,
+                operation: "enhance" as const,
+                skipped: false,
+                skipReason: null,
+                startedAt: null,
+              }
+            : item;
+        });
+        notifiedRef.current.delete(snapshot.job_id);
+        setJobs((previous) => ({
+          ...previous,
+          [snapshot.job_id]: {
+            jobId: snapshot.job_id,
+            status: "running",
+            createdAt: snapshot.created_at,
+            options: snapshot.options,
+          },
+        }));
+        setItems((previous) => [
+          ...previous.filter((item) => item.jobId !== snapshot.job_id),
+          ...restored,
+        ]);
+        const seeds: StoredSeed[] = restored.map((item) => ({
+          itemId: item.itemId,
+          name: item.name,
+          kind: item.kind,
+          sizeBytes: null,
+        }));
+        writeStoredJobs([
+          ...readStoredJobs().filter((job) => job.jobId !== snapshot.job_id),
+          { jobId: snapshot.job_id, items: seeds },
+        ]);
+        openEvents(snapshot.job_id);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+    [openEvents],
+  );
+
+  /** Permanently delete one terminal row. The server removes the whole job
+   * directory when this was its last item. */
+  const deleteItem = useCallback(
+    async (item: SessionItem): Promise<string | null> => {
+      try {
+        await deleteJobItem(item.jobId, item.itemId);
+        const wasLast = !items.some(
+          (candidate) => candidate.jobId === item.jobId && candidate.key !== item.key,
+        );
+        setItems((prev) => prev.filter((candidate) => candidate.key !== item.key));
+        if (wasLast) {
+          closeEvents(item.jobId);
+          setJobs((prev) => {
+            const { [item.jobId]: _deleted, ...rest } = prev;
+            return rest;
+          });
+        }
+        writeStoredJobs(
+          readStoredJobs().flatMap((job) => {
+            if (job.jobId !== item.jobId) return [job];
+            const seeds = job.items.filter((seed) => seed.itemId !== item.itemId);
+            return seeds.length === 0 ? [] : [{ ...job, items: seeds }];
+          }),
         );
         return null;
       } catch (e) {
         return e instanceof Error ? e.message : String(e);
       }
     },
-    [adopt, jobs],
+    [closeEvents, items],
   );
 
   const clear = useCallback(() => {
@@ -337,65 +687,6 @@ export function useJobs() {
     writeStoredJobs(readStoredJobs().filter((job) => !terminalIds.has(job.jobId)));
   }, [jobs]);
 
-  /** Merge an archived (terminal) job from the history into the session.
-   * No event stream — the snapshot already is the final state. */
-  const openArchived = useCallback((snap: JobSnapshot): string | null => {
-    const jobId = snap.job_id;
-    const now = Date.now();
-    setJobs((prev) =>
-      prev[jobId] !== undefined
-        ? prev
-        : {
-            ...prev,
-            [jobId]: {
-              jobId,
-              status: snap.status,
-              createdAt: snap.created_at,
-              options: snap.options,
-              archived: true,
-            },
-          },
-    );
-    setItems((prev) =>
-      prev.some((i) => i.jobId === jobId)
-        ? prev
-        : [
-            ...prev,
-            ...snap.items.map((p) =>
-              mergeItem(
-                seedItem(
-                  jobId,
-                  { itemId: p.item_id, name: p.name, kind: p.kind, sizeBytes: null },
-                  true,
-                ),
-                p,
-                now,
-              ),
-            ),
-          ],
-    );
-    const stored = readStoredJobs();
-    if (!stored.some((j) => j.jobId === jobId)) {
-      writeStoredJobs([
-        ...stored,
-        {
-          jobId,
-          items: snap.items.map((p) => ({
-            itemId: p.item_id,
-            name: p.name,
-            kind: p.kind,
-            sizeBytes: null,
-          })),
-          archived: true,
-        },
-      ]);
-    }
-    const first = snap.items.find(
-      (item) => item.status === "done" && item.output !== null && !item.skipped,
-    );
-    return first === undefined ? null : `${jobId}/${first.item_id}`;
-  }, []);
-
   // ---- session restore (F5 mid-job): seed the ledger from sessionStorage,
   // then reconcile each job against the server. 404 (server restarted) drops
   // the job silently; running jobs re-attach via EventSource snapshot replay.
@@ -403,13 +694,29 @@ export function useJobs() {
   useEffect(() => {
     if (restoredRef.current) return;
     restoredRef.current = true;
-    const stored = readStoredJobs();
+    const migration = migrateLegacyRetrySeeds(readStoredJobs());
+    const stored = migration.jobs;
+    if (migration.removals.length > 0) {
+      writeStoredJobs(stored);
+      setSuppressedHistoryIds(migration.suppressedJobIds);
+      void (async () => {
+        for (const removal of migration.removals) {
+          try {
+            await deleteJobItem(removal.jobId, removal.itemId);
+          } catch {
+            // Best effort: a missing old job is already the desired result,
+            // and the superseded row stays hidden for this browser session.
+          }
+        }
+        setHistoryRevision((revision) => revision + 1);
+      })();
+    }
     if (stored.length === 0) return;
 
     setItems((prev) =>
       prev.length > 0
         ? prev
-        : stored.flatMap((j) => j.items.map((s) => seedItem(j.jobId, s, j.archived === true))),
+        : stored.flatMap((j) => j.items.map((s) => seedItem(j.jobId, s))),
     );
     setJobs((prev) => {
       const next = { ...prev };
@@ -418,8 +725,7 @@ export function useJobs() {
           jobId: j.jobId,
           status: "running",
           createdAt: null,
-          options: { preset: null, llm: null },
-          archived: j.archived === true,
+          options: { preset: null, llm: null, ocr: null },
         };
       }
       return next;
@@ -449,7 +755,6 @@ export function useJobs() {
               status: snap.status,
               createdAt: snap.created_at,
               options: snap.options,
-              archived: j.archived === true,
             },
           }));
           setItems((prev) =>
@@ -501,6 +806,7 @@ export function useJobs() {
         }
       }
       if (i.status === "error") failed += 1;
+      if (i.llmEnhanced) hasCost = true;
       if (i.costUsd !== null && i.costUsd > 0) {
         hasCost = true;
         costTotal += i.costUsd;
@@ -525,6 +831,10 @@ export function useJobs() {
     () => Object.values(jobs).filter((job) => job.status !== "running").length,
     [jobs],
   );
+  const orderedItems = useMemo(
+    () => newestSessionItemsFirst(items, jobs),
+    [items, jobs],
+  );
 
   /** Items still queued or running (drives the clear-confirm step). */
   const activeCount = useMemo(
@@ -537,19 +847,23 @@ export function useJobs() {
   );
 
   return {
-    items,
+    items: orderedItems,
     jobs,
-    jobCount: Object.keys(jobs).length,
     stats,
     running,
     activeCount,
     now,
     submit,
     retry,
+    retryArchived,
+    enhance,
+    enhanceArchived,
+    deleteItem,
     submitError,
     clear,
     clearSettled,
     terminalJobCount,
-    openArchived,
+    suppressedHistoryIds,
+    historyRevision,
   };
 }

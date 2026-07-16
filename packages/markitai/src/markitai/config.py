@@ -230,6 +230,9 @@ class ModelInfo(BaseModel):
     # LiteLLM's deployment identity. Routing groups (``model_name``) are not
     # unique: several deployments may legitimately share ``default``.
     id: str | None = None
+    # Stable reference to a saved provider connection. Credentials remain on
+    # the provider when individual model deployments are removed.
+    provider_id: str | None = None
     supports_vision: bool | None = None
     max_tokens: int | None = None
     max_input_tokens: int | None = None
@@ -265,6 +268,15 @@ class RouterSettings(BaseModel):
     fallbacks: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class LLMProviderConfig(BaseModel):
+    """Credentials for one provider connection, independent of its models."""
+
+    id: str
+    provider: str
+    api_key: str | None = None
+    api_base: str | None = None
+
+
 class LLMConfig(BaseModel):
     """LLM configuration."""
 
@@ -278,6 +290,7 @@ class LLMConfig(BaseModel):
         description="Keep base .md file alongside .llm.md in LLM mode",
     )
     model_list: list[ModelConfig] = Field(default_factory=list)
+    providers: list[LLMProviderConfig] = Field(default_factory=list)
     router_settings: RouterSettings = Field(default_factory=RouterSettings)
     concurrency: int = Field(
         default=DEFAULT_LLM_CONCURRENCY, ge=1, description="Max parallel LLM requests"

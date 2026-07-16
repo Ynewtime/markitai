@@ -22,6 +22,10 @@ from loguru import logger
 from markitai.fetch_types import FetchResult
 from markitai.security import atomic_write_json
 
+# Bump when extraction semantics change so stale rendered Markdown is not
+# served after parser fixes (for example, quoted-post truncation markers).
+_CONTENT_CACHE_VERSION = "2"
+
 
 def _make_json_safe(value: Any) -> Any:
     """Convert nested metadata values to JSON-safe types."""
@@ -181,7 +185,8 @@ class FetchCache:
             url: URL to hash
             strategy: Optional strategy name to include in key
         """
-        key_input = url if strategy is None else f"{url}\x00{strategy}"
+        scope = url if strategy is None else f"{url}\x00{strategy}"
+        key_input = f"{_CONTENT_CACHE_VERSION}\x00{scope}"
         return hashlib.sha256(key_input.encode()).hexdigest()[:32]
 
     def _metadata_to_json(self, metadata: dict[str, Any]) -> str:

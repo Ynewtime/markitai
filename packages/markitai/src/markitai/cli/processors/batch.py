@@ -331,7 +331,8 @@ def create_url_processor(
                 f"has_multi_source={has_multi_source}, has_screenshot={has_screenshot}"
             )
 
-            # Download images if --alt or --desc is enabled
+            # Download images only when their LLM analysis can run. Presets
+            # may leave image flags set after an explicit --no-llm override.
             images_count = 0
             screenshots_count = 1 if has_screenshot else 0
             downloaded_images: list[Path] = []
@@ -356,7 +357,7 @@ def create_url_processor(
                     screenshots=screenshots_count,
                 ), extra_info
 
-            if cfg.image.alt_enabled or cfg.image.desc_enabled:
+            if cfg.llm.enabled and (cfg.image.alt_enabled or cfg.image.desc_enabled):
                 download_result = await download_url_images(
                     markdown=original_markdown,
                     output_dir=output_dir,

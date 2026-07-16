@@ -14,12 +14,14 @@ export function CliCommand({
   urls,
   preset,
   llm,
+  ocr,
   announce,
 }: {
   t: Dict;
   urls: string[];
   preset: Preset;
   llm: boolean;
+  ocr: boolean;
   announce: (msg: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -32,7 +34,7 @@ export function CliCommand({
     return () => window.clearTimeout(h);
   }, [copied]);
 
-  const cmd = buildCliCommand(urls, preset, llm);
+  const cmd = buildCliCommand(urls, preset, llm, ocr);
   const placeholder = urls.length === 0;
 
   const copy = () => {

@@ -318,6 +318,23 @@ class TestFormatStandaloneImageMarkdown:
         assert "A sunset over the ocean" in result
         assert "---" not in result  # No frontmatter
 
+    def test_encodes_unicode_image_destination(self):
+        """Standalone image previews use a portable CommonMark destination."""
+        analysis = MagicMock()
+        analysis.caption = "打印预览"
+        analysis.description = ""
+        analysis.extracted_text = ""
+
+        result = format_standalone_image_markdown(
+            Path("截屏 2026.png"),
+            analysis,
+            ".markitai/assets/截屏 2026.png",
+            include_frontmatter=False,
+        )
+
+        assert "![打印预览](.markitai/assets/%E6%88%AA%E5%B1%8F%202026.png)" in result
+        assert "](.markitai/assets/截屏 2026.png)" not in result
+
     def test_with_frontmatter(self):
         """Frontmatter should carry metadata without expanding body content."""
         analysis = MagicMock()

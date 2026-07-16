@@ -359,6 +359,34 @@ def _find_quoted_element(article: Tag) -> Tag | None:
     return None
 
 
+_QUOTE_TRUNCATION_MARKERS = {
+    "...",
+    "…",
+    "show more",
+    "显示更多",
+    "顯示更多",
+    "さらに表示",
+    "더 보기",
+    "voir plus",
+    "mehr anzeigen",
+    "mostrar más",
+    "mostrar mais",
+    "mostra altro",
+    "показать ещё",
+}
+
+
+def _mark_truncated_quote(text: str, quoted_el: Tag) -> str:
+    """Append an explicit marker when X exposes a clipped quoted post."""
+    if not text or text.rstrip().endswith(("...", "…")):
+        return text
+    for element in quoted_el.find_all(["button", "span"]):
+        marker = " ".join(element.get_text(" ", strip=True).casefold().split())
+        if marker in _QUOTE_TRUNCATION_MARKERS:
+            return f"{text.rstrip()}..."
+    return text
+
+
 def _parse_quoted_item(quoted_el: Tag) -> EmbeddedQuote | None:
     """Parse a quoted-tweet container into an EmbeddedQuote.
 
@@ -369,7 +397,7 @@ def _parse_quoted_item(quoted_el: Tag) -> EmbeddedQuote | None:
         An EmbeddedQuote, or None if the container has no usable content.
     """
     q_name, q_handle = _parse_author(quoted_el)
-    q_text = _parse_text(quoted_el)
+    q_text = _mark_truncated_quote(_parse_text(quoted_el), quoted_el)
     q_timestamp = _parse_timestamp(quoted_el)
     q_media = _parse_media(quoted_el)
 
@@ -615,7 +643,7 @@ def _parse_quoted_item_new(quoted_el: Tag) -> EmbeddedQuote | None:
         An EmbeddedQuote, or None if the container has no usable content.
     """
     q_name, q_handle = _parse_author_new(quoted_el)
-    q_text = _parse_text_new(quoted_el)
+    q_text = _mark_truncated_quote(_parse_text_new(quoted_el), quoted_el)
     q_timestamp = _parse_timestamp_new(quoted_el)
     q_media = _parse_media(quoted_el)
 

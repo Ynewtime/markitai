@@ -20,6 +20,12 @@ export function fmtDate(iso: string): string {
   return iso.slice(0, 10);
 }
 
+/** Server-local ISO timestamp -> compact "07-12 14:30". */
+export function fmtDateTime(iso: string | null): string {
+  if (iso === null || iso.length < 16) return "-";
+  return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`;
+}
+
 /** Latin words + CJK chars, so zh documents count sensibly too. */
 export function countWords(s: string): number {
   const cjkRe = /[぀-ヿ㐀-鿿豈-﫿]/g;

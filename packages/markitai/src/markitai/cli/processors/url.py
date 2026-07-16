@@ -42,7 +42,7 @@ from markitai.utils.cli_helpers import (
 )
 from markitai.utils.output import resolve_output_path
 from markitai.utils.paths import ensure_dir, ensure_screenshots_dir
-from markitai.utils.text import format_error_message
+from markitai.utils.text import format_error_message, markdown_image_reference
 from markitai.utils.url_redaction import redact_url as _safe_url_for_display
 from markitai.utils.url_redaction import (
     redact_urls_in_text as _redact_urls_in_message,
@@ -309,8 +309,9 @@ async def process_url(
         # original_markdown was already set from fetch_result.content above
         markdown_for_llm = original_markdown
 
-        # Download images from URLs if --alt or --desc is enabled
-        # Only update markdown_for_llm, keep original_markdown unchanged
+        # Download images only when their LLM analysis can run. An explicit
+        # --no-llm can override a preset while leaving --alt/--desc set.
+        # Only update markdown_for_llm, keep original_markdown unchanged.
         downloaded_images: list[Path] = []
         images_count = 0
         screenshots_count = 1 if screenshot_path and screenshot_path.exists() else 0
@@ -321,7 +322,7 @@ async def process_url(
             stages.note(f"Screenshot captured: {screenshot_path.name}")
             logger.info(f"Screenshot saved: {screenshot_path}")
 
-        if cfg.image.alt_enabled or cfg.image.desc_enabled:
+        if cfg.llm.enabled and (cfg.image.alt_enabled or cfg.image.desc_enabled):
             stages.advance("images", "Downloading images...")
             download_result = await download_url_images(
                 markdown=original_markdown,
@@ -373,8 +374,8 @@ async def process_url(
                 and screenshot_path is not None
             ):
                 # .md file just references the screenshot (not as HTML comment)
-                screenshot_ref = (
-                    f"![Screenshot]({SCREENSHOTS_REL_PATH}/{screenshot_path.name})"
+                screenshot_ref = markdown_image_reference(
+                    "Screenshot", f"{SCREENSHOTS_REL_PATH}/{screenshot_path.name}"
                 )
                 base_content = _add_basic_frontmatter(
                     screenshot_ref,

@@ -2,35 +2,32 @@ import { useState } from "react";
 import type { ItemStatus } from "../api/types";
 import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
-import { fmtBytes, fmtCost, fmtDur, shortError } from "../lib/format";
-import { FileTextIcon, GlobeIcon, RotateCcwIcon } from "./icons";
+import { fmtBytes, fmtCost, fmtDateTime, fmtDur, shortError } from "../lib/format";
+import { ConfirmDeletePopover } from "./ConfirmDeletePopover";
+import {
+  FileTextIcon,
+  GlobeIcon,
+  MagicWandIcon,
+  RotateCcwIcon,
+  WarningIcon,
+} from "./icons";
 
-/** CLI status words — lowercase mono, identical in both locales. */
 const STATUS_TEXT: Record<ItemStatus | "skipped", string> = {
-  queued: "queued",
-  running: "converting",
-  done: "done",
-  error: "failed",
-  skipped: "skipped",
+  queued: "Queued",
+  running: "Converting",
+  done: "Done",
+  error: "Failed",
+  skipped: "Skipped",
 };
-
-/** Empty-cell placeholder — a plain hyphen (visible copy bans em/en dashes). */
 const DASH = "-";
-/** Kept tail of middle-truncated names — preserves “….txt” endings. */
 const NAME_TAIL_CHARS = 12;
-
-/** CLI word for history-merged rows — stays English in both locales. */
-const ARCHIVED_TEXT = "archived";
-/** CLI word for rows re-run as a new job — the ledger keeps the original. */
-const RETRIED_TEXT = "retried";
 
 function liveDuration(item: SessionItem, now: number): string | null {
   if (item.startedAt === null) return null;
   return fmtDur(Math.max(0, now - item.startedAt));
 }
 
-/** Middle truncation: head span ellipsizes, tail (extension) stays visible.
- * CSS alone can only end-truncate, so the split happens here. */
+/** Preserve the filename tail while the middle of a long name ellipsizes. */
 function MidName({ name, title }: { name: string; title: string }) {
   if (name.length <= NAME_TAIL_CHARS + 4) {
     return (
@@ -47,28 +44,51 @@ function MidName({ name, title }: { name: string; title: string }) {
   );
 }
 
-function StatusCell({ item }: { item: SessionItem }) {
-  switch (item.status) {
-    case "done":
-      // Skips complete as "done" but carry no fresh result — neutral chip.
-      return item.skipped ? (
-        <span className="chip skip">{STATUS_TEXT.skipped}</span>
-      ) : (
-        <span className="chip ok">{STATUS_TEXT.done}</span>
-      );
-    case "error":
-      return <span className="chip err">{STATUS_TEXT.error}</span>;
-    case "running":
-      // The compact column is too narrow for the word — spinner only.
-      return (
-        <span className="runstat" title={STATUS_TEXT.running}>
-          <span className="spin" aria-hidden="true" />
-          <span className="sr-only">{STATUS_TEXT.running}</span>
+/** Terminal rows use compact colored marks rather than textual `<done>` pills. */
+function StatusMark({ item, t }: { item: SessionItem; t: Dict }) {
+  if (item.status === "done") {
+    const skipped = item.skipped;
+    const tooltip =
+      skipped && item.skipReason === "image_only" ? t.skipImageOnly : t.statSkipped;
+    return (
+      <span
+        className={skipped ? "item-result skip tooltip" : "item-result ok"}
+        title={skipped ? tooltip : t.done}
+        data-tooltip={skipped ? tooltip : undefined}
+        aria-label={skipped ? tooltip : t.done}
+        tabIndex={skipped ? 0 : undefined}
+      >
+        <span aria-hidden="true">
+          {skipped ? <WarningIcon size={17} /> : "✓"}
         </span>
-      );
-    case "queued":
-      return <span className="runstat queued">{STATUS_TEXT.queued}</span>;
+        <span className="sr-only">{skipped ? tooltip : t.done}</span>
+      </span>
+    );
   }
+  if (item.status === "error") {
+    const detail = item.error ?? t.statFailed;
+    return (
+      <span
+        className="item-result error tooltip"
+        title={detail}
+        data-tooltip={detail}
+        aria-label={`${t.statFailed}: ${detail}`}
+        tabIndex={0}
+      >
+        <span aria-hidden="true">×</span>
+        <span className="sr-only">{t.statFailed}</span>
+      </span>
+    );
+  }
+  if (item.status === "running") {
+    return (
+      <span className="runstat" title={STATUS_TEXT.running}>
+        <span className="spin" aria-hidden="true" />
+        <span className="sr-only">{STATUS_TEXT.running}</span>
+      </span>
+    );
+  }
+  return <span className="runstat queued">{STATUS_TEXT.queued}</span>;
 }
 
 export function ItemRow({
@@ -79,11 +99,13 @@ export function ItemRow({
   now,
   selected,
   tabbable,
-  llmConfigured,
+  canDelete,
   onPreview,
-  onOpenSettings,
   onRowFocus,
   onRetry,
+  onEnhance = async () => null,
+  onDelete,
+  llmAvailable = false,
 }: {
   t: Dict;
   item: SessionItem;
@@ -91,32 +113,68 @@ export function ItemRow({
   showCost: boolean;
   now: number;
   selected: boolean;
-  /** Roving tabindex: exactly one row in the listbox is tabbable. */
   tabbable: boolean;
-  llmConfigured: boolean;
+  canDelete: boolean;
   onPreview: (key: string, opener: HTMLElement) => void;
-  onOpenSettings: () => void;
   onRowFocus: (key: string) => void;
   onRetry: (item: SessionItem) => Promise<string | null>;
+  onEnhance?: (item: SessionItem) => Promise<string | null>;
+  onDelete: (item: SessionItem) => Promise<string | null>;
+  llmAvailable?: boolean;
 }) {
   const [errExpanded, setErrExpanded] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
-  const [retryErr, setRetryErr] = useState<string | null>(null);
+  const [enhanceBusy, setEnhanceBusy] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const [enhanceErr, setEnhanceErr] = useState<string | null>(null);
 
   const running = item.status === "running";
   const failed = item.status === "error";
   const skipped = item.status === "done" && item.skipped;
   const previewable = item.status === "done" && item.output !== null && !item.skipped;
-  // Failed rows (archived ones too) can be re-run; once retried the button
-  // yields to the neutral marker (the new row carries its own retry).
-  const canRetry = failed && !item.retried;
+  const llmApplied =
+    item.llmEnhanced ||
+    item.operation === "enhance" ||
+    (item.costUsd !== null && item.costUsd > 0);
+  const enhanceable = previewable && !item.llmEnhanced && canDelete;
+
   const doRetry = async () => {
-    if (retryBusy) return;
+    if (retryBusy || enhanceBusy || deleteBusy) return;
     setRetryBusy(true);
-    setRetryErr(null);
-    const err = await onRetry(item);
+    setActionErr(null);
+    setEnhanceErr(null);
+    const error = await onRetry(item);
+    if (error !== null) setActionErr(`${t.retryFailed}: ${error}`);
     setRetryBusy(false);
-    if (err !== null) setRetryErr(err);
+  };
+
+  const doEnhance = async () => {
+    if (retryBusy || enhanceBusy || deleteBusy || !llmAvailable) return;
+    setEnhanceBusy(true);
+    setActionErr(null);
+    setEnhanceErr(null);
+    const error = await onEnhance(item);
+    if (error !== null) {
+      const detail = `${t.llmEnhanceFailed}: ${error}`;
+      setActionErr(detail);
+      setEnhanceErr(detail);
+    }
+    setEnhanceBusy(false);
+  };
+
+  const doDelete = async () => {
+    if (retryBusy || enhanceBusy || deleteBusy) return false;
+    setDeleteBusy(true);
+    setActionErr(null);
+    setEnhanceErr(null);
+    const error = await onDelete(item);
+    if (error !== null) {
+      setActionErr(error);
+      setDeleteBusy(false);
+      return false;
+    }
+    return true;
   };
 
   const live = running ? liveDuration(item, now) : null;
@@ -125,31 +183,25 @@ export function ItemRow({
     : item.durationMs !== null
       ? fmtDur(item.durationMs)
       : (live ?? DASH);
+  const finishedText = fmtDateTime(item.finishedAt);
   const sizeText = item.sizeBytes !== null ? fmtBytes(item.sizeBytes) : null;
-  const costText =
-    item.costUsd !== null && item.costUsd > 0 ? fmtCost(item.costUsd) : DASH;
-  // The mock strips the protocol from URLs in the compact list.
+  const costText = item.costUsd !== null ? fmtCost(item.costUsd) : null;
   const displayName = item.name.replace(/^https?:\/\//, "");
   const nameTitle = sizeText !== null ? `${item.name} · ${sizeText}` : item.name;
 
-  // Size lost its column — it lives in the name title and the meta line.
   const metaParts: string[] = [];
   if (sizeText !== null) metaParts.push(sizeText);
   if (running) metaParts.push(`running ${live ?? DASH}`);
   else if (!skipped && item.durationMs !== null) metaParts.push(fmtDur(item.durationMs));
-  if (showCost && item.costUsd !== null && item.costUsd > 0)
-    metaParts.push(fmtCost(item.costUsd));
+  if (item.finishedAt !== null) metaParts.push(finishedText);
+  if (showCost) {
+    metaParts.push(
+      llmApplied ? `LLM${costText === null ? "" : ` ${costText}`}` : "Base",
+    );
+  }
   if (item.status === "queued") metaParts.push(STATUS_TEXT.queued);
 
-  // "image input — configure llm …" points at the settings panel while llm
-  // is unconfigured; the row click opens it.
-  const skipNeedsConfig = skipped && item.skipReason === "image_only" && !llmConfigured;
-  // aria-disabled marks rows with no interaction at all (queued/running/plain
-  // skips). Failed rows toggle their error text and host the enabled retry
-  // button, and unconfigured image-skips open settings - announcing those as
-  // disabled would contradict their working controls. Selection-follows-focus
-  // is gated on the item data in ItemList, not on this attribute.
-  const inert = !previewable && !failed && !skipNeedsConfig;
+  const inert = !previewable && !failed && !canDelete;
   const skipText =
     item.skipReason === "image_only"
       ? t.skipImageOnly
@@ -158,23 +210,25 @@ export function ItemRow({
         : item.skipReason === null
           ? STATUS_TEXT.skipped
           : `${STATUS_TEXT.skipped} (${item.skipReason})`;
-
   const detailId =
-    failed || skipped ? `d-${item.key.replace(/[^a-zA-Z0-9_-]/g, "-")}` : undefined;
+    failed || (skipped && item.skipReason !== "image_only")
+      ? `d-${item.key.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+      : undefined;
 
-  // Column context for screen readers ("sample.txt, 12 KB, 0.3 seconds, done").
   const ariaParts = [displayName];
-  if (item.archived) ariaParts.push(ARCHIVED_TEXT);
-  if (item.retried) ariaParts.push(RETRIED_TEXT);
   if (sizeText !== null) ariaParts.push(sizeText);
   if (!skipped && item.durationMs !== null)
     ariaParts.push(`${(item.durationMs / 1000).toFixed(1)} ${t.ariaSeconds}`);
+  if (showCost) {
+    ariaParts.push(
+      llmApplied ? `LLM${costText === null ? "" : ` ${costText}`}` : "Base",
+    );
+  }
   ariaParts.push(skipped ? STATUS_TEXT.skipped : STATUS_TEXT[item.status]);
 
   const activate = (opener: HTMLElement) => {
     if (previewable) onPreview(item.key, opener);
-    else if (failed) setErrExpanded((v) => !v);
-    else if (skipNeedsConfig) onOpenSettings();
+    else if (failed) setErrExpanded((value) => !value);
   };
 
   return (
@@ -187,16 +241,20 @@ export function ItemRow({
       aria-label={ariaParts.join(", ")}
       aria-describedby={detailId}
       tabIndex={tabbable ? 0 : -1}
-      className={`lrow${selected ? " sel" : ""}${failed || skipNeedsConfig ? " actionable" : ""}`}
+      className={`lrow${selected ? " sel" : ""}${failed ? " actionable" : ""}`}
       title={failed ? (item.error ?? undefined) : undefined}
-      onClick={(e) => activate(e.currentTarget)}
+      onClick={(event) => {
+        // Safari does not consistently focus generic tabindex elements on a
+        // pointer click; make the listbox's roving focus browser-independent.
+        event.currentTarget.focus({ preventScroll: true });
+        activate(event.currentTarget);
+      }}
       onFocus={() => onRowFocus(item.key)}
-      onKeyDown={(e) => {
-        // Keys on nested controls (the retry button) act on the control only.
-        if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          activate(e.currentTarget);
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          activate(event.currentTarget);
         }
       }}
     >
@@ -204,62 +262,108 @@ export function ItemRow({
       <span className="c-name">
         {item.kind === "file" ? <FileTextIcon /> : <GlobeIcon />}
         <MidName name={displayName} title={nameTitle} />
-        {item.archived && <span className="minibadge">{ARCHIVED_TEXT}</span>}
-        {item.retried && <span className="minibadge">{RETRIED_TEXT}</span>}
       </span>
-      <span className={running ? "c-time live" : "c-time"}>{timeText}</span>
-      {showCost && <span className="c-cost">{costText}</span>}
-      <span className="c-status">
-        <StatusCell item={item} />
+      <span className={running ? "c-duration live" : "c-duration"}>{timeText}</span>
+      <span className="c-finished" title={item.finishedAt ?? undefined}>
+        {finishedText}
       </span>
-      {metaParts.length > 0 && <span className="rowmeta">{metaParts.join(" · ")}</span>}
-      {failed && (item.error !== null || canRetry) && (
+      {showCost && (
+        <span className="c-cost llm-cell">
+          <span className={llmApplied ? "llm-tag on" : "llm-tag"}>
+            {llmApplied ? "LLM" : "Base"}
+          </span>
+          {llmApplied && costText !== null && (
+            <span className="llm-price">{costText}</span>
+          )}
+        </span>
+      )}
+      <span className="c-status archive-actions">
+        <StatusMark item={item} t={t} />
+        {(enhanceable || failed || skipped || canDelete) && (
+          <span className="item-actions">
+            {enhanceable && (
+              <button
+                type="button"
+                className={
+                  enhanceErr === null
+                    ? "rowicon enhance"
+                    : "rowicon enhance fail tooltip"
+                }
+                aria-label={t.enhanceWithLlm(displayName)}
+                title={
+                  enhanceErr ??
+                  (llmAvailable
+                    ? t.enhanceWithLlm(displayName)
+                    : t.llmEnhanceUnavailable)
+                }
+                data-tooltip={enhanceErr ?? undefined}
+                disabled={
+                  !llmAvailable || retryBusy || enhanceBusy || deleteBusy
+                }
+                aria-busy={enhanceBusy || undefined}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void doEnhance();
+                }}
+              >
+                {enhanceBusy ? (
+                  <span className="spin" aria-hidden="true" />
+                ) : (
+                  <MagicWandIcon />
+                )}
+              </button>
+            )}
+            {(failed || skipped) && (
+              <button
+                type="button"
+                className="rowicon retry"
+                aria-label={t.retryAria(displayName)}
+                title={t.retryAria(displayName)}
+                disabled={retryBusy || enhanceBusy || deleteBusy}
+                aria-busy={retryBusy || undefined}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void doRetry();
+                }}
+              >
+                {retryBusy ? <span className="spin" aria-hidden="true" /> : <RotateCcwIcon />}
+              </button>
+            )}
+            {canDelete && (
+              <ConfirmDeletePopover
+                triggerLabel={t.histDeleteAria(displayName)}
+                title={t.deleteItemTitle(displayName)}
+                description={t.deleteItemDescription}
+                confirmLabel={t.deletePermanently}
+                cancelLabel={t.cancel}
+                busyLabel={t.deleting}
+                disabled={retryBusy || enhanceBusy || deleteBusy}
+                onConfirm={doDelete}
+              />
+            )}
+          </span>
+        )}
+      </span>
+      {metaParts.length > 0 && <span className="rowmeta">{metaParts.join(" / ")}</span>}
+      {failed && item.error !== null && (
         <span className="c-err" id={detailId}>
           <span className="errtext" title={t.errExpandTitle}>
-            {item.error === null ? null : errExpanded ? (
+            {errExpanded ? (
               <span className="err-full">{item.error}</span>
             ) : (
               shortError(item.error)
             )}
           </span>
-          {canRetry && (
-            <button
-              type="button"
-              className="rowact retry"
-              aria-label={t.retryAria(displayName)}
-              title={t.retryAria(displayName)}
-              disabled={retryBusy}
-              aria-busy={retryBusy || undefined}
-              onClick={(e) => {
-                e.stopPropagation(); // the row click toggles the error text
-                void doRetry();
-              }}
-            >
-              {retryBusy ? (
-                <span className="spin" aria-hidden="true" />
-              ) : (
-                <RotateCcwIcon size={13} />
-              )}
-            </button>
-          )}
         </span>
       )}
-      {failed && retryErr !== null && (
+      {actionErr !== null && (
         <span className="c-err retryerr" role="alert">
-          {t.retryFailed}: {retryErr}
+          {actionErr}
         </span>
       )}
-      {skipped && (
+      {skipped && item.skipReason !== "image_only" && (
         <span className="c-skip" id={detailId}>
-          {skipNeedsConfig ? (
-            <>
-              {t.skipCfgPre}
-              <span className="linkish">{t.skipCfgLink}</span>
-              {t.skipCfgPost}
-            </>
-          ) : (
-            skipText
-          )}
+          {skipText}
         </span>
       )}
     </div>

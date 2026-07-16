@@ -2,11 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   addLLMDeployments,
   deleteLLMDeployment,
+  deleteLLMProvider,
   discoverLLMModels,
+  fetchLLMProviderCredentials,
   fetchLLMSettings,
   fetchProviderConnections,
   testLLMSettings,
   updateLLMDeployment,
+  updateLLMProvider,
 } from "../api/client";
 import type {
   LLMDeployment,
@@ -16,16 +19,85 @@ import type {
   ProviderConnection,
 } from "../api/types";
 import type { Dict } from "../i18n";
+import { ConfirmDeletePopover } from "./ConfirmDeletePopover";
+import { AppNotification } from "./WarningNotification";
 import { ModelPicker } from "./settings/ModelPicker";
 import { ProviderPicker } from "./settings/ProviderPicker";
-import { XIcon } from "./icons";
+import {
+  CheckIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  WarningIcon,
+  XIcon,
+} from "./icons";
 
 const EXIT_MS = 120;
-const CONFIRM_RESET_MS = 4000;
-type RowTest = { state: "busy" } | { state: "ok" | "fail"; detail: string };
+type RowTest = "busy" | "ok" | "fail";
+type TestNotice = {
+  tone: "success" | "error";
+  title: string;
+  message: string;
+};
+
+function SecretInput({
+  t,
+  id,
+  label,
+  value,
+  placeholder,
+  disabled,
+  onChange,
+}: {
+  t: Dict;
+  id: string;
+  label: string;
+  value: string;
+  placeholder?: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  const toggleLabel = revealed ? t.concealField(label) : t.revealField(label);
+  return (
+    <div className="fld">
+      <label className="lbl" htmlFor={id}>
+        {label}
+      </label>
+      <div className="secret-input">
+        <input
+          id={id}
+          type={revealed ? "text" : "password"}
+          value={value}
+          placeholder={placeholder}
+          disabled={disabled}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <button
+          type="button"
+          className="secret-reveal"
+          aria-label={toggleLabel}
+          title={toggleLabel}
+          disabled={disabled}
+          onClick={() => setRevealed((current) => !current)}
+        >
+          {revealed ? <EyeSlashIcon /> : <EyeIcon />}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function settingsError(error: unknown, t: Dict): string {
+  const text = errorText(error);
+  return text.includes("saved provider connection no longer exists")
+    ? t.providerConnectionMissing
+    : text;
 }
 
 function isLocalProvider(provider: string): boolean {
@@ -108,6 +180,14 @@ export function SettingsModal({
     return () => document.removeEventListener("keydown", onKey, true);
   }, [requestClose]);
 
+  const refreshProviders = useCallback(async (refresh = false) => {
+    try {
+      setProviders(await fetchProviderConnections(refresh));
+    } catch {
+      // The model list remains usable if provider detection itself fails.
+    }
+  }, []);
+
   useEffect(() => {
     let stale = false;
     fetchLLMSettings().then(
@@ -118,7 +198,7 @@ export function SettingsModal({
         if (!stale) setLoadError(errorText(error));
       },
     );
-    fetchProviderConnections().then(
+    void fetchProviderConnections().then(
       (nextProviders) => {
         if (!stale) setProviders(nextProviders);
       },
@@ -130,67 +210,98 @@ export function SettingsModal({
   }, []);
 
   const [rowTests, setRowTests] = useState<Record<string, RowTest>>({});
-  const runTest = async (deployment: LLMDeployment) => {
-    const id = deployment.deployment_id;
-    setRowTests((previous) => ({ ...previous, [id]: { state: "busy" } }));
-    try {
-      const result = await testLLMSettings({ deployment_id: id });
-      setRowTests((previous) => ({
-        ...previous,
-        [id]: { state: result.ok ? "ok" : "fail", detail: result.detail },
-      }));
-    } catch (error) {
-      setRowTests((previous) => ({
-        ...previous,
-        [id]: { state: "fail", detail: errorText(error) },
-      }));
-    }
-  };
-
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const confirmTimerRef = useRef<number | null>(null);
+  const [testNotice, setTestNotice] = useState<TestNotice | null>(null);
+  const testTimersRef = useRef<Record<string, number>>({});
+  const testNoticeTimerRef = useRef<number | null>(null);
   useEffect(
     () => () => {
-      if (confirmTimerRef.current !== null) window.clearTimeout(confirmTimerRef.current);
+      for (const timer of Object.values(testTimersRef.current)) {
+        window.clearTimeout(timer);
+      }
+      if (testNoticeTimerRef.current !== null) {
+        window.clearTimeout(testNoticeTimerRef.current);
+      }
     },
     [],
   );
+  const settleTestButton = (id: string, state: "ok" | "fail") => {
+    window.clearTimeout(testTimersRef.current[id]);
+    setRowTests((previous) => ({ ...previous, [id]: state }));
+    testTimersRef.current[id] = window.setTimeout(() => {
+      setRowTests((previous) => {
+        const next = { ...previous };
+        delete next[id];
+        return next;
+      });
+      delete testTimersRef.current[id];
+    }, state === "ok" ? 1400 : 1800);
+  };
+  const runTest = async (deployment: LLMDeployment) => {
+    const id = deployment.deployment_id;
+    window.clearTimeout(testTimersRef.current[id]);
+    if (testNoticeTimerRef.current !== null) {
+      window.clearTimeout(testNoticeTimerRef.current);
+      testNoticeTimerRef.current = null;
+    }
+    setTestNotice(null);
+    setRowTests((previous) => ({ ...previous, [id]: "busy" }));
+    try {
+      const result = await testLLMSettings({ deployment_id: id });
+      settleTestButton(id, result.ok ? "ok" : "fail");
+      if (result.ok) {
+        setTestNotice({
+          tone: "success",
+          title: t.modelTestPassed,
+          message: t.modelTestReady(deployment.model),
+        });
+        testNoticeTimerRef.current = window.setTimeout(() => {
+          setTestNotice(null);
+          testNoticeTimerRef.current = null;
+        }, 3000);
+      } else {
+        setTestNotice({
+          tone: "error",
+          title: t.modelTestFailed,
+          message: result.detail,
+        });
+      }
+    } catch (error) {
+      settleTestButton(id, "fail");
+      setTestNotice({
+        tone: "error",
+        title: t.modelTestFailed,
+        message: errorText(error),
+      });
+    }
+  };
 
   const removeDeployment = async (deployment: LLMDeployment) => {
-    if (settings === null) return;
-    const id = deployment.deployment_id;
-    if (confirmDelete !== id) {
-      setConfirmDelete(id);
-      if (confirmTimerRef.current !== null) window.clearTimeout(confirmTimerRef.current);
-      confirmTimerRef.current = window.setTimeout(() => setConfirmDelete(null), CONFIRM_RESET_MS);
-      return;
-    }
-    setConfirmDelete(null);
+    if (settings === null) return false;
     setListError(null);
     try {
-      const next = await deleteLLMDeployment(id, settings.revision);
+      const next = await deleteLLMDeployment(
+        deployment.deployment_id,
+        settings.revision,
+      );
       setSettings(next);
+      await refreshProviders(true);
       onSaved();
+      return true;
     } catch (error) {
-      setListError(errorText(error));
+      setListError(settingsError(error, t));
+      return false;
     }
   };
 
   const [editing, setEditing] = useState<LLMDeployment | null>(null);
   const [editGroup, setEditGroup] = useState("");
   const [editModel, setEditModel] = useState("");
-  const [editKey, setEditKey] = useState("");
-  const [editBase, setEditBase] = useState("");
   const [editWeight, setEditWeight] = useState(1);
   const [editBusy, setEditBusy] = useState(false);
   const openEdit = (deployment: LLMDeployment) => {
     setEditing(deployment);
     setEditGroup(deployment.routing_group);
     setEditModel(deployment.model);
-    setEditKey("");
-    // The API exposes only a secret-free origin, not the full stored path.
-    // Keep this blank so saving another field cannot truncate the real base URL.
-    setEditBase("");
     setEditWeight(deployment.weight);
     setListError(null);
   };
@@ -202,8 +313,6 @@ export function SettingsModal({
       const next = await updateLLMDeployment(editing.deployment_id, {
         model_name: editGroup.trim(),
         model: editModel.trim(),
-        ...(editKey.trim() === "" ? {} : { api_key: editKey.trim() }),
-        ...(editBase.trim() === "" ? {} : { api_base: editBase.trim() }),
         weight: editWeight,
         expected_revision: settings.revision,
       });
@@ -215,6 +324,93 @@ export function SettingsModal({
       setListError(errorText(error));
     } finally {
       setEditBusy(false);
+    }
+  };
+
+  const [editingProvider, setEditingProvider] = useState<ProviderConnection | null>(null);
+  const [editProviderKey, setEditProviderKey] = useState("");
+  const [editProviderBase, setEditProviderBase] = useState("");
+  const [providerBusy, setProviderBusy] = useState(false);
+  const [providerCredentialsBusy, setProviderCredentialsBusy] = useState(false);
+  const providerCredentialsRequestRef = useRef(0);
+  const openProviderEdit = async (connection: ProviderConnection) => {
+    if (connection.provider_id === undefined) return;
+    const requestId = ++providerCredentialsRequestRef.current;
+    setEditingProvider(connection);
+    setEditProviderKey("");
+    setEditProviderBase("");
+    setProviderCredentialsBusy(true);
+    setEditing(null);
+    setListError(null);
+    try {
+      const credentials = await fetchLLMProviderCredentials(connection.provider_id);
+      if (requestId !== providerCredentialsRequestRef.current) return;
+      setEditProviderKey(credentials.api_key ?? "");
+      setEditProviderBase(credentials.api_base ?? "");
+    } catch (error) {
+      if (requestId === providerCredentialsRequestRef.current) {
+        setEditingProvider(null);
+        setListError(settingsError(error, t));
+      }
+    } finally {
+      if (requestId === providerCredentialsRequestRef.current) {
+        setProviderCredentialsBusy(false);
+      }
+    }
+  };
+  const closeProviderEdit = () => {
+    providerCredentialsRequestRef.current += 1;
+    setEditingProvider(null);
+    setProviderCredentialsBusy(false);
+  };
+  const saveProviderEdit = async () => {
+    if (
+      settings === null ||
+      editingProvider?.provider_id === undefined ||
+      providerBusy ||
+      providerCredentialsBusy
+    ) {
+      return;
+    }
+    setProviderBusy(true);
+    setListError(null);
+    try {
+      const next = await updateLLMProvider(editingProvider.provider_id, {
+        api_key: editProviderKey.trim() === "" ? null : editProviderKey.trim(),
+        api_base: editProviderBase.trim() === "" ? null : editProviderBase.trim(),
+        expected_revision: settings.revision,
+      });
+      setSettings(next);
+      setEditingProvider(null);
+      providerCredentialsRequestRef.current += 1;
+      await refreshProviders(true);
+      onSaved();
+      announce(t.providerSaved);
+    } catch (error) {
+      setListError(settingsError(error, t));
+    } finally {
+      setProviderBusy(false);
+    }
+  };
+  const removeProvider = async (connection: ProviderConnection) => {
+    if (settings === null || connection.provider_id === undefined) return false;
+    setListError(null);
+    try {
+      const next = await deleteLLMProvider(
+        connection.provider_id,
+        settings.revision,
+      );
+      setSettings(next);
+      if (editingProvider?.provider_id === connection.provider_id) {
+        setEditingProvider(null);
+        providerCredentialsRequestRef.current += 1;
+      }
+      await refreshProviders(true);
+      onSaved();
+      return true;
+    } catch (error) {
+      setListError(settingsError(error, t));
+      return false;
     }
   };
 
@@ -232,6 +428,7 @@ export function SettingsModal({
   const usesExistingConnection =
     provider !== null &&
     (isLocalProvider(provider.provider) ||
+      provider.provider_id !== undefined ||
       provider.deployment_id !== undefined ||
       provider.kind === "environment");
   const usesDefaultOllama = provider?.provider === "ollama";
@@ -254,6 +451,8 @@ export function SettingsModal({
   const resetAddFlow = () => {
     setAdding(false);
     setProvider(null);
+    setEditingProvider(null);
+    providerCredentialsRequestRef.current += 1;
     setDiscovery(null);
     setSelectedModels(new Set());
     setListError(null);
@@ -270,6 +469,7 @@ export function SettingsModal({
 
   const chooseProvider = (next: ProviderConnection) => {
     setProvider(next);
+    closeProviderEdit();
     setDraftKey(next.credential ?? "");
     setDraftBase("");
     setDiscovery(null);
@@ -285,6 +485,10 @@ export function SettingsModal({
     try {
       const result = await discoverLLMModels({
         provider: provider.provider,
+        ...(provider.provider_id === undefined ||
+        provider.provider_id.startsWith("legacy:")
+          ? {}
+          : { provider_id: provider.provider_id }),
         ...(provider.deployment_id === undefined
           ? {}
           : { deployment_id: provider.deployment_id }),
@@ -293,9 +497,12 @@ export function SettingsModal({
         refresh,
       });
       setDiscovery(result);
-      setSelectedModels(new Set());
+      const available = new Set(result.models.map((candidate) => candidate.model));
+      setSelectedModels(
+        (previous) => new Set([...previous].filter((model) => available.has(model))),
+      );
     } catch (error) {
-      setListError(errorText(error));
+      setListError(settingsError(error, t));
     } finally {
       setDiscovering(false);
     }
@@ -324,6 +531,11 @@ export function SettingsModal({
       model_name: routingGroup.trim() || "default",
       model,
       weight,
+      provider: provider.provider,
+      ...(provider.provider_id === undefined ||
+      provider.provider_id.startsWith("legacy:")
+        ? {}
+        : { credential_provider_id: provider.provider_id }),
       ...(provider.deployment_id === undefined
         ? {}
         : { credential_deployment_id: provider.deployment_id }),
@@ -340,6 +552,7 @@ export function SettingsModal({
       setProvider(null);
       setDiscovery(null);
       setSelectedModels(new Set());
+      await refreshProviders(true);
       onSaved();
       announce(t.modelsAdded(deployments.length));
     } catch (error) {
@@ -373,42 +586,122 @@ export function SettingsModal({
 
   const renderDeployment = (deployment: LLMDeployment, detected = false) => {
     const test = rowTests[deployment.deployment_id];
-    const confirming = confirmDelete === deployment.deployment_id;
     return (
       <div className="prov" key={`${detected ? "detected" : "configured"}:${deployment.deployment_id}`}>
         <div className="prov-line">
           <span className="prov-name mono">{deployment.routing_group}</span>
           <span className="prov-model mono" title={deployment.model}>{deployment.model}</span>
-          <span className="minibadge">{detected ? "session" : `w${deployment.weight}`}</span>
+          <span className="minibadge" title={t.weightHint}>
+            {detected ? "Session" : t.modelWeight(deployment.weight)}
+          </span>
           <span className="prov-acts">
-            <button type="button" className="rowact" disabled={test?.state === "busy"} onClick={() => void runTest(deployment)}>
-              {test?.state === "busy" ? t.testing : t.test}
+            <button
+              type="button"
+              className={`rowact model-test${test === undefined ? "" : ` ${test}`}`}
+              disabled={test === "busy"}
+              aria-label={
+                test === "busy"
+                  ? t.testing
+                  : test === "ok"
+                    ? t.modelTestPassed
+                    : test === "fail"
+                      ? t.modelTestFailed
+                      : t.test
+              }
+              onClick={() => void runTest(deployment)}
+            >
+              <span className="model-test-swap" key={test ?? "idle"}>
+                {test === "busy" ? (
+                  <span className="spin" aria-hidden="true" />
+                ) : test === "ok" ? (
+                  <CheckIcon size={16} />
+                ) : test === "fail" ? (
+                  <WarningIcon size={15} />
+                ) : (
+                  t.test
+                )}
+              </span>
             </button>
             {detected ? (
               <button type="button" className="rowact" onClick={() => void saveDetected(deployment)}>{t.saveToConfig}</button>
             ) : (
               <>
                 <button type="button" className="rowact" onClick={() => openEdit(deployment)}>{t.edit}</button>
-                <button
-                  type="button"
-                  className={confirming ? "rowact warn" : "rowact"}
-                  aria-label={confirming ? t.confirmDeleteModel(deployment.model) : t.deleteModel(deployment.model)}
-                  onClick={() => void removeDeployment(deployment)}
-                >
-                  {confirming ? t.histConfirm : t.histDelete}
-                </button>
+                <ConfirmDeletePopover
+                  triggerLabel={t.deleteModel(deployment.model)}
+                  title={t.deleteModelTitle(deployment.model)}
+                  description={t.deleteModelDescription}
+                  confirmLabel={t.deletePermanently}
+                  cancelLabel={t.cancel}
+                  busyLabel={t.deleting}
+                  onConfirm={() => removeDeployment(deployment)}
+                />
               </>
             )}
           </span>
         </div>
-        {test !== undefined && test.state !== "busy" && (
-          <p className={test.state === "fail" ? "prov-detail mono fail" : "prov-detail mono"} role="status">
-            {test.state} · {test.detail}
-          </p>
-        )}
       </div>
     );
   };
+
+  const providerEditor =
+    editingProvider === null ? null : (
+      <form
+        key={editingProvider.provider_id}
+        className="mdl-form provider-editor"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void saveProviderEdit();
+        }}
+      >
+        <h3 className="picker-group mono">
+          {t.editProvider(editingProvider.label)}
+        </h3>
+        <div className="connection-fields">
+          <SecretInput
+            t={t}
+            id="provider-api-key"
+            label={t.setApiKey}
+            value={editProviderKey}
+            placeholder={providerCredentialsBusy ? t.loading : t.setKeyPh}
+            disabled={providerCredentialsBusy}
+            onChange={setEditProviderKey}
+          />
+          <div className="fld">
+            <label className="lbl" htmlFor="provider-api-base">
+              {t.setApiBase}
+            </label>
+            <input
+              id="provider-api-base"
+              type="url"
+              inputMode="url"
+              value={editProviderBase}
+              placeholder={providerCredentialsBusy ? t.loading : t.setBasePh}
+              disabled={providerCredentialsBusy}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => setEditProviderBase(event.target.value)}
+            />
+          </div>
+        </div>
+        <div className="set-actions">
+          <button
+            type="submit"
+            className="btn primary"
+            disabled={providerBusy || providerCredentialsBusy}
+          >
+            {providerBusy ? t.saving : t.save}
+          </button>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={closeProviderEdit}
+          >
+            {t.cancel}
+          </button>
+        </div>
+      </form>
+    );
 
   return (
     <div
@@ -417,6 +710,21 @@ export function SettingsModal({
         if (event.target === event.currentTarget) requestClose();
       }}
     >
+      {testNotice !== null && (
+        <AppNotification
+          tone={testNotice.tone}
+          title={testNotice.title}
+          message={testNotice.message}
+          closeLabel={t.close}
+          onClose={() => {
+            if (testNoticeTimerRef.current !== null) {
+              window.clearTimeout(testNoticeTimerRef.current);
+              testNoticeTimerRef.current = null;
+            }
+            setTestNotice(null);
+          }}
+        />
+      )}
       <div ref={cardRef} className="mdl settings-modal" role="dialog" aria-modal="true" aria-labelledby="mdl-title" tabIndex={-1}>
         <div className="mdl-head">
           <nav className="settings-crumbs mono" aria-label={t.breadcrumbAria}>
@@ -461,11 +769,16 @@ export function SettingsModal({
                     providers={providers}
                     selectedId={null}
                     onSelect={chooseProvider}
+                    onEditProvider={openProviderEdit}
+                    onDeleteProvider={removeProvider}
                   />
                 )}
-                <button type="button" className="btn ghost" onClick={resetAddFlow}>
-                  {t.cancel}
-                </button>
+                {providerEditor}
+                {editingProvider === null && (
+                  <button type="button" className="btn ghost" onClick={resetAddFlow}>
+                    {t.cancel}
+                  </button>
+                )}
               </>
             ) : (
               <>
@@ -632,7 +945,7 @@ export function SettingsModal({
           ) : (
             <>
               <div className="settings-summary">
-                <span className="mono">{t.deploymentsConfigured(settings.deployments.length)}</span>
+                <span className="mono">{t.modelsConfigured(settings.deployments.length)}</span>
                 <button type="button" className="btn primary" onClick={() => setAdding(true)}>{t.addModels}</button>
               </div>
               {settings.deployments.length === 0 ? (
@@ -651,8 +964,6 @@ export function SettingsModal({
                   <div className="connection-fields">
                     <label className="fld"><span className="lbl">{t.routingGroup}</span><input value={editGroup} onChange={(event) => setEditGroup(event.target.value)} /></label>
                     <label className="fld"><span className="lbl">{t.setModel}</span><input value={editModel} onChange={(event) => setEditModel(event.target.value)} /></label>
-                    <label className="fld"><span className="lbl">{t.setApiKey}</span><input type="password" value={editKey} placeholder={t.keepKeyHint} onChange={(event) => setEditKey(event.target.value)} /></label>
-                    <label className="fld"><span className="lbl">{t.setApiBase}</span><input value={editBase} placeholder={t.keepBaseHint} onChange={(event) => setEditBase(event.target.value)} /></label>
                     <label className="fld"><span className="lbl">{t.weight}</span><input type="number" min={0} value={editWeight} onChange={(event) => setEditWeight(Math.max(0, Number(event.target.value) || 0))} /></label>
                   </div>
                   <div className="set-actions">

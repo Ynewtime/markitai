@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import httpx
 from loguru import logger
@@ -32,6 +32,7 @@ from markitai.constants import (
 )
 from markitai.utils.mime import get_extension_from_mime, normalize_image_extension
 from markitai.utils.paths import ensure_assets_dir
+from markitai.utils.text import markdown_image_reference
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -215,7 +216,7 @@ def _compress_image_worker(
     min_height: int,
     min_area: int,
 ) -> tuple[bytes, int, int] | None:
-    """Compress a single image in a worker process.
+    """Compress a single image in a worker thread or process.
 
     Prefers OpenCV for better multi-threaded performance (releases GIL),
     falls back to Pillow if OpenCV fails.
@@ -466,7 +467,9 @@ class ImageProcessor:
                 if processed.saved_path is None:
                     # Image was filtered/deduplicated, remove from output
                     return ""
-                return f"![{match.group(1)}]({assets_path}/{processed.saved_path.name})"
+                return markdown_image_reference(
+                    match.group(1), f"{assets_path}/{processed.saved_path.name}"
+                )
 
             return self.DATA_URI_PATTERN.sub(replace_match_indexed, markdown)
 
@@ -481,7 +484,9 @@ class ImageProcessor:
                 return match.group(0)
             try:
                 img = next(image_iter)
-                return f"![{match.group(1)}]({assets_path}/{img.path.name})"
+                return markdown_image_reference(
+                    match.group(1), f"{assets_path}/{img.path.name}"
+                )
             except StopIteration:
                 return match.group(0)
 
@@ -506,7 +511,7 @@ class ImageProcessor:
         def replace_match(match: re.Match) -> str:
             alt_text = match.group(1)
             if replacement_path:
-                return f"![{alt_text}]({replacement_path})"
+                return markdown_image_reference(alt_text, replacement_path)
             return ""  # Remove the image entirely
 
         return self.DATA_URI_PATTERN.sub(replace_match, markdown)
@@ -539,7 +544,7 @@ class ImageProcessor:
         invalid_patterns = {"...", "..", ".", "placeholder", "image", "filename"}
 
         def validate_image(match: re.Match) -> str:
-            filename = match.group(1)
+            filename = unquote(match.group(1))
             # Check for placeholder patterns
             if filename.strip() in invalid_patterns or filename.strip() == "":
                 return ""
@@ -1507,7 +1512,11 @@ async def download_url_images(
                 image_data = response.content
                 if ext.lower() in (".jpg", ".jpeg", ".png", ".webp"):
                     try:
-                        processed = _compress_image_worker(
+                        # Pillow decode/resize/compress is CPU-bound. Keeping
+                        # it on the event loop stalls serve API/SSE responses
+                        # while a URL job processes remote images.
+                        processed = await asyncio.to_thread(
+                            _compress_image_worker,
                             image_data,
                             quality=config.quality,
                             max_size=(config.max_width, config.max_height),
@@ -1532,13 +1541,15 @@ async def download_url_images(
                     except Exception as e:
                         logger.debug(f"Image processing failed, saving original: {e}")
 
-                # Save to file
-                output_path.write_bytes(image_data)
+                # Keep filesystem writes off callers' event loops as well.
+                await asyncio.to_thread(output_path.write_bytes, image_data)
                 downloaded_paths.append(output_path)
 
                 # Prepare replacement with local path
                 local_path = f"{ASSETS_REL_PATH}/{filename}"
-                replacements[original_match] = f"![{alt_text}]({local_path})"
+                replacements[original_match] = markdown_image_reference(
+                    alt_text, local_path
+                )
 
                 # Track URL to path mapping for post-processing
                 url_to_path[image_url] = output_path

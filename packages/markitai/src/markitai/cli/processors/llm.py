@@ -23,7 +23,7 @@ from markitai.constants import (
 )
 from markitai.image import ImageProcessor
 from markitai.security import atomic_write_text
-from markitai.utils.text import format_error_message
+from markitai.utils.text import format_error_message, markdown_image_reference
 from markitai.workflow.helpers import (
     create_llm_processor,
     extract_document_context,
@@ -294,7 +294,9 @@ async def analyze_images_with_llm(
             # Update alt text in markdown (if alt_enabled)
             if alt_enabled and not is_standalone_image:
                 old_pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(image_path.name)}\)"
-                new_ref = f"![{analysis.caption}]({ASSETS_REL_PATH}/{image_path.name})"
+                new_ref = markdown_image_reference(
+                    analysis.caption, f"{ASSETS_REL_PATH}/{image_path.name}"
+                )
                 markdown = re.sub(old_pattern, new_ref, markdown)
 
         # Update .llm.md file
@@ -343,8 +345,8 @@ async def analyze_images_with_llm(
                     if analysis is None:
                         continue
                     old_pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(image_path.name)}\)"
-                    new_ref = (
-                        f"![{analysis.caption}]({ASSETS_REL_PATH}/{image_path.name})"
+                    new_ref = markdown_image_reference(
+                        analysis.caption, f"{ASSETS_REL_PATH}/{image_path.name}"
                     )
                     llm_content = re.sub(old_pattern, new_ref, llm_content)
                 atomic_write_text(llm_output, llm_content)

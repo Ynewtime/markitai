@@ -4,7 +4,8 @@
 #
 # Usage:
 #   powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"   # User install
-#   .\scripts\setup.ps1                                                                         # Dev setup (in repo)
+#   .\scripts\setup.ps1                                                               # Dev setup (in repo)
+# Full failure logs use a private temp file; set MARKITAI_SETUP_LOG to override.
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -36,7 +37,9 @@ function i18n {
             # Intro/Outro
             "welcome"                   { return "欢迎使用 Markitai 安装程序!" }
             "setup_complete"            { return "安装完成!" }
+            "setup_complete_with_warnings" { return "安装完成，但有部分组件失败" }
             "dev_setup_complete"        { return "开发环境设置完成!" }
+            "dev_setup_complete_with_warnings" { return "开发环境设置完成，但有部分组件失败" }
 
             # Mode
             "mode_user"                 { return "模式: 用户安装" }
@@ -92,10 +95,12 @@ function i18n {
             "info_syncing_deps"         { return "正在同步依赖..." }
             "info_deps_synced"          { return "依赖同步完成" }
             "info_precommit_installed"  { return "pre-commit hooks 已安装" }
+            "info_error_log"            { return "完整错误日志" }
 
             # Error messages
             "error_uv_required"         { return "需要安装 uv 包管理器" }
             "error_python_required"     { return "需要安装 Python 3.11-3.13" }
+            "error_unexpected"          { return "发生意外错误" }
             "error_setup_failed"        { return "安装失败" }
 
             # Install source (repo detection)
@@ -133,6 +138,7 @@ function i18n {
             "run_tests"                 { return "运行测试" }
             "run_cli"                   { return "运行 CLI" }
             "interactive_mode"          { return "交互模式" }
+            "start_web_ui"              { return "启动 Web UI" }
             "configure_llm"             { return "配置 LLM" }
             "configure_env"             { return "配置环境变量" }
             "convert_file"              { return "转换文件" }
@@ -154,7 +160,9 @@ function i18n {
             # Intro/Outro
             "welcome"                   { return "Welcome to Markitai Setup!" }
             "setup_complete"            { return "Setup complete!" }
+            "setup_complete_with_warnings" { return "Setup complete with warnings" }
             "dev_setup_complete"        { return "Development environment ready!" }
+            "dev_setup_complete_with_warnings" { return "Development environment ready with warnings" }
 
             # Mode
             "mode_user"                 { return "Mode: User Install" }
@@ -210,10 +218,12 @@ function i18n {
             "info_syncing_deps"         { return "Syncing dependencies..." }
             "info_deps_synced"          { return "Dependencies synced" }
             "info_precommit_installed"  { return "pre-commit hooks installed" }
+            "info_error_log"            { return "Full error log" }
 
             # Error messages
             "error_uv_required"         { return "uv package manager is required" }
             "error_python_required"     { return "Python 3.11-3.13 is required" }
+            "error_unexpected"          { return "Unexpected error" }
             "error_setup_failed"        { return "Setup failed" }
 
             # Install source (repo detection)
@@ -251,6 +261,7 @@ function i18n {
             "run_tests"                 { return "Run tests" }
             "run_cli"                   { return "Run CLI" }
             "interactive_mode"          { return "Interactive mode" }
+            "start_web_ui"              { return "Start Web UI" }
             "configure_llm"             { return "Configure LLM" }
             "configure_env"             { return "Configure environment" }
             "convert_file"              { return "Convert a file" }
@@ -270,48 +281,90 @@ function i18n {
 }
 
 # ============================================================
-# Clack-style Visual Components
-# Inspired by @clack/prompts - beautiful CLI with guide lines
+# Compact tree-style visual components
 # ============================================================
+# The one-column guide follows the `withGuide` visual grammar popularized by
+# @clack/prompts. Keeping this renderer inline preserves PowerShell 5.1 support
+# and lets the bootstrap run before Node or Python is installed.
 
-# Unicode box-drawing characters
-$S_BAR = [char]0x2502         # │
-$S_BAR_H = [char]0x2500       # ─
-$S_CORNER_TOP = [char]0x250C  # ┌
-$S_CORNER_BOT = [char]0x2514  # └
-$S_STEP_ACTIVE = [char]0x25C6 # ◆
-$S_STEP_SUBMIT = [char]0x25C7 # ◇
-$S_CHECK = [char]0x2713       # ✓
-$S_CROSS = [char]0x2717       # ✗
-$S_ARROW = [char]0x2192       # →
-$S_CIRCLE = [char]0x25CB      # ○
-$S_BOX_TOP = [char]0x256D     # ╭
-$S_BOX_BOT = [char]0x2570     # ╰
+$S_BAR = [char]0x2502           # │
+$S_BAR_H = [char]0x2500         # ─
+$S_BRANCH = [char]0x251C        # ├
+$S_CORNER_TOP = [char]0x256D    # ╭
+$S_CORNER_BOT = [char]0x2570    # ╰
+$S_CHECK = [char]0x2713         # ✓
+$S_CROSS = [char]0x2717         # ✗
+$S_ARROW = [char]0x2192         # →
+$S_CIRCLE = [char]0x25CB        # ○
+
+# Session state lets the global catch close an interrupted tree exactly once.
+$script:CLACK_SESSION_ACTIVE = $false
+$script:CLACK_SESSION_CLOSED = $false
+$script:SETUP_LOG_FILE = $env:MARKITAI_SETUP_LOG
+$script:SETUP_LOG_AUTO = $false
+$script:SETUP_LOG_SHOWN = $false
+
+# Print an empty row while preserving the session guide.
+function Write-GuideLine {
+    Write-Host $S_BAR -ForegroundColor DarkGray
+}
+
+# Print a branch connected to the session guide.
+function Write-TreeBranch {
+    param(
+        [string]$Text,
+        [ConsoleColor]$Color = [ConsoleColor]::DarkGray
+    )
+    Write-Host $S_BRANCH -ForegroundColor DarkGray -NoNewline
+    Write-Host $S_BAR_H -ForegroundColor $Color -NoNewline
+    Write-Host " $Text"
+}
 
 # Session intro - start of CLI flow
 function Clack-Intro {
     param([string]$Title)
+    $script:CLACK_SESSION_ACTIVE = $true
+    $script:CLACK_SESSION_CLOSED = $false
     Write-Host ""
     Write-Host $S_CORNER_TOP -ForegroundColor DarkGray -NoNewline
-    Write-Host "  $Title"
-    Write-Host $S_BAR -ForegroundColor DarkGray
+    Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
+    Write-Host " $Title"
+    Write-GuideLine
 }
 
 # Session outro - end of CLI flow
 function Clack-Outro {
     param([string]$Message)
-    Write-Host $S_BAR -ForegroundColor DarkGray
+    $script:CLACK_SESSION_CLOSED = $true
+    if ($script:SETUP_LOG_AUTO -and $script:SETUP_LOG_FILE) {
+        Remove-Item $script:SETUP_LOG_FILE -Force -ErrorAction SilentlyContinue
+        $script:SETUP_LOG_FILE = $null
+    }
+    Write-GuideLine
     Write-Host $S_CORNER_BOT -ForegroundColor DarkGray -NoNewline
-    Write-Host "  $Message" -ForegroundColor Green
+    Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
+    Write-Host " $Message" -ForegroundColor Green
     Write-Host ""
 }
 
-# Section header with active marker
+# Non-fatal component failures close the tree in warning yellow, not success
+# green, while still returning a successful core installation.
+function Clack-OutroWarning {
+    param([string]$Message)
+    Show-SetupErrorLog
+    $script:CLACK_SESSION_CLOSED = $true
+    Write-GuideLine
+    Write-Host $S_CORNER_BOT -ForegroundColor DarkGray -NoNewline
+    Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
+    Write-Host " $Message" -ForegroundColor Yellow
+    Write-Host ""
+}
+
+# Section header connected to the session guide
 function Clack-Section {
     param([string]$Title)
-    Write-Host $S_BAR -ForegroundColor DarkGray
-    Write-Host $S_STEP_ACTIVE -ForegroundColor Magenta -NoNewline
-    Write-Host "  $Title"
+    Write-GuideLine
+    Write-TreeBranch -Text $Title -Color Magenta
 }
 
 # Log with guide line - success
@@ -362,11 +415,102 @@ function Clack-Skip {
 # Log with guide line - plain text
 function Clack-Log {
     param([string]$Message)
+    if ([string]::IsNullOrEmpty($Message)) {
+        Write-GuideLine
+        return
+    }
     Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
     Write-Host "  $Message"
 }
 
-# Confirm prompt with guide line
+function Initialize-SetupLog {
+    if ($script:SETUP_LOG_FILE) {
+        try {
+            $null = [IO.File]::Open(
+                $script:SETUP_LOG_FILE,
+                [IO.FileMode]::Append,
+                [IO.FileAccess]::Write,
+                [IO.FileShare]::Read
+            ).Dispose()
+            return $true
+        } catch {
+            $script:SETUP_LOG_FILE = $null
+            return $false
+        }
+    }
+
+    try {
+        $script:SETUP_LOG_FILE = Join-Path (
+            [IO.Path]::GetTempPath()
+        ) "markitai-setup-$([Guid]::NewGuid()).log"
+        $null = [IO.File]::Create($script:SETUP_LOG_FILE).Dispose()
+        $script:SETUP_LOG_AUTO = $true
+        return $true
+    } catch {
+        $script:SETUP_LOG_FILE = $null
+        return $false
+    }
+}
+
+function Write-SetupDiagnostic {
+    param(
+        [string]$Text,
+        [string]$Context = "diagnostic"
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return }
+    if (-not (Initialize-SetupLog)) { return }
+    try {
+        $entry = "`r`n== $Context ==`r`n$Text`r`n"
+        [IO.File]::AppendAllText($script:SETUP_LOG_FILE, $entry)
+    } catch {}
+}
+
+function Show-SetupErrorLog {
+    if (-not $script:SETUP_LOG_FILE -or $script:SETUP_LOG_SHOWN) { return }
+    $script:SETUP_LOG_SHOWN = $true
+    Clack-Info "$(i18n 'info_error_log'): $($script:SETUP_LOG_FILE)"
+}
+
+# Print only the final few third-party diagnostic lines. ANSI sequences are
+# removed so captured native errors cannot turn the whole block red; the full
+# sanitized text is retained in a private setup log for troubleshooting.
+function Clack-Detail {
+    param(
+        [AllowNull()]
+        [object]$Detail,
+        [int]$MaxLines = 6,
+        [string]$Context = "diagnostic"
+    )
+
+    if ($null -eq $Detail) { return }
+    $text = if ($Detail -is [string]) {
+        $Detail
+    } else {
+        (@($Detail) | ForEach-Object { "$_" }) -join [Environment]::NewLine
+    }
+    if ([string]::IsNullOrWhiteSpace($text)) { return }
+
+    $escape = [Regex]::Escape([string][char]27)
+    $clean = [Regex]::Replace($text, "$escape\[[0-9;?]*[A-Za-z]", "")
+    Write-SetupDiagnostic -Text $clean -Context $Context
+    $lines = @(
+        $clean -split "`r?`n" |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Last $MaxLines
+    )
+    foreach ($line in $lines) {
+        $bounded = if ($line.Length -gt 300) {
+            $line.Substring(0, 297) + "..."
+        } else {
+            $line
+        }
+        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
+        Write-Host "    $bounded" -ForegroundColor DarkGray
+    }
+}
+
+# Confirm prompt connected to the session guide
 function Clack-Confirm {
     param(
         [string]$Prompt,
@@ -379,12 +523,13 @@ function Clack-Confirm {
         $hint = "y/N"
     }
 
-    Write-Host $S_BAR -ForegroundColor DarkGray
-    Write-Host $S_STEP_SUBMIT -ForegroundColor Cyan -NoNewline
+    Write-GuideLine
+    Write-Host $S_BRANCH -ForegroundColor DarkGray -NoNewline
+    Write-Host $S_BAR_H -ForegroundColor Cyan -NoNewline
     if (Test-InteractiveInput) {
-        $answer = Read-Host "  $Prompt [$hint]"
+        $answer = Read-Host " $Prompt [$hint]"
     } else {
-        Write-Host "  $Prompt [$hint]"
+        Write-Host " $Prompt [$hint] $Default"
         $answer = $Default
     }
 
@@ -423,7 +568,8 @@ function Confirm-OptionalInstall {
     return (Clack-Confirm $Prompt $Default)
 }
 
-# Note/message box with guide line
+# Compact note block. Content stays on the single outer guide instead of
+# drawing a second, competing box down the left side.
 function Clack-Note {
     param(
         [Parameter(Position=0)]
@@ -432,33 +578,38 @@ function Clack-Note {
         [string[]]$Lines
     )
 
-    Write-Host $S_BAR -ForegroundColor DarkGray
-    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-    Write-Host "  " -NoNewline
-    Write-Host $S_BOX_TOP -ForegroundColor DarkGray -NoNewline
-    Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
-    Write-Host " $Title"
+    Write-GuideLine
+    Write-TreeBranch -Text $Title -Color Green
 
     foreach ($line in $Lines) {
-        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-        Write-Host "  " -NoNewline
-        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-        Write-Host "  $line"
+        Clack-Log $line
     }
-
-    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-    Write-Host "  " -NoNewline
-    Write-Host $S_BOX_BOT -ForegroundColor DarkGray -NoNewline
-    Write-Host $S_BAR_H -ForegroundColor DarkGray
 }
 
 # Cancel message
 function Clack-Cancel {
     param([string]$Message)
-    Write-Host $S_BAR -ForegroundColor DarkGray
+    Show-SetupErrorLog
+    $script:CLACK_SESSION_CLOSED = $true
+    Write-GuideLine
     Write-Host $S_CORNER_BOT -ForegroundColor DarkGray -NoNewline
-    Write-Host "  $Message" -ForegroundColor Red
+    Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
+    Write-Host " $Message" -ForegroundColor Red
     Write-Host ""
+}
+
+# Last-resort guard for exceptions outside the expected per-component paths.
+function Complete-UnexpectedFailure {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    if ($script:CLACK_SESSION_ACTIVE -and -not $script:CLACK_SESSION_CLOSED) {
+        Clack-Error (i18n "error_unexpected")
+        Clack-Detail -Detail $ErrorRecord.Exception.Message -MaxLines 3
+        Clack-Cancel (i18n "error_setup_failed")
+        return
+    }
+
+    Write-Host (i18n "error_setup_failed") -ForegroundColor Red
 }
 
 # ============================================================
@@ -482,6 +633,45 @@ function Track-Install {
     }
 }
 
+# Optional components are failure-isolated: an unexpected exception is shown
+# as a bounded tree item, tracked, and does not prevent later choices/summary.
+function Invoke-OptionalStep {
+    param(
+        [string]$Component,
+        [scriptblock]$Action
+    )
+
+    try {
+        & $Action | Out-Null
+    } catch {
+        Clack-Error "$(i18n $Component) $(i18n 'failed')"
+        Clack-Detail -Detail $_.Exception.Message -MaxLines 3
+        $alreadyTracked =
+            ($script:INSTALLED_COMPONENTS -contains $Component) -or
+            ($script:SKIPPED_COMPONENTS -contains $Component) -or
+            ($script:FAILED_COMPONENTS -contains $Component)
+        if (-not $alreadyTracked) {
+            Track-Install -Component $Component -Status "failed"
+        }
+    }
+}
+
+# Best-effort maintenance steps have no standalone summary component, but must
+# still not tear down an otherwise successful setup.
+function Invoke-BestEffortStep {
+    param(
+        [string]$FailureMessage,
+        [scriptblock]$Action
+    )
+
+    try {
+        & $Action | Out-Null
+    } catch {
+        Clack-Warn $FailureMessage
+        Clack-Detail -Detail $_.Exception.Message -MaxLines 3
+    }
+}
+
 # ============================================================
 # Version Variables (can be overridden via environment)
 # ============================================================
@@ -498,6 +688,60 @@ function Test-CommandExists {
     param([string]$CommandName)
     $cmd = Get-Command $CommandName -ErrorAction SilentlyContinue
     return ($null -ne $cmd)
+}
+
+# Run a native command without allowing PowerShell 5.1 to paint native stderr
+# as unbounded red ErrorRecords. Callers decide whether to show the bounded
+# Output through Clack-Detail.
+function Invoke-NativeQuietly {
+    param([scriptblock]$Command)
+
+    $oldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $output = @()
+    $exitCode = 1
+    try {
+        $LASTEXITCODE = $null
+        $output = @(& $Command 2>&1)
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+    } catch {
+        $output = @($_.Exception.Message)
+        $exitCode = 1
+    } finally {
+        $ErrorActionPreference = $oldErrorAction
+    }
+
+    return [PSCustomObject]@{
+        Success = ($exitCode -eq 0)
+        ExitCode = $exitCode
+        Output = $output
+    }
+}
+
+# Download official PowerShell installers to a temporary file and execute them
+# in a child process. An installer calling `exit` can then never terminate this
+# parent script before its tree is closed.
+function Invoke-PowerShellInstallerQuietly {
+    param([string]$Uri)
+
+    $tempPath = Join-Path ([IO.Path]::GetTempPath()) "markitai-installer-$([Guid]::NewGuid()).ps1"
+    try {
+        $content = Invoke-RestMethod -Uri $Uri -ErrorAction Stop
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText($tempPath, [string]$content, $utf8NoBom)
+        $engine = (Get-Process -Id $PID -ErrorAction Stop).Path
+        return Invoke-NativeQuietly {
+            & $engine -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tempPath
+        }
+    } catch {
+        return [PSCustomObject]@{
+            Success = $false
+            ExitCode = 1
+            Output = @($_.Exception.Message)
+        }
+    } finally {
+        Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # Get project root directory
@@ -560,10 +804,20 @@ function Configure-Mirrors {
         return
     }
 
-    # Show mirror source selection
-    Write-Host $S_BAR -ForegroundColor DarkGray
-    Write-Host $S_STEP_SUBMIT -ForegroundColor Cyan -NoNewline
-    $choice = Read-Host "  $(i18n 'mirror_select') [1]`n$S_BAR  1. $(i18n 'mirror_tuna')`n$S_BAR  2. $(i18n 'mirror_aliyun')`n$S_BAR  3. $(i18n 'mirror_tencent')`n$S_BAR  4. $(i18n 'mirror_huawei')`n$S_BAR  >"
+    # Show mirror source selection on the same continuous tree guide.
+    Write-GuideLine
+    Write-TreeBranch -Text "$(i18n 'mirror_select') [1]" -Color Cyan
+    Clack-Log "1. $(i18n 'mirror_tuna')"
+    Clack-Log "2. $(i18n 'mirror_aliyun')"
+    Clack-Log "3. $(i18n 'mirror_tencent')"
+    Clack-Log "4. $(i18n 'mirror_huawei')"
+    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
+    if (Test-InteractiveInput) {
+        $choice = Read-Host "  >"
+    } else {
+        Write-Host "  > 1"
+        $choice = "1"
+    }
 
     if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
 
@@ -748,9 +1002,15 @@ function Install-UV {
         $uvUrl = "https://astral.sh/uv/install.ps1"
     }
 
-    try {
-        $null = Invoke-RestMethod $uvUrl | Invoke-Expression 2>$null
+    $installResult = Invoke-PowerShellInstallerQuietly -Uri $uvUrl
+    if (-not $installResult.Success) {
+        Clack-Error "$(i18n 'uv') $(i18n 'failed')"
+        Clack-Detail -Detail $installResult.Output -MaxLines 4
+        Track-Install -Component "uv" -Status "failed"
+        return $false
+    }
 
+    try {
         # Refresh PATH (User paths take precedence)
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + $env:Path
 
@@ -768,6 +1028,7 @@ function Install-UV {
         return $true
     } catch {
         Clack-Error "$(i18n 'uv') $(i18n 'failed')"
+        Clack-Detail -Detail @($installResult.Output + $_.Exception.Message) -MaxLines 4
         Track-Install -Component "uv" -Status "failed"
         return $false
     }
@@ -793,8 +1054,8 @@ function Install-Python {
 
     # Not found, auto-install (3.13 as default)
     Clack-Info "$(i18n 'installing') $(i18n 'python') 3.13..."
-    $null = & uv python install 3.13 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    $installResult = Invoke-NativeQuietly { & uv python install 3.13 }
+    if ($installResult.Success) {
         $uvPython = & uv python find 3.13 2>$null
         if ($uvPython -and (Test-Path $uvPython)) {
             $version = & $uvPython -c "import sys; v=sys.version_info; print('%d.%d.%d' % (v[0], v[1], v[2]))" 2>$null
@@ -807,6 +1068,7 @@ function Install-Python {
     }
 
     Clack-Error (i18n "error_python_required")
+    Clack-Detail -Detail $installResult.Output -MaxLines 4
     return $false
 }
 
@@ -839,6 +1101,7 @@ function Install-Markitai {
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $exitCode = 1
+    $lastOutput = @()
 
     if (Test-Path $markitaiToolDir) {
         # Only an unpinned PyPI install can use the receipt-based upgrade path.
@@ -848,7 +1111,7 @@ function Install-Markitai {
             -not (Test-MarkitaiExtrasNeedUpdate)
         ) {
             try {
-                $null = & uv tool upgrade markitai 2>&1
+                $lastOutput = @(& uv tool upgrade markitai 2>&1)
                 $exitCode = $LASTEXITCODE
             } catch {}
         }
@@ -856,7 +1119,7 @@ function Install-Markitai {
         # Upgrade failed (or local source), try force reinstall
         if ($exitCode -ne 0) {
             try {
-                $null = & uv tool install $pkg --python $pythonArg --force 2>&1
+                $lastOutput = @(& uv tool install $pkg --python $pythonArg --force 2>&1)
                 $exitCode = $LASTEXITCODE
             } catch {}
         }
@@ -864,7 +1127,7 @@ function Install-Markitai {
         # Fresh install
         Clack-Info "$(i18n 'installing') $(i18n 'markitai')..."
         try {
-            $null = & uv tool install $pkg --python $pythonArg 2>&1
+            $lastOutput = @(& uv tool install $pkg --python $pythonArg 2>&1)
             $exitCode = $LASTEXITCODE
         } catch {}
     }
@@ -893,6 +1156,7 @@ function Install-Markitai {
     }
 
     Clack-Error "$(i18n 'markitai') $(i18n 'failed')"
+    Clack-Detail -Detail $lastOutput -MaxLines 6
     Track-Install -Component "markitai" -Status "failed"
     return $false
 }
@@ -1014,14 +1278,11 @@ function Finalize-MarkitaiExtras {
     # Reinstall with all extras (progressive fallback on failure)
     $pkg = Get-MarkitaiPkgSpec -Extras $script:MARKITAI_EXTRAS
 
-    $oldErrorAction = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $installOk = $false
-    $uvErr = ""
-    try {
-        $uvErr = & uv tool install $pkg --python $script:PYTHON_CMD --force 2>&1
-        if ($LASTEXITCODE -eq 0) { $installOk = $true }
-    } catch { $uvErr = $_.Exception.Message }
+    $primaryResult = Invoke-NativeQuietly {
+        & uv tool install $pkg --python $script:PYTHON_CMD --force
+    }
+    $installOk = $primaryResult.Success
+    $fallbackResult = $null
 
     if (-not $installOk) {
         # Full install failed — retry without SDK-dependent extras
@@ -1041,21 +1302,23 @@ function Finalize-MarkitaiExtras {
         if ($safeExtras.Count -gt 0) {
             $safeList = $safeExtras -join ","
             $pkg = Get-MarkitaiPkgSpec -Extras $safeList
-            try {
-                $null = & uv tool install $pkg --python $script:PYTHON_CMD --force 2>&1
-                if ($LASTEXITCODE -eq 0) {
-                    if ($skipped.Count -gt 0) {
-                        Clack-Warn "$(i18n 'skipped') extras: $($skipped -join ', ') (SDK $(i18n 'not_found'))"
-                    }
-                    $installOk = $true
+            $fallbackResult = Invoke-NativeQuietly {
+                & uv tool install $pkg --python $script:PYTHON_CMD --force
+            }
+            if ($fallbackResult.Success) {
+                if ($skipped.Count -gt 0) {
+                    Clack-Warn "$(i18n 'skipped') extras: $($skipped -join ', ') (SDK $(i18n 'not_found'))"
                 }
-            } catch {}
+                $installOk = $true
+            }
         }
         if (-not $installOk) {
-            Clack-Warn "$(i18n 'markitai') extras update $(i18n 'failed'): $uvErr"
+            Clack-Warn "$(i18n 'markitai') extras update $(i18n 'failed')"
+            $details = @($primaryResult.Output)
+            if ($fallbackResult) { $details += $fallbackResult.Output }
+            Clack-Detail -Detail $details -MaxLines 3 -Context "markitai extras"
         }
     }
-    $ErrorActionPreference = $oldErrorAction
 }
 
 # Sync project dependencies (Dev mode)
@@ -1077,6 +1340,7 @@ function Sync-Dependencies {
             return $true
         } else {
             Clack-Error "$(i18n 'python_deps') $(i18n 'failed')"
+            Clack-Detail -Detail $syncResult -MaxLines 6
             Track-Install -Component "python_deps" -Status "failed"
             return $false
         }
@@ -1104,6 +1368,7 @@ function Install-PreCommit {
                     return $true
                 } else {
                     Clack-Warn "$(i18n 'precommit') $(i18n 'failed')"
+                    Clack-Detail -Detail $precommitResult -MaxLines 3
                     return $false
                 }
             }
@@ -1159,6 +1424,7 @@ function Install-OptionalPlaywright {
 
     $oldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $lastOutput = @()
 
     # Method 1: Use playwright from markitai's uv tool environment
     $markitaiPlaywright = $null
@@ -1177,7 +1443,7 @@ function Install-OptionalPlaywright {
 
     if (Test-Path $markitaiPlaywright) {
         try {
-            $null = & $markitaiPlaywright install chromium 2>&1
+            $lastOutput = @(& $markitaiPlaywright install chromium 2>&1)
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Clack-Success "$(i18n 'playwright') $(i18n 'installed')"
@@ -1190,7 +1456,7 @@ function Install-OptionalPlaywright {
     # Method 2: Fallback to Python module
     if ($script:PYTHON_CMD) {
         try {
-            $null = & $script:PYTHON_CMD -m playwright install chromium 2>&1
+            $lastOutput = @(& $script:PYTHON_CMD -m playwright install chromium 2>&1)
             if ($LASTEXITCODE -eq 0) {
                 $ErrorActionPreference = $oldErrorAction
                 Clack-Success "$(i18n 'playwright') $(i18n 'installed')"
@@ -1202,6 +1468,7 @@ function Install-OptionalPlaywright {
 
     $ErrorActionPreference = $oldErrorAction
     Clack-Error "$(i18n 'playwright') $(i18n 'failed')"
+    Clack-Detail -Detail $lastOutput -MaxLines 4
     Track-Install -Component "playwright" -Status "failed"
     return $false
 }
@@ -1239,10 +1506,11 @@ function Install-OptionalLibreOffice {
     Clack-Info "$(i18n 'installing') $(i18n 'libreoffice')..."
 
     # Priority: winget > scoop > choco
+    $lastResult = $null
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        $null = & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $lastResult = Invoke-NativeQuietly { & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements }
+        if ($lastResult.Success) {
             Clack-Success "$(i18n 'libreoffice') $(i18n 'installed')"
             Track-Install -Component "libreoffice" -Status "installed"
             return $true
@@ -1251,9 +1519,9 @@ function Install-OptionalLibreOffice {
 
     $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
     if ($scoopCmd) {
-        $null = & scoop bucket add extras 2>$null
-        $null = & scoop install extras/libreoffice 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $null = Invoke-NativeQuietly { & scoop bucket add extras }
+        $lastResult = Invoke-NativeQuietly { & scoop install extras/libreoffice }
+        if ($lastResult.Success) {
             Clack-Success "$(i18n 'libreoffice') $(i18n 'installed')"
             Track-Install -Component "libreoffice" -Status "installed"
             return $true
@@ -1262,8 +1530,8 @@ function Install-OptionalLibreOffice {
 
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
-        $null = & choco install libreoffice-fresh -y 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $lastResult = Invoke-NativeQuietly { & choco install libreoffice-fresh -y }
+        if ($lastResult.Success) {
             Clack-Success "$(i18n 'libreoffice') $(i18n 'installed')"
             Track-Install -Component "libreoffice" -Status "installed"
             return $true
@@ -1271,6 +1539,7 @@ function Install-OptionalLibreOffice {
     }
 
     Clack-Error "$(i18n 'libreoffice') $(i18n 'failed')"
+    if ($lastResult) { Clack-Detail -Detail $lastResult.Output -MaxLines 3 }
     Track-Install -Component "libreoffice" -Status "failed"
     return $false
 }
@@ -1301,10 +1570,11 @@ function Install-OptionalFFmpeg {
     Clack-Info "$(i18n 'installing') $(i18n 'ffmpeg')..."
 
     # Priority: winget > scoop > choco
+    $lastResult = $null
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        $null = & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $lastResult = Invoke-NativeQuietly { & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements }
+        if ($lastResult.Success) {
             Clack-Success "$(i18n 'ffmpeg') $(i18n 'installed')"
             Track-Install -Component "ffmpeg" -Status "installed"
             return $true
@@ -1313,8 +1583,8 @@ function Install-OptionalFFmpeg {
 
     $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
     if ($scoopCmd) {
-        $null = & scoop install ffmpeg 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $lastResult = Invoke-NativeQuietly { & scoop install ffmpeg }
+        if ($lastResult.Success) {
             Clack-Success "$(i18n 'ffmpeg') $(i18n 'installed')"
             Track-Install -Component "ffmpeg" -Status "installed"
             return $true
@@ -1323,8 +1593,8 @@ function Install-OptionalFFmpeg {
 
     $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
     if ($chocoCmd) {
-        $null = & choco install ffmpeg -y 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $lastResult = Invoke-NativeQuietly { & choco install ffmpeg -y }
+        if ($lastResult.Success) {
             Clack-Success "$(i18n 'ffmpeg') $(i18n 'installed')"
             Track-Install -Component "ffmpeg" -Status "installed"
             return $true
@@ -1332,6 +1602,7 @@ function Install-OptionalFFmpeg {
     }
 
     Clack-Error "$(i18n 'ffmpeg') $(i18n 'failed')"
+    if ($lastResult) { Clack-Detail -Detail $lastResult.Output -MaxLines 3 }
     Track-Install -Component "ffmpeg" -Status "failed"
     return $false
 }
@@ -1358,8 +1629,11 @@ function Install-OptionalClaudeCLI {
 
     # Prefer official install script (PowerShell)
     $claudeUrl = "https://claude.ai/install.ps1"
-    try {
-        $null = Invoke-Expression (Invoke-RestMethod -Uri $claudeUrl) 2>&1
+    $installResult = Invoke-PowerShellInstallerQuietly -Uri $claudeUrl
+    $lastDetail = $installResult.Output
+    if ($installResult.Success) {
+        # Child-process PATH changes do not flow back; reload persisted paths.
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + $env:Path
         $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
         if ($claudeCmd) {
             Clack-Success "$(i18n 'claude_cli') $(i18n 'installed')"
@@ -1368,23 +1642,25 @@ function Install-OptionalClaudeCLI {
             Track-Install -Component "claude_cli" -Status "installed"
             return $true
         }
-    } catch {}
+    }
 
     # Fallback: npm/pnpm
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
     if ($pnpmCmd) {
-        $null = & pnpm add -g @anthropic-ai/claude-code 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $lastResult = Invoke-NativeQuietly { & pnpm add -g @anthropic-ai/claude-code }
+        $lastDetail = $lastResult.Output
+        if ($lastResult.Success) {
             Clack-Success "$(i18n 'claude_cli') $(i18n 'installed')"
             Install-MarkitaiExtra -ExtraName "claude-agent" | Out-Null
             Track-Install -Component "claude_cli" -Status "installed"
             return $true
         }
     } elseif ($npmCmd) {
-        $null = & npm install -g @anthropic-ai/claude-code 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $lastResult = Invoke-NativeQuietly { & npm install -g @anthropic-ai/claude-code }
+        $lastDetail = $lastResult.Output
+        if ($lastResult.Success) {
             Clack-Success "$(i18n 'claude_cli') $(i18n 'installed')"
             Install-MarkitaiExtra -ExtraName "claude-agent" | Out-Null
             Track-Install -Component "claude_cli" -Status "installed"
@@ -1393,6 +1669,7 @@ function Install-OptionalClaudeCLI {
     }
 
     Clack-Error "$(i18n 'claude_cli') $(i18n 'failed')"
+    Clack-Detail -Detail $lastDetail -MaxLines 3
     Track-Install -Component "claude_cli" -Status "failed"
     return $false
 }
@@ -1418,10 +1695,11 @@ function Install-OptionalCopilotCLI {
     Clack-Info "$(i18n 'installing') $(i18n 'copilot_cli')..."
 
     # Prefer WinGet on Windows
+    $lastResult = $null
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        $null = & winget install GitHub.Copilot --accept-package-agreements --accept-source-agreements 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $lastResult = Invoke-NativeQuietly { & winget install GitHub.Copilot --accept-package-agreements --accept-source-agreements }
+        if ($lastResult.Success) {
             Clack-Success "$(i18n 'copilot_cli') $(i18n 'installed')"
             # Also install the SDK extra
             Install-MarkitaiExtra -ExtraName "copilot" | Out-Null
@@ -1435,16 +1713,16 @@ function Install-OptionalCopilotCLI {
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
     if ($pnpmCmd) {
-        $null = & pnpm add -g @github/copilot 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $lastResult = Invoke-NativeQuietly { & pnpm add -g @github/copilot }
+        if ($lastResult.Success) {
             Clack-Success "$(i18n 'copilot_cli') $(i18n 'installed')"
             Install-MarkitaiExtra -ExtraName "copilot" | Out-Null
             Track-Install -Component "copilot_cli" -Status "installed"
             return $true
         }
     } elseif ($npmCmd) {
-        $null = & npm install -g @github/copilot 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $lastResult = Invoke-NativeQuietly { & npm install -g @github/copilot }
+        if ($lastResult.Success) {
             Clack-Success "$(i18n 'copilot_cli') $(i18n 'installed')"
             Install-MarkitaiExtra -ExtraName "copilot" | Out-Null
             Track-Install -Component "copilot_cli" -Status "installed"
@@ -1453,79 +1731,52 @@ function Install-OptionalCopilotCLI {
     }
 
     Clack-Error "$(i18n 'copilot_cli') $(i18n 'failed')"
+    if ($lastResult) { Clack-Detail -Detail $lastResult.Output -MaxLines 3 }
     Track-Install -Component "copilot_cli" -Status "failed"
     return $false
+}
+
+# Print one compact summary group on the shared outer guide.
+function Write-SummaryGroup {
+    param(
+        [string]$Title,
+        [string[]]$Components,
+        [string]$Symbol,
+        [ConsoleColor]$Color
+    )
+
+    if (@($Components).Count -eq 0) { return }
+
+    Write-GuideLine
+    Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
+    Write-Host "  $Title"
+    foreach ($comp in $Components) {
+        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
+        Write-Host "    " -NoNewline
+        Write-Host $Symbol -ForegroundColor $Color -NoNewline
+        Write-Host " $(i18n $comp)"
+    }
 }
 
 # Print installation summary
 function Print-Summary {
     Clack-Section (i18n "section_summary")
 
-    # Print installed components
-    if ($script:INSTALLED_COMPONENTS.Count -gt 0) {
-        Write-Host $S_BAR -ForegroundColor DarkGray
-        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-        Write-Host "  " -NoNewline
-        Write-Host $S_BOX_TOP -ForegroundColor DarkGray -NoNewline
-        Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
-        Write-Host " $(i18n 'summary_installed')"
-        foreach ($comp in $script:INSTALLED_COMPONENTS) {
-            Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-            Write-Host "  " -NoNewline
-            Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-            Write-Host "  " -NoNewline
-            Write-Host $S_CHECK -ForegroundColor Green -NoNewline
-            Write-Host " $(i18n $comp)"
-        }
-        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-        Write-Host "  " -NoNewline
-        Write-Host $S_BOX_BOT -ForegroundColor DarkGray -NoNewline
-        Write-Host $S_BAR_H -ForegroundColor DarkGray
-    }
-
-    # Print skipped components
-    if ($script:SKIPPED_COMPONENTS.Count -gt 0) {
-        Write-Host $S_BAR -ForegroundColor DarkGray
-        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-        Write-Host "  " -NoNewline
-        Write-Host $S_BOX_TOP -ForegroundColor DarkGray -NoNewline
-        Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
-        Write-Host " $(i18n 'summary_skipped')"
-        foreach ($comp in $script:SKIPPED_COMPONENTS) {
-            Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-            Write-Host "  " -NoNewline
-            Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-            Write-Host "  " -NoNewline
-            Write-Host $S_CIRCLE -ForegroundColor Yellow -NoNewline
-            Write-Host " $(i18n $comp)"
-        }
-        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-        Write-Host "  " -NoNewline
-        Write-Host $S_BOX_BOT -ForegroundColor DarkGray -NoNewline
-        Write-Host $S_BAR_H -ForegroundColor DarkGray
-    }
-
-    # Print failed components
-    if ($script:FAILED_COMPONENTS.Count -gt 0) {
-        Write-Host $S_BAR -ForegroundColor DarkGray
-        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-        Write-Host "  " -NoNewline
-        Write-Host $S_BOX_TOP -ForegroundColor DarkGray -NoNewline
-        Write-Host $S_BAR_H -ForegroundColor DarkGray -NoNewline
-        Write-Host " $(i18n 'summary_failed')"
-        foreach ($comp in $script:FAILED_COMPONENTS) {
-            Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-            Write-Host "  " -NoNewline
-            Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-            Write-Host "  " -NoNewline
-            Write-Host $S_CROSS -ForegroundColor Red -NoNewline
-            Write-Host " $(i18n $comp)"
-        }
-        Write-Host $S_BAR -ForegroundColor DarkGray -NoNewline
-        Write-Host "  " -NoNewline
-        Write-Host $S_BOX_BOT -ForegroundColor DarkGray -NoNewline
-        Write-Host $S_BAR_H -ForegroundColor DarkGray
-    }
+    Write-SummaryGroup `
+        -Title (i18n "summary_installed") `
+        -Components $script:INSTALLED_COMPONENTS `
+        -Symbol $S_CHECK `
+        -Color Green
+    Write-SummaryGroup `
+        -Title (i18n "summary_skipped") `
+        -Components $script:SKIPPED_COMPONENTS `
+        -Symbol $S_CIRCLE `
+        -Color Yellow
+    Write-SummaryGroup `
+        -Title (i18n "summary_failed") `
+        -Components $script:FAILED_COMPONENTS `
+        -Symbol $S_CROSS `
+        -Color Red
 
     # Empty line before docs link
     Clack-Log ""
@@ -1549,7 +1800,17 @@ function Test-MkaiAlias {
 function Print-UserCompletion {
     $lines = @(
         "$(i18n 'interactive_mode'):",
-        "  markitai -I",
+        "  markitai -I"
+    )
+    # Only advertise the serve command when its dependencies were selected.
+    if (Test-MarkitaiExtraEnabled -ExtraName "serve") {
+        $lines += @(
+            "",
+            "$(i18n 'start_web_ui'):",
+            "  markitai serve"
+        )
+    }
+    $lines += @(
         "",
         "$(i18n 'configure_llm'):",
         "  markitai init",
@@ -1577,6 +1838,9 @@ function Print-DevCompletion {
         "$(i18n 'interactive_mode'):" `
         "  uv run markitai -I" `
         "" `
+        "$(i18n 'start_web_ui'):" `
+        "  uv run markitai serve" `
+        "" `
         "$(i18n 'run_tests'):" `
         "  uv run pytest" `
         "" `
@@ -1586,7 +1850,8 @@ function Print-DevCompletion {
 
 # Initialize markitai config (silent, first install only)
 # Skips when a config already exists: `init --yes` would silently append
-# newly detected providers to the user's model_list.
+# newly detected providers to the user's model_list. The detector only records
+# a local CLI after login succeeds and its finalized runtime SDK is importable.
 function Initialize-Config {
     if (Test-Path "$HOME/.markitai/config.json") {
         return
@@ -1622,21 +1887,27 @@ function Run-UserSetup {
     Track-MarkitaiServe
 
     Clack-Section (i18n "section_optional")
-    Install-OptionalPlaywright | Out-Null
-    Install-OptionalLibreOffice | Out-Null
-    Install-OptionalFFmpeg | Out-Null
+    Invoke-OptionalStep -Component "playwright" -Action { Install-OptionalPlaywright }
+    Invoke-OptionalStep -Component "libreoffice" -Action { Install-OptionalLibreOffice }
+    Invoke-OptionalStep -Component "ffmpeg" -Action { Install-OptionalFFmpeg }
 
     Clack-Section (i18n "section_llm_cli")
-    Install-OptionalClaudeCLI | Out-Null
-    Install-OptionalCopilotCLI | Out-Null
+    Invoke-OptionalStep -Component "claude_cli" -Action { Install-OptionalClaudeCLI }
+    Invoke-OptionalStep -Component "copilot_cli" -Action { Install-OptionalCopilotCLI }
 
-    Finalize-MarkitaiExtras
+    Invoke-BestEffortStep `
+        -FailureMessage "$(i18n 'markitai') extras update $(i18n 'failed')" `
+        -Action { Finalize-MarkitaiExtras }
 
     Initialize-Config 2>$null | Out-Null
 
     Print-Summary
     Print-UserCompletion
-    Clack-Outro (i18n "setup_complete")
+    if ($script:FAILED_COMPONENTS.Count -gt 0) {
+        Clack-OutroWarning (i18n "setup_complete_with_warnings")
+    } else {
+        Clack-Outro (i18n "setup_complete")
+    }
 }
 
 # Dev mode main flow
@@ -1654,20 +1925,24 @@ function Run-DevSetup {
 
     Clack-Section (i18n "section_dev_env")
     if (-not (Sync-Dependencies)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
-    Install-PreCommit | Out-Null
+    Invoke-OptionalStep -Component "precommit" -Action { Install-PreCommit }
 
     Clack-Section (i18n "section_optional")
-    Install-OptionalPlaywright | Out-Null
-    Install-OptionalLibreOffice | Out-Null
-    Install-OptionalFFmpeg | Out-Null
+    Invoke-OptionalStep -Component "playwright" -Action { Install-OptionalPlaywright }
+    Invoke-OptionalStep -Component "libreoffice" -Action { Install-OptionalLibreOffice }
+    Invoke-OptionalStep -Component "ffmpeg" -Action { Install-OptionalFFmpeg }
 
     Clack-Section (i18n "section_llm_cli")
-    Install-OptionalClaudeCLI | Out-Null
-    Install-OptionalCopilotCLI | Out-Null
+    Invoke-OptionalStep -Component "claude_cli" -Action { Install-OptionalClaudeCLI }
+    Invoke-OptionalStep -Component "copilot_cli" -Action { Install-OptionalCopilotCLI }
 
     Print-Summary
     Print-DevCompletion
-    Clack-Outro (i18n "dev_setup_complete")
+    if ($script:FAILED_COMPONENTS.Count -gt 0) {
+        Clack-OutroWarning (i18n "dev_setup_complete_with_warnings")
+    } else {
+        Clack-Outro (i18n "dev_setup_complete")
+    }
 }
 
 # Main entry point
@@ -1679,5 +1954,20 @@ function Main {
     }
 }
 
-# Run main function
-Main
+# Run main function behind a final exception boundary so the tree is never
+# left open and PowerShell never emits its verbose red stack formatting.
+try {
+    Main
+} catch {
+    Complete-UnexpectedFailure -ErrorRecord $_
+    exit 1
+} finally {
+    # Pipeline cancellation (for example Ctrl+C) can bypass catch, but
+    # PowerShell still runs finally. Best-effort closure avoids a dangling │.
+    if ($script:CLACK_SESSION_ACTIVE -and -not $script:CLACK_SESSION_CLOSED) {
+        try {
+            Clack-Error (i18n "error_unexpected")
+            Clack-Cancel (i18n "error_setup_failed")
+        } catch {}
+    }
+}

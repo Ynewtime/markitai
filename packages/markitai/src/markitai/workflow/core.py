@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from loguru import logger
 
@@ -30,7 +31,7 @@ from markitai.security import (
     validate_file_size,
 )
 from markitai.utils.paths import ensure_dir
-from markitai.utils.text import format_error_message
+from markitai.utils.text import format_error_message, markdown_image_reference
 from markitai.workflow.helpers import (
     add_basic_frontmatter,
     append_reference_image_comments,
@@ -580,7 +581,7 @@ def apply_alt_text_updates(
         llm_content = llm_file.read_text(encoding="utf-8")
 
         # Build combined pattern and replacement map for a single-pass substitution
-        replacements: dict[str, str] = {}
+        replacements: dict[tuple[str, str], str] = {}
         patterns: list[str] = []
         for asset in image_analysis.assets:
             asset_path = Path(asset.get("asset", ""))
@@ -588,18 +589,24 @@ def apply_alt_text_updates(
             if not alt_text or not asset_path.name:
                 continue
 
-            pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(asset_path.name)}\)"
-            new_ref = f"![{alt_text}]({ASSETS_REL_PATH}/{asset_path.name})"
+            encoded_name = quote(asset_path.name, safe="._~-")
+            pattern = (
+                rf"!\[[^\]]*\]\([^)]*(?:{re.escape(asset_path.name)}|"
+                rf"{re.escape(encoded_name)})\)"
+            )
+            new_ref = markdown_image_reference(
+                alt_text, f"{ASSETS_REL_PATH}/{asset_path.name}"
+            )
             patterns.append(pattern)
-            replacements[asset_path.name] = new_ref
+            replacements[(asset_path.name, encoded_name)] = new_ref
 
         if patterns:
             combined = re.compile("|".join(patterns))
 
             def replace_match(m: re.Match[str]) -> str:
                 text = m.group(0)
-                for name, ref in replacements.items():
-                    if name in text:
+                for names, ref in replacements.items():
+                    if any(name in text for name in names):
                         return ref
                 return text
 

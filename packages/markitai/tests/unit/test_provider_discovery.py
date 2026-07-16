@@ -490,6 +490,79 @@ class TestLiveDiscovery:
         assert result["source"] == "live_api"
 
 
+class TestProviderConnections:
+    async def test_configured_claude_model_reuses_detected_cli_card(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.config import LiteLLMParams, ModelConfig
+        from markitai.providers.auth import AuthManager
+
+        monkeypatch.setattr(
+            discovery.shutil,
+            "which",
+            lambda binary: "/usr/bin/claude" if binary == "claude" else None,
+        )
+        monkeypatch.setattr(
+            discovery, "_local_runtime_available", lambda _provider: True
+        )
+
+        class Authenticated:
+            authenticated = True
+
+        class Unauthenticated:
+            authenticated = False
+
+        async def fake_auth(
+            _self: AuthManager, provider: str, **_kwargs: Any
+        ) -> Authenticated | Unauthenticated:
+            return Authenticated() if provider == "claude-agent" else Unauthenticated()
+
+        monkeypatch.setattr(AuthManager, "check_auth", fake_auth)
+        configured = [
+            ModelConfig(
+                model_name="default",
+                litellm_params=LiteLLMParams(model="claude-agent/sonnet"),
+            )
+        ]
+        cards = await discovery.detect_provider_connections(configured, refresh=True)
+        claude = [card for card in cards if card["provider"] == "claude-agent"]
+        assert len(claude) == 1
+        assert claude[0]["kind"] == "local_cli"
+        assert claude[0]["status"] == "ready"
+        assert discovery.startup_model_candidates(claude)[0]["model"] == (
+            "claude-agent/sonnet"
+        )
+
+    async def test_authenticated_cli_without_sdk_is_not_ready(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.providers.auth import AuthManager
+
+        monkeypatch.setattr(
+            discovery.shutil,
+            "which",
+            lambda binary: "/usr/bin/claude" if binary == "claude" else None,
+        )
+        monkeypatch.setattr(
+            discovery, "_local_runtime_available", lambda _provider: False
+        )
+
+        class Status:
+            authenticated = True
+
+        async def fake_auth(
+            _self: AuthManager, _provider: str, **_kwargs: Any
+        ) -> Status:
+            return Status()
+
+        monkeypatch.setattr(AuthManager, "check_auth", fake_auth)
+        cards = await discovery.detect_provider_connections(refresh=True)
+        claude = next(card for card in cards if card["provider"] == "claude-agent")
+        assert claude["status"] == "missing_dependency"
+        assert claude["supports_discovery"] is False
+        assert discovery.startup_model_candidates([claude]) == []
+
+
 class TestDiscoveryCache:
     async def test_concurrent_requests_are_single_flight(
         self, monkeypatch: pytest.MonkeyPatch

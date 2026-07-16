@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
@@ -68,6 +69,37 @@ class TestServeCommand:
         assert args[0] is sentinel_app
         assert kwargs["host"] == "0.0.0.0"
         assert kwargs["port"] == 3611
+
+    def test_browser_opens_only_after_server_is_ready(self) -> None:
+        import importlib
+
+        serve_mod = importlib.import_module("markitai.cli.commands.serve")
+        stop = threading.Event()
+        with (
+            patch.object(
+                serve_mod, "_server_is_ready", side_effect=[False, True]
+            ) as probe,
+            patch.object(serve_mod.webbrowser, "open") as browser_open,
+        ):
+            serve_mod._open_browser_when_ready(
+                "http://127.0.0.1:3600",
+                "127.0.0.1",
+                3600,
+                stop,
+                timeout=1.0,
+                interval=0,
+            )
+
+        assert probe.call_count == 2
+        browser_open.assert_called_once_with("http://127.0.0.1:3600")
+
+    def test_browser_address_handles_wildcard_and_ipv6_hosts(self) -> None:
+        from markitai.cli.commands.serve import _browser_address
+
+        assert _browser_address("0.0.0.0") == ("127.0.0.1", "127.0.0.1")
+        assert _browser_address("::") == ("::1", "[::1]")
+        assert _browser_address("::1") == ("::1", "[::1]")
+        assert _browser_address("[::1]") == ("::1", "[::1]")
 
     def test_registered_as_lazy_subcommand(self) -> None:
         from markitai.cli.commands import _LAZY_MAP

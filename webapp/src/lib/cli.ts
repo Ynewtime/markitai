@@ -11,11 +11,16 @@ function shellQuote(s: string): string {
 
 /** Equivalent `markitai` invocation for the current composer state. Flags
  * mirror the real CLI option declarations in cli/main.py (`-o/--output`,
- * `--preset`, `--llm/--no-llm`). The web options payload always carries an
- * explicit preset + llm, so both flags are always emitted. Browser file drops
+ * `--preset`, `--llm/--no-llm`, `--ocr/--no-ocr`). The web options payload
+ * carries explicit values, so the equivalent flags are always emitted. Browser file drops
  * carry no local paths, so a <your-files> placeholder stands in whenever no
  * URLs are typed (the UI shows a replace-me hint next to it). */
-export function buildCliCommand(urls: string[], preset: Preset, llm: boolean): string {
+export function buildCliCommand(
+  urls: string[],
+  preset: Preset,
+  llm: boolean,
+  ocr: boolean,
+): string {
   const inputs = urls.length > 0 ? urls.map(shellQuote) : ["<your-files>"];
   return [
     "markitai",
@@ -25,5 +30,6 @@ export function buildCliCommand(urls: string[], preset: Preset, llm: boolean): s
     "--preset",
     preset,
     llm ? "--llm" : "--no-llm",
+    ocr ? "--ocr" : "--no-ocr",
   ].join(" ");
 }

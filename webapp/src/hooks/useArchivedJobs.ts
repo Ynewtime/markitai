@@ -3,6 +3,7 @@ import { deleteHistoryJob, fetchHistory, fetchJobSnapshot } from "../api/client"
 import type { HistoryEntry, JobSnapshot, JobStatus } from "../api/types";
 
 const FOCUS_REFRESH_MS = 20_000;
+const EMPTY_SUPPRESSED_IDS: ReadonlySet<string> = new Set();
 
 type ArchivedAction = "open" | "delete";
 
@@ -14,6 +15,7 @@ function errorText(error: unknown): string {
  * the boundary so archived job summaries never become item-ledger rows. */
 export function useArchivedJobs(
   jobs: Record<string, { status: JobStatus }>,
+  suppressedIds: ReadonlySet<string> = EMPTY_SUPPRESSED_IDS,
 ) {
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -136,8 +138,12 @@ export function useArchivedJobs(
 
   const currentIds = useMemo(() => new Set(Object.keys(jobs)), [jobs]);
   const recent = useMemo(
-    () => entries?.filter((entry) => !currentIds.has(entry.job_id)) ?? null,
-    [currentIds, entries],
+    () =>
+      entries?.filter(
+        (entry) =>
+          !currentIds.has(entry.job_id) && !suppressedIds.has(entry.job_id),
+      ) ?? null,
+    [currentIds, entries, suppressedIds],
   );
 
   return {

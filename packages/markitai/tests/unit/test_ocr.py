@@ -233,19 +233,15 @@ class TestOCRProcessorMocked:
             processor.recognize(Path("/non/existent/file.png"))
 
     def test_recognize_empty_result(self, ocr_config: OCRConfig, tmp_path: Path):
-        """Test OCR with empty result."""
+        """Test OCR with an empty result too small to tile."""
+        from PIL import Image
+
         test_image = tmp_path / "empty.png"
-        test_image.write_bytes(b"fake image data")
+        Image.new("RGB", (100, 100), "white").save(test_image)
 
-        # Mock the global engine
         mock_engine = MagicMock()
-        mock_engine.return_value = MagicMock(
-            txts=[],
-            scores=[],
-            boxes=[],
-        )
+        mock_engine.return_value = MagicMock(txts=[], scores=[], boxes=[])
 
-        # Set global engine directly (config must match to avoid rebuild)
         OCRProcessor._global_engine = mock_engine
         OCRProcessor._global_config = ocr_config
 
@@ -255,6 +251,29 @@ class TestOCRProcessorMocked:
         assert result.text == ""
         assert result.confidence == 0.0
         assert len(result.boxes) == 0
+        assert mock_engine.call_count == 1
+
+    def test_sparse_layout_retries_overlapping_tiles(self, ocr_config: OCRConfig):
+        """Small text in a mostly empty image gets a tiled second pass."""
+        import numpy as np
+
+        empty = MagicMock(txts=None, scores=None, boxes=None)
+        found = MagicMock(
+            txts=("markitai test fixture sample.jpg",),
+            scores=(0.99,),
+            boxes=(np.array([[10, 10], [200, 10], [200, 30], [10, 30]]),),
+        )
+        mock_engine = MagicMock(side_effect=[empty, found, empty, empty, empty])
+        OCRProcessor._global_engine = mock_engine
+        OCRProcessor._global_config = ocr_config
+
+        result = OCRProcessor(ocr_config).recognize_numpy(
+            np.zeros((768, 1024, 3), dtype=np.uint8)
+        )
+
+        assert result.text == "markitai test fixture sample.jpg"
+        assert result.confidence == pytest.approx(0.99)
+        assert mock_engine.call_count == 5
 
 
 class TestOCRPDFMethods:
@@ -386,7 +405,7 @@ class TestOCRRecognizeToMarkdown:
         test_image = tmp_path / "test.png"
         test_image.write_bytes(b"fake image data")
 
-        mock_result = MagicMock()
+        mock_result = MagicMock(txts=["Heading"], scores=[0.99], boxes=[])
         mock_result.to_markdown.return_value = "# Heading\n\nParagraph"
 
         mock_engine = MagicMock()

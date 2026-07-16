@@ -9,11 +9,17 @@ setup before the summary/next-steps/outro ever printed.
 
 The fix guards every non-fatal orchestration call with `|| true`. This
 test fails if any of them regresses back to a bare call.
+
+The module also verifies failure-output containment: noisy third-party ANSI
+stderr is bounded, unexpected exits close the tree once, and PowerShell native
+commands do not leak verbose red ErrorRecords.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -117,6 +123,19 @@ def test_setup_ps1_preserves_existing_config() -> None:
     guard = body.find('Test-Path "$HOME/.markitai/config.json"')
     init = body.find("markitai init --yes")
     assert 0 <= guard < init, "existing-config guard must run before markitai init"
+
+
+def test_local_provider_runtime_extras_are_applied_before_auto_config() -> None:
+    """Auto-detected CLI models must already be runnable in the tool environment."""
+    metadata = tomllib.loads(_MARKITAI_PYPROJECT.read_text(encoding="utf-8"))
+    extras = metadata["project"]["optional-dependencies"]
+    assert any(req.startswith("claude-agent-sdk") for req in extras["claude-agent"])
+    assert any(req.startswith("github-copilot-sdk") for req in extras["copilot"])
+
+    shell_flow = _shell_function("run_user_setup")
+    assert shell_flow.find("finalize_markitai_extras") < shell_flow.find("init_config")
+    ps_flow = _powershell_function("Run-UserSetup")
+    assert ps_flow.find("Finalize-MarkitaiExtras") < ps_flow.find("Initialize-Config")
 
 
 def test_setup_scripts_only_select_supported_python_versions() -> None:
@@ -230,6 +249,15 @@ def test_user_install_selects_serve_before_installing_markitai() -> None:
     assert "confirm_serve)" in shell_text and "serve)" in shell_text
     assert '"confirm_serve"' in ps_text and '"serve"' in ps_text
 
+    shell_completion = _shell_function("print_user_completion")
+    assert 'markitai_extra_enabled "serve"' in shell_completion
+    assert "markitai serve" in shell_completion
+    ps_completion = _powershell_function("Print-UserCompletion")
+    assert 'Test-MarkitaiExtraEnabled -ExtraName "serve"' in ps_completion
+    assert "markitai serve" in ps_completion
+    assert "uv run markitai serve" in _shell_function("print_dev_completion")
+    assert "uv run markitai serve" in _powershell_function("Print-DevCompletion")
+
 
 def test_combined_extra_install_bypasses_receipt_upgrade_when_extras_changed() -> None:
     """A newly selected extra must be applied by the combined package spec."""
@@ -285,3 +313,124 @@ def test_all_extra_and_its_fallback_include_serve() -> None:
         '$script:MARKITAI_ALL_FALLBACK_EXTRAS = "browser,extra-fetch,kreuzberg,svg,heif,serve"'
         in ps_text
     )
+
+
+def test_setup_sh_bounds_and_sanitizes_failed_command_output(tmp_path: Path) -> None:
+    """A noisy ANSI-colored failure must stay inside and close the tree."""
+    text = _SETUP_SH.read_text(encoding="utf-8")
+    visual_start = text.index("# Color Definitions")
+    visual_end = text.index("# Installation Status Tracking")
+    visual_runtime = text[visual_start:visual_end]
+
+    script = tmp_path / "failure-guard.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "i18n() {\n"
+        '  case "$1" in\n'
+        '    error_unexpected) echo "Unexpected error" ;;\n'
+        '    info_error_log) echo "Full error log" ;;\n'
+        '    *) echo "Setup failed" ;;\n'
+        "  esac\n"
+        "}\n"
+        f"{visual_runtime}\n"
+        "trap 'setup_on_exit' 0\n"
+        "noisy_failure() {\n"
+        "  i=1\n"
+        '  while [ "$i" -le 20 ]; do\n'
+        '    printf "\\033[31mdiagnostic line %s\\033[0m\\n" "$i" >&2\n'
+        "    i=$((i+1))\n"
+        "  done\n"
+        "  return 7\n"
+        "}\n"
+        'clack_intro "Failure test"\n'
+        'clack_spinner "fragile step..." noisy_failure\n'
+        'clack_outro "must not print"\n',
+        encoding="utf-8",
+    )
+
+    full_log = tmp_path / "full-setup.log"
+    result = subprocess.run(
+        ["sh", str(script)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "MARKITAI_SETUP_LOG": str(full_log)},
+    )
+    clean = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", result.stdout)
+    diagnostic_lines = [
+        line for line in clean.splitlines() if "diagnostic line" in line
+    ]
+
+    assert result.returncode == 7
+    assert result.stderr == ""
+    assert len(diagnostic_lines) == 6
+    assert diagnostic_lines[0].endswith("diagnostic line 15")
+    assert diagnostic_lines[-1].endswith("diagnostic line 20")
+    assert clean.count("Unexpected error") == 1
+    assert clean.count("Setup failed") == 1
+    assert str(full_log) in clean
+    assert "must not print" not in clean
+
+    persisted = full_log.read_text(encoding="utf-8")
+    assert persisted.count("diagnostic line") == 20
+    assert "diagnostic line 1" in persisted
+    assert "diagnostic line 20" in persisted
+    assert "\x1b[31m" not in persisted
+
+
+def test_setup_sh_expected_and_unexpected_failures_close_once() -> None:
+    """The EXIT guard must not duplicate an already-rendered cancellation."""
+    text = _SETUP_SH.read_text(encoding="utf-8")
+    assert "trap 'setup_on_exit' 0" in text
+    assert "CLACK_PENDING_DETAIL=" in _shell_function("clack_spinner")
+    assert "clack_flush_detail" in _shell_function("clack_error")
+    assert "CLACK_SESSION_CLOSED=true" in _shell_function("clack_cancel")
+    assert "CLACK_SESSION_CLOSED=true" in _shell_function("clack_outro")
+    assert "CLACK_SESSION_CLOSED=true" in _shell_function("clack_outro_warn")
+    for flow in ("run_user_setup", "run_dev_setup"):
+        assert "clack_outro_warn" in _shell_function(flow)
+
+
+def test_setup_ps1_has_bounded_native_and_global_error_guards() -> None:
+    """PowerShell native stderr and unexpected exceptions must not leak raw UI."""
+    text = _SETUP_PS1.read_text(encoding="utf-8")
+    assert re.search(
+        r"try \{\s*Main\s*\} catch \{\s*Complete-UnexpectedFailure",
+        text,
+        re.DOTALL,
+    )
+    assert "} finally {" in text
+
+    unexpected = _powershell_function("Complete-UnexpectedFailure")
+    assert "Clack-Detail" in unexpected
+    assert "Clack-Cancel" in unexpected
+    assert "Write-Error" not in unexpected
+
+    detail = _powershell_function("Clack-Detail")
+    assert "Write-SetupDiagnostic" in detail
+    assert "Show-SetupErrorLog" in _powershell_function("Clack-Cancel")
+
+    native_guard = _powershell_function("Invoke-NativeQuietly")
+    assert '$ErrorActionPreference = "Continue"' in native_guard
+    assert "$output = @(& $Command 2>&1)" in native_guard
+
+    installer_guard = _powershell_function("Invoke-PowerShellInstallerQuietly")
+    assert "-File $tempPath" in installer_guard
+    assert "Invoke-NativeQuietly" in installer_guard
+    assert "Invoke-Expression" not in text
+
+    for function in (
+        "Install-OptionalLibreOffice",
+        "Install-OptionalFFmpeg",
+        "Install-OptionalClaudeCLI",
+        "Install-OptionalCopilotCLI",
+    ):
+        assert "Invoke-NativeQuietly" in _powershell_function(function)
+
+    for flow in ("Run-UserSetup", "Run-DevSetup"):
+        body = _powershell_function(flow)
+        assert "Invoke-OptionalStep" in body
+        assert "Clack-OutroWarning" in body
+
+    assert "extras update $(i18n 'failed'): $uvErr" not in text

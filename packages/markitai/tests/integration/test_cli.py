@@ -261,8 +261,12 @@ class TestOutputFileTarget:
     ) -> None:
         urls_file = tmp_path / "links.urls"
         urls_file.write_text("https://example.com/\n")
+        # Keep this usage test independent of the developer's user config,
+        # which may legitimately define output.dir as a batch fallback.
+        config_file = tmp_path / "empty-config.json"
+        config_file.write_text("{}")
 
-        result = runner.invoke(app, [str(urls_file)])
+        result = runner.invoke(app, [str(urls_file), "-c", str(config_file)])
 
         assert result.exit_code == 1
         assert result.stdout == ""

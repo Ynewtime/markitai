@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
 vi.mock("./api/client", async (importOriginal) => {
@@ -27,7 +27,11 @@ vi.mock("./hooks/useArchivedJobs", () => ({
         done: 1,
         failed: 0,
         skipped: 0,
+        llm_enhanced: 0,
+        cost_usd: 0,
         names_preview: ["archived.pdf"],
+        kinds_preview: ["file"],
+        duration_ms: 60_000,
         size_bytes: 100,
       },
     ],
@@ -44,7 +48,7 @@ vi.mock("./hooks/useArchivedJobs", () => ({
       total: 1,
       created_at: "2026-07-12T10:00:00Z",
       finished_at: "2026-07-12T10:01:00Z",
-      options: { preset: "standard", llm: false },
+      options: { preset: "standard", llm: false, ocr: false },
       items: [
         {
           item_id: "item-2",
@@ -54,7 +58,10 @@ vi.mock("./hooks/useArchivedJobs", () => ({
           error: null,
           output: "archived.md",
           duration_ms: 100,
+          finished_at: "2026-07-12T10:01:00Z",
           cost_usd: null,
+          llm_enhanced: false,
+          operation: "convert",
           skipped: false,
           skip_reason: null,
         },
@@ -77,13 +84,14 @@ vi.mock("./hooks/useJobs", () => ({
         error: null,
         output: "result.md",
         durationMs: 120,
+        finishedAt: "2026-07-13T10:00:01Z",
         costUsd: null,
+        llmEnhanced: false,
+        operation: "convert",
         skipped: false,
         skipReason: null,
         sizeBytes: 8,
         startedAt: null,
-        archived: false,
-        retried: false,
       },
     ],
     jobs: {
@@ -91,11 +99,9 @@ vi.mock("./hooks/useJobs", () => ({
         jobId: "job-1",
         status: "done",
         createdAt: "2026-07-13T10:00:00Z",
-        options: { preset: "standard", llm: false },
-        archived: false,
+        options: { preset: "standard", llm: false, ocr: false },
       },
     },
-    jobCount: 1,
     stats: {
       done: 1,
       skipped: 0,
@@ -110,38 +116,96 @@ vi.mock("./hooks/useJobs", () => ({
     now: Date.now(),
     submit: vi.fn().mockResolvedValue(true),
     retry: vi.fn().mockResolvedValue(null),
+    enhance: vi.fn().mockResolvedValue(null),
+    enhanceArchived: vi.fn().mockResolvedValue(null),
+    retryArchived: vi.fn().mockResolvedValue(null),
+    deleteItem: vi.fn().mockResolvedValue(null),
     submitError: null,
     clear: vi.fn(),
     clearSettled: vi.fn(),
     terminalJobCount: 1,
-    openArchived: vi.fn().mockReturnValue("job-1/item-1"),
+    suppressedHistoryIds: new Set<string>(),
+    historyRevision: 0,
   }),
 }));
 
 describe("App workspace", () => {
-  it("starts at home after a reload and keeps restored tasks behind an explicit navigation", async () => {
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("starts at home on / and navigates the task list to /jobs", async () => {
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Drop files. Get Markdown." })).toBeVisible();
+    expect(
+      await screen.findByRole("heading", {
+        name: "Drop files. Paste URLs. Get Markdown.",
+      }),
+    ).toBeVisible();
+    const llmSwitch = await screen.findByRole("switch", { name: "LLM enhancement" });
+    expect(llmSwitch).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByRole("button", { name: "minimal" })).not.toBeInTheDocument();
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /item in session/ }));
     const listbox = await screen.findByRole("listbox");
+    expect(window.location.pathname).toBe("/jobs");
     const composer = screen.getByRole("textbox");
     expect(
       composer.compareDocumentPosition(listbox) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    const archivedRow = screen.getByRole("option", { name: "open archived.pdf" });
+    const source = composer.closest(".convert-source");
+    expect(source).not.toBeNull();
+    expect(source?.querySelector(".url-entry .file-picker")).not.toBeNull();
+    const currentRow = screen.getByRole("option", { name: /result\.md/ });
+    expect(currentRow.querySelector(".c-finished")).toHaveTextContent("07-13 10:00");
+    expect(currentRow.querySelector(".c-status.archive-actions")).not.toBeNull();
+    const archivedRow = screen.getByRole("option", { name: "Open archived.pdf" });
     expect(listbox.contains(archivedRow)).toBe(true);
-    expect(document.querySelector(".archived-rows")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "view conversions" })).toBeVisible();
+    expect(archivedRow).not.toHaveClass("archived-row");
+    expect(archivedRow.querySelector(".c-status.archive-actions")).not.toBeNull();
+    expect(screen.getByRole("button", { name: /download all/i })).toBeEnabled();
+    const historyButton = screen.getByRole("button", { name: "View conversions" });
+    expect(historyButton).toBeVisible();
+    expect(historyButton).toHaveAttribute("aria-current", "page");
+    expect(historyButton).toHaveClass("on");
+    historyButton.focus();
+    fireEvent.click(historyButton);
+    await waitFor(() => expect(currentRow).toHaveFocus());
+  });
+
+  it("restores the task-list view when /jobs is refreshed", async () => {
+    window.history.replaceState(null, "", "/jobs");
+
+    render(<App />);
+
+    expect(await screen.findByRole("listbox")).toBeVisible();
+    expect(
+      screen.queryByRole("heading", {
+        name: "Drop files. Paste URLs. Get Markdown.",
+      }),
+    ).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/jobs");
+    expect(screen.getByRole("button", { name: "View conversions" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    const firstRow = screen.getByRole("option", { name: /result\.md/ });
+    await waitFor(() => expect(firstRow).not.toHaveFocus());
+    expect(firstRow).toHaveAttribute("aria-selected", "false");
+
+    fireEvent.focus(firstRow);
+    expect(firstRow).toHaveAttribute("aria-selected", "true");
+    fireEvent.pointerDown(screen.getByRole("main"));
+    await waitFor(() => expect(firstRow).toHaveAttribute("aria-selected", "false"));
+    expect(firstRow).not.toHaveFocus();
   });
 
   it("opens an archived option in place without moving it into the current session", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "view conversions" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View conversions" }));
     const listbox = await screen.findByRole("listbox");
-    const archivedOption = screen.getByRole("option", { name: "open archived.pdf" });
+    const archivedOption = screen.getByRole("option", { name: "Open archived.pdf" });
 
     fireEvent.click(archivedOption);
 

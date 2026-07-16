@@ -307,8 +307,10 @@ class SingleFileWorkflow:
                 # Update alt text in markdown (if alt_enabled)
                 if alt_enabled:
                     old_pattern = rf"!\[[^\]]*\]\([^)]*{re.escape(image_path.name)}\)"
-                    new_ref = (
-                        f"![{analysis_caption}]({ASSETS_REL_PATH}/{image_path.name})"
+                    from markitai.utils.text import markdown_image_reference
+
+                    new_ref = markdown_image_reference(
+                        analysis_caption, f"{ASSETS_REL_PATH}/{image_path.name}"
                     )
                     markdown = re.sub(old_pattern, new_ref, markdown)
 

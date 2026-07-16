@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from markitai.cli.providers_detect import (
     ProviderDetectionResult,
     detect_all_providers,
@@ -11,6 +13,16 @@ from markitai.cli.providers_detect import (
     format_model_list,
     get_active_models_from_config,
 )
+
+
+@pytest.fixture(autouse=True)
+def available_runtime_dependency():
+    """Provider detection tests must not depend on extras in the test venv."""
+    with patch(
+        "markitai.cli.providers_detect._runtime_dependency_available",
+        return_value=True,
+    ):
+        yield
 
 
 class TestDetectAllProviders:
@@ -61,6 +73,47 @@ class TestDetectAllProviders:
             assert len(results) == 1
             assert results[0].provider == "copilot"
             assert results[0].model == "copilot/claude-haiku-4.5"
+
+    def test_installed_but_signed_out_cli_is_not_detected(self) -> None:
+        with (
+            patch(
+                "markitai.cli.providers_detect.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_claude_auth",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            assert detect_all_providers() == []
+
+    def test_authenticated_cli_without_runtime_dependency_is_not_detected(self) -> None:
+        """A global CLI login must not create an unusable local model."""
+        with (
+            patch(
+                "markitai.cli.providers_detect.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_claude_auth",
+                return_value=True,
+            ),
+            patch(
+                "markitai.cli.providers_detect._runtime_dependency_available",
+                return_value=False,
+            ),
+            patch(
+                "markitai.cli.providers_detect._check_chatgpt_auth",
+                return_value=False,
+            ),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            assert detect_all_providers() == []
 
     def test_detect_env_providers(self) -> None:
         """Should detect environment variable providers."""
