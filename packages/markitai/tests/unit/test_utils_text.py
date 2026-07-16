@@ -6,8 +6,21 @@ from markitai.utils.text import (
     clean_control_characters,
     extract_asset_image_names,
     format_error_message,
+    markdown_image_reference,
     preview_items_for_log,
 )
+
+
+class TestMarkdownImageReference:
+    def test_encodes_spaces_unicode_and_markdown_delimiters(self) -> None:
+        reference = markdown_image_reference(
+            "截图 [一]", ".markitai/assets/截图 1 (final).png"
+        )
+
+        assert reference == (
+            "![截图 \\[一\\]]("
+            ".markitai/assets/%E6%88%AA%E5%9B%BE%201%20%28final%29.png)"
+        )
 
 
 class TestCleanControlCharacters:
@@ -362,6 +375,15 @@ class TestExtractAssetImageNames:
         """Sanitized asset names (spaces -> underscores) are returned as-is."""
         markdown = "![](.markitai/assets/My_Paper_v7.pdf-0003-00.jpg)"
         assert extract_asset_image_names(markdown) == ["My_Paper_v7.pdf-0003-00.jpg"]
+
+    def test_decodes_uri_encoded_unicode_names(self) -> None:
+        markdown = (
+            "![](.markitai/assets/"
+            "%E6%88%AA%E5%B1%8F2026-07-15%20%E4%B8%8B%E5%8D%8811.11.09.png)"
+        )
+        assert extract_asset_image_names(markdown) == [
+            "截屏2026-07-15 下午11.11.09.png"
+        ]
 
     def test_ignores_non_asset_refs(self) -> None:
         """External URLs and other relative paths are not asset names."""

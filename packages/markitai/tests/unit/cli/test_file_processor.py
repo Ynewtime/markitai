@@ -118,6 +118,30 @@ class TestResolveAssetReferences:
 
         assert "![A bar chart of Q3 revenue](file://" in result
 
+    def test_asset_store_resolves_uri_encoded_unicode_filename(
+        self, tmp_path: Path
+    ) -> None:
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        (assets_dir / "截屏 下午.png").write_bytes(b"image-data")
+
+        from markitai.utils.asset_store import AssetStore
+
+        store = AssetStore(tmp_path / "store")
+        markdown = (
+            "![截图](.markitai/assets/"
+            "%E6%88%AA%E5%B1%8F%20%E4%B8%8B%E5%8D%88.png)"
+        )
+        result = resolve_asset_references(
+            markdown,
+            temp_dir=tmp_path,
+            asset_store=store,
+            source_name="doc.png",
+        )
+
+        assert "![截图](file://" in result
+        assert "![image:" not in result
+
     def test_asset_store_tier_uses_filename_for_empty_alt(self, tmp_path: Path) -> None:
         """Empty alt text falls back to the filename."""
         assets_dir = tmp_path / ".markitai" / "assets"

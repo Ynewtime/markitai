@@ -577,6 +577,367 @@ class TestDeleteLLMModel:
         assert resp.status_code == 404
 
 
+class TestProviderConnections:
+    async def test_local_cli_and_its_saved_model_share_one_provider_card(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.providers import discovery
+
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry("claude-agent/sonnet"),
+            _model_entry(
+                "deepseek/deepseek-chat", "env:DEEPSEEK_API_KEY", model_name="a"
+            ),
+            _model_entry(
+                "deepseek/deepseek-reasoner", "env:DEEPSEEK_API_KEY", model_name="b"
+            ),
+        ]
+
+        async def fake_connections(
+            _configured: list[ModelConfig], *, refresh: bool = False
+        ) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": "claude-agent",
+                    "provider": "claude-agent",
+                    "label": "Claude Code CLI",
+                    "kind": "local_cli",
+                    "status": "ready",
+                    "source": "cli",
+                    "default_model": "claude-agent/sonnet",
+                    "supports_discovery": True,
+                },
+                {
+                    "id": "configured:1",
+                    "provider": "claude-agent",
+                    "label": "Claude-Agent",
+                    "kind": "configured",
+                    "status": "ready",
+                    "source": "config",
+                    "supports_discovery": True,
+                },
+            ]
+
+        monkeypatch.setattr(discovery, "detect_provider_connections", fake_connections)
+        async with _serve_client(_make_app(tmp_path, cfg)) as client:
+            response = await client.get("/api/settings/llm/providers?refresh=true")
+        assert response.status_code == 200
+        claude = [
+            card
+            for card in response.json()["providers"]
+            if card["provider"] == "claude-agent"
+        ]
+        assert len(claude) == 1
+        assert claude[0]["kind"] == "local_cli"
+        assert claude[0]["supports_discovery"] is True
+        deepseek = [
+            card
+            for card in response.json()["providers"]
+            if card["provider"] == "deepseek"
+        ]
+        assert len(deepseek) == 1
+        assert deepseek[0]["kind"] == "configured"
+        assert deepseek[0]["label"] == "DeepSeek"
+
+
+class TestProviderCredentialLifecycle:
+    async def test_credentials_are_revealed_only_by_explicit_provider_request(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            revision = (await client.get("/api/settings/llm")).json()["revision"]
+            added = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": revision,
+                    "deployments": [
+                        {
+                            "model_name": "default",
+                            "model": "deepseek/deepseek-chat",
+                            "provider": "deepseek",
+                            "api_key": "sk-visible-on-request",
+                            "api_base": "https://proxy.example/v1",
+                        }
+                    ],
+                },
+            )
+            assert added.status_code == 200
+            cards_response = await client.get("/api/settings/llm/providers")
+            card = next(
+                card
+                for card in cards_response.json()["providers"]
+                if card["provider"] == "deepseek" and card["kind"] == "configured"
+            )
+            credentials = await client.get(
+                f"/api/settings/llm/providers/{card['provider_id']}/credentials"
+            )
+
+        assert "sk-visible-on-request" not in cards_response.text
+        assert credentials.status_code == 200
+        assert credentials.headers["cache-control"] == "no-store"
+        assert credentials.json() == {
+            "api_key": "sk-visible-on-request",
+            "api_base": "https://proxy.example/v1",
+        }
+
+    async def test_provider_editor_gets_effective_default_api_base(
+        self, tmp_path: Path
+    ) -> None:
+        """A key-only DeepSeek connection still has a visible effective URL."""
+        async with _serve_client(_make_app(tmp_path)) as client:
+            revision = (await client.get("/api/settings/llm")).json()["revision"]
+            added = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": revision,
+                    "deployments": [
+                        {
+                            "model_name": "default",
+                            "model": "deepseek/deepseek-chat",
+                            "provider": "deepseek",
+                            "api_key": "sk-deepseek",
+                        }
+                    ],
+                },
+            )
+            assert added.status_code == 200
+            cards_response = await client.get("/api/settings/llm/providers")
+            card = next(
+                card
+                for card in cards_response.json()["providers"]
+                if card["provider"] == "deepseek"
+                and card["kind"] == "configured"
+            )
+            credentials = await client.get(
+                f"/api/settings/llm/providers/{card['provider_id']}/credentials"
+            )
+
+        assert card["api_base_configured"] is False
+        assert card["api_base"] == "https://api.deepseek.com"
+        assert credentials.json() == {
+            "api_key": "sk-deepseek",
+            "api_base": "https://api.deepseek.com",
+        }
+
+    async def test_legacy_embedded_credentials_migrate_before_last_model_delete(
+        self, tmp_path: Path
+    ) -> None:
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            _model_entry(
+                "deepseek/deepseek-chat", "env:DEEPSEEK_API_KEY", model_name="a"
+            ),
+            _model_entry(
+                "deepseek/deepseek-reasoner",
+                "env:DEEPSEEK_API_KEY",
+                model_name="b",
+            ),
+        ]
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, cfg, config_path=config_path)
+        ) as client:
+            payload = (await client.get("/api/settings/llm")).json()
+            first_id = payload["deployments"][0]["deployment_id"]
+            first = await client.delete(
+                f"/api/settings/llm/deployments/{first_id}",
+                params={"expected_revision": payload["revision"]},
+            )
+            assert first.status_code == 200
+            payload = first.json()
+            second_id = payload["deployments"][0]["deployment_id"]
+            second = await client.delete(
+                f"/api/settings/llm/deployments/{second_id}",
+                params={"expected_revision": payload["revision"]},
+            )
+            assert second.status_code == 200
+            cards = (await client.get("/api/settings/llm/providers")).json()[
+                "providers"
+            ]
+
+        deepseek = next(
+            card
+            for card in cards
+            if card["provider"] == "deepseek" and card["kind"] == "configured"
+        )
+        assert deepseek["model_count"] == 0
+        on_disk = json.loads(config_path.read_text(encoding="utf-8"))["llm"]
+        assert on_disk["model_list"] == []
+        assert on_disk["providers"][0]["api_key"] == "env:DEEPSEEK_API_KEY"
+
+    async def test_deleting_all_models_keeps_provider_and_can_add_again(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = tmp_path / "config.json"
+        captured: dict[str, Any] = {}
+
+        async def fake_discover(
+            provider: str,
+            *,
+            api_key: str | None,
+            api_base: str | None,
+            refresh: bool,
+        ) -> dict[str, Any]:
+            captured.update(
+                provider=provider,
+                api_key=api_key,
+                api_base=api_base,
+                refresh=refresh,
+            )
+            return {
+                "provider": provider,
+                "status": "ok",
+                "source": "test",
+                "authoritative": True,
+                "cached": False,
+                "stale": False,
+                "models": [],
+            }
+
+        monkeypatch.setattr(
+            "markitai.providers.discovery.discover_models", fake_discover
+        )
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            revision = (await client.get("/api/settings/llm")).json()["revision"]
+            added = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": revision,
+                    "deployments": [
+                        {
+                            "model_name": "default",
+                            "model": "deepseek/deepseek-chat",
+                            "provider": "deepseek",
+                            "api_key": "sk-deepseek-secret",
+                        },
+                        {
+                            "model_name": "default",
+                            "model": "deepseek/deepseek-reasoner",
+                            "provider": "deepseek",
+                            "api_key": "sk-deepseek-secret",
+                        },
+                    ],
+                },
+            )
+            payload = added.json()
+            first, second = payload["deployments"]
+            for deployment in (first, second):
+                deleted = await client.delete(
+                    f"/api/settings/llm/deployments/{deployment['deployment_id']}",
+                    params={"expected_revision": payload["revision"]},
+                )
+                assert deleted.status_code == 200
+                payload = deleted.json()
+
+            cards = (await client.get("/api/settings/llm/providers")).json()[
+                "providers"
+            ]
+            deepseek = next(
+                card
+                for card in cards
+                if card["provider"] == "deepseek" and card["kind"] == "configured"
+            )
+            assert deepseek["model_count"] == 0
+            assert deepseek["api_key_configured"] is True
+            assert "sk-deepseek-secret" not in json.dumps(cards)
+
+            discovered = await client.post(
+                "/api/settings/llm/model-discovery",
+                json={"provider": "deepseek", "provider_id": deepseek["provider_id"]},
+            )
+            assert discovered.status_code == 200
+            readded = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": payload["revision"],
+                    "deployments": [
+                        {
+                            "model_name": "default",
+                            "model": "deepseek/deepseek-chat",
+                            "provider": "deepseek",
+                            "credential_provider_id": deepseek["provider_id"],
+                        }
+                    ],
+                },
+            )
+
+        assert captured["api_key"] == "sk-deepseek-secret"
+        assert readded.status_code == 200
+        on_disk = json.loads(config_path.read_text(encoding="utf-8"))["llm"]
+        assert len(on_disk["providers"]) == 1
+        assert on_disk["providers"][0]["api_key"] == "sk-deepseek-secret"
+        assert on_disk["model_list"][0]["litellm_params"]["api_key"] == (
+            "sk-deepseek-secret"
+        )
+
+    async def test_edit_provider_updates_models_and_delete_provider_clears_all(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "config.json"
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            revision = (await client.get("/api/settings/llm")).json()["revision"]
+            added = await client.post(
+                "/api/settings/llm/deployments/batch",
+                json={
+                    "expected_revision": revision,
+                    "deployments": [
+                        {
+                            "model_name": "default",
+                            "model": "deepseek/deepseek-chat",
+                            "provider": "deepseek",
+                            "api_key": "sk-old-secret",
+                        }
+                    ],
+                },
+            )
+            card = next(
+                card
+                for card in (
+                    await client.get("/api/settings/llm/providers")
+                ).json()["providers"]
+                if card["provider"] == "deepseek" and card["kind"] == "configured"
+            )
+            edited = await client.patch(
+                f"/api/settings/llm/providers/{card['provider_id']}",
+                json={
+                    "api_key": "sk-new-secret",
+                    "api_base": "https://proxy.example/v1",
+                    "expected_revision": added.json()["revision"],
+                },
+            )
+            assert edited.status_code == 200
+            deleted = await client.delete(
+                f"/api/settings/llm/providers/{card['provider_id']}",
+                params={"expected_revision": edited.json()["revision"]},
+            )
+
+        assert deleted.status_code == 200
+        assert deleted.json()["deployments"] == []
+        on_disk = json.loads(config_path.read_text(encoding="utf-8"))["llm"]
+        assert on_disk["providers"] == []
+        assert on_disk["model_list"] == []
+        text = config_path.read_text(encoding="utf-8")
+        assert "sk-old-secret" not in text
+        assert "sk-new-secret" not in text
+
+    async def test_missing_provider_error_is_actionable(self, tmp_path: Path) -> None:
+        async with _serve_client(_make_app(tmp_path)) as client:
+            response = await client.post(
+                "/api/settings/llm/model-discovery",
+                json={"provider": "deepseek", "provider_id": "gone"},
+            )
+        assert response.status_code == 404
+        assert "Refresh the provider list" in response.json()["detail"]
+
+
 class TestDetectedProviders:
     """GET /api/settings/llm/detected: detection candidates passthrough."""
 
@@ -672,7 +1033,10 @@ class TestLLMSettingsProbe:
         assert "openai/gpt-test" in data["detail"]
         assert captured["model"] == "openai/gpt-test"
         assert captured["api_key"] == "sk-1234567890abcdef"
-        assert captured["max_tokens"] == 1
+        assert captured["max_tokens"] == 16
+        assert captured["messages"] == [
+            {"role": "user", "content": "Reply with exactly OK."}
+        ]
         assert captured["timeout"] == 15
         assert not (tmp_path / "config.json").exists()  # probe persists nothing
 
@@ -757,7 +1121,9 @@ class TestLLMSettingsProbe:
         data = resp.json()
         assert resp.status_code == 200
         assert data["ok"] is False
-        assert "claude-agent SDK is not installed" in data["detail"]
+        assert "runtime support is missing" in data["detail"]
+        assert "CLI login alone is not the SDK" in data["detail"]
+        assert "uv sync --extra serve --extra claude-agent" in data["detail"]
 
     async def test_probe_without_key_uses_stored_credentials(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

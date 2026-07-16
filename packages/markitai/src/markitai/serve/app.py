@@ -12,7 +12,6 @@ import ipaddress
 import json
 import os
 import re
-import shutil
 import sys
 import uuid
 import zipfile
@@ -31,13 +30,18 @@ from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from markitai import __version__
+from markitai.providers.discovery import provider_default_api_base
 from markitai.serve.jobs import (
     Job,
     JobRegistry,
+    RetryWork,
     cleanup_stale_jobs,
     job_dir_size,
+    job_duration_ms,
     rehydrate_jobs,
     run_job,
+    run_retry_queue,
+    write_job_meta,
 )
 from markitai.serve.schemas import (
     JobOptions,
@@ -46,13 +50,14 @@ from markitai.serve.schemas import (
     LLMModelCreate,
     LLMModelDiscoveryRequest,
     LLMModelUpdate,
+    LLMProviderUpdate,
     LLMSettingsUpdate,
 )
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
-    from markitai.config import MarkitaiConfig, ModelConfig
+    from markitai.config import LLMProviderConfig, MarkitaiConfig, ModelConfig
 
 DEFAULT_JOBS_ROOT = Path.home() / ".markitai" / "serve" / "jobs"
 DEFAULT_CONFIG_PATH = Path.home() / ".markitai" / "config.json"
@@ -112,6 +117,7 @@ class ServeState:
     config_path: Path
     config_origin: Literal["explicit", "environment", "project", "user", "default"]
     configured_models: list[ModelConfig]
+    configured_providers: list[LLMProviderConfig]
     detected_models: list[ModelConfig]
     settings_revision: str
     settings_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -304,6 +310,8 @@ def _build_job_config(base: MarkitaiConfig, opts: JobOptions) -> MarkitaiConfig:
             cfg.screenshot.enabled = preset.screenshot
     if opts.llm is not None:
         cfg.llm.enabled = opts.llm
+    if opts.ocr is not None:
+        cfg.ocr.enabled = opts.ocr
     if cfg.llm.enabled and not cfg.llm.model_list:
         logger.warning(
             "[Serve] LLM requested but no models are configured; "
@@ -349,10 +357,13 @@ def _display_config_path(path: Path) -> str:
         return str(path)
 
 
-def _model_list_revision(entries: list[Any]) -> str:
-    """Return a canonical optimistic-concurrency revision for model_list."""
+def _settings_revision(models: list[Any], providers: list[Any]) -> str:
+    """Return a canonical revision for models and saved provider connections."""
     canonical = json.dumps(
-        entries, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        {"models": models, "providers": providers},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode()
     return hashlib.sha256(canonical).hexdigest()
 
@@ -529,14 +540,15 @@ def _llm_settings_payload(state: ServeState) -> dict[str, Any]:
 
 def _mutate_config_model_list(
     config_path: Path,
-    mutate: Callable[[list[Any], dict[str, str]], list[Any]],
+    mutate: Callable[[list[Any], list[Any], dict[str, str]], list[Any]],
     *,
     fallback: list[ModelConfig],
+    fallback_providers: list[LLMProviderConfig],
     expected_revision: str | None,
     backfill_ids: bool,
-) -> tuple[list[ModelConfig], str]:
-    """Atomically mutate raw model_list with revision and identity checks."""
-    from markitai.config import ModelConfig
+) -> tuple[list[ModelConfig], list[LLMProviderConfig], str]:
+    """Atomically mutate models and provider connections with revision checks."""
+    from markitai.config import LLMProviderConfig, ModelConfig
     from markitai.security import atomic_write_json
 
     data: dict[str, Any] = {}
@@ -552,8 +564,14 @@ def _mutate_config_model_list(
     model_list = llm.get("model_list")
     if not isinstance(model_list, list):
         model_list = [_model_to_raw(model) for model in fallback]
+    provider_list = llm.get("providers")
+    if not isinstance(provider_list, list):
+        provider_list = [
+            provider.model_dump(mode="json", exclude_none=True)
+            for provider in fallback_providers
+        ]
 
-    current_revision = _model_list_revision(model_list)
+    current_revision = _settings_revision(model_list, provider_list)
     if expected_revision is not None and expected_revision != current_revision:
         raise HTTPException(
             status_code=409,
@@ -564,14 +582,19 @@ def _mutate_config_model_list(
         )
 
     legacy_mapping = _backfill_raw_deployment_ids(model_list) if backfill_ids else {}
-    model_list = mutate(model_list, legacy_mapping)
+    model_list = mutate(model_list, provider_list, legacy_mapping)
     llm["model_list"] = model_list
+    if provider_list or "providers" in llm or fallback_providers:
+        llm["providers"] = provider_list
     data["llm"] = llm
 
     merged = [ModelConfig.model_validate(model) for model in model_list]
-    revision = _model_list_revision(model_list)
+    merged_providers = [
+        LLMProviderConfig.model_validate(provider) for provider in provider_list
+    ]
+    revision = _settings_revision(model_list, provider_list)
     atomic_write_json(config_path, data)
-    return merged, revision
+    return merged, merged_providers, revision
 
 
 def _find_raw_entries(entries: list[Any], model_name: str) -> list[dict[str, Any]]:
@@ -590,6 +613,108 @@ def _find_raw_deployment(
         if isinstance(entry, dict) and _deployment_id(entry, index) == target_id:
             return entry
     return None
+
+
+def _raw_provider_by_id(
+    providers: list[Any], provider_id: str
+) -> dict[str, Any] | None:
+    return next(
+        (
+            provider
+            for provider in providers
+            if isinstance(provider, dict) and provider.get("id") == provider_id
+        ),
+        None,
+    )
+
+
+def _raw_model_provider_id(entry: dict[str, Any]) -> str | None:
+    info = entry.get("model_info")
+    value = info.get("provider_id") if isinstance(info, dict) else None
+    return value if isinstance(value, str) and value else None
+
+
+def _link_raw_model_to_provider(entry: dict[str, Any], provider_id: str) -> None:
+    info = entry.get("model_info")
+    if not isinstance(info, dict):
+        info = {}
+        entry["model_info"] = info
+    info["provider_id"] = provider_id
+
+
+def _ensure_raw_provider(
+    providers: list[Any],
+    *,
+    provider: str,
+    api_key: str | None,
+    api_base: str | None,
+    models: list[Any] | None = None,
+) -> str | None:
+    """Persist one credential connection and link matching legacy models."""
+    from markitai.providers import is_local_provider_model
+
+    if is_local_provider_model(f"{provider}/model") or (
+        api_key is None and api_base is None
+    ):
+        return None
+    match = next(
+        (
+            candidate
+            for candidate in providers
+            if isinstance(candidate, dict)
+            and candidate.get("provider") == provider
+            and candidate.get("api_key") == api_key
+            and candidate.get("api_base") == api_base
+        ),
+        None,
+    )
+    if match is None:
+        match = {
+            "id": str(uuid.uuid4()),
+            "provider": provider,
+            **({"api_key": api_key} if api_key is not None else {}),
+            **({"api_base": api_base} if api_base is not None else {}),
+        }
+        providers.append(match)
+    provider_id = str(match["id"])
+    for entry in models or []:
+        if not isinstance(entry, dict):
+            continue
+        params = entry.get("litellm_params")
+        if not isinstance(params, dict):
+            continue
+        model = params.get("model")
+        if (
+            isinstance(model, str)
+            and model.split("/", 1)[0].lower() == provider
+            and params.get("api_key") == api_key
+            and params.get("api_base") == api_base
+        ):
+            _link_raw_model_to_provider(entry, provider_id)
+    return provider_id
+
+
+def _preserve_raw_deployment_provider(
+    entry: dict[str, Any], entries: list[Any], providers: list[Any]
+) -> None:
+    """Migrate embedded credentials before a model deployment is removed."""
+    if _raw_model_provider_id(entry) is not None:
+        return
+    params = entry.get("litellm_params")
+    if not isinstance(params, dict):
+        return
+    model = params.get("model")
+    if not isinstance(model, str):
+        return
+    _ensure_raw_provider(
+        providers,
+        provider=model.split("/", 1)[0].lower(),
+        api_key=params.get("api_key") if isinstance(params.get("api_key"), str) else None,
+        api_base=(
+            params.get("api_base") if isinstance(params.get("api_base"), str) else None
+        ),
+        models=entries,
+    )
 
 
 def _strip_ignored_local_params(params: dict[str, Any]) -> None:
@@ -662,9 +787,8 @@ def _fill_stored_credentials(
 ) -> LLMSettingsUpdate:
     """Fill a keyless probe body with the stored credentials for its model.
 
-    The settings UI only ever sees stored api_keys masked, so a saved-row
-    test posts ``{model, api_base}`` without the key; resolve it from the
-    running config exactly like a job run would. An explicit ``api_key``
+    A saved-row test posts only its deployment reference; resolve credentials
+    from the running config exactly like a job run would. An explicit ``api_key``
     always wins, local providers never take one, and nothing is persisted.
     """
     from markitai.providers import is_local_provider_model
@@ -745,7 +869,7 @@ def _stored_probe_body(
 
 
 async def _probe_llm(body: LLMSettingsUpdate) -> str:
-    """Run a minimal one-token completion against the given model.
+    """Run a minimal short completion against the given model.
 
     Mirrors the router's parameter mapping — ``env:VAR`` resolution and the
     directly-registered handlers for local providers (claude-agent/,
@@ -762,6 +886,7 @@ async def _probe_llm(body: LLMSettingsUpdate) -> str:
     from markitai.providers import (
         get_provider,
         is_local_provider_available,
+        is_local_provider_model,
         register_providers,
     )
 
@@ -773,15 +898,27 @@ async def _probe_llm(body: LLMSettingsUpdate) -> str:
     api_key = params.get_resolved_api_key()
     api_base = params.get_resolved_api_base()
 
-    if not is_local_provider_available(body.model):
+    if is_local_provider_model(body.model) and not is_local_provider_available(
+        body.model
+    ):
         provider = body.model.split("/", 1)[0]
-        raise RuntimeError(f"{provider} SDK is not installed")
+        extra = "claude-agent" if provider == "claude-agent" else provider
+        raise RuntimeError(
+            f"{provider} runtime support is missing from the Python environment "
+            "running Markitai (CLI login alone is not the SDK). Run setup again "
+            f"or install markitai[{extra}]; in this repository run: "
+            f"uv sync --extra serve --extra {extra}"
+        )
 
     register_providers()
     kwargs: dict[str, Any] = {
         "model": body.model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 1,
+        # One token is too small for APIs that account for hidden reasoning
+        # tokens and can turn a healthy model into an artificial length error.
+        "messages": [
+            {"role": "user", "content": "Reply with exactly OK."}
+        ],
+        "max_tokens": 16,
         "timeout": _LLM_TEST_TIMEOUT_S,
     }
     if api_key:
@@ -797,6 +934,28 @@ async def _probe_llm(body: LLMSettingsUpdate) -> str:
 
         await litellm.acompletion(**kwargs)
     return f"{body.model} responded"
+
+
+def _add_job_outputs_to_zip(
+    archive: zipfile.ZipFile, job: Job, *, prefix: Path | None = None
+) -> None:
+    """Add one job's immutable output tree to an open ZIP archive."""
+    out_dir = job.out_dir.resolve()
+    for file in sorted(out_dir.rglob("*")):
+        if not file.is_file() or (
+            file.name.startswith(".") and file.name.endswith(".tmp")
+        ):
+            continue
+        relative = file.relative_to(out_dir)
+        archive.write(file, relative if prefix is None else prefix / relative)
+
+
+def _job_archive_folder(job: Job) -> str:
+    """Human-readable, filesystem-safe folder for a multi-job archive."""
+    output = next((item.output for item in job.items if item.output), None)
+    if output is None:
+        return f"job-{job.job_id}"
+    return _sanitize_upload_name(_split_output_name(Path(output).name))
 
 
 def _split_output_name(name: str) -> str:
@@ -828,16 +987,26 @@ def _config_origin(
     return "default"
 
 
-def _initial_settings_revision(path: Path, models: list[ModelConfig]) -> str:
+def _initial_settings_revision(
+    path: Path,
+    models: list[ModelConfig],
+    providers: list[LLMProviderConfig],
+) -> str:
     try:
         data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
         llm = data.get("llm") if isinstance(data, dict) else None
         entries = llm.get("model_list") if isinstance(llm, dict) else None
+        raw_providers = llm.get("providers") if isinstance(llm, dict) else None
         if isinstance(entries, list):
-            return _model_list_revision(entries)
+            return _settings_revision(
+                entries, raw_providers if isinstance(raw_providers, list) else []
+            )
     except (OSError, ValueError):
         pass
-    return _model_list_revision([_model_to_raw(model) for model in models])
+    return _settings_revision(
+        [_model_to_raw(model) for model in models],
+        [provider.model_dump(mode="json", exclude_none=True) for provider in providers],
+    )
 
 
 class _SPAStaticFiles(StaticFiles):
@@ -930,6 +1099,7 @@ def create_app(
                 or (Path(env_path).expanduser() if env_path else DEFAULT_CONFIG_PATH)
             )
 
+        configured_providers = list(cfg.llm.providers)
         cfg.llm.model_list = _effective_models(configured_models, detected_models)
         root = (jobs_root if jobs_root is not None else DEFAULT_JOBS_ROOT).resolve()
         root.mkdir(parents=True, exist_ok=True)
@@ -946,9 +1116,10 @@ def create_app(
                 resolved_config_path, explicit=config_path is not None
             ),
             configured_models=configured_models,
+            configured_providers=configured_providers,
             detected_models=detected_models,
             settings_revision=_initial_settings_revision(
-                resolved_config_path, configured_models
+                resolved_config_path, configured_models, configured_providers
             ),
         )
         app.state.markitai = state
@@ -1033,31 +1204,170 @@ def create_app(
     async def get_llm_providers(
         request: Request, refresh: bool = False
     ) -> dict[str, Any]:
-        from markitai.providers.discovery import detect_provider_connections
+        from markitai.providers import is_local_provider_model
+        from markitai.providers.discovery import (
+            detect_provider_connections,
+            provider_label,
+        )
 
         state = _state(request)
-        providers = await detect_provider_connections(
+        detected = await detect_provider_connections(
             state.configured_models, refresh=refresh
         )
-        providers = [card for card in providers if card.get("kind") != "configured"]
-        for index, model in enumerate(state.configured_models):
-            provider = model.litellm_params.model.split("/", 1)[0]
+        detected = [card for card in detected if card.get("kind") != "configured"]
+        explicit_by_id = {provider.id: provider for provider in state.configured_providers}
+        explicit_provider_names = {provider.provider for provider in explicit_by_id.values()}
+        # A persisted env reference and its auto-detected environment card are
+        # one connection, not two provider cards.
+        providers = [
+            card
+            for card in detected
+            if not (
+                card.get("kind") == "common"
+                and card.get("provider") in explicit_provider_names
+            )
+            and not any(
+                card.get("kind") == "environment"
+                and card.get("provider") == saved.provider
+                and saved.api_key == f"env:{card.get('source')}"
+                for saved in explicit_by_id.values()
+            )
+        ]
+        local_connections = {
+            str(card["provider"])
+            for card in providers
+            if card.get("kind") in {"local_cli", "oauth"}
+        }
+
+        for saved in state.configured_providers:
+            model_count = sum(
+                model.model_info is not None
+                and model.model_info.provider_id == saved.id
+                for model in state.configured_models
+            )
             providers.append(
                 {
-                    "id": f"deployment:{_deployment_id(model, index)}",
-                    "deployment_id": _deployment_id(model, index),
-                    "provider": provider,
-                    "label": provider.replace("_", " ").title(),
+                    "id": f"provider:{saved.id}",
+                    "provider_id": saved.id,
+                    "provider": saved.provider,
+                    "label": provider_label(saved.provider),
                     "kind": "configured",
                     "status": "ready"
-                    if model.litellm_params.weight > 0
-                    else "disabled",
+                    if saved.api_key is not None or saved.api_base is not None
+                    else "needs_credentials",
                     "source": "config",
-                    "api_base_configured": bool(model.litellm_params.api_base),
+                    "api_key_configured": bool(saved.api_key),
+                    "api_base_configured": bool(saved.api_base),
+                    "api_base": _sanitized_api_origin(
+                        saved.api_base or provider_default_api_base(saved.provider)
+                    ),
+                    "model_count": model_count,
+                    "supports_discovery": True,
+                }
+            )
+
+        seen_configured_connections: set[tuple[str, str | None, str | None]] = set()
+        explicit_connections = {
+            (provider.provider, provider.api_base, provider.api_key)
+            for provider in state.configured_providers
+        }
+        for index, model in enumerate(state.configured_models):
+            params = model.litellm_params
+            provider = params.model.split("/", 1)[0].lower()
+            connection = (provider, params.api_base, params.api_key)
+            linked = model.model_info.provider_id if model.model_info else None
+            if is_local_provider_model(params.model):
+                continue
+            if linked in explicit_by_id or connection in explicit_connections:
+                continue
+            if connection in seen_configured_connections:
+                continue
+            seen_configured_connections.add(connection)
+            if provider in local_connections and params.api_base is None:
+                continue
+            deployment_id = _deployment_id(model, index)
+            model_count = sum(
+                (
+                    candidate.litellm_params.model.split("/", 1)[0].lower(),
+                    candidate.litellm_params.api_base,
+                    candidate.litellm_params.api_key,
+                )
+                == connection
+                for candidate in state.configured_models
+            )
+            providers.append(
+                {
+                    "id": f"provider:legacy:{deployment_id}",
+                    "provider_id": f"legacy:{deployment_id}",
+                    "deployment_id": deployment_id,
+                    "provider": provider,
+                    "label": provider_label(provider),
+                    "kind": "configured",
+                    "status": "ready" if params.weight > 0 else "disabled",
+                    "source": "config",
+                    "api_key_configured": bool(params.api_key),
+                    "api_base_configured": bool(params.api_base),
+                    "api_base": _sanitized_api_origin(
+                        params.api_base or provider_default_api_base(provider)
+                    ),
+                    "model_count": model_count,
                     "supports_discovery": True,
                 }
             )
         return {"providers": providers}
+
+    @app.get("/api/settings/llm/providers/{provider_id}/credentials")
+    async def get_llm_provider_credentials(
+        request: Request, provider_id: str
+    ) -> dict[str, str | None]:
+        """Return one saved connection's editable values on explicit request.
+
+        Provider collection responses remain secret-free. This endpoint is
+        covered by the loopback-only settings middleware and is called only
+        when the user opens the provider editor. API keys stay behind a
+        password control; API bases are ordinary, non-secret URL fields.
+        """
+        state = _state(request)
+        saved = next(
+            (
+                provider
+                for provider in state.configured_providers
+                if provider.id == provider_id
+            ),
+            None,
+        )
+        if saved is not None:
+            return {
+                "api_key": saved.api_key,
+                "api_base": saved.api_base
+                or provider_default_api_base(saved.provider),
+            }
+
+        deployment_id = (
+            provider_id.removeprefix("legacy:")
+            if provider_id.startswith("legacy:")
+            else None
+        )
+        legacy = (
+            _configured_deployment_by_id(state, deployment_id)
+            if deployment_id is not None
+            else None
+        )
+        if legacy is not None:
+            legacy_provider = legacy.litellm_params.model.split("/", 1)[0].lower()
+            return {
+                "api_key": legacy.litellm_params.api_key,
+                "api_base": legacy.litellm_params.api_base
+                or provider_default_api_base(legacy_provider),
+            }
+
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "This saved provider connection no longer exists. "
+                "Refresh the provider list and choose it again."
+            ),
+        )
 
     @app.post("/api/settings/llm/model-discovery")
     async def discover_llm_models(
@@ -1066,19 +1376,55 @@ def create_app(
         from markitai.config import resolve_env_value
         from markitai.providers.discovery import discover_models
 
+        state = _state(request)
+        stored_provider = next(
+            (
+                provider
+                for provider in state.configured_providers
+                if provider.id == body.provider_id
+            ),
+            None,
+        )
+        deployment_id = body.deployment_id
+        if body.provider_id is not None and body.provider_id.startswith("legacy:"):
+            deployment_id = body.provider_id.removeprefix("legacy:")
         stored = (
-            _configured_deployment_by_id(_state(request), body.deployment_id)
-            if body.deployment_id is not None
+            _configured_deployment_by_id(state, deployment_id)
+            if deployment_id is not None
             else None
         )
-        if body.deployment_id is not None and stored is None:
-            raise HTTPException(status_code=404, detail="deployment not found")
-        raw_key = body.api_key or (
-            stored.litellm_params.api_key if stored is not None else None
+        if body.provider_id is not None and stored_provider is None and stored is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "This saved provider connection no longer exists. "
+                    "Refresh the provider list and choose it again."
+                ),
+            )
+        if deployment_id is not None and stored is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "This saved provider connection no longer exists. "
+                    "Refresh the provider list and choose it again."
+                ),
+            )
+        fallback_key = (
+            stored_provider.api_key
+            if stored_provider is not None
+            else stored.litellm_params.api_key
+            if stored is not None
+            else None
         )
-        raw_base = body.api_base or (
-            stored.litellm_params.api_base if stored is not None else None
+        fallback_base = (
+            stored_provider.api_base
+            if stored_provider is not None
+            else stored.litellm_params.api_base
+            if stored is not None
+            else None
         )
+        raw_key = body.api_key if body.api_key is not None else fallback_key
+        raw_base = body.api_base if body.api_base is not None else fallback_base
         api_key = resolve_env_value(raw_key, strict=False) if raw_key else None
         api_base = resolve_env_value(raw_base, strict=False) if raw_base else None
         return await discover_models(
@@ -1090,7 +1436,7 @@ def create_app(
 
     async def _apply_model_list_mutation(
         state: ServeState,
-        mutate: Callable[[list[Any], dict[str, str]], list[Any]],
+        mutate: Callable[[list[Any], list[Any], dict[str, str]], list[Any]],
         *,
         expected_revision: str | None = None,
         backfill_ids: bool = False,
@@ -1098,11 +1444,12 @@ def create_app(
         """Run one settings write: atomic file mutation + hot update."""
         async with state.settings_lock:
             try:
-                merged, revision = await asyncio.to_thread(
+                merged, merged_providers, revision = await asyncio.to_thread(
                     _mutate_config_model_list,
                     state.config_path,
                     mutate,
                     fallback=state.configured_models,
+                    fallback_providers=state.configured_providers,
                     expected_revision=expected_revision,
                     backfill_ids=backfill_ids,
                 )
@@ -1127,7 +1474,9 @@ def create_app(
                     detail=f"failed to update config file: {type(e).__name__}",
                 )
             state.configured_models = merged
+            state.configured_providers = merged_providers
             state.settings_revision = revision
+            state.config.llm.providers = merged_providers
             state.config.llm.model_list = _effective_models(
                 merged, state.detected_models
             )
@@ -1136,27 +1485,76 @@ def create_app(
             )
         return _llm_settings_payload(state)
 
-    def raw_deployment(state: ServeState, body: LLMModelCreate) -> dict[str, Any]:
+    def raw_deployment(
+        state: ServeState,
+        body: LLMModelCreate,
+        providers: list[Any],
+        models: list[Any],
+    ) -> dict[str, Any]:
         credential_source = (
             _configured_deployment_by_id(state, body.credential_deployment_id)
             if body.credential_deployment_id is not None
             else None
         )
+        credential_provider = (
+            _raw_provider_by_id(providers, body.credential_provider_id)
+            if body.credential_provider_id is not None
+            else None
+        )
         if body.credential_deployment_id is not None and credential_source is None:
             raise HTTPException(
-                status_code=404, detail="credential deployment not found"
+                status_code=404,
+                detail=(
+                    "This saved provider connection no longer exists. "
+                    "Refresh the provider list and choose it again."
+                ),
             )
+        if body.credential_provider_id is not None and credential_provider is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "This saved provider connection no longer exists. "
+                    "Refresh the provider list and choose it again."
+                ),
+            )
+
+        provider_name = (
+            body.provider or body.model.split("/", 1)[0]
+        ).strip().lower()
+        provider_id = (
+            str(credential_provider["id"])
+            if credential_provider is not None
+            else credential_source.model_info.provider_id
+            if credential_source is not None
+            and credential_source.model_info is not None
+            else None
+        )
+        fallback_key = (
+            credential_provider.get("api_key")
+            if credential_provider is not None
+            else credential_source.litellm_params.api_key
+            if credential_source is not None
+            else None
+        )
+        fallback_base = (
+            credential_provider.get("api_base")
+            if credential_provider is not None
+            else credential_source.litellm_params.api_base
+            if credential_source is not None
+            else None
+        )
+        api_key = body.api_key if body.api_key is not None else fallback_key
+        api_base = body.api_base if body.api_base is not None else fallback_base
+        if provider_id is None:
+            provider_id = _ensure_raw_provider(
+                providers,
+                provider=provider_name,
+                api_key=api_key,
+                api_base=api_base,
+                models=models,
+            )
+
         params: dict[str, Any] = {"model": body.model}
-        api_key = body.api_key or (
-            credential_source.litellm_params.api_key
-            if credential_source is not None
-            else None
-        )
-        api_base = body.api_base or (
-            credential_source.litellm_params.api_base
-            if credential_source is not None
-            else None
-        )
         if api_key is not None:
             params["api_key"] = api_key
         if api_base is not None:
@@ -1164,10 +1562,13 @@ def create_app(
         if body.weight != 1:
             params["weight"] = body.weight
         _strip_ignored_local_params(params)
+        info = {"id": str(uuid.uuid4())}
+        if provider_id is not None:
+            info["provider_id"] = provider_id
         return {
             "model_name": body.model_name,
             "litellm_params": params,
-            "model_info": {"id": str(uuid.uuid4())},
+            "model_info": info,
         }
 
     def update_raw_deployment(entry: dict[str, Any], body: LLMModelUpdate) -> None:
@@ -1197,8 +1598,10 @@ def create_app(
     async def add_llm_model(request: Request, body: LLMModelCreate) -> dict[str, Any]:
         state = _state(request)
 
-        def mutate(entries: list[Any], _legacy_mapping: dict[str, str]) -> list[Any]:
-            entries.append(raw_deployment(state, body))
+        def mutate(
+            entries: list[Any], providers: list[Any], _legacy_mapping: dict[str, str]
+        ) -> list[Any]:
+            entries.append(raw_deployment(state, body, providers, entries))
             return entries
 
         payload = await _apply_model_list_mutation(
@@ -1211,7 +1614,9 @@ def create_app(
     async def update_llm_model(
         request: Request, model_name: str, body: LLMModelUpdate
     ) -> dict[str, Any]:
-        def mutate(entries: list[Any], _legacy_mapping: dict[str, str]) -> list[Any]:
+        def mutate(
+            entries: list[Any], _providers: list[Any], _legacy_mapping: dict[str, str]
+        ) -> list[Any]:
             matches = _find_raw_entries(entries, model_name)
             if not matches:
                 raise HTTPException(
@@ -1236,7 +1641,9 @@ def create_app(
 
     @app.delete("/api/settings/llm/models/{model_name}")
     async def delete_llm_model(request: Request, model_name: str) -> dict[str, Any]:
-        def mutate(entries: list[Any], _legacy_mapping: dict[str, str]) -> list[Any]:
+        def mutate(
+            entries: list[Any], providers: list[Any], _legacy_mapping: dict[str, str]
+        ) -> list[Any]:
             matches = _find_raw_entries(entries, model_name)
             if not matches:
                 raise HTTPException(
@@ -1251,6 +1658,7 @@ def create_app(
                     },
                 )
             target = matches[0]
+            _preserve_raw_deployment_provider(target, entries, providers)
             return [entry for entry in entries if entry is not target]
 
         payload = await _apply_model_list_mutation(_state(request), mutate)
@@ -1263,10 +1671,11 @@ def create_app(
     ) -> dict[str, Any]:
         state = _state(request)
 
-        def mutate(entries: list[Any], _legacy_mapping: dict[str, str]) -> list[Any]:
-            entries.extend(
-                raw_deployment(state, deployment) for deployment in body.deployments
-            )
+        def mutate(
+            entries: list[Any], providers: list[Any], _legacy_mapping: dict[str, str]
+        ) -> list[Any]:
+            for deployment in body.deployments:
+                entries.append(raw_deployment(state, deployment, providers, entries))
             return entries
 
         return await _apply_model_list_mutation(
@@ -1283,10 +1692,18 @@ def create_app(
         if body.expected_revision is None:
             raise HTTPException(status_code=422, detail="expected_revision is required")
 
-        def mutate(entries: list[Any], legacy_mapping: dict[str, str]) -> list[Any]:
+        def mutate(
+            entries: list[Any], _providers: list[Any], legacy_mapping: dict[str, str]
+        ) -> list[Any]:
             entry = _find_raw_deployment(entries, deployment_id, legacy_mapping)
             if entry is None:
-                raise HTTPException(status_code=404, detail="deployment not found")
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "This model configuration no longer exists. "
+                        "Refresh settings and try again."
+                    ),
+                )
             update_raw_deployment(entry, body)
             return entries
 
@@ -1301,11 +1718,208 @@ def create_app(
     async def delete_llm_deployment(
         request: Request, deployment_id: str, expected_revision: str
     ) -> dict[str, Any]:
-        def mutate(entries: list[Any], legacy_mapping: dict[str, str]) -> list[Any]:
+        def mutate(
+            entries: list[Any], providers: list[Any], legacy_mapping: dict[str, str]
+        ) -> list[Any]:
             entry = _find_raw_deployment(entries, deployment_id, legacy_mapping)
             if entry is None:
-                raise HTTPException(status_code=404, detail="deployment not found")
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "This model configuration no longer exists. "
+                        "Refresh settings and try again."
+                    ),
+                )
+            _preserve_raw_deployment_provider(entry, entries, providers)
             return [candidate for candidate in entries if candidate is not entry]
+
+        return await _apply_model_list_mutation(
+            _state(request),
+            mutate,
+            expected_revision=expected_revision,
+            backfill_ids=True,
+        )
+
+    def locate_raw_provider(
+        entries: list[Any],
+        providers: list[Any],
+        provider_id: str,
+        legacy_mapping: dict[str, str],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        target = _raw_provider_by_id(providers, provider_id)
+        legacy_entry = None
+        if target is None and provider_id.startswith("legacy:"):
+            legacy_entry = _find_raw_deployment(
+                entries,
+                provider_id.removeprefix("legacy:"),
+                legacy_mapping,
+            )
+        return target, legacy_entry
+
+    @app.patch("/api/settings/llm/providers/{provider_id}")
+    async def update_llm_provider(
+        request: Request, provider_id: str, body: LLMProviderUpdate
+    ) -> dict[str, Any]:
+        def mutate(
+            entries: list[Any], providers: list[Any], legacy_mapping: dict[str, str]
+        ) -> list[Any]:
+            target, legacy_entry = locate_raw_provider(
+                entries, providers, provider_id, legacy_mapping
+            )
+            if target is None and legacy_entry is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "This saved provider connection no longer exists. "
+                        "Refresh the provider list and choose it again."
+                    ),
+                )
+
+            legacy_params = (
+                legacy_entry.get("litellm_params")
+                if isinstance(legacy_entry, dict)
+                else None
+            )
+            if not isinstance(legacy_params, dict):
+                legacy_params = {}
+            legacy_model = legacy_params.get("model")
+            provider_name = (
+                str(target.get("provider"))
+                if target is not None
+                else legacy_model.split("/", 1)[0].lower()
+                if isinstance(legacy_model, str)
+                else ""
+            )
+            old_key = (
+                target.get("api_key") if target is not None else legacy_params.get("api_key")
+            )
+            old_base = (
+                target.get("api_base")
+                if target is not None
+                else legacy_params.get("api_base")
+            )
+            if target is None:
+                target = {
+                    "id": str(uuid.uuid4()),
+                    "provider": provider_name,
+                    **({"api_key": old_key} if isinstance(old_key, str) else {}),
+                    **({"api_base": old_base} if isinstance(old_base, str) else {}),
+                }
+                providers.append(target)
+
+            if "api_key" in body.model_fields_set:
+                if body.api_key is None:
+                    target.pop("api_key", None)
+                else:
+                    target["api_key"] = body.api_key
+            if "api_base" in body.model_fields_set:
+                if body.api_base is None:
+                    target.pop("api_base", None)
+                else:
+                    target["api_base"] = body.api_base
+
+            saved_id = str(target["id"])
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                params = entry.get("litellm_params")
+                if not isinstance(params, dict):
+                    continue
+                model = params.get("model")
+                matches_old_connection = (
+                    isinstance(model, str)
+                    and model.split("/", 1)[0].lower() == provider_name
+                    and params.get("api_key") == old_key
+                    and params.get("api_base") == old_base
+                )
+                if (
+                    _raw_model_provider_id(entry) != saved_id
+                    and not matches_old_connection
+                ):
+                    continue
+                if "api_key" in body.model_fields_set:
+                    if body.api_key is None:
+                        params.pop("api_key", None)
+                    else:
+                        params["api_key"] = body.api_key
+                if "api_base" in body.model_fields_set:
+                    if body.api_base is None:
+                        params.pop("api_base", None)
+                    else:
+                        params["api_base"] = body.api_base
+                _link_raw_model_to_provider(entry, saved_id)
+            return entries
+
+        return await _apply_model_list_mutation(
+            _state(request),
+            mutate,
+            expected_revision=body.expected_revision,
+            backfill_ids=True,
+        )
+
+    @app.delete("/api/settings/llm/providers/{provider_id}")
+    async def delete_llm_provider(
+        request: Request, provider_id: str, expected_revision: str
+    ) -> dict[str, Any]:
+        def mutate(
+            entries: list[Any], providers: list[Any], legacy_mapping: dict[str, str]
+        ) -> list[Any]:
+            target, legacy_entry = locate_raw_provider(
+                entries, providers, provider_id, legacy_mapping
+            )
+            if target is None and legacy_entry is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "This saved provider connection no longer exists. "
+                        "Refresh the provider list and choose it again."
+                    ),
+                )
+            legacy_params = (
+                legacy_entry.get("litellm_params")
+                if isinstance(legacy_entry, dict)
+                else None
+            )
+            if not isinstance(legacy_params, dict):
+                legacy_params = {}
+            model = legacy_params.get("model")
+            provider_name = (
+                str(target.get("provider"))
+                if target is not None
+                else model.split("/", 1)[0].lower()
+                if isinstance(model, str)
+                else ""
+            )
+            saved_id = str(target["id"]) if target is not None else None
+            old_key = (
+                target.get("api_key") if target is not None else legacy_params.get("api_key")
+            )
+            old_base = (
+                target.get("api_base")
+                if target is not None
+                else legacy_params.get("api_base")
+            )
+            if target is not None:
+                providers[:] = [candidate for candidate in providers if candidate is not target]
+
+            remaining: list[Any] = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    remaining.append(entry)
+                    continue
+                params = entry.get("litellm_params")
+                entry_model = params.get("model") if isinstance(params, dict) else None
+                matches = saved_id is not None and _raw_model_provider_id(entry) == saved_id
+                if not matches and isinstance(params, dict):
+                    matches = (
+                        isinstance(entry_model, str)
+                        and entry_model.split("/", 1)[0].lower() == provider_name
+                        and params.get("api_key") == old_key
+                        and params.get("api_base") == old_base
+                    )
+                if not matches:
+                    remaining.append(entry)
+            return remaining
 
         return await _apply_model_list_mutation(
             _state(request),
@@ -1451,40 +2065,32 @@ def create_app(
             ],
         }
 
-    @app.post("/api/jobs/{job_id}/items/{item_id}/retry", status_code=201)
+    @app.post("/api/jobs/{job_id}/items/{item_id}/retry", status_code=202)
     async def retry_job_item(
         request: Request,
         job_id: str,
         item_id: str,
         body: JobRetryBody | None = None,
     ) -> dict[str, Any]:
-        """Create a new single-item job re-running a terminal item.
-
-        File items copy the original from the source job's uploads dir; URL
-        items re-enter the URL cascade. Options are inherited from the source
-        job unless the body overrides them. The new job runs through the
-        normal runner (SSE, meta.json and history all apply); archived
-        (rehydrated) jobs can be retried too because their uploads survive
-        on disk.
-        """
+        """Queue a terminal item to retry or explicitly enhance with LLM."""
         state = _state(request)
-        source_job = _get_job(request, job_id)
-        source_item = source_job.get_item(item_id)
-        if source_item is None:
+        job = _get_job(request, job_id)
+        item = job.get_item(item_id)
+        if item is None:
             raise HTTPException(status_code=404, detail="item not found")
-        if source_item.status not in ("done", "error"):
+        if item.status not in ("done", "error") or item_id in job.retry_pending:
             raise HTTPException(
                 status_code=409,
                 detail="item has not reached a terminal state yet; retry when done",
             )
 
+        operation = body.operation if body is not None else "retry"
         if body is not None and body.options is not None:
             opts = body.options
         else:
             opts = JobOptions.model_validate(
-                {k: source_job.options.get(k) for k in ("preset", "llm")}
+                {key: job.options.get(key) for key in ("preset", "llm", "ocr")}
             )
-
         if opts.preset is not None:
             from markitai.config import get_preset
 
@@ -1493,71 +2099,104 @@ def create_app(
                     status_code=422, detail=f"unknown preset '{opts.preset}'"
                 )
 
-        upload_src: Path | None = None
-        if source_item.kind == "file":
-            uploads_dir = source_job.uploads_dir.resolve()
-            upload_src = (uploads_dir / source_item.name).resolve()
-            # meta.json is plain on-disk state: a tampered item name must not
-            # reach outside the source job's uploads directory.
-            if not upload_src.is_relative_to(uploads_dir) or not upload_src.is_file():
+        if item.kind == "file":
+            uploads_dir = job.uploads_dir.resolve()
+            upload = (uploads_dir / item.name).resolve()
+            # Rehydrated meta is untrusted on-disk state; never follow a
+            # tampered name outside the job's upload directory.
+            if not upload.is_relative_to(uploads_dir) or not upload.is_file():
                 raise HTTPException(
                     status_code=404,
                     detail=(
-                        f"original upload '{source_item.name}' is no longer on "
+                        f"original upload '{item.name}' is no longer on "
                         "disk (job files may have been cleaned up)"
                     ),
                 )
+            item.source = upload
+        else:
+            from markitai.utils.cli_helpers import url_to_filename
+
+            item.source = item.name
+            item.output_name = item.output_name or url_to_filename(item.name)
 
         cfg = _build_job_config(state.config, opts)
-        job = state.registry.create_job(options=opts.model_dump(), cfg=cfg)
-        cfg.output.dir = str(job.out_dir)
-
-        from markitai.serve.jobs import JobItem
-        from markitai.utils.cli_helpers import url_to_filename
-
-        # Same rollback semantics as POST /api/jobs: any failure below must
-        # not leave a zombie "running" job behind.
-        try:
-            if upload_src is not None:
-                copied = job.uploads_dir / source_item.name
-                await asyncio.to_thread(shutil.copyfile, upload_src, copied)
-                job.items.append(
-                    JobItem(
-                        item_id="i1", name=source_item.name, kind="file", source=copied
-                    )
-                )
-            else:
-                url = source_item.name
-                job.items.append(
-                    JobItem(
-                        item_id="i1",
-                        name=url,
-                        kind="url",
-                        source=url,
-                        output_name=url_to_filename(url),
-                    )
-                )
-            job.task = asyncio.create_task(run_job(state.registry, job))
-        except Exception as e:
-            state.registry.discard_job(job)
-            logger.exception("[Serve] Retry job {} creation failed: {}", job.job_id, e)
+        if operation == "enhance" and (
+            not cfg.llm.enabled or not _llm_settings_payload(state)["routable"]
+        ):
             raise HTTPException(
-                status_code=500, detail="internal error while creating the retry job"
-            ) from e
+                status_code=409,
+                detail="LLM enhancement is unavailable; enable a routable LLM first",
+            )
+        cfg.output.dir = str(job.out_dir)
+        job.cfg = cfg
+        if operation != "enhance":
+            job.options = opts.model_dump()
+
+        # Reset only this item. The job keeps its identity and item ordering;
+        # the serial worker prevents rapid retries from racing output writes.
+        item.status = "queued"
+        item.error = None
+        item.output = None
+        item.duration_ms = None
+        item.finished_at = None
+        item.cost_usd = None
+        item.llm_enhanced = False
+        item.operation = operation
+        item.skipped = False
+        item.skip_reason = None
+        job.status = "running"
+        job.finished_at = None
+        (job.job_dir / "meta.json").unlink(missing_ok=True)
+        job.retry_pending.add(item_id)
+        job.retry_queue.put_nowait(
+            RetryWork(item_id=item_id, cfg=cfg, operation=operation)
+        )
+        state.registry.publish_item(job, item)
+        state.registry.publish_job(job)
+
+        if job.task is None or job.task.done():
+            job.task = asyncio.create_task(run_retry_queue(state.registry, job))
         logger.info(
-            "[Serve] Job {} created: retry of item {}/{} ({})",
-            job.job_id,
-            source_job.job_id,
-            item_id,
-            source_item.kind,
+            "[Serve] Job {} queued {} for item {}", job_id, operation, item_id
         )
         return {
-            "job_id": job.job_id,
-            "items": [
-                {"item_id": i.item_id, "name": i.name, "kind": i.kind}
-                for i in job.items
-            ],
+            "job_id": job_id,
+            "items": [{"item_id": item.item_id, "name": item.name, "kind": item.kind}],
         }
+
+    @app.delete("/api/jobs/{job_id}/items/{item_id}", status_code=204)
+    async def delete_job_item(request: Request, job_id: str, item_id: str) -> None:
+        """Permanently remove one terminal ledger item and its direct output."""
+        state = _state(request)
+        job = _get_job(request, job_id)
+        item = job.get_item(item_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="item not found")
+        if job.status == "running" or item.status not in ("done", "error"):
+            raise HTTPException(
+                status_code=409, detail="job is still running; retry when done"
+            )
+
+        if len(job.items) == 1:
+            await asyncio.to_thread(state.registry.discard_job, job)
+            logger.info("[Serve] Job {} deleted with its last item", job_id)
+            return
+
+        output = item.output
+        job.items.remove(item)
+        if output:
+            candidate = (job.out_dir / output).resolve()
+            if candidate.is_relative_to(job.out_dir.resolve()):
+                candidate.unlink(missing_ok=True)
+                if candidate.name.endswith(".llm.md"):
+                    base = candidate.with_name(
+                        f"{candidate.name.removesuffix('.llm.md')}.md"
+                    )
+                    base.unlink(missing_ok=True)
+        (job.job_dir / "archive.zip").unlink(missing_ok=True)
+        await asyncio.to_thread(write_job_meta, job)
+        state.registry.publish_job(job)
+        logger.info("[Serve] Job {} item {} deleted", job_id, item_id)
 
     @app.get("/api/jobs/{job_id}")
     async def get_job(request: Request, job_id: str) -> dict[str, Any]:
@@ -1685,7 +2324,6 @@ def create_app(
             raise HTTPException(
                 status_code=409, detail="job is still running; retry when done"
             )
-        out_dir = job.out_dir.resolve()
         archive_path = job.job_dir / "archive.zip"
 
         def build() -> None:
@@ -1695,11 +2333,7 @@ def create_app(
             tmp_path = archive_path.with_name(f".archive.{uuid.uuid4().hex}.tmp")
             try:
                 with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for file in sorted(out_dir.rglob("*")):
-                        if file.is_file() and not (
-                            file.name.startswith(".") and file.name.endswith(".tmp")
-                        ):
-                            zf.write(file, file.relative_to(out_dir))
+                    _add_job_outputs_to_zip(zf, job)
                 os.replace(tmp_path, archive_path)
             finally:
                 tmp_path.unlink(missing_ok=True)
@@ -1733,7 +2367,15 @@ def create_app(
                     "done": job.done_count,
                     "failed": job.failed_count,
                     "skipped": job.skipped_count,
+                    "llm_enhanced": sum(i.llm_enhanced for i in job.items),
+                    "cost_usd": (
+                        sum(i.cost_usd or 0.0 for i in job.items)
+                        if any(i.cost_usd is not None for i in job.items)
+                        else None
+                    ),
                     "names_preview": [i.name for i in job.items[:3]],
+                    "kinds_preview": [i.kind for i in job.items[:3]],
+                    "duration_ms": job_duration_ms(job),
                     "size_bytes": job_dir_size(job.job_dir),
                 }
                 for job in jobs
@@ -1741,6 +2383,50 @@ def create_app(
         )
         entries.sort(key=lambda e: str(e["created_at"]), reverse=True)
         return entries
+
+    @app.get("/api/history/archive")
+    async def get_history_archive(request: Request) -> FileResponse:
+        """Download every completed job, including rehydrated history."""
+        registry = _state(request).registry
+        jobs = sorted(
+            (job for job in registry.jobs.values() if job.status != "running"),
+            key=lambda job: job.created_at,
+        )
+        if not jobs:
+            raise HTTPException(status_code=404, detail="no completed jobs to archive")
+
+        archive_path = registry.jobs_root / "archive.zip"
+
+        def build() -> None:
+            tmp_path = archive_path.with_name(f".archive.{uuid.uuid4().hex}.tmp")
+            try:
+                with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                    nested = len(jobs) > 1
+                    used_folders: set[str] = set()
+                    for job in jobs:
+                        prefix: Path | None = None
+                        if nested:
+                            base = _job_archive_folder(job)
+                            folder = base
+                            counter = 2
+                            while folder.casefold() in used_folders:
+                                folder = f"{base} ({counter})"
+                                counter += 1
+                            used_folders.add(folder.casefold())
+                            prefix = Path(folder)
+                        _add_job_outputs_to_zip(zf, job, prefix=prefix)
+                os.replace(tmp_path, archive_path)
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+        async with registry.archive_lock:
+            await asyncio.to_thread(build)
+        return FileResponse(
+            archive_path,
+            filename="markitai-all.zip",
+            media_type="application/zip",
+            content_disposition_type="attachment",
+        )
 
     @app.delete("/api/history/{job_id}", status_code=204)
     async def delete_history_job(request: Request, job_id: str) -> None:

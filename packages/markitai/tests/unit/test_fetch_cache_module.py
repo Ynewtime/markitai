@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 
@@ -42,6 +43,17 @@ class TestFetchCacheBasicOps:
             assert cached.content == "# Hello"
             assert cached.strategy_used == "static"
             assert cached.cache_hit is True
+        finally:
+            cache.close()
+
+    def test_content_key_is_versioned_after_extractor_changes(self, tmp_path: Path):
+        from markitai.fetch_cache import FetchCache
+
+        cache = FetchCache(tmp_path / "test.db")
+        try:
+            url = "https://x.com/example/status/1"
+            old_key = hashlib.sha256(f"{url}\0playwright".encode()).hexdigest()[:32]
+            assert cache._compute_hash(url, "playwright") != old_key
         finally:
             cache.close()
 

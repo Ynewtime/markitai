@@ -35,6 +35,11 @@ JOB_TTL_HOURS = 7 * 24.0  # conversion history is kept for 7 days
 META_FILENAME = "meta.json"
 
 
+def _now_iso() -> str:
+    """Browser-portable RFC 3339 timestamp with millisecond precision."""
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -53,7 +58,10 @@ class JobItem:
     output: str | None = None  # relpath inside the job out dir
     output_name: str | None = None  # pre-assigned unique output (url items)
     duration_ms: int | None = None
+    finished_at: str | None = None
     cost_usd: float | None = None
+    llm_enhanced: bool = False  # selected output is an .llm.md variant
+    operation: str = "convert"  # convert | retry | enhance
     skipped: bool = False  # completed as a skip (status stays "done")
     skip_reason: str | None = None  # e.g. "exists", "image_only"
 
@@ -67,10 +75,22 @@ class JobItem:
             "error": self.error,
             "output": self.output,
             "duration_ms": self.duration_ms,
+            "finished_at": self.finished_at,
             "cost_usd": self.cost_usd,
+            "llm_enhanced": self.llm_enhanced,
+            "operation": self.operation,
             "skipped": self.skipped,
             "skip_reason": self.skip_reason,
         }
+
+
+@dataclass(slots=True)
+class RetryWork:
+    """One in-place item retry waiting on a job's serial worker."""
+
+    item_id: str
+    cfg: MarkitaiConfig
+    operation: str = "retry"
 
 
 @dataclass
@@ -90,6 +110,10 @@ class Job:
         default_factory=list
     )
     archive_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    retry_queue: asyncio.Queue[RetryWork] = field(
+        default_factory=asyncio.Queue, repr=False
+    )
+    retry_pending: set[str] = field(default_factory=set, repr=False)
 
     @property
     def uploads_dir(self) -> Path:
@@ -158,6 +182,7 @@ class JobRegistry:
     def __init__(self, jobs_root: Path) -> None:
         self.jobs_root = jobs_root
         self.jobs: dict[str, Job] = {}
+        self.archive_lock = asyncio.Lock()
 
     def create_job(self, options: dict[str, Any], cfg: MarkitaiConfig) -> Job:
         """Create a job with fresh uploads/out directories on disk."""
@@ -166,7 +191,7 @@ class JobRegistry:
         job = Job(
             job_id=job_id,
             job_dir=job_dir,
-            created_at=datetime.now().astimezone().isoformat(),
+            created_at=_now_iso(),
             options=options,
             cfg=cfg,
         )
@@ -271,12 +296,14 @@ def write_job_meta(job: Job) -> None:
             "finished_at": job.finished_at,
             "status": job.status,
             "options": job.options,
-            "items": [i.to_payload() for i in job.items],
+            "items": [item.to_payload() for item in job.items],
         },
     )
 
 
-def _item_from_payload(raw: dict[str, Any], index: int) -> JobItem:
+def _item_from_payload(
+    raw: dict[str, Any], index: int, fallback_finished_at: str | None = None
+) -> JobItem:
     """Rebuild a JobItem from its meta.json payload dict."""
     return JobItem(
         item_id=str(raw.get("item_id") or f"i{index}"),
@@ -287,7 +314,12 @@ def _item_from_payload(raw: dict[str, Any], index: int) -> JobItem:
         error=raw.get("error"),
         output=raw.get("output"),
         duration_ms=raw.get("duration_ms"),
+        finished_at=raw.get("finished_at") or fallback_finished_at,
         cost_usd=raw.get("cost_usd"),
+        llm_enhanced=bool(
+            raw.get("llm_enhanced", str(raw.get("output") or "").endswith(".llm.md"))
+        ),
+        operation=str(raw.get("operation") or "convert"),
         skipped=bool(raw.get("skipped", False)),
         skip_reason=raw.get("skip_reason"),
     )
@@ -328,15 +360,19 @@ def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
         raw_items = meta.get("items")
         if not isinstance(raw_items, list):
             raw_items = []
-        options = meta.get("options")
+        raw_options = meta.get("options")
+        options = raw_options if isinstance(raw_options, dict) else {}
+        normalized_options = {
+            key: options.get(key) for key in ("preset", "llm", "ocr")
+        }
         job = Job(
             job_id=entry.name,
             job_dir=entry,
             created_at=str(meta.get("created_at") or ""),
-            options=options if isinstance(options, dict) else {},
+            options=normalized_options,
             cfg=cfg,
             items=[
-                _item_from_payload(raw, index)
+                _item_from_payload(raw, index, meta.get("finished_at"))
                 for index, raw in enumerate(raw_items, start=1)
                 if isinstance(raw, dict)
             ],
@@ -346,6 +382,21 @@ def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
         registry.jobs[job.job_id] = job
         count += 1
     return count
+
+
+def job_duration_ms(job: Job) -> int | None:
+    """Wall-clock duration of a terminal job, when timestamps are valid."""
+    if not job.created_at or not job.finished_at:
+        return None
+    try:
+        created = datetime.fromisoformat(job.created_at)
+        finished = datetime.fromisoformat(job.finished_at)
+    except ValueError:
+        return None
+    try:
+        return max(0, int((finished - created).total_seconds() * 1000))
+    except TypeError:  # mixed offset-aware/naive timestamps in old or edited meta
+        return None
 
 
 def job_dir_size(job_dir: Path) -> int:
@@ -506,8 +557,10 @@ async def process_url_item(
 
     filename = output_name or url_to_filename(url)
 
-    # Localize remote images so alt/desc analysis inputs and refs stay local.
-    if cfg.image.alt_enabled or cfg.image.desc_enabled:
+    # Remote images are inputs to LLM image analysis. Preset image flags can
+    # remain set after an explicit --no-llm override; downloading in that case
+    # adds no analysis value and can turn a fast fetch into minutes of waits.
+    if cfg.llm.enabled and (cfg.image.alt_enabled or cfg.image.desc_enabled):
         from markitai.image import download_url_images
 
         download_result = await download_url_images(
@@ -606,19 +659,26 @@ def _apply_result(job: Job, item: JobItem, result: ProcessResult) -> None:
         is_skip = result.error is not None and result.error.startswith("skipped (")
         item.error = result.error if is_skip else None
         item.skipped = is_skip
+        item.llm_enhanced = bool(
+            not is_skip and item.output and item.output.endswith(".llm.md")
+        )
         if is_skip and result.error is not None:
             item.skip_reason = result.error.removeprefix("skipped (").removesuffix(")")
     else:
         item.status = "error"
         item.error = result.error or "unknown error"
+        item.llm_enhanced = False
 
 
 async def _run_item(
     registry: JobRegistry,
     job: Job,
     item: JobItem,
+    cfg: MarkitaiConfig,
     shared_processor: LLMProcessor | None,
     url_ctx: UrlJobContext | None,
+    *,
+    require_llm: bool = False,
 ) -> None:
     """Run one item, emitting running -> done/error events."""
     item.status = "running"
@@ -627,13 +687,13 @@ async def _run_item(
     try:
         if item.kind == "file":
             result = await process_file_item(
-                Path(item.source), job.cfg, job.out_dir, shared_processor
+                Path(item.source), cfg, job.out_dir, shared_processor
             )
         else:
             assert url_ctx is not None
             result = await process_url_item(
                 str(item.source),
-                job.cfg,
+                cfg,
                 job.out_dir,
                 shared_processor,
                 url_ctx,
@@ -642,6 +702,8 @@ async def _run_item(
     except asyncio.CancelledError:
         item.status = "error"
         item.error = "cancelled"
+        item.duration_ms = int((time.perf_counter() - start) * 1000)
+        item.finished_at = _now_iso()
         registry.publish_item(job, item)
         raise
     except Exception as e:  # defensive: the item must reach a terminal state
@@ -649,67 +711,146 @@ async def _run_item(
         from markitai.utils.text import format_error_message
 
         result = ProcessResult(success=False, error=format_error_message(e))
+    if require_llm and result.success:
+        enhanced_output = bool(
+            result.output_path and result.output_path.endswith(".llm.md")
+        )
+        if not enhanced_output:
+            result.success = False
+            result.output_path = None
+            result.error = "LLM enhancement did not produce an enhanced Markdown result"
     item.duration_ms = int((time.perf_counter() - start) * 1000)
     _apply_result(job, item, result)
+    item.finished_at = _now_iso()
     registry.publish_item(job, item)
     registry.publish_job(job)
 
 
-async def run_job(registry: JobRegistry, job: Job) -> None:
-    """Run all items of *job* with per-kind concurrency, then finalize it."""
-    cfg = job.cfg
+async def run_job(
+    registry: JobRegistry,
+    job: Job,
+    *,
+    items: list[JobItem] | None = None,
+    cfg: MarkitaiConfig | None = None,
+    finalize: bool = True,
+    require_llm: bool = False,
+) -> None:
+    """Run selected items of *job*, optionally leaving finalization to a queue."""
+    targets = list(job.items if items is None else items)
+    run_cfg = job.cfg if cfg is None else cfg
     try:
         shared_processor: LLMProcessor | None = None
-        if cfg.llm.enabled and cfg.llm.model_list:
+        if run_cfg.llm.enabled and run_cfg.llm.model_list:
             from markitai.llm import LLMRuntime
             from markitai.workflow.helpers import create_llm_processor
 
             shared_processor = create_llm_processor(
-                cfg, runtime=LLMRuntime(concurrency=cfg.llm.concurrency)
+                run_cfg,
+                runtime=LLMRuntime(concurrency=run_cfg.llm.concurrency),
             )
 
         url_ctx = (
-            UrlJobContext.build(cfg, job.out_dir)
-            if any(i.kind == "url" for i in job.items)
+            UrlJobContext.build(run_cfg, job.out_dir)
+            if any(i.kind == "url" for i in targets)
             else None
         )
 
-        file_semaphore = asyncio.Semaphore(max(1, cfg.batch.concurrency))
-        url_semaphore = asyncio.Semaphore(max(1, cfg.batch.url_concurrency))
+        file_semaphore = asyncio.Semaphore(max(1, run_cfg.batch.concurrency))
+        url_semaphore = asyncio.Semaphore(max(1, run_cfg.batch.url_concurrency))
 
         async def run_gated(item: JobItem) -> None:
             semaphore = file_semaphore if item.kind == "file" else url_semaphore
             async with semaphore:
-                await _run_item(registry, job, item, shared_processor, url_ctx)
+                await _run_item(
+                    registry,
+                    job,
+                    item,
+                    run_cfg,
+                    shared_processor,
+                    url_ctx,
+                    require_llm=require_llm,
+                )
 
-        await asyncio.gather(*(run_gated(item) for item in job.items))
+        await asyncio.gather(*(run_gated(item) for item in targets))
     except asyncio.CancelledError:
-        for item in job.items:
+        for item in targets:
             if item.status in ("queued", "running"):
                 item.status = "error"
                 item.error = "cancelled (server shutdown)"
+                item.finished_at = _now_iso()
         raise
     except Exception as e:  # defensive: the job must reach a terminal state
         logger.exception("[Serve] Job {} crashed: {}", job.job_id, e)
-        for item in job.items:
+        for item in targets:
             if item.status in ("queued", "running"):
                 item.status = "error"
                 item.error = f"internal error: {e}"
+                item.finished_at = _now_iso()
                 registry.publish_item(job, item)
     finally:
-        job.status = "done"
-        job.finished_at = datetime.now().astimezone().isoformat()
-        try:
-            write_job_meta(job)
-        except OSError as e:  # history is best effort; the job itself succeeded
-            logger.warning(
-                "[Serve] Failed to write meta.json for job {}: {}", job.job_id, e
-            )
-        registry.publish_job(job)
-        logger.info(
-            "[Serve] Job {} finished: {} done, {} failed, {} total",
-            job.job_id,
-            job.done_count,
-            job.failed_count,
-            len(job.items),
+        if finalize:
+            finalize_job(registry, job)
+
+
+def finalize_job(registry: JobRegistry, job: Job) -> None:
+    """Persist and publish a job after its initial run or retry queue drains."""
+    job.status = "done"
+    job.finished_at = _now_iso()
+    try:
+        write_job_meta(job)
+    except OSError as e:  # history is best effort; the job itself succeeded
+        logger.warning(
+            "[Serve] Failed to write meta.json for job {}: {}", job.job_id, e
         )
+    registry.publish_job(job)
+    logger.info(
+        "[Serve] Job {} finished: {} done, {} failed, {} total",
+        job.job_id,
+        job.done_count,
+        job.failed_count,
+        len(job.items),
+    )
+
+
+async def run_retry_queue(registry: JobRegistry, job: Job) -> None:
+    """Run queued item retries serially and keep their original ledger rows."""
+    cancelled = False
+    try:
+        while True:
+            try:
+                work = job.retry_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            try:
+                item = job.get_item(work.item_id)
+                if item is not None:
+                    await run_job(
+                        registry,
+                        job,
+                        items=[item],
+                        cfg=work.cfg,
+                        finalize=False,
+                        require_llm=work.operation == "enhance",
+                    )
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+            finally:
+                job.retry_pending.discard(work.item_id)
+                job.retry_queue.task_done()
+    finally:
+        if cancelled:
+            while True:
+                try:
+                    work = job.retry_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                item = job.get_item(work.item_id)
+                if item is not None and item.status == "queued":
+                    item.status = "error"
+                    item.error = "cancelled (server shutdown)"
+                    item.finished_at = _now_iso()
+                    registry.publish_item(job, item)
+                job.retry_pending.discard(work.item_id)
+                job.retry_queue.task_done()
+        finalize_job(registry, job)

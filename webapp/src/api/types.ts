@@ -11,6 +11,7 @@ export type Preset = "minimal" | "standard" | "rich";
 export interface JobOptions {
   preset: Preset | null;
   llm: boolean | null;
+  ocr: boolean | null;
 }
 
 export interface CreatedItem {
@@ -33,7 +34,12 @@ export interface ItemPayload {
   error: string | null;
   output: string | null;
   duration_ms: number | null;
+  finished_at: string | null;
   cost_usd: number | null;
+  /** The selected output is an LLM-enhanced Markdown variant. */
+  llm_enhanced: boolean;
+  /** Most recent operation that produced this state. */
+  operation: "convert" | "retry" | "enhance";
   /** Completed as a skip — status stays "done" but there is no new result. */
   skipped: boolean;
   /** Skip reason, e.g. "exists" | "image_only"; null unless skipped. */
@@ -106,8 +112,14 @@ export type LLMSettingsUpdate =
   | { model: string; api_key?: string; api_base?: string }
   | { deployment_id: string };
 
+export interface LLMProviderCredentials {
+  api_key: string | null;
+  api_base: string | null;
+}
+
 export interface ProviderConnection {
   id: string;
+  provider_id?: string;
   deployment_id?: string;
   provider: string;
   label: string;
@@ -116,7 +128,10 @@ export interface ProviderConnection {
   source: string;
   default_model?: string;
   credential?: string;
+  api_key_configured?: boolean;
   api_base_configured?: boolean;
+  api_base?: string | null;
+  model_count?: number;
   supports_discovery: boolean;
 }
 
@@ -147,9 +162,11 @@ export interface LLMTestResult {
 export interface LLMModelCreate {
   model_name: string;
   model: string;
+  provider?: string;
   api_key?: string;
   api_base?: string;
   weight?: number;
+  credential_provider_id?: string;
   credential_deployment_id?: string;
 }
 
@@ -167,6 +184,12 @@ export interface LLMDeploymentBatch {
   deployments: LLMModelCreate[];
 }
 
+export interface LLMProviderUpdate {
+  api_key?: string | null;
+  api_base?: string | null;
+  expected_revision: string;
+}
+
 /** One entry of `GET /api/history` (time-descending). */
 export interface HistoryEntry {
   job_id: string;
@@ -177,6 +200,10 @@ export interface HistoryEntry {
   done: number;
   failed: number;
   skipped: number;
+  llm_enhanced: number;
+  cost_usd: number | null;
   names_preview: string[];
+  kinds_preview: ItemKind[];
+  duration_ms: number | null;
   size_bytes: number;
 }

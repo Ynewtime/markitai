@@ -1,51 +1,99 @@
+import { useState } from "react";
 import type { Dict } from "../i18n";
 import { DownloadIcon } from "./icons";
 
-/** Workspace job-header actions. Running jobs stay in the current session;
- * while any are active, clear removes terminal jobs only. */
+/** Workspace actions. The ZIP covers every completed server job and stays
+ * disabled until active conversions settle; clear remains session-scoped. */
 export function DownloadActions({
   t,
-  multiJob,
   zipHref,
-  jobRunning,
   activeCount,
   clearableJobCount,
+  showClear,
   onClear,
+  onDownloadError,
 }: {
   t: Dict;
-  multiJob: boolean;
   zipHref: string | null;
-  jobRunning: boolean;
   activeCount: number;
   clearableJobCount: number;
+  showClear: boolean;
   onClear: () => void;
+  onDownloadError: (message: string) => void;
 }) {
-  const zipLabel = multiJob ? t.downloadJobZip : t.downloadAllZip;
   const clearingCompleted = activeCount > 0;
   const clearDisabled = clearingCompleted && clearableJobCount === 0;
+  const [downloading, setDownloading] = useState(false);
+
+  const downloadArchive = async () => {
+    if (zipHref === null || downloading) return;
+    setDownloading(true);
+    try {
+      const response = await fetch(zipHref);
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const encodedName = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+      const plainName = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
+      let filename = plainName ?? "markitai-all.zip";
+      if (encodedName !== undefined) {
+        try {
+          filename = decodeURIComponent(encodedName);
+        } catch {
+          filename = encodedName;
+        }
+      }
+      link.href = objectUrl;
+      link.download = filename;
+      link.style.display = "none";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      // Safari may consume the object URL after the synthetic click returns.
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (error) {
+      onDownloadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <div className="actions">
-      <button
-        type="button"
-        className="btn ghost"
-        disabled={clearDisabled}
-        title={clearDisabled ? t.nothingCompleted : undefined}
-        onClick={onClear}
-      >
-        {clearingCompleted ? t.clearCompleted : t.clearAll}
-      </button>
-      {zipHref !== null &&
-        (jobRunning ? (
-          <button type="button" className="btn primary" disabled title={t.zipWhileRunning}>
+      {showClear && (
+        <button
+          type="button"
+          className="btn ghost"
+          disabled={clearDisabled}
+          title={clearDisabled ? t.nothingCompleted : undefined}
+          onClick={onClear}
+        >
+          {clearingCompleted ? t.clearCompleted : t.clearAll}
+        </button>
+      )}
+      {zipHref !== null ? (
+        <button
+          type="button"
+          className="btn primary"
+          disabled={downloading}
+          aria-busy={downloading || undefined}
+          onClick={() => void downloadArchive()}
+        >
+          {downloading ? (
+            <span className="spin" aria-hidden="true" />
+          ) : (
             <DownloadIcon size={15} />
-            {zipLabel}
-          </button>
-        ) : (
-          <a className="btn primary" href={zipHref} download>
-            <DownloadIcon size={15} />
-            {zipLabel}
-          </a>
-        ))}
+          )}
+          {downloading ? t.downloadingZip : t.downloadAllZip}
+        </button>
+      ) : activeCount > 0 ? (
+        <button type="button" className="btn primary" disabled title={t.zipWhileRunning}>
+          <DownloadIcon size={15} />
+          {t.downloadAllZip}
+        </button>
+      ) : null}
     </div>
   );
 }

@@ -7,6 +7,7 @@ OAuth authentication, and environment variables.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import os
 import shutil
 from dataclasses import dataclass
@@ -106,6 +107,11 @@ def providers_to_model_configs(
     ]
 
 
+def _runtime_dependency_available(module: str) -> bool:
+    """Check the current Markitai environment, not the global CLI install."""
+    return importlib.util.find_spec(module) is not None
+
+
 def detect_all_providers() -> list[ProviderDetectionResult]:
     """Auto-detect all available LLM providers.
 
@@ -126,7 +132,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
     results: list[ProviderDetectionResult] = []
 
     # 1. Check Claude CLI
-    if shutil.which("claude"):
+    if shutil.which("claude") and _runtime_dependency_available("claude_agent_sdk"):
         if _check_claude_auth():
             results.append(
                 ProviderDetectionResult(
@@ -138,7 +144,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
             )
 
     # 2. Check Copilot CLI
-    if shutil.which("copilot"):
+    if shutil.which("copilot") and _runtime_dependency_available("copilot"):
         if _check_copilot_auth():
             results.append(
                 ProviderDetectionResult(

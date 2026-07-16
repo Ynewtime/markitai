@@ -273,6 +273,19 @@ class TestRemoveNonexistentImages:
         assert ".markitai/assets/real.jpg" in result
         assert ".markitai/assets/fake.jpg" not in result
 
+    def test_keeps_uri_encoded_unicode_image_names(self, tmp_path: Path) -> None:
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        (assets_dir / "截屏 下午.png").write_bytes(b"fake image data")
+        markdown = (
+            "![](.markitai/assets/"
+            "%E6%88%AA%E5%B1%8F%20%E4%B8%8B%E5%8D%88.png)"
+        )
+
+        result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
+
+        assert result == markdown
+
     def test_removes_nonexistent_images(self, tmp_path: Path) -> None:
         """Test that nonexistent image references are removed."""
         assets_dir = tmp_path / ".markitai" / "assets"
@@ -1998,6 +2011,51 @@ class TestDownloadUrlImages:
         assert len(result.downloaded_paths) == 1
         # Format should change to configured format
         assert "compressed.0001.jpeg" in result.updated_markdown
+
+    @pytest.mark.asyncio
+    async def test_download_compression_runs_off_event_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CPU-bound image work must not stall serve's API/SSE event loop."""
+        import threading
+
+        import httpx
+
+        import markitai.image as image_module
+        from markitai.image import download_url_images
+
+        class MockResponse:
+            status_code = 200
+            content = b"image-data"
+            headers = {"content-type": "image/png"}
+
+            def raise_for_status(self):
+                pass
+
+        async def mock_get(self, url, **kwargs):
+            return MockResponse()
+
+        worker_thread_ids: list[int] = []
+
+        def mock_compress(image_data: bytes, **kwargs):
+            worker_thread_ids.append(threading.get_ident())
+            return image_data, 100, 100
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+        monkeypatch.setattr(image_module, "_compress_image_worker", mock_compress)
+
+        result = await download_url_images(
+            markdown="![](https://example.com/image.png)",
+            output_dir=tmp_path,
+            base_url="https://example.com",
+            config=ImageConfig(format="png"),
+        )
+
+        assert len(result.downloaded_paths) == 1
+        assert worker_thread_ids
+        assert all(
+            thread_id != threading.get_ident() for thread_id in worker_thread_ids
+        )
 
     @pytest.mark.asyncio
     async def test_download_filters_small_images(

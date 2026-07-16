@@ -7,6 +7,8 @@ import type {
   JobOptions,
   JobSnapshot,
   LLMModelUpdate,
+  LLMProviderCredentials,
+  LLMProviderUpdate,
   LLMSettingsPayload,
   ModelDiscoveryResult,
   ProviderConnection,
@@ -90,6 +92,7 @@ export async function fetchProviderConnections(
 
 export function discoverLLMModels(body: {
   provider: string;
+  provider_id?: string;
   deployment_id?: string;
   api_key?: string;
   api_base?: string;
@@ -120,6 +123,43 @@ export async function updateLLMDeployment(
   return (await res.json()) as LLMSettingsPayload;
 }
 
+export function fetchLLMProviderCredentials(
+  providerId: string,
+): Promise<LLMProviderCredentials> {
+  return getJson<LLMProviderCredentials>(
+    `/api/settings/llm/providers/${encodeURIComponent(providerId)}/credentials`,
+  );
+}
+
+export async function updateLLMProvider(
+  providerId: string,
+  body: LLMProviderUpdate,
+): Promise<LLMSettingsPayload> {
+  const res = await fetch(
+    `/api/settings/llm/providers/${encodeURIComponent(providerId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!res.ok) throw new Error(await errorDetail(res));
+  return (await res.json()) as LLMSettingsPayload;
+}
+
+export async function deleteLLMProvider(
+  providerId: string,
+  expectedRevision: string,
+): Promise<LLMSettingsPayload> {
+  const query = new URLSearchParams({ expected_revision: expectedRevision });
+  const res = await fetch(
+    `/api/settings/llm/providers/${encodeURIComponent(providerId)}?${query}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(await errorDetail(res));
+  return (await res.json()) as LLMSettingsPayload;
+}
+
 export async function deleteLLMDeployment(
   deploymentId: string,
   expectedRevision: string,
@@ -140,6 +180,14 @@ export function testLLMSettings(body: LLMSettingsUpdate): Promise<LLMTestResult>
 
 export function fetchHistory(): Promise<HistoryEntry[]> {
   return getJson<HistoryEntry[]>("/api/history");
+}
+
+export async function deleteJobItem(jobId: string, itemId: string): Promise<void> {
+  const res = await fetch(
+    `/api/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(await errorDetail(res));
 }
 
 export async function deleteHistoryJob(jobId: string): Promise<boolean> {
@@ -172,16 +220,42 @@ export function fetchItemResult(
   );
 }
 
-/** R4: retry a terminal item as a new single-item job. No body — the new
- * job inherits the original job's options server-side. 409 = item not
- * terminal; 404 = job/item gone or the upload was cleaned up. */
+/** Queue a terminal item in place. The response keeps the original job and
+ * item IDs; SSE resumes on that job and updates the existing ledger row. */
 export async function retryJobItem(
   jobId: string,
   itemId: string,
+  options?: JobOptions,
 ): Promise<CreateJobResponse> {
   const res = await fetch(
     `/api/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/retry`,
-    { method: "POST" },
+    {
+      method: "POST",
+      ...(options === undefined
+        ? {}
+        : {
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ options }),
+          }),
+    },
+  );
+  if (!res.ok) throw new Error(await errorDetail(res));
+  return (await res.json()) as CreateJobResponse;
+}
+
+/** Re-run one terminal item with LLM required, preserving its row identity. */
+export async function enhanceJobItem(
+  jobId: string,
+  itemId: string,
+  options: JobOptions,
+): Promise<CreateJobResponse> {
+  const res = await fetch(
+    `/api/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/retry`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operation: "enhance", options }),
+    },
   );
   if (!res.ok) throw new Error(await errorDetail(res));
   return (await res.json()) as CreateJobResponse;
@@ -212,4 +286,8 @@ export function jobFileUrl(jobId: string, relpath: string): string {
 
 export function jobArchiveUrl(jobId: string): string {
   return `/api/jobs/${encodeURIComponent(jobId)}/archive`;
+}
+
+export function historyArchiveUrl(): string {
+  return "/api/history/archive";
 }

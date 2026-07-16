@@ -15,7 +15,11 @@ const entries: HistoryEntry[] = [
     done: 1,
     failed: 0,
     skipped: 0,
+    llm_enhanced: 0,
+    cost_usd: 0,
     names_preview: ["first.pdf"],
+    kinds_preview: ["file"],
+    duration_ms: 60_000,
     size_bytes: 100,
   },
   {
@@ -27,7 +31,11 @@ const entries: HistoryEntry[] = [
     done: 1,
     failed: 0,
     skipped: 0,
+    llm_enhanced: 0,
+    cost_usd: 0,
     names_preview: ["second.pdf"],
+    kinds_preview: ["file"],
+    duration_ms: 30_000,
     size_bytes: 200,
   },
 ];
@@ -47,23 +55,24 @@ describe("ArchivedJobRows", () => {
         startIndex={1}
         onRefresh={vi.fn().mockResolvedValue(undefined)}
         onOpen={vi.fn().mockResolvedValue(null)}
+        onRetry={vi.fn().mockResolvedValue(null)}
         onDelete={onDelete}
         announce={() => undefined}
       />,
     );
 
-    expect(screen.getByRole("option", { name: "open first.pdf" })).toHaveClass(
-      "lrow",
-      "archived-row",
-    );
-    expect(document.querySelector(".archived-rows")).not.toBeInTheDocument();
+    const first = screen.getByRole("option", { name: "Open first.pdf" });
+    expect(first).toHaveClass("lrow", "actionable");
+    expect(first).not.toHaveClass("archived-row");
+    expect(first.querySelector(".c-duration")).toHaveTextContent("60.0s");
+    expect(first.querySelector(".c-finished")).toHaveTextContent("07-13 10:01");
+    const resultMark = first.querySelector(".c-status.archive-actions .item-result.ok");
+    expect(resultMark).toHaveTextContent("✓");
+    expect(resultMark).toHaveAttribute("title", "Done");
 
-    await user.click(screen.getByRole("button", { name: "permanently delete first.pdf" }));
-    const confirm = screen.getByRole("button", {
-      name: "confirm permanent deletion of first.pdf",
-    });
-    expect(confirm).toHaveTextContent("delete permanently?");
-    await user.click(confirm);
+    await user.click(screen.getByRole("button", { name: "Permanently delete first.pdf" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Delete first.pdf?");
+    await user.click(screen.getByRole("button", { name: "Delete permanently" }));
 
     rerender(
       <ArchivedJobRows
@@ -76,6 +85,7 @@ describe("ArchivedJobRows", () => {
         startIndex={1}
         onRefresh={vi.fn().mockResolvedValue(undefined)}
         onOpen={vi.fn().mockResolvedValue(null)}
+        onRetry={vi.fn().mockResolvedValue(null)}
         onDelete={onDelete}
         announce={() => undefined}
       />,
@@ -83,7 +93,101 @@ describe("ArchivedJobRows", () => {
 
     await waitFor(() => {
       expect(onDelete).toHaveBeenCalledWith("job-1");
-      expect(screen.getByRole("option", { name: "open second.pdf" })).toHaveFocus();
+      expect(screen.getByRole("option", { name: "Open second.pdf" })).toHaveFocus();
     });
+  });
+
+  it("enhances a persisted base result and keeps failures on the action tooltip", async () => {
+    const user = userEvent.setup();
+    const onEnhance = vi.fn().mockResolvedValue("provider timed out");
+    render(
+      <ArchivedJobRows
+        t={dicts.en}
+        entries={[entries[0]!]}
+        error={null}
+        actions={{}}
+        rowErrors={{}}
+        showCost
+        startIndex={0}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onOpen={vi.fn().mockResolvedValue(null)}
+        onRetry={vi.fn().mockResolvedValue(null)}
+        onEnhance={onEnhance}
+        onDelete={vi.fn().mockResolvedValue(true)}
+        announce={() => undefined}
+        llmAvailable
+      />,
+    );
+
+    const action = screen.getByRole("button", {
+      name: "Enhance first.pdf with LLM",
+    });
+    await user.click(action);
+    expect(onEnhance).toHaveBeenCalledWith("job-1");
+    expect(screen.getByText(/LLM enhancement failed: provider timed out/)).toBeVisible();
+    expect(action).toHaveAttribute(
+      "data-tooltip",
+      "LLM enhancement failed: provider timed out",
+    );
+  });
+
+  it("shows a warning icon and retry for a persisted skip", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn().mockResolvedValue(null);
+    const { container } = render(
+      <ArchivedJobRows
+        t={dicts.en}
+        entries={[
+          {
+            ...entries[0]!,
+            skipped: 1,
+          },
+        ]}
+        error={null}
+        actions={{}}
+        rowErrors={{}}
+        showCost={false}
+        startIndex={0}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onOpen={vi.fn().mockResolvedValue(null)}
+        onRetry={onRetry}
+        onDelete={vi.fn().mockResolvedValue(true)}
+        announce={() => undefined}
+      />,
+    );
+
+    expect(container.querySelector(".item-result.skip svg")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Retry first.pdf" }));
+    expect(onRetry).toHaveBeenCalledWith("job-1");
+  });
+
+  it("restores retry for a persisted single-item failure", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn().mockResolvedValue(null);
+    render(
+      <ArchivedJobRows
+        t={dicts.en}
+        entries={[
+          {
+            ...entries[0]!,
+            done: 0,
+            failed: 1,
+          },
+        ]}
+        error={null}
+        actions={{}}
+        rowErrors={{}}
+        showCost={false}
+        startIndex={0}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onOpen={vi.fn().mockResolvedValue(null)}
+        onRetry={onRetry}
+        onDelete={vi.fn().mockResolvedValue(true)}
+        announce={() => undefined}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Retry first.pdf" }));
+    expect(onRetry).toHaveBeenCalledWith("job-1");
   });
 });

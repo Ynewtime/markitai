@@ -49,6 +49,16 @@ class TestQuotedTweet:
         assert item.quoted_item.text == "Quoted tweet text"
         assert item.quoted_item.timestamp == "2025-12-23T08:00:00.000Z"
 
+    def test_localized_show_more_marks_quote_as_truncated(self) -> None:
+        html = _QUOTED_TWEET_HTML.replace(
+            '<div data-testid="tweetText"><span>Quoted tweet text</span></div>',
+            '<div data-testid="tweetText"><span>Quoted tweet text</span></div>'
+            '<button type="button">显示更多</button>',
+        )
+        item = parse_tweet_article(_article(html), tweet_id="1")
+        assert item.quoted_item is not None
+        assert item.quoted_item.text == "Quoted tweet text..."
+
     def test_quote_media_not_attributed_to_parent(self) -> None:
         item = parse_tweet_article(_article(_QUOTED_TWEET_HTML), tweet_id="1")
         parent_urls = [m.url for m in item.media]

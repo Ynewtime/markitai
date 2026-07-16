@@ -23,6 +23,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from loguru import logger
 
@@ -217,7 +218,7 @@ def resolve_asset_references(
 
     def _replace(match: re.Match[str]) -> str:
         subdir = match.group(2)  # "assets" or "screenshots" — captured group
-        filename = match.group(3)
+        filename = unquote(match.group(3))
 
         if protocol is not None:
             # Tier 1: terminal inline image

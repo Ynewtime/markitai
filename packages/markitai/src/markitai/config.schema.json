@@ -5,35 +5,41 @@
       "properties": {
         "concurrency": {
           "default": 10,
+          "description": "Max parallel file processing tasks",
           "minimum": 1,
           "title": "Concurrency",
           "type": "integer"
         },
         "url_concurrency": {
           "default": 5,
+          "description": "Max parallel URL fetches",
           "minimum": 1,
           "title": "Url Concurrency",
           "type": "integer"
         },
         "state_flush_interval_seconds": {
           "default": 10,
+          "description": "Seconds between state file writes",
           "title": "State Flush Interval Seconds",
           "type": "integer"
         },
         "scan_max_depth": {
           "default": 5,
+          "description": "Max directory recursion depth",
           "minimum": 0,
           "title": "Scan Max Depth",
           "type": "integer"
         },
         "scan_max_files": {
           "default": 10000,
+          "description": "Max files to scan per directory",
           "minimum": 1,
           "title": "Scan Max Files",
           "type": "integer"
         },
         "heavy_task_limit": {
           "default": 0,
+          "description": "Max heavy tasks (0=unlimited)",
           "minimum": 0,
           "title": "Heavy Task Limit",
           "type": "integer"
@@ -52,6 +58,7 @@
         },
         "no_cache": {
           "default": false,
+          "description": "Skip reading cache, still write",
           "title": "No Cache",
           "type": "boolean"
         },
@@ -65,11 +72,13 @@
         },
         "max_size_bytes": {
           "default": 536870912,
+          "description": "Max cache size in bytes",
           "title": "Max Size Bytes",
           "type": "integer"
         },
         "global_dir": {
           "default": "~/.markitai",
+          "description": "Global cache/config directory",
           "title": "Global Dir",
           "type": "string"
         }
@@ -90,6 +99,7 @@
             }
           ],
           "default": null,
+          "description": "CF API token (supports env: syntax)",
           "title": "Api Token"
         },
         "account_id": {
@@ -102,20 +112,24 @@
             }
           ],
           "default": null,
+          "description": "CF account ID (supports env: syntax)",
           "title": "Account Id"
         },
         "timeout": {
           "default": 30000,
+          "description": "Browser rendering timeout (ms)",
           "title": "Timeout",
           "type": "integer"
         },
         "wait_until": {
           "default": "networkidle0",
+          "description": "Page load event to wait for",
           "title": "Wait Until",
           "type": "string"
         },
         "cache_ttl": {
           "default": 0,
+          "description": "Browser rendering cache TTL (seconds)",
           "title": "Cache Ttl",
           "type": "integer"
         },
@@ -144,6 +158,7 @@
             }
           ],
           "default": null,
+          "description": "Custom User-Agent string",
           "title": "User Agent"
         },
         "cookies": {
@@ -174,6 +189,7 @@
             }
           ],
           "default": null,
+          "description": "CSS selector to wait for after load",
           "title": "Wait For Selector"
         },
         "http_credentials": {
@@ -193,6 +209,7 @@
         },
         "convert_enabled": {
           "default": false,
+          "description": "Use Workers AI for file conversion",
           "title": "Convert Enabled",
           "type": "boolean"
         }
@@ -201,15 +218,17 @@
       "type": "object"
     },
     "DefuddleConfig": {
-      "description": "Defuddle content extraction API configuration.\n\nDefuddle (https://defuddle.md) extracts clean article content from web pages,\nremoving clutter like ads, sidebars, and navigation. Returns Markdown with\nrich YAML frontmatter (title, author, published, description, word_count).\n\nNOTE: Rate limit is undocumented. The default RPM is conservative.\nNOTE: JS rendering capability of the API is unconfirmed \u2014 SPA-heavy sites\nmay still need playwright as fallback.",
+      "description": "Defuddle content extraction API configuration.\n\nDefuddle (https://defuddle.md) extracts clean article content from web pages,\nremoving clutter like ads, sidebars, and navigation. Returns Markdown with\nrich YAML frontmatter (title, author, published, description, word_count).\n\nNOTE: Rate limit is undocumented. The default RPM is conservative.\nNOTE: JS rendering capability of the API is unconfirmed — SPA-heavy sites\nmay still need playwright as fallback.",
       "properties": {
         "timeout": {
           "default": 30,
+          "description": "Request timeout in seconds",
           "title": "Timeout",
           "type": "integer"
         },
         "rpm": {
           "default": 20,
+          "description": "Max requests per minute",
           "minimum": 1,
           "title": "Rpm",
           "type": "integer"
@@ -330,6 +349,7 @@
       "properties": {
         "strategy": {
           "default": "auto",
+          "description": "Default URL fetch strategy",
           "enum": [
             "auto",
             "static",
@@ -401,6 +421,7 @@
         },
         "max_strategy_hops": {
           "default": 5,
+          "description": "Max strategy fallback attempts",
           "maximum": 6,
           "minimum": 1,
           "title": "Max Strategy Hops",
@@ -445,21 +466,25 @@
       "properties": {
         "alt_enabled": {
           "default": false,
+          "description": "Generate alt text via LLM",
           "title": "Alt Enabled",
           "type": "boolean"
         },
         "desc_enabled": {
           "default": false,
+          "description": "Generate description files via LLM",
           "title": "Desc Enabled",
           "type": "boolean"
         },
         "compress": {
           "default": true,
+          "description": "Compress images before embedding",
           "title": "Compress",
           "type": "boolean"
         },
         "quality": {
           "default": 75,
+          "description": "JPEG/WebP quality (1-100)",
           "maximum": 100,
           "minimum": 1,
           "title": "Quality",
@@ -467,6 +492,7 @@
         },
         "format": {
           "default": "jpeg",
+          "description": "Output image format",
           "enum": [
             "jpeg",
             "png",
@@ -477,11 +503,13 @@
         },
         "max_width": {
           "default": 1920,
+          "description": "Downscale images wider than this (px)",
           "title": "Max Width",
           "type": "integer"
         },
         "max_height": {
           "default": 99999,
+          "description": "Downscale images taller than this (px)",
           "title": "Max Height",
           "type": "integer"
         },
@@ -490,16 +518,19 @@
         },
         "stdout_persist": {
           "default": true,
+          "description": "Save piped images to disk",
           "title": "Stdout Persist",
           "type": "boolean"
         },
         "stdout_persist_dir": {
           "default": "~/.markitai/assets",
+          "description": "Directory for persisted piped images",
           "title": "Stdout Persist Dir",
           "type": "string"
         },
         "stdout_fetch_external": {
           "default": false,
+          "description": "Download external image URLs from stdin",
           "title": "Stdout Fetch External",
           "type": "boolean"
         }
@@ -512,21 +543,25 @@
       "properties": {
         "min_width": {
           "default": 50,
+          "description": "Skip images narrower than this (px)",
           "title": "Min Width",
           "type": "integer"
         },
         "min_height": {
           "default": 50,
+          "description": "Skip images shorter than this (px)",
           "title": "Min Height",
           "type": "integer"
         },
         "min_area": {
           "default": 5000,
+          "description": "Skip images smaller than this (px²)",
           "title": "Min Area",
           "type": "integer"
         },
         "deduplicate": {
           "default": true,
+          "description": "Remove duplicate images by hash",
           "title": "Deduplicate",
           "type": "boolean"
         }
@@ -547,21 +582,25 @@
             }
           ],
           "default": null,
+          "description": "Jina Reader API key (supports env: syntax)",
           "title": "Api Key"
         },
         "timeout": {
           "default": 30,
+          "description": "Request timeout in seconds",
           "title": "Timeout",
           "type": "integer"
         },
         "rpm": {
           "default": 20,
+          "description": "Max requests per minute",
           "minimum": 1,
           "title": "Rpm",
           "type": "integer"
         },
         "no_cache": {
           "default": false,
+          "description": "Skip Jina server-side cache",
           "title": "No Cache",
           "type": "boolean"
         },
@@ -575,6 +614,7 @@
             }
           ],
           "default": null,
+          "description": "CSS selector for content extraction",
           "title": "Target Selector"
         },
         "wait_for_selector": {
@@ -587,6 +627,7 @@
             }
           ],
           "default": null,
+          "description": "Wait for element before extraction",
           "title": "Wait For Selector"
         }
       },
@@ -620,16 +661,68 @@
           "title": "Model List",
           "type": "array"
         },
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/LLMProviderConfig"
+          },
+          "title": "Providers",
+          "type": "array"
+        },
         "router_settings": {
           "$ref": "#/$defs/RouterSettings"
         },
         "concurrency": {
           "default": 10,
+          "description": "Max parallel LLM requests",
+          "minimum": 1,
           "title": "Concurrency",
           "type": "integer"
         }
       },
       "title": "LLMConfig",
+      "type": "object"
+    },
+    "LLMProviderConfig": {
+      "description": "Credentials for one provider connection, independent of its models.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Key"
+        },
+        "api_base": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Base"
+        }
+      },
+      "required": [
+        "id",
+        "provider"
+      ],
+      "title": "LLMProviderConfig",
       "type": "object"
     },
     "LiteLLMParams": {
@@ -695,6 +788,7 @@
       "properties": {
         "level": {
           "default": "INFO",
+          "description": "Minimum log level",
           "enum": [
             "DEBUG",
             "INFO",
@@ -715,20 +809,24 @@
             }
           ],
           "default": null,
+          "description": "Log file directory",
           "title": "Dir"
         },
         "rotation": {
           "default": "10 MB",
+          "description": "Rotate log file at this size",
           "title": "Rotation",
           "type": "string"
         },
         "retention": {
           "default": "7 days",
+          "description": "Delete old logs after this period",
           "title": "Retention",
           "type": "string"
         },
         "format": {
           "default": "text",
+          "description": "Log output format",
           "enum": [
             "text",
             "json"
@@ -772,6 +870,30 @@
     "ModelInfo": {
       "description": "Model metadata. All fields are optional and auto-detected from litellm if not set.",
       "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "provider_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Id"
+        },
         "supports_vision": {
           "anyOf": [
             {
@@ -822,6 +944,7 @@
         },
         "lang": {
           "default": "en",
+          "description": "OCR language code",
           "title": "Lang",
           "type": "string"
         },
@@ -861,10 +984,12 @@
             }
           ],
           "default": null,
+          "description": "Default output directory",
           "title": "Dir"
         },
         "on_conflict": {
           "default": "rename",
+          "description": "skip, overwrite, or rename on conflict",
           "enum": [
             "skip",
             "overwrite",
@@ -875,6 +1000,7 @@
         },
         "allow_symlinks": {
           "default": false,
+          "description": "Follow symlinks when processing files",
           "title": "Allow Symlinks",
           "type": "boolean"
         },
@@ -888,6 +1014,7 @@
             }
           ],
           "default": null,
+          "description": "Write JSON report (default: batch/URL-batch runs only)",
           "title": "Report"
         }
       },
@@ -899,11 +1026,13 @@
       "properties": {
         "timeout": {
           "default": 30000,
+          "description": "Navigation timeout (ms)",
           "title": "Timeout",
           "type": "integer"
         },
         "wait_for": {
           "default": "domcontentloaded",
+          "description": "Page load event to wait for",
           "enum": [
             "load",
             "domcontentloaded",
@@ -914,11 +1043,13 @@
         },
         "extra_wait_ms": {
           "default": 3000,
+          "description": "Extra wait after page load (ms)",
           "title": "Extra Wait Ms",
           "type": "integer"
         },
         "session_mode": {
           "default": "isolated",
+          "description": "Browser session reuse mode",
           "enum": [
             "isolated",
             "domain_persistent"
@@ -928,6 +1059,7 @@
         },
         "session_ttl_seconds": {
           "default": 600,
+          "description": "Persistent session TTL (seconds)",
           "maximum": 7200,
           "minimum": 60,
           "title": "Session Ttl Seconds",
@@ -943,6 +1075,7 @@
             }
           ],
           "default": null,
+          "description": "CSS selector to wait for",
           "title": "Wait For Selector"
         },
         "cookies": {
@@ -1003,6 +1136,7 @@
             }
           ],
           "default": null,
+          "description": "Custom User-Agent string",
           "title": "User Agent"
         },
         "http_credentials": {
@@ -1265,6 +1399,7 @@
       "properties": {
         "routing_strategy": {
           "default": "simple-shuffle",
+          "description": "LLM router load balancing strategy",
           "enum": [
             "simple-shuffle",
             "least-busy",
@@ -1276,11 +1411,15 @@
         },
         "num_retries": {
           "default": 2,
+          "description": "Max retries on LLM failure",
+          "minimum": 0,
           "title": "Num Retries",
           "type": "integer"
         },
         "timeout": {
           "default": 120,
+          "description": "LLM request timeout in seconds",
+          "minimum": 1,
           "title": "Timeout",
           "type": "integer"
         },
@@ -1306,16 +1445,19 @@
         },
         "viewport_width": {
           "default": 1920,
+          "description": "Browser viewport width (px)",
           "title": "Viewport Width",
           "type": "integer"
         },
         "viewport_height": {
           "default": 1080,
+          "description": "Browser viewport height (px)",
           "title": "Viewport Height",
           "type": "integer"
         },
         "quality": {
           "default": 75,
+          "description": "Screenshot JPEG quality (1-100)",
           "maximum": 100,
           "minimum": 1,
           "title": "Quality",
@@ -1323,11 +1465,13 @@
         },
         "max_height": {
           "default": 10000,
+          "description": "Max full-page screenshot height (px)",
           "title": "Max Height",
           "type": "integer"
         },
         "screenshot_only": {
           "default": false,
+          "description": "LLM reads only screenshots, no text extraction",
           "title": "Screenshot Only",
           "type": "boolean"
         }

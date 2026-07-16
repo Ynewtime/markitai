@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -197,7 +198,9 @@ class OCRProcessor:
 
         # Build params
         params: dict[str, Any] = {
-            "Global.log_level": "warning",  # Reduce logging noise
+            # Empty first-pass detections are handled by the tiled fallback
+            # below, so RapidOCR's warning would be noisy and misleading.
+            "Global.log_level": "error",
         }
 
         # Set language if configured (must use LangRec enum)
@@ -266,49 +269,166 @@ class OCRProcessor:
             ],
         )
 
+    @staticmethod
+    def _load_rgb_array(image_path: Path) -> Any:
+        """Decode an image with EXIF orientation applied for fallback OCR."""
+        import numpy as np
+        from PIL import Image, ImageOps
+
+        with Image.open(image_path) as image:
+            return np.asarray(ImageOps.exif_transpose(image).convert("RGB"))
+
+    @staticmethod
+    def _box_bounds(
+        box: Any, fallback: tuple[int, int, int, int]
+    ) -> tuple[float, float, float, float]:
+        """Return a tolerant axis-aligned bound for one RapidOCR polygon."""
+        try:
+            points = box.tolist() if hasattr(box, "tolist") else list(box)
+            xs = [float(point[0]) for point in points]
+            ys = [float(point[1]) for point in points]
+            if xs and ys:
+                return min(xs), min(ys), max(xs), max(ys)
+        except (TypeError, ValueError, IndexError):
+            pass
+        return (
+            float(fallback[0]),
+            float(fallback[1]),
+            float(fallback[2]),
+            float(fallback[3]),
+        )
+
+    @staticmethod
+    def _boxes_overlap(
+        left: tuple[float, float, float, float],
+        right: tuple[float, float, float, float],
+    ) -> bool:
+        """Detect duplicate text boxes produced in overlapping image tiles."""
+        ix = max(0.0, min(left[2], right[2]) - max(left[0], right[0]))
+        iy = max(0.0, min(left[3], right[3]) - max(left[1], right[1]))
+        intersection = ix * iy
+        if intersection <= 0:
+            return False
+        left_area = max(1.0, (left[2] - left[0]) * (left[3] - left[1]))
+        right_area = max(1.0, (right[2] - right[0]) * (right[3] - right[1]))
+        return intersection / min(left_area, right_area) >= 0.35
+
+    def _recognize_sparse_tiles(self, image_array: Any) -> OCRResult:
+        """Retry an empty detection using overlapping document-image tiles.
+
+        RapidOCR scales the shorter image side for detection. On a mostly
+        empty screenshot this can make a small caption only a few pixels high,
+        even though it is perfectly legible. Overlapping tiles are the common
+        document-OCR remedy: each tile gives small text enough effective
+        resolution without blindly enlarging an already large full image.
+        """
+        import numpy as np
+
+        if not isinstance(image_array, np.ndarray):
+            raise TypeError(f"Expected numpy array, got {type(image_array)}")
+        if image_array.ndim < 2:
+            return OCRResult(text="", confidence=0.0, boxes=[])
+
+        height, width = image_array.shape[:2]
+        if width < 320 and height < 320:
+            return OCRResult(text="", confidence=0.0, boxes=[])
+
+        # Keep tiles near a document-friendly 500-900 px, capped to avoid a
+        # pathological number of inferences for very large scans.
+        columns = min(4, max(1, math.ceil(width / 800)))
+        rows = min(4, max(1, math.ceil(height / 600)))
+        if columns == 1 and rows == 1:
+            return OCRResult(text="", confidence=0.0, boxes=[])
+
+        tile_width = math.ceil(width / columns)
+        tile_height = math.ceil(height / rows)
+        overlap_x = max(16, round(tile_width * 0.06))
+        overlap_y = max(16, round(tile_height * 0.06))
+        blocks: list[dict[str, Any]] = []
+
+        for row in range(rows):
+            for column in range(columns):
+                x0 = max(0, column * tile_width - overlap_x)
+                y0 = max(0, row * tile_height - overlap_y)
+                x1 = min(width, (column + 1) * tile_width + overlap_x)
+                y1 = min(height, (row + 1) * tile_height + overlap_y)
+                tile = image_array[y0:y1, x0:x1]
+                raw: Any = self.engine(tile, box_thresh=0.35, text_score=0.45)
+                texts = list(raw.txts) if raw.txts is not None else []
+                scores = list(raw.scores) if raw.scores is not None else []
+                boxes = list(raw.boxes) if raw.boxes is not None else []
+
+                for index, raw_text in enumerate(texts):
+                    text = str(raw_text).strip()
+                    if not text:
+                        continue
+                    score = float(scores[index]) if index < len(scores) else 0.0
+                    local = self._box_bounds(
+                        boxes[index] if index < len(boxes) else None,
+                        (0, 0, x1 - x0, y1 - y0),
+                    )
+                    bounds = (
+                        local[0] + x0,
+                        local[1] + y0,
+                        local[2] + x0,
+                        local[3] + y0,
+                    )
+                    normalized = " ".join(text.casefold().split())
+                    duplicate = next(
+                        (
+                            block
+                            for block in blocks
+                            if block["normalized"] == normalized
+                            and self._boxes_overlap(block["bounds"], bounds)
+                        ),
+                        None,
+                    )
+                    candidate = {
+                        "text": text,
+                        "score": score,
+                        "bounds": bounds,
+                        "normalized": normalized,
+                    }
+                    if duplicate is None:
+                        blocks.append(candidate)
+                    elif score > duplicate["score"]:
+                        duplicate.update(candidate)
+
+        blocks.sort(key=lambda block: (block["bounds"][1], block["bounds"][0]))
+        if not blocks:
+            return OCRResult(text="", confidence=0.0, boxes=[])
+        return OCRResult(
+            text="\n".join(block["text"] for block in blocks),
+            confidence=sum(block["score"] for block in blocks) / len(blocks),
+            boxes=[list(block["bounds"]) for block in blocks],
+        )
+
     def recognize(self, image_path: Path | str) -> OCRResult:
-        """
-        Perform OCR on an image file.
-
-        Args:
-            image_path: Path to the image file
-
-        Returns:
-            OCRResult with recognized text and metadata
-        """
+        """Perform OCR on an image file, retrying sparse layouts by tile."""
         image_path = Path(image_path)
 
         if not image_path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
 
         logger.debug(f"Running OCR on: {image_path.name}")
-
-        result: Any = self.engine(str(image_path))
-        return self._build_ocr_result(result)
+        result = self._build_ocr_result(self.engine(str(image_path)))
+        if result.text.strip():
+            return result
+        logger.debug("OCR full-image pass was empty; retrying overlapping tiles")
+        return self._recognize_sparse_tiles(self._load_rgb_array(image_path))
 
     def recognize_numpy(self, image_array: Any) -> OCRResult:
-        """
-        Perform OCR on a numpy array (RGB image data).
-
-        This is more efficient than recognize_bytes as it avoids
-        intermediate file I/O when the image is already in memory.
-
-        Args:
-            image_array: numpy array of shape (H, W, 3) or (H, W, 4) in RGB(A) format
-
-        Returns:
-            OCRResult with recognized text and metadata
-        """
+        """Perform OCR on an RGB(A) array, with a sparse-layout fallback."""
         import numpy as np
 
-        # Ensure we have a proper numpy array
         if not isinstance(image_array, np.ndarray):
             raise TypeError(f"Expected numpy array, got {type(image_array)}")
 
         logger.debug(f"Running OCR on numpy array: shape={image_array.shape}")
-
-        result: Any = self.engine(image_array)
-        return self._build_ocr_result(result)
+        result = self._build_ocr_result(self.engine(image_array))
+        if result.text.strip():
+            return result
+        return self._recognize_sparse_tiles(image_array)
 
     def recognize_bytes(self, image_data: bytes) -> OCRResult:
         """
@@ -474,11 +594,16 @@ class OCRProcessor:
             return_word_box=True,
             return_single_char_box=True,
         )
+        texts = list(result.txts) if result.txts is not None else []
 
-        # Try to use built-in markdown conversion
-        if hasattr(result, "to_markdown"):
+        # Preserve RapidOCR's table/layout Markdown when the full-image pass
+        # succeeded. Its empty-result Markdown is intentionally not returned:
+        # a sparse tiled retry may still recover small text.
+        if texts and hasattr(result, "to_markdown"):
             return result.to_markdown()
+        if texts:
+            return "\n\n".join(str(text) for text in texts)
 
-        # Fallback: simple text extraction
-        texts = result.txts if result.txts else []
-        return "\n\n".join(texts)
+        logger.debug("OCR Markdown pass was empty; retrying overlapping tiles")
+        fallback = self._recognize_sparse_tiles(self._load_rgb_array(image_path))
+        return "\n\n".join(fallback.text.splitlines())

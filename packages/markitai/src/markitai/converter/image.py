@@ -17,6 +17,7 @@ from markitai.converter.base import (
 )
 from markitai.converter.heif import HEIF_SUFFIXES, decode_to_png, ensure_heif_ready
 from markitai.utils.paths import ensure_assets_dir
+from markitai.utils.text import markdown_image_reference
 
 
 class ImageConverter(BaseConverter):
@@ -209,7 +210,11 @@ class ImageConverter(BaseConverter):
 
             if result.strip():
                 logger.debug(f"OCR extracted text from {input_path.name}")
-                return f"# {input_path.stem}\n\n{result}"
+                return (
+                    f"# {input_path.stem}\n\n"
+                    f"{markdown_image_reference(input_path.stem, image_ref_path)}\n\n"
+                    f"{result}"
+                )
             else:
                 logger.warning(f"OCR found no text in {input_path.name}")
                 return self._create_image_placeholder(input_path, image_ref_path)
@@ -231,7 +236,10 @@ class ImageConverter(BaseConverter):
         Returns:
             Markdown with image placeholder
         """
-        return f"# {input_path.stem}\n\n![{input_path.stem}]({image_ref_path})\n"
+        return (
+            f"# {input_path.stem}\n\n"
+            f"{markdown_image_reference(input_path.stem, image_ref_path)}\n"
+        )
 
 
 # Register ImageConverter for all supported image formats

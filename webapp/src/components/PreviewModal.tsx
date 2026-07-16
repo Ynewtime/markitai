@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
 import { MarkdownPreview } from "./MarkdownPreview";
-import { XIcon } from "./icons";
+import { ExternalLinkIcon, XIcon } from "./icons";
 
 export function PreviewModal({
   t,
@@ -18,6 +18,8 @@ export function PreviewModal({
   announce: (msg: string) => void;
 }) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
+  const sourceHref =
+    item.kind === "url" && /^https?:\/\//i.test(item.name) ? item.name : null;
 
   useEffect(() => {
     const previous = document.body.style.overflow;
@@ -92,7 +94,21 @@ export function PreviewModal({
         <div className="mdl-head preview-modal-head">
           <div className="preview-modal-title">
             <span>{t.previewAria}</span>
-            <h2 title={item.name}>{item.name}</h2>
+            <h2 title={item.name}>
+              {sourceHref === null ? (
+                item.name
+              ) : (
+                <a
+                  href={sourceHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`${item.name} ${t.opensNewTab}`}
+                >
+                  <span>{item.name}</span>
+                  <ExternalLinkIcon />
+                </a>
+              )}
+            </h2>
           </div>
           <button
             type="button"

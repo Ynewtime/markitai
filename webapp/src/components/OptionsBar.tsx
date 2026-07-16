@@ -4,72 +4,85 @@ import { CliCommand } from "./CliCommand";
 
 const PRESETS: Preset[] = ["minimal", "standard", "rich"];
 
-/** Preset segmented control + LLM switch. When llm is not configured the
- * switch and the standard/rich presets are disabled (CapabilityHint explains).
- * The row ends with the copy-as-CLI-command toggle; its expanded strip wraps
- * onto a full-width line below (flex-basis 100% inside this wrapping row). */
+/** OCR is always available as a conversion option. LLM controls require a
+ * routable deployment, and Preset remains a refinement of enabled LLM work. */
 export function OptionsBar({
   t,
   preset,
   llm,
+  ocr,
   llmConfigured,
   urls,
   announce,
   onPreset,
   onLlm,
+  onOcr,
 }: {
   t: Dict;
   preset: Preset;
   llm: boolean;
+  ocr: boolean;
   llmConfigured: boolean;
   urls: string[];
   announce: (msg: string) => void;
   onPreset: (p: Preset) => void;
   onLlm: (v: boolean) => void;
+  onOcr: (v: boolean) => void;
 }) {
-  // Attach the "why is this disabled" explanation to the control itself.
-  const disabledTitle = !llmConfigured
-    ? `${t.capHintPre}${t.capHintLink}${t.capHintPost}`
-    : undefined;
   return (
     <div className="options">
+      {llmConfigured && (
+        <div className="opt">
+          <span className="lbl">{t.llmEnhance}</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={llm}
+            aria-label={t.llmEnhance}
+            className={llm ? "switch on" : "switch"}
+            onClick={() => onLlm(!llm)}
+          />
+        </div>
+      )}
       <div className="opt">
-        <span className="lbl" id="preset-lbl">
-          {t.preset}
-        </span>
-        <div className="seg" role="group" aria-labelledby="preset-lbl">
-          {PRESETS.map((p) => {
-            const disabled = !llmConfigured && p !== "minimal";
-            return (
+        <span className="lbl">{t.ocr}</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={ocr}
+          aria-label={t.ocr}
+          className={ocr ? "switch on" : "switch"}
+          onClick={() => onOcr(!ocr)}
+        />
+      </div>
+      {llmConfigured && llm && (
+        <div className="opt">
+          <span className="lbl" id="preset-lbl">
+            {t.preset}
+          </span>
+          <div className="seg" role="group" aria-labelledby="preset-lbl">
+            {PRESETS.map((p) => (
               <button
                 key={p}
                 type="button"
                 className={p === preset ? "on" : undefined}
                 aria-pressed={p === preset}
-                disabled={disabled}
-                title={disabled ? disabledTitle : undefined}
                 onClick={() => onPreset(p)}
               >
                 {p}
               </button>
-            );
-          })}
+            ))}
+          </div>
         </div>
-      </div>
-      <div className="opt">
-        <span className="lbl">{t.llmEnhance}</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={llm}
-          aria-label={t.llmEnhance}
-          className={llm ? "switch on" : "switch"}
-          disabled={!llmConfigured}
-          title={!llmConfigured ? disabledTitle : undefined}
-          onClick={() => onLlm(!llm)}
-        />
-      </div>
-      <CliCommand t={t} urls={urls} preset={preset} llm={llm} announce={announce} />
+      )}
+      <CliCommand
+        t={t}
+        urls={urls}
+        preset={preset}
+        llm={llm}
+        ocr={ocr}
+        announce={announce}
+      />
     </div>
   );
 }

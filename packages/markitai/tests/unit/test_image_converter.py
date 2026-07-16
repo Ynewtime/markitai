@@ -81,6 +81,7 @@ class TestImageConverter:
             result = converter.convert(sample_image)
 
             assert "Extracted text" in result.markdown
+            assert "![test](test.png)" in result.markdown
             assert result.metadata["ocr_used"] is True
 
     def test_convert_ocr_no_text(self, sample_image: Path):
@@ -191,6 +192,33 @@ class TestCopyToAssets:
 
         assert ref_path == f".markitai/assets/{file_name}"
         assert (output_dir / ".markitai" / "assets" / file_name).exists()
+
+    def test_unicode_filename_with_spaces_uses_a_parseable_markdown_url(
+        self, tmp_path: Path
+    ) -> None:
+        input_path = tmp_path / "截屏2026-07-15 下午11.11.09.png"
+        Image.new("RGB", (8, 8), color="purple").save(input_path, format="PNG")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        config = MarkitaiConfig()
+        config.ocr.enabled = False
+
+        result = ImageConverter(config).convert(input_path, output_dir)
+
+        assert result.metadata["asset_path"] == (
+            ".markitai/assets/截屏2026-07-15 下午11.11.09.png"
+        )
+        assert (
+            "![截屏2026-07-15 下午11.11.09]("
+            ".markitai/assets/%E6%88%AA%E5%B1%8F2026-07-15%20"
+            "%E4%B8%8B%E5%8D%8811.11.09.png)"
+        ) in result.markdown
+        assert (
+            output_dir
+            / ".markitai"
+            / "assets"
+            / "截屏2026-07-15 下午11.11.09.png"
+        ).is_file()
 
     def test_copy_to_assets_with_output_dir(self, sample_image: Path, tmp_path: Path):
         """Test copying image to assets directory."""

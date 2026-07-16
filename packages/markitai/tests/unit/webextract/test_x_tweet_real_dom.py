@@ -132,6 +132,8 @@ class TestQuotedTweet:
         assert quoted.url == QUOTE_URL
         assert quoted.timestamp == "Jun 19"
         assert "Show more" not in quoted.text
+        assert quoted.text.endswith("用它来生成 PPT...")
+        assert "> 用它来生成 PPT..." in result.markdown
 
 
 class TestNoiseRemoval:

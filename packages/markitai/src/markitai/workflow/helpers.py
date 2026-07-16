@@ -16,6 +16,7 @@ from markitai.constants import MARKITAI_META_DIR
 from markitai.json_order import order_images
 from markitai.security import atomic_write_json
 from markitai.utils.paths import ensure_dir
+from markitai.utils.text import markdown_image_reference
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -527,8 +528,9 @@ def format_standalone_image_markdown(
     # Title
     sections.append(f"# {input_path.stem}\n")
 
-    # Image preview with alt text
-    sections.append(f"![{analysis.caption}]({image_ref_path})\n")
+    # Image preview with alt text. CommonMark destinations cannot contain raw
+    # spaces, so keep standalone-image output portable for Unicode filenames.
+    sections.append(f"{markdown_image_reference(analysis.caption, image_ref_path)}\n")
 
     # Image description section
     if analysis.description:

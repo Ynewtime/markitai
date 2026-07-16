@@ -752,6 +752,50 @@ class TestProcessUrlSuccessPath:
         assert "source:" in content  # frontmatter
 
     @pytest.mark.asyncio
+    async def test_no_llm_override_skips_preset_image_downloads(
+        self, tmp_path: Path
+    ) -> None:
+        """Image-analysis flags left by a preset do no work under --no-llm."""
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = False
+        cfg.cache.enabled = False
+        cfg.image.alt_enabled = True
+        cfg.image.desc_enabled = True
+
+        mock_result = MagicMock()
+        mock_result.content = "# Test Page\n\n![](https://images.example.com/slow.png)"
+        mock_result.cache_hit = False
+        mock_result.strategy_used = "static"
+        mock_result.screenshot_path = None
+        mock_result.title = "Test Page"
+        mock_result.static_content = None
+        mock_result.browser_content = None
+        mock_result.metadata = {}
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch(
+                "markitai.image.download_url_images", new_callable=AsyncMock
+            ) as download_mock,
+        ):
+            await process_url(
+                url="https://example.com/test",
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        download_mock.assert_not_awaited()
+        assert "https://images.example.com/slow.png" in (
+            tmp_path / "test.md"
+        ).read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
     async def test_single_url_report_preserves_llm_model_names(
         self, tmp_path: Path
     ) -> None:

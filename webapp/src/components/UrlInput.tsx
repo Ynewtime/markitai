@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dict } from "../i18n";
+import { FilePicker } from "./DropZone";
+import { UploadIcon } from "./icons";
 
 /** App's mobile breakpoint (matches app.css) — below it the full en
  * placeholder wraps and the 1-row textarea clips it, so swap in the short
@@ -29,12 +31,14 @@ export function UrlInput({
   text,
   onText,
   onConvert,
+  onFiles,
   compact = false,
 }: {
   t: Dict;
   text: string;
   onText: (text: string) => void;
   onConvert: (urls: string[]) => Promise<boolean>;
+  onFiles: (files: File[]) => void;
   compact?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
@@ -65,22 +69,30 @@ export function UrlInput({
 
   return (
     <div className={compact ? "urlrow compact" : "urlrow"}>
-      <textarea
-        ref={inputRef}
-        className="urlin"
-        rows={rows}
-        value={text}
-        placeholder={narrow ? t.urlPlaceholderShort : t.urlPlaceholder}
-        spellCheck={false}
-        aria-label={t.urlPlaceholder}
-        onChange={(e) => onText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter" || e.shiftKey) return;
-          if (e.nativeEvent.isComposing) return; // IME confirm, not submit
-          e.preventDefault();
-          void submit();
-        }}
-      />
+      <div className="url-entry">
+        <textarea
+          ref={inputRef}
+          className="urlin"
+          rows={rows}
+          value={text}
+          placeholder={narrow ? t.urlPlaceholderShort : t.urlPlaceholder}
+          spellCheck={false}
+          aria-label={t.urlPlaceholder}
+          onChange={(e) => onText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" || e.shiftKey) return;
+            if (e.nativeEvent.isComposing) return; // IME confirm, not submit
+            e.preventDefault();
+            void submit();
+          }}
+        />
+        <FilePicker
+          label={t.browse}
+          onFiles={onFiles}
+          icon={<UploadIcon />}
+          className="file-picker"
+        />
+      </div>
       <button
         type="button"
         className={compact ? "btn primary" : "btn primary lg"}

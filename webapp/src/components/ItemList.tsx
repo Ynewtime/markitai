@@ -40,14 +40,16 @@ export function ItemList({
   now,
   stats,
   settled,
-  llmConfigured,
   selectedKey,
   onSelect,
   onPreview,
   focusKey,
   onFocusKeyHandled,
-  onOpenSettings,
   onRetry,
+  onEnhance = async () => null,
+  onDelete,
+  canDelete,
+  llmAvailable = false,
   archivedRows,
   hasArchivedRows = false,
 }: {
@@ -57,14 +59,16 @@ export function ItemList({
   now: number;
   stats: SessionStats;
   settled: boolean;
-  llmConfigured: boolean;
   selectedKey: string | null;
   onSelect: (key: string) => void;
   onPreview: (key: string, opener: HTMLElement) => void;
   focusKey: string | null;
   onFocusKeyHandled: () => void;
-  onOpenSettings: () => void;
   onRetry: (item: SessionItem) => Promise<string | null>;
+  onEnhance?: (item: SessionItem) => Promise<string | null>;
+  onDelete: (item: SessionItem) => Promise<string | null>;
+  canDelete: (item: SessionItem) => boolean;
+  llmAvailable?: boolean;
   archivedRows?: ReactNode;
   hasArchivedRows?: boolean;
 }) {
@@ -146,7 +150,7 @@ export function ItemList({
     const el = options[next];
     if (el === undefined) return;
     el.focus();
-    // Selection follows focus for current-session rows. Archived options
+    // Selection follows focus for current-session rows. Persisted job rows
     // own their activation and remain in place when opened.
     const sessionKey = el.dataset.sessionKey;
     const item = sessionKey === undefined ? undefined : visible.find((entry) => entry.key === sessionKey);
@@ -194,7 +198,8 @@ export function ItemList({
       <div className="lrow lhead" aria-hidden="true">
         <span />
         <span>{t.colName}</span>
-        <span className="c-time">{t.colTime}</span>
+        <span className="c-duration">{t.colDuration}</span>
+        <span className="c-finished">{t.colFinished}</span>
         {showCost && <span className="c-cost">{t.colCost}</span>}
         <span className="c-status">{t.colStatus}</span>
       </div>
@@ -214,11 +219,16 @@ export function ItemList({
             now={now}
             selected={item.key === selectedKey}
             tabbable={item.key === effectiveActive}
-            llmConfigured={llmConfigured}
             onPreview={onPreview}
-            onOpenSettings={onOpenSettings}
-            onRowFocus={setActiveKey}
+            onRowFocus={(key) => {
+              setActiveKey(key);
+              onSelect(key);
+            }}
             onRetry={onRetry}
+            onEnhance={onEnhance}
+            onDelete={onDelete}
+            canDelete={canDelete(item)}
+            llmAvailable={llmAvailable}
           />
         ))}
         {archivedRows}
@@ -238,7 +248,8 @@ export function ItemList({
               </span>
             )}
           </span>
-          <span className="c-time">{totalTime}</span>
+          <span className="c-duration">{totalTime}</span>
+          <span className="c-finished" />
           {showCost && <span className="c-cost">{fmtCost(stats.costTotal)}</span>}
           <span className="t-note">{totalNote}</span>
           <span className="totmeta">

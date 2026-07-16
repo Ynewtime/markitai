@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -12,6 +14,7 @@ class JobOptions(BaseModel):
 
     preset: str | None = None
     llm: bool | None = None
+    ocr: bool | None = None
 
 
 class JobRetryBody(BaseModel):
@@ -20,6 +23,7 @@ class JobRetryBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     options: JobOptions | None = None
+    operation: Literal["retry", "enhance"] = "retry"
 
 
 def _require_non_blank(value: str | None) -> str | None:
@@ -90,9 +94,11 @@ class LLMModelCreate(BaseModel):
 
     model_name: str
     model: str
+    provider: str | None = None
     api_key: str | None = None
     api_base: str | None = None
     weight: int = Field(default=1, ge=0)
+    credential_provider_id: str | None = None
     credential_deployment_id: str | None = None
     expected_revision: str | None = None
 
@@ -101,17 +107,35 @@ class LLMModelCreate(BaseModel):
     def _non_blank(cls, value: str) -> str:
         return _require_non_blank(value) or ""
 
+    @field_validator("provider")
+    @classmethod
+    def _optional_non_blank(cls, value: str | None) -> str | None:
+        return _require_non_blank(value)
+
     @field_validator(
         "model_name",
         "model",
+        "provider",
         "api_key",
         "api_base",
+        "credential_provider_id",
         "credential_deployment_id",
         "expected_revision",
     )
     @classmethod
     def _no_mask_char(cls, value: str | None) -> str | None:
         return _reject_mask_char(value)
+
+    @model_validator(mode="after")
+    def _one_credential_reference(self) -> LLMModelCreate:
+        if (
+            self.credential_provider_id is not None
+            and self.credential_deployment_id is not None
+        ):
+            raise ValueError(
+                "send credential_provider_id or credential_deployment_id, not both"
+            )
+        return self
 
 
 class LLMModelUpdate(BaseModel):
@@ -145,6 +169,7 @@ class LLMModelDiscoveryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     provider: str
+    provider_id: str | None = None
     deployment_id: str | None = None
     api_key: str | None = None
     api_base: str | None = None
@@ -155,10 +180,32 @@ class LLMModelDiscoveryRequest(BaseModel):
     def _provider_not_blank(cls, value: str) -> str:
         return _require_non_blank(value) or ""
 
-    @field_validator("deployment_id", "api_key", "api_base")
+    @field_validator("provider_id", "deployment_id", "api_key", "api_base")
     @classmethod
     def _no_mask_char(cls, value: str | None) -> str | None:
         return _reject_mask_char(value)
+
+
+class LLMProviderUpdate(BaseModel):
+    """Partial update for one saved provider connection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: str | None = None
+    api_base: str | None = None
+    expected_revision: str
+
+    @field_validator("api_key", "api_base", "expected_revision")
+    @classmethod
+    def _valid_value(cls, value: str | None) -> str | None:
+        value = _reject_mask_char(value)
+        return _require_non_blank(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def _has_update(self) -> LLMProviderUpdate:
+        if not ({"api_key", "api_base"} & self.model_fields_set):
+            raise ValueError("api_key or api_base is required")
+        return self
 
 
 class LLMDeploymentBatch(BaseModel):

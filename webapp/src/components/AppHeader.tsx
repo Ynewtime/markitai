@@ -24,6 +24,7 @@ export function AppHeader({
   onLocale,
   onHome,
   onHistory,
+  historyActive,
   settingsOpen,
   onToggleSettings,
   gearRef,
@@ -34,6 +35,7 @@ export function AppHeader({
   onLocale: (l: Locale) => void;
   onHome: () => void;
   onHistory: () => void;
+  historyActive: boolean;
   settingsOpen: boolean;
   onToggleSettings: () => void;
   gearRef: RefObject<HTMLButtonElement | null>;
@@ -69,9 +71,10 @@ export function AppHeader({
           <ThemeToggle t={t} label={t.themeAria} />
           <button
             type="button"
-            className="gearbtn"
+            className={historyActive ? "gearbtn tasknav on" : "gearbtn tasknav"}
             aria-label={t.historyAria}
-            title={t.historyAria}
+            aria-current={historyActive ? "page" : undefined}
+            title={historyActive ? t.historyCurrent : t.historyAria}
             onClick={onHistory}
           >
             <HistoryIcon size={16} />

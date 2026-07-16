@@ -5,7 +5,8 @@
 #
 # Usage:
 #   curl -fsSL https://markitai.dev/setup.sh | sh    # User install
-#   ./scripts/setup.sh                                         # Dev setup (in repo)
+#   ./scripts/setup.sh                               # Dev setup (in repo)
+# Full failure logs use a private temp file; set MARKITAI_SETUP_LOG to override.
 
 # -e: exit on error; -u: error on unset variables (pipefail is not POSIX sh)
 set -eu
@@ -41,7 +42,9 @@ i18n() {
             # Intro/Outro
             welcome)                    echo "欢迎使用 Markitai 安装程序!" ;;
             setup_complete)             echo "安装完成!" ;;
+            setup_complete_with_warnings) echo "安装完成，但有部分组件失败" ;;
             dev_setup_complete)         echo "开发环境设置完成!" ;;
+            dev_setup_complete_with_warnings) echo "开发环境设置完成，但有部分组件失败" ;;
 
             # Mode
             mode_user)                  echo "模式: 用户安装" ;;
@@ -97,10 +100,12 @@ i18n() {
             info_syncing_deps)          echo "正在同步依赖..." ;;
             info_deps_synced)           echo "依赖同步完成" ;;
             info_precommit_installed)   echo "pre-commit hooks 已安装" ;;
+            info_error_log)             echo "完整错误日志" ;;
 
             # Error messages
             error_uv_required)          echo "需要安装 uv 包管理器" ;;
             error_python_required)      echo "需要安装 Python 3.11-3.13" ;;
+            error_unexpected)           echo "发生意外错误" ;;
             error_setup_failed)         echo "安装失败" ;;
 
             # Install source (repo detection)
@@ -136,6 +141,7 @@ i18n() {
             run_tests)                  echo "运行测试" ;;
             run_cli)                    echo "运行 CLI" ;;
             interactive_mode)           echo "交互模式" ;;
+            start_web_ui)               echo "启动 Web UI" ;;
             configure_llm)              echo "配置 LLM" ;;
             configure_env)              echo "配置环境变量" ;;
             convert_file)               echo "转换文件" ;;
@@ -157,7 +163,9 @@ i18n() {
             # Intro/Outro
             welcome)                    echo "Welcome to Markitai Setup!" ;;
             setup_complete)             echo "Setup complete!" ;;
+            setup_complete_with_warnings) echo "Setup complete with warnings" ;;
             dev_setup_complete)         echo "Development environment ready!" ;;
+            dev_setup_complete_with_warnings) echo "Development environment ready with warnings" ;;
 
             # Mode
             mode_user)                  echo "Mode: User Install" ;;
@@ -213,10 +221,12 @@ i18n() {
             info_syncing_deps)          echo "Syncing dependencies..." ;;
             info_deps_synced)           echo "Dependencies synced" ;;
             info_precommit_installed)   echo "pre-commit hooks installed" ;;
+            info_error_log)             echo "Full error log" ;;
 
             # Error messages
             error_uv_required)          echo "uv package manager is required" ;;
             error_python_required)      echo "Python 3.11-3.13 is required" ;;
+            error_unexpected)           echo "Unexpected error" ;;
             error_setup_failed)         echo "Setup failed" ;;
 
             # Install source (repo detection)
@@ -252,6 +262,7 @@ i18n() {
             run_tests)                  echo "Run tests" ;;
             run_cli)                    echo "Run CLI" ;;
             interactive_mode)           echo "Interactive mode" ;;
+            start_web_ui)               echo "Start Web UI" ;;
             configure_llm)              echo "Configure LLM" ;;
             configure_env)              echo "Configure environment" ;;
             convert_file)               echo "Convert a file" ;;
@@ -276,7 +287,6 @@ i18n() {
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 GRAY='\033[0;90m'
@@ -285,80 +295,207 @@ BOLD='\033[1m'
 DIM='\033[2m'
 
 # ============================================================
-# Clack-style Visual Components
-# Inspired by @clack/prompts - beautiful CLI with guide lines
+# Compact tree-style visual components
 # ============================================================
+# The one-column guide follows the `withGuide` visual grammar popularized by
+# @clack/prompts. Shell installers cannot rely on Node being present (or redraw
+# completed prompts like Clack), so the tiny renderer stays inline and uses
+# tree branches to keep the guide visibly connected in static terminal output.
 
-# Guide line characters
 S_BAR="│"
 S_BAR_H="─"
-S_CORNER_TOP_RIGHT="┐"
-S_CORNER_BOTTOM_RIGHT="┘"
-S_CONNECT_LEFT="├"
-S_STEP_ACTIVE="◆"
-S_STEP_SUBMIT="◇"
-S_RADIO_ACTIVE="●"
-S_RADIO_INACTIVE="○"
-S_CHECKBOX_ACTIVE="◼"
-S_CHECKBOX_INACTIVE="◻"
+S_CORNER_TOP="╭"
+S_CORNER_BOTTOM="╰"
+S_BRANCH="├"
+S_CHECK="✓"
+S_CROSS="✗"
+S_ARROW="→"
+S_CIRCLE="○"
+
+# Session state lets the global exit guard close an interrupted tree exactly
+# once. Spinner state is also global so signals cannot leave it running.
+CLACK_SESSION_ACTIVE=false
+CLACK_SESSION_CLOSED=false
+CLACK_SPINNER_PID=""
+CLACK_SPINNER_ERRFILE=""
+CLACK_PENDING_DETAIL=""
+SETUP_LOG_FILE="${MARKITAI_SETUP_LOG:-}"
+SETUP_LOG_AUTO=false
+SETUP_LOG_SHOWN=false
+
+# Print an empty row while preserving the session guide.
+clack_guide() {
+    printf "${GRAY}%s${NC}\n" "$S_BAR"
+}
 
 # Session intro - start of CLI flow
 # Usage: clack_intro "Title"
 clack_intro() {
+    CLACK_SESSION_ACTIVE=true
+    CLACK_SESSION_CLOSED=false
     printf "\n"
-    printf "${GRAY}┌${NC}  ${BOLD}%s${NC}\n" "$1"
-    printf "${GRAY}│${NC}\n"
+    printf "${GRAY}%s%s${NC} ${BOLD}%s${NC}\n" "$S_CORNER_TOP" "$S_BAR_H" "$1"
+    clack_guide
 }
 
 # Session outro - end of CLI flow
 # Usage: clack_outro "Message"
 clack_outro() {
-    printf "${GRAY}│${NC}\n"
-    printf "${GRAY}└${NC}  ${GREEN}%s${NC}\n" "$1"
-    printf "\n"
+    CLACK_SESSION_CLOSED=true
+    if [ "$SETUP_LOG_AUTO" = true ] && [ -n "$SETUP_LOG_FILE" ]; then
+        rm -f "$SETUP_LOG_FILE" 2>/dev/null || true
+        SETUP_LOG_FILE=""
+    fi
+    clack_guide
+    printf "${GRAY}%s%s${NC} ${GREEN}%s${NC}\n\n" "$S_CORNER_BOTTOM" "$S_BAR_H" "$1"
 }
 
-# Section header with active marker
+# Non-fatal component failures close the tree in warning yellow, not success
+# green, while still returning a successful core installation.
+clack_outro_warn() {
+    clack_show_error_log
+    CLACK_SESSION_CLOSED=true
+    clack_guide
+    printf "${GRAY}%s%s${NC} ${YELLOW}%s${NC}\n\n" "$S_CORNER_BOTTOM" "$S_BAR_H" "$1"
+}
+
+# Section header connected to the session guide
 # Usage: clack_section "Section title"
 clack_section() {
-    printf "${GRAY}│${NC}\n"
-    printf "${MAGENTA}◆${NC}  ${BOLD}%s${NC}\n" "$1"
+    clack_guide
+    printf "${GRAY}%s${MAGENTA}%s${NC} ${BOLD}%s${NC}\n" "$S_BRANCH" "$S_BAR_H" "$1"
 }
 
 # Log with guide line - success
 # Usage: clack_success "Message"
 clack_success() {
-    printf "${GRAY}│${NC}  ${GREEN}✓${NC} %s\n" "$1"
+    printf "${GRAY}%s${NC}  ${GREEN}%s${NC} %s\n" "$S_BAR" "$S_CHECK" "$1"
 }
 
 # Log with guide line - error
 # Usage: clack_error "Message"
 clack_error() {
-    printf "${GRAY}│${NC}  ${RED}✗${NC} %s\n" "$1"
+    printf "${GRAY}%s${NC}  ${RED}%s${NC} %s\n" "$S_BAR" "$S_CROSS" "$1"
+    clack_flush_detail
 }
 
 # Log with guide line - warning
 # Usage: clack_warn "Message"
 clack_warn() {
-    printf "${GRAY}│${NC}  ${YELLOW}!${NC} %s\n" "$1"
+    printf "${GRAY}%s${NC}  ${YELLOW}!${NC} %s\n" "$S_BAR" "$1"
+    clack_flush_detail
 }
 
 # Log with guide line - info
 # Usage: clack_info "Message"
 clack_info() {
-    printf "${GRAY}│${NC}  ${CYAN}→${NC} %s\n" "$1"
+    printf "${GRAY}%s${NC}  ${CYAN}%s${NC} %s\n" "$S_BAR" "$S_ARROW" "$1"
 }
 
 # Log with guide line - skipped
 # Usage: clack_skip "Message"
 clack_skip() {
-    printf "${GRAY}│${NC}  ${GRAY}○${NC} ${GRAY}%s${NC}\n" "$1"
+    printf "${GRAY}%s${NC}  ${GRAY}%s %s${NC}\n" "$S_BAR" "$S_CIRCLE" "$1"
 }
 
 # Log with guide line - plain text
 # Usage: clack_log "Message"
 clack_log() {
-    printf "${GRAY}│${NC}  %b\n" "$1"
+    if [ -n "$1" ]; then
+        printf "${GRAY}%s${NC}  %b\n" "$S_BAR" "$1"
+    else
+        clack_guide
+    fi
+}
+
+# Remove terminal color/control sequences before third-party diagnostics are
+# placed inside our own tree. This prevents captured ANSI red from leaking.
+clack_strip_ansi() {
+    _csa_esc=$(printf '\033')
+    sed "s/${_csa_esc}\\[[0-9;?]*[[:alpha:]]//g" | tr -d '\r'
+}
+
+setup_log_init() {
+    if [ -n "$SETUP_LOG_FILE" ]; then
+        if : >> "$SETUP_LOG_FILE" 2>/dev/null; then
+            chmod 600 "$SETUP_LOG_FILE" 2>/dev/null || true
+            return 0
+        fi
+        SETUP_LOG_FILE=""
+        return 1
+    fi
+
+    _sli_dir="${TMPDIR:-/tmp}"
+    SETUP_LOG_FILE=$(mktemp "$_sli_dir/markitai-setup.XXXXXX.log" 2>/dev/null) || {
+        SETUP_LOG_FILE=""
+        return 1
+    }
+    SETUP_LOG_AUTO=true
+    chmod 600 "$SETUP_LOG_FILE" 2>/dev/null || true
+}
+
+clack_record_detail() {
+    _crd_context="$1"
+    _crd_text="$2"
+    [ -n "$_crd_text" ] || return 0
+    setup_log_init || return 0
+    {
+        printf '\n== %s ==\n' "$_crd_context"
+        printf '%s\n' "$_crd_text" | clack_strip_ansi
+    } >> "$SETUP_LOG_FILE" 2>/dev/null || true
+}
+
+clack_record_file() {
+    _crf_context="$1"
+    _crf_file="$2"
+    [ -s "$_crf_file" ] || return 0
+    setup_log_init || return 0
+    {
+        printf '\n== %s ==\n' "$_crf_context"
+        clack_strip_ansi < "$_crf_file"
+    } >> "$SETUP_LOG_FILE" 2>/dev/null || true
+}
+
+clack_print_detail() {
+    _cpd_text="$1"
+    _cpd_limit="${2:-6}"
+    [ -n "$_cpd_text" ] || return 0
+
+    printf '%s\n' "$_cpd_text" \
+        | clack_strip_ansi \
+        | awk 'NF { print }' \
+        | tail -n "$_cpd_limit" \
+        | cut -c 1-300 \
+        | while IFS= read -r _cpd_line; do
+            printf "${GRAY}%s${NC}    ${DIM}%s${NC}\n" "$S_BAR" "$_cpd_line"
+        done
+}
+
+# Preserve the complete diagnostic in a private log, but print only its tail.
+# Usage: clack_detail "multiline text" [max lines] [context]
+clack_detail() {
+    _cd_text="$1"
+    _cd_limit="${2:-6}"
+    _cd_context="${3:-diagnostic}"
+    [ -n "$_cd_text" ] || return 0
+    clack_record_detail "$_cd_context" "$_cd_text"
+    clack_print_detail "$_cd_text" "$_cd_limit"
+}
+
+clack_show_error_log() {
+    [ -n "$SETUP_LOG_FILE" ] || return 0
+    [ "$SETUP_LOG_SHOWN" = true ] && return 0
+    SETUP_LOG_SHOWN=true
+    clack_info "$(i18n info_error_log): $SETUP_LOG_FILE"
+}
+
+# Spinner errors are held until the caller prints its concise error/warning,
+# keeping diagnostics visually nested beneath the status that explains them.
+clack_flush_detail() {
+    [ -n "${CLACK_PENDING_DETAIL:-}" ] || return 0
+    _cfd_detail="$CLACK_PENDING_DETAIL"
+    CLACK_PENDING_DETAIL=""
+    clack_print_detail "$_cfd_detail" 6
 }
 
 # Spinner with guide line
@@ -369,47 +506,98 @@ clack_spinner() {
     _cs_message="$1"
     shift
 
-    # Spinner frames (ASCII compatible)
     _cs_pid=""
+    _cs_dynamic=false
+    CLACK_PENDING_DETAIL=""
     # No predictable /tmp fallback (avoids symlink attacks); discard stderr instead
     _cs_errfile=$(mktemp 2>/dev/null) || _cs_errfile="/dev/null"
+    CLACK_SPINNER_ERRFILE="$_cs_errfile"
 
-    # Start spinner in background
-    (
-        while true; do
-            for _cs_frame in '|' '/' '-' '\'; do
-                printf "\r${GRAY}│${NC}  ${CYAN}%s${NC} %s" "$_cs_frame" "$_cs_message"
-                sleep 0.1 2>/dev/null || sleep 1
+    # Cursor animation is only safe on a real terminal. CI/log output gets one
+    # stable progress row instead of hundreds of carriage-return frames.
+    if [ -t 1 ] && [ "${TERM:-}" != "dumb" ] && [ "${CI:-}" != "true" ]; then
+        _cs_dynamic=true
+        (
+            while true; do
+                for _cs_frame in '◒' '◐' '◓' '◑'; do
+                    printf "\r${GRAY}%s${NC}  ${CYAN}%s${NC} %s" "$S_BAR" "$_cs_frame" "$_cs_message"
+                    sleep 0.1 2>/dev/null || sleep 1
+                done
             done
-        done
-    ) &
-    _cs_pid=$!
+        ) &
+        _cs_pid=$!
+        CLACK_SPINNER_PID="$_cs_pid"
+    else
+        clack_info "$_cs_message"
+    fi
 
-    # Run the actual command, capture stderr for error reporting
-    "$@" >/dev/null 2>"$_cs_errfile"
-    _cs_status=$?
+    # Guard the command explicitly so `set -e` can never skip spinner cleanup.
+    if "$@" >/dev/null 2>"$_cs_errfile"; then
+        _cs_status=0
+    else
+        _cs_status=$?
+    fi
 
-    # Stop spinner
-    kill "$_cs_pid" 2>/dev/null
-    wait "$_cs_pid" 2>/dev/null
+    if [ "$_cs_dynamic" = true ]; then
+        kill "$_cs_pid" 2>/dev/null || true
+        wait "$_cs_pid" 2>/dev/null || true
+        printf "\r\033[K"
+    fi
+    CLACK_SPINNER_PID=""
 
-    # Clear spinner line
-    printf "\r\033[K"
-
-    # On failure, show last lines of stderr
-    if [ $_cs_status -ne 0 ] && [ -s "$_cs_errfile" ]; then
-        tail -10 "$_cs_errfile" | while IFS= read -r _cs_line; do
-            printf "${GRAY}│${NC}  ${DIM}%s${NC}\n" "$_cs_line"
-        done
+    # Preserve the complete stderr, then hold only its tail for terminal output.
+    if [ "$_cs_status" -ne 0 ] && [ -s "$_cs_errfile" ]; then
+        clack_record_file "$_cs_message" "$_cs_errfile"
+        CLACK_PENDING_DETAIL=$(tail -n 10 "$_cs_errfile" 2>/dev/null || true)
     fi
 
     if [ "$_cs_errfile" != "/dev/null" ]; then
-        rm -f "$_cs_errfile" 2>/dev/null
+        rm -f "$_cs_errfile" 2>/dev/null || true
     fi
-    return $_cs_status
+    CLACK_SPINNER_ERRFILE=""
+    return "$_cs_status"
 }
 
-# Confirm prompt with guide line
+# Run a command silently while preserving complete stdout/stderr on failure.
+# Unlike the spinner, callers are expected to have already printed a status row.
+clack_run_quiet() {
+    _crq_context="$1"
+    shift
+    CLACK_PENDING_DETAIL=""
+    _crq_file=$(mktemp 2>/dev/null) || _crq_file="/dev/null"
+
+    if "$@" >"$_crq_file" 2>&1; then
+        _crq_status=0
+    else
+        _crq_status=$?
+        if [ "$_crq_file" != "/dev/null" ] && [ -s "$_crq_file" ]; then
+            clack_record_file "$_crq_context" "$_crq_file"
+            CLACK_PENDING_DETAIL=$(tail -n 10 "$_crq_file" 2>/dev/null || true)
+        fi
+    fi
+
+    if [ "$_crq_file" != "/dev/null" ]; then
+        rm -f "$_crq_file" 2>/dev/null || true
+    fi
+    return "$_crq_status"
+}
+
+run_remote_shell_installer() {
+    _rsi_context="$1"
+    _rsi_url="$2"
+    _rsi_file=$(mktemp 2>/dev/null) || return 1
+    # shellcheck disable=SC2016 # $1/$2 expand in the child sh, not here
+    if clack_run_quiet "$_rsi_context" \
+        sh -c 'curl -fsSL -o "$1" "$2" && bash "$1"' sh "$_rsi_file" "$_rsi_url"; then
+        _rsi_status=0
+    else
+        _rsi_status=$?
+    fi
+    rm -f "$_rsi_file" 2>/dev/null || true
+    return "$_rsi_status"
+}
+
+# Confirm prompt connected to the session guide
 # Usage: clack_confirm "Question?" "y|n"
 # Returns: 0 for yes, 1 for no
 clack_confirm() {
@@ -422,19 +610,25 @@ clack_confirm() {
         _cc_hint="${GRAY}y/${NC}${BOLD}N${NC}"
     fi
 
-    printf "${GRAY}│${NC}\n"
-    printf "${CYAN}◇${NC}  %s ${GRAY}[%b]${NC} " "$_cc_prompt" "$_cc_hint"
+    clack_guide
+    printf "${GRAY}%s${CYAN}%s${NC} %s ${GRAY}[%b]${NC} " "$S_BRANCH" "$S_BAR_H" "$_cc_prompt" "$_cc_hint"
 
-    # Read from /dev/tty for piped execution support;
-    # fall back to the default answer when no TTY is available (CI, cron)
+    # Read from /dev/tty for piped execution support. A terminal echoes its own
+    # newline, so printing another one creates the stray blank rows seen with
+    # `curl | sh`; only redirected/headless output needs an explicit value.
     _cc_answer=""
     if [ -t 0 ]; then
-        read -r _cc_answer
-    elif read -r _cc_answer < /dev/tty 2>/dev/null; then
-        printf "\n"
+        if read -r _cc_answer; then
+            [ -t 1 ] || printf "%s\n" "${_cc_answer:-$_cc_default}"
+        else
+            _cc_answer="$_cc_default"
+            printf "%s\n" "$_cc_answer"
+        fi
+    elif { read -r _cc_answer < /dev/tty; } 2>/dev/null; then
+        [ -t 1 ] || printf "%s\n" "${_cc_answer:-$_cc_default}"
     else
         _cc_answer="$_cc_default"
-        printf "\n"
+        printf "%s\n" "$_cc_answer"
     fi
 
     if [ -z "$_cc_answer" ]; then
@@ -479,41 +673,73 @@ clack_confirm_optional() {
     clack_confirm "$1" "$2"
 }
 
-# Note/message box with guide line
+# Compact note block. Content stays on the single outer guide instead of
+# drawing a second, competing box down the left side.
 # Usage: clack_note "title" "line1" "line2" ...
 # Or:    clack_note "title" <<EOF
 #        line1
 #        line2
 #        EOF
-# Note: Use %b to interpret escape sequences in lines
+# Note: clack_log uses %b to interpret color escapes in lines.
 clack_note() {
     _cn_title="$1"
     shift
 
-    printf "${GRAY}│${NC}\n"
-    printf "${GRAY}│${NC}  ${GRAY}╭─${NC} ${BOLD}%s${NC}\n" "$_cn_title"
+    clack_guide
+    printf "${GRAY}%s${GREEN}%s${NC} ${BOLD}%s${NC}\n" "$S_BRANCH" "$S_BAR_H" "$_cn_title"
 
-    # If arguments provided, use them as lines
     if [ $# -gt 0 ]; then
         for _cn_line in "$@"; do
-            printf "${GRAY}│${NC}  ${GRAY}│${NC}  %b\n" "$_cn_line"
+            clack_log "$_cn_line"
         done
     else
-        # Read from stdin (heredoc support)
         while IFS= read -r _cn_line; do
-            printf "${GRAY}│${NC}  ${GRAY}│${NC}  %b\n" "$_cn_line"
+            clack_log "$_cn_line"
         done
     fi
-
-    printf "${GRAY}│${NC}  ${GRAY}╰─${NC}\n"
 }
 
 # Cancel message
 # Usage: clack_cancel "Message"
 clack_cancel() {
-    printf "${GRAY}│${NC}\n"
-    printf "${GRAY}└${NC}  ${RED}%s${NC}\n" "$1"
-    printf "\n"
+    clack_show_error_log
+    CLACK_SESSION_CLOSED=true
+    clack_guide
+    printf "${GRAY}%s%s${NC} ${RED}%s${NC}\n\n" "$S_CORNER_BOTTOM" "$S_BAR_H" "$1"
+}
+
+# Last-resort guard for an unanticipated `set -e`, signal, or shell failure.
+# Expected failure paths call clack_cancel first and therefore are not repeated.
+setup_on_exit() {
+    _soe_status=$?
+    trap - 0 HUP INT TERM
+
+    if [ -n "${CLACK_SPINNER_PID:-}" ]; then
+        kill "$CLACK_SPINNER_PID" 2>/dev/null || true
+        wait "$CLACK_SPINNER_PID" 2>/dev/null || true
+        if [ -t 1 ]; then
+            printf '\r\033[K'
+        fi
+    fi
+    if [ -n "${CLACK_SPINNER_ERRFILE:-}" ] && [ "$CLACK_SPINNER_ERRFILE" != "/dev/null" ]; then
+        if [ -s "$CLACK_SPINNER_ERRFILE" ]; then
+            clack_record_file "$(i18n error_unexpected)" "$CLACK_SPINNER_ERRFILE"
+            CLACK_PENDING_DETAIL=$(tail -n 10 "$CLACK_SPINNER_ERRFILE" 2>/dev/null || true)
+        fi
+        rm -f "$CLACK_SPINNER_ERRFILE" 2>/dev/null || true
+    fi
+
+    if [ "$_soe_status" -ne 0 ] && [ "${CLACK_SESSION_ACTIVE:-false}" = true ] \
+        && [ "${CLACK_SESSION_CLOSED:-false}" != true ]; then
+        clack_error "$(i18n error_unexpected)"
+        clack_cancel "$(i18n error_setup_failed)"
+    fi
+
+    exit "$_soe_status"
+}
+
+setup_on_signal() {
+    exit "$1"
 }
 
 # ============================================================
@@ -606,23 +832,30 @@ configure_mirrors() {
         return 0
     fi
 
-    # Show mirror source selection
-    printf "${GRAY}│${NC}\n"
-    printf "${CYAN}◇${NC}  %s ${GRAY}[1]${NC}\n" "$(i18n mirror_select)"
-    printf "${GRAY}│${NC}  ${CYAN}1.${NC} %s\n" "$(i18n mirror_tuna)"
-    printf "${GRAY}│${NC}  ${GRAY}2.${NC} %s\n" "$(i18n mirror_aliyun)"
-    printf "${GRAY}│${NC}  ${GRAY}3.${NC} %s\n" "$(i18n mirror_tencent)"
-    printf "${GRAY}│${NC}  ${GRAY}4.${NC} %s\n" "$(i18n mirror_huawei)"
-    printf "${GRAY}│${NC}  > "
+    # Show mirror source selection on the same continuous tree guide.
+    clack_guide
+    printf "${GRAY}%s${CYAN}%s${NC} %s ${GRAY}[1]${NC}\n" "$S_BRANCH" "$S_BAR_H" "$(i18n mirror_select)"
+    printf "${GRAY}%s${NC}  ${CYAN}1.${NC} %s\n" "$S_BAR" "$(i18n mirror_tuna)"
+    printf "${GRAY}%s${NC}  ${GRAY}2.${NC} %s\n" "$S_BAR" "$(i18n mirror_aliyun)"
+    printf "${GRAY}%s${NC}  ${GRAY}3.${NC} %s\n" "$S_BAR" "$(i18n mirror_tencent)"
+    printf "${GRAY}%s${NC}  ${GRAY}4.${NC} %s\n" "$S_BAR" "$(i18n mirror_huawei)"
+    printf "${GRAY}%s${NC}  > " "$S_BAR"
 
-    # Fall back to the default choice when no TTY is available (CI, cron)
+    # Fall back to the default choice when no TTY is available (CI, cron).
+    # As with confirmations, do not add a second newline on terminal output.
     _mirror_choice=""
     if [ -t 0 ]; then
-        read -r _mirror_choice
-    elif read -r _mirror_choice < /dev/tty 2>/dev/null; then
-        printf "\n"
+        if read -r _mirror_choice; then
+            [ -t 1 ] || printf "%s\n" "${_mirror_choice:-1}"
+        else
+            _mirror_choice="1"
+            printf "%s\n" "$_mirror_choice"
+        fi
+    elif { read -r _mirror_choice < /dev/tty; } 2>/dev/null; then
+        [ -t 1 ] || printf "%s\n" "${_mirror_choice:-1}"
     else
-        printf "\n"
+        _mirror_choice="1"
+        printf "%s\n" "$_mirror_choice"
     fi
 
     [ -z "$_mirror_choice" ] && _mirror_choice="1"
@@ -865,7 +1098,7 @@ detect_python() {
 
     # Not found, auto-install (3.13 as default)
     clack_info "$(i18n installing) $(i18n python) 3.13..."
-    if uv python install 3.13 >/dev/null 2>&1; then
+    if clack_run_quiet "$(i18n installing) $(i18n python) 3.13" uv python install 3.13; then
         _py_path=$(uv python find 3.13 2>/dev/null) || _py_path=""
         if [ -n "$_py_path" ] && [ -x "$_py_path" ]; then
             PYTHON_CMD="$_py_path"
@@ -925,7 +1158,6 @@ install_markitai() {
         fi
     else
         # Fresh install
-        clack_info "$(i18n installing) $(i18n markitai)..."
         if clack_spinner "$(i18n installing) $(i18n markitai)..." uv tool install "$_mi_pkg" --python "$PYTHON_CMD"; then
             export PATH="$HOME/.local/bin:$PATH"
             _mi_version=$(markitai --version 2>/dev/null | awk '{print $NF}' || echo "")
@@ -1079,6 +1311,7 @@ finalize_markitai_extras() {
     _mi_pkg=$(markitai_pkg_spec "$MARKITAI_EXTRAS")
     _uv_err=""
     if ! _uv_err=$(uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force 2>&1); then
+        clack_record_detail "$(i18n markitai) extras" "$_uv_err"
         # Full install failed — retry without SDK-dependent extras
         _safe_extras=""
         _skipped=""
@@ -1097,13 +1330,15 @@ finalize_markitai_extras() {
 
         if [ -n "$_safe_extras" ]; then
             _mi_pkg=$(markitai_pkg_spec "$_safe_extras")
-            if uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force >/dev/null 2>&1; then
+            if clack_run_quiet "$(i18n markitai) extras fallback" \
+                uv tool install "$_mi_pkg" --python "$PYTHON_CMD" --force; then
                 [ -n "$_skipped" ] && clack_warn "$(i18n skipped) extras: $_skipped (SDK $(i18n not_found))"
             else
-                clack_warn "$(i18n markitai) extras update $(i18n failed): $_uv_err"
+                clack_warn "$(i18n markitai) extras update $(i18n failed)"
             fi
         else
-            clack_warn "$(i18n markitai) extras update $(i18n failed): $_uv_err"
+            clack_warn "$(i18n markitai) extras update $(i18n failed)"
+            clack_print_detail "$_uv_err" 3
         fi
     fi
 }
@@ -1235,8 +1470,8 @@ install_optional_playwright() {
     # On Linux, install system dependencies silently
     if [ "$OS_TYPE" = "Linux" ]; then
         if [ -f /etc/arch-release ]; then
-            # shellcheck disable=SC2086 # Word splitting is intentional for package list
             _arch_deps="nss nspr at-spi2-core cups libdrm mesa alsa-lib libxcomposite libxdamage libxrandr libxkbcommon pango cairo noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-liberation"
+            # shellcheck disable=SC2086 # Word splitting is intentional for package list
             sudo pacman -S --noconfirm --needed $_arch_deps >/dev/null 2>&1 || true
         elif command -v apt-get >/dev/null 2>&1; then
             if [ -x "$_pw_cmd" ]; then
@@ -1283,7 +1518,7 @@ install_optional_libreoffice() {
     case "$OS_TYPE" in
         Darwin)
             if command -v brew >/dev/null 2>&1; then
-                if brew install --cask libreoffice >/dev/null 2>&1; then
+                if clack_run_quiet "$(i18n installing) $(i18n libreoffice)" brew install --cask libreoffice; then
                     clack_success "$(i18n libreoffice) $(i18n installed)"
                     track_install "libreoffice" "installed"
                     return 0
@@ -1292,19 +1527,20 @@ install_optional_libreoffice() {
             ;;
         Linux)
             if [ -f /etc/debian_version ]; then
-                if sudo apt update >/dev/null 2>&1 && sudo apt install -y libreoffice >/dev/null 2>&1; then
+                if clack_run_quiet "apt update" sudo apt update && \
+                   clack_run_quiet "$(i18n installing) $(i18n libreoffice)" sudo apt install -y libreoffice; then
                     clack_success "$(i18n libreoffice) $(i18n installed)"
                     track_install "libreoffice" "installed"
                     return 0
                 fi
             elif [ -f /etc/fedora-release ]; then
-                if sudo dnf install -y libreoffice >/dev/null 2>&1; then
+                if clack_run_quiet "$(i18n installing) $(i18n libreoffice)" sudo dnf install -y libreoffice; then
                     clack_success "$(i18n libreoffice) $(i18n installed)"
                     track_install "libreoffice" "installed"
                     return 0
                 fi
             elif [ -f /etc/arch-release ]; then
-                if sudo pacman -S --noconfirm libreoffice-fresh >/dev/null 2>&1; then
+                if clack_run_quiet "$(i18n installing) $(i18n libreoffice)" sudo pacman -S --noconfirm libreoffice-fresh; then
                     clack_success "$(i18n libreoffice) $(i18n installed)"
                     track_install "libreoffice" "installed"
                     return 0
@@ -1342,7 +1578,7 @@ install_optional_ffmpeg() {
     case "$OS_TYPE" in
         Darwin)
             if command -v brew >/dev/null 2>&1; then
-                if brew install ffmpeg >/dev/null 2>&1; then
+                if clack_run_quiet "$(i18n installing) $(i18n ffmpeg)" brew install ffmpeg; then
                     clack_success "$(i18n ffmpeg) $(i18n installed)"
                     track_install "ffmpeg" "installed"
                     return 0
@@ -1351,19 +1587,20 @@ install_optional_ffmpeg() {
             ;;
         Linux)
             if [ -f /etc/debian_version ]; then
-                if sudo apt update >/dev/null 2>&1 && sudo apt install -y ffmpeg >/dev/null 2>&1; then
+                if clack_run_quiet "apt update" sudo apt update && \
+                   clack_run_quiet "$(i18n installing) $(i18n ffmpeg)" sudo apt install -y ffmpeg; then
                     clack_success "$(i18n ffmpeg) $(i18n installed)"
                     track_install "ffmpeg" "installed"
                     return 0
                 fi
             elif [ -f /etc/fedora-release ]; then
-                if sudo dnf install -y ffmpeg >/dev/null 2>&1; then
+                if clack_run_quiet "$(i18n installing) $(i18n ffmpeg)" sudo dnf install -y ffmpeg; then
                     clack_success "$(i18n ffmpeg) $(i18n installed)"
                     track_install "ffmpeg" "installed"
                     return 0
                 fi
             elif [ -f /etc/arch-release ]; then
-                if sudo pacman -S --noconfirm ffmpeg >/dev/null 2>&1; then
+                if clack_run_quiet "$(i18n installing) $(i18n ffmpeg)" sudo pacman -S --noconfirm ffmpeg; then
                     clack_success "$(i18n ffmpeg) $(i18n installed)"
                     track_install "ffmpeg" "installed"
                     return 0
@@ -1397,8 +1634,8 @@ install_optional_claude_cli() {
 
     clack_info "$(i18n installing) $(i18n claude_cli)..."
 
-    # Try official install script
-    if curl -fsSL "https://claude.ai/install.sh" 2>/dev/null | bash >/dev/null 2>&1; then
+    # Try official install script in a child shell so its exit is contained.
+    if run_remote_shell_installer "$(i18n installing) $(i18n claude_cli)" "https://claude.ai/install.sh"; then
         if command -v claude >/dev/null 2>&1; then
             clack_success "$(i18n claude_cli) $(i18n installed)"
             # Also install the SDK extra
@@ -1410,14 +1647,14 @@ install_optional_claude_cli() {
 
     # Fallback: npm/pnpm
     if command -v pnpm >/dev/null 2>&1; then
-        if pnpm add -g @anthropic-ai/claude-code >/dev/null 2>&1; then
+        if clack_run_quiet "$(i18n installing) $(i18n claude_cli)" pnpm add -g @anthropic-ai/claude-code; then
             clack_success "$(i18n claude_cli) $(i18n installed)"
             install_markitai_extra "claude-agent" || true
             track_install "claude_cli" "installed"
             return 0
         fi
     elif command -v npm >/dev/null 2>&1; then
-        if npm install -g @anthropic-ai/claude-code >/dev/null 2>&1; then
+        if clack_run_quiet "$(i18n installing) $(i18n claude_cli)" npm install -g @anthropic-ai/claude-code; then
             clack_success "$(i18n claude_cli) $(i18n installed)"
             install_markitai_extra "claude-agent" || true
             track_install "claude_cli" "installed"
@@ -1450,8 +1687,8 @@ install_optional_copilot_cli() {
 
     clack_info "$(i18n installing) $(i18n copilot_cli)..."
 
-    # Try official install script
-    if curl -fsSL "https://gh.io/copilot-install" 2>/dev/null | bash >/dev/null 2>&1; then
+    # Try official install script in a child shell so its exit is contained.
+    if run_remote_shell_installer "$(i18n installing) $(i18n copilot_cli)" "https://gh.io/copilot-install"; then
         if command -v copilot >/dev/null 2>&1; then
             clack_success "$(i18n copilot_cli) $(i18n installed)"
             # Also install the SDK extra
@@ -1463,14 +1700,14 @@ install_optional_copilot_cli() {
 
     # Fallback: npm/pnpm
     if command -v pnpm >/dev/null 2>&1; then
-        if pnpm add -g @github/copilot >/dev/null 2>&1; then
+        if clack_run_quiet "$(i18n installing) $(i18n copilot_cli)" pnpm add -g @github/copilot; then
             clack_success "$(i18n copilot_cli) $(i18n installed)"
             install_markitai_extra "copilot" || true
             track_install "copilot_cli" "installed"
             return 0
         fi
     elif command -v npm >/dev/null 2>&1; then
-        if npm install -g @github/copilot >/dev/null 2>&1; then
+        if clack_run_quiet "$(i18n installing) $(i18n copilot_cli)" npm install -g @github/copilot; then
             clack_success "$(i18n copilot_cli) $(i18n installed)"
             install_markitai_extra "copilot" || true
             track_install "copilot_cli" "installed"
@@ -1496,12 +1733,11 @@ print_summary() {
         set -- $INSTALLED_COMPONENTS
         IFS="$_ifs_old"
         if [ $# -gt 0 ]; then
-            printf "${GRAY}│${NC}\n"
-            printf "${GRAY}│${NC}  ${GRAY}╭─${NC} ${BOLD}%s${NC}\n" "$(i18n summary_installed)"
+            clack_guide
+            printf "${GRAY}%s${NC}  ${BOLD}%s${NC}\n" "$S_BAR" "$(i18n summary_installed)"
             for _comp in "$@"; do
-                [ -n "$_comp" ] && printf "${GRAY}│${NC}  ${GRAY}│${NC}  ${GREEN}✓${NC} %s\n" "$(i18n "$_comp")"
+                [ -n "$_comp" ] && printf "${GRAY}%s${NC}    ${GREEN}%s${NC} %s\n" "$S_BAR" "$S_CHECK" "$(i18n "$_comp")"
             done
-            printf "${GRAY}│${NC}  ${GRAY}╰─${NC}\n"
         fi
     fi
 
@@ -1513,12 +1749,11 @@ print_summary() {
         set -- $SKIPPED_COMPONENTS
         IFS="$_ifs_old"
         if [ $# -gt 0 ]; then
-            printf "${GRAY}│${NC}\n"
-            printf "${GRAY}│${NC}  ${GRAY}╭─${NC} ${BOLD}%s${NC}\n" "$(i18n summary_skipped)"
+            clack_guide
+            printf "${GRAY}%s${NC}  ${BOLD}%s${NC}\n" "$S_BAR" "$(i18n summary_skipped)"
             for _comp in "$@"; do
-                [ -n "$_comp" ] && printf "${GRAY}│${NC}  ${GRAY}│${NC}  ${YELLOW}○${NC} %s\n" "$(i18n "$_comp")"
+                [ -n "$_comp" ] && printf "${GRAY}%s${NC}    ${YELLOW}%s${NC} %s\n" "$S_BAR" "$S_CIRCLE" "$(i18n "$_comp")"
             done
-            printf "${GRAY}│${NC}  ${GRAY}╰─${NC}\n"
         fi
     fi
 
@@ -1530,12 +1765,11 @@ print_summary() {
         set -- $FAILED_COMPONENTS
         IFS="$_ifs_old"
         if [ $# -gt 0 ]; then
-            printf "${GRAY}│${NC}\n"
-            printf "${GRAY}│${NC}  ${GRAY}╭─${NC} ${BOLD}%s${NC}\n" "$(i18n summary_failed)"
+            clack_guide
+            printf "${GRAY}%s${NC}  ${BOLD}%s${NC}\n" "$S_BAR" "$(i18n summary_failed)"
             for _comp in "$@"; do
-                [ -n "$_comp" ] && printf "${GRAY}│${NC}  ${GRAY}│${NC}  ${RED}✗${NC} %s\n" "$(i18n "$_comp")"
+                [ -n "$_comp" ] && printf "${GRAY}%s${NC}    ${RED}%s${NC} %s\n" "$S_BAR" "$S_CROSS" "$(i18n "$_comp")"
             done
-            printf "${GRAY}│${NC}  ${GRAY}╰─${NC}\n"
         fi
     fi
 
@@ -1566,7 +1800,17 @@ print_user_completion() {
 
     set -- \
         "$(i18n interactive_mode):" \
-        "  ${CYAN}markitai -I${NC}" \
+        "  ${CYAN}markitai -I${NC}"
+
+    # Only advertise the serve command when its dependencies were selected.
+    if markitai_extra_enabled "serve"; then
+        set -- "$@" \
+            "" \
+            "$(i18n start_web_ui):" \
+            "  ${CYAN}markitai serve${NC}"
+    fi
+
+    set -- "$@" \
         "" \
         "$(i18n configure_llm):" \
         "  ${CYAN}markitai init${NC}" \
@@ -1596,6 +1840,9 @@ print_dev_completion() {
         "$(i18n interactive_mode):" \
         "  ${CYAN}uv run markitai -I${NC}" \
         "" \
+        "$(i18n start_web_ui):" \
+        "  ${CYAN}uv run markitai serve${NC}" \
+        "" \
         "$(i18n run_tests):" \
         "  ${CYAN}uv run pytest${NC}" \
         "" \
@@ -1605,7 +1852,8 @@ print_dev_completion() {
 
 # Initialize markitai config (silent, first install only)
 # Skips when a config already exists: `init --yes` would silently append
-# newly detected providers to the user's model_list.
+# newly detected providers to the user's model_list. The detector only records
+# a local CLI after login succeeds and its finalized runtime SDK is importable.
 # Returns: 0 always
 init_config() {
     if [ -f "$HOME/.markitai/config.json" ]; then
@@ -1652,7 +1900,11 @@ run_user_setup() {
 
     print_summary
     print_user_completion
-    clack_outro "$(i18n setup_complete)"
+    if [ -n "$FAILED_COMPONENTS" ]; then
+        clack_outro_warn "$(i18n setup_complete_with_warnings)"
+    else
+        clack_outro "$(i18n setup_complete)"
+    fi
 }
 
 # Dev mode main flow
@@ -1681,7 +1933,11 @@ run_dev_setup() {
 
     print_summary
     print_dev_completion
-    clack_outro "$(i18n dev_setup_complete)"
+    if [ -n "$FAILED_COMPONENTS" ]; then
+        clack_outro_warn "$(i18n dev_setup_complete_with_warnings)"
+    else
+        clack_outro "$(i18n dev_setup_complete)"
+    fi
 }
 
 # Main entry point
@@ -1692,6 +1948,12 @@ main() {
         run_user_setup
     fi
 }
+
+# Always close an active guide on an unexpected exit or signal.
+trap 'setup_on_exit' 0
+trap 'setup_on_signal 129' HUP
+trap 'setup_on_signal 130' INT
+trap 'setup_on_signal 143' TERM
 
 # ${1+"$@"} instead of "$@": with `set -u` and no arguments, old shells
 # (e.g. macOS bash 3.2) would abort on "$@"

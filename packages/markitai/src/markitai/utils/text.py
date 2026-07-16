@@ -5,8 +5,18 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from typing import Any
+from urllib.parse import quote
 
 from pydantic import ValidationError
+
+
+def markdown_image_reference(alt: str, path: str) -> str:
+    """Build a CommonMark image reference safe for spaces and Unicode paths."""
+    escaped_alt = (
+        alt.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+    )
+    encoded_path = quote(path, safe="/._~-")
+    return f"![{escaped_alt}]({encoded_path})"
 
 
 def clean_control_characters(text: str, preserve_whitespace: bool = True) -> str:
@@ -380,13 +390,15 @@ def extract_asset_image_names(markdown: str) -> list[str]:
     Returns:
         List of asset file basenames referenced in the markdown
     """
+    from urllib.parse import unquote
+
     from markitai.constants import ASSETS_REL_PATH
 
     pattern = re.compile(rf"!\[[^\]]*\]\({re.escape(ASSETS_REL_PATH)}[/\\]([^)]+)\)")
     seen: set[str] = set()
     names: list[str] = []
     for match in pattern.finditer(markdown):
-        name = match.group(1).strip()
+        name = unquote(match.group(1).strip())
         if name and name not in seen:
             seen.add(name)
             names.append(name)

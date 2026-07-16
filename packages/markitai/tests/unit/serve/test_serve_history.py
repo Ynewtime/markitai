@@ -150,10 +150,11 @@ class TestJobMeta:
         assert meta["created_at"] == data["created_at"]
         assert meta["finished_at"] == data["finished_at"]
         assert meta["status"] == "done"
-        assert meta["options"] == {"preset": None, "llm": None}
+        assert meta["options"] == {"preset": None, "llm": None, "ocr": None}
         assert meta["items"] == data["items"]  # full item snapshot
         item = meta["items"][0]
         assert item["output"] == "doc.txt.md"
+        assert item["finished_at"] is not None
         assert item["cost_usd"] == 0.25
 
 
@@ -210,6 +211,38 @@ class TestRehydrate:
         assert events[0][1]["status"] == "done"
         assert events[1][1] == {"status": "done", "done": 1, "failed": 0, "total": 1}
 
+    async def test_rehydrate_backfills_legacy_item_completion_time(
+        self, tmp_path: Path
+    ) -> None:
+        job_dir = tmp_path / "jobs" / "legacy-job"
+        job_dir.mkdir(parents=True)
+        finished_at = "2026-07-12T10:01:00+00:00"
+        (job_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "job_id": "legacy-job",
+                    "created_at": "2026-07-12T10:00:00+00:00",
+                    "finished_at": finished_at,
+                    "status": "done",
+                    "items": [
+                        {
+                            "item_id": "i1",
+                            "name": "legacy.txt",
+                            "kind": "file",
+                            "status": "done",
+                            "duration_ms": 1000,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        async with _serve_client(_make_app(tmp_path)) as client:
+            snapshot = (await client.get("/api/jobs/legacy-job")).json()
+
+        assert snapshot["items"][0]["finished_at"] == finished_at
+
     async def test_rehydrate_skips_dirs_without_valid_terminal_meta(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -264,12 +297,45 @@ class TestHistory:
             "done": 1,
             "failed": 0,
             "skipped": 0,
+            "llm_enhanced": 0,
+            "cost_usd": 0.25,
             "names_preview": ["new.txt"],
+            "kinds_preview": ["file"],
+            "duration_ms": newest["duration_ms"],
             "size_bytes": newest["size_bytes"],
         }
+        assert newest["duration_ms"] >= 0
         assert newest["size_bytes"] > 0
         assert oldest["total"] == 4
         assert oldest["names_preview"] == ["old.txt", "b.txt", "c.txt"]  # first 3
+
+    async def test_download_all_includes_live_and_rehydrated_jobs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", _fake_converter())
+        await _run_one_job(_make_app(tmp_path), [("report.txt", b"old")])
+
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs", files=_multipart([("report.txt", b"new")])
+            )
+            await _wait_job_done(client, created.json()["job_id"])
+            archive = await client.get("/api/history/archive")
+
+        assert archive.status_code == 200
+        assert "markitai-all.zip" in archive.headers["content-disposition"]
+        with zipfile.ZipFile(BytesIO(archive.content)) as zf:
+            assert set(zf.namelist()) == {
+                "report.txt/report.txt.md",
+                "report.txt (2)/report.txt.md",
+            }
+
+    async def test_download_all_without_completed_jobs_is_404(
+        self, tmp_path: Path
+    ) -> None:
+        async with _serve_client(_make_app(tmp_path)) as client:
+            archive = await client.get("/api/history/archive")
+        assert archive.status_code == 404
 
     async def test_running_job_is_not_listed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
