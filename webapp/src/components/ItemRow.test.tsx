@@ -116,7 +116,9 @@ describe("ItemRow terminal actions", () => {
     );
   });
 
-  it("shows enhanced output and its cost without another enhance action", () => {
+  it("keeps re-enhancement available for an existing LLM result", async () => {
+    const user = userEvent.setup();
+    const onEnhance = vi.fn().mockResolvedValue(null);
     renderRow(
       {
         ...item("done"),
@@ -125,14 +127,36 @@ describe("ItemRow terminal actions", () => {
         llmEnhanced: true,
         operation: "enhance",
       },
-      { showCost: true, llmAvailable: true },
+      { showCost: true, llmAvailable: true, onEnhance },
     );
 
     expect(screen.getByText("LLM")).toHaveClass("llm-tag", "on");
     expect(screen.getByText("$0.0123")).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "Enhance doc.pdf with LLM" }),
-    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Enhance doc.pdf with LLM" }),
+    );
+    expect(onEnhance).toHaveBeenCalledOnce();
+  });
+
+  it("cannot trigger enhancement while the workspace LLM switch is off", async () => {
+    const user = userEvent.setup();
+    const onEnhance = vi.fn().mockResolvedValue(null);
+    renderRow(item("done"), {
+      llmAvailable: false,
+      llmDisabledReason: "Turn on LLM enhancement above to use this action",
+      onEnhance,
+    });
+
+    const action = screen.getByRole("button", {
+      name: "Enhance doc.pdf with LLM",
+    });
+    expect(action).toBeDisabled();
+    expect(action).toHaveAttribute(
+      "title",
+      "Turn on LLM enhancement above to use this action",
+    );
+    await user.click(action);
+    expect(onEnhance).not.toHaveBeenCalled();
   });
 
   it("shows enhancement failures inline and on the failed-status tooltip", async () => {

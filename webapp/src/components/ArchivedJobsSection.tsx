@@ -19,6 +19,26 @@ function statsLine(entry: HistoryEntry, t: Dict): string {
   return parts.join(" · ");
 }
 
+export interface ArchivedJobRowsProps {
+  t: Dict;
+  entries: HistoryEntry[] | null;
+  error: string | null;
+  actions: Record<string, "open" | "delete">;
+  rowErrors: Record<string, string>;
+  showCost: boolean;
+  startIndex: number;
+  onRefresh: () => Promise<void>;
+  onOpen: (jobId: string, opener: HTMLElement) => Promise<JobSnapshot | null>;
+  onRetry: (jobId: string) => Promise<string | null>;
+  onEnhance?: (jobId: string) => Promise<string | null>;
+  onDelete: (jobId: string) => Promise<boolean>;
+  announce: (message: string) => void;
+  llmAvailable?: boolean;
+  llmDisabledReason?: string;
+  tabbableJobId?: string | null;
+  onRowFocus?: (jobId: string) => void;
+}
+
 /** Persisted jobs use the same ledger row and terminal status language. */
 export function ArchivedJobRows({
   t,
@@ -35,22 +55,10 @@ export function ArchivedJobRows({
   onDelete,
   announce,
   llmAvailable = false,
-}: {
-  t: Dict;
-  entries: HistoryEntry[] | null;
-  error: string | null;
-  actions: Record<string, "open" | "delete">;
-  rowErrors: Record<string, string>;
-  showCost: boolean;
-  startIndex: number;
-  onRefresh: () => Promise<void>;
-  onOpen: (jobId: string, opener: HTMLElement) => Promise<JobSnapshot | null>;
-  onRetry: (jobId: string) => Promise<string | null>;
-  onEnhance?: (jobId: string) => Promise<string | null>;
-  onDelete: (jobId: string) => Promise<boolean>;
-  announce: (message: string) => void;
-  llmAvailable?: boolean;
-}) {
+  llmDisabledReason,
+  tabbableJobId,
+  onRowFocus,
+}: ArchivedJobRowsProps) {
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const [retrying, setRetrying] = useState<string | null>(null);
   const [enhancing, setEnhancing] = useState<string | null>(null);
@@ -92,16 +100,28 @@ export function ArchivedJobRows({
     }
   };
 
-  const requestDelete = async (entry: HistoryEntry, index: number) => {
+  const requestDelete = async (entry: HistoryEntry) => {
     const jobId = entry.job_id;
-    const nextId = entries?.[index + 1]?.job_id ?? entries?.[index - 1]?.job_id ?? null;
+    const row = rowRefs.current.get(jobId);
+    const listOptions = row
+      ?.closest('[role="listbox"]')
+      ?.querySelectorAll<HTMLElement>('[role="option"]');
+    const options =
+      listOptions === undefined
+        ? (entries ?? []).flatMap((candidate) => {
+            const element = rowRefs.current.get(candidate.job_id);
+            return element === undefined ? [] : [element];
+          })
+        : Array.from(listOptions);
+    const rowIndex = row === undefined ? -1 : options.indexOf(row);
+    const focusTarget =
+      rowIndex < 0 ? null : (options[rowIndex + 1] ?? options[rowIndex - 1] ?? null);
     const deleted = await onDelete(jobId);
     if (!deleted) return false;
 
     announce(t.histDeleted(entry.names_preview[0] ?? jobId));
     window.requestAnimationFrame(() => {
-      const nextRow = nextId === null ? null : rowRefs.current.get(nextId);
-      nextRow?.focus();
+      if (focusTarget?.isConnected) focusTarget.focus();
     });
     return true;
   };
@@ -141,8 +161,7 @@ export function ArchivedJobRows({
           entry.total === 1 &&
           entry.done === 1 &&
           entry.failed === 0 &&
-          entry.skipped === 0 &&
-          entry.llm_enhanced === 0;
+          entry.skipped === 0;
         const hasLlm =
           entry.llm_enhanced > 0 ||
           (entry.cost_usd !== null && entry.cost_usd > 0);
@@ -178,7 +197,16 @@ export function ArchivedJobRows({
             role="option"
             aria-selected={false}
             aria-disabled={busy !== undefined ? true : undefined}
-            tabIndex={startIndex === 0 && index === 0 ? 0 : -1}
+            data-ledger-key={`archive:${entry.job_id}`}
+            tabIndex={
+              tabbableJobId === undefined
+                ? startIndex === 0 && index === 0
+                  ? 0
+                  : -1
+                : tabbableJobId === entry.job_id
+                  ? 0
+                  : -1
+            }
             aria-label={`${t.histOpen} ${firstName}`}
             key={entry.job_id}
             ref={(element) => {
@@ -189,6 +217,7 @@ export function ArchivedJobRows({
               event.currentTarget.focus({ preventScroll: true });
               activate(event.currentTarget);
             }}
+            onFocus={() => onRowFocus?.(entry.job_id)}
             onKeyDown={(event) => {
               if (event.target !== event.currentTarget) return;
               if (event.key === "Enter" || event.key === " ") {
@@ -272,7 +301,7 @@ export function ArchivedJobRows({
                     retryErrors[entry.job_id] ??
                     (llmAvailable
                       ? t.enhanceWithLlm(firstName)
-                      : t.llmEnhanceUnavailable)
+                      : (llmDisabledReason ?? t.llmEnhanceUnavailable))
                   }
                   data-tooltip={retryErrors[entry.job_id]}
                   disabled={
@@ -324,7 +353,7 @@ export function ArchivedJobRows({
                 disabled={
                   busy !== undefined || retrying !== null || enhancing !== null
                 }
-                onConfirm={() => requestDelete(entry, index)}
+                onConfirm={() => requestDelete(entry)}
               />
             </span>
             <span className="rowmeta">

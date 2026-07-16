@@ -159,6 +159,12 @@ describe("App workspace", () => {
     expect(source?.querySelector(".url-entry .file-picker")).not.toBeNull();
     const currentRow = screen.getByRole("option", { name: /result\.md/ });
     expect(currentRow.querySelector(".c-finished")).toHaveTextContent("07-13 10:00");
+    const enhance = screen.getByRole("button", {
+      name: "Enhance result.md with LLM",
+    });
+    expect(enhance).toBeDisabled();
+    fireEvent.click(screen.getByRole("switch", { name: "LLM enhancement" }));
+    expect(enhance).toBeEnabled();
     expect(currentRow.querySelector(".c-status.archive-actions")).not.toBeNull();
     const archivedRow = screen.getByRole("option", { name: "Open archived.pdf" });
     expect(listbox.contains(archivedRow)).toBe(true);
