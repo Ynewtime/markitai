@@ -106,6 +106,7 @@ export function ItemRow({
   onEnhance = async () => null,
   onDelete,
   llmAvailable = false,
+  llmDisabledReason,
 }: {
   t: Dict;
   item: SessionItem;
@@ -121,6 +122,7 @@ export function ItemRow({
   onEnhance?: (item: SessionItem) => Promise<string | null>;
   onDelete: (item: SessionItem) => Promise<string | null>;
   llmAvailable?: boolean;
+  llmDisabledReason?: string;
 }) {
   const [errExpanded, setErrExpanded] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
@@ -137,7 +139,7 @@ export function ItemRow({
     item.llmEnhanced ||
     item.operation === "enhance" ||
     (item.costUsd !== null && item.costUsd > 0);
-  const enhanceable = previewable && !item.llmEnhanced && canDelete;
+  const enhanceable = previewable && canDelete;
 
   const doRetry = async () => {
     if (retryBusy || enhanceBusy || deleteBusy) return;
@@ -236,6 +238,7 @@ export function ItemRow({
       role="option"
       id={`opt-${item.key.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
       data-session-key={item.key}
+      data-ledger-key={item.key}
       aria-selected={selected}
       aria-disabled={inert ? true : undefined}
       aria-label={ariaParts.join(", ")}
@@ -294,7 +297,7 @@ export function ItemRow({
                   enhanceErr ??
                   (llmAvailable
                     ? t.enhanceWithLlm(displayName)
-                    : t.llmEnhanceUnavailable)
+                    : (llmDisabledReason ?? t.llmEnhanceUnavailable))
                 }
                 data-tooltip={enhanceErr ?? undefined}
                 disabled={

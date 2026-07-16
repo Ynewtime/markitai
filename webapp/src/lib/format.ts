@@ -26,6 +26,44 @@ export function fmtDateTime(iso: string | null): string {
   return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`;
 }
 
+/** Parse Python's offset-aware ISO timestamps without Date.parse quirks.
+ * Safari rejects some otherwise valid six-digit fractional timestamps. */
+export function serverTimestampMs(value: string): number | null {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(
+      value,
+    );
+  if (match === null) return null;
+  const [
+    ,
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second,
+    fraction = "",
+    zone,
+    sign,
+    zoneHour,
+    zoneMinute,
+  ] = match;
+  const milliseconds = Number((fraction + "000").slice(0, 3));
+  const utc = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+    milliseconds,
+  );
+  if (!Number.isFinite(utc)) return null;
+  if (zone === "Z") return utc;
+  const offset = (Number(zoneHour) * 60 + Number(zoneMinute)) * 60_000;
+  return sign === "+" ? utc - offset : utc + offset;
+}
+
 /** Latin words + CJK chars, so zh documents count sensibly too. */
 export function countWords(s: string): number {
   const cjkRe = /[぀-ヿ㐀-鿿豈-﫿]/g;

@@ -17,7 +17,10 @@ import type {
   JobSnapshot,
   JobStatus,
 } from "../api/types";
+import { serverTimestampMs } from "../lib/format";
 import { notifyJobDone, requestNotifyPermission } from "../lib/notify";
+
+export { serverTimestampMs } from "../lib/format";
 
 /** sessionStorage seeds so an F5 mid-job can rebuild the ledger and re-attach
  * to still-running jobs (the server replays a snapshot on connect). */
@@ -157,32 +160,6 @@ export interface SessionJob {
   status: JobStatus;
   createdAt: string | null;
   options: JobOptions;
-}
-
-/** Parse the server's offset-aware ISO timestamp without browser Date.parse quirks.
- * Safari rejects some valid six-digit fractional timestamps emitted by Python. */
-export function serverTimestampMs(value: string): number | null {
-  const match =
-    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(
-      value,
-    );
-  if (match === null) return null;
-  const [, year, month, day, hour, minute, second, fraction = "", zone, sign, zoneHour, zoneMinute] =
-    match;
-  const milliseconds = Number((fraction + "000").slice(0, 3));
-  const utc = Date.UTC(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second),
-    milliseconds,
-  );
-  if (!Number.isFinite(utc)) return null;
-  if (zone === "Z") return utc;
-  const offset = (Number(zoneHour) * 60 + Number(zoneMinute)) * 60_000;
-  return sign === "+" ? utc - offset : utc + offset;
 }
 
 /** Keep each job's input order, but place the most recently created job first. */

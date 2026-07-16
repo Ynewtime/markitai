@@ -3,7 +3,6 @@ import { fetchCapabilities, historyArchiveUrl } from "./api/client";
 import { MAX_JOB_ITEMS, type Capabilities, type JobOptions, type Preset } from "./api/types";
 import type { SessionItem } from "./hooks/useJobs";
 import { AppHeader } from "./components/AppHeader";
-import { ArchivedJobRows } from "./components/ArchivedJobsSection";
 import { CapabilityHint } from "./components/CapabilityHint";
 import { DownloadActions } from "./components/DownloadActions";
 import { DropOverlay } from "./components/DropZone";
@@ -378,7 +377,10 @@ export default function App() {
     archivedPreview?.item ?? (selected !== null && previewable(selected) ? selected : null);
   const previewOpenerRef = useRef<HTMLElement | null>(null);
   const previewReturnKeyRef = useRef<string | null>(null);
-  const handleSelect = useCallback((key: string) => setSelectedKey(key), []);
+  const handleSelect = useCallback(
+    (key: string | null) => setSelectedKey(key),
+    [],
+  );
   const openPreview = useCallback((key: string, opener: HTMLElement) => {
     setArchivedPreview(null);
     setSelectedKey(key);
@@ -523,6 +525,10 @@ export default function App() {
   // Keep the Base/LLM distinction visible even when every current result has
   // zero cost; hiding this column made unenhanced rows ambiguous.
   const showCost = true;
+  const llmEnhanceAvailable = llmConfigured && llm;
+  const llmDisabledReason = llmConfigured
+    ? t.llmEnhanceTurnOn
+    : t.llmEnhanceUnavailable;
 
   // Safari can retain focus on a generic tabindex row after a page click.
   // Clear ledger selection from a capture listener, while preserving the row
@@ -739,6 +745,21 @@ export default function App() {
                 <ItemList
                   t={t}
                   items={items}
+                  jobs={jobs}
+                  archive={{
+                    entries: archived.entries,
+                    error: archived.error,
+                    rowProps: {
+                      actions: archived.actions,
+                      rowErrors: archived.rowErrors,
+                      onRefresh: archived.refresh,
+                      onOpen: openArchivedJob,
+                      onRetry: retryArchivedJob,
+                      onEnhance: enhanceArchivedJob,
+                      onDelete: archived.deleteJob,
+                      announce,
+                    },
+                  }}
                   showCost={showCost}
                   now={now}
                   stats={stats}
@@ -752,26 +773,8 @@ export default function App() {
                   onEnhance={enhanceItem}
                   onDelete={deleteSessionItem}
                   canDelete={(item) => jobs[item.jobId]?.status === "done"}
-                  llmAvailable={llmConfigured}
-                  hasArchivedRows={(archived.entries?.length ?? 0) > 0 || archived.error !== null}
-                  archivedRows={
-                    <ArchivedJobRows
-                      t={t}
-                      entries={archived.entries}
-                      error={archived.error}
-                      actions={archived.actions}
-                      rowErrors={archived.rowErrors}
-                      showCost={showCost}
-                      startIndex={items.length}
-                      onRefresh={archived.refresh}
-                      onOpen={openArchivedJob}
-                      onRetry={retryArchivedJob}
-                      onEnhance={enhanceArchivedJob}
-                      onDelete={archived.deleteJob}
-                      announce={announce}
-                      llmAvailable={llmConfigured}
-                    />
-                  }
+                  llmAvailable={llmEnhanceAvailable}
+                  llmDisabledReason={llmDisabledReason}
                 />
               </div>
             </div>

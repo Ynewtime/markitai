@@ -131,6 +131,33 @@ describe("ArchivedJobRows", () => {
     );
   });
 
+  it("keeps enhancement available for a persisted LLM result", () => {
+    render(
+      <ArchivedJobRows
+        t={dicts.en}
+        entries={[
+          { ...entries[0]!, llm_enhanced: 1, cost_usd: 0.01 },
+        ]}
+        error={null}
+        actions={{}}
+        rowErrors={{}}
+        showCost
+        startIndex={0}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onOpen={vi.fn().mockResolvedValue(null)}
+        onRetry={vi.fn().mockResolvedValue(null)}
+        onEnhance={vi.fn().mockResolvedValue(null)}
+        onDelete={vi.fn().mockResolvedValue(true)}
+        announce={() => undefined}
+        llmAvailable
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Enhance first.pdf with LLM" }),
+    ).toBeEnabled();
+  });
+
   it("shows a warning icon and retry for a persisted skip", async () => {
     const user = userEvent.setup();
     const onRetry = vi.fn().mockResolvedValue(null);

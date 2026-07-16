@@ -3088,7 +3088,17 @@
 @media print {
   @page {
     size: A4;
-    margin: 0;
+    margin: 8mm 0 12mm;
+  }
+  @page markitai-light {
+    size: A4;
+    margin: 8mm 0 12mm;
+    background: #fff;
+  }
+  @page markitai-dark {
+    size: A4;
+    margin: 8mm 0 12mm;
+    background: #09090b;
   }
 
   body.printing-preview.printing-dark-theme {
@@ -3111,8 +3121,8 @@
     --syntax-constant: #79c0ff;
   }
 
-  /* Zero page margin lets Safari paint the selected theme edge-to-edge.
-     Fragment-cloned document padding below supplies the visual page margin. */
+  /* Named page backgrounds keep dark exports continuous through the page
+     margins where supported; document backgrounds remain the fallback. */
   html.printing-dark-theme,
   html.printing-dark-theme body.printing-preview,
   body.printing-preview.printing-dark-theme .preview-modal,
@@ -3190,19 +3200,22 @@
   body.printing-preview .pdf-export-target #pane-rendered {
     display: block !important;
   }
-  /* Padding belongs to the fragmented document rather than @page, avoiding
-     a white paper frame while preserving a compact margin on every page. */
+  /* @page owns vertical spacing so every Safari/Chromium fragment receives
+     both a top and bottom margin. This box supplies only horizontal inset. */
   body.printing-preview .pdf-print-document {
-    page: auto;
+    page: markitai-light;
     display: block;
     box-sizing: border-box;
     width: auto;
     min-width: 0;
     max-width: none;
     margin: 0;
-    padding: 8mm 10mm;
+    padding: 0 10mm;
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
+  }
+  body.printing-preview.printing-dark-theme .pdf-print-document {
+    page: markitai-dark;
   }
 
   /* Ordinary flow children naturally occur only on the first and last page;

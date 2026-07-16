@@ -385,18 +385,34 @@ def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
 
 
 def job_duration_ms(job: Job) -> int | None:
-    """Wall-clock duration of a terminal job, when timestamps are valid."""
-    if not job.created_at or not job.finished_at:
-        return None
-    try:
-        created = datetime.fromisoformat(job.created_at)
-        finished = datetime.fromisoformat(job.finished_at)
-    except ValueError:
-        return None
-    try:
-        return max(0, int((finished - created).total_seconds() * 1000))
-    except TypeError:  # mixed offset-aware/naive timestamps in old or edited meta
-        return None
+    """Duration of the latest conversion pass, with a legacy fallback.
+
+    Retrying or enhancing an old job updates ``finished_at`` but intentionally
+    preserves ``created_at``. Their wall-clock difference can therefore span
+    hours; rerun item durations describe the actual latest pass and keep
+    history meaningful. Initial jobs retain their accurate wall-clock timing;
+    the longest item is only the fallback for incomplete legacy timestamps.
+    """
+    item_durations = [
+        item.duration_ms for item in job.items if item.duration_ms is not None
+    ]
+    rerun_durations = [
+        item.duration_ms
+        for item in job.items
+        if item.operation != "convert" and item.duration_ms is not None
+    ]
+    if rerun_durations:
+        return max(rerun_durations)
+
+    if job.created_at and job.finished_at:
+        try:
+            created = datetime.fromisoformat(job.created_at)
+            finished = datetime.fromisoformat(job.finished_at)
+            return max(0, int((finished - created).total_seconds() * 1000))
+        except (TypeError, ValueError):
+            # Mixed offset-aware/naive or edited legacy timestamps.
+            pass
+    return max(item_durations) if item_durations else None
 
 
 def job_dir_size(job_dir: Path) -> int:

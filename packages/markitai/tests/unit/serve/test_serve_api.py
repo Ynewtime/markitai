@@ -1072,7 +1072,10 @@ class TestRetry:
         from markitai.batch import ProcessResult
         from markitai.config import LiteLLMParams, ModelConfig
 
+        attempts: list[bool] = []
+
         async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            attempts.append(cfg.llm.enabled)
             suffix = ".llm.md" if cfg.llm.enabled else ".md"
             output = out_dir / f"{file_path.name}{suffix}"
             output.write_text("enhanced" if cfg.llm.enabled else "base", encoding="utf-8")
@@ -1115,6 +1118,18 @@ class TestRetry:
             )
             assert queued.status_code == 202
             enhanced = await _wait_job_done(client, job_id)
+
+            # An existing .llm.md result remains explicitly re-enhanceable so
+            # changed model settings can be applied without creating a new row.
+            repeated = await client.post(
+                f"/api/jobs/{job_id}/items/i1/retry",
+                json={
+                    "operation": "enhance",
+                    "options": {"preset": "minimal", "llm": True},
+                },
+            )
+            assert repeated.status_code == 202
+            enhanced = await _wait_job_done(client, job_id)
             history = (await client.get("/api/history")).json()[0]
 
         item = enhanced["items"][0]
@@ -1127,6 +1142,8 @@ class TestRetry:
         assert enhanced["options"]["llm"] is False
         assert history["llm_enhanced"] == 1
         assert history["cost_usd"] == pytest.approx(0.0123)
+        assert history["duration_ms"] == item["duration_ms"]
+        assert attempts == [False, True, True]
 
     async def test_explicit_llm_enhancement_requires_an_llm_result(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
