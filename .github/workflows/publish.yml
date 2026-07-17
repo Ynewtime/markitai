@@ -3,8 +3,11 @@ name: Release
 # Manual release flow (no release-please). To cut a release:
 #   1. bump __version__ in packages/markitai/src/markitai/__init__.py
 #   2. add a `## [X.Y.Z]` section to CHANGELOG.md
-#   3. commit + push to main
-#   4. git tag vX.Y.Z && git push origin vX.Y.Z
+#   3. if the webapp changed, run scripts/sync_webapp_static.sh so the packaged
+#      serve/static matches webapp/src (the `webapp` job below re-checks this
+#      and fails the release if it is stale)
+#   4. commit + push to main
+#   5. git tag vX.Y.Z && git push origin vX.Y.Z
 # Pushing the tag runs this workflow: tests -> build -> tag/version check ->
 # publish to PyPI -> create the GitHub Release (notes from the CHANGELOG section).
 on:
@@ -22,6 +25,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The wheel packages the committed serve/static as-is (no rebuild at publish
+  # time), so a release must verify that snapshot matches webapp/src — else a
+  # frontend change committed without scripts/sync_webapp_static.sh ships stale
+  # assets. This mirrors ci.yml's webapp job and gates `publish` below.
+  webapp:
+    name: Webapp test & packaged-asset check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: webapp/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm --dir webapp install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm --dir webapp test
+
+      - name: Build webapp and verify packaged assets are in sync
+        run: scripts/sync_webapp_static.sh --check
+
   lint:
     runs-on: ubuntu-latest
     permissions:
@@ -131,7 +170,7 @@ jobs:
           uv tool run --isolated --python '${{ matrix.python-version }}' --from "$wheel" markitai --help >/dev/null
 
   publish:
-    needs: [lint, test]
+    needs: [webapp, lint, test]
     runs-on: ubuntu-latest
     permissions:
       contents: write  # create the GitHub Release
