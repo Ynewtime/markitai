@@ -36,12 +36,16 @@ export function ModelPicker({
   const [query, setQuery] = useState("");
   const [manual, setManual] = useState("");
   const [manualModels, setManualModels] = useState<ModelCandidate[]>([]);
+  // Raw text of the weight field while it has focus, so clearing it does not
+  // snap to 0 mid-edit; blur resolves back to the parsed weight.
+  const [weightDraft, setWeightDraft] = useState<string | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setQuery("");
     setManual("");
     setManualModels([]);
+    setWeightDraft(null);
   }, [provider]);
 
   const allCandidates = useMemo(() => {
@@ -196,8 +200,12 @@ export function ModelPicker({
               <input
                 type="number"
                 min={0}
-                value={weight}
-                onChange={(event) => onWeight(Math.max(0, Number(event.target.value) || 0))}
+                value={weightDraft ?? weight}
+                onChange={(event) => {
+                  setWeightDraft(event.target.value);
+                  onWeight(Math.max(0, Number(event.target.value) || 0));
+                }}
+                onBlur={() => setWeightDraft(null)}
               />
             </label>
           </div>

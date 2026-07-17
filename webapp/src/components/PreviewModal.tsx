@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
-import { MarkdownPreview } from "./MarkdownPreview";
+import { MarkdownPreview, openPdfSettingsCard } from "./MarkdownPreview";
 import { ExternalLinkIcon, XIcon } from "./icons";
 
 export function PreviewModal({
@@ -35,7 +35,12 @@ export function PreviewModal({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // An open PDF-settings popover is the topmost layer: it owns Escape and
+      // bounds the Tab cycle. Its listener shares this document node, so
+      // stopPropagation cannot arbitrate - the modal has to stand down itself.
+      const popover = openPdfSettingsCard();
       if (event.key === "Escape") {
+        if (popover !== null) return;
         event.preventDefault();
         event.stopPropagation();
         onClose();
@@ -43,7 +48,7 @@ export function PreviewModal({
       }
       if (event.key !== "Tab") return;
 
-      const dialog = dialogRef.current;
+      const dialog = popover ?? dialogRef.current;
       if (dialog === null) return;
       const focusable = Array.from(
         dialog.querySelectorAll<HTMLElement>(
@@ -78,7 +83,9 @@ export function PreviewModal({
 
   return (
     <div
-      className="mdl-veil"
+      /* preview-veil: lets phone CSS turn only this modal into a full-screen
+         sheet without touching the settings dialog's shared veil styling */
+      className="mdl-veil preview-veil"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}

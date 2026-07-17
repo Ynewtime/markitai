@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -76,6 +76,20 @@ describe("ItemRow terminal actions", () => {
     expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ itemId: "i1" }));
   });
 
+  it("renders the meta line as separate facts with a tagged timestamp", () => {
+    const { container } = renderRow(item("done"), { showCost: true });
+
+    const meta = container.querySelector(".rowmeta");
+    const bits = Array.from(meta?.querySelectorAll(".metabit") ?? []).map(
+      (bit) => bit.textContent,
+    );
+    expect(bits).toEqual(["100 B", "0.1s", "07-15 10:00", "Base"]);
+    // the timestamp bit is tagged: it is what the tightest phones drop
+    expect(meta?.querySelector(".metabit-time")).toHaveTextContent("07-15 10:00");
+    // separators are CSS ::before — a joined string would strand a "/" on wrap
+    expect(meta?.textContent).not.toContain("/");
+  });
+
   it("shows a warning tooltip and allows an image-only skip to retry", async () => {
     const user = userEvent.setup();
     const onRetry = vi.fn().mockResolvedValue(null);
@@ -96,16 +110,33 @@ describe("ItemRow terminal actions", () => {
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
+  it("is not aria-disabled while it hosts an enabled Retry (skipped, job running)", () => {
+    const skipped = {
+      ...item("done"),
+      output: null,
+      skipped: true,
+      skipReason: "image_only",
+    };
+    // canDelete false models a still-running job; the row is not previewable
+    // and not failed, but its Retry is enabled — so it must not read disabled
+    renderRow(skipped, { canDelete: false });
+
+    const row = screen.getByRole("option");
+    expect(row).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("button", { name: "Retry doc.pdf" })).toBeEnabled();
+  });
+
   it("labels base output and can enhance it in place when LLM is available", async () => {
     const user = userEvent.setup();
     const onEnhance = vi.fn().mockResolvedValue(null);
-    renderRow(item("done"), {
+    const { container } = renderRow(item("done"), {
       showCost: true,
       llmAvailable: true,
       onEnhance,
     });
 
-    expect(screen.getByText("Base")).toHaveClass("llm-tag");
+    // scoped to the cost cell: the meta line repeats "Base" in its own span
+    expect(container.querySelector(".llm-cell .llm-tag")).toHaveTextContent("Base");
     const action = screen.getByRole("button", {
       name: "Enhance doc.pdf with LLM",
     });
@@ -197,5 +228,56 @@ describe("ItemRow terminal actions", () => {
     expect(actions?.querySelectorAll("button")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "Retry doc.pdf" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles the full error detail on the failed row", async () => {
+    const user = userEvent.setup();
+    const { container } = renderRow(item("error"));
+
+    const row = screen.getByRole("option");
+    // role="option" does not support aria-expanded; the error text the row
+    // describes (aria-describedby) is what conveys state to screen readers.
+    expect(row).not.toHaveAttribute("aria-expanded");
+    expect(container.querySelector(".err-full")).toBeNull();
+    await user.click(row);
+    expect(container.querySelector(".err-full")).not.toBeNull();
+  });
+
+  it("hands focus to the neighboring row after a delete", async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn().mockResolvedValue(null);
+    const second = { ...item("done"), key: "job-1/i2", itemId: "i2", name: "next.pdf" };
+    const rowProps = {
+      t: dicts.en,
+      index: 0,
+      showCost: false,
+      now: Date.now(),
+      selected: false,
+      tabbable: false,
+      canDelete: true,
+      onPreview: vi.fn(),
+      onRowFocus: vi.fn(),
+      onRetry: vi.fn().mockResolvedValue(null),
+      onDelete,
+    };
+    const list = (items: SessionItem[]) => (
+      <div role="listbox">
+        {items.map((value) => (
+          <ItemRow key={value.key} {...rowProps} item={value} />
+        ))}
+      </div>
+    );
+    const { rerender } = render(list([item("done"), second]));
+
+    await user.click(
+      screen.getByRole("button", { name: "Permanently delete doc.pdf" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete permanently" }));
+    rerender(list([second]));
+
+    await waitFor(() => {
+      expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ itemId: "i1" }));
+      expect(screen.getByRole("option", { name: /next\.pdf/ })).toHaveFocus();
+    });
   });
 });

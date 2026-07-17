@@ -52,7 +52,7 @@ async def _serve_client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
+            transport=transport, base_url="http://127.0.0.1"
         ) as client:
             yield client
 
@@ -395,6 +395,66 @@ class TestHistory:
             await _wait_job_done(client, job_id)
             done = await client.delete(f"/api/history/{job_id}")
             assert done.status_code == 204
+
+
+class TestHistorySizeCache:
+    """size_bytes comes from the terminal-state cache, not a per-refresh rglob."""
+
+    async def test_terminal_meta_caches_size_and_history_reuses_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", _fake_converter())
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs", files=_multipart([("doc.txt", b"hello")])
+            )
+            job_id = created.json()["job_id"]
+            await _wait_job_done(client, job_id)
+            meta = json.loads(
+                (tmp_path / "jobs" / job_id / "meta.json").read_text(encoding="utf-8")
+            )
+            assert meta["dir_size_bytes"] > 0
+
+            def fail_rglob(job_dir: Path) -> int:
+                pytest.fail("history refresh must use the cached size")
+
+            monkeypatch.setattr("markitai.serve.jobs.job_dir_size", fail_rglob)
+            history = (await client.get("/api/history")).json()
+        assert history[0]["size_bytes"] == meta["dir_size_bytes"]
+
+    async def test_legacy_meta_without_size_is_computed_once_and_persisted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        job_dir = tmp_path / "jobs" / "legacy-job"
+        (job_dir / "out").mkdir(parents=True)
+        (job_dir / "out" / "legacy.txt.md").write_text("x" * 64, encoding="utf-8")
+        meta_path = job_dir / "meta.json"
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "job_id": "legacy-job",
+                    "created_at": "2026-07-12T10:00:00+00:00",
+                    "finished_at": "2026-07-12T10:01:00+00:00",
+                    "status": "done",
+                    "items": [{"item_id": "i1", "name": "legacy.txt", "kind": "file"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        async with _serve_client(_make_app(tmp_path)) as client:
+            first = (await client.get("/api/history")).json()
+            assert first[0]["size_bytes"] >= 64
+            # The lazy compute is persisted so a restart also skips the rglob.
+            persisted = json.loads(meta_path.read_text(encoding="utf-8"))
+            assert persisted["dir_size_bytes"] == first[0]["size_bytes"]
+
+            def fail_rglob(job_dir: Path) -> int:
+                pytest.fail("second refresh must use the cached size")
+
+            monkeypatch.setattr("markitai.serve.jobs.job_dir_size", fail_rglob)
+            second = (await client.get("/api/history")).json()
+        assert second[0]["size_bytes"] == first[0]["size_bytes"]
 
 
 class TestHistoryTTL:

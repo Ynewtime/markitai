@@ -64,9 +64,13 @@ export function serverTimestampMs(value: string): number | null {
   return sign === "+" ? utc - offset : utc + offset;
 }
 
-/** Latin words + CJK chars, so zh documents count sensibly too. */
+/** Latin words + CJK chars, so zh documents count sensibly too. Kept to real
+ * CJK blocks — kana, Extension A, Unified Ideographs, the F900-FAFF
+ * compatibility block, and the plane-2/3 supplementary extensions (B and up,
+ * hence the u flag) — so nearby scripts such as Hebrew/Arabic presentation
+ * forms still count per word, not per character. */
 export function countWords(s: string): number {
-  const cjkRe = /[぀-ヿ㐀-鿿豈-﫿]/g;
+  const cjkRe = /[぀-ヿ㐀-䶿一-鿿豈-﫿\u{20000}-\u{3FFFF}]/gu;
   const cjk = s.match(cjkRe)?.length ?? 0;
   const words = s.replace(cjkRe, " ").match(/\S+/g)?.length ?? 0;
   return cjk + words;

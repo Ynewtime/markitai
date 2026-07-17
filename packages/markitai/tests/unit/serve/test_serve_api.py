@@ -53,7 +53,7 @@ async def _serve_client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
+            transport=transport, base_url="http://127.0.0.1"
         ) as client:
             yield client
 
@@ -983,6 +983,56 @@ class TestRetry:
 
         return convert
 
+    async def test_retry_while_sibling_still_running_is_not_stranded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Retrying a terminal item mid-job must start the retry worker even
+        though the initial run (job.task) is not yet done."""
+        gate = asyncio.Event()
+        calls: list[str] = []
+
+        async def conv(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            from markitai.batch import ProcessResult
+
+            calls.append(file_path.name)
+            if file_path.name == "doc2.txt":
+                await gate.wait()  # hold the initial run open
+                out = out_dir / f"{file_path.name}.md"
+                out.write_text("ok", encoding="utf-8")
+                return ProcessResult(success=True, output_path=str(out))
+            if calls.count("doc1.txt") == 1:  # first pass: i1 fails
+                return ProcessResult(success=False, error="boom")
+            out = out_dir / f"{file_path.name}.md"  # retry pass: i1 succeeds
+            out.write_text("ok", encoding="utf-8")
+            return ProcessResult(success=True, output_path=str(out))
+
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", conv)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(files=[("doc1.txt", b"a"), ("doc2.txt", b"b")]),
+            )
+            job_id = created.json()["job_id"]
+
+            # i1 has failed while i2 is still gated (job running).
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                snap = (await client.get(f"/api/jobs/{job_id}")).json()
+                if snap["items"][0]["status"] == "error":
+                    break
+                await asyncio.sleep(0.02)
+            assert snap["status"] == "running"
+            assert snap["items"][0]["status"] == "error"
+
+            queued = await client.post(f"/api/jobs/{job_id}/items/i1/retry")
+            assert queued.status_code == 202
+            gate.set()
+            done = await _wait_job_done(client, job_id)
+
+        assert done["items"][0]["status"] == "done"
+        assert done["items"][0]["output"] == "doc1.txt.md"
+        assert done["items"][1]["status"] == "done"
+
     async def test_retry_failed_file_item_reuses_upload_and_row(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1184,11 +1234,14 @@ class TestRetry:
             assert queued.status_code == 202
             failed = await _wait_job_done(client, job_id)
 
+        # A failed enhance must not destroy the item's existing base result:
+        # the row rolls back to its prior successful (base) state.
         item = failed["items"][0]
-        assert item["status"] == "error"
-        assert item["operation"] == "enhance"
+        assert item["status"] == "done"
+        assert item["operation"] == "convert"
         assert item["llm_enhanced"] is False
-        assert "did not produce" in item["error"]
+        assert item["output"] == "doc.txt.md"
+        assert item["error"] is None
 
     async def test_explicit_llm_enhancement_is_rejected_without_models(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

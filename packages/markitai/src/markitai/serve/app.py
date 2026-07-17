@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import ValidationError
+from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from markitai import __version__
@@ -36,7 +37,7 @@ from markitai.serve.jobs import (
     JobRegistry,
     RetryWork,
     cleanup_stale_jobs,
-    job_dir_size,
+    job_cached_dir_size,
     job_duration_ms,
     rehydrate_jobs,
     run_job,
@@ -55,7 +56,7 @@ from markitai.serve.schemas import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator, Callable, Sequence
 
     from markitai.config import LLMProviderConfig, MarkitaiConfig, ModelConfig
 
@@ -204,6 +205,146 @@ class _BodyLimitMiddleware:
 
                 response = JSONResponse(
                     {"detail": "request body too large"}, status_code=413
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+_LOCAL_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+_STATE_CHANGING_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
+
+
+def _host_header_hostname(value: str) -> str | None:
+    """Extract the lowercased hostname from a ``host[:port]`` header value."""
+    try:
+        return urlsplit(f"//{value}").hostname
+    except ValueError:
+        return None
+
+
+def _origin_hostname(value: str) -> str | None:
+    """Extract the lowercased hostname from an Origin header value.
+
+    Opaque origins (``null``) and malformed values yield None.
+    """
+    try:
+        return urlsplit(value).hostname
+    except ValueError:
+        return None
+
+
+def _normalize_allowed_host(value: str) -> str:
+    """Normalize a user-supplied allowlist entry to a bare lowercase hostname."""
+    host = value.strip().lower()
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    return host
+
+
+def _is_trusted_hostname(hostname: str | None, extra_allowed: frozenset[str]) -> bool:
+    """Whether *hostname* is safe against DNS rebinding.
+
+    IP-literal hosts are always trusted: rebinding needs the browser to
+    resolve an attacker-controlled DNS name, so literal IPs (including LAN
+    binds like 192.168.x.x) cannot be spoofed that way.
+    """
+    if not hostname:
+        return False
+    if hostname in _LOCAL_HOSTNAMES or hostname in extra_allowed:
+        return True
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_trusted_origin(
+    origin_hostname: str | None,
+    host_hostname: str | None,
+    extra_allowed: frozenset[str],
+) -> bool:
+    """Whether *origin_hostname* may issue a state-changing cross-site request.
+
+    Unlike the Host header, the Origin is fully attacker-controlled, so the
+    blanket IP-literal trust of ``_is_trusted_hostname`` must not apply here:
+    an attacker can host the exploit page from a bare IP and would otherwise
+    pass. Trust only loopback, explicit ``--allowed-host`` entries, or an
+    origin whose host equals the already Host-validated host (i.e. the request
+    is same-origin: the attacker's page would have to be served from the very
+    address the victim connected to, which makes it the real app).
+    """
+    if not origin_hostname:
+        return False
+    if origin_hostname in _LOCAL_HOSTNAMES or origin_hostname in extra_allowed:
+        return True
+    return host_hostname is not None and origin_hostname == host_hostname
+
+
+class _HostGuardMiddleware:
+    """Reject DNS-rebinding hosts and cross-site state-changing requests.
+
+    The loopback peer check on the settings routes cannot stop DNS
+    rebinding: the browser connects to 127.0.0.1 (so the peer *is* loopback)
+    while the page came from an attacker-controlled DNS name. Validating the
+    Host header closes that hole. The Origin check covers CSRF: multipart
+    POSTs are CORS-safelisted (no preflight), so any website could otherwise
+    fire POST /api/jobs — which fetches caller-chosen URLs server-side —
+    cross-site. Requests without an Origin header (curl, same-origin GETs)
+    pass through untouched.
+    """
+
+    def __init__(self, app: Any, allowed_hosts: frozenset[str]) -> None:
+        self.app = app
+        self.allowed_hosts = allowed_hosts
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            host_header: str | None = None
+            origin_header: str | None = None
+            for key, value in scope.get("headers") or ():
+                if key == b"host":
+                    host_header = value.decode("latin-1")
+                elif key == b"origin":
+                    origin_header = value.decode("latin-1")
+            host_hostname = (
+                _host_header_hostname(host_header)
+                if host_header is not None
+                else None
+            )
+            if host_header is not None and not _is_trusted_hostname(
+                host_hostname, self.allowed_hosts
+            ):
+                response = JSONResponse(
+                    {
+                        "detail": (
+                            f"host '{host_header}' is not allowed; use "
+                            "localhost, an IP address, or start the server "
+                            "with --allowed-host"
+                        )
+                    },
+                    status_code=400,
+                )
+                await response(scope, receive, send)
+                return
+            if (
+                origin_header is not None
+                and scope.get("method", "").upper() in _STATE_CHANGING_METHODS
+                and not _is_trusted_origin(
+                    _origin_hostname(origin_header),
+                    host_hostname,
+                    self.allowed_hosts,
+                )
+            ):
+                response = JSONResponse(
+                    {
+                        "detail": (
+                            f"cross-site request from origin "
+                            f"'{origin_header}' is not allowed"
+                        )
+                    },
+                    status_code=403,
                 )
                 await response(scope, receive, send)
                 return
@@ -947,7 +1088,12 @@ def _add_job_outputs_to_zip(
         ):
             continue
         relative = file.relative_to(out_dir)
-        archive.write(file, relative if prefix is None else prefix / relative)
+        try:
+            archive.write(file, relative if prefix is None else prefix / relative)
+        except OSError:
+            # A concurrent delete-item / rerun can unlink a file between the
+            # rglob and this write; skip it rather than failing the archive.
+            continue
 
 
 def _job_archive_folder(job: Job) -> str:
@@ -1035,6 +1181,7 @@ def create_app(
     config: MarkitaiConfig | None = None,
     configure_logging: bool = True,
     config_path: Path | None = None,
+    allowed_hosts: Sequence[str] | None = None,
 ) -> FastAPI:
     """Create the markitai serve FastAPI application.
 
@@ -1050,6 +1197,9 @@ def create_app(
             (disable in embedding tests to keep global state untouched).
         config_path: Config file the ``/api/settings/llm/models`` endpoints
             write to. Defaults to ``~/.markitai/config.json``.
+        allowed_hosts: Extra hostnames accepted in the Host and Origin
+            headers besides localhost and IP literals (DNS-rebinding and
+            CSRF protection).
     """
 
     @asynccontextmanager
@@ -1148,6 +1298,14 @@ def create_app(
 
     app = FastAPI(title="markitai serve", version=__version__, lifespan=lifespan)
     app.add_middleware(_BodyLimitMiddleware)
+    app.add_middleware(
+        _HostGuardMiddleware,
+        allowed_hosts=frozenset(
+            hostname
+            for hostname in map(_normalize_allowed_host, allowed_hosts or ())
+            if hostname
+        ),
+    )
 
     @app.middleware("http")
     async def protect_local_settings(request: Request, call_next: Any) -> Response:
@@ -1337,10 +1495,14 @@ def create_app(
             None,
         )
         if saved is not None:
+            # Return the RAW saved base (None when the connection uses the
+            # provider default) so re-saving after only a key edit does not
+            # pin the default as an explicit override; the default is offered
+            # separately for the editor's placeholder.
             return {
                 "api_key": saved.api_key,
-                "api_base": saved.api_base
-                or provider_default_api_base(saved.provider),
+                "api_base": saved.api_base,
+                "api_base_placeholder": provider_default_api_base(saved.provider),
             }
 
         deployment_id = (
@@ -1357,8 +1519,8 @@ def create_app(
             legacy_provider = legacy.litellm_params.model.split("/", 1)[0].lower()
             return {
                 "api_key": legacy.litellm_params.api_key,
-                "api_base": legacy.litellm_params.api_base
-                or provider_default_api_base(legacy_provider),
+                "api_base": legacy.litellm_params.api_base,
+                "api_base_placeholder": provider_default_api_base(legacy_provider),
             }
 
         raise HTTPException(
@@ -2128,12 +2290,34 @@ def create_app(
                 detail="LLM enhancement is unavailable; enable a routable LLM first",
             )
         cfg.output.dir = str(job.out_dir)
+        # The rerun reuses the job's out_dir, so it would otherwise hit
+        # on_conflict against its own prior output (rename → duplicate
+        # versioned files; skip → the enhance can never run). Always overwrite
+        # the item's own outputs; a failed rerun rolls back (RetryWork.prior_*).
+        cfg.output.on_conflict = "overwrite"
         job.cfg = cfg
         if operation != "enhance":
             job.options = opts.model_dump()
 
+        # Snapshot the previous successful (non-skipped) result so a failed
+        # rerun can be rolled back to it instead of destroying a done output.
+        protect = item.status == "done" and item.output is not None and not item.skipped
+        work = RetryWork(
+            item_id=item_id,
+            cfg=cfg,
+            operation=operation,
+            prior_output=item.output if protect else None,
+            prior_cost_usd=item.cost_usd if protect else None,
+            prior_duration_ms=item.duration_ms if protect else None,
+            prior_finished_at=item.finished_at if protect else None,
+            prior_operation=item.operation if protect else "convert",
+            prior_llm_enhanced=item.llm_enhanced if protect else False,
+        )
+
         # Reset only this item. The job keeps its identity and item ordering;
         # the serial worker prevents rapid retries from racing output writes.
+        # meta.json is left intact: an unclean shutdown mid-rerun then
+        # rehydrates the job at its last persisted state rather than losing it.
         item.status = "queued"
         item.error = None
         item.output = None
@@ -2146,16 +2330,16 @@ def create_app(
         item.skip_reason = None
         job.status = "running"
         job.finished_at = None
-        (job.job_dir / "meta.json").unlink(missing_ok=True)
         job.retry_pending.add(item_id)
-        job.retry_queue.put_nowait(
-            RetryWork(item_id=item_id, cfg=cfg, operation=operation)
-        )
+        job.retry_queue.put_nowait(work)
         state.registry.publish_item(job, item)
         state.registry.publish_job(job)
 
-        if job.task is None or job.task.done():
-            job.task = asyncio.create_task(run_retry_queue(state.registry, job))
+        # A dedicated drainer, independent of the initial run: retrying an item
+        # while sibling items are still converting must start the worker even
+        # though job.task (the initial run) is not yet done.
+        if job.retry_task is None or job.retry_task.done():
+            job.retry_task = asyncio.create_task(run_retry_queue(state.registry, job))
         logger.info(
             "[Serve] Job {} queued {} for item {}", job_id, operation, item_id
         )
@@ -2260,10 +2444,15 @@ def create_app(
         base_name = _split_output_name(output_path.name)
         llm_path = output_path.parent / f"{base_name}.llm.md"
         base_path = output_path.parent / f"{base_name}.md"
-        if llm_path.is_file():
+        # Honor the item's selected variant rather than probing llm-first: a
+        # non-LLM retry after an earlier enhance leaves a stale .llm.md on disk
+        # (pruned on success, but this stays correct even if it lingers).
+        if item.llm_enhanced and llm_path.is_file():
             variant, markdown_path = "llm", llm_path
         elif base_path.is_file():
             variant, markdown_path = "base", base_path
+        elif llm_path.is_file():
+            variant, markdown_path = "llm", llm_path
         else:
             raise HTTPException(status_code=404, detail="item result not available")
 
@@ -2281,7 +2470,10 @@ def create_app(
                 )
 
         add_artifact(base_path)
-        add_artifact(llm_path)
+        # Only expose the .llm.md when the item is actually enhanced, so a
+        # stale sibling never makes the UI offer a spurious base↔llm diff.
+        if item.llm_enhanced:
+            add_artifact(llm_path)
         from markitai.constants import ASSETS_REL_PATH, SCREENSHOTS_REL_PATH
 
         # Plain string prefix match (not glob: metacharacters in upload names
@@ -2376,7 +2568,7 @@ def create_app(
                     "names_preview": [i.name for i in job.items[:3]],
                     "kinds_preview": [i.kind for i in job.items[:3]],
                     "duration_ms": job_duration_ms(job),
-                    "size_bytes": job_dir_size(job.job_dir),
+                    "size_bytes": job_cached_dir_size(job),
                 }
                 for job in jobs
             ]
@@ -2421,11 +2613,15 @@ def create_app(
 
         async with registry.archive_lock:
             await asyncio.to_thread(build)
+        # The whole-history zip is rebuilt on every download, so it is pure
+        # dead weight afterwards. Unlink once the response is sent (POSIX keeps
+        # the open fd valid for the in-flight stream); nothing else removes it.
         return FileResponse(
             archive_path,
             filename="markitai-all.zip",
             media_type="application/zip",
             content_disposition_type="attachment",
+            background=BackgroundTask(archive_path.unlink, missing_ok=True),
         )
 
     @app.delete("/api/history/{job_id}", status_code=204)

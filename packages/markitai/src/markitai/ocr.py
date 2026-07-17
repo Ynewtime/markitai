@@ -81,6 +81,31 @@ class OCRResult:
     boxes: list[list[float]]
 
 
+def _capture_engine_thresholds(engine: Any) -> dict[str, Any]:
+    """Snapshot RapidOCR's mutable detection thresholds before a scoped call.
+
+    RapidOCR.__call__ writes ``text_score`` and the detector's ``box_thresh``
+    in place and never restores them; snapshotting lets a tuned per-tile pass
+    leave the shared singleton exactly as it found it. Attribute paths are
+    probed defensively so a RapidOCR layout change degrades to a no-op.
+    """
+    snapshot: dict[str, Any] = {}
+    if hasattr(engine, "text_score"):
+        snapshot["text_score"] = engine.text_score
+    postprocess = getattr(getattr(engine, "text_det", None), "postprocess_op", None)
+    if postprocess is not None and hasattr(postprocess, "box_thresh"):
+        snapshot["box_thresh"] = postprocess.box_thresh
+    return snapshot
+
+
+def _restore_engine_thresholds(engine: Any, snapshot: dict[str, Any]) -> None:
+    """Restore thresholds captured by :func:`_capture_engine_thresholds`."""
+    if "text_score" in snapshot:
+        engine.text_score = snapshot["text_score"]
+    if "box_thresh" in snapshot:
+        engine.text_det.postprocess_op.box_thresh = snapshot["box_thresh"]
+
+
 class OCRProcessor:
     """OCR processor using RapidOCR.
 
@@ -346,53 +371,61 @@ class OCRProcessor:
         overlap_y = max(16, round(tile_height * 0.06))
         blocks: list[dict[str, Any]] = []
 
-        for row in range(rows):
-            for column in range(columns):
-                x0 = max(0, column * tile_width - overlap_x)
-                y0 = max(0, row * tile_height - overlap_y)
-                x1 = min(width, (column + 1) * tile_width + overlap_x)
-                y1 = min(height, (row + 1) * tile_height + overlap_y)
-                tile = image_array[y0:y1, x0:x1]
-                raw: Any = self.engine(tile, box_thresh=0.35, text_score=0.45)
-                texts = list(raw.txts) if raw.txts is not None else []
-                scores = list(raw.scores) if raw.scores is not None else []
-                boxes = list(raw.boxes) if raw.boxes is not None else []
+        # RapidOCR's engine is a process-wide singleton and __call__ mutates
+        # its box_thresh/text_score in place (update_params), never restoring
+        # them. Passing the low tile thresholds would otherwise leak into every
+        # later full-image pass across the whole batch. Snapshot and restore.
+        saved_thresholds = _capture_engine_thresholds(self.engine)
+        try:
+            for row in range(rows):
+                for column in range(columns):
+                    x0 = max(0, column * tile_width - overlap_x)
+                    y0 = max(0, row * tile_height - overlap_y)
+                    x1 = min(width, (column + 1) * tile_width + overlap_x)
+                    y1 = min(height, (row + 1) * tile_height + overlap_y)
+                    tile = image_array[y0:y1, x0:x1]
+                    raw: Any = self.engine(tile, box_thresh=0.35, text_score=0.45)
+                    texts = list(raw.txts) if raw.txts is not None else []
+                    scores = list(raw.scores) if raw.scores is not None else []
+                    boxes = list(raw.boxes) if raw.boxes is not None else []
 
-                for index, raw_text in enumerate(texts):
-                    text = str(raw_text).strip()
-                    if not text:
-                        continue
-                    score = float(scores[index]) if index < len(scores) else 0.0
-                    local = self._box_bounds(
-                        boxes[index] if index < len(boxes) else None,
-                        (0, 0, x1 - x0, y1 - y0),
-                    )
-                    bounds = (
-                        local[0] + x0,
-                        local[1] + y0,
-                        local[2] + x0,
-                        local[3] + y0,
-                    )
-                    normalized = " ".join(text.casefold().split())
-                    duplicate = next(
-                        (
-                            block
-                            for block in blocks
-                            if block["normalized"] == normalized
-                            and self._boxes_overlap(block["bounds"], bounds)
-                        ),
-                        None,
-                    )
-                    candidate = {
-                        "text": text,
-                        "score": score,
-                        "bounds": bounds,
-                        "normalized": normalized,
-                    }
-                    if duplicate is None:
-                        blocks.append(candidate)
-                    elif score > duplicate["score"]:
-                        duplicate.update(candidate)
+                    for index, raw_text in enumerate(texts):
+                        text = str(raw_text).strip()
+                        if not text:
+                            continue
+                        score = float(scores[index]) if index < len(scores) else 0.0
+                        local = self._box_bounds(
+                            boxes[index] if index < len(boxes) else None,
+                            (0, 0, x1 - x0, y1 - y0),
+                        )
+                        bounds = (
+                            local[0] + x0,
+                            local[1] + y0,
+                            local[2] + x0,
+                            local[3] + y0,
+                        )
+                        normalized = " ".join(text.casefold().split())
+                        duplicate = next(
+                            (
+                                block
+                                for block in blocks
+                                if block["normalized"] == normalized
+                                and self._boxes_overlap(block["bounds"], bounds)
+                            ),
+                            None,
+                        )
+                        candidate = {
+                            "text": text,
+                            "score": score,
+                            "bounds": bounds,
+                            "normalized": normalized,
+                        }
+                        if duplicate is None:
+                            blocks.append(candidate)
+                        elif score > duplicate["score"]:
+                            duplicate.update(candidate)
+        finally:
+            _restore_engine_thresholds(self.engine, saved_thresholds)
 
         blocks.sort(key=lambda block: (block["bounds"][1], block["bounds"][0]))
         if not blocks:

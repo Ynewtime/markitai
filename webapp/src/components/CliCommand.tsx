@@ -4,6 +4,46 @@ import type { Dict } from "../i18n";
 import { buildCliCommand } from "../lib/cli";
 import { TerminalIcon } from "./icons";
 
+export type CopyState = "idle" | "copied" | "failed";
+
+/** navigator.clipboard only exists on secure origins — on LAN http the
+ * unguarded call would throw synchronously in the click handler. Fall back
+ * to a transient textarea + execCommand("copy"); resolves false when neither
+ * path copied so callers can surface the failure. */
+// eslint-disable-next-line react-refresh/only-export-components -- shared with MarkdownPreview; this file trades fast refresh for the one helper.
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  const clipboard: Clipboard | undefined = navigator.clipboard;
+  if (clipboard !== undefined) {
+    try {
+      await clipboard.writeText(text);
+      return true;
+    } catch {
+      // Permission denied or focus lost — the legacy path may still work.
+    }
+  }
+  // select() moves focus to the textarea; restore it afterwards so a keyboard
+  // user activating Copy keeps their place (and the button keeps focus for its
+  // Copied/Copy failed badge swap).
+  const previouslyFocused = document.activeElement;
+  const host = document.createElement("textarea");
+  host.value = text;
+  host.setAttribute("readonly", "");
+  // display:none would make the selection empty; park it off-view instead.
+  host.style.position = "fixed";
+  host.style.opacity = "0";
+  document.body.append(host);
+  host.select();
+  let ok: boolean;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  host.remove();
+  if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus();
+  return ok;
+}
+
 /** Terminal icon at the end of the options row — expands to a one-line
  * always-dark mono command strip with a copy badge (same badge + live-region
  * voice as the Source card). The command tracks the composer state live:
@@ -25,26 +65,23 @@ export function CliCommand({
   announce: (msg: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<CopyState>("idle");
   const id = useId();
 
   useEffect(() => {
-    if (!copied) return;
-    const h = window.setTimeout(() => setCopied(false), 1500);
+    if (copyState === "idle") return;
+    const h = window.setTimeout(() => setCopyState("idle"), 1500);
     return () => window.clearTimeout(h);
-  }, [copied]);
+  }, [copyState]);
 
   const cmd = buildCliCommand(urls, preset, llm, ocr);
   const placeholder = urls.length === 0;
 
   const copy = () => {
-    navigator.clipboard.writeText(cmd).then(
-      () => {
-        setCopied(true);
-        announce(t.copied);
-      },
-      () => undefined,
-    );
+    void copyTextToClipboard(cmd).then((ok) => {
+      setCopyState(ok ? "copied" : "failed");
+      announce(ok ? t.copied : t.copyFailed);
+    });
   };
 
   return (
@@ -58,7 +95,10 @@ export function CliCommand({
         aria-controls={id}
         onClick={() => setOpen((v) => !v)}
       >
-        <TerminalIcon size={15} />
+        <TerminalIcon size={14} />
+        {/* short technical token, same in both locales; the full name lives
+            in aria-label/title */}
+        <span aria-hidden="true">CLI</span>
       </button>
       {open && (
         <div className="cliwrap" id={id}>
@@ -70,7 +110,11 @@ export function CliCommand({
               {cmd}
             </code>
             <button type="button" className="badge" onClick={copy}>
-              {copied ? t.copied : t.copy}
+              {copyState === "copied"
+                ? t.copied
+                : copyState === "failed"
+                  ? t.copyFailed
+                  : t.copy}
             </button>
           </div>
           {placeholder && <p className="clihint">{t.cliHint}</p>}

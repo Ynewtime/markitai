@@ -42,10 +42,8 @@ describe("PreviewModal", () => {
     window.localStorage?.removeItem("markitai.pdf.custom-header-footer");
     document.body.classList.remove(
       "printing-preview",
-      "printing-dark-theme",
       "printing-custom-header-footer",
     );
-    document.documentElement.classList.remove("printing-dark-theme");
     document.documentElement.removeAttribute("data-theme");
   });
 
@@ -88,35 +86,70 @@ describe("PreviewModal", () => {
       "href",
       "/result.md",
     );
-    expect(document.querySelector(".pdf-print-header")).not.toBeInTheDocument();
-    expect(document.querySelector(".pdf-print-footer")).not.toBeInTheDocument();
-    const customHeader = screen.getByRole("switch", {
-      name: dicts.en.pdfCustomHeaderFooter,
-    });
-    expect(customHeader).toHaveAttribute("aria-checked", "false");
-    fireEvent.click(screen.getByRole("button", { name: dicts.en.exportPdf }));
-    expect(print).toHaveBeenCalledOnce();
-    expect(document.body).toHaveClass("printing-preview");
-    expect(document.body).not.toHaveClass("printing-custom-header-footer");
-    expect(document.title).toBe("result");
-    window.dispatchEvent(new Event("afterprint"));
-
-    fireEvent.click(customHeader);
+    // custom header/footer now defaults ON: the furniture is in the DOM
+    // up front (screen CSS hides it; print CSS shows it)
     expect(document.querySelector(".pdf-print-header")).toHaveTextContent(
       "markitairesult",
     );
     expect(document.querySelector(".pdf-print-footer")).toHaveTextContent(
       `${dicts.en.pdfPreparedBy}${dicts.en.pdfSource}: result.md`,
     );
+    // PDFs always export the light layout, whatever the page theme
     document.documentElement.dataset.theme = "dark";
     fireEvent.click(screen.getByRole("button", { name: dicts.en.exportPdf }));
-    expect(print).toHaveBeenCalledTimes(2);
+    expect(print).toHaveBeenCalledOnce();
+    expect(document.body).toHaveClass("printing-preview");
     expect(document.body).toHaveClass("printing-custom-header-footer");
-    expect(document.body).toHaveClass("printing-dark-theme");
-    expect(document.documentElement).toHaveClass("printing-dark-theme");
+    expect(document.body).not.toHaveClass("printing-dark-theme");
+    expect(document.title).toBe("result");
     window.dispatchEvent(new Event("afterprint"));
-    expect(document.documentElement).not.toHaveClass("printing-dark-theme");
+    expect(document.body).not.toHaveClass("printing-preview");
+
+    // opting out through the PDF settings popover removes the furniture
+    fireEvent.click(screen.getByRole("button", { name: dicts.en.pdfSettings }));
+    fireEvent.click(
+      screen.getByRole("switch", { name: dicts.en.pdfCustomHeaderFooter }),
+    );
+    expect(document.querySelector(".pdf-print-header")).not.toBeInTheDocument();
+    expect(document.querySelector(".pdf-print-footer")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: dicts.en.exportPdf }));
+    expect(print).toHaveBeenCalledTimes(2);
+    expect(document.body).not.toHaveClass("printing-custom-header-footer");
+    window.dispatchEvent(new Event("afterprint"));
     vi.unstubAllGlobals();
+  });
+
+  it("lets Escape close the PDF settings popover without closing the modal", async () => {
+    const onClose = vi.fn();
+    render(
+      <PreviewModal
+        t={dicts.en}
+        item={item}
+        createdAt={null}
+        onClose={onClose}
+        announce={() => undefined}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: dicts.en.pdfSettings });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("switch", { name: dicts.en.pdfCustomHeaderFooter }),
+    ).toHaveFocus();
+
+    // The popover is the topmost layer: Escape must only dismiss it (the
+    // modal's document-level handler stands down) and return focus.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("switch", { name: dicts.en.pdfCustomHeaderFooter }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("renders URI-encoded Unicode asset names as images", async () => {
@@ -140,6 +173,31 @@ describe("PreviewModal", () => {
     expect(image.getAttribute("src")).toContain(
       "%E6%88%AA%E5%B1%8F%20%E4%B8%8B%E5%8D%88.png",
     );
+  });
+
+  it("tags near-measure figures md-wide and small ones not at all", async () => {
+    render(
+      <PreviewModal
+        t={dicts.en}
+        item={item}
+        createdAt={null}
+        onClose={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+    const image = await screen.findByRole("img", { name: "截图" });
+
+    // jsdom never loads resources — stub intrinsic geometry and fire load
+    Object.defineProperty(image, "naturalWidth", { configurable: true, value: 300 });
+    Object.defineProperty(image, "naturalHeight", { configurable: true, value: 200 });
+    fireEvent.load(image);
+    expect(image).not.toHaveClass("md-wide");
+    expect(image).not.toHaveClass("md-badge");
+
+    Object.defineProperty(image, "naturalWidth", { configurable: true, value: 683 });
+    Object.defineProperty(image, "naturalHeight", { configurable: true, value: 512 });
+    fireEvent.load(image);
+    expect(image).toHaveClass("md-wide");
   });
 
   it("links URL preview titles to their source in a new tab", async () => {

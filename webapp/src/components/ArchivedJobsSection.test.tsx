@@ -69,6 +69,19 @@ describe("ArchivedJobRows", () => {
     const resultMark = first.querySelector(".c-status.archive-actions .item-result.ok");
     expect(resultMark).toHaveTextContent("✓");
     expect(resultMark).toHaveAttribute("title", "Done");
+    // actions live in the shared .item-actions slot (mobile CSS fixes its
+    // width so status marks align down the list) and the meta line is
+    // separate facts with a tagged timestamp, mirroring session rows
+    expect(
+      first.querySelector(".archive-actions .item-actions .rowicon.danger"),
+    ).not.toBeNull();
+    const metaBits = Array.from(first.querySelectorAll(".rowmeta .metabit")).map(
+      (bit) => bit.textContent,
+    );
+    expect(metaBits).toEqual(["60.0s", "07-13 10:01", "Base", "Storage 100 B"]);
+    expect(
+      first.querySelector(".rowmeta .metabit-time"),
+    ).toHaveTextContent("07-13 10:01");
 
     await user.click(screen.getByRole("button", { name: "Permanently delete first.pdf" }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent("Delete first.pdf?");
@@ -131,7 +144,7 @@ describe("ArchivedJobRows", () => {
     );
   });
 
-  it("keeps enhancement available for a persisted LLM result", () => {
+  it("does not offer enhancement for an already-enhanced persisted result", () => {
     render(
       <ArchivedJobRows
         t={dicts.en}
@@ -154,8 +167,8 @@ describe("ArchivedJobRows", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Enhance first.pdf with LLM" }),
-    ).toBeEnabled();
+      screen.queryByRole("button", { name: "Enhance first.pdf with LLM" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows a warning icon and retry for a persisted skip", async () => {

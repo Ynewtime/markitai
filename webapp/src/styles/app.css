@@ -43,6 +43,7 @@
   --t-badge-text: #d4d4d8;
   --t-green: #bbf7d0;
   --t-red: #fca5a5;
+  --t-amber: #fcd34d;
   /* theme-invariant focus ring for members of the always-dark card */
   --t-focus: #f4f4f5;
 
@@ -207,8 +208,9 @@
     background: var(--selection-bg);
     color: var(--selection-fg);
   }
-  /* the always-dark card needs a bright selection in both themes */
-  .term ::selection {
+  /* the always-dark cards need a bright selection in both themes */
+  .term ::selection,
+  .clicmd ::selection {
     background: var(--t-text);
     color: var(--t-bg);
   }
@@ -282,16 +284,32 @@
     align-items: center;
     gap: 20px;
   }
-  .hdr-links a {
+  /* control groups (lang/theme toggles; history/settings icons): internal gap
+     mirrors .hdr-ctl's 16px so desktop spacing is identical to the ungrouped
+     layout — the groups exist for the phone header grid to place as units */
+  .hdr-toggles,
+  .hdr-icons {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .hdr-links a,
+  .app-footer a {
     font-size: 13px;
     color: var(--text-2);
     transition: color 120ms ease;
   }
-  .hdr-links .ext {
+  .hdr-links .ext,
+  .app-footer .ext {
     font-family: var(--font-mono);
     font-size: 11px;
     margin-left: 3px;
     color: var(--text-3);
+  }
+  /* phone-only home of the header's external links — the ≤600px block swaps
+     it in as .hdr-links swaps out, so one copy exists at any width */
+  .app-footer {
+    display: none;
   }
   .gearbtn {
     display: inline-flex;
@@ -403,7 +421,10 @@
   .url-entry .urlin {
     display: block; /* remove the inline textarea baseline gap from centering */
     width: 100%;
-    padding-right: 112px;
+    /* full clearance for the overlaid picker: icon 14 + gap 6 + "Choose
+       files" ~79 + padding 18 + border 2 + right offset 6 ≈ 125px — 112px
+       let typed text and the placeholder run under the button */
+    padding-right: 136px;
   }
   .file-picker {
     position: absolute;
@@ -477,11 +498,6 @@
     padding: 0 12px;
     font-size: 12px;
   }
-  /* square icon-only variant (28px, pairs with .sm text buttons) */
-  .btn.sm.icon {
-    width: 28px;
-    padding: 0;
-  }
   .btn.primary {
     background: var(--accent);
     color: var(--accent-contrast);
@@ -518,6 +534,7 @@
   .linklike:focus-visible,
   .flist [role="option"]:focus-visible,
   .hdr-links a:focus-visible,
+  .app-footer a:focus-visible,
   .md a:focus-visible,
   .md pre:focus-visible,
   .tablewrap:focus-visible,
@@ -527,7 +544,10 @@
   .rowicon:focus-visible,
   .notification-close:focus-visible,
   .notification-action:focus-visible,
-  .settings-crumbs button:focus-visible {
+  .settings-crumbs button:focus-visible,
+  .connection-options summary:focus-visible,
+  .manual-disclosure summary:focus-visible,
+  .picker-advanced summary:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
@@ -680,11 +700,6 @@
     cursor: pointer;
     transition: color 120ms ease;
   }
-  /* non-interactive twin inside option rows (the row itself handles clicks) */
-  .linkish {
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
 
   /* full-page drag veil: bg wash quiets the page, accent hairline frames it,
      pill sits in the upper third so it never masks the copy it covers */
@@ -828,6 +843,13 @@
       transform: translateY(-5px);
     }
   }
+  /* bottom-docked (phone) variant enters from below instead */
+  @keyframes notification-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+  }
 
   /* neutral informational line (folder-drop truncation / empty notices) */
   .notice {
@@ -841,14 +863,24 @@
   }
 
   /* ---------- copy as CLI command (options-row disclosure) ---------- */
+  /* same control language as .file-picker (bordered chip, mono label) so
+     the disclosure reads as a peer of the row's other affordances, not a
+     stray glyph */
   .clibtn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
+    gap: 6px;
     height: 28px;
-    border-radius: var(--r-sm);
+    padding: 0 9px;
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    background: var(--strip);
     color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
     cursor: pointer;
     position: relative;
     transition: color 120ms ease, background-color 120ms ease,
@@ -859,7 +891,8 @@
   }
   .clibtn.on {
     color: var(--text-1);
-    background: var(--strip);
+    border-color: var(--hairline-strong);
+    background: var(--surface);
   }
   /* the expanded strip wraps onto its own full-width line of the flex row */
   .cliwrap {
@@ -938,10 +971,6 @@
     color: var(--text-1);
     font-weight: 600;
   }
-  .jobhead .actions {
-    display: flex;
-    gap: 8px;
-  }
   .jobhead-r {
     display: flex;
     align-items: center;
@@ -1013,7 +1042,7 @@
     font-variant-numeric: tabular-nums;
   }
   .c-duration.live {
-    color: var(--text-4);
+    color: var(--text-3);
   }
   .llm-cell {
     display: inline-flex;
@@ -1099,7 +1128,7 @@
     line-height: 1.4;
     text-align: left;
     white-space: normal;
-    box-shadow: 0 8px 24px color-mix(in srgb, var(--bg) 75%, transparent);
+    box-shadow: 0 8px 24px rgb(9 9 11 / 0.35);
     opacity: 0;
     pointer-events: none;
     transform: translateY(2px);
@@ -1184,7 +1213,7 @@
     color: var(--t-red);
   }
   .chip.skip {
-    color: var(--warning);
+    color: var(--t-amber);
   }
 
   .runstat {
@@ -1295,7 +1324,7 @@
     color: var(--t-red);
   }
   .fchip.on.skipped {
-    color: var(--warning);
+    color: var(--t-amber);
   }
   .fchip:focus-visible {
     outline: 2px solid var(--accent);
@@ -1426,6 +1455,22 @@
     gap: 24px;
     margin-top: 0;
   }
+  /* The archive download rides the options row, pushed to the right edge so
+     conversion toggles and the batch-result action share one line. (When the
+     CLI strip is open its full-width line wraps first; the zip then takes the
+     following line, still right-aligned.) 30px matches the preset segment's
+     dark fill (32px box minus its 1px hairline borders) so the two boxes
+     carry the same visual weight on the row. */
+  .composer .options .zipbtn {
+    height: 30px;
+    margin-left: auto;
+  }
+  /* phone-only second slot for the archive download (below the ledger).
+     Hidden by default so its wrapper never adds a .work-list grid row/gap on
+     desktop; the ≤600px block reveals it while hiding the options-row twin. */
+  .list-zip {
+    display: none;
+  }
   .composer .caphint {
     margin-top: 0;
   }
@@ -1502,14 +1547,80 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  .pdf-header-option {
+  .pdf-settings {
     display: inline-flex;
+  }
+  /* PDF export options popover — anchored fixed layer above the preview
+     modal, flips around its trigger. Unlike the delete confirmation it is
+     NOT portalled to <body>: it renders inside the preview dialog so
+     aria-modal does not hide it from assistive tech. */
+  .pdf-settings-card {
+    position: fixed;
+    z-index: 70;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    box-sizing: border-box;
+    width: min(300px, calc(100vw - 24px));
+    padding: 14px 16px 12px;
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--r-term);
+    background: var(--surface);
+    color: var(--text-2);
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    line-height: 1.5;
+    text-align: left;
+    white-space: normal;
+    box-shadow:
+      0 18px 48px rgb(9 9 11 / 0.16),
+      0 3px 10px rgb(9 9 11 / 0.08);
+    animation: popover-in 140ms var(--ease-out);
+  }
+  .pdf-settings-head {
+    display: flex;
     align-items: center;
-    gap: 9px;
+    justify-content: space-between;
+    gap: 12px;
+    /* the 28px close button would otherwise stretch the title row past the
+       card's 12px rhythm — let it eat into the padding instead */
+    margin-block: -6px -4px;
+  }
+  .pdf-settings-card strong {
+    color: var(--text-1);
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  /* why the follow-theme switch is disabled (WebKit); hangs directly off its
+     row, unlike the bordered end-of-card hint */
+  .pdf-settings-arrow {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    margin-left: -5px;
+    border: solid var(--hairline-strong);
+    background: var(--surface);
+    transform: rotate(45deg);
+  }
+  .pdf-settings-card.below .pdf-settings-arrow {
+    top: -6px;
+    border-width: 1px 0 0 1px;
+  }
+  .pdf-settings-card.above .pdf-settings-arrow {
+    bottom: -6px;
+    border-width: 0 1px 1px 0;
+  }
+  .pdf-settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .pdf-settings-hint {
+    padding-top: 10px;
+    border-top: 1px solid var(--hairline);
     color: var(--text-3);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    white-space: nowrap;
+    font-size: 11.5px;
   }
 
   /* both panes scroll internally under a viewport cap (like the Source
@@ -1580,7 +1691,7 @@
   .md table {
     width: 100%;
     border-collapse: collapse;
-    margin: 16px 0 8px;
+    margin: 0 0 16px;
   }
   .md th {
     font-size: 13px;
@@ -1790,7 +1901,7 @@
     line-height: 1.8;
     color: var(--t-green);
     overflow-x: auto;
-    max-height: 70vh;
+    max-height: 70dvh;
     font-variant-numeric: tabular-nums;
     scrollbar-width: thin;
     scrollbar-color: var(--t-border) transparent;
@@ -1929,6 +2040,19 @@
   }
   .settings-modal {
     width: min(760px, 100%);
+  }
+  /* Desktop: the settings dialog's height changes as the add-models flow
+     expands, so anchor its top near the upper quarter of the viewport — a
+     fixed top edge keeps the header stationary instead of re-centering the
+     card on every height change. */
+  .settings-veil {
+    align-items: flex-start;
+    padding-top: 22dvh;
+  }
+  /* the top anchor consumed 22dvh of the veil; cap the card to what remains
+     above the 24px bottom padding so the tall add-models flow still fits */
+  .settings-veil .mdl {
+    max-height: calc(78dvh - 24px);
   }
   .preview-modal {
     width: min(1120px, 100%);
@@ -2080,6 +2204,31 @@
     justify-content: space-between;
     gap: 12px;
   }
+  /* phone-only appearance section (language + theme): desktop keeps the
+     toggles in the header, so hide it here — display: none also keeps its
+     controls out of the modal's focus trap and accessibility tree */
+  .appearance-section {
+    display: none;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .appearance-controls {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    row-gap: 12px;
+    flex-wrap: wrap;
+  }
+  .appearance-opt {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .appearance-opt .lbl {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+  }
   .settings-summary > span {
     font-size: 12px;
     color: var(--text-2);
@@ -2206,8 +2355,8 @@
   }
   .required-field {
     margin-left: 7px;
-    font-size: 10px;
-    color: var(--text-4);
+    font-size: 11px;
+    color: var(--text-3);
   }
   .connection-options,
   .manual-disclosure {
@@ -2233,7 +2382,7 @@
     background: var(--strip);
     font-size: 11px;
     line-height: 1.5;
-    color: var(--text-3);
+    color: var(--text-2);
   }
   .discovery-state strong {
     font-size: 12px;
@@ -2365,13 +2514,6 @@
   .detected-section {
     padding-top: 6px;
   }
-  .provider-section {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding-bottom: 4px;
-  }
-
   /* provider rows */
   .provlist {
     display: flex;
@@ -2404,11 +2546,6 @@
     white-space: nowrap;
     min-width: 0;
     flex: 1 1 auto;
-  }
-  .prov-key {
-    font-size: 12px;
-    color: var(--text-3);
-    flex: none;
   }
   .prov-acts {
     display: flex;
@@ -2620,25 +2757,14 @@
     cursor: not-allowed;
   }
 
-  /* detected local provider quick-add */
-  .detlist {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .det-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--text-2);
-  }
-
   /* neutral mini badge: `local` key stand-in, `archived` ledger rows */
   .minibadge {
     display: inline-flex;
     align-items: center;
     height: 18px;
+    /* pills never wrap internally — squeezed grid columns ellipsize the
+       neighboring name instead */
+    white-space: nowrap;
     padding: 0 7px;
     border: 1px solid var(--hairline-strong);
     border-radius: 999px;
@@ -2725,19 +2851,6 @@
     outline: 2px solid var(--accent);
     outline-offset: -1px;
   }
-  .keyrow {
-    display: flex;
-    gap: 8px;
-  }
-  .keyrow .btn {
-    flex: none;
-    height: 36px;
-  }
-  .fld-hint {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-3);
-  }
   .set-actions {
     display: flex;
     align-items: center;
@@ -2748,15 +2861,6 @@
     padding-top: 14px;
     border-top: 1px solid var(--hairline);
   }
-  .set-note {
-    font-size: 12px;
-    color: var(--text-2);
-    overflow-wrap: anywhere;
-  }
-  .set-note.fail {
-    color: var(--err);
-  }
-
   /* ---------- persisted jobs: same row and status language */
   .archive-actions {
     align-items: center;
@@ -2785,7 +2889,8 @@
   /* ---------- hover voice: one 120ms fade, pointer-only (touch devices
      otherwise keep sticky hover states after a tap) ---------- */
   @media (hover: hover) and (pointer: fine) {
-    .hdr-links a:hover {
+    .hdr-links a:hover,
+    .app-footer a:hover {
       color: var(--text-1);
     }
     .gearbtn:hover {
@@ -2794,7 +2899,9 @@
     }
     .clibtn:hover {
       color: var(--text-1);
-      background: var(--strip);
+      /* the chip's resting fill is already --strip — shift the border like
+         the .file-picker/.fchip hovers so the state reads in dark too */
+      border-color: var(--hairline-strong);
     }
     .fchip:not(.on):hover {
       border-color: var(--text-3);
@@ -2808,6 +2915,7 @@
     }
     .seg button:not(:disabled):not(.on):hover {
       background: var(--strip);
+      color: var(--text-1);
     }
     .switch:not(:disabled):not(.on):hover {
       border-color: var(--text-2);
@@ -2872,8 +2980,17 @@
   }
 
   /* ---------- responsive ---------- */
-  @media (max-width: 780px) {
+  /* `screen`: Chromium evaluates print media queries against the print job's
+     content-box width (~703-740px for A4 with typical margins), which falls
+     inside this breakpoint — without the guard these rules leak into exported
+     PDFs (tablewrap/pre scroll-shadow gradients painted into the document,
+     compacted table cells). */
+  @media screen and (max-width: 780px) {
     .shell {
+      /* #root is a flex column here (sticky footer) — the shell's auto
+         margins would otherwise defeat cross-axis stretch and collapse it
+         to fit-content, leaving dead gutters at mid widths */
+      width: 100%;
       padding: 0 20px;
     }
     .apphdr .shell {
@@ -2898,7 +3015,10 @@
       display: none;
     }
     .rowmeta {
-      display: block;
+      display: flex;
+      flex-wrap: wrap;
+      column-gap: 8px;
+      row-gap: 2px;
       grid-column: 2 / -1;
       font-family: var(--font-mono);
       font-size: 12px;
@@ -2906,6 +3026,16 @@
       margin-top: 5px;
       font-variant-numeric: tabular-nums;
       text-align: left;
+    }
+    /* facts wrap as units; the separator lives in CSS so a line break never
+       strands a dangling one */
+    .rowmeta .metabit {
+      white-space: nowrap;
+    }
+    .rowmeta .metabit + .metabit::before {
+      content: "·";
+      margin-right: 8px;
+      color: var(--text-4);
     }
     .totals .t-note {
       display: none;
@@ -2931,6 +3061,50 @@
     .pane-note {
       padding: 28px 24px 32px;
     }
+    /* narrow-column table compaction: the 12px desktop cell air is the first
+       thing to give before content does */
+    .md th {
+      padding: 0 8px 8px 0;
+    }
+    .md td {
+      font-size: 13px;
+      padding: 8px 8px 8px 0;
+    }
+    /* touch surfaces show no hover scrollbar, so panning inside tables and
+       code blocks needs its own cue: a thin persistent bar plus scrolling
+       shadows. The opaque covers scroll with the content
+       (background-attachment: local) and slide over the fixed shadows at
+       either end — the shadow only shows where more content remains. */
+    .md .tablewrap,
+    .md pre {
+      --edge-cover: var(--surface);
+      --edge-shadow: color-mix(in srgb, var(--text-1) 17%, transparent);
+      scrollbar-width: thin;
+      background-image: linear-gradient(
+          to right,
+          var(--edge-cover) 40%,
+          transparent
+        ),
+        linear-gradient(to left, var(--edge-cover) 40%, transparent),
+        radial-gradient(
+          farthest-side at 0 50%,
+          var(--edge-shadow),
+          transparent
+        ),
+        radial-gradient(
+          farthest-side at 100% 50%,
+          var(--edge-shadow),
+          transparent
+        );
+      background-position: left, right, left, right;
+      background-repeat: no-repeat;
+      background-size: 32px 100%, 32px 100%, 12px 100%, 12px 100%;
+      background-attachment: local, local, scroll, scroll;
+    }
+    /* code blocks sit on the strip, not the pane surface */
+    .md pre {
+      --edge-cover: var(--strip);
+    }
     .panelbar {
       padding: 0 16px;
     }
@@ -2944,8 +3118,7 @@
       width: 32px;
       padding-inline: 0;
     }
-    .panelbar .side .action-label,
-    .pdf-header-option > span {
+    .panelbar .side .action-label {
       display: none;
     }
     .tabs {
@@ -2953,6 +3126,14 @@
     }
     .mdl-veil {
       padding: 16px;
+    }
+    /* small screens keep the settings dialog centered like every other modal */
+    .settings-veil {
+      align-items: center;
+      padding-top: 16px;
+    }
+    .settings-veil .mdl {
+      max-height: calc(100dvh - 48px);
     }
     .mdl-head {
       padding: 12px 16px;
@@ -2982,6 +3163,32 @@
     .manual-model .btn {
       width: 100%;
     }
+    /* model rows: one flex line starves the model id (the row's key fact) —
+       promote it to its own full-width line under alias/weight/actions */
+    .prov-line {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      row-gap: 3px;
+    }
+    .prov-line > .prov-name {
+      grid-row: 1;
+      grid-column: 1;
+    }
+    .prov-line > .minibadge {
+      grid-row: 1;
+      grid-column: 2;
+      justify-self: start;
+    }
+    .prov-line > .prov-acts {
+      grid-row: 1;
+      grid-column: 3;
+    }
+    .prov-line > .prov-model {
+      grid-row: 2;
+      grid-column: 1 / -1;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
     .preview-modal .pane {
       max-height: calc(100dvh - 136px);
     }
@@ -2997,6 +3204,13 @@
       height: 44px;
       margin-block: -8px;
     }
+    /* fixed two-icon slot (2 × 44px rowicons + 2px gap): the ✓/× mark lands
+       at one x down the list whether or not wand/retry render beside the
+       always-present delete */
+    .archive-actions .item-actions {
+      min-width: 90px;
+      justify-content: flex-end;
+    }
     .warning-notification {
       top: 128px;
       right: 16px;
@@ -3007,8 +3221,43 @@
       padding-top: 64px;
       padding-bottom: 72px;
     }
+    /* heading + stats above, actions below at the same gutter — side by side
+       the action button outweighs the small eyebrow heading */
     .jobhead {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 12px;
       padding-top: 28px;
+    }
+    /* one voice for the options row in both contexts (home centers it on
+       desktop): left-aligned at the gutter, one compact gap so the CLI
+       disclosure reads as part of the toggle group. Explicit width: home's
+       centered column otherwise fit-content-sizes the row, and the opened
+       CLI strip's intrinsic width would push the whole row past the
+       viewport (its command scrolls internally only once the row is bound
+       to the container). */
+    /* double selector out-specifies the desktop .composer .options rule */
+    .options,
+    .composer .options {
+      width: 100%;
+      /* distribute the row instead of piling controls at the gutter; when
+         the preset segment forces a wrap, each resulting line stays
+         edge-aligned rather than leaving an orphan control mid-row */
+      justify-content: space-between;
+      gap: 16px;
+      row-gap: 14px;
+    }
+    /* raw markdown soft-wraps instead of nested horizontal panning inside
+       the terminal card */
+    .term pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    /* the zip action wraps onto its own full-width line, like the other
+       full-width mobile CTAs (.provider-detail-head .btn, .fin) */
+    .composer .options .zipbtn {
+      flex-basis: 100%;
+      margin-left: 0;
     }
     /* touch targets ≥44px — hit areas grow via padding/pseudo, visuals stay */
     .browse {
@@ -3042,8 +3291,185 @@
     .fchip::before {
       inset: -10px -3px;
     }
+    .badge,
+    .notification-close,
+    .settings-modal .rowact {
+      position: relative;
+    }
+    .file-picker::before,
+    .badge::before,
+    .secret-reveal::before,
+    .notification-close::before {
+      content: "";
+      position: absolute;
+      inset: -8px;
+    }
+    /* rowacts sit 2px apart — grow the hit area vertically only */
+    .settings-modal .rowact::before {
+      content: "";
+      position: absolute;
+      inset: -10px 0;
+    }
     .fin {
       width: 100%;
+    }
+  }
+
+  /* phones/narrow tablets — one-row header (brand + view icons),
+     full-screen preview sheet. One mobile tier: everything ≤780px gets the
+     phone format (no intermediate band). `screen` keeps these clear of
+     print (the A4 page box never matches anyway). */
+  @media screen and (max-width: 780px) {
+    /* the header keeps only identity and the two view icons: external links
+       move to the phone-only .app-footer, and the lang/theme toggles move
+       into the settings modal's appearance section. Hiding (not moving) the
+       header copies keeps one instance per control at any width. */
+    .hdr-links,
+    .hdr-toggles {
+      display: none;
+    }
+    /* sticky-footer column: short pages must still pin the link band to the
+       viewport bottom, not leave it floating mid-page after the content */
+    #root {
+      display: flex;
+      flex-direction: column;
+      min-height: 100dvh;
+    }
+    .app-footer {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      margin-top: auto;
+      padding: 14px 20px;
+      /* clear the home-indicator area on notched phones */
+      padding-bottom: calc(14px + env(safe-area-inset-bottom));
+      border-top: 1px solid var(--hairline);
+    }
+    /* the modal takes over the appearance controls the header gave up */
+    .appearance-section {
+      display: block;
+    }
+    /* notifications dock to the bottom edge — thumb reach, and the top of a
+       phone screen is where the header/system chrome already competes. The
+       offset clears the .app-footer's ~48px band so a toast never covers the
+       Docs/GitHub links when the page rests at its end. */
+    .warning-notification {
+      top: auto;
+      bottom: calc(60px + env(safe-area-inset-bottom));
+      right: 16px;
+      animation-name: notification-in-up;
+    }
+    /* the CLI copy affordance is a desktop hand-off (paths, terminals) —
+       hide the toggle and its expanded strip outright on phones */
+    .clibtn,
+    .cliwrap {
+      display: none;
+    }
+    /* the whole options row fits one line at 360px: short LLM label (set in
+       React, not CSS content), tighter gaps, slimmer segment padding, and
+       the preset segment gives up its full-width line from the 780px tier */
+    .options,
+    .composer .options {
+      /* three controls (LLM · OCR · preset) share the row */
+      gap: 10px;
+      row-gap: 12px;
+    }
+    /* home hero row distributes the leftover width; the workspace composer
+       row reads better left-aligned under its input */
+    .options {
+      justify-content: space-between;
+    }
+    .composer .options {
+      justify-content: flex-start;
+    }
+    /* icon-only picker: the text label costs ~90px the placeholder needs */
+    .file-picker > span {
+      display: none;
+    }
+    .file-picker {
+      padding: 0 8px;
+    }
+    .url-entry .urlin {
+      padding-right: 46px;
+    }
+    .opt {
+      gap: 6px;
+    }
+    .options .opt:has(.seg) {
+      flex-basis: auto;
+    }
+    .seg button {
+      padding: 0 7px;
+    }
+    /* the "Preset" label leaves the visual row but must keep rendering for
+       the segment's aria-labelledby — sr-only box instead of display: none */
+    .options #preset-lbl {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      border: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    /* the archive download leaves the options row for the slot under the
+       ledger: a full-width CTA like the app's other phone CTAs (.fin,
+       .provider-detail-head .btn). :has() keeps the empty wrapper from
+       adding a .work-list grid row when the button renders nothing. */
+    .composer .options .zipbtn {
+      display: none;
+    }
+    .list-zip:has(.zipbtn) {
+      display: block;
+    }
+    .list-zip .zipbtn {
+      width: 100%;
+      min-height: 44px;
+    }
+    /* the preview modal becomes an edge-to-edge sheet: a floating card this
+       small wastes ~90px of chrome and leaves the dead app header peeking
+       around every edge */
+    .preview-veil {
+      padding: 0;
+    }
+    .preview-veil .preview-modal {
+      width: 100%;
+      height: 100dvh;
+      max-height: none;
+      border: 0;
+      border-radius: 0;
+    }
+    /* pane cap yields to flex so the document area absorbs exactly the
+       height the head and panelbar leave over */
+    .preview-modal .panel {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      flex-direction: column;
+      border-radius: 0;
+    }
+    .preview-modal .panelbar {
+      flex: none;
+    }
+    .preview-modal .pane {
+      flex: 1;
+      max-height: none;
+    }
+    .md {
+      padding: 24px 16px 32px;
+    }
+    .pane-note {
+      padding: 24px 16px 32px;
+    }
+  }
+
+  /* tightest phones: the finished timestamp is the least load-bearing meta
+     bit — drop it before the line wraps */
+  @media (max-width: 400px) {
+    .rowmeta .metabit-time {
+      display: none;
     }
   }
 }
@@ -3086,65 +3512,56 @@
 }
 
 @media print {
+  /* Real margins on all four sides. The browser's optional native header/
+     footer is laid out inside this margin area, so it needs the room: Chrome
+     refuses to draw its header below ~9mm of top margin, and Safari's
+     furniture hugs the paper edge when the side margins are 0. 14mm top and
+     bottom leave near-equal air between the furniture text (which ends
+     ~8.8mm from the top edge / ~8.1mm from the bottom) and the content box.
+     Margins also keep content clear of printer/viewer unprintable edges. */
   @page {
     size: A4;
-    margin: 8mm 0 12mm;
-  }
-  @page markitai-light {
-    size: A4;
-    margin: 8mm 0 12mm;
-    background: #fff;
-  }
-  @page markitai-dark {
-    size: A4;
-    margin: 8mm 0 12mm;
-    background: #09090b;
+    margin: 14mm 12mm;
   }
 
-  body.printing-preview.printing-dark-theme {
-    color-scheme: dark;
-    --bg: #09090b;
-    --surface: #18181b;
-    --strip: #18181b;
-    --text-1: #fafafa;
-    --text-2: #a1a1aa;
-    --text-3: #a1a1aa;
-    --text-4: #71717a;
-    --hairline: #27272a;
-    --hairline-strong: #3f3f46;
-    --accent: #fafafa;
-    --syntax-comment: #8b949e;
-    --syntax-keyword: #ff7b72;
-    --syntax-title: #d2a8ff;
-    --syntax-string: #a5d6ff;
-    --syntax-variable: #ffa657;
-    --syntax-constant: #79c0ff;
+  /* PDFs always print the light layout (dark export was removed: WebKit has
+     no per-page inset primitive for the dark slab, so it could never render
+     acceptably there). The sheet is forced white, but an explicit
+     :root[data-theme="dark"] keeps feeding dark variables down the tree:
+     headings would fill #fafafa on #fff. Pin the light palette on body so
+     inheritance under the print scope always matches the white sheet. */
+  body.printing-preview {
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --strip: #f4f4f5;
+    --text-1: #18181b;
+    --text-2: #52525b;
+    --text-3: #71717a;
+    --text-4: #a1a1aa;
+    --hairline: #e4e4e7;
+    --hairline-strong: #d4d4d8;
+    --accent: #18181b;
+    --syntax-comment: #6e7781;
+    --syntax-keyword: #cf222e;
+    --syntax-title: #8250df;
+    --syntax-string: #0a3069;
+    --syntax-variable: #953800;
+    --syntax-constant: #0550ae;
   }
 
-  /* Named page backgrounds keep dark exports continuous through the page
-     margins where supported; document backgrounds remain the fallback. */
-  html.printing-dark-theme,
-  html.printing-dark-theme body.printing-preview,
-  body.printing-preview.printing-dark-theme .preview-modal,
-  body.printing-preview.printing-dark-theme .pdf-export-target,
-  body.printing-preview.printing-dark-theme .pdf-print-document {
-    background: #09090b !important;
-  }
-  html:not(.printing-dark-theme),
-  body.printing-preview:not(.printing-dark-theme),
-  body.printing-preview:not(.printing-dark-theme) .preview-modal,
-  body.printing-preview:not(.printing-dark-theme) .pdf-export-target,
-  body.printing-preview:not(.printing-dark-theme) .pdf-print-document {
-    background: #fff !important;
-  }
-
+  /* Page margin boxes cannot be painted (Safari never propagates a canvas
+     background into them), so the sheet is white and native header/footer
+     text stays readable. */
   html,
   body.printing-preview {
     width: auto !important;
     min-width: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
-    background: var(--bg) !important;
+    /* light color-scheme: Chromium otherwise fills the page sheet (incl. the
+       margin area) with its dark-canvas default instead of white */
+    color-scheme: light !important;
+    background: #fff !important;
     color: var(--text-1) !important;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
@@ -3169,12 +3586,17 @@
     margin: 0;
     border: 0;
     border-radius: 0;
-    background: var(--surface);
+    background: transparent;
     box-shadow: none;
     transform: none;
   }
   body.printing-preview .preview-modal-head,
   body.printing-preview .pdf-export-target .panelbar {
+    display: none !important;
+  }
+  /* the PDF-settings popover lives in the panelbar (print-hidden above), but
+     hide it explicitly too — it must never survive a DOM move */
+  body.printing-preview .pdf-settings-card {
     display: none !important;
   }
   body.printing-preview .pdf-export-target {
@@ -3185,7 +3607,7 @@
     border: 0;
     border-radius: 0;
     overflow: visible;
-    background: var(--surface);
+    background: transparent;
   }
   body.printing-preview .pdf-export-target .pane {
     display: none !important;
@@ -3200,22 +3622,22 @@
   body.printing-preview .pdf-export-target #pane-rendered {
     display: block !important;
   }
-  /* @page owns vertical spacing so every Safari/Chromium fragment receives
-     both a top and bottom margin. This box supplies only horizontal inset. */
+  /* @page owns all outer spacing; this box is the printable document. The
+     1mm right padding is a measured WebKit compensation, not spacing: WebKit
+     print clips all ink at the page content box's right edge and lays
+     100%-width boxes out flush against it, which eats their right border
+     (verified via WKWebView prints — the skills-diagram image lost its right
+     border at padding 0 and kept it at 1mm; Chromium never clips there and
+     is indifferent to the extra millimetre). */
   body.printing-preview .pdf-print-document {
-    page: markitai-light;
     display: block;
     box-sizing: border-box;
     width: auto;
     min-width: 0;
     max-width: none;
     margin: 0;
-    padding: 0 10mm;
-    -webkit-box-decoration-break: clone;
-    box-decoration-break: clone;
-  }
-  body.printing-preview.printing-dark-theme .pdf-print-document {
-    page: markitai-dark;
+    padding: 0 1mm 0 0;
+    background: #fff;
   }
 
   /* Ordinary flow children naturally occur only on the first and last page;
@@ -3340,6 +3762,10 @@
     border-left: 0.5mm solid var(--hairline-strong);
     background: transparent;
   }
+  /* Keep code blocks whole across page breaks — a box chopped mid-page with
+     no bottom border reads as truncated output in single-page viewers.
+     Engines relax the avoidance for blocks taller than one page, so long
+     listings still paginate without loss. */
   body.printing-preview .pdf-export-target .md pre {
     width: auto;
     min-width: 0;
@@ -3348,7 +3774,8 @@
     overflow-wrap: anywhere;
     word-break: break-word;
     white-space: pre-wrap;
-    break-inside: auto;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
     border: 0.3mm solid var(--hairline);
     background: var(--strip) !important;
   }
@@ -3403,6 +3830,14 @@
     margin-right: auto;
     margin-left: 0;
     object-fit: contain;
+  }
+  /* md-wide = near-measure figures (tagged in the img onLoad heuristic).
+     Engines disagree on pt-sized SVG intrinsics — Chromium renders a 512pt
+     hero at 180.6mm inside the 185mm measure (ragged right edge), Safari
+     computes it wider and clamps — stretching to the full measure prints
+     identically in both. */
+  body.printing-preview .pdf-export-target .md img.md-wide {
+    width: 100%;
   }
   body.printing-preview .pdf-export-target .md img.md-badge {
     display: inline-block;

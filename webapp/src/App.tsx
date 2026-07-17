@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchCapabilities, historyArchiveUrl } from "./api/client";
 import { MAX_JOB_ITEMS, type Capabilities, type JobOptions, type Preset } from "./api/types";
 import type { SessionItem } from "./hooks/useJobs";
-import { AppHeader } from "./components/AppHeader";
+import { AppFooter, AppHeader } from "./components/AppHeader";
 import { CapabilityHint } from "./components/CapabilityHint";
-import { DownloadActions } from "./components/DownloadActions";
+import { ClearJobsButton, DownloadArchiveButton } from "./components/DownloadActions";
 import { DropOverlay } from "./components/DropZone";
 import { ErrorInline } from "./components/ErrorInline";
 import { ItemList } from "./components/ItemList";
@@ -17,6 +17,7 @@ import { UrlInput } from "./components/UrlInput";
 import {
   AppNotification,
   WarningNotification,
+  type NotificationTone,
 } from "./components/WarningNotification";
 import { useArchivedJobs } from "./hooks/useArchivedJobs";
 import { useJobs } from "./hooks/useJobs";
@@ -143,12 +144,13 @@ export default function App() {
   const [liveMsg, setLiveMsg] = useState("");
   const [imageWarningKey, setImageWarningKey] = useState<string | null>(null);
   const [jobNotice, setJobNotice] = useState<{
+    tone: NotificationTone;
     title: string;
     message: string;
   } | null>(null);
   const announce = useCallback((msg: string) => {
     // Alternate a trailing NBSP so repeating the same text re-announces.
-    setLiveMsg((prev) => (prev === msg ? `${msg} ` : msg));
+    setLiveMsg((prev) => (prev === msg ? `${msg}\u00A0` : msg));
   }, []);
 
   const {
@@ -175,6 +177,7 @@ export default function App() {
   const archived = useArchivedJobs(jobs, suppressedHistoryIds);
   useEffect(() => {
     if (historyRevision > 0) void archived.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- archived is a fresh object each render; its stable refresh ref is the real input.
   }, [archived.refresh, historyRevision]);
   const deleteSessionItem = useCallback(
     async (item: SessionItem) => {
@@ -182,6 +185,7 @@ export default function App() {
       if (error === null) void archived.refresh();
       return error;
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- archived is a fresh object each render; its stable refresh ref is the real input.
     [archived.refresh, deleteItem],
   );
 
@@ -192,7 +196,6 @@ export default function App() {
     const next = new Map<string, boolean>();
     let msg: string | null = null;
     let skippedImageKey: string | null = null;
-    let enhancementFailure: SessionItem | null = null;
     let settledCount = 0;
     for (const i of items) if (isSettled(i)) settledCount += 1;
     for (const i of items) {
@@ -200,9 +203,6 @@ export default function App() {
       next.set(i.key, settled);
       if (settled && prev.get(i.key) === false) {
         msg = t.announceItem(i.name, settledWord(i), settledCount, items.length);
-        if (i.status === "error" && i.operation === "enhance") {
-          enhancementFailure = i;
-        }
       }
       if (i.skipped && i.skipReason === "image_only") {
         if (!warnedImageRef.current.has(i.key)) {
@@ -216,12 +216,6 @@ export default function App() {
     prevSettledRef.current = next;
     if (msg !== null) announce(msg);
     if (skippedImageKey !== null) setImageWarningKey(skippedImageKey);
-    if (enhancementFailure !== null) {
-      setJobNotice({
-        title: t.llmEnhanceFailed,
-        message: enhancementFailure.error ?? t.llmEnhanceFailed,
-      });
-    }
   }, [items, t, announce]);
 
   // ---- settings modal (gear toggles; Esc/overlay close; focus returns to gear)
@@ -276,6 +270,7 @@ export default function App() {
       (firstRow ?? document.querySelector<HTMLElement>(".workspace .urlin"))?.focus();
       if (alreadyOpen) announce(t.historyCurrent);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- archived is a fresh object each render; its stable refresh ref is the real input.
   }, [announce, archived.refresh, effectiveView, navigateView, t.historyCurrent]);
   // The URL draft lives here so the CLI-command line can mirror it live
   // (the home and composer inputs are never mounted at the same time).
@@ -320,17 +315,27 @@ export default function App() {
   );
   const submitUrls = useCallback(
     async (urls: string[]) => {
-      const ok = await submit([], urls, optionsRef.current);
+      // Pasted URL batches obey the same job cap as folder drops, with the
+      // same neutral truncation notice.
+      let notice: string | null = null;
+      let send = urls;
+      if (urls.length > MAX_JOB_ITEMS) {
+        send = urls.slice(0, MAX_JOB_ITEMS);
+        notice = t.dropTruncated(MAX_JOB_ITEMS, urls.length);
+      }
+      setDropNotice(notice);
+      const ok = await submit([], send, optionsRef.current);
       if (ok) navigateView("workspace");
       return ok;
     },
-    [navigateView, submit],
+    [navigateView, submit, t],
   );
+  // The OCR override applies to the retried request only; the persisted
+  // toggle changes solely through the notification action that says so.
   const retryOptions = useCallback((skipReason: string | null): JobOptions => {
     const options = { ...optionsRef.current };
     if (skipReason === "image_only" && !options.llm && !options.ocr) {
       options.ocr = true;
-      setOcr(true);
     }
     return options;
   }, []);
@@ -339,16 +344,15 @@ export default function App() {
       item.skipped ? retry(item, retryOptions(item.skipReason)) : retry(item),
     [retry, retryOptions],
   );
+  // Enhancement failures surface exactly once, on the affected row: immediate
+  // API rejections through the row's inline action error, and async SSE
+  // failures through the row settling as failed. No app-level toast doubles them.
   const enhanceItem = useCallback(
     async (item: SessionItem) => {
       const sourceOptions = jobs[item.jobId]?.options ?? optionsRef.current;
-      const error = await enhance(item, { ...sourceOptions, llm: true });
-      if (error !== null) {
-        setJobNotice({ title: t.llmEnhanceFailed, message: error });
-      }
-      return error;
+      return enhance(item, { ...sourceOptions, llm: true });
     },
-    [enhance, jobs, t.llmEnhanceFailed],
+    [enhance, jobs],
   );
   const imageWarningItem =
     imageWarningKey === null
@@ -432,7 +436,17 @@ export default function App() {
           candidate.output !== null &&
           !candidate.skipped,
       );
-      if (item === undefined) return snapshot;
+      if (item === undefined) {
+        // All-failed/all-skipped jobs carry no output; say so instead of
+        // letting the click silently do nothing.
+        announce(t.nothingToPreview);
+        setJobNotice({
+          tone: "warning",
+          title: snapshot.items[0]?.name ?? snapshot.job_id,
+          message: t.nothingToPreview,
+        });
+        return snapshot;
+      }
       setArchivedPreview({
         createdAt: snapshot.created_at,
         item: {
@@ -460,13 +474,13 @@ export default function App() {
       setPreviewOpen(true);
       return snapshot;
     },
-    [archived],
+    [announce, archived, t.nothingToPreview],
   );
 
   const retryArchivedJob = useCallback(
     async (jobId: string) => {
       const snapshot = await archived.openJob(jobId);
-      if (snapshot === null) return t.retryLoad;
+      if (snapshot === null) return t.jobLoadFailed;
       const retryable = snapshot.items.find(
         (item) => item.status === "error" || (item.status === "done" && item.skipped),
       );
@@ -484,13 +498,14 @@ export default function App() {
       }
       return error;
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- archived is a fresh object each render; its stable openJob ref is the real input.
     [announce, archived.openJob, retryArchived, retryOptions, t],
   );
 
   const enhanceArchivedJob = useCallback(
     async (jobId: string) => {
       const snapshot = await archived.openJob(jobId);
-      if (snapshot === null) return t.retryLoad;
+      if (snapshot === null) return t.jobLoadFailed;
       const candidate = snapshot.items.find(
         (item) =>
           item.status === "done" &&
@@ -499,6 +514,8 @@ export default function App() {
           !item.llm_enhanced,
       );
       if (candidate === undefined) return t.noEnhanceableItem;
+      // The returned error renders inline on the archived row — its single
+      // visible surface, matching enhanceItem above.
       const error = await enhanceArchived(snapshot, candidate.item_id, {
         ...snapshot.options,
         llm: true,
@@ -506,19 +523,17 @@ export default function App() {
       if (error === null) {
         setFocusItemKey(`${snapshot.job_id}/${candidate.item_id}`);
         announce(t.enhanceWithLlm(candidate.name));
-      } else {
-        setJobNotice({ title: t.llmEnhanceFailed, message: error });
       }
       return error;
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- archived is a fresh object each render; its stable openJob ref is the real input.
     [
       announce,
       archived.openJob,
       enhanceArchived,
       t.enhanceWithLlm,
-      t.llmEnhanceFailed,
+      t.jobLoadFailed,
       t.noEnhanceableItem,
-      t.retryLoad,
     ],
   );
 
@@ -574,12 +589,31 @@ export default function App() {
 
   const archivedJobCount = archived.entries?.length ?? 0;
   const completedJobCount = terminalJobCount + archivedJobCount;
-  const hasTaskRows = items.length > 0 || archivedJobCount > 0;
 
   const capHint =
     caps !== null && !caps.llm.routable ? (
       <CapabilityHint t={t} onOpenSettings={openSettings} />
     ) : null;
+
+  // One element description feeds both archive-download slots (options row on
+  // desktop, below the ledger on phones); CSS shows exactly one per
+  // breakpoint, so gating and aria semantics can never drift apart.
+  const archiveDownload = (
+    <DownloadArchiveButton
+      t={t}
+      zipHref={
+        completedJobCount > 0 && activeCount === 0 ? historyArchiveUrl() : null
+      }
+      activeCount={activeCount}
+      onDownloadError={(message) =>
+        setJobNotice({
+          tone: "error",
+          title: t.downloadFailed,
+          message,
+        })
+      }
+    />
+  );
 
   return (
     <>
@@ -603,6 +637,9 @@ export default function App() {
           closeLabel={t.close}
           onAction={() => {
             setImageWarningKey(null);
+            // This action's label promises a persistent change, so it is the
+            // one place a retry may flip the stored OCR toggle.
+            setOcr(true);
             void retryItem(imageWarningItem).then((error) => {
               announce(
                 error === null
@@ -616,7 +653,7 @@ export default function App() {
       )}
       {jobNotice !== null && (
         <AppNotification
-          tone="error"
+          tone={jobNotice.tone}
           title={jobNotice.title}
           message={jobNotice.message}
           closeLabel={t.close}
@@ -624,7 +661,14 @@ export default function App() {
         />
       )}
       {settingsOpen && (
-        <SettingsModal t={t} onClose={closeSettings} onSaved={refreshCaps} announce={announce} />
+        <SettingsModal
+          t={t}
+          locale={locale}
+          onLocale={handleLocale}
+          onClose={closeSettings}
+          onSaved={refreshCaps}
+          announce={announce}
+        />
       )}
       {previewOpen && previewItem !== null && (
         <PreviewModal
@@ -685,22 +729,13 @@ export default function App() {
         <main className="shell workspace">
           <div className="jobhead">
             <JobStats t={t} running={running} stats={stats} />
-            {hasTaskRows && (
+            {items.length > 0 && (
               <div className="jobhead-r">
-                <DownloadActions
+                <ClearJobsButton
                   t={t}
-                  zipHref={
-                    completedJobCount > 0 && activeCount === 0
-                      ? historyArchiveUrl()
-                      : null
-                  }
                   activeCount={activeCount}
                   clearableJobCount={terminalJobCount}
-                  showClear={items.length > 0}
                   onClear={handleClear}
-                  onDownloadError={(message) =>
-                    setJobNotice({ title: t.downloadFailed, message })
-                  }
                 />
               </div>
             )}
@@ -739,6 +774,7 @@ export default function App() {
                     onPreset={setPreset}
                     onLlm={setLlm}
                     onOcr={setOcr}
+                    trailing={archiveDownload}
                   />
                   {capHint}
                 </div>
@@ -776,12 +812,16 @@ export default function App() {
                   llmAvailable={llmEnhanceAvailable}
                   llmDisabledReason={llmDisabledReason}
                 />
+                {/* phone slot: the zip CTA reads better under the ledger it
+                    archives than squeezed into the options row */}
+                <div className="list-zip">{archiveDownload}</div>
               </div>
             </div>
           </div>
         </main>
       )}
 
+      <AppFooter t={t} />
       <DropOverlay label={t.dropToConvert} onFiles={submitFiles} />
       <div className="sr-only" role="status" aria-live="polite">
         {liveMsg}

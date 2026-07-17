@@ -17,6 +17,7 @@ import type {
   JobSnapshot,
   JobStatus,
 } from "../api/types";
+import { detectLocale, dicts } from "../i18n";
 import { serverTimestampMs } from "../lib/format";
 import { notifyJobDone, requestNotifyPermission } from "../lib/notify";
 
@@ -274,7 +275,9 @@ export function useJobs() {
   const notifyTerminal = useCallback((jobId: string, done: number, failed: number) => {
     if (notifiedRef.current.has(jobId)) return;
     notifiedRef.current.add(jobId);
-    notifyJobDone(failed > 0 ? `${done} done · ${failed} failed` : `${done} done`);
+    // Resolved at call time: the notification must follow a locale switch
+    // made after the job was submitted.
+    notifyJobDone(dicts[detectLocale()].notifyBody(done, failed));
   }, []);
 
   const openEvents = useCallback(
@@ -283,8 +286,7 @@ export function useJobs() {
       const es = new EventSource(jobEventsUrl(jobId));
       sourcesRef.current.set(jobId, es);
 
-      es.addEventListener("snapshot", (e) => {
-        const snap = JSON.parse((e as MessageEvent<string>).data) as JobSnapshot;
+      const applySnapshot = (snap: JobSnapshot) => {
         const now = Date.now();
         setJobs((prev) => ({
           ...prev,
@@ -306,6 +308,10 @@ export function useJobs() {
           notifyTerminal(jobId, snap.done, snap.failed);
           closeEvents(jobId);
         }
+      };
+
+      es.addEventListener("snapshot", (e) => {
+        applySnapshot(JSON.parse((e as MessageEvent<string>).data) as JobSnapshot);
       });
 
       es.addEventListener("item", (e) => {
@@ -332,6 +338,54 @@ export function useJobs() {
           notifyTerminal(jobId, p.done, p.failed);
           closeEvents(jobId);
         }
+      });
+
+      // While CONNECTING the browser retries on its own and the server
+      // replays a snapshot on reconnect (merges are idempotent). CLOSED is a
+      // permanent browser-side failure (e.g. the server restarted mid-job),
+      // so the job must be reconciled by hand or rows would show
+      // "Converting" forever.
+      es.addEventListener("error", () => {
+        if (es.readyState !== EventSource.CLOSED) return;
+        const failJob = () => {
+          const message = dicts[detectLocale()].connLost;
+          setItems((prev) =>
+            prev.map((item) =>
+              item.jobId === jobId &&
+              (item.status === "queued" || item.status === "running")
+                ? { ...item, status: "error", error: message, startedAt: null }
+                : item,
+            ),
+          );
+          setJobs((prev) => {
+            const job = prev[jobId];
+            return job === undefined
+              ? prev
+              : { ...prev, [jobId]: { ...job, status: "done" } };
+          });
+          // Latch terminality without notifying: connection loss is not a
+          // completion, and a retry clears the latch as usual.
+          notifiedRef.current.add(jobId);
+          closeEvents(jobId);
+        };
+        void fetchJobSnapshot(jobId).then(
+          (snap) => {
+            // A retry/enhance may have replaced the stream meanwhile; the
+            // stale handler must not touch the fresh one.
+            if (sourcesRef.current.get(jobId) !== es) return;
+            if (snap === null) {
+              failJob();
+              return;
+            }
+            applySnapshot(snap);
+            // Server still owns a running job but this stream is dead —
+            // attach a fresh one (the snapshot replay keeps it idempotent).
+            if (snap.status === "running") openEvents(jobId);
+          },
+          () => {
+            if (sourcesRef.current.get(jobId) === es) failJob();
+          },
+        );
       });
     },
     [closeEvents, notifyTerminal],

@@ -17,6 +17,24 @@ function ExtLink({ href, label, srNote }: { href: string; label: string; srNote:
   );
 }
 
+/** Phone-only footer for the header's external links: at ≤780px the header
+ * collapses to brand + view icons and .hdr-links hides, so Docs/GitHub move
+ * here. CSS gates both ends of the swap on the same breakpoint — exactly one
+ * copy of the links is ever visible (display: none also drops the hidden one
+ * from the accessibility tree). */
+export function AppFooter({ t }: { t: Dict }) {
+  return (
+    <footer className="app-footer">
+      <ExtLink href="https://markitai.dev" label={t.docsLabel} srNote={t.opensNewTab} />
+      <ExtLink
+        href="https://github.com/Ynewtime/markitai"
+        label="GitHub"
+        srNote={t.opensNewTab}
+      />
+    </footer>
+  );
+}
+
 export function AppHeader({
   t,
   version,
@@ -60,36 +78,43 @@ export function AppHeader({
         </div>
         <div className="hdr-ctl">
           <nav className="hdr-links">
-            <ExtLink href="https://markitai.dev" label="Docs" srNote={t.opensNewTab} />
+            <ExtLink href="https://markitai.dev" label={t.docsLabel} srNote={t.opensNewTab} />
             <ExtLink
               href="https://github.com/Ynewtime/markitai"
               label="GitHub"
               srNote={t.opensNewTab}
             />
           </nav>
-          <LangToggle label={t.langAria} locale={locale} onLocale={onLocale} />
-          <ThemeToggle t={t} label={t.themeAria} />
-          <button
-            type="button"
-            className={historyActive ? "gearbtn tasknav on" : "gearbtn tasknav"}
-            aria-label={t.historyAria}
-            aria-current={historyActive ? "page" : undefined}
-            title={historyActive ? t.historyCurrent : t.historyAria}
-            onClick={onHistory}
-          >
-            <HistoryIcon size={16} />
-          </button>
-          <button
-            ref={gearRef}
-            type="button"
-            className="gearbtn"
-            aria-label={t.settingsAria}
-            aria-expanded={settingsOpen}
-            title={t.settingsAria}
-            onClick={onToggleSettings}
-          >
-            <SettingsIcon size={16} />
-          </button>
+          {/* grouping spans: the phone header grid dissolves .hdr-ctl
+              (display: contents) and needs the toggles and the two nav icons
+              to travel as units — desktop spacing is unchanged */}
+          <span className="hdr-toggles">
+            <LangToggle label={t.langAria} locale={locale} onLocale={onLocale} />
+            <ThemeToggle t={t} label={t.themeAria} />
+          </span>
+          <span className="hdr-icons">
+            <button
+              type="button"
+              className={historyActive ? "gearbtn tasknav on" : "gearbtn tasknav"}
+              aria-label={t.historyAria}
+              aria-current={historyActive ? "page" : undefined}
+              title={historyActive ? t.historyCurrent : t.historyAria}
+              onClick={onHistory}
+            >
+              <HistoryIcon size={16} />
+            </button>
+            <button
+              ref={gearRef}
+              type="button"
+              className="gearbtn"
+              aria-label={t.settingsAria}
+              aria-expanded={settingsOpen}
+              title={t.settingsAria}
+              onClick={onToggleSettings}
+            >
+              <SettingsIcon size={16} />
+            </button>
+          </span>
         </div>
       </div>
     </header>

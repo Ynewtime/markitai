@@ -97,7 +97,18 @@ def _open_browser_when_ready(
     default=False,
     help="Do not open the browser after startup.",
 )
-def serve(host: str, port: int, no_open: bool) -> None:
+@click.option(
+    "--allowed-host",
+    "allowed_hosts",
+    multiple=True,
+    metavar="HOSTNAME",
+    help=(
+        "Additional hostname to accept in the Host and Origin headers "
+        "(repeatable). localhost and IP addresses are always accepted; "
+        "other hostnames are rejected to block DNS rebinding."
+    ),
+)
+def serve(host: str, port: int, no_open: bool, allowed_hosts: tuple[str, ...]) -> None:
     """Run the Markitai web UI server.
 
     Requires the serve extra (fastapi + uvicorn + python-multipart).
@@ -106,6 +117,7 @@ def serve(host: str, port: int, no_open: bool) -> None:
         markitai serve                    # http://127.0.0.1:3600, opens browser
         markitai serve --port 8080        # Custom port
         markitai serve --no-open          # Don't open the browser
+        markitai serve --allowed-host my-box.lan   # Accept a DNS name
     """
     from rich.markup import escape
 
@@ -121,7 +133,7 @@ def serve(host: str, port: int, no_open: bool) -> None:
 
     connect_host, url_host = _browser_address(host)
     url = f"http://{url_host}:{port}"
-    app = create_app()
+    app = create_app(allowed_hosts=allowed_hosts)
 
     browser_stop = threading.Event()
     browser_thread: threading.Thread | None = None

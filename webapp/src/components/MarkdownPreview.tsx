@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -12,7 +20,8 @@ import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
 import { diffLines, MAX_DIFF_LINES, type DiffLine } from "../lib/diff";
 import { countWords, fmtBytes, fmtDate, utf8Bytes } from "../lib/format";
-import { DownloadIcon, LogoMark, PdfIcon } from "./icons";
+import { copyTextToClipboard, type CopyState } from "./CliCommand";
+import { DownloadIcon, LogoMark, PdfIcon, SettingsIcon, XIcon } from "./icons";
 
 type Tab = "rendered" | "source" | "diff";
 type RehypeHighlight = typeof import("rehype-highlight").default;
@@ -32,21 +41,13 @@ function isBadgeImage(src: string | undefined, alt: string | undefined): boolean
   );
 }
 
-function isCurrentThemeDark(): boolean {
-  const scheme = getComputedStyle(document.documentElement).colorScheme;
-  if (scheme.split(/\s+/).includes("dark")) return true;
-  if (document.documentElement.dataset.theme === "dark") return true;
-  return (
-    document.documentElement.dataset.theme !== "light" &&
-    window.matchMedia("(prefers-color-scheme: dark)").matches
-  );
-}
-
+/** Custom header/footer is on by default; only an explicit stored "false"
+ * (a deliberate opt-out) turns it off. */
 function readCustomPdfHeader(): boolean {
   try {
-    return localStorage.getItem(PDF_HEADER_KEY) === "true";
+    return localStorage.getItem(PDF_HEADER_KEY) !== "false";
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -98,6 +99,195 @@ type DiffState =
   | { kind: "toolarge" }
   | { kind: "error"; message: string };
 
+type CardPosition = {
+  top: number;
+  left: number;
+  arrowLeft: number;
+  placement: "above" | "below";
+};
+
+/** An open settings card is the preview dialog's topmost layer: PreviewModal
+ * must check for it before handling Escape or trapping Tab focus itself
+ * (both listen on the same document node, so stopPropagation cannot
+ * arbitrate between them). */
+// eslint-disable-next-line react-refresh/only-export-components -- shared with PreviewModal's Escape/focus handling; splitting the file would orphan the comment above.
+export function openPdfSettingsCard(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".pdf-settings-card");
+}
+
+/** Compact PDF export options behind one panelbar button (the tabs row is too
+ * crowded for inline switches). Anchored like ConfirmDeletePopover but NOT
+ * portalled: PreviewModal's dialog is aria-modal, and assistive tech treats
+ * anything outside that subtree as inert, so the card must render inside it —
+ * position: fixed already keeps ancestor overflow from clipping it. Outside
+ * pointerdown, Escape and the in-card close button dismiss it; focus returns
+ * to the trigger. */
+function PdfSettingsMenu({
+  t,
+  disabled,
+  customPdfHeader,
+  onToggleCustomPdfHeader,
+}: {
+  t: Dict;
+  disabled: boolean;
+  customPdfHeader: boolean;
+  onToggleCustomPdfHeader: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<CardPosition | null>(null);
+  const rootRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const cardId = useId();
+
+  const close = useCallback((returnFocus = true) => {
+    setOpen(false);
+    setPosition(null);
+    if (returnFocus) {
+      window.requestAnimationFrame(() => {
+        if (triggerRef.current?.isConnected) triggerRef.current.focus();
+      });
+    }
+  }, []);
+
+  const placeCard = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (trigger === null) return;
+    const rect = trigger.getBoundingClientRect();
+    const margin = 12;
+    const gap = 10;
+    const width = Math.min(300, window.innerWidth - margin * 2);
+    const height = cardRef.current?.offsetHeight ?? 170;
+    const roomBelow = window.innerHeight - rect.bottom;
+    const placement = roomBelow >= height + gap + margin ? "below" : "above";
+    const top =
+      placement === "below"
+        ? rect.bottom + gap
+        : Math.max(margin, rect.top - height - gap);
+    const left = Math.min(
+      window.innerWidth - width - margin,
+      Math.max(margin, rect.right - width),
+    );
+    const arrowLeft = Math.min(width - 20, Math.max(20, rect.left + rect.width / 2 - left));
+    setPosition({ top, left, arrowLeft, placement });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    placeCard();
+    const frame = window.requestAnimationFrame(placeCard);
+    window.addEventListener("resize", placeCard);
+    window.addEventListener("scroll", placeCard, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", placeCard);
+      window.removeEventListener("scroll", placeCard, true);
+    };
+  }, [open, placeCard]);
+
+  useEffect(() => {
+    if (!open) return;
+    cardRef.current
+      ?.querySelector<HTMLButtonElement>('button[role="switch"]:enabled')
+      ?.focus();
+    const onPointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) return;
+      if (
+        rootRef.current?.contains(event.target) ||
+        cardRef.current?.contains(event.target)
+      ) {
+        return;
+      }
+      close(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [close, open]);
+
+  const card = open ? (
+    <div
+      ref={cardRef}
+      id={cardId}
+      className={`pdf-settings-card ${position?.placement ?? "below"}`}
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby={titleId}
+      style={
+        position === null
+          ? { visibility: "hidden" }
+          : { top: position.top, left: position.left }
+      }
+      onClick={(event) => event.stopPropagation()}
+    >
+      {position !== null && (
+        <span
+          className="pdf-settings-arrow"
+          style={{ left: position.arrowLeft }}
+          aria-hidden="true"
+        />
+      )}
+      <span className="pdf-settings-head">
+        <strong id={titleId}>{t.pdfSettings}</strong>
+        {/* touch AT has no Escape key and outside-tap is undiscoverable
+            under a screen reader — give the card a visible way out */}
+        <button
+          type="button"
+          className="gearbtn"
+          aria-label={t.close}
+          title={t.close}
+          onClick={() => close()}
+        >
+          <XIcon size={14} />
+        </button>
+      </span>
+      <span className="pdf-settings-row">
+        <span>{t.pdfCustomHeaderFooter}</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={customPdfHeader}
+          aria-label={t.pdfCustomHeaderFooter}
+          className={customPdfHeader ? "switch on" : "switch"}
+          onClick={onToggleCustomPdfHeader}
+        />
+      </span>
+      <span className="pdf-settings-hint">{t.pdfPrintDialogHint}</span>
+    </div>
+  ) : null;
+
+  return (
+    <span ref={rootRef} className="pdf-settings">
+      <button
+        ref={triggerRef}
+        type="button"
+        className="btn ghost sm"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? cardId : undefined}
+        disabled={disabled}
+        title={t.pdfSettings}
+        aria-label={t.pdfSettings}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <SettingsIcon size={13} />
+        <span className="action-label">{t.pdfSettings}</span>
+      </button>
+      {card}
+    </span>
+  );
+}
+
 /** Rendered/source/diff preview for one completed conversion. */
 export function MarkdownPreview({
   t,
@@ -113,7 +303,7 @@ export function MarkdownPreview({
   const [tab, setTab] = useState<Tab>("rendered");
   const [result, setResult] = useState<ItemResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<CopyState>("idle");
   const [customPdfHeader, setCustomPdfHeader] = useState(readCustomPdfHeader);
   const [rehypeHighlight, setRehypeHighlight] = useState<RehypeHighlight | null>(null);
   const cacheRef = useRef<Map<string, ItemResult>>(new Map());
@@ -136,8 +326,13 @@ export function MarkdownPreview({
     };
   }, []);
 
+  // In-place retry/enhance keeps jobId/itemId (so item.key), but replaces the
+  // item's output — fold the per-run fields into the cache key so a re-run
+  // can never be served the previous run's content.
+  const cacheKey = `${item.key}|${item.finishedAt ?? ""}|${String(item.llmEnhanced)}|${item.operation}`;
+
   useEffect(() => {
-    const cached = cacheRef.current.get(item.key);
+    const cached = cacheRef.current.get(cacheKey);
     if (cached !== undefined) {
       setResult(cached);
       setError(null);
@@ -149,7 +344,7 @@ export function MarkdownPreview({
     fetchItemResult(item.jobId, item.itemId).then(
       (r) => {
         if (stale) return;
-        cacheRef.current.set(item.key, r);
+        cacheRef.current.set(cacheKey, r);
         setResult(r);
       },
       (e: unknown) => {
@@ -159,7 +354,7 @@ export function MarkdownPreview({
     return () => {
       stale = true;
     };
-  }, [item.key, item.jobId, item.itemId]);
+  }, [cacheKey, item.jobId, item.itemId]);
 
   // ---- diff tab (only when the artifacts hold both .md and .llm.md).
   const pair = useMemo(() => findDiffPair(result), [result]);
@@ -177,7 +372,7 @@ export function MarkdownPreview({
 
   useEffect(() => {
     if (tab !== "diff" || pair === null) return;
-    const cached = diffCacheRef.current.get(item.key);
+    const cached = diffCacheRef.current.get(cacheKey);
     if (cached !== undefined) {
       setDiff(cached);
       return;
@@ -203,7 +398,7 @@ export function MarkdownPreview({
           }
           st = { kind: "lines", lines, adds, dels };
         }
-        diffCacheRef.current.set(item.key, st);
+        diffCacheRef.current.set(cacheKey, st);
         setDiff(st);
       },
       (e: unknown) => {
@@ -215,13 +410,13 @@ export function MarkdownPreview({
     return () => {
       stale = true;
     };
-  }, [tab, pair, item.key, item.jobId]);
+  }, [tab, pair, cacheKey, item.jobId]);
 
   useEffect(() => {
-    if (!copied) return;
-    const id = window.setTimeout(() => setCopied(false), 1500);
+    if (copyState === "idle") return;
+    const id = window.setTimeout(() => setCopyState("idle"), 1500);
     return () => window.clearTimeout(id);
-  }, [copied]);
+  }, [copyState]);
 
   // Relative refs (e.g. .markitai/assets/x.png) resolve against the job's
   // out dir — rewrite them to the files endpoint so images render.
@@ -296,6 +491,13 @@ export function MarkdownPreview({
               image.naturalWidth / image.naturalHeight >= 1.5
             ) {
               image.classList.add("md-badge");
+            } else if (image.naturalWidth >= 600) {
+              // Near-measure figures print ragged otherwise: the engines
+              // disagree on intrinsic pt-sized SVGs (Chromium renders a
+              // 512pt-wide hero at 180.6mm inside the 185mm print measure,
+              // Safari computes it wider and clamps to 100%). Print CSS
+              // stretches tagged figures to the full measure in both.
+              image.classList.add("md-wide");
             }
             onLoad?.(event);
           }}
@@ -311,13 +513,10 @@ export function MarkdownPreview({
 
   const copySource = () => {
     if (markdown === null) return;
-    navigator.clipboard.writeText(markdown).then(
-      () => {
-        setCopied(true);
-        announce(t.copied);
-      },
-      () => undefined,
-    );
+    void copyTextToClipboard(markdown).then((ok) => {
+      setCopyState(ok ? "copied" : "failed");
+      announce(ok ? t.copied : t.copyFailed);
+    });
   };
 
   useEffect(
@@ -336,10 +535,6 @@ export function MarkdownPreview({
     // header less awkward when the user enables it in the print dialog.
     document.title = documentBase;
     document.body.classList.add("printing-preview");
-    if (isCurrentThemeDark()) {
-      document.body.classList.add("printing-dark-theme");
-      document.documentElement.classList.add("printing-dark-theme");
-    }
     if (customPdfHeader) {
       document.body.classList.add("printing-custom-header-footer");
     }
@@ -351,10 +546,8 @@ export function MarkdownPreview({
       document.title = previousTitle;
       document.body.classList.remove(
         "printing-preview",
-        "printing-dark-theme",
         "printing-custom-header-footer",
       );
-      document.documentElement.classList.remove("printing-dark-theme");
       panelRef.current?.classList.remove("pdf-export-target");
       window.removeEventListener("afterprint", cleanup);
       printCleanupRef.current = null;
@@ -386,7 +579,7 @@ export function MarkdownPreview({
 
   const docDate = createdAt !== null ? fmtDate(createdAt) : null;
   const variantLabel =
-    result === null ? null : result.variant === "llm" ? "LLM enhanced" : "Base";
+    result === null ? null : result.variant === "llm" ? t.llmEnhancedLabel : "Base";
   const renderedBody = useMemo(
     () => portableLocalImageDestinations(meta?.split.body ?? markdown ?? ""),
     [markdown, meta?.split.body],
@@ -403,7 +596,11 @@ export function MarkdownPreview({
         rehypePlugins={
           rehypeHighlight === null
             ? []
-            : [[rehypeHighlight, { detect: false, ignoreMissing: true }]]
+            : // Only highlight blocks with an explicit language: auto-detection
+              // on the many bare fences converted docs emit misclassifies more
+              // than it helps. ignoreMissing: an unknown label is a plain
+              // block, not an error.
+              [[rehypeHighlight, { detect: false, ignoreMissing: true }]]
         }
         urlTransform={urlTransform}
         components={mdComponents}
@@ -484,29 +681,23 @@ export function MarkdownPreview({
         <div className="side">
           {meta !== null && (
             <span className="meta">
-              {meta.words.toLocaleString("en-US")} {t.words} · {fmtBytes(meta.bytes)}
+              {meta.words.toLocaleString()} {t.words} · {fmtBytes(meta.bytes)}
             </span>
           )}
-          <span className="pdf-header-option" title={t.pdfPrintDialogHint}>
-            <span>{t.pdfCustomHeaderFooter}</span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={customPdfHeader}
-              aria-label={t.pdfCustomHeaderFooter}
-              className={customPdfHeader ? "switch on" : "switch"}
-              disabled={markdown === null}
-              onClick={() => {
-                const next = !customPdfHeader;
-                setCustomPdfHeader(next);
-                try {
-                  localStorage.setItem(PDF_HEADER_KEY, String(next));
-                } catch {
-                  /* localStorage unavailable */
-                }
-              }}
-            />
-          </span>
+          <PdfSettingsMenu
+            t={t}
+            disabled={markdown === null}
+            customPdfHeader={customPdfHeader}
+            onToggleCustomPdfHeader={() => {
+              const next = !customPdfHeader;
+              setCustomPdfHeader(next);
+              try {
+                localStorage.setItem(PDF_HEADER_KEY, String(next));
+              } catch {
+                /* localStorage unavailable */
+              }
+            }}
+          />
           <button
             type="button"
             className="btn ghost sm"
@@ -573,7 +764,11 @@ export function MarkdownPreview({
                   {meta !== null && ` · ${fmtBytes(meta.bytes)} · utf-8`}
                 </span>
                 <button type="button" className="badge" onClick={copySource}>
-                  {copied ? t.copied : t.copy}
+                  {copyState === "copied"
+                    ? t.copied
+                    : copyState === "failed"
+                      ? t.copyFailed
+                      : t.copy}
                 </button>
               </div>
               <pre tabIndex={0} aria-label={t.srcAria}>

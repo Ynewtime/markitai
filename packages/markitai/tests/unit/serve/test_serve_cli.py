@@ -70,6 +70,35 @@ class TestServeCommand:
         assert kwargs["host"] == "0.0.0.0"
         assert kwargs["port"] == 3611
 
+    def test_allowed_host_option_threads_through_to_create_app(
+        self, cli_runner: CliRunner
+    ) -> None:
+        import pytest
+
+        uvicorn = pytest.importorskip("uvicorn")
+
+        from markitai.cli.commands.serve import serve
+
+        sentinel_app = object()
+        with (
+            patch.object(uvicorn, "run"),
+            patch(
+                "markitai.serve.create_app", return_value=sentinel_app
+            ) as mock_create,
+        ):
+            result = cli_runner.invoke(
+                serve,
+                [
+                    "--no-open",
+                    "--allowed-host",
+                    "proxy.lan",
+                    "--allowed-host",
+                    "box.local",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_create.assert_called_once_with(allowed_hosts=("proxy.lan", "box.local"))
+
     def test_browser_opens_only_after_server_is_ready(self) -> None:
         import importlib
 
