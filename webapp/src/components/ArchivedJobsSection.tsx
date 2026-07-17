@@ -132,6 +132,10 @@ export function ArchivedJobRows({
         className="lrow archive-state errline"
         role="option"
         aria-selected={false}
+        // Part of the ledger's roving listbox so arrow navigation can reach
+        // the retry affordance instead of skipping over this row.
+        data-ledger-key="archive:error"
+        tabIndex={-1}
       >
         <span />
         <span>{error}</span>
@@ -157,11 +161,14 @@ export function ArchivedJobRows({
         const firstName = entry.names_preview[0] ?? entry.job_id;
         const firstKind = entry.kinds_preview[0] ?? "file";
         const busy = actions[entry.job_id];
+        // The wand turns a base result into an LLM one; a job whose only
+        // item is already enhanced has nothing left to offer.
         const enhanceable =
           entry.total === 1 &&
           entry.done === 1 &&
           entry.failed === 0 &&
-          entry.skipped === 0;
+          entry.skipped === 0 &&
+          entry.llm_enhanced === 0;
         const hasLlm =
           entry.llm_enhanced > 0 ||
           (entry.cost_usd !== null && entry.cost_usd > 0);
@@ -288,78 +295,90 @@ export function ArchivedJobRows({
                   </span>
                 </span>
               )}
-              {enhanceable && (
-                <button
-                  type="button"
-                  className={
-                    retryErrors[entry.job_id] === undefined
-                      ? "rowicon enhance"
-                      : "rowicon enhance fail tooltip"
-                  }
-                  aria-label={t.enhanceWithLlm(firstName)}
-                  title={
-                    retryErrors[entry.job_id] ??
-                    (llmAvailable
-                      ? t.enhanceWithLlm(firstName)
-                      : (llmDisabledReason ?? t.llmEnhanceUnavailable))
-                  }
-                  data-tooltip={retryErrors[entry.job_id]}
-                  disabled={
-                    !llmAvailable ||
-                    busy !== undefined ||
-                    retrying !== null ||
-                    enhancing !== null
-                  }
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void enhance(entry);
-                  }}
-                >
-                  {enhancing === entry.job_id ? (
-                    <span className="spin" aria-hidden="true" />
-                  ) : (
-                    <MagicWandIcon />
-                  )}
-                </button>
-              )}
-              {entry.total === 1 && (entry.failed === 1 || entry.skipped === 1) && (
-                <button
-                  type="button"
-                  className="rowicon retry"
-                  aria-label={t.retryAria(firstName)}
-                  title={t.retryAria(firstName)}
+              {/* same .item-actions slot as session rows: mobile CSS gives it
+                  a fixed width so the status mark keeps one x down the list
+                  whether or not wand/retry render */}
+              <span className="item-actions">
+                {enhanceable && (
+                  <button
+                    type="button"
+                    className={
+                      retryErrors[entry.job_id] === undefined
+                        ? "rowicon enhance"
+                        : "rowicon enhance fail tooltip"
+                    }
+                    aria-label={t.enhanceWithLlm(firstName)}
+                    title={
+                      retryErrors[entry.job_id] ??
+                      (llmAvailable
+                        ? t.enhanceWithLlm(firstName)
+                        : (llmDisabledReason ?? t.llmEnhanceUnavailable))
+                    }
+                    data-tooltip={retryErrors[entry.job_id]}
+                    disabled={
+                      !llmAvailable ||
+                      busy !== undefined ||
+                      retrying !== null ||
+                      enhancing !== null
+                    }
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void enhance(entry);
+                    }}
+                  >
+                    {enhancing === entry.job_id ? (
+                      <span className="spin" aria-hidden="true" />
+                    ) : (
+                      <MagicWandIcon />
+                    )}
+                  </button>
+                )}
+                {entry.total === 1 && (entry.failed === 1 || entry.skipped === 1) && (
+                  <button
+                    type="button"
+                    className="rowicon retry"
+                    aria-label={t.retryAria(firstName)}
+                    title={t.retryAria(firstName)}
+                    disabled={
+                      busy !== undefined || retrying !== null || enhancing !== null
+                    }
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void retry(entry);
+                    }}
+                  >
+                    {retrying === entry.job_id ? (
+                      <span className="spin" aria-hidden="true" />
+                    ) : (
+                      <RotateCcwIcon />
+                    )}
+                  </button>
+                )}
+                <ConfirmDeletePopover
+                  triggerLabel={t.histDeleteAria(firstName)}
+                  title={t.deleteItemTitle(firstName)}
+                  description={t.deleteItemDescription}
+                  confirmLabel={t.deletePermanently}
+                  cancelLabel={t.cancel}
+                  busyLabel={t.deleting}
                   disabled={
                     busy !== undefined || retrying !== null || enhancing !== null
                   }
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void retry(entry);
-                  }}
-                >
-                  {retrying === entry.job_id ? (
-                    <span className="spin" aria-hidden="true" />
-                  ) : (
-                    <RotateCcwIcon />
-                  )}
-                </button>
-              )}
-              <ConfirmDeletePopover
-                triggerLabel={t.histDeleteAria(firstName)}
-                title={t.deleteItemTitle(firstName)}
-                description={t.deleteItemDescription}
-                confirmLabel={t.deletePermanently}
-                cancelLabel={t.cancel}
-                busyLabel={t.deleting}
-                disabled={
-                  busy !== undefined || retrying !== null || enhancing !== null
-                }
-                onConfirm={() => requestDelete(entry)}
-              />
+                  onConfirm={() => requestDelete(entry)}
+                />
+              </span>
             </span>
+            {/* separate spans (not one joined string): the mobile meta line
+                wraps between facts, never mid-fact; the timestamp bit is the
+                first thing the tightest phones drop */}
             <span className="rowmeta">
-              {duration} / {finished} / {llmLabel}
-              {hasLlm && entry.cost_usd !== null && ` ${fmtCost(entry.cost_usd)}`} /{" "}
-              {t.histStorageSize(fmtBytes(entry.size_bytes))}
+              <span className="metabit">{duration}</span>
+              <span className="metabit metabit-time">{finished}</span>
+              <span className="metabit">
+                {llmLabel}
+                {hasLlm && entry.cost_usd !== null && ` ${fmtCost(entry.cost_usd)}`}
+              </span>
+              <span className="metabit">{t.histStorageSize(fmtBytes(entry.size_bytes))}</span>
             </span>
             {(rowErrors[entry.job_id] !== undefined ||
               retryErrors[entry.job_id] !== undefined) && (

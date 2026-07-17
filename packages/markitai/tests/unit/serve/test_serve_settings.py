@@ -68,7 +68,7 @@ async def _serve_client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
+            transport=transport, base_url="http://127.0.0.1"
         ) as client:
             yield client
 
@@ -679,9 +679,12 @@ class TestProviderCredentialLifecycle:
         assert "sk-visible-on-request" not in cards_response.text
         assert credentials.status_code == 200
         assert credentials.headers["cache-control"] == "no-store"
+        # An explicitly-saved base is returned verbatim; the default is offered
+        # separately for the editor placeholder.
         assert credentials.json() == {
             "api_key": "sk-visible-on-request",
             "api_base": "https://proxy.example/v1",
+            "api_base_placeholder": "https://api.deepseek.com",
         }
 
     async def test_provider_editor_gets_effective_default_api_base(
@@ -718,9 +721,12 @@ class TestProviderCredentialLifecycle:
 
         assert card["api_base_configured"] is False
         assert card["api_base"] == "https://api.deepseek.com"
+        # A key-only connection saves no base (stays on the provider default);
+        # the editor field is empty with the default as its placeholder.
         assert credentials.json() == {
             "api_key": "sk-deepseek",
-            "api_base": "https://api.deepseek.com",
+            "api_base": None,
+            "api_base_placeholder": "https://api.deepseek.com",
         }
 
     async def test_legacy_embedded_credentials_migrate_before_last_model_delete(
@@ -1521,7 +1527,7 @@ class TestSettingsOriginAndSecurity:
         async with app.router.lifespan_context(app):
             transport = httpx.ASGITransport(app=app, client=("203.0.113.9", 1234))
             async with httpx.AsyncClient(
-                transport=transport, base_url="http://test"
+                transport=transport, base_url="http://127.0.0.1"
             ) as client:
                 response = await client.get("/api/settings/llm")
         assert response.status_code == 403

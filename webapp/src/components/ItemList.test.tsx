@@ -164,3 +164,85 @@ describe("ItemList roving selection", () => {
     expect(skipped).toHaveAttribute("aria-selected", "true");
   });
 });
+
+describe("ItemList empty workspace", () => {
+  it("shows an explicit empty state instead of a zeroed totals row", () => {
+    const { container } = render(
+      <ItemList
+        t={dicts.en}
+        items={[]}
+        jobs={{}}
+        showCost={false}
+        now={Date.now()}
+        stats={{
+          done: 0,
+          skipped: 0,
+          failed: 0,
+          total: 0,
+          costTotal: 0,
+          hasCost: false,
+          doneDurationMs: 0,
+        }}
+        settled
+        selectedKey={null}
+        onSelect={vi.fn()}
+        onPreview={vi.fn()}
+        focusKey={null}
+        onFocusKeyHandled={vi.fn()}
+        onRetry={vi.fn().mockResolvedValue(null)}
+        onDelete={vi.fn().mockResolvedValue(null)}
+        canDelete={() => false}
+      />,
+    );
+
+    expect(screen.getByText(dicts.en.emptyWorkspace)).toBeVisible();
+    expect(container.querySelector(".lrow.totals")).toBeNull();
+  });
+
+  it("suppresses the empty state while archived history is still loading", () => {
+    render(
+      <ItemList
+        t={dicts.en}
+        items={[]}
+        jobs={{}}
+        archive={{
+          // null entries = fetchHistory still in flight; the empty message
+          // must wait so it never flashes over about-to-arrive archived rows.
+          entries: null,
+          error: null,
+          rowProps: {
+            actions: {},
+            rowErrors: {},
+            onRefresh: vi.fn().mockResolvedValue(undefined),
+            onOpen: vi.fn().mockResolvedValue(null),
+            onRetry: vi.fn().mockResolvedValue(null),
+            onDelete: vi.fn().mockResolvedValue(true),
+            announce: vi.fn(),
+          },
+        }}
+        showCost={false}
+        now={Date.now()}
+        stats={{
+          done: 0,
+          skipped: 0,
+          failed: 0,
+          total: 0,
+          costTotal: 0,
+          hasCost: false,
+          doneDurationMs: 0,
+        }}
+        settled
+        selectedKey={null}
+        onSelect={vi.fn()}
+        onPreview={vi.fn()}
+        focusKey={null}
+        onFocusKeyHandled={vi.fn()}
+        onRetry={vi.fn().mockResolvedValue(null)}
+        onDelete={vi.fn().mockResolvedValue(null)}
+        canDelete={() => false}
+      />,
+    );
+
+    expect(screen.queryByText(dicts.en.emptyWorkspace)).not.toBeInTheDocument();
+  });
+});

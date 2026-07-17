@@ -114,7 +114,10 @@ export type LLMSettingsUpdate =
 
 export interface LLMProviderCredentials {
   api_key: string | null;
+  // the RAW saved base (null when the connection uses the provider default)
   api_base: string | null;
+  // the provider default, offered for the editor's placeholder only
+  api_base_placeholder?: string | null;
 }
 
 export interface ProviderConnection {

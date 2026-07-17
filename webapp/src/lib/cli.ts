@@ -1,8 +1,10 @@
 import type { Preset } from "../api/types";
 
 /** Safe-bare shell charset; anything else (?, &, spaces, quotes) is wrapped
- * in single quotes so pasted commands survive a real shell. */
-const SHELL_SAFE_RE = /^[A-Za-z0-9_\-./:@%+=,~]+$/;
+ * in single quotes so pasted commands survive a real shell. A leading "~"
+ * would tilde-expand, so those strings are quoted too; "~" elsewhere in a
+ * word (e.g. /~user/ URLs) is inert and stays bare. */
+const SHELL_SAFE_RE = /^(?!~)[A-Za-z0-9_\-./:@%+=,~]+$/;
 
 function shellQuote(s: string): string {
   if (SHELL_SAFE_RE.test(s)) return s;

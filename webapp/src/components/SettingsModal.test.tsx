@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../api/client";
 import type { LLMSettingsPayload } from "../api/types";
 import { dicts } from "../i18n";
 import { SettingsModal } from "./SettingsModal";
@@ -18,18 +19,49 @@ const api = vi.hoisted(() => ({
   test: vi.fn(),
 }));
 
-vi.mock("../api/client", () => ({
-  fetchLLMSettings: api.fetchSettings,
-  fetchProviderConnections: api.fetchProviders,
-  fetchLLMProviderCredentials: api.fetchCredentials,
-  discoverLLMModels: api.discover,
-  addLLMDeployments: api.add,
-  updateLLMDeployment: api.update,
-  deleteLLMDeployment: api.remove,
-  updateLLMProvider: api.updateProvider,
-  deleteLLMProvider: api.removeProvider,
-  testLLMSettings: api.test,
-}));
+vi.mock("../api/client", async (importOriginal) => {
+  // Keep the real ApiError class so instanceof branches in the component
+  // still recognize errors constructed by the tests.
+  const actual = await importOriginal<typeof import("../api/client")>();
+  return {
+    ApiError: actual.ApiError,
+    fetchLLMSettings: api.fetchSettings,
+    fetchProviderConnections: api.fetchProviders,
+    fetchLLMProviderCredentials: api.fetchCredentials,
+    discoverLLMModels: api.discover,
+    addLLMDeployments: api.add,
+    updateLLMDeployment: api.update,
+    deleteLLMDeployment: api.remove,
+    updateLLMProvider: api.updateProvider,
+    deleteLLMProvider: api.removeProvider,
+    testLLMSettings: api.test,
+  };
+});
+
+// jsdom performs no layout, so offsetParent is always null and the modal's
+// focus trap would treat every element as hidden; approximate visibility as
+// "attached to a parent" for the keyboard tests.
+const offsetParentDescriptor = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  "offsetParent",
+);
+beforeAll(() => {
+  Object.defineProperty(HTMLElement.prototype, "offsetParent", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.parentElement;
+    },
+  });
+});
+afterAll(() => {
+  if (offsetParentDescriptor !== undefined) {
+    Object.defineProperty(
+      HTMLElement.prototype,
+      "offsetParent",
+      offsetParentDescriptor,
+    );
+  }
+});
 
 const emptySettings: LLMSettingsPayload = {
   configured: false,
@@ -40,6 +72,17 @@ const emptySettings: LLMSettingsPayload = {
   revision: "revision-1",
   deployments: [],
   detected: [],
+};
+
+const gptDeployment = {
+  deployment_id: "deployment-1",
+  routing_group: "default",
+  model: "openai/gpt-test",
+  weight: 1,
+  api_key_configured: true,
+  api_base_configured: false,
+  api_base: null,
+  persisted: true,
 };
 
 describe("SettingsModal", () => {
@@ -95,6 +138,8 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={onSaved}
         announce={() => undefined}
@@ -177,6 +222,8 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -238,6 +285,8 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -282,6 +331,8 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -331,6 +382,8 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -423,6 +476,8 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -443,5 +498,345 @@ describe("SettingsModal", () => {
     await user.click(screen.getByRole("button", { name: dicts.en.cancel }));
     expect(document.querySelector(".provider-picker")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: dicts.en.addModels })).toBeVisible();
+  });
+
+  it("traps Tab inside the delete popover and Escape closes only the popover", async () => {
+    const user = userEvent.setup();
+    api.fetchSettings.mockResolvedValue({
+      ...emptySettings,
+      configured: true,
+      deployments: [gptDeployment],
+    });
+    api.fetchProviders.mockResolvedValue([]);
+    const onClose = vi.fn();
+
+    render(
+      <SettingsModal
+        t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
+        onClose={onClose}
+        onSaved={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: dicts.en.deleteModel("openai/gpt-test"),
+      }),
+    );
+    const popover = screen.getByRole("alertdialog");
+    const cancel = within(popover).getByRole("button", { name: dicts.en.cancel });
+    const confirm = within(popover).getByRole("button", {
+      name: dicts.en.deletePermanently,
+    });
+    await waitFor(() => expect(cancel).toHaveFocus());
+    await user.tab();
+    expect(confirm).toHaveFocus();
+    await user.tab();
+    expect(cancel).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(document.querySelector(".mdl-veil.out")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
+  it("steps Escape back one breadcrumb level before closing the modal", async () => {
+    const user = userEvent.setup();
+    api.fetchSettings.mockResolvedValue(emptySettings);
+    api.fetchProviders.mockResolvedValue([
+      {
+        id: "common:openai",
+        provider: "openai",
+        label: "OpenAI",
+        kind: "common",
+        status: "needs_credentials",
+        source: "built_in",
+        supports_discovery: true,
+      },
+    ]);
+    const onClose = vi.fn();
+
+    render(
+      <SettingsModal
+        t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
+        onClose={onClose}
+        onSaved={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: dicts.en.addModels }));
+    await user.click(
+      screen.getByRole("button", { name: dicts.en.selectProvider("OpenAI") }),
+    );
+    expect(screen.getByRole("heading", { name: "OpenAI" })).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("heading", { name: dicts.en.addModels })).toBeVisible();
+    expect(document.querySelector(".provider-picker")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("heading", { name: dicts.en.settingsTitle }),
+    ).toBeVisible();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
+  it("surfaces provider load failures in the add flow with a retry", async () => {
+    const user = userEvent.setup();
+    api.fetchSettings.mockResolvedValue(emptySettings);
+    api.fetchProviders
+      .mockRejectedValueOnce(new Error("providers backend down"))
+      .mockResolvedValue([
+        {
+          id: "common:openai",
+          provider: "openai",
+          label: "OpenAI",
+          kind: "common",
+          status: "needs_credentials",
+          source: "built_in",
+          supports_discovery: true,
+        },
+      ]);
+
+    render(
+      <SettingsModal
+        t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
+        onClose={() => undefined}
+        onSaved={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: dicts.en.addModels }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      dicts.en.providersLoadFailed,
+    );
+    expect(screen.queryByText(dicts.en.loading)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: dicts.en.retryLoad }));
+    expect(
+      await screen.findByRole("button", { name: dicts.en.selectProvider("OpenAI") }),
+    ).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows the conflict message when a save hits a stale revision", async () => {
+    const user = userEvent.setup();
+    api.fetchSettings.mockResolvedValue({
+      ...emptySettings,
+      configured: true,
+      deployments: [gptDeployment],
+    });
+    api.fetchProviders.mockResolvedValue([]);
+    api.update.mockRejectedValue(
+      new ApiError(
+        "Settings were changed in another window",
+        409,
+        "stale_revision",
+        "a".repeat(64),
+      ),
+    );
+
+    render(
+      <SettingsModal
+        t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
+        onClose={() => undefined}
+        onSaved={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: dicts.en.edit }));
+    await user.click(screen.getByRole("button", { name: dicts.en.save }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      dicts.en.settingsConflict,
+    );
+  });
+
+  it("lets the weight field stay empty while editing and resolves on commit", async () => {
+    const user = userEvent.setup();
+    api.fetchSettings.mockResolvedValue({
+      ...emptySettings,
+      configured: true,
+      deployments: [gptDeployment],
+    });
+    api.fetchProviders.mockResolvedValue([]);
+    api.update.mockResolvedValue({ ...emptySettings, revision: "revision-2" });
+
+    render(
+      <SettingsModal
+        t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
+        onClose={() => undefined}
+        onSaved={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: dicts.en.edit }));
+    const weightInput = screen.getByLabelText(dicts.en.weight);
+    await user.clear(weightInput);
+    expect(weightInput).toHaveValue(null);
+    await user.type(weightInput, "3");
+    await user.click(screen.getByRole("button", { name: dicts.en.save }));
+
+    await waitFor(() => {
+      expect(api.update).toHaveBeenCalledWith(
+        "deployment-1",
+        expect.objectContaining({ weight: 3 }),
+      );
+    });
+  });
+
+  it("hands focus to a surviving model after deleting one", async () => {
+    const user = userEvent.setup();
+    const gptDeployment2 = {
+      ...gptDeployment,
+      deployment_id: "deployment-2",
+      model: "openai/gpt-test-2",
+    };
+    api.fetchSettings.mockResolvedValue({
+      ...emptySettings,
+      configured: true,
+      deployments: [gptDeployment, gptDeployment2],
+    });
+    api.fetchProviders.mockResolvedValue([]);
+    api.remove.mockResolvedValue({
+      ...emptySettings,
+      configured: true,
+      revision: "revision-2",
+      deployments: [gptDeployment2],
+    });
+
+    render(
+      <SettingsModal
+        t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
+        onClose={() => undefined}
+        onSaved={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: dicts.en.deleteModel("openai/gpt-test"),
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: dicts.en.deletePermanently }),
+    );
+    await waitFor(() =>
+      expect(api.remove).toHaveBeenCalledWith("deployment-1", "revision-1"),
+    );
+    // Focus moves to the surviving row rather than falling to <body>.
+    await waitFor(() => {
+      const survivor = document.querySelector(
+        '.prov[data-deployment-id="deployment-2"] button',
+      );
+      expect(survivor).toHaveFocus();
+    });
+  });
+
+  it("hosts the appearance controls for the phone header hand-off", async () => {
+    const user = userEvent.setup();
+    api.fetchSettings.mockResolvedValue(emptySettings);
+    api.fetchProviders.mockResolvedValue([]);
+    const onLocale = vi.fn();
+
+    render(
+      <SettingsModal
+        t={dicts.en}
+        locale="en"
+        onLocale={onLocale}
+        onClose={() => undefined}
+        onSaved={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+
+    const section = document.querySelector<HTMLElement>(".appearance-section");
+    expect(section).not.toBeNull();
+    expect(
+      within(section!).getByRole("group", { name: dicts.en.langAria }),
+    ).toBeInTheDocument();
+    expect(
+      within(section!).getByRole("radiogroup", { name: dicts.en.themeAria }),
+    ).toBeInTheDocument();
+    await user.click(within(section!).getByRole("button", { name: "中" }));
+    expect(onLocale).toHaveBeenCalledWith("zh");
+
+    // The add-models flow replaces the modal body wholesale; the appearance
+    // section belongs to the root breadcrumb level only.
+    await user.click(await screen.findByRole("button", { name: dicts.en.addModels }));
+    expect(document.querySelector(".appearance-section")).toBeNull();
+  });
+
+  it("moves focus to the level heading after an Escape unwind", async () => {
+    const user = userEvent.setup();
+    api.fetchSettings.mockResolvedValue(emptySettings);
+    api.fetchProviders.mockResolvedValue([
+      {
+        id: "common:openai",
+        provider: "openai",
+        label: "OpenAI",
+        kind: "common",
+        status: "needs_credentials",
+        source: "built_in",
+        supports_discovery: true,
+      },
+    ]);
+
+    render(
+      <SettingsModal
+        t={dicts.en}
+        locale="en"
+        onLocale={() => undefined}
+        onClose={() => undefined}
+        onSaved={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: dicts.en.addModels }));
+    await user.click(
+      screen.getByRole("button", { name: dicts.en.selectProvider("OpenAI") }),
+    );
+    expect(screen.getByRole("heading", { name: "OpenAI" })).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: dicts.en.addModels }),
+      ).toHaveFocus(),
+    );
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: dicts.en.settingsTitle }),
+      ).toHaveFocus(),
+    );
   });
 });

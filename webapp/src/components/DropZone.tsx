@@ -94,7 +94,9 @@ export function FilePicker({
   className?: string;
 }) {
   return (
-    <label className={className}>
+    // aria-label duplicates the visible text so the icon-only phone variant
+    // (the span is display:none there) keeps its accessible name
+    <label className={className} aria-label={label}>
       {icon}
       <span>{label}</span>
       <input

@@ -9,6 +9,14 @@ type Position = {
   placement: "above" | "below";
 };
 
+/** The card is portalled to document.body, outside any ancestor dialog's DOM
+ * subtree, so dialogs must ask document-wide whether a confirmation layer is
+ * on top before handling Escape or trapping Tab focus themselves. */
+// eslint-disable-next-line react-refresh/only-export-components -- shared with SettingsModal's Escape/focus handling; splitting the file would orphan the comment above.
+export function openDeletePopoverCard(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".delete-popover-card");
+}
+
 /** Anchored destructive confirmation. The card is portalled to the viewport so
  * modal/list overflow cannot clip it, and flips around the trigger as needed. */
 export function ConfirmDeletePopover({

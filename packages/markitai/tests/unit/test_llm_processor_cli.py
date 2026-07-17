@@ -1507,3 +1507,34 @@ class TestProcessWithLLMPureMode:
         assert "Concise explanations" in sent_to_llm
         assert "author:" in sent_to_llm
         assert "# Concise" in sent_to_llm
+
+
+class TestImageRefPattern:
+    """_image_ref_pattern: alt-text updates must survive percent-encoding."""
+
+    def test_matches_percent_encoded_and_raw_destinations(self) -> None:
+        import re
+
+        from markitai.cli.processors.llm import _image_ref_pattern
+        from markitai.utils.text import markdown_image_reference
+
+        name = "文 档.0001.jpg"
+        encoded = markdown_image_reference("old", f".markitai/assets/{name}")
+        new_ref = markdown_image_reference("caption", f".markitai/assets/{name}")
+
+        # markdown_image_reference writes the destination percent-encoded
+        assert "%" in encoded
+        replaced = re.sub(_image_ref_pattern(name), new_ref, encoded)
+        assert replaced == new_ref
+
+        raw = f"![old](.markitai/assets/{name})"
+        assert re.sub(_image_ref_pattern(name), new_ref, raw) == new_ref
+
+    def test_ascii_name_unchanged(self) -> None:
+        import re
+
+        from markitai.cli.processors.llm import _image_ref_pattern
+
+        raw = "![x](.markitai/assets/plain.0001.png)"
+        out = re.sub(_image_ref_pattern("plain.0001.png"), "![y](z)", raw)
+        assert out == "![y](z)"

@@ -1,8 +1,15 @@
+import type { ReactNode } from "react";
 import type { Preset } from "../api/types";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { Dict } from "../i18n";
 import { CliCommand } from "./CliCommand";
 
 const PRESETS: Preset[] = ["minimal", "standard", "rich"];
+
+/** App's mobile breakpoint (app.css ≤780px tier) — there the options row must
+ * hold every toggle on one line at 360px, so the LLM label drops to its short
+ * form. The switch keeps the full name in aria-label. */
+const PHONE_Q = "(max-width: 780px)";
 
 /** OCR is always available as a conversion option. LLM controls require a
  * routable deployment, and Preset remains a refinement of enabled LLM work. */
@@ -17,6 +24,7 @@ export function OptionsBar({
   onPreset,
   onLlm,
   onOcr,
+  trailing,
 }: {
   t: Dict;
   preset: Preset;
@@ -28,12 +36,16 @@ export function OptionsBar({
   onPreset: (p: Preset) => void;
   onLlm: (v: boolean) => void;
   onOcr: (v: boolean) => void;
+  /** Extra row member after the CLI disclosure — the workspace composer parks
+   * its archive download at the row's right edge; home passes nothing. */
+  trailing?: ReactNode;
 }) {
+  const phone = useMediaQuery(PHONE_Q);
   return (
     <div className="options">
       {llmConfigured && (
         <div className="opt">
-          <span className="lbl">{t.llmEnhance}</span>
+          <span className="lbl">{phone ? t.llmEnhanceShort : t.llmEnhance}</span>
           <button
             type="button"
             role="switch"
@@ -83,6 +95,7 @@ export function OptionsBar({
         ocr={ocr}
         announce={announce}
       />
+      {trailing}
     </div>
   );
 }

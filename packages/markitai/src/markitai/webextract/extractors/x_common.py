@@ -376,11 +376,26 @@ _QUOTE_TRUNCATION_MARKERS = {
 }
 
 
+def _is_truncation_control(element: Tag) -> bool:
+    """True only for an actual clickable, not ordinary quoted-text runs.
+
+    X splits ``tweetText`` into many ``<span>`` at emoji/link/hashtag
+    boundaries, so a complete quote can contain a standalone ``…`` span or the
+    literal words "show more". Requiring an interactive control keeps those
+    from fabricating a truncation ellipsis on text that is not clipped.
+    """
+    if element.name in ("button", "a"):
+        return True
+    return element.get("role") in ("button", "link")
+
+
 def _mark_truncated_quote(text: str, quoted_el: Tag) -> str:
     """Append an explicit marker when X exposes a clipped quoted post."""
     if not text or text.rstrip().endswith(("...", "…")):
         return text
-    for element in quoted_el.find_all(["button", "span"]):
+    for element in quoted_el.find_all(["button", "a", "span"]):
+        if not _is_truncation_control(element):
+            continue
         marker = " ".join(element.get_text(" ", strip=True).casefold().split())
         if marker in _QUOTE_TRUNCATION_MARKERS:
             return f"{text.rstrip()}..."

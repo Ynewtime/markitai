@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { Dict } from "../i18n";
 import { FilePicker } from "./DropZone";
 import { UploadIcon } from "./icons";
@@ -7,19 +8,6 @@ import { UploadIcon } from "./icons";
  * placeholder wraps and the 1-row textarea clips it, so swap in the short
  * copy. aria-label keeps the full hint. */
 const NARROW_Q = "(max-width: 780px)";
-
-function useNarrow(): boolean {
-  const [narrow, setNarrow] = useState(
-    () => typeof window !== "undefined" && window.matchMedia(NARROW_Q).matches,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia(NARROW_Q);
-    const onChange = () => setNarrow(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-  return narrow;
-}
 
 /** URL entry: a textarea styled as the mock's single input — pasting
  * multi-line text grows it one row per URL. Enter converts (the placeholder
@@ -43,7 +31,7 @@ export function UrlInput({
 }) {
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const narrow = useNarrow();
+  const narrow = useMediaQuery(NARROW_Q);
 
   const urls = useMemo(
     () =>

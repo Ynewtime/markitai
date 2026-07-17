@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ItemStatus } from "../api/types";
 import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
@@ -124,6 +124,7 @@ export function ItemRow({
   llmAvailable?: boolean;
   llmDisabledReason?: string;
 }) {
+  const rowRef = useRef<HTMLDivElement>(null);
   const [errExpanded, setErrExpanded] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
   const [enhanceBusy, setEnhanceBusy] = useState(false);
@@ -170,12 +171,27 @@ export function ItemRow({
     setDeleteBusy(true);
     setActionErr(null);
     setEnhanceErr(null);
+    // Pick the focus successor before the row (and the confirm popover's
+    // trigger) unmounts, so deleting does not drop focus to <body> — the
+    // same handoff ArchivedJobRows performs.
+    const row = rowRef.current;
+    const options = Array.from(
+      row
+        ?.closest('[role="listbox"]')
+        ?.querySelectorAll<HTMLElement>('[role="option"]') ?? [],
+    );
+    const rowIndex = row === null ? -1 : options.indexOf(row);
+    const focusTarget =
+      rowIndex < 0 ? null : (options[rowIndex + 1] ?? options[rowIndex - 1] ?? null);
     const error = await onDelete(item);
     if (error !== null) {
       setActionErr(error);
       setDeleteBusy(false);
       return false;
     }
+    window.requestAnimationFrame(() => {
+      if (focusTarget?.isConnected) focusTarget.focus();
+    });
     return true;
   };
 
@@ -191,19 +207,25 @@ export function ItemRow({
   const displayName = item.name.replace(/^https?:\/\//, "");
   const nameTitle = sizeText !== null ? `${item.name} · ${sizeText}` : item.name;
 
-  const metaParts: string[] = [];
-  if (sizeText !== null) metaParts.push(sizeText);
-  if (running) metaParts.push(`running ${live ?? DASH}`);
-  else if (!skipped && item.durationMs !== null) metaParts.push(fmtDur(item.durationMs));
-  if (item.finishedAt !== null) metaParts.push(finishedText);
+  // Bits stay separate spans (not one joined string) so the mobile meta line
+  // wraps between facts — never mid-fact, never stranding a separator. The
+  // timestamp is tagged: it is the first bit the tightest phones drop.
+  const metaParts: { text: string; time?: boolean }[] = [];
+  if (sizeText !== null) metaParts.push({ text: sizeText });
+  if (running) metaParts.push({ text: `${STATUS_TEXT.running} ${live ?? DASH}` });
+  else if (!skipped && item.durationMs !== null)
+    metaParts.push({ text: fmtDur(item.durationMs) });
+  if (item.finishedAt !== null) metaParts.push({ text: finishedText, time: true });
   if (showCost) {
-    metaParts.push(
-      llmApplied ? `LLM${costText === null ? "" : ` ${costText}`}` : "Base",
-    );
+    metaParts.push({
+      text: llmApplied ? `LLM${costText === null ? "" : ` ${costText}`}` : "Base",
+    });
   }
-  if (item.status === "queued") metaParts.push(STATUS_TEXT.queued);
+  if (item.status === "queued") metaParts.push({ text: STATUS_TEXT.queued });
 
-  const inert = !previewable && !failed && !canDelete;
+  // A skipped row still hosts an enabled Retry (rendered on failed || skipped),
+  // so it must not announce itself disabled to assistive tech.
+  const inert = !previewable && !failed && !skipped && !canDelete;
   const skipText =
     item.skipReason === "image_only"
       ? t.skipImageOnly
@@ -235,6 +257,7 @@ export function ItemRow({
 
   return (
     <div
+      ref={rowRef}
       role="option"
       id={`opt-${item.key.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
       data-session-key={item.key}
@@ -347,7 +370,18 @@ export function ItemRow({
           </span>
         )}
       </span>
-      {metaParts.length > 0 && <span className="rowmeta">{metaParts.join(" / ")}</span>}
+      {metaParts.length > 0 && (
+        <span className="rowmeta">
+          {metaParts.map((bit) => (
+            <span
+              key={bit.text}
+              className={bit.time === true ? "metabit metabit-time" : "metabit"}
+            >
+              {bit.text}
+            </span>
+          ))}
+        </span>
+      )}
       {failed && item.error !== null && (
         <span className="c-err" id={detailId}>
           <span className="errtext" title={t.errExpandTitle}>

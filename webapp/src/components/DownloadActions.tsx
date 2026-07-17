@@ -2,27 +2,48 @@ import { useState } from "react";
 import type { Dict } from "../i18n";
 import { DownloadIcon } from "./icons";
 
-/** Workspace actions. The ZIP covers every completed server job and stays
- * disabled until active conversions settle; clear remains session-scoped. */
-export function DownloadActions({
+/** Job-header clear. Session-scoped: while conversions run it only removes
+ * settled rows, so the label and disabled state track that split. */
+export function ClearJobsButton({
+  t,
+  activeCount,
+  clearableJobCount,
+  onClear,
+}: {
+  t: Dict;
+  activeCount: number;
+  clearableJobCount: number;
+  onClear: () => void;
+}) {
+  const clearingCompleted = activeCount > 0;
+  const clearDisabled = clearingCompleted && clearableJobCount === 0;
+  return (
+    <button
+      type="button"
+      className="btn ghost"
+      disabled={clearDisabled}
+      title={clearDisabled ? t.nothingCompleted : undefined}
+      onClick={onClear}
+    >
+      {clearingCompleted ? t.clearCompleted : t.clearAll}
+    </button>
+  );
+}
+
+/** Composer-row ZIP download. The archive covers every completed server job
+ * and stays disabled until active conversions settle; with nothing completed
+ * and nothing running there is no archive to offer, so it renders nothing. */
+export function DownloadArchiveButton({
   t,
   zipHref,
   activeCount,
-  clearableJobCount,
-  showClear,
-  onClear,
   onDownloadError,
 }: {
   t: Dict;
   zipHref: string | null;
   activeCount: number;
-  clearableJobCount: number;
-  showClear: boolean;
-  onClear: () => void;
   onDownloadError: (message: string) => void;
 }) {
-  const clearingCompleted = activeCount > 0;
-  const clearDisabled = clearingCompleted && clearableJobCount === 0;
   const [downloading, setDownloading] = useState(false);
 
   const downloadArchive = async () => {
@@ -60,40 +81,25 @@ export function DownloadActions({
     }
   };
 
-  return (
-    <div className="actions">
-      {showClear && (
-        <button
-          type="button"
-          className="btn ghost"
-          disabled={clearDisabled}
-          title={clearDisabled ? t.nothingCompleted : undefined}
-          onClick={onClear}
-        >
-          {clearingCompleted ? t.clearCompleted : t.clearAll}
-        </button>
+  return zipHref !== null ? (
+    <button
+      type="button"
+      className="btn primary zipbtn"
+      disabled={downloading}
+      aria-busy={downloading || undefined}
+      onClick={() => void downloadArchive()}
+    >
+      {downloading ? (
+        <span className="spin" aria-hidden="true" />
+      ) : (
+        <DownloadIcon size={15} />
       )}
-      {zipHref !== null ? (
-        <button
-          type="button"
-          className="btn primary"
-          disabled={downloading}
-          aria-busy={downloading || undefined}
-          onClick={() => void downloadArchive()}
-        >
-          {downloading ? (
-            <span className="spin" aria-hidden="true" />
-          ) : (
-            <DownloadIcon size={15} />
-          )}
-          {downloading ? t.downloadingZip : t.downloadAllZip}
-        </button>
-      ) : activeCount > 0 ? (
-        <button type="button" className="btn primary" disabled title={t.zipWhileRunning}>
-          <DownloadIcon size={15} />
-          {t.downloadAllZip}
-        </button>
-      ) : null}
-    </div>
-  );
+      {downloading ? t.downloadingZip : t.downloadAllZip}
+    </button>
+  ) : activeCount > 0 ? (
+    <button type="button" className="btn primary zipbtn" disabled title={t.zipWhileRunning}>
+      <DownloadIcon size={15} />
+      {t.downloadAllZip}
+    </button>
+  ) : null;
 }

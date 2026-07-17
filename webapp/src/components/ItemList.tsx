@@ -18,6 +18,9 @@ import { ItemRow } from "./ItemRow";
 const STATUS_FILTERS = ["all", "done", "failed", "skipped"] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 
+/** Stable fallback: a fresh [] per render would invalidate the rows memo. */
+const NO_ARCHIVE_ENTRIES: HistoryEntry[] = [];
+
 type ArchiveRowProps = Omit<
   ArchivedJobRowsProps,
   | "t"
@@ -106,6 +109,7 @@ function sessionActivityTimestamp(
 /** Merge live and persisted jobs by latest activity. Retried/enhanced work
  * moves to the top deterministically, while items inside one job retain their
  * original input order instead of being scrambled by individual finish time. */
+// eslint-disable-next-line react-refresh/only-export-components -- exported for unit tests; the merge logic belongs next to the list it feeds.
 export function mergeLedgerRows(
   items: SessionItem[],
   jobs: Record<string, SessionJob>,
@@ -211,7 +215,7 @@ export function ItemList({
   llmDisabledReason?: string;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
-  const archivedEntries = archive?.entries ?? [];
+  const archivedEntries = archive?.entries ?? NO_ARCHIVE_ENTRIES;
   const rows = useMemo(
     () => mergeLedgerRows(items, jobs, archivedEntries),
     [archivedEntries, items, jobs],
@@ -446,7 +450,10 @@ export function ItemList({
       {filterOn && visibleRows.length === 0 && (
         <p className="fempty">{t.filterNoMatch}</p>
       )}
-      {settled && !hasArchivedRows && (
+      {rows.length === 0 && !hasArchivedRows && archive?.entries !== null && (
+        <p className="fempty">{t.emptyWorkspace}</p>
+      )}
+      {settled && !hasArchivedRows && rows.length > 0 && (
         <div className="lrow totals">
           <span />
           <span className="t-lbl">

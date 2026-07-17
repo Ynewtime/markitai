@@ -11,6 +11,7 @@ from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from fastapi import FastAPI
@@ -40,6 +41,7 @@ def create_app(
     config: MarkitaiConfig | None = None,
     configure_logging: bool = True,
     config_path: Path | None = None,
+    allowed_hosts: Sequence[str] | None = None,
 ) -> FastAPI:
     """Create the FastAPI app (guarded re-export of :func:`serve.app.create_app`).
 
@@ -51,6 +53,8 @@ def create_app(
         configure_logging: Whether the app lifespan takes over loguru.
         config_path: Config file the ``/api/settings/llm/models`` endpoints
             write to. Defaults to ``~/.markitai/config.json``.
+        allowed_hosts: Extra hostnames accepted in the Host and Origin
+            headers besides localhost and IP literals.
 
     Raises:
         ImportError: When the serve extra is not installed.
@@ -65,4 +69,5 @@ def create_app(
         config=config,
         configure_logging=configure_logging,
         config_path=config_path,
+        allowed_hosts=allowed_hosts,
     )

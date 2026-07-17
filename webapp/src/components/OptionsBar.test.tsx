@@ -64,4 +64,26 @@ describe("OptionsBar", () => {
       "true",
     );
   });
+
+  it("shortens the LLM label on the phone tier but keeps the full accessible name", () => {
+    // The setup-file matchMedia stub always reports false; report true for
+    // the phone query so the component takes its narrow branch.
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      ...original(query),
+      matches: query === "(max-width: 780px)",
+    })) as typeof window.matchMedia;
+    try {
+      render(<OptionsBar {...baseProps} llm llmConfigured />);
+
+      expect(screen.getByText("LLM")).toBeVisible();
+      expect(screen.queryByText("LLM enhancement")).not.toBeInTheDocument();
+      // aria-label keeps the full wording even while the visible label is short
+      expect(screen.getByRole("switch", { name: "LLM enhancement" })).toBeVisible();
+      // the visually hidden #preset-lbl still names the segment group
+      expect(screen.getByRole("group", { name: "Preset" })).toBeInTheDocument();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });

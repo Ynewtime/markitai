@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ApiError,
   addLLMDeployments,
   deleteLLMDeployment,
   deleteLLMProvider,
@@ -18,8 +19,14 @@ import type {
   ModelDiscoveryResult,
   ProviderConnection,
 } from "../api/types";
-import type { Dict } from "../i18n";
-import { ConfirmDeletePopover } from "./ConfirmDeletePopover";
+import type { Dict, Locale } from "../i18n";
+import {
+  ConfirmDeletePopover,
+  openDeletePopoverCard,
+} from "./ConfirmDeletePopover";
+import { useMediaQuery } from "../hooks/useMediaQuery";
+import { LangToggle } from "./LangToggle";
+import { ThemeToggle } from "./ThemeToggle";
 import { AppNotification } from "./WarningNotification";
 import { ModelPicker } from "./settings/ModelPicker";
 import { ProviderPicker } from "./settings/ProviderPicker";
@@ -94,6 +101,9 @@ function errorText(error: unknown): string {
 }
 
 function settingsError(error: unknown, t: Dict): string {
+  if (error instanceof ApiError && error.code === "stale_revision") {
+    return t.settingsConflict;
+  }
   const text = errorText(error);
   return text.includes("saved provider connection no longer exists")
     ? t.providerConnectionMissing
@@ -106,16 +116,23 @@ function isLocalProvider(provider: string): boolean {
 
 export function SettingsModal({
   t,
+  locale,
+  onLocale,
   onClose,
   onSaved,
   announce,
 }: {
   t: Dict;
+  locale: Locale;
+  onLocale: (l: Locale) => void;
   onClose: () => void;
   onSaved: () => void;
   announce: (message: string) => void;
 }) {
   const [settings, setSettings] = useState<LLMSettingsPayload | null>(null);
+  // phone-width model rows squeeze the weight pill's grid column below its
+  // content width, wrapping text inside the pill — swap to the short label
+  const narrowBadges = useMediaQuery("(max-width: 780px)");
   const [providers, setProviders] = useState<ProviderConnection[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -123,6 +140,7 @@ export function SettingsModal({
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const addModelsButtonRef = useRef<HTMLButtonElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const requestClose = useCallback(() => {
     if (closingRef.current) return;
@@ -141,50 +159,15 @@ export function SettingsModal({
     };
   }, []);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        requestClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const root = cardRef.current;
-      if (root === null) return;
-      const focusable = Array.from(
-        root.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])',
-        ),
-      ).filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null);
-      if (focusable.length === 0) {
-        event.preventDefault();
-        root.focus();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-      if (!(active instanceof HTMLElement) || !root.contains(active)) {
-        event.preventDefault();
-        first?.focus();
-      } else if (event.shiftKey && (active === first || active === root)) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [requestClose]);
-
+  const [providersFailed, setProvidersFailed] = useState(false);
   const refreshProviders = useCallback(async (refresh = false) => {
     try {
       setProviders(await fetchProviderConnections(refresh));
+      setProvidersFailed(false);
     } catch {
-      // The model list remains usable if provider detection itself fails.
+      // The configured-model list stays usable when provider detection fails;
+      // the add-models flow surfaces the failure with a retry instead.
+      setProvidersFailed(true);
     }
   }, []);
 
@@ -198,16 +181,11 @@ export function SettingsModal({
         if (!stale) setLoadError(errorText(error));
       },
     );
-    void fetchProviderConnections().then(
-      (nextProviders) => {
-        if (!stale) setProviders(nextProviders);
-      },
-      () => undefined,
-    );
+    void refreshProviders();
     return () => {
       stale = true;
     };
-  }, []);
+  }, [refreshProviders]);
 
   const [rowTests, setRowTests] = useState<Record<string, RowTest>>({});
   const [testNotice, setTestNotice] = useState<TestNotice | null>(null);
@@ -278,6 +256,20 @@ export function SettingsModal({
   const removeDeployment = async (deployment: LLMDeployment) => {
     if (settings === null) return false;
     setListError(null);
+    // Pick the focus successor before the row unmounts: the confirm popover
+    // closes without returning focus (its trigger vanishes with the deleted
+    // deployment), which would otherwise drop focus to <body> mid-dialog.
+    const removedIndex = settings.deployments.findIndex(
+      (item) => item.deployment_id === deployment.deployment_id,
+    );
+    const remaining = settings.deployments.filter(
+      (item) => item.deployment_id !== deployment.deployment_id,
+    );
+    const successorId =
+      removedIndex < 0
+        ? null
+        : (remaining[removedIndex] ?? remaining[removedIndex - 1])?.deployment_id ??
+          null;
     try {
       const next = await deleteLLMDeployment(
         deployment.deployment_id,
@@ -286,6 +278,17 @@ export function SettingsModal({
       setSettings(next);
       await refreshProviders(true);
       onSaved();
+      window.requestAnimationFrame(() => {
+        const rows = Array.from(
+          cardRef.current?.querySelectorAll<HTMLElement>(".prov") ?? [],
+        );
+        const successorRow =
+          successorId === null
+            ? null
+            : (rows.find((row) => row.dataset.deploymentId === successorId) ?? null);
+        (successorRow?.querySelector<HTMLElement>("button") ??
+          addModelsButtonRef.current)?.focus();
+      });
       return true;
     } catch (error) {
       setListError(settingsError(error, t));
@@ -297,12 +300,16 @@ export function SettingsModal({
   const [editGroup, setEditGroup] = useState("");
   const [editModel, setEditModel] = useState("");
   const [editWeight, setEditWeight] = useState(1);
+  // Raw text of the weight field while it has focus, so clearing it does not
+  // snap to 0 mid-edit; blur resolves back to the parsed weight.
+  const [editWeightDraft, setEditWeightDraft] = useState<string | null>(null);
   const [editBusy, setEditBusy] = useState(false);
   const openEdit = (deployment: LLMDeployment) => {
     setEditing(deployment);
     setEditGroup(deployment.routing_group);
     setEditModel(deployment.model);
     setEditWeight(deployment.weight);
+    setEditWeightDraft(null);
     setListError(null);
   };
   const saveEdit = async () => {
@@ -321,7 +328,7 @@ export function SettingsModal({
       onSaved();
       announce(t.saved);
     } catch (error) {
-      setListError(errorText(error));
+      setListError(settingsError(error, t));
     } finally {
       setEditBusy(false);
     }
@@ -330,6 +337,9 @@ export function SettingsModal({
   const [editingProvider, setEditingProvider] = useState<ProviderConnection | null>(null);
   const [editProviderKey, setEditProviderKey] = useState("");
   const [editProviderBase, setEditProviderBase] = useState("");
+  // provider default shown as the base field's placeholder; an empty field
+  // saves null (keep using the default) rather than pinning the default URL
+  const [editBasePlaceholder, setEditBasePlaceholder] = useState("");
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerCredentialsBusy, setProviderCredentialsBusy] = useState(false);
   const providerCredentialsRequestRef = useRef(0);
@@ -339,6 +349,7 @@ export function SettingsModal({
     setEditingProvider(connection);
     setEditProviderKey("");
     setEditProviderBase("");
+    setEditBasePlaceholder("");
     setProviderCredentialsBusy(true);
     setEditing(null);
     setListError(null);
@@ -347,6 +358,7 @@ export function SettingsModal({
       if (requestId !== providerCredentialsRequestRef.current) return;
       setEditProviderKey(credentials.api_key ?? "");
       setEditProviderBase(credentials.api_base ?? "");
+      setEditBasePlaceholder(credentials.api_base_placeholder ?? "");
     } catch (error) {
       if (requestId === providerCredentialsRequestRef.current) {
         setEditingProvider(null);
@@ -467,6 +479,68 @@ export function SettingsModal({
     autoDiscoveryRef.current = null;
   };
 
+  // After an Escape-driven breadcrumb unwind the focused subtree unmounts;
+  // move focus to the surviving level heading so it does not fall to <body>.
+  const focusBreadcrumbHeading = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      cardRef.current?.querySelector<HTMLElement>("#mdl-title")?.focus();
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      // An open delete confirmation is the topmost layer: it owns Escape and
+      // bounds the Tab cycle. Its listener shares this document node, so
+      // stopPropagation cannot arbitrate - the modal has to stand down itself.
+      const popover = openDeletePopoverCard();
+      if (event.key === "Escape") {
+        if (popover !== null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        // Escape unwinds the add-models flow one breadcrumb level at a time
+        // before it closes the whole modal.
+        if (adding && provider !== null) {
+          backToProviders();
+          focusBreadcrumbHeading();
+        } else if (adding) {
+          resetAddFlow();
+          focusBreadcrumbHeading();
+        } else requestClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const root = popover ?? cardRef.current;
+      if (root === null) return;
+      const focusable = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        root.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement) || !root.contains(active)) {
+        event.preventDefault();
+        first?.focus();
+      } else if (event.shiftKey && (active === first || active === root)) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+    // backToProviders/resetAddFlow only close over stable setters and refs,
+    // so re-registering on the state they read is enough to stay current.
+  }, [requestClose, adding, provider, focusBreadcrumbHeading]);
+
   const chooseProvider = (next: ProviderConnection) => {
     setProvider(next);
     closeProviderEdit();
@@ -520,6 +594,7 @@ export function SettingsModal({
     }
     autoDiscoveryRef.current = provider.id;
     void loadModels(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadModels is recreated every render; autoDiscoveryRef already keys the fetch by provider.
   }, [provider, autoDiscoversModels, discovery, discovering]);
 
   const addSelected = async () => {
@@ -556,7 +631,7 @@ export function SettingsModal({
       onSaved();
       announce(t.modelsAdded(deployments.length));
     } catch (error) {
-      setListError(errorText(error));
+      setListError(settingsError(error, t));
     } finally {
       setAddBusy(false);
     }
@@ -580,19 +655,27 @@ export function SettingsModal({
       onSaved();
       announce(t.saved);
     } catch (error) {
-      setListError(errorText(error));
+      setListError(settingsError(error, t));
     }
   };
 
   const renderDeployment = (deployment: LLMDeployment, detected = false) => {
     const test = rowTests[deployment.deployment_id];
     return (
-      <div className="prov" key={`${detected ? "detected" : "configured"}:${deployment.deployment_id}`}>
+      <div
+        className="prov"
+        data-deployment-id={deployment.deployment_id}
+        key={`${detected ? "detected" : "configured"}:${deployment.deployment_id}`}
+      >
         <div className="prov-line">
           <span className="prov-name mono">{deployment.routing_group}</span>
           <span className="prov-model mono" title={deployment.model}>{deployment.model}</span>
           <span className="minibadge" title={t.weightHint}>
-            {detected ? "Session" : t.modelWeight(deployment.weight)}
+            {detected
+              ? t.sessionBadge
+              : narrowBadges
+                ? t.modelWeightShort(deployment.weight)
+                : t.modelWeight(deployment.weight)}
           </span>
           <span className="prov-acts">
             <button
@@ -676,7 +759,11 @@ export function SettingsModal({
               type="url"
               inputMode="url"
               value={editProviderBase}
-              placeholder={providerCredentialsBusy ? t.loading : t.setBasePh}
+              placeholder={
+                providerCredentialsBusy
+                  ? t.loading
+                  : editBasePlaceholder || t.setBasePh
+              }
               disabled={providerCredentialsBusy}
               autoComplete="off"
               spellCheck={false}
@@ -705,7 +792,7 @@ export function SettingsModal({
 
   return (
     <div
-      className={closing ? "mdl-veil out" : "mdl-veil"}
+      className={closing ? "mdl-veil settings-veil out" : "mdl-veil settings-veil"}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) requestClose();
       }}
@@ -735,19 +822,19 @@ export function SettingsModal({
                 </button>
                 <span aria-hidden="true">/</span>
                 {provider === null ? (
-                  <h2 id="mdl-title">{t.addModels}</h2>
+                  <h2 id="mdl-title" tabIndex={-1}>{t.addModels}</h2>
                 ) : (
                   <>
                     <button type="button" onClick={backToProviders}>
                       {t.addModels}
                     </button>
                     <span aria-hidden="true">/</span>
-                    <h2 id="mdl-title">{provider.label}</h2>
+                    <h2 id="mdl-title" tabIndex={-1}>{provider.label}</h2>
                   </>
                 )}
               </>
             ) : (
-              <h2 id="mdl-title">{t.settingsTitle}</h2>
+              <h2 id="mdl-title" tabIndex={-1}>{t.settingsTitle}</h2>
             )}
           </nav>
           <button type="button" className="gearbtn" aria-label={t.close} title={t.close} onClick={requestClose}>
@@ -756,13 +843,50 @@ export function SettingsModal({
         </div>
 
         <div className="mdl-body">
+          {/* Phone-only appearance controls: at ≤780px the header hides
+              .hdr-toggles and this section takes over (CSS gates both on the
+              same breakpoint, so exactly one control location exists at any
+              width). Desktop keeps it display: none, which also removes it
+              from the focus trap's offsetParent-based focusable scan. Only on
+              the root breadcrumb level — the add-models flow replaces the
+              body wholesale. */}
+          {!adding && (
+            <section className="appearance-section" aria-labelledby="appearance-title">
+              <h3 id="appearance-title" className="picker-group mono">
+                {t.appearanceTitle}
+              </h3>
+              <div className="appearance-controls">
+                <div className="appearance-opt">
+                  <span className="lbl">{t.langAria}</span>
+                  <LangToggle label={t.langAria} locale={locale} onLocale={onLocale} />
+                </div>
+                <div className="appearance-opt">
+                  <span className="lbl">{t.themeAria}</span>
+                  <ThemeToggle t={t} label={t.themeAria} />
+                </div>
+              </div>
+            </section>
+          )}
           {settings === null ? (
             <p className={loadError === null ? "mdl-dim mono" : "errline"}>{loadError ?? t.loading}</p>
           ) : adding ? (
             provider === null ? (
               <>
                 {providers.length === 0 ? (
-                  <p className="mdl-dim mono">{t.loading}</p>
+                  providersFailed ? (
+                    <>
+                      <p className="errline" role="alert">{t.providersLoadFailed}</p>
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => void refreshProviders()}
+                      >
+                        {t.retryLoad}
+                      </button>
+                    </>
+                  ) : (
+                    <p className="mdl-dim mono">{t.loading}</p>
+                  )
                 ) : (
                   <ProviderPicker
                     t={t}
@@ -946,7 +1070,7 @@ export function SettingsModal({
             <>
               <div className="settings-summary">
                 <span className="mono">{t.modelsConfigured(settings.deployments.length)}</span>
-                <button type="button" className="btn primary" onClick={() => setAdding(true)}>{t.addModels}</button>
+                <button ref={addModelsButtonRef} type="button" className="btn primary" onClick={() => setAdding(true)}>{t.addModels}</button>
               </div>
               {settings.deployments.length === 0 ? (
                 <p className="mdl-dim mono">{t.setStatusNone}</p>
@@ -964,7 +1088,7 @@ export function SettingsModal({
                   <div className="connection-fields">
                     <label className="fld"><span className="lbl">{t.routingGroup}</span><input value={editGroup} onChange={(event) => setEditGroup(event.target.value)} /></label>
                     <label className="fld"><span className="lbl">{t.setModel}</span><input value={editModel} onChange={(event) => setEditModel(event.target.value)} /></label>
-                    <label className="fld"><span className="lbl">{t.weight}</span><input type="number" min={0} value={editWeight} onChange={(event) => setEditWeight(Math.max(0, Number(event.target.value) || 0))} /></label>
+                    <label className="fld"><span className="lbl">{t.weight}</span><input type="number" min={0} value={editWeightDraft ?? editWeight} onChange={(event) => { setEditWeightDraft(event.target.value); setEditWeight(Math.max(0, Number(event.target.value) || 0)); }} onBlur={() => setEditWeightDraft(null)} /></label>
                   </div>
                   <div className="set-actions">
                     <button type="submit" className="btn primary" disabled={editBusy || editGroup.trim() === "" || editModel.trim() === ""}>{editBusy ? t.saving : t.save}</button>

@@ -74,6 +74,9 @@ class JobItem:
             "status": self.status,
             "error": self.error,
             "output": self.output,
+            # persisted so a rehydrated URL item retries into the same
+            # de-conflicted output name instead of recomputing (and colliding)
+            "output_name": self.output_name,
             "duration_ms": self.duration_ms,
             "finished_at": self.finished_at,
             "cost_usd": self.cost_usd,
@@ -86,11 +89,22 @@ class JobItem:
 
 @dataclass(slots=True)
 class RetryWork:
-    """One in-place item retry waiting on a job's serial worker."""
+    """One in-place item retry waiting on a job's serial worker.
+
+    ``prior_*`` snapshots the item's previous successful (non-skipped) result
+    so a failed rerun can be rolled back to it — enhancing or retrying a done
+    item must never destroy the base output it already had.
+    """
 
     item_id: str
     cfg: MarkitaiConfig
     operation: str = "retry"
+    prior_output: str | None = None
+    prior_cost_usd: float | None = None
+    prior_duration_ms: int | None = None
+    prior_finished_at: str | None = None
+    prior_operation: str = "convert"
+    prior_llm_enhanced: bool = False
 
 
 @dataclass
@@ -105,7 +119,14 @@ class Job:
     items: list[JobItem] = field(default_factory=list)
     status: str = "running"  # running | done
     finished_at: str | None = None  # set when the job reaches its terminal state
-    task: asyncio.Task[None] | None = None
+    dir_size_bytes: int | None = None  # cached at terminal state (see meta.json)
+    task: asyncio.Task[None] | None = None  # the initial run
+    retry_task: asyncio.Task[None] | None = None  # the retry-queue drainer
+    # Count of live runners (initial run + retry drainer). The job is only
+    # finalized when this reaches zero AND no retry work is outstanding, so a
+    # retry queued while the initial run is still active is never stranded and
+    # the two never double- or prematurely-finalize.
+    runners: int = 0
     subscribers: list[asyncio.Queue[tuple[str, dict[str, Any]]]] = field(
         default_factory=list
     )
@@ -242,9 +263,10 @@ class JobRegistry:
     async def shutdown(self) -> None:
         """Cancel all still-running job tasks (server shutdown)."""
         tasks = [
-            job.task
+            task
             for job in self.jobs.values()
-            if job.task is not None and not job.task.done()
+            for task in (job.task, job.retry_task)
+            if task is not None and not task.done()
         ]
         for task in tasks:
             task.cancel()
@@ -263,6 +285,10 @@ def cleanup_stale_jobs(jobs_root: Path, ttl_hours: float = JOB_TTL_HOURS) -> int
     """
     if not jobs_root.is_dir():
         return 0
+    # A history archive left behind by an interrupted download (its normal
+    # unlink is a response background task) lives at the jobs root, not inside
+    # any job dir, so nothing else reclaims it.
+    (jobs_root / "archive.zip").unlink(missing_ok=True)
     cutoff = time.time() - ttl_hours * 3600
     removed = 0
     for entry in jobs_root.iterdir():
@@ -280,14 +306,21 @@ def cleanup_stale_jobs(jobs_root: Path, ttl_hours: float = JOB_TTL_HOURS) -> int
 # ---------------------------------------------------------------------------
 
 
-def write_job_meta(job: Job) -> None:
+def write_job_meta(job: Job, *, refresh_size: bool = True) -> None:
     """Persist the job's terminal snapshot to ``<job_dir>/meta.json``.
 
     Written once when the job reaches its terminal state; startup rehydrate
-    reads it back to register the job as archived history.
+    reads it back to register the job as archived history. Every caller is a
+    terminal transition (finalize, item deletion), so the cached directory
+    size is refreshed here — /api/history must not rglob per refresh.
+
+    ``refresh_size=False`` skips the rglob and trusts ``job.dir_size_bytes``;
+    finalize_job precomputes it off-thread so the loop never rglobs.
     """
     from markitai.security import atomic_write_json
 
+    if refresh_size:
+        job.dir_size_bytes = job_dir_size(job.job_dir)
     atomic_write_json(
         job.job_dir / META_FILENAME,
         {
@@ -296,6 +329,7 @@ def write_job_meta(job: Job) -> None:
             "finished_at": job.finished_at,
             "status": job.status,
             "options": job.options,
+            "dir_size_bytes": job.dir_size_bytes,
             "items": [item.to_payload() for item in job.items],
         },
     )
@@ -313,6 +347,7 @@ def _item_from_payload(
         status=str(raw.get("status") or "done"),
         error=raw.get("error"),
         output=raw.get("output"),
+        output_name=raw.get("output_name"),
         duration_ms=raw.get("duration_ms"),
         finished_at=raw.get("finished_at") or fallback_finished_at,
         cost_usd=raw.get("cost_usd"),
@@ -365,6 +400,7 @@ def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
         normalized_options = {
             key: options.get(key) for key in ("preset", "llm", "ocr")
         }
+        raw_size = meta.get("dir_size_bytes")
         job = Job(
             job_id=entry.name,
             job_dir=entry,
@@ -378,6 +414,7 @@ def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
             ],
             status="done",
             finished_at=meta.get("finished_at"),
+            dir_size_bytes=raw_size if isinstance(raw_size, int) else None,
         )
         registry.jobs[job.job_id] = job
         count += 1
@@ -428,6 +465,37 @@ def job_dir_size(job_dir: Path) -> int:
     except OSError:
         return total
     return total
+
+
+def _backfill_meta_dir_size(job: Job) -> None:
+    """Write the freshly computed size into a legacy meta.json (best effort)."""
+    from markitai.security import atomic_write_json
+
+    meta_path = job.job_dir / META_FILENAME
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return
+    if not isinstance(meta, dict):
+        return
+    meta["dir_size_bytes"] = job.dir_size_bytes
+    try:
+        atomic_write_json(meta_path, meta)
+    except OSError:
+        pass
+
+
+def job_cached_dir_size(job: Job) -> int:
+    """Return the job dir size cached at its terminal state.
+
+    Jobs rehydrated from a meta.json that predates ``dir_size_bytes`` get
+    the size computed once here and persisted back, so the full rglob never
+    runs more than once per job across history refreshes and restarts.
+    """
+    if job.dir_size_bytes is None:
+        job.dir_size_bytes = job_dir_size(job.job_dir)
+        _backfill_meta_dir_size(job)
+    return job.dir_size_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -754,6 +822,8 @@ async def run_job(
     """Run selected items of *job*, optionally leaving finalization to a queue."""
     targets = list(job.items if items is None else items)
     run_cfg = job.cfg if cfg is None else cfg
+    if finalize:
+        job.runners += 1
     try:
         shared_processor: LLMProcessor | None = None
         if run_cfg.llm.enabled and run_cfg.llm.model_list:
@@ -805,15 +875,47 @@ async def run_job(
                 registry.publish_item(job, item)
     finally:
         if finalize:
-            finalize_job(registry, job)
+            job.runners -= 1
+            await finalize_if_idle(registry, job)
 
 
-def finalize_job(registry: JobRegistry, job: Job) -> None:
+async def finalize_if_idle(registry: JobRegistry, job: Job) -> None:
+    """Finalize once the initial run and retry drainer are both idle.
+
+    ``retry_pending`` is added to synchronously by the retry endpoint before
+    its drainer task is even scheduled, so this guard also covers the gap
+    between queueing a retry and the drainer starting.
+    """
+    if job.runners == 0 and job.retry_queue.empty() and not job.retry_pending:
+        await finalize_job(registry, job)
+
+
+async def finalize_job(registry: JobRegistry, job: Job) -> None:
     """Persist and publish a job after its initial run or retry queue drains."""
-    job.status = "done"
-    job.finished_at = _now_iso()
+    finished_at = _now_iso()
     try:
-        write_job_meta(job)
+        # rglob the out dir off-thread WHILE the job is still "running" — a
+        # job with hundreds of files (or a slow disk) must not block the loop
+        # and stall other jobs' SSE progress.
+        size: int | None = await asyncio.to_thread(job_dir_size, job.job_dir)
+    except asyncio.CancelledError:
+        # graceful shutdown: persist synchronously so the job still rehydrates
+        job.finished_at = finished_at
+        job.status = "done"
+        try:
+            write_job_meta(job)
+        except OSError:
+            pass
+        raise
+    except OSError:
+        size = None
+    # No await past this point: the observable status flips to "done" and
+    # meta.json lands together, so the job is never seen terminal without it.
+    job.finished_at = finished_at
+    job.dir_size_bytes = size
+    job.status = "done"
+    try:
+        write_job_meta(job, refresh_size=False)
     except OSError as e:  # history is best effort; the job itself succeeded
         logger.warning(
             "[Serve] Failed to write meta.json for job {}: {}", job.job_id, e
@@ -828,15 +930,49 @@ def finalize_job(registry: JobRegistry, job: Job) -> None:
     )
 
 
+def _restore_prior_result(job: Job, item: JobItem, work: RetryWork) -> None:
+    """Roll a failed rerun back to the item's previous successful result.
+
+    Enhance/retry reset the row and reuse the job's out_dir with
+    ``on_conflict=overwrite``, so the base ``.md`` is rewritten in place and
+    stays valid; restoring the reference keeps the working result downloadable
+    instead of leaving a done row downgraded to an output-less error.
+    """
+    item.status = "done"
+    item.error = None
+    item.output = work.prior_output
+    item.cost_usd = work.prior_cost_usd
+    item.duration_ms = work.prior_duration_ms
+    item.finished_at = work.prior_finished_at
+    item.operation = work.prior_operation
+    item.llm_enhanced = work.prior_llm_enhanced
+    item.skipped = False
+    item.skip_reason = None
+
+
+def _prune_stale_variant(job: Job, item: JobItem) -> None:
+    """Delete the opposite-variant sibling a successful rerun made stale.
+
+    A non-LLM retry of a previously enhanced item leaves its ``.llm.md`` on
+    disk; without this the result endpoint (and diff) could still surface the
+    outdated enhanced markdown.
+    """
+    if item.output is None or item.llm_enhanced:
+        return
+    if not item.output.endswith(".md") or item.output.endswith(".llm.md"):
+        return
+    stale = (job.out_dir / f"{item.output.removesuffix('.md')}.llm.md").resolve()
+    if stale.is_relative_to(job.out_dir.resolve()):
+        stale.unlink(missing_ok=True)
+
+
 async def run_retry_queue(registry: JobRegistry, job: Job) -> None:
     """Run queued item retries serially and keep their original ledger rows."""
+    job.runners += 1
     cancelled = False
     try:
-        while True:
-            try:
-                work = job.retry_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        while not job.retry_queue.empty():
+            work = job.retry_queue.get_nowait()
             try:
                 item = job.get_item(work.item_id)
                 if item is not None:
@@ -848,6 +984,11 @@ async def run_retry_queue(registry: JobRegistry, job: Job) -> None:
                         finalize=False,
                         require_llm=work.operation == "enhance",
                     )
+                    if item.status == "error" and work.prior_output is not None:
+                        _restore_prior_result(job, item, work)
+                        registry.publish_item(job, item)
+                    elif item.status == "done":
+                        _prune_stale_variant(job, item)
             except asyncio.CancelledError:
                 cancelled = True
                 raise
@@ -869,4 +1010,5 @@ async def run_retry_queue(registry: JobRegistry, job: Job) -> None:
                     registry.publish_item(job, item)
                 job.retry_pending.discard(work.item_id)
                 job.retry_queue.task_done()
-        finalize_job(registry, job)
+        job.runners -= 1
+        await finalize_if_idle(registry, job)

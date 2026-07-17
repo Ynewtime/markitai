@@ -59,6 +59,18 @@ class TestQuotedTweet:
         assert item.quoted_item is not None
         assert item.quoted_item.text == "Quoted tweet text..."
 
+    def test_standalone_ellipsis_span_is_not_a_truncation(self) -> None:
+        # X splits tweetText into spans; a complete quote with an interior
+        # ellipsis span (not a "show more" control) must not fabricate a "...".
+        html = _QUOTED_TWEET_HTML.replace(
+            "<span>Quoted tweet text</span>",
+            "<span>Quoted </span><span>…</span><span> and more</span>",
+        )
+        item = parse_tweet_article(_article(html), tweet_id="1")
+        assert item.quoted_item is not None
+        assert item.quoted_item.text == "Quoted … and more"
+        assert not item.quoted_item.text.endswith("...")
+
     def test_quote_media_not_attributed_to_parent(self) -> None:
         item = parse_tweet_article(_article(_QUOTED_TWEET_HTML), tweet_id="1")
         parent_urls = [m.url for m in item.media]

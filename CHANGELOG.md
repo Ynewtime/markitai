@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-18
+
+### Added
+
+- **Export any web-workspace preview to PDF**: the rendered Markdown prints to a clean A4 document — real four-side margins, whole code blocks and figures that never clip mid-page, and repeating table headers. A "PDF settings" menu holds an optional custom header/footer (on by default); PDFs always print light so the result is identical in Chrome, Safari and macOS Preview
+
+### Changed
+
+- **The web workspace is now usable on phones and narrow windows**: a single ≤780px layout gives the composer, options and task list one coherent column — the header collapses to identity plus history/settings, language and theme move into the settings dialog, external links and notifications dock to the bottom, and the batch download sits under the task list
+- **Batch download moved next to the conversion options** on desktop, so it no longer competes with the Clear action in the workspace header
+
+### Fixed
+
+- **The local server now refuses cross-origin and rebinding requests**: a Host/Origin allow-list (loopback, IP-literal hosts, and any `--allowed-host` you pass) blocks a malicious web page from reaching the API — which could otherwise read saved provider credentials or drive server-side URL fetches — while same-origin use and LAN binds keep working
+- **In-place retry and LLM enhancement are reliable**: retrying an item while its siblings are still converting no longer strands it as "queued"; a failed enhancement keeps the working base result instead of downgrading the row to an output-less error; an interrupted rerun no longer erases the whole job from history on restart; and re-runs overwrite their own prior outputs instead of accumulating versioned duplicates or serving a stale enhanced variant
+- **Scanned-document OCR stays accurate across a batch**: the sparse-page tiled fallback no longer lowers detection thresholds process-wide, so later pages are OCR'd at full confidence
+- **LLM alt text applies to images whose names contain spaces or CJK**: references written percent-encoded were not being matched, so captions were silently dropped for those assets
+- **Quoted posts from X keep their exact text**: an interior ellipsis or "show more" run inside the quote no longer fabricates a truncation marker on complete text
+- **Editing only a provider's API key no longer pins its default API base**: the editor field is empty (with the default shown as a placeholder) when the connection uses the provider default, so saving keeps tracking that default
+- **Whole-history downloads clean up after themselves**: the generated archive is removed once the download finishes and can no longer survive as an orphan, and a file deleted mid-build is skipped instead of failing the download
+- **The completion notification reads "N done" for a clean job** instead of "N done · 0 failed", and the local server's job finalization no longer blocks other jobs' live progress while sizing large output directories
+
 ## [0.22.0] - 2026-07-14
 
 ### Added
