@@ -277,10 +277,7 @@ class TestRemoveNonexistentImages:
         assets_dir = tmp_path / ".markitai" / "assets"
         assets_dir.mkdir(parents=True)
         (assets_dir / "截屏 下午.png").write_bytes(b"fake image data")
-        markdown = (
-            "![](.markitai/assets/"
-            "%E6%88%AA%E5%B1%8F%20%E4%B8%8B%E5%8D%88.png)"
-        )
+        markdown = "![](.markitai/assets/%E6%88%AA%E5%B1%8F%20%E4%B8%8B%E5%8D%88.png)"
 
         result = ImageProcessor.remove_nonexistent_images(markdown, assets_dir)
 

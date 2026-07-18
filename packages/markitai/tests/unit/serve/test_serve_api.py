@@ -1128,7 +1128,9 @@ class TestRetry:
             attempts.append(cfg.llm.enabled)
             suffix = ".llm.md" if cfg.llm.enabled else ".md"
             output = out_dir / f"{file_path.name}{suffix}"
-            output.write_text("enhanced" if cfg.llm.enabled else "base", encoding="utf-8")
+            output.write_text(
+                "enhanced" if cfg.llm.enabled else "base", encoding="utf-8"
+            )
             return ProcessResult(
                 success=True,
                 output_path=str(output),

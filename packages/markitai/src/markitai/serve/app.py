@@ -309,9 +309,7 @@ class _HostGuardMiddleware:
                 elif key == b"origin":
                     origin_header = value.decode("latin-1")
             host_hostname = (
-                _host_header_hostname(host_header)
-                if host_header is not None
-                else None
+                _host_header_hostname(host_header) if host_header is not None else None
             )
             if host_header is not None and not _is_trusted_hostname(
                 host_hostname, self.allowed_hosts
@@ -850,7 +848,9 @@ def _preserve_raw_deployment_provider(
     _ensure_raw_provider(
         providers,
         provider=model.split("/", 1)[0].lower(),
-        api_key=params.get("api_key") if isinstance(params.get("api_key"), str) else None,
+        api_key=params.get("api_key")
+        if isinstance(params.get("api_key"), str)
+        else None,
         api_base=(
             params.get("api_base") if isinstance(params.get("api_base"), str) else None
         ),
@@ -1056,9 +1056,7 @@ async def _probe_llm(body: LLMSettingsUpdate) -> str:
         "model": body.model,
         # One token is too small for APIs that account for hidden reasoning
         # tokens and can turn a healthy model into an artificial length error.
-        "messages": [
-            {"role": "user", "content": "Reply with exactly OK."}
-        ],
+        "messages": [{"role": "user", "content": "Reply with exactly OK."}],
         "max_tokens": 16,
         "timeout": _LLM_TEST_TIMEOUT_S,
     }
@@ -1373,8 +1371,12 @@ def create_app(
             state.configured_models, refresh=refresh
         )
         detected = [card for card in detected if card.get("kind") != "configured"]
-        explicit_by_id = {provider.id: provider for provider in state.configured_providers}
-        explicit_provider_names = {provider.provider for provider in explicit_by_id.values()}
+        explicit_by_id = {
+            provider.id: provider for provider in state.configured_providers
+        }
+        explicit_provider_names = {
+            provider.provider for provider in explicit_by_id.values()
+        }
         # A persisted env reference and its auto-detected environment card are
         # one connection, not two provider cards.
         providers = [
@@ -1680,9 +1682,7 @@ def create_app(
                 ),
             )
 
-        provider_name = (
-            body.provider or body.model.split("/", 1)[0]
-        ).strip().lower()
+        provider_name = (body.provider or body.model.split("/", 1)[0]).strip().lower()
         provider_id = (
             str(credential_provider["id"])
             if credential_provider is not None
@@ -1953,7 +1953,9 @@ def create_app(
                 else ""
             )
             old_key = (
-                target.get("api_key") if target is not None else legacy_params.get("api_key")
+                target.get("api_key")
+                if target is not None
+                else legacy_params.get("api_key")
             )
             old_base = (
                 target.get("api_base")
@@ -2054,7 +2056,9 @@ def create_app(
             )
             saved_id = str(target["id"]) if target is not None else None
             old_key = (
-                target.get("api_key") if target is not None else legacy_params.get("api_key")
+                target.get("api_key")
+                if target is not None
+                else legacy_params.get("api_key")
             )
             old_base = (
                 target.get("api_base")
@@ -2062,7 +2066,9 @@ def create_app(
                 else legacy_params.get("api_base")
             )
             if target is not None:
-                providers[:] = [candidate for candidate in providers if candidate is not target]
+                providers[:] = [
+                    candidate for candidate in providers if candidate is not target
+                ]
 
             remaining: list[Any] = []
             for entry in entries:
@@ -2071,7 +2077,9 @@ def create_app(
                     continue
                 params = entry.get("litellm_params")
                 entry_model = params.get("model") if isinstance(params, dict) else None
-                matches = saved_id is not None and _raw_model_provider_id(entry) == saved_id
+                matches = (
+                    saved_id is not None and _raw_model_provider_id(entry) == saved_id
+                )
                 if not matches and isinstance(params, dict):
                     matches = (
                         isinstance(entry_model, str)
@@ -2340,9 +2348,7 @@ def create_app(
         # though job.task (the initial run) is not yet done.
         if job.retry_task is None or job.retry_task.done():
             job.retry_task = asyncio.create_task(run_retry_queue(state.registry, job))
-        logger.info(
-            "[Serve] Job {} queued {} for item {}", job_id, operation, item_id
-        )
+        logger.info("[Serve] Job {} queued {} for item {}", job_id, operation, item_id)
         return {
             "job_id": job_id,
             "items": [{"item_id": item.item_id, "name": item.name, "kind": item.kind}],

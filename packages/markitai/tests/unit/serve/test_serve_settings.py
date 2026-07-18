@@ -712,8 +712,7 @@ class TestProviderCredentialLifecycle:
             card = next(
                 card
                 for card in cards_response.json()["providers"]
-                if card["provider"] == "deepseek"
-                and card["kind"] == "configured"
+                if card["provider"] == "deepseek" and card["kind"] == "configured"
             )
             credentials = await client.get(
                 f"/api/settings/llm/providers/{card['provider_id']}/credentials"
@@ -906,9 +905,9 @@ class TestProviderCredentialLifecycle:
             )
             card = next(
                 card
-                for card in (
-                    await client.get("/api/settings/llm/providers")
-                ).json()["providers"]
+                for card in (await client.get("/api/settings/llm/providers")).json()[
+                    "providers"
+                ]
                 if card["provider"] == "deepseek" and card["kind"] == "configured"
             )
             edited = await client.patch(

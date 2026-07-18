@@ -12,9 +12,7 @@ from pydantic import ValidationError
 
 def markdown_image_reference(alt: str, path: str) -> str:
     """Build a CommonMark image reference safe for spaces and Unicode paths."""
-    escaped_alt = (
-        alt.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
-    )
+    escaped_alt = alt.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
     encoded_path = quote(path, safe="/._~-")
     return f"![{escaped_alt}]({encoded_path})"
 

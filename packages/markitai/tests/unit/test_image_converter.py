@@ -214,10 +214,7 @@ class TestCopyToAssets:
             "%E4%B8%8B%E5%8D%8811.11.09.png)"
         ) in result.markdown
         assert (
-            output_dir
-            / ".markitai"
-            / "assets"
-            / "截屏2026-07-15 下午11.11.09.png"
+            output_dir / ".markitai" / "assets" / "截屏2026-07-15 下午11.11.09.png"
         ).is_file()
 
     def test_copy_to_assets_with_output_dir(self, sample_image: Path, tmp_path: Path):
