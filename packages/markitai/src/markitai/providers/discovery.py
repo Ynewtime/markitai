@@ -519,8 +519,7 @@ async def _http_models(
             headers["ChatGPT-Account-Id"] = account_id
     elif provider == "gemini":
         url = urljoin(
-            (api_base or provider_default_api_base(provider) or "").rstrip("/")
-            + "/",
+            (api_base or provider_default_api_base(provider) or "").rstrip("/") + "/",
             "models",
         )
         if api_key:

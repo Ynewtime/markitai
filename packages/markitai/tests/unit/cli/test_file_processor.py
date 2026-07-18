@@ -129,8 +129,7 @@ class TestResolveAssetReferences:
 
         store = AssetStore(tmp_path / "store")
         markdown = (
-            "![截图](.markitai/assets/"
-            "%E6%88%AA%E5%B1%8F%20%E4%B8%8B%E5%8D%88.png)"
+            "![截图](.markitai/assets/%E6%88%AA%E5%B1%8F%20%E4%B8%8B%E5%8D%88.png)"
         )
         result = resolve_asset_references(
             markdown,

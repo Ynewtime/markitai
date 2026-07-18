@@ -21,7 +21,7 @@ _BROWSER_POLL_INTERVAL_S = 0.05
 
 def _browser_address(host: str) -> tuple[str, str]:
     """Return the connect host and URL host used by the local browser."""
-    if host in {"0.0.0.0", ""}:
+    if host in {"0.0.0.0", ""}:  # nosec B104 - literal comparison to normalize the browser URL, not a bind
         return "127.0.0.1", "127.0.0.1"
     if host == "::":
         return "::1", "[::1]"
