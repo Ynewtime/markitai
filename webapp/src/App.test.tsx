@@ -178,7 +178,7 @@ describe("App workspace", () => {
     });
     expect(enhance).toBeDisabled();
     fireEvent.click(screen.getByRole("switch", { name: "LLM enhancement" }));
-    await waitFor(() => expect(enhance).toBeEnabled());
+    expect(enhance).toBeEnabled();
     expect(currentRow.querySelector(".c-status.archive-actions")).not.toBeNull();
     const archivedRow = screen.getByRole("option", { name: "Open archived.pdf" });
     expect(listbox.contains(archivedRow)).toBe(true);
@@ -262,10 +262,7 @@ describe("App workspace", () => {
     const wand = screen.getByRole("button", {
       name: "Enhance archived.pdf with LLM",
     });
-    // The enhance action gates on llmConfigured (caps.llm.routable), which
-    // arrives from fetchCapabilities asynchronously — wait for it to settle
-    // rather than assuming it resolved before the toggle click.
-    await waitFor(() => expect(wand).toBeEnabled());
+    expect(wand).toBeEnabled();
     fireEvent.click(wand);
 
     expect(
