@@ -29,7 +29,19 @@ def strip_ansi(text: str) -> str:
 
 
 def make_tty_console() -> Console:
-    return Console(file=io.StringIO(), force_terminal=True, width=80)
+    """Console backed by a StringIO that claims to be a terminal.
+
+    ``_environ`` pins a normal TERM: Rich's dumb-terminal and no-color
+    detection read only the console's own environ, so a test runner
+    started with TERM=dumb or NO_COLOR set (e.g. CI sandboxes) cannot
+    silently drop the control codes and styles these tests assert on.
+    """
+    return Console(
+        file=io.StringIO(),
+        force_terminal=True,
+        width=80,
+        _environ={"TERM": "xterm-256color"},
+    )
 
 
 def make_fetch_result(content: str = "# Test Page\n\nSome content.") -> MagicMock:
