@@ -231,9 +231,18 @@ class TestShowLoginStart:
 
     def test_uses_dim_style(self) -> None:
         """show_login_start wraps text in dim style."""
-        # Use a console WITH color to verify markup is applied
+        # Use a console WITH color to verify markup is applied. _environ
+        # pins a normal TERM so a runner started with TERM=dumb or NO_COLOR
+        # set cannot disable Rich's color output (Rich reads only the
+        # console's own environ for those checks).
         buf = io.StringIO()
-        console = Console(file=buf, width=120, highlight=False, force_terminal=True)
+        console = Console(
+            file=buf,
+            width=120,
+            highlight=False,
+            force_terminal=True,
+            _environ={"TERM": "xterm-256color"},
+        )
         show_login_start("copilot", console=console)
         output = buf.getvalue()
         # Rich dim style produces ANSI dim escape (ESC[2m)
