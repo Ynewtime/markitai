@@ -209,4 +209,6 @@ export interface HistoryEntry {
   kinds_preview: ItemKind[];
   duration_ms: number | null;
   size_bytes: number;
+  /** Where the conversion ran: browser UI/API or a local CLI run. */
+  origin: "web" | "cli";
 }

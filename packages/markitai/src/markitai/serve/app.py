@@ -32,6 +32,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from markitai import __version__
 from markitai.providers.discovery import provider_default_api_base
+from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT
 from markitai.serve.jobs import (
     Job,
     JobRegistry,
@@ -60,7 +61,7 @@ if TYPE_CHECKING:
 
     from markitai.config import LLMProviderConfig, MarkitaiConfig, ModelConfig
 
-DEFAULT_JOBS_ROOT = Path.home() / ".markitai" / "serve" / "jobs"
+DEFAULT_JOBS_ROOT = DEFAULT_SERVE_JOBS_ROOT
 DEFAULT_CONFIG_PATH = Path.home() / ".markitai" / "config.json"
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB per file
 MAX_JOB_ITEMS = 50
@@ -2549,7 +2550,15 @@ def create_app(
 
     @app.get("/api/history")
     async def get_history(request: Request) -> list[dict[str, Any]]:
-        registry = _state(request).registry
+        state = _state(request)
+        registry = state.registry
+        # Pick up jobs written since startup by other processes — local CLI
+        # conversions recorded with --record-history land in the same jobs
+        # root. Runs on the loop thread on purpose: it only stats/parses
+        # directories not yet registered, and keeping registry mutations on
+        # the loop preserves the single-writer invariant the read endpoints
+        # (which iterate the registry from worker threads) rely on.
+        rehydrate_jobs(registry, state.config)
         # The registry already dedupes archived vs this-process terminal jobs:
         # a job finished in this process is one entry, and startup rehydrate
         # never overwrites a live registry entry.
@@ -2575,6 +2584,7 @@ def create_app(
                     "kinds_preview": [i.kind for i in job.items[:3]],
                     "duration_ms": job_duration_ms(job),
                     "size_bytes": job_cached_dir_size(job),
+                    "origin": job.options.get("origin") or "web",
                 }
                 for job in jobs
             ]

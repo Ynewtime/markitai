@@ -8,11 +8,16 @@ Second slice (Phase 4B): the shared output-target skeleton (``-o``
 interpretation, stdout-mode temp dirs, explicit-file finalization) and the
 stdout asset-reference helpers used by both single-input processors.
 
+Third slice: CLI conversion history — ``record_cli_job`` publishes a
+finished run as a job directory under the ``markitai serve`` jobs root, so
+local conversions appear in the web UI's history page.
+
 Layering: ``markitai.runs`` sits below ``markitai.cli`` and must never
 import it (enforced by the import-linter contracts in the root
 pyproject.toml).
 """
 
+from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT, record_cli_job
 from markitai.runs.output import (
     ASSET_REF_PATTERN,
     OutputTarget,
@@ -35,6 +40,7 @@ from markitai.runs.types import Outcome
 
 __all__ = [
     "ASSET_REF_PATTERN",
+    "DEFAULT_SERVE_JOBS_ROOT",
     "REPORT_VERSION",
     "Outcome",
     "OutputTarget",
@@ -45,6 +51,7 @@ __all__ = [
     "finalize_explicit_output",
     "normalize_temp_asset_refs",
     "prepare_output_target",
+    "record_cli_job",
     "resolve_asset_references",
     "resolve_exit_code",
     "split_output_file_target",

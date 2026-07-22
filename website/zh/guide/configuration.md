@@ -198,6 +198,9 @@ markitai config validate ./markitai.json    # 验证指定文件
   "security": {
     "pdf_sanitize": "warn"
   },
+  "history": {
+    "record": false
+  },
   "prompts": {
     "dir": "~/.markitai/prompts"
   }
@@ -233,6 +236,7 @@ markitai config validate ./markitai.json    # 验证指定文件
 | `MARKITAI_STATIC_HTTP` | 静态 HTTP 后端：`httpx`（默认）或 `curl_cffi`（TLS 指纹伪装） |
 | `MARKITAI_LANG` | CLI 语言覆盖（`en` 或 `zh`） |
 | `MARKITAI_PURE` | 启用 pure 模式（`1`、`true` 或 `yes`） |
+| `MARKITAI_RECORD_HISTORY` | 将 CLI 运行记录到 `markitai serve` 历史（`1`、`true`、`yes` 或 `on`；已设置但为假值表示显式关闭）。可被 `--record-history` / `--no-record-history` 覆盖；会覆盖配置项 `history.record` |
 | `MARKITAI_NO_REMOTE_FETCH` | 硬性禁用远程提取，包括显式远程 `-s` 策略（`1`、`true` 或 `yes`） |
 | `MODEL` | 无 `model_list` 配置时的单模型覆盖 |
 

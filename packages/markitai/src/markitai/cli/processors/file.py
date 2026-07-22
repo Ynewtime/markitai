@@ -62,6 +62,7 @@ async def process_single_file(
     log_file_path: Path | None = None,
     verbose: bool = False,
     quiet: bool = False,
+    history: list[Outcome] | None = None,
 ) -> None:
     """Process a single file with layered output.
 
@@ -80,6 +81,9 @@ async def process_single_file(
         log_file_path: Path to log file for report.
         verbose: Enable verbose output.
         quiet: Suppress diagnostics and informational output.
+        history: Optional list collecting the run's Outcome for serve
+            history recording (append-only; the caller decides whether to
+            record).
     """
     from markitai.workflow.core import ConversionContext, convert_document_core
 
@@ -183,16 +187,38 @@ async def process_single_file(
         # Handle skipped files (already exists)
         if result.skip_reason == "exists":
             stages.stop()
+            planned_name = output_file_name or derive_output_name(input_path.name)
+            base_output_file = (
+                output_dir / planned_name if output_dir is not None else None
+            )
+            if history is not None:
+                history.append(
+                    Outcome(
+                        kind="file",
+                        source=input_path.name,
+                        status="skipped",
+                        output_path=base_output_file,
+                        skip_reason="exists",
+                        duration=time.time() - start_time,
+                    )
+                )
             if not quiet and not stdout_mode:
-                assert output_dir is not None
-                planned_name = output_file_name or derive_output_name(input_path.name)
-                base_output_file = output_dir / planned_name
                 console.print(f"[yellow]Skipped (exists):[/yellow] {base_output_file}")
             return
 
         # Handle skipped files (image-only format, no LLM/OCR)
         if result.skip_reason == "image_only":
             stages.stop()
+            if history is not None:
+                history.append(
+                    Outcome(
+                        kind="file",
+                        source=input_path.name,
+                        status="skipped",
+                        skip_reason="image_only",
+                        duration=time.time() - start_time,
+                    )
+                )
             ui.warning(
                 f"Skipped {input_path.name} (image file, no text to extract). "
                 f"Use --llm or --ocr for content extraction.",
@@ -273,6 +299,21 @@ async def process_single_file(
                 ctx.output_file if output_file_name is not None else None,
             )
 
+        if history is not None:
+            history.append(
+                Outcome(
+                    kind="file",
+                    source=input_path.name,
+                    status="completed",
+                    output_path=final_output_file,
+                    images=ctx.embedded_images_count,
+                    screenshots=ctx.screenshots_count,
+                    cost_usd=ctx.llm_cost,
+                    llm_usage=ctx.llm_usage,
+                    duration=duration,
+                )
+            )
+
         # Output based on mode
         if quiet and not stdout_mode:
             # Quiet file mode: suppress the informational output path. In
@@ -351,6 +392,16 @@ async def process_single_file(
         error_msg = format_error_message(e)
         stages.fail()
         stages.stop()
+        if history is not None:
+            history.append(
+                Outcome(
+                    kind="file",
+                    source=input_path.name,
+                    status="failed",
+                    error=error_msg,
+                    duration=time.time() - start_time,
+                )
+            )
         ui.error(error_msg, console=diag_console)
         sys.exit(resolve_exit_code(1, batch=False))
 

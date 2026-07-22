@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CLI conversions can opt into the web UI history**: `--record-history` (or `MARKITAI_RECORD_HISTORY`, or `history.record` in the config; flag > env > config, off by default) records a completed CLI run as a job under `~/.markitai/serve/jobs/`, copying outputs and referenced assets so it appears in the `markitai serve` history page live, without restarting the server. CLI-recorded entries carry `origin: "cli"` and show a "CLI" badge in the web UI, and share the same seven-day TTL cleanup, deletion, and archive download as web-created jobs. Recording is skipped in stdout/pipe mode, never fails a conversion, and prints a one-line dim confirmation to stderr (suppressed by `--quiet`)
+
 ## [0.23.0] - 2026-07-18
 
 ### Added

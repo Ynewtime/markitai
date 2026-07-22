@@ -303,6 +303,7 @@ class TestHistory:
             "kinds_preview": ["file"],
             "duration_ms": newest["duration_ms"],
             "size_bytes": newest["size_bytes"],
+            "origin": "web",
         }
         assert newest["duration_ms"] >= 0
         assert newest["size_bytes"] > 0
@@ -455,6 +456,109 @@ class TestHistorySizeCache:
             monkeypatch.setattr("markitai.serve.jobs.job_dir_size", fail_rglob)
             second = (await client.get("/api/history")).json()
         assert second[0]["size_bytes"] == first[0]["size_bytes"]
+
+
+class TestCliRecordedHistory:
+    """CLI runs recorded via record_cli_job show up as origin "cli"."""
+
+    def _record(self, jobs_root: Path, work: Path) -> Path:
+        """Write a two-item CLI history job (one done file, one failed URL)."""
+        from markitai.runs.history import record_cli_job
+        from markitai.runs.types import Outcome
+
+        work.mkdir(exist_ok=True)
+        out = work / "notes.txt.md"
+        out.write_text("# converted notes\n", encoding="utf-8")
+        job_dir = record_cli_job(
+            [
+                Outcome(
+                    kind="file",
+                    source="notes.txt",
+                    status="completed",
+                    output_path=out,
+                    duration=0.5,
+                ),
+                Outcome(
+                    kind="url",
+                    source="https://example.com",
+                    status="failed",
+                    error="fetch boom",
+                ),
+            ],
+            options={"preset": None, "llm": False, "ocr": False, "origin": "cli"},
+            jobs_root=jobs_root,
+        )
+        assert job_dir is not None
+        return job_dir
+
+    async def test_recorded_job_serves_all_read_endpoints(self, tmp_path: Path) -> None:
+        job_dir = self._record(tmp_path / "jobs", tmp_path / "work")
+
+        async with _serve_client(_make_app(tmp_path)) as client:
+            history = (await client.get("/api/history")).json()
+            assert [h["job_id"] for h in history] == [job_dir.name]
+            entry = history[0]
+            assert entry["origin"] == "cli"
+            assert entry["done"] == 1
+            assert entry["failed"] == 1
+            assert entry["names_preview"] == ["notes.txt", "https://example.com"]
+
+            snapshot = (await client.get(f"/api/jobs/{job_dir.name}")).json()
+            assert snapshot["options"]["origin"] == "cli"
+            items = {item["name"]: item for item in snapshot["items"]}
+            assert items["notes.txt"]["status"] == "done"
+            assert items["notes.txt"]["output"] == "notes.txt.md"
+            assert items["notes.txt"]["duration_ms"] == 500
+            assert items["https://example.com"]["status"] == "error"
+            assert items["https://example.com"]["error"] == "fetch boom"
+
+            result = await client.get(f"/api/jobs/{job_dir.name}/items/i1/result")
+            assert result.status_code == 200
+            assert "converted notes" in result.json()["markdown"]
+
+            download = await client.get(f"/api/jobs/{job_dir.name}/files/notes.txt.md")
+            assert download.status_code == 200
+            assert "attachment" in download.headers["content-disposition"]
+
+            archive = await client.get(f"/api/jobs/{job_dir.name}/archive")
+            assert archive.status_code == 200
+            with zipfile.ZipFile(BytesIO(archive.content)) as zf:
+                assert "notes.txt.md" in zf.namelist()
+
+    async def test_recorded_after_startup_is_discovered_live(
+        self, tmp_path: Path
+    ) -> None:
+        """GET /api/history picks up CLI records written while serving."""
+        work = tmp_path / "work"
+        work.mkdir()
+        async with _serve_client(_make_app(tmp_path)) as client:
+            assert (await client.get("/api/history")).json() == []
+            job_dir = self._record(tmp_path / "jobs", work)
+            history = (await client.get("/api/history")).json()
+            # ...and a second refresh neither duplicates nor re-reads it.
+            again = (await client.get("/api/history")).json()
+
+        assert [h["job_id"] for h in history] == [job_dir.name]
+        assert history[0]["origin"] == "cli"
+        assert [h["job_id"] for h in again] == [job_dir.name]
+
+    async def test_web_and_cli_jobs_keep_their_origins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", _fake_converter())
+        work = tmp_path / "work"
+        work.mkdir()
+        cli_job = self._record(tmp_path / "jobs", work)
+
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs", files=_multipart([("web.txt", b"hi")])
+            )
+            web = await _wait_job_done(client, created.json()["job_id"])
+            history = (await client.get("/api/history")).json()
+
+        origins = {h["job_id"]: h["origin"] for h in history}
+        assert origins == {web["job_id"]: "web", cli_job.name: "cli"}
 
 
 class TestHistoryTTL:

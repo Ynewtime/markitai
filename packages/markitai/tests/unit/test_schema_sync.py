@@ -12,6 +12,7 @@ from markitai.config import (
     DomainProfileConfig,
     FetchConfig,
     FetchPolicyConfig,
+    HistoryConfig,
     ImageConfig,
     JinaConfig,
     LLMConfig,
@@ -157,6 +158,14 @@ class TestSchemaSync:
         assert "strategy_priority" in props
         assert props["strategy_priority"]["default"] is None
 
+    def test_history_config_in_schema(self, schema: dict) -> None:
+        """Verify HistoryConfig is in schema with record default."""
+        assert "history" in schema["properties"]
+        assert schema["properties"]["history"]["$ref"] == "#/$defs/HistoryConfig"
+        props = schema["$defs"]["HistoryConfig"]["properties"]
+        assert props["record"]["default"] is False
+        assert HistoryConfig().record is False
+
 
 class TestModelFieldSync:
     """Tests to verify model fields exist in schema."""
@@ -280,6 +289,13 @@ class TestModelFieldSync:
 
         model_fields = set(SecurityConfig.model_fields.keys())
         schema_fields = set(schema["$defs"]["SecurityConfig"]["properties"].keys())
+        missing = model_fields - schema_fields
+        assert not missing, f"Fields missing from schema: {missing}"
+
+    def test_history_config_fields_match(self, schema: dict) -> None:
+        """Verify all HistoryConfig fields are in schema."""
+        model_fields = set(HistoryConfig.model_fields.keys())
+        schema_fields = set(schema["$defs"]["HistoryConfig"]["properties"].keys())
         missing = model_fields - schema_fields
         assert not missing, f"Fields missing from schema: {missing}"
 

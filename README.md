@@ -12,7 +12,7 @@ Opinionated Markdown converter with native LLM enhancement support.
 - **Batch processing**: concurrent conversion with progress display and `--resume` for interrupted jobs
 - **OCR**: scanned PDFs and images via RapidOCR
 - **Web fetching**: static HTTP with cache revalidation, or Playwright rendering for JS-heavy pages
-- **Local web workspace**: upload files or folders, submit URLs, configure LLM providers, compare results, retry failures, and revisit conversion history
+- **Local web workspace**: upload files or folders, submit URLs, configure LLM providers, compare results, retry failures, and revisit conversion history — CLI runs can opt in too, via `--record-history`
 
 Docs: <https://markitai.dev>
 

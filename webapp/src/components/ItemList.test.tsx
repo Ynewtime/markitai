@@ -84,6 +84,7 @@ function history(jobId: string, createdAt: string): HistoryEntry {
     kinds_preview: ["file"],
     duration_ms: 10,
     size_bytes: 10,
+    origin: "web",
   };
 }
 

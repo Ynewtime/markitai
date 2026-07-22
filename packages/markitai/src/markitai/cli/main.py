@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Fix Windows console encoding for Unicode output
@@ -53,6 +54,7 @@ click.rich_click.OPTION_GROUPS = {
                 "--preset",
                 "--interactive",
                 "--dry-run",
+                "--record-history",
             ],
         },
         {
@@ -124,12 +126,14 @@ from markitai.cli.processors.validators import (
     check_vision_model_config as _check_vision_model_config,
 )
 from markitai.config import ConfigFileError, ConfigManager, EnvVarNotFoundError
+from markitai.runs import Outcome
 
 # Import utilities from refactored modules
 from markitai.utils.cli_helpers import (
     is_url,
 )
 from markitai.utils.executor import shutdown_converter_executor
+from markitai.utils.term import MARK_LINE
 from markitai.utils.url_redaction import redact_url
 
 console = get_console()
@@ -376,6 +380,13 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Preview conversion without writing files.",
 )
 @click.option(
+    "--record-history/--no-record-history",
+    default=None,
+    help="Record this run in the 'markitai serve' conversion history "
+    "(env: MARKITAI_RECORD_HISTORY; config: history.record). "
+    "Skipped in stdout mode.",
+)
+@click.option(
     "--pure",
     is_flag=True,
     help="Pure mode: skip frontmatter and post-processing. With --llm: raw MD → LLM → output.",
@@ -436,6 +447,7 @@ def app(
     verbose: bool,
     quiet: bool,
     dry_run: bool,
+    record_history: bool | None,
     pure: bool,
     keep_base: bool,
 ) -> None:
@@ -680,6 +692,22 @@ def app(
     if not pure and os.environ.get("MARKITAI_PURE", "").strip() in ("1", "true", "yes"):
         cfg.llm.pure = True
 
+    # History recording: --record-history flag > MARKITAI_RECORD_HISTORY >
+    # history.record config > off. An env var set to a falsy value counts as
+    # an explicit opt-out (it still wins over the config).
+    if record_history is not None:
+        record_history_enabled = record_history
+    else:
+        env_record = os.environ.get("MARKITAI_RECORD_HISTORY", "").strip().lower()
+        if env_record:
+            record_history_enabled = env_record in ("1", "true", "yes", "on")
+        else:
+            record_history_enabled = cfg.history.record
+
+    # Per-item results collected by the processors for history recording;
+    # recorded as one job after the run completes (even on partial failure).
+    history_items: list[Outcome] = []
+
     # Warn about features that --pure silently overrides
     if cfg.llm.pure and cfg.llm.enabled:
         ignored_flags = []
@@ -810,6 +838,9 @@ def app(
     if output:
         logger.debug(f"Output directory: {output.resolve()}")
 
+    # Run start time drives the recorded history job's created_at.
+    run_started_at = datetime.now().astimezone()
+
     async def run_workflow() -> None:
         # Helper to get effective output directory (CLI -o or config fallback)
         def get_effective_output() -> Path | None:
@@ -926,6 +957,7 @@ def app(
                 fetch_strategy=fetch_strategy,
                 explicit_fetch_strategy=explicit_fetch_strategy,
                 quiet=quiet,
+                history=history_items,
             )
             return
 
@@ -946,6 +978,7 @@ def app(
                 fetch_strategy=fetch_strategy,
                 explicit_fetch_strategy=explicit_fetch_strategy,
                 quiet=quiet,
+                history=history_items,
             )
             return
 
@@ -970,6 +1003,7 @@ def app(
                 explicit_fetch_strategy=explicit_fetch_strategy,
                 glob_patterns=glob_patterns,
                 quiet=quiet,
+                history=history_items,
             )
             return
 
@@ -986,6 +1020,7 @@ def app(
             log_file_path,
             verbose=verbose,
             quiet=quiet,
+            history=history_items,
         )
 
     async def run_workflow_with_cleanup() -> None:
@@ -1009,8 +1044,42 @@ def app(
             except Exception as e:
                 logger.debug("[Cleanup] LiteLLM client cleanup failed: {}", e)
 
+    def record_run_history() -> None:
+        """Publish this run to the 'markitai serve' history (best effort).
+
+        Skipped in stdout mode: the conversion output went to a throwaway
+        temp dir (and stdout must stay clean), so there is nothing durable
+        to record. Any recorder failure is logged and swallowed inside
+        record_cli_job — history must never break a conversion.
+        """
+        if not record_history_enabled or is_stdout_mode or not history_items:
+            return
+        from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT, record_cli_job
+
+        job_dir = record_cli_job(
+            history_items,
+            options={
+                "preset": preset,
+                "llm": cfg.llm.enabled,
+                "ocr": cfg.ocr.enabled,
+                "origin": "cli",
+            },
+            jobs_root=DEFAULT_SERVE_JOBS_ROOT,
+            started_at=run_started_at,
+        )
+        if job_dir is not None and not quiet:
+            stderr_console.print(
+                f"  [dim]{MARK_LINE}[/] Recorded in history — "
+                "view with 'markitai serve'"
+            )
+
     try:
         asyncio.run(run_workflow_with_cleanup())
+    except SystemExit:
+        # Processors signal (partial) failure via SystemExit; record the
+        # collected per-item results first so failed runs also show up.
+        record_run_history()
+        raise
     except EnvVarNotFoundError as e:
         stderr_console.print(f"[red]Error: {e}[/red]")
         ctx.exit(1)
@@ -1023,6 +1092,8 @@ def app(
             stderr_console.print(f"[red]Error: {error_msg}[/red]")
             ctx.exit(1)
         raise
+    else:
+        record_run_history()
 
 
 # =============================================================================

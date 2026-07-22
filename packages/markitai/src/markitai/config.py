@@ -788,6 +788,19 @@ class PresetConfig(BaseModel):
     screenshot: bool = False
 
 
+class HistoryConfig(BaseModel):
+    """Conversion history recording into 'markitai serve'."""
+
+    record: bool = Field(
+        default=False,
+        description=(
+            "Record CLI conversions into the 'markitai serve' history "
+            "(~/.markitai/serve/jobs). Overridden by --record-history and "
+            "MARKITAI_RECORD_HISTORY."
+        ),
+    )
+
+
 # Built-in preset definitions
 BUILTIN_PRESETS: dict[str, PresetConfig] = {
     "rich": PresetConfig(llm=True, alt=True, desc=True, screenshot=True),
@@ -812,6 +825,7 @@ class MarkitaiConfig(BaseModel):
     fetch: FetchConfig = Field(default_factory=FetchConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     presets: dict[str, PresetConfig] = Field(default_factory=dict)
+    history: HistoryConfig = Field(default_factory=HistoryConfig)
 
 
 # Matches array index notation in key paths, e.g. "model_list[0]"

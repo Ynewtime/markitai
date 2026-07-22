@@ -45,6 +45,7 @@ export default defineConfig({
               text: '指南',
               items: [
                 { text: '快速开始', link: '/zh/guide/getting-started' },
+                { text: '网页工作台', link: '/zh/guide/serve' },
                 {
                   text: '配置说明',
                   link: '/zh/guide/configuration',
@@ -142,6 +143,7 @@ export default defineConfig({
           text: 'Guide',
           items: [
             { text: 'Getting Started', link: '/guide/getting-started' },
+            { text: 'Web Workspace', link: '/guide/serve' },
             {
               text: 'Configuration',
               link: '/guide/configuration',

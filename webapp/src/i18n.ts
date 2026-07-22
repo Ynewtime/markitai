@@ -228,6 +228,7 @@ const en = {
   histDeleted: (name: string) => `${name} permanently deleted`,
   histStorageSize: (size: string) => `Storage ${size}`,
   histMore: (n: number) => `+${n} more`,
+  originCli: "CLI",
   sessResults: (n: number) =>
     `${n} ${n === 1 ? "item" : "items"} in session · View results`,
   sessProgress: (n: number) => `${n} converting · View progress`,
@@ -458,6 +459,7 @@ const zh: Dict = {
   histDeleted: (name: string) => `${name} 已永久删除`,
   histStorageSize: (size: string) => `存储 ${size}`,
   histMore: (n: number) => `+${n} 项`,
+  originCli: "CLI",
   sessResults: (n: number) => `会话中有 ${n} 个结果 · 查看结果`,
   sessProgress: (n: number) => `${n} 个转换中 · 查看进度`,
   themeAuto: "跟随系统",

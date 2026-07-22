@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
+## [Unreleased]
+
+### 新增
+
+- **CLI 转换可选记录到网页界面历史**：通过 `--record-history`（或 `MARKITAI_RECORD_HISTORY` 环境变量，或配置项 `history.record`；优先级：参数 > 环境变量 > 配置，默认关闭）可将完成的 CLI 运行记录为 `~/.markitai/serve/jobs/` 下的任务，复制输出及引用的资源，使其无需重启服务即可实时出现在 `markitai serve` 的历史页面中。CLI 记录的条目带有 `origin: "cli"`，网页界面会显示「CLI」徽标，并与网页创建的任务共享七天 TTL 清理、删除与归档下载。stdout/管道模式下跳过记录；记录完全容错，绝不会导致转换失败，完成后在 stderr 打印一行暗色确认信息（可被 `--quiet` 抑制）
+
 ## [0.23.0] - 2026-07-18
 
 ### 新增
