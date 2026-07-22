@@ -21,6 +21,7 @@ const entries: HistoryEntry[] = [
     kinds_preview: ["file"],
     duration_ms: 60_000,
     size_bytes: 100,
+    origin: "web",
   },
   {
     job_id: "job-2",
@@ -37,6 +38,7 @@ const entries: HistoryEntry[] = [
     kinds_preview: ["file"],
     duration_ms: 30_000,
     size_bytes: 200,
+    origin: "web",
   },
 ];
 
@@ -199,6 +201,55 @@ describe("ArchivedJobRows", () => {
     expect(container.querySelector(".item-result.skip svg")).not.toBeNull();
     await user.click(screen.getByRole("button", { name: "Retry first.pdf" }));
     expect(onRetry).toHaveBeenCalledWith("job-1");
+  });
+
+  it("tags a CLI-origin entry and leaves web-origin rows clean", () => {
+    render(
+      <ArchivedJobRows
+        t={dicts.en}
+        entries={[entries[0]!, { ...entries[1]!, origin: "cli" as const }]}
+        error={null}
+        actions={{}}
+        rowErrors={{}}
+        showCost={false}
+        startIndex={0}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onOpen={vi.fn().mockResolvedValue(null)}
+        onRetry={vi.fn().mockResolvedValue(null)}
+        onDelete={vi.fn().mockResolvedValue(true)}
+        announce={() => undefined}
+      />,
+    );
+
+    const webRow = screen.getByRole("option", { name: "Open first.pdf" });
+    expect(webRow.querySelector(".origin-tag")).toBeNull();
+    const cliRow = screen.getByRole("option", { name: "Open second.pdf" });
+    expect(cliRow.querySelector(".c-name .origin-tag")).toHaveTextContent("CLI");
+  });
+
+  it("renders the origin tag localized", () => {
+    render(
+      <ArchivedJobRows
+        t={dicts.zh}
+        entries={[{ ...entries[0]!, origin: "cli" as const }]}
+        error={null}
+        actions={{}}
+        rowErrors={{}}
+        showCost={false}
+        startIndex={0}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onOpen={vi.fn().mockResolvedValue(null)}
+        onRetry={vi.fn().mockResolvedValue(null)}
+        onDelete={vi.fn().mockResolvedValue(true)}
+        announce={() => undefined}
+      />,
+    );
+
+    expect(
+      screen
+        .getByRole("option", { name: "打开 first.pdf" })
+        .querySelector(".c-name .origin-tag"),
+    ).toHaveTextContent(dicts.zh.originCli);
   });
 
   it("restores retry for a persisted single-item failure", async () => {

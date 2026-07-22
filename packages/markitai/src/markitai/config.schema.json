@@ -461,6 +461,19 @@
       "title": "FetchPolicyConfig",
       "type": "object"
     },
+    "HistoryConfig": {
+      "description": "Conversion history recording into 'markitai serve'.",
+      "properties": {
+        "record": {
+          "default": false,
+          "description": "Record CLI conversions into the 'markitai serve' history (~/.markitai/serve/jobs). Overridden by --record-history and MARKITAI_RECORD_HISTORY.",
+          "title": "Record",
+          "type": "boolean"
+        }
+      },
+      "title": "HistoryConfig",
+      "type": "object"
+    },
     "ImageConfig": {
       "description": "Image processing configuration.",
       "properties": {
@@ -1542,6 +1555,9 @@
       },
       "title": "Presets",
       "type": "object"
+    },
+    "history": {
+      "$ref": "#/$defs/HistoryConfig"
     }
   },
   "title": "MarkitaiConfig",

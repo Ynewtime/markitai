@@ -20,7 +20,7 @@ from markitai.cli.logging_config import restore_console_handler
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
 from markitai.converter.base import EXTENSION_MAP
-from markitai.runs import resolve_exit_code
+from markitai.runs import Outcome, resolve_exit_code
 from markitai.security import atomic_write_text
 from markitai.utils.cli_helpers import sanitize_filename, url_to_filename
 from markitai.utils.output import resolve_output_path
@@ -36,6 +36,7 @@ from markitai.workflow.helpers import (
 )
 
 if TYPE_CHECKING:
+    from markitai.batch import FileState, UrlState
     from markitai.fetch import FetchStrategy
     from markitai.llm import LLMProcessor
 
@@ -49,6 +50,57 @@ def _file_output_dir(file_path: Path, input_dir: Path, output_dir: Path) -> Path
         return output_dir / rel_path
     except ValueError:
         return output_dir
+
+
+def _file_state_to_outcome(file_state: FileState, input_dir: Path) -> Outcome:
+    """Map one batch file state onto a history Outcome.
+
+    Output paths are stored output_dir-prefixed in the state and are used
+    as-is (relative ones resolve against the process cwd, which the
+    recorder shares).
+    """
+    from markitai.batch import FileStatus
+
+    path = Path(file_state.path)
+    try:
+        source = path.relative_to(input_dir).as_posix()
+    except ValueError:
+        source = path.name
+    failed = file_state.status == FileStatus.FAILED
+    skipped = not failed and file_state.skip_reason is not None
+    return Outcome(
+        kind="file",
+        source=source,
+        status="failed" if failed else ("skipped" if skipped else "completed"),
+        output_path=Path(file_state.output) if file_state.output else None,
+        error=file_state.error if failed else None,
+        skip_reason=file_state.skip_reason,
+        images=file_state.images,
+        screenshots=file_state.screenshots,
+        cost_usd=file_state.cost_usd,
+        llm_usage=file_state.llm_usage,
+        duration=file_state.duration,
+    )
+
+
+def _url_state_to_outcome(url_state: UrlState) -> Outcome:
+    """Map one batch URL state onto a history Outcome."""
+    from markitai.batch import FileStatus
+
+    failed = url_state.status == FileStatus.FAILED
+    return Outcome(
+        kind="url",
+        source=url_state.url,
+        status="failed" if failed else "completed",
+        output_path=Path(url_state.output) if url_state.output else None,
+        error=url_state.error if failed else None,
+        images=url_state.images,
+        screenshots=url_state.screenshots,
+        cost_usd=url_state.cost_usd,
+        llm_usage=url_state.llm_usage,
+        fetch_strategy=url_state.fetch_strategy,
+        duration=url_state.duration,
+    )
 
 
 def create_process_file(
@@ -591,8 +643,17 @@ async def process_batch(
     explicit_fetch_strategy: bool = False,
     glob_patterns: tuple[str, ...] = (),
     quiet: bool = False,
+    history: list[Outcome] | None = None,
 ) -> None:
-    """Process directory in batch mode."""
+    """Process directory in batch mode.
+
+    Args:
+        history: Optional list collecting this run's per-item Outcomes for
+            serve history recording (append-only; the caller decides
+            whether to record). Only items processed in this run are
+            collected — a resumed batch does not re-record items that
+            completed earlier.
+    """
     # Batch output must be a directory; reject file-like -o values early
     if output_dir.suffix == ".md" and not output_dir.is_dir():
         raise click.UsageError(
@@ -1096,6 +1157,19 @@ async def process_batch(
             # Still persist state for resume capability
             batch.save_state(force=True, log=True)
             logger.debug("Report generation disabled (output.report=false)")
+
+    # Collect this run's per-item outcomes for serve history recording.
+    # Only files/URLs processed in this run — a resumed batch does not
+    # re-record items that completed in an earlier run.
+    if history is not None and state is not None:
+        for file_path in files_to_process:
+            file_state = state.files.get(str(file_path))
+            if file_state is not None:
+                history.append(_file_state_to_outcome(file_state, input_dir))
+        for _source_file, entry in url_entries_to_process:
+            url_state = state.urls.get(entry.url)
+            if url_state is not None:
+                history.append(_url_state_to_outcome(url_state))
 
     # Exit with appropriate code
     total_failed = (state.failed_count if state else 0) + (

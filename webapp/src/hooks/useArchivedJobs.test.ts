@@ -32,6 +32,7 @@ function entry(jobId: string): HistoryEntry {
     kinds_preview: ["file"],
     duration_ms: 10,
     size_bytes: 100,
+    origin: "web",
   };
 }
 

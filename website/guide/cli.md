@@ -174,6 +174,16 @@ Resume interrupted batch processing. Completed files are skipped, `FAILED`/inter
 markitai ./docs -o ./output --resume
 ```
 
+### `--record-history`
+
+Record the completed run as a job in the `markitai serve` history (stored under `~/.markitai/serve/jobs/`, with outputs and referenced assets copied in), so it shows up in the web UI history page live, without restarting the server. CLI-recorded entries are marked with a "CLI" badge and share the same seven-day cleanup, deletion, and archive download as web-created jobs.
+
+```bash
+markitai document.docx -o ./output --record-history
+```
+
+Precedence: `--record-history` / `--no-record-history` > `MARKITAI_RECORD_HISTORY` (truthy: `1`/`true`/`yes`/`on`; a set-but-falsy value is an explicit opt-out) > `history.record` in the config > default (off). Recording is skipped in stdout/pipe mode and never fails a conversion; a one-line confirmation goes to stderr (suppressed by `--quiet`). See [Configuration → Environment Variables](/guide/configuration#markitai-settings).
+
 ## Concurrency Options
 
 ### `--llm-concurrency <n>`

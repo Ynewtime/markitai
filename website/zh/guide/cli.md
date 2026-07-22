@@ -174,6 +174,16 @@ markitai document.docx -o ./result.md
 markitai ./docs -o ./output --resume
 ```
 
+### `--record-history`
+
+将本次完成的运行记录为 `markitai serve` 历史中的任务（保存在 `~/.markitai/serve/jobs/` 下，输出与引用的资源会一并复制），使其无需重启服务即可实时出现在网页界面的历史页面中。CLI 记录的条目带有「CLI」徽标，并与网页创建的任务共享七天清理、删除与归档下载。
+
+```bash
+markitai document.docx -o ./output --record-history
+```
+
+优先级：`--record-history` / `--no-record-history` > `MARKITAI_RECORD_HISTORY`（真值：`1`/`true`/`yes`/`on`；已设置但为假值表示显式关闭）> 配置项 `history.record` > 默认（关闭）。stdout/管道模式下跳过记录；记录完全容错，绝不会导致转换失败，完成后在 stderr 打印一行确认信息（可被 `--quiet` 抑制）。参见[配置 → 环境变量](/zh/guide/configuration#markitai-设置)。
+
 ## 并发选项
 
 ### `--llm-concurrency <n>`

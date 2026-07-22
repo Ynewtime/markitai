@@ -397,7 +397,9 @@ def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
             raw_items = []
         raw_options = meta.get("options")
         options = raw_options if isinstance(raw_options, dict) else {}
-        normalized_options = {key: options.get(key) for key in ("preset", "llm", "ocr")}
+        normalized_options = {
+            key: options.get(key) for key in ("preset", "llm", "ocr", "origin")
+        }
         raw_size = meta.get("dir_size_bytes")
         job = Job(
             job_id=entry.name,

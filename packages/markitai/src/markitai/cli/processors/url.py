@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
 import click
@@ -60,6 +61,7 @@ from markitai.workflow.helpers import (
 from markitai.workflow.single import ImageAnalysisResult
 
 if TYPE_CHECKING:
+    from markitai.batch import ProcessResult
     from markitai.fetch import FetchCache, FetchResult, FetchStrategy
     from markitai.llm import LLMProcessor
 
@@ -102,6 +104,7 @@ async def process_url(
     fetch_strategy: FetchStrategy | None = None,
     explicit_fetch_strategy: bool = False,
     quiet: bool = False,
+    history: list[Outcome] | None = None,
 ) -> None:
     """Process a URL and convert to Markdown.
 
@@ -127,6 +130,9 @@ async def process_url(
         fetch_strategy: Strategy to use for fetching URL content
         explicit_fetch_strategy: If True, strategy was explicitly set via CLI flag
         quiet: If True, suppress the live status spinner
+        history: Optional list collecting the run's Outcome for serve
+            history recording (append-only; the caller decides whether to
+            record).
     """
     from markitai.cli.processors.llm import analyze_images_with_llm
     from markitai.fetch import (
@@ -214,6 +220,19 @@ async def process_url(
     # Track cache hit for reporting
     fetch_cache_hit = False
 
+    def record_failure(message: str) -> None:
+        """Append a failed history outcome for this URL (best effort)."""
+        if history is not None:
+            history.append(
+                Outcome(
+                    kind="url",
+                    source=url,
+                    status="failed",
+                    error=message,
+                    duration=(datetime.now() - started_at).total_seconds(),
+                )
+            )
+
     # Initialize fetch cache if caching is enabled
     fetch_cache: FetchCache | None = None
     if cfg.cache.enabled:
@@ -269,6 +288,7 @@ async def process_url(
         except JinaRateLimitError:
             stages.fail()
             stages.stop()
+            record_failure("Jina Reader rate limit exceeded (20 RPM)")
             ui.error(
                 "Jina Reader rate limit exceeded (free tier: 20 RPM)",
                 console=diag_console,
@@ -281,12 +301,14 @@ async def process_url(
         except FetchError as e:
             stages.fail()
             stages.stop()
+            record_failure(str(e))
             _print_url_error(url, str(e), diag_console)
             raise SystemExit(1)
 
         if not original_markdown.strip():
             stages.fail("No content extracted")
             stages.stop()
+            record_failure("No content extracted")
             _print_url_error(url, "No content extracted", diag_console)
             ui.step(
                 "The page may be empty, require JavaScript, "
@@ -302,6 +324,17 @@ async def process_url(
         if output_file is None:
             stages.stop()
             logger.info(f"[SKIP] Output exists: {base_output_file}")
+            if history is not None:
+                history.append(
+                    Outcome(
+                        kind="url",
+                        source=url,
+                        status="skipped",
+                        output_path=base_output_file,
+                        skip_reason="exists",
+                        duration=(datetime.now() - started_at).total_seconds(),
+                    )
+                )
             if not quiet:
                 console.print(f"[yellow]Skipped (exists):[/yellow] {base_output_file}")
             return
@@ -353,6 +386,17 @@ async def process_url(
         has_screenshot = screenshot_path is not None and screenshot_path.exists()
         if cfg.screenshot.screenshot_only and not cfg.llm.enabled:
             stages.stop()
+            if history is not None:
+                history.append(
+                    Outcome(
+                        kind="url",
+                        source=url,
+                        status="completed",
+                        output_path=screenshot_path if has_screenshot else None,
+                        screenshots=1 if has_screenshot else 0,
+                        duration=(datetime.now() - started_at).total_seconds(),
+                    )
+                )
             if has_screenshot and screenshot_path is not None:
                 if not quiet:
                     console.print(f"[green]Screenshot saved:[/green] {screenshot_path}")
@@ -713,6 +757,22 @@ async def process_url(
                 output_file if explicit_file_name is not None else None,
             )
 
+            if history is not None:
+                history.append(
+                    Outcome(
+                        kind="url",
+                        source=url,
+                        status="completed",
+                        output_path=final_output_file,
+                        images=images_count,
+                        screenshots=screenshots_count,
+                        cost_usd=llm_cost,
+                        llm_usage=llm_usage,
+                        fetch_strategy=used_strategy,
+                        duration=duration,
+                    )
+                )
+
             if verbose and not quiet:
                 console.print(f"  {ui.MARK_SUCCESS} Fetched via {used_strategy}")
                 if images_count > 0:
@@ -734,6 +794,7 @@ async def process_url(
     except Exception as e:
         stages.fail()
         stages.stop()
+        record_failure(format_error_message(e))
         _print_url_error(url, str(e), diag_console)
         raise SystemExit(resolve_exit_code(1, batch=False))
     finally:
@@ -755,6 +816,7 @@ async def process_url_batch(
     fetch_strategy: FetchStrategy | None = None,
     explicit_fetch_strategy: bool = False,
     quiet: bool = False,
+    history: list[Outcome] | None = None,
 ) -> None:
     """Batch process multiple URLs from a URL list file.
 
@@ -773,6 +835,9 @@ async def process_url_batch(
         fetch_strategy: Strategy to use for fetching URL content
         explicit_fetch_strategy: If True, strategy was explicitly set via CLI flag
         quiet: Suppress progress, summary, and output-path information
+        history: Optional list collecting each URL's Outcome for serve
+            history recording (append-only; the caller decides whether to
+            record).
     """
     # Batch output must be a directory; reject file-like -o values early
     if output_dir.suffix == ".md" and not output_dir.is_dir():
@@ -888,6 +953,43 @@ async def process_url_batch(
         nonlocal completed, failed, total_llm_cost
 
         url = entry.url
+        item_start = time.perf_counter()
+        extra_info: dict[str, Any] = {}
+
+        def record_outcome(
+            status: Literal["completed", "failed", "skipped"],
+            result: ProcessResult | None,
+            error: str | None = None,
+        ) -> None:
+            """Append this URL's history outcome (best effort)."""
+            if history is None:
+                return
+            history.append(
+                Outcome(
+                    kind="url",
+                    source=url,
+                    status=status,
+                    output_path=(
+                        Path(result.output_path)
+                        if result is not None and result.output_path
+                        else None
+                    ),
+                    error=error,
+                    skip_reason=(
+                        result.error[9:-1]
+                        if result is not None
+                        and result.error is not None
+                        and result.error.startswith("skipped (")
+                        else None
+                    ),
+                    images=result.images if result is not None else 0,
+                    screenshots=result.screenshots if result is not None else 0,
+                    cost_usd=result.cost_usd if result is not None else 0.0,
+                    llm_usage=result.llm_usage if result is not None else {},
+                    fetch_strategy=extra_info.get("fetch_strategy"),
+                    duration=time.perf_counter() - item_start,
+                )
+            )
 
         async with semaphore:
             try:
@@ -905,12 +1007,14 @@ async def process_url_batch(
 
                 if not result.success:
                     results[url] = {"status": "failed", "error": result.error}
+                    record_outcome("failed", result, error=result.error)
                     _print_url_error(url, result.error or "Unknown error", diag_console)
                     failed += 1
                     return
 
                 if result.error and result.error.startswith("skipped ("):
                     results[url] = {"status": "skipped", "error": "Output exists"}
+                    record_outcome("skipped", result)
                     return
 
                 total_llm_cost += result.cost_usd
@@ -926,6 +1030,7 @@ async def process_url_batch(
                     "images": result.images,
                     "screenshots": result.screenshots,
                 }
+                record_outcome("completed", result)
                 completed += 1
                 logger.info(
                     f"Completed via {url_fetch_strategy}: {_safe_url_for_display(url)}"
@@ -938,6 +1043,7 @@ async def process_url_batch(
                     f"{_redact_urls_in_message(err_msg)}"
                 )
                 results[url] = {"status": "failed", "error": err_msg}
+                record_outcome("failed", None, error=err_msg)
                 _print_url_error(url, err_msg, diag_console)
                 failed += 1
 

@@ -198,6 +198,9 @@ markitai config validate ./markitai.json    # Validate specific file
   "security": {
     "pdf_sanitize": "warn"
   },
+  "history": {
+    "record": false
+  },
   "prompts": {
     "dir": "~/.markitai/prompts"
   }
@@ -233,6 +236,7 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 | `MARKITAI_STATIC_HTTP` | Static HTTP backend: `httpx` (default) or `curl_cffi` (TLS impersonation) |
 | `MARKITAI_LANG` | CLI language override (`en` or `zh`) |
 | `MARKITAI_PURE` | Enable pure mode (`1`, `true`, or `yes`) |
+| `MARKITAI_RECORD_HISTORY` | Record CLI runs to the `markitai serve` history (`1`, `true`, `yes`, or `on`; a set-but-falsy value explicitly opts out). Overridden by `--record-history` / `--no-record-history`; overrides `history.record` |
 | `MARKITAI_NO_REMOTE_FETCH` | Hard-disable remote extraction, including explicit remote `-s` strategies (`1`, `true`, or `yes`) |
 | `MODEL` | Single-model override when no `model_list` configured |
 

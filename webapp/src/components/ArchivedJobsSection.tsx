@@ -237,6 +237,9 @@ export function ArchivedJobRows({
             <span className="c-name" title={names}>
               {firstKind === "url" ? <GlobeIcon /> : <FileTextIcon />}
               <span className="fname">{names}</span>
+              {entry.origin === "cli" && (
+                <span className="origin-tag">{t.originCli}</span>
+              )}
             </span>
             <span className="c-duration">{duration}</span>
             <span className="c-finished" title={entry.finished_at ?? undefined}>

@@ -69,6 +69,7 @@ vi.mock("./hooks/useArchivedJobs", () => ({
         kinds_preview: ["file"],
         duration_ms: 60_000,
         size_bytes: 100,
+        origin: "web",
       },
     ],
     error: null,

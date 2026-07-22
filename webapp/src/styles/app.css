@@ -1051,7 +1051,8 @@
     gap: 5px;
     white-space: nowrap;
   }
-  .llm-tag {
+  .llm-tag,
+  .origin-tag {
     display: inline-flex;
     align-items: center;
     min-height: 18px;
@@ -1065,6 +1066,10 @@
     letter-spacing: 0.04em;
     line-height: 1;
     text-transform: uppercase;
+  }
+  /* the tag never shrinks into the ellipsizing filename next to it */
+  .c-name .origin-tag {
+    flex: none;
   }
   .llm-tag.on {
     border-color: color-mix(in srgb, var(--success) 45%, var(--hairline));
