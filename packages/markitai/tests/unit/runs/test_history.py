@@ -105,7 +105,7 @@ class TestRecordCliJob:
 
         # Outputs and referenced assets are copied; batch bookkeeping is not.
         copied = {
-            str(p.relative_to(job_dir / "out"))
+            p.relative_to(job_dir / "out").as_posix()
             for p in (job_dir / "out").rglob("*")
             if p.is_file()
         }
