@@ -39,6 +39,7 @@ _WEBSITE = _REPO_ROOT / "website"
 _EN_GUIDE = _WEBSITE / "guide"
 _ZH_GUIDE = _WEBSITE / "zh" / "guide"
 _README = _REPO_ROOT / "README.md"
+_SKILLS = _REPO_ROOT / "skills"
 _MARKITAI_PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
 pytestmark = pytest.mark.skipif(
@@ -61,15 +62,21 @@ _REMOVAL_MARKERS = ("removed", "已移除")
 
 
 def _iter_docs() -> list[Path]:
-    """Return every hand-written Markdown page, both languages.
+    """Return every hand-written Markdown page: both guides and the skills.
+
+    `skills/` teaches agents the same CLI the guides teach humans, so it rots
+    the same way and belongs in the same scan — it was the one copy of the
+    "deprecated aliases still work" sentence that survived their removal.
 
     Skips build artifacts: `pnpm docs:build` copies CHANGELOG.md in as
     `changelog.md`, and a changelog legitimately names flags that no longer
     exist. node_modules is skipped for the obvious reason.
     """
+    roots = [_WEBSITE, _SKILLS] if _SKILLS.is_dir() else [_WEBSITE]
     return sorted(
         path
-        for path in _WEBSITE.rglob("*.md")
+        for root in roots
+        for path in root.rglob("*.md")
         if path.name != "changelog.md" and "node_modules" not in path.parts
     )
 
