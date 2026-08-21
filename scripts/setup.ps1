@@ -67,9 +67,9 @@ function i18n {
             "python"                    { return "Python" }
             "markitai"                  { return "markitai" }
             "serve"                     { return "Web UI (markitai serve)" }
+            "ocr"                       { return "OCR (扫描件文字识别)" }
             "playwright"                { return "Playwright 浏览器" }
             "libreoffice"               { return "LibreOffice" }
-            "ffmpeg"                    { return "FFmpeg" }
             "claude_cli"                { return "Claude Code CLI" }
             "copilot_cli"               { return "Copilot CLI" }
             "precommit"                 { return "pre-commit hooks" }
@@ -77,9 +77,9 @@ function i18n {
 
             # Confirmations
             "confirm_serve"             { return "安装 Web UI 依赖? (启用 markitai serve)" }
+            "confirm_ocr"               { return "安装 OCR 支持? (识别扫描件和图片中的文字, 约 150MB)" }
             "confirm_playwright"        { return "安装 Playwright 浏览器? (用于 JS 渲染页面)" }
             "confirm_libreoffice"       { return "安装 LibreOffice? (用于 Office 文档转换)" }
-            "confirm_ffmpeg"            { return "安装 FFmpeg? (用于音视频处理)" }
             "confirm_claude_cli"        { return "安装 Claude Code CLI? (使用 Claude 订阅)" }
             "confirm_copilot_cli"       { return "安装 Copilot CLI? (使用 GitHub Copilot 订阅)" }
             "confirm_uv"                { return "安装 uv 包管理器?" }
@@ -87,7 +87,6 @@ function i18n {
 
             # Info messages
             "info_libreoffice_purpose"  { return "LibreOffice 用于转换旧版 Office 文档 (.doc/.ppt) 并渲染幻灯片截图" }
-            "info_ffmpeg_purpose"       { return "FFmpeg 用于处理音频和视频文件" }
             "info_playwright_purpose"   { return "Playwright 用于获取 JavaScript 渲染的网页内容" }
             "info_project_dir"          { return "项目目录" }
             "info_docs"                 { return "文档" }
@@ -112,15 +111,15 @@ function i18n {
 
             # Network / Mirrors
             "section_network"           { return "网络环境" }
-            "mirror_no_proxy"           { return "未检测到代理，部分资源可能无法访问" }
-            "mirror_confirm"            { return "启用国内镜像加速? (推荐无代理环境使用)" }
+            "mirror_slow_index"         { return "PyPI 默认源响应缓慢或不可达" }
+            "mirror_confirm"            { return "使用镜像源加速安装?" }
             "mirror_select"             { return "选择镜像源" }
             "mirror_tuna"               { return "清华 TUNA (推荐)" }
             "mirror_aliyun"             { return "阿里云" }
             "mirror_tencent"            { return "腾讯云" }
             "mirror_huawei"             { return "华为云" }
-            "mirror_enabled"            { return "已启用国内镜像加速" }
-            "mirror_skipped"            { return "已跳过镜像配置" }
+            "mirror_enabled"            { return "已启用镜像加速" }
+            "mirror_skipped"            { return "继续使用默认源" }
             "mirror_pypi"               { return "PyPI 镜像" }
             "mirror_playwright"         { return "Playwright 镜像" }
             "mirror_npm"                { return "npm 镜像" }
@@ -190,9 +189,9 @@ function i18n {
             "python"                    { return "Python" }
             "markitai"                  { return "markitai" }
             "serve"                     { return "Web UI (markitai serve)" }
+            "ocr"                       { return "OCR (scanned-document text recognition)" }
             "playwright"                { return "Playwright browser" }
             "libreoffice"               { return "LibreOffice" }
-            "ffmpeg"                    { return "FFmpeg" }
             "claude_cli"                { return "Claude Code CLI" }
             "copilot_cli"               { return "Copilot CLI" }
             "precommit"                 { return "pre-commit hooks" }
@@ -200,9 +199,9 @@ function i18n {
 
             # Confirmations
             "confirm_serve"             { return "Install Web UI dependencies? (enables markitai serve)" }
+            "confirm_ocr"               { return "Install OCR support? (text recognition in scanned PDFs and images, ~150MB)" }
             "confirm_playwright"        { return "Install Playwright browser? (for JS-rendered pages)" }
             "confirm_libreoffice"       { return "Install LibreOffice? (for Office document conversion)" }
-            "confirm_ffmpeg"            { return "Install FFmpeg? (for audio/video processing)" }
             "confirm_claude_cli"        { return "Install Claude Code CLI? (use your Claude subscription)" }
             "confirm_copilot_cli"       { return "Install Copilot CLI? (use your GitHub Copilot subscription)" }
             "confirm_uv"                { return "Install uv package manager?" }
@@ -210,7 +209,6 @@ function i18n {
 
             # Info messages
             "info_libreoffice_purpose"  { return "LibreOffice converts legacy Office files (.doc/.ppt) and renders slide screenshots" }
-            "info_ffmpeg_purpose"       { return "FFmpeg processes audio and video files" }
             "info_playwright_purpose"   { return "Playwright fetches JavaScript-rendered web pages" }
             "info_project_dir"          { return "Project directory" }
             "info_docs"                 { return "Documentation" }
@@ -235,15 +233,15 @@ function i18n {
 
             # Network / Mirrors
             "section_network"           { return "Network Environment" }
-            "mirror_no_proxy"           { return "No proxy detected, some resources may be inaccessible" }
-            "mirror_confirm"            { return "Enable China mirror acceleration? (recommended without proxy)" }
+            "mirror_slow_index"         { return "The default PyPI index is slow or unreachable from here" }
+            "mirror_confirm"            { return "Use a mirror to speed up the install?" }
             "mirror_select"             { return "Select mirror source" }
             "mirror_tuna"               { return "Tsinghua TUNA (Recommended)" }
             "mirror_aliyun"             { return "Alibaba Cloud" }
             "mirror_tencent"            { return "Tencent Cloud" }
             "mirror_huawei"             { return "Huawei Cloud" }
-            "mirror_enabled"            { return "China mirror acceleration enabled" }
-            "mirror_skipped"            { return "Mirror configuration skipped" }
+            "mirror_enabled"            { return "Mirror acceleration enabled" }
+            "mirror_skipped"            { return "Keeping the default index" }
             "mirror_pypi"               { return "PyPI mirror" }
             "mirror_playwright"         { return "Playwright mirror" }
             "mirror_npm"                { return "npm mirror" }
@@ -793,17 +791,93 @@ function Test-Proxy {
     return $false
 }
 
-# Prompt user to enable China mirrors if no proxy is detected
+# Time-boxed reachability probe of the default package index.
+#
+# This must stay an APPLICATION-layer check. A bare TCP/port probe
+# (Test-NetConnection, TcpClient) is meaningless on a machine running a
+# TUN-mode proxy: every port answers, so every probe "succeeds". An HTTP
+# status alone is not enough either, because an intermittently empty body
+# still returns 200. So: real GET, verify status *and* that bytes arrived.
+#
+# The timeout doubles as the "too slow to install through" threshold.
+#
+# Env: MARKITAI_INDEX_PROBE_URL / MARKITAI_INDEX_PROBE_TIMEOUT (test seams).
+# Returns: $true when the default index answered in time.
+function Test-DefaultIndexReachable {
+    $url = if ($env:MARKITAI_INDEX_PROBE_URL) {
+        $env:MARKITAI_INDEX_PROBE_URL
+    } else {
+        "https://pypi.org/simple/markitai/"
+    }
+    $timeout = 3
+    if ($env:MARKITAI_INDEX_PROBE_TIMEOUT -match "^\d+$") {
+        $timeout = [int]$env:MARKITAI_INDEX_PROBE_TIMEOUT
+    }
+
+    $previousProgress = $ProgressPreference
+    $ProgressPreference = "SilentlyContinue"
+    try {
+        # Windows PowerShell 5.1 still negotiates TLS 1.0 by default on some
+        # builds; pypi.org requires 1.2 or better.
+        try {
+            [Net.ServicePointManager]::SecurityProtocol =
+                [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        } catch {}
+
+        $response = Invoke-WebRequest -Uri $url -UseBasicParsing `
+            -TimeoutSec $timeout -ErrorAction Stop
+        if ([int]$response.StatusCode -ne 200) { return $false }
+
+        $length = 0
+        try { $length = [int]$response.RawContentLength } catch { $length = 0 }
+        if ($length -le 0 -and $response.Content) { $length = $response.Content.Length }
+        return ($length -gt 0)
+    } catch {
+        return $false
+    } finally {
+        $ProgressPreference = $previousProgress
+    }
+}
+
+# Offer China mirrors only when this machine has an actual problem reaching
+# the default index.
+#
+# The previous rule was "no proxy variable set" — which is true for most of
+# the planet, so the very first thing a user in Berlin or São Paulo saw was a
+# warning about Chinese mirrors that had nothing to do with them. Locale and
+# timezone are no better: they misfire on travellers, expats and CI runners.
+# Measured reachability is the only evidence that actually predicts the
+# problem mirrors solve.
 function Configure-Mirrors {
+    # Explicit override in either direction wins: no probe, no question.
+    if ($env:MARKITAI_USE_MIRROR -match "^(1|true|yes|on)$") {
+        Select-MirrorSource
+        return
+    }
+    if ($env:MARKITAI_USE_MIRROR -match "^(0|false|no|off)$") { return }
+
+    # A configured proxy is the user's own routing decision.
     if (Test-Proxy) { return }
 
-    Clack-Warn (i18n "mirror_no_proxy")
+    # Never ask without interactive input, and never spend the probe budget there.
+    if (-not (Test-InteractiveInput)) { return }
 
-    if (-not (Clack-Confirm (i18n "mirror_confirm") "n")) {
+    # Fast, healthy index: say nothing at all and use the default.
+    if (Test-DefaultIndexReachable) { return }
+
+    Clack-Warn (i18n "mirror_slow_index")
+
+    if (-not (Clack-Confirm (i18n "mirror_confirm") "y")) {
         Clack-Log (i18n "mirror_skipped")
         return
     }
 
+    Select-MirrorSource
+}
+
+# Pick a mirror and export it. Reached from an accepted prompt or from an
+# explicit MARKITAI_USE_MIRROR=1.
+function Select-MirrorSource {
     # Show mirror source selection on the same continuous tree guide.
     Write-GuideLine
     Write-TreeBranch -Text "$(i18n 'mirror_select') [1]" -Color Cyan
@@ -1165,7 +1239,11 @@ function Install-Markitai {
 # non-interactive install starts with core only unless explicitly opted in.
 $script:MARKITAI_EXTRAS = ""
 $script:MARKITAI_RECEIPT_EXTRAS = @()
-$script:MARKITAI_ALL_FALLBACK_EXTRAS = "browser,extra-fetch,kreuzberg,svg,heif,serve"
+$script:MARKITAI_ALL_FALLBACK_EXTRAS = "browser,extra-fetch,kreuzberg,svg,heif,ocr,serve"
+# Extras the user explicitly turned down. `markitai doctor --suggest-extras`
+# recommends `ocr` unconditionally, so without this list the finalize pass
+# would reinstall exactly what was just declined and make the prompt a lie.
+$script:MARKITAI_DECLINED_EXTRAS = @()
 if ((Test-InteractiveInput) -or (Test-OptionalInstallRequested)) {
     $script:MARKITAI_EXTRAS = "browser"
 }
@@ -1194,6 +1272,21 @@ function Install-MarkitaiExtra {
     } else {
         $script:MARKITAI_EXTRAS = "$($script:MARKITAI_EXTRAS),$ExtraName"
     }
+}
+
+# Return true when the user answered "no" to an extra in this run.
+function Test-MarkitaiExtraDeclined {
+    param([string]$ExtraName)
+
+    return ($script:MARKITAI_DECLINED_EXTRAS -contains $ExtraName)
+}
+
+# Remember a declined extra so no later suggestion pass re-adds it.
+function Deny-MarkitaiExtra {
+    param([string]$ExtraName)
+
+    if (Test-MarkitaiExtraDeclined -ExtraName $ExtraName) { return }
+    $script:MARKITAI_DECLINED_EXTRAS += $ExtraName
 }
 
 # Preserve every extra recorded by uv before asking for new capabilities.
@@ -1252,6 +1345,28 @@ function Track-MarkitaiServe {
     }
 }
 
+# Resolve OCR before installing markitai, for the same reason as `serve`.
+# rapidocr moved out of the core dependencies: it is ~150MB of models that
+# nobody converting born-digital documents ever executes, so the guided
+# installer asks instead of deciding. A repeat run skips the question when the
+# uv receipt already records the extra.
+function Select-MarkitaiOcr {
+    if (Test-MarkitaiExtraEnabled -ExtraName "ocr") { return }
+    if (Confirm-OptionalInstall (i18n "confirm_ocr") "y") {
+        Install-MarkitaiExtra -ExtraName "ocr"
+    } else {
+        Deny-MarkitaiExtra -ExtraName "ocr"
+    }
+}
+
+function Track-MarkitaiOcr {
+    if (Test-MarkitaiExtraEnabled -ExtraName "ocr") {
+        Track-Install -Component "ocr" -Status "installed"
+    } else {
+        Track-Install -Component "ocr" -Status "skipped"
+    }
+}
+
 # Finalize markitai extras after all optional components are resolved.
 # Merges `markitai doctor --suggest-extras` output with manually tracked
 # MARKITAI_EXTRAS (from CLI install functions), so nothing is lost.
@@ -1265,7 +1380,9 @@ function Finalize-MarkitaiExtras {
         $suggested = & markitai doctor --suggest-extras 2>$null
         if ($suggested) {
             foreach ($extra in ($suggested.Trim() -split ',')) {
-                if ($extra) { Install-MarkitaiExtra -ExtraName $extra }
+                if ($extra -and -not (Test-MarkitaiExtraDeclined -ExtraName $extra)) {
+                    Install-MarkitaiExtra -ExtraName $extra
+                }
             }
         }
     } catch {}
@@ -1541,69 +1658,6 @@ function Install-OptionalLibreOffice {
     Clack-Error "$(i18n 'libreoffice') $(i18n 'failed')"
     if ($lastResult) { Clack-Detail -Detail $lastResult.Output -MaxLines 3 }
     Track-Install -Component "libreoffice" -Status "failed"
-    return $false
-}
-
-# Install FFmpeg (Optional)
-function Install-OptionalFFmpeg {
-    # Check if already installed
-    $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
-    if ($ffmpegCmd) {
-        $version = & ffmpeg -version 2>&1 | Select-Object -First 1
-        if ($version -match "ffmpeg version ([^\s]+)") {
-            Clack-Success "$(i18n 'ffmpeg'): $($Matches[1]) $(i18n 'already_installed')"
-        } else {
-            Clack-Success "$(i18n 'ffmpeg') $(i18n 'already_installed')"
-        }
-        Track-Install -Component "ffmpeg" -Status "installed"
-        return $true
-    }
-
-    Clack-Info (i18n "info_ffmpeg_purpose")
-
-    if (-not (Confirm-OptionalInstall (i18n "confirm_ffmpeg") "n")) {
-        Clack-Skip (i18n "ffmpeg")
-        Track-Install -Component "ffmpeg" -Status "skipped"
-        return $false
-    }
-
-    Clack-Info "$(i18n 'installing') $(i18n 'ffmpeg')..."
-
-    # Priority: winget > scoop > choco
-    $lastResult = $null
-    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
-    if ($wingetCmd) {
-        $lastResult = Invoke-NativeQuietly { & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements }
-        if ($lastResult.Success) {
-            Clack-Success "$(i18n 'ffmpeg') $(i18n 'installed')"
-            Track-Install -Component "ffmpeg" -Status "installed"
-            return $true
-        }
-    }
-
-    $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
-    if ($scoopCmd) {
-        $lastResult = Invoke-NativeQuietly { & scoop install ffmpeg }
-        if ($lastResult.Success) {
-            Clack-Success "$(i18n 'ffmpeg') $(i18n 'installed')"
-            Track-Install -Component "ffmpeg" -Status "installed"
-            return $true
-        }
-    }
-
-    $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
-    if ($chocoCmd) {
-        $lastResult = Invoke-NativeQuietly { & choco install ffmpeg -y }
-        if ($lastResult.Success) {
-            Clack-Success "$(i18n 'ffmpeg') $(i18n 'installed')"
-            Track-Install -Component "ffmpeg" -Status "installed"
-            return $true
-        }
-    }
-
-    Clack-Error "$(i18n 'ffmpeg') $(i18n 'failed')"
-    if ($lastResult) { Clack-Detail -Detail $lastResult.Output -MaxLines 3 }
-    Track-Install -Component "ffmpeg" -Status "failed"
     return $false
 }
 
@@ -1883,13 +1937,14 @@ function Run-UserSetup {
     if (-not (Install-Python)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
     Import-MarkitaiReceiptExtras
     Select-MarkitaiServe
+    Select-MarkitaiOcr
     if (-not (Install-Markitai)) { Print-Summary; Clack-Cancel (i18n "error_setup_failed"); exit 1 }
     Track-MarkitaiServe
+    Track-MarkitaiOcr
 
     Clack-Section (i18n "section_optional")
     Invoke-OptionalStep -Component "playwright" -Action { Install-OptionalPlaywright }
     Invoke-OptionalStep -Component "libreoffice" -Action { Install-OptionalLibreOffice }
-    Invoke-OptionalStep -Component "ffmpeg" -Action { Install-OptionalFFmpeg }
 
     Clack-Section (i18n "section_llm_cli")
     Invoke-OptionalStep -Component "claude_cli" -Action { Install-OptionalClaudeCLI }
@@ -1930,7 +1985,6 @@ function Run-DevSetup {
     Clack-Section (i18n "section_optional")
     Invoke-OptionalStep -Component "playwright" -Action { Install-OptionalPlaywright }
     Invoke-OptionalStep -Component "libreoffice" -Action { Install-OptionalLibreOffice }
-    Invoke-OptionalStep -Component "ffmpeg" -Action { Install-OptionalFFmpeg }
 
     Clack-Section (i18n "section_llm_cli")
     Invoke-OptionalStep -Component "claude_cli" -Action { Install-OptionalClaudeCLI }

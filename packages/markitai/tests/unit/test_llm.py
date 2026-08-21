@@ -1305,7 +1305,9 @@ class TestCleanDocumentPure:
 
         captured_messages = []
 
-        async def capture_call_llm(model, messages, context=""):
+        async def capture_call_llm(
+            model, messages, context="", *, require_content=False
+        ):
             captured_messages.append(messages)
             return MagicMock(content="LLM cleaned output")
 

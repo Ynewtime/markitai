@@ -431,36 +431,39 @@ class TestConcurrencyOptions:
 class TestURLFetchStrategyOptions:
     """Tests for URL fetch strategy options."""
 
-    def test_playwright_flag(self, runner: CliRunner, sample_txt: Path, tmp_path: Path):
-        """Test --playwright flag is accepted."""
-        output_dir = tmp_path / "output"
-        result = runner.invoke(
-            app,
-            [str(sample_txt), "-o", str(output_dir), "--playwright"],
-        )
-        assert result.exit_code == 0
-
-    def test_jina_flag(self, runner: CliRunner, sample_txt: Path, tmp_path: Path):
-        """Test --jina flag is accepted."""
-        output_dir = tmp_path / "output"
-        result = runner.invoke(
-            app,
-            [str(sample_txt), "-o", str(output_dir), "--jina"],
-        )
-        assert result.exit_code == 0
-
-    def test_mutually_exclusive_fetch_strategies(
-        self, runner: CliRunner, sample_txt: Path, tmp_path: Path
+    @pytest.mark.parametrize("strategy", ["playwright", "jina"])
+    def test_strategy_option_is_accepted(
+        self, runner: CliRunner, sample_txt: Path, tmp_path: Path, strategy: str
     ):
-        """Test --playwright and --jina are mutually exclusive."""
+        """``-s <name>`` is the supported way to pick a fetch strategy."""
         output_dir = tmp_path / "output"
         result = runner.invoke(
             app,
-            [str(sample_txt), "-o", str(output_dir), "--playwright", "--jina"],
+            [str(sample_txt), "-o", str(output_dir), "-s", strategy],
         )
-        assert result.exit_code != 0
-        output = result.output.lower()
-        assert "mutually" in output and "exclusive" in output
+        assert result.exit_code == 0
+
+    @pytest.mark.parametrize(
+        ("removed", "replacement"),
+        [("--playwright", "-s playwright"), ("--kreuzberg", "-b kreuzberg")],
+    )
+    def test_removed_alias_names_its_replacement(
+        self,
+        runner: CliRunner,
+        sample_txt: Path,
+        tmp_path: Path,
+        removed: str,
+        replacement: str,
+    ):
+        """A removed alias fails as a usage error that names the new spelling."""
+        output_dir = tmp_path / "output"
+        result = runner.invoke(
+            app,
+            [str(sample_txt), "-o", str(output_dir), removed],
+        )
+        assert result.exit_code == 2
+        assert removed in result.output
+        assert replacement in result.output
 
 
 # =============================================================================

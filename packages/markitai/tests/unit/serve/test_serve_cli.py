@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 
@@ -137,3 +138,87 @@ class TestServeCommand:
         assert "serve" in _LAZY_COMMANDS
         assert _LAZY_COMMANDS["serve"][0] == "markitai.cli.commands.serve"
         assert "serve" in _LAZY_MAP
+
+
+def _squeeze(text: str) -> str:
+    """Collapse Rich's line wrapping so assertions can match whole phrases."""
+    return " ".join(text.split())
+
+
+class TestNonLoopbackBindWarning:
+    """Binding beyond loopback opens an unauthenticated API to the network.
+
+    The API has no authentication at all (only the settings routes are
+    loopback-gated), so ``--host 0.0.0.0`` hands every reachable machine the
+    job, history, download and delete endpoints. That has to be said out loud
+    at startup — and only then: the default loopback path must stay silent.
+    """
+
+    def _invoke(self, cli_runner: CliRunner, args: list[str]):
+        import pytest
+
+        uvicorn = pytest.importorskip("uvicorn")
+
+        from markitai.cli.commands.serve import serve
+
+        with (
+            patch.object(uvicorn, "run"),
+            patch("markitai.serve.create_app", return_value=object()),
+        ):
+            return cli_runner.invoke(serve, ["--no-open", *args])
+
+    @pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.50", "[::]"])
+    def test_exposed_bind_warns_on_stderr(
+        self, cli_runner: CliRunner, host: str
+    ) -> None:
+        result = self._invoke(cli_runner, ["--host", host])
+        assert result.exit_code == 0, result.output
+        warning = _squeeze(result.stderr)
+        assert host in warning
+        # Why it matters ...
+        assert "no authentication" in warning
+        assert "conversion history" in warning
+        # ... and what to do instead.
+        assert "127.0.0.1" in warning
+
+    @pytest.mark.parametrize(
+        "args",
+        [[], ["--host", "127.0.0.1"], ["--host", "localhost"], ["--host", "::1"]],
+    )
+    def test_loopback_bind_stays_silent(
+        self, cli_runner: CliRunner, args: list[str]
+    ) -> None:
+        """The default path must not nag: UX floor for a local-first tool."""
+        result = self._invoke(cli_runner, args)
+        assert result.exit_code == 0, result.output
+        assert "no authentication" not in _squeeze(result.stderr)
+        assert result.stderr.strip() == ""
+
+    def test_binds_beyond_loopback_classifier(self) -> None:
+        from markitai.cli.commands.serve import _binds_beyond_loopback
+
+        assert _binds_beyond_loopback("0.0.0.0") is True
+        assert _binds_beyond_loopback("::") is True
+        assert _binds_beyond_loopback("") is True
+        assert _binds_beyond_loopback("box.lan") is True
+        assert _binds_beyond_loopback("10.0.0.2") is True
+        assert _binds_beyond_loopback("127.0.0.1") is False
+        assert _binds_beyond_loopback("127.0.0.53") is False
+        assert _binds_beyond_loopback("::1") is False
+        assert _binds_beyond_loopback("[::1]") is False
+        assert _binds_beyond_loopback("LocalHost") is False
+
+    def test_host_help_states_the_exposure(self, cli_runner: CliRunner) -> None:
+        from markitai.cli.commands.serve import serve
+
+        help_text = _squeeze(cli_runner.invoke(serve, ["--help"]).output)
+        assert "no authentication" in help_text
+
+    def test_allowed_host_help_is_not_only_about_dns_rebinding(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """--allowed-host reads like a security control; say what it is not."""
+        from markitai.cli.commands.serve import serve
+
+        help_text = _squeeze(cli_runner.invoke(serve, ["--help"]).output)
+        assert "not authentication" in help_text

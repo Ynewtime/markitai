@@ -43,7 +43,7 @@ class JinaRateLimitError(FetchError):
     def __init__(self) -> None:
         super().__init__(
             "Jina Reader rate limit exceeded (free tier: 20 RPM). "
-            "Try again later or use --playwright for browser rendering."
+            "Try again later or use '-s playwright' for browser rendering."
         )
 
 

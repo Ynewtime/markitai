@@ -81,7 +81,7 @@ async def fetch_with_defuddle(
         if response.status_code == 429:
             raise FetchError(
                 "Defuddle rate limit exceeded. "
-                "Try again later or use --playwright for local rendering."
+                "Try again later or use '-s playwright' for local rendering."
             )
         elif response.status_code >= 400:
             raise FetchError(

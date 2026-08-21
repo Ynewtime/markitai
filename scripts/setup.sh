@@ -72,9 +72,9 @@ i18n() {
             python)                     echo "Python" ;;
             markitai)                   echo "markitai" ;;
             serve)                      echo "Web UI (markitai serve)" ;;
+            ocr)                        echo "OCR (扫描件文字识别)" ;;
             playwright)                 echo "Playwright 浏览器" ;;
             libreoffice)                echo "LibreOffice" ;;
-            ffmpeg)                     echo "FFmpeg" ;;
             claude_cli)                 echo "Claude Code CLI" ;;
             copilot_cli)                echo "Copilot CLI" ;;
             precommit)                  echo "pre-commit hooks" ;;
@@ -82,9 +82,9 @@ i18n() {
 
             # Confirmations
             confirm_serve)              echo "安装 Web UI 依赖? (启用 markitai serve)" ;;
+            confirm_ocr)                echo "安装 OCR 支持? (识别扫描件和图片中的文字, 约 150MB)" ;;
             confirm_playwright)         echo "安装 Playwright 浏览器? (用于 JS 渲染页面)" ;;
             confirm_libreoffice)        echo "安装 LibreOffice? (用于 Office 文档转换)" ;;
-            confirm_ffmpeg)             echo "安装 FFmpeg? (用于音视频处理)" ;;
             confirm_claude_cli)         echo "安装 Claude Code CLI? (使用 Claude 订阅)" ;;
             confirm_copilot_cli)        echo "安装 Copilot CLI? (使用 GitHub Copilot 订阅)" ;;
             confirm_uv)                 echo "安装 uv 包管理器?" ;;
@@ -92,7 +92,6 @@ i18n() {
 
             # Info messages
             info_libreoffice_purpose)   echo "LibreOffice 用于转换旧版 Office 文档 (.doc/.ppt) 并渲染幻灯片截图" ;;
-            info_ffmpeg_purpose)        echo "FFmpeg 用于处理音频和视频文件" ;;
             info_playwright_purpose)    echo "Playwright 用于获取 JavaScript 渲染的网页内容" ;;
             info_project_dir)           echo "项目目录" ;;
             info_docs)                  echo "文档" ;;
@@ -117,15 +116,15 @@ i18n() {
 
             # Network / Mirrors
             section_network)            echo "网络环境" ;;
-            mirror_no_proxy)            echo "未检测到代理，部分资源可能无法访问" ;;
-            mirror_confirm)             echo "启用国内镜像加速? (推荐无代理环境使用)" ;;
+            mirror_slow_index)          echo "PyPI 默认源响应缓慢或不可达" ;;
+            mirror_confirm)             echo "使用镜像源加速安装?" ;;
             mirror_select)              echo "选择镜像源" ;;
             mirror_tuna)                echo "清华 TUNA (推荐)" ;;
             mirror_aliyun)              echo "阿里云" ;;
             mirror_tencent)             echo "腾讯云" ;;
             mirror_huawei)              echo "华为云" ;;
-            mirror_enabled)             echo "已启用国内镜像加速" ;;
-            mirror_skipped)             echo "已跳过镜像配置" ;;
+            mirror_enabled)             echo "已启用镜像加速" ;;
+            mirror_skipped)             echo "继续使用默认源" ;;
             mirror_pypi)                echo "PyPI 镜像" ;;
             mirror_playwright)          echo "Playwright 镜像" ;;
             mirror_npm)                 echo "npm 镜像" ;;
@@ -193,9 +192,9 @@ i18n() {
             python)                     echo "Python" ;;
             markitai)                   echo "markitai" ;;
             serve)                      echo "Web UI (markitai serve)" ;;
+            ocr)                        echo "OCR (scanned-document text recognition)" ;;
             playwright)                 echo "Playwright browser" ;;
             libreoffice)                echo "LibreOffice" ;;
-            ffmpeg)                     echo "FFmpeg" ;;
             claude_cli)                 echo "Claude Code CLI" ;;
             copilot_cli)                echo "Copilot CLI" ;;
             precommit)                  echo "pre-commit hooks" ;;
@@ -203,9 +202,9 @@ i18n() {
 
             # Confirmations
             confirm_serve)              echo "Install Web UI dependencies? (enables markitai serve)" ;;
+            confirm_ocr)                echo "Install OCR support? (text recognition in scanned PDFs and images, ~150MB)" ;;
             confirm_playwright)         echo "Install Playwright browser? (for JS-rendered pages)" ;;
             confirm_libreoffice)        echo "Install LibreOffice? (for Office document conversion)" ;;
-            confirm_ffmpeg)             echo "Install FFmpeg? (for audio/video processing)" ;;
             confirm_claude_cli)         echo "Install Claude Code CLI? (use your Claude subscription)" ;;
             confirm_copilot_cli)        echo "Install Copilot CLI? (use your GitHub Copilot subscription)" ;;
             confirm_uv)                 echo "Install uv package manager?" ;;
@@ -213,7 +212,6 @@ i18n() {
 
             # Info messages
             info_libreoffice_purpose)   echo "LibreOffice converts legacy Office files (.doc/.ppt) and renders slide screenshots" ;;
-            info_ffmpeg_purpose)        echo "FFmpeg processes audio and video files" ;;
             info_playwright_purpose)    echo "Playwright fetches JavaScript-rendered web pages" ;;
             info_project_dir)           echo "Project directory" ;;
             info_docs)                  echo "Documentation" ;;
@@ -238,15 +236,15 @@ i18n() {
 
             # Network / Mirrors
             section_network)            echo "Network Environment" ;;
-            mirror_no_proxy)            echo "No proxy detected, some resources may be inaccessible" ;;
-            mirror_confirm)             echo "Enable China mirror acceleration? (recommended without proxy)" ;;
+            mirror_slow_index)          echo "The default PyPI index is slow or unreachable from here" ;;
+            mirror_confirm)             echo "Use a mirror to speed up the install?" ;;
             mirror_select)              echo "Select mirror source" ;;
             mirror_tuna)                echo "Tsinghua TUNA (Recommended)" ;;
             mirror_aliyun)              echo "Alibaba Cloud" ;;
             mirror_tencent)             echo "Tencent Cloud" ;;
             mirror_huawei)              echo "Huawei Cloud" ;;
-            mirror_enabled)             echo "China mirror acceleration enabled" ;;
-            mirror_skipped)             echo "Mirror configuration skipped" ;;
+            mirror_enabled)             echo "Mirror acceleration enabled" ;;
+            mirror_skipped)             echo "Keeping the default index" ;;
             mirror_pypi)                echo "PyPI mirror" ;;
             mirror_playwright)          echo "Playwright mirror" ;;
             mirror_npm)                 echo "npm mirror" ;;
@@ -818,20 +816,92 @@ detect_proxy() {
     return 1
 }
 
-# Prompt user to enable China mirrors if no proxy is detected
+# Time-boxed reachability probe of the default package index.
+#
+# This must stay an APPLICATION-layer check. A bare TCP/port probe (nc -z,
+# /dev/tcp, connect_ex) is meaningless on a machine running a TUN-mode proxy:
+# every port answers, so every probe "succeeds". And an HTTP status alone is
+# not enough either, because an intermittently empty body still returns 200.
+# So: real GET, verify status *and* that bytes actually arrived.
+#
+# The timeout doubles as the "too slow to install through" threshold — a few
+# KB of index metadata that cannot arrive within it predicts a miserable
+# multi-hundred-MB download.
+#
+# Env: MARKITAI_INDEX_PROBE_URL / MARKITAI_INDEX_PROBE_TIMEOUT (test seams).
+# Returns: 0 when the default index answered in time, 1 otherwise.
+probe_default_index() {
+    _probe_url="${MARKITAI_INDEX_PROBE_URL:-https://pypi.org/simple/markitai/}"
+    _probe_timeout="${MARKITAI_INDEX_PROBE_TIMEOUT:-3}"
+
+    # No HTTP client to measure with: stay silent rather than show an
+    # unrelated mirror question. install_uv reports the missing curl itself.
+    command -v curl >/dev/null 2>&1 || return 0
+
+    _probe_out=$(curl -fsS -o /dev/null \
+        --connect-timeout "$_probe_timeout" --max-time "$_probe_timeout" \
+        -w '%{http_code} %{size_download}' "$_probe_url" 2>/dev/null) || return 1
+
+    _probe_code="${_probe_out%% *}"
+    _probe_bytes="${_probe_out##* }"
+    [ "$_probe_code" = "200" ] || return 1
+    case "$_probe_bytes" in
+        ''|0|*[!0-9]*) return 1 ;;
+    esac
+    return 0
+}
+
+# Offer China mirrors only when this machine has an actual problem reaching
+# the default index.
+#
+# The previous rule was "no proxy variable set" — which is true for most of
+# the planet, so the very first thing a user in Berlin or São Paulo saw was a
+# warning about Chinese mirrors that had nothing to do with them. Locale and
+# timezone are no better: they misfire on travellers, expats and CI runners.
+# Measured reachability is the only evidence that actually predicts the
+# problem mirrors solve.
+#
 # Sets: UV_INDEX_URL, PLAYWRIGHT_DOWNLOAD_HOST, NPM_CONFIG_REGISTRY
 configure_mirrors() {
+    # Explicit override in either direction wins: no probe, no question.
+    case "${MARKITAI_USE_MIRROR:-}" in
+        1|true|TRUE|yes|YES|on|ON)
+            select_mirror_source
+            return 0
+            ;;
+        0|false|FALSE|no|NO|off|OFF)
+            return 0
+            ;;
+    esac
+
+    # A configured proxy is the user's own routing decision; do not second-guess it.
     if detect_proxy; then
         return 0
     fi
 
-    clack_warn "$(i18n mirror_no_proxy)"
+    # Never ask without a terminal, and never spend the probe budget there.
+    if ! has_interactive_tty; then
+        return 0
+    fi
 
-    if ! clack_confirm "$(i18n mirror_confirm)" "n"; then
+    # Fast, healthy index: say nothing at all and use the default.
+    if probe_default_index; then
+        return 0
+    fi
+
+    clack_warn "$(i18n mirror_slow_index)"
+
+    if ! clack_confirm "$(i18n mirror_confirm)" "y"; then
         clack_log "$(i18n mirror_skipped)"
         return 0
     fi
 
+    select_mirror_source
+}
+
+# Pick a mirror and export it. Reached from an accepted prompt or from an
+# explicit MARKITAI_USE_MIRROR=1.
+select_mirror_source() {
     # Show mirror source selection on the same continuous tree guide.
     clack_guide
     printf "${GRAY}%s${CYAN}%s${NC} %s ${GRAY}[1]${NC}\n" "$S_BRANCH" "$S_BAR_H" "$(i18n mirror_select)"
@@ -1183,7 +1253,11 @@ install_markitai() {
 # an interactive session keeps the guided browser-extra default.
 MARKITAI_EXTRAS=""
 MARKITAI_RECEIPT_EXTRAS=""
-MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,kreuzberg,svg,heif,serve"
+MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,kreuzberg,svg,heif,ocr,serve"
+# Extras the user explicitly turned down. `markitai doctor --suggest-extras`
+# recommends `ocr` unconditionally, so without this list the finalize pass
+# would reinstall exactly what was just declined and make the prompt a lie.
+MARKITAI_DECLINED_EXTRAS=""
 if has_interactive_tty || optional_install_requested; then
     MARKITAI_EXTRAS="browser"
 fi
@@ -1219,6 +1293,20 @@ install_markitai_extra() {
     else
         MARKITAI_EXTRAS="${MARKITAI_EXTRAS},$_extra_name"
     fi
+}
+
+# Return success when the user answered "no" to an extra in this run.
+markitai_extra_declined() {
+    case ",$MARKITAI_DECLINED_EXTRAS," in
+        *",$1,"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Remember a declined extra so no later suggestion pass re-adds it.
+decline_markitai_extra() {
+    markitai_extra_declined "$1" && return 0
+    MARKITAI_DECLINED_EXTRAS="${MARKITAI_DECLINED_EXTRAS:+$MARKITAI_DECLINED_EXTRAS,}$1"
 }
 
 # Preserve every extra recorded by uv before asking for new capabilities.
@@ -1281,6 +1369,28 @@ track_markitai_serve() {
     fi
 }
 
+# Resolve OCR before installing markitai, for the same reason as `serve`.
+# rapidocr moved out of the core dependencies: it is ~150MB of models that
+# nobody converting born-digital documents ever executes, so the guided
+# installer asks instead of deciding. A repeat run skips the question when the
+# uv receipt already records the extra.
+select_markitai_ocr() {
+    markitai_extra_enabled "ocr" && return 0
+    if clack_confirm_optional "$(i18n confirm_ocr)" "y"; then
+        install_markitai_extra "ocr"
+    else
+        decline_markitai_extra "ocr"
+    fi
+}
+
+track_markitai_ocr() {
+    if markitai_extra_enabled "ocr"; then
+        track_install "ocr" "installed"
+    else
+        track_install "ocr" "skipped"
+    fi
+}
+
 # Finalize markitai extras after all optional components are resolved.
 # Merges `markitai doctor --suggest-extras` output with manually tracked
 # MARKITAI_EXTRAS (from CLI install functions), so nothing is lost.
@@ -1295,6 +1405,7 @@ finalize_markitai_extras() {
     if [ -n "$_suggested" ]; then
         _old_ifs="$IFS"; IFS=','
         for _e in $_suggested; do
+            markitai_extra_declined "$_e" && continue
             install_markitai_extra "$_e"
         done
         IFS="$_old_ifs"
@@ -1551,66 +1662,6 @@ install_optional_libreoffice() {
 
     clack_error "$(i18n libreoffice) $(i18n failed)"
     track_install "libreoffice" "failed"
-    return 1
-}
-
-# Install FFmpeg (Optional)
-# Returns: 0 on success, 1 on failure, 2 if skipped
-install_optional_ffmpeg() {
-    # Check if already installed
-    if command -v ffmpeg >/dev/null 2>&1; then
-        _ff_version=$(ffmpeg -version 2>/dev/null | head -n1 | sed 's/ffmpeg version \([^ ]*\).*/\1/')
-        clack_success "$(i18n ffmpeg): $_ff_version"
-        track_install "ffmpeg" "installed"
-        return 0
-    fi
-
-    clack_info "$(i18n info_ffmpeg_purpose)"
-
-    if ! clack_confirm_optional "$(i18n confirm_ffmpeg)" "n"; then
-        clack_skip "$(i18n ffmpeg)"
-        track_install "ffmpeg" "skipped"
-        return 2
-    fi
-
-    clack_info "$(i18n installing) $(i18n ffmpeg)..."
-
-    case "$OS_TYPE" in
-        Darwin)
-            if command -v brew >/dev/null 2>&1; then
-                if clack_run_quiet "$(i18n installing) $(i18n ffmpeg)" brew install ffmpeg; then
-                    clack_success "$(i18n ffmpeg) $(i18n installed)"
-                    track_install "ffmpeg" "installed"
-                    return 0
-                fi
-            fi
-            ;;
-        Linux)
-            if [ -f /etc/debian_version ]; then
-                if clack_run_quiet "apt update" sudo apt update && \
-                   clack_run_quiet "$(i18n installing) $(i18n ffmpeg)" sudo apt install -y ffmpeg; then
-                    clack_success "$(i18n ffmpeg) $(i18n installed)"
-                    track_install "ffmpeg" "installed"
-                    return 0
-                fi
-            elif [ -f /etc/fedora-release ]; then
-                if clack_run_quiet "$(i18n installing) $(i18n ffmpeg)" sudo dnf install -y ffmpeg; then
-                    clack_success "$(i18n ffmpeg) $(i18n installed)"
-                    track_install "ffmpeg" "installed"
-                    return 0
-                fi
-            elif [ -f /etc/arch-release ]; then
-                if clack_run_quiet "$(i18n installing) $(i18n ffmpeg)" sudo pacman -S --noconfirm ffmpeg; then
-                    clack_success "$(i18n ffmpeg) $(i18n installed)"
-                    track_install "ffmpeg" "installed"
-                    return 0
-                fi
-            fi
-            ;;
-    esac
-
-    clack_error "$(i18n ffmpeg) $(i18n failed)"
-    track_install "ffmpeg" "failed"
     return 1
 }
 
@@ -1882,13 +1933,14 @@ run_user_setup() {
     detect_python || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
     load_existing_markitai_extras
     select_markitai_serve
+    select_markitai_ocr
     install_markitai || { print_summary; clack_cancel "$(i18n error_setup_failed)"; exit 1; }
     track_markitai_serve
+    track_markitai_ocr
 
     clack_section "$(i18n section_optional)"
     install_optional_playwright || true
     install_optional_libreoffice || true
-    install_optional_ffmpeg || true
 
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli || true
@@ -1925,7 +1977,6 @@ run_dev_setup() {
     clack_section "$(i18n section_optional)"
     install_optional_playwright || true
     install_optional_libreoffice || true
-    install_optional_ffmpeg || true
 
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli || true

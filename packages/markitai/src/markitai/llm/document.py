@@ -35,6 +35,48 @@ PURE_MODE_RULES = """\
 - The document may start with a YAML frontmatter block delimited by `---` lines (e.g., `---\\ntitle: ...\\n---`).
 - You MUST preserve the frontmatter block exactly as-is. Do not modify, reorder, or remove any fields.
 - If no frontmatter is present, do not add one."""
+
+# Labels that separate the attached images from the prompt text. Part of the
+# effective prompt like every other in-code fragment below, so they feed the
+# cache-key digest of the categories that send them.
+SCREENSHOT_LABEL = "\n__MARKITAI_SCREENSHOT__"
+PAGE_LABEL_TEMPLATE = "\n__MARKITAI_PAGE_LABEL_{index}__"
+
+# Tail reminder appended after the page images of a vision call, reinforcing
+# the placeholder rules for the last pages. Part of the effective prompt, so
+# it also feeds the cache-key digest of every category that sends it.
+VISION_TAIL_REMINDER = (
+    "\nREMINDER: Preserve ALL __MARKITAI_*__ placeholders exactly as-is. "
+    "Do not remove or modify any placeholder. "
+    "Output every page/slide — do not skip the last pages."
+)
+
+# Metadata task injected into document_vision_system via {metadata_section}
+VISION_METADATA_SECTION = """
+## Task 2: Metadata Generation
+
+Generate the following fields:
+
+- description: Summarize the core point or conclusion of the entire document in one sentence (under 100 characters, single line)
+  - Focus on what the article actually discusses, not a generic description
+  - Do not use templated openings like "This article discusses..."
+  - If the source document already has a semantically accurate description, reuse it directly
+- tags: Array of related tags (3-5, for classification and retrieval)
+  - **Tags must not contain spaces** — use hyphens instead: `machine-learning`, not `machine learning`
+  - Each tag must be 30 characters or fewer
+  - Examples: `AI`, `software-engineering`, `web-development`
+
+**Output language MUST match the source document** — English content → English metadata, Chinese content → Chinese metadata, etc.
+"""
+
+# Prompt-instruction headings an LLM sometimes copies verbatim into
+# cleaned_markdown. Every marker here must still appear in a live prompt
+# template or in-code prompt constant — test_prompt_leakage_sync.py fails
+# when a prompt is reworded and a marker is left behind matching nothing.
+PROMPT_LEAKAGE_MARKERS = (
+    "## Task 1:",
+    "## Task 2:",
+)
 # Aliased: many methods in this module take a ``content`` parameter
 from markitai.llm import content as content_utils
 from markitai.llm.content import (
@@ -44,7 +86,7 @@ from markitai.llm.content import (
     restore_image_positions as _shared_restore_image_positions,
 )
 from markitai.llm.degeneration import truncate_degenerate_tail
-from markitai.llm.engine import LLMCall
+from markitai.llm.engine import EmptyLLMResponseError, LLMCall
 
 # Moved to markitai.llm.engine (Phase 2.1); alias keeps the internal
 # reference in process_document() working unchanged.
@@ -238,16 +280,46 @@ class DocumentEnhancer:
         self._get_cached_image = get_cached_image
         self._get_next_call_index = get_next_call_index
 
+    def _prompt_scoped_key(
+        self,
+        category: str,
+        *names: str,
+        extra: tuple[str, ...] = (),
+        suffix: str = "",
+    ) -> str:
+        """Build a cache key that changes when the prompt text changes.
+
+        Args:
+            category: Cache category name (e.g. ``"cleaner"``).
+            names: Prompt templates that make up the call's prompt.
+            extra: In-code prompt fragments sent alongside the templates.
+            suffix: Extra key discriminators (context, page count, ...).
+
+        Returns:
+            ``"<category>@<prompt-digest><suffix>"``.
+        """
+        digest = self._prompt_manager.template_digest(*names, extra=extra)
+        return f"{category}@{digest}{suffix}"
+
     async def _call_llm(
         self,
         model: str,
         messages: list[dict[str, Any]],
         context: str = "",
+        *,
+        require_content: bool = False,
     ) -> LLMResponse:
         """Make a text LLM call with smart router selection.
 
         Mirrors ``LLMProcessor._call_llm``: uses the vision router when the
         messages contain images, the engine's default router otherwise.
+
+        Args:
+            model: Logical model name.
+            messages: Chat messages.
+            context: Context identifier for usage tracking.
+            require_content: Raise ``EmptyLLMResponseError`` instead of
+                returning blank content (set by the caching call sites).
         """
         call_index = self._get_next_call_index(context) if context else 0
         call_id = f"{context}:{call_index}" if context else f"call:{call_index}"
@@ -259,6 +331,7 @@ class DocumentEnhancer:
             context=context,
             max_retries=self._config.router_settings.num_retries,
             router=router,
+            require_content=require_content,
         )
 
     async def clean_markdown(self, content: str, context: str = "") -> str:
@@ -273,7 +346,8 @@ class DocumentEnhancer:
         2. Persistent cache (cross-session, SQLite)
         3. LLM API call
 
-        The cache_key parameter identifies the cache category (e.g. "cleaner");
+        The cache_key parameter identifies the cache category plus the digest
+        of the prompts that produced the result (e.g. "cleaner@1a2b3c4d");
         PersistentCache internally combines it with a content hash for lookups.
 
         Args:
@@ -283,7 +357,12 @@ class DocumentEnhancer:
         Returns:
             Cleaned markdown content
         """
-        cache_key = "cleaner"
+        cache_key = self._prompt_scoped_key(
+            "cleaner",
+            "cleaner_system",
+            "cleaner_user",
+            extra=(STANDARD_MODE_RULES,),
+        )
 
         # 1. Check in-memory cache first (fastest)
         cached = self._engine.memory_cache.get(cache_key, content)
@@ -318,14 +397,24 @@ class DocumentEnhancer:
             "cleaner_user", content=protected_content
         )
 
-        response = await self._call_llm(
-            model="default",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            context=context,
-        )
+        try:
+            response = await self._call_llm(
+                model="default",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                context=context,
+                require_content=True,
+            )
+        except EmptyLLMResponseError as exc:
+            # Nothing is cached: an empty answer would otherwise be replayed
+            # from the TTL-less persistent cache on every later run.
+            logger.error(
+                f"[{context or 'cleaner'}] clean_markdown got an empty LLM "
+                f"response, keeping the original content: {exc}"
+            )
+            return content
 
         fallback = self._fallback_if_boundary_placeholders_missing(
             response.content,
@@ -656,7 +745,13 @@ class DocumentEnhancer:
         _, base64_image = self._get_cached_image(screenshot_path)
         image_fingerprint = hashlib.sha256(base64_image.encode()).hexdigest()
 
-        cache_key = f"screenshot_extract:{context}"
+        cache_key = self._prompt_scoped_key(
+            "screenshot_extract",
+            "screenshot_extract_system",
+            "screenshot_extract_user",
+            extra=(SCREENSHOT_LABEL,),
+            suffix=f":{context}",
+        )
         cache_content = f"{screenshot_path.name}|{image_fingerprint}"
 
         # Use screenshot extraction prompts
@@ -675,7 +770,7 @@ class DocumentEnhancer:
 
         # Add screenshot (base64_image was loaded above for the cache key)
         mime_type = get_mime_type(screenshot_path.suffix)
-        content_parts.append({"type": "text", "text": "\n__MARKITAI_SCREENSHOT__"})
+        content_parts.append({"type": "text", "text": SCREENSHOT_LABEL})
         content_parts.append(
             {
                 "type": "image_url",
@@ -771,7 +866,13 @@ class DocumentEnhancer:
         if original_title is None:
             original_title = extract_frontmatter_title(content)
 
-        cache_key = f"enhance_url:{context}"
+        cache_key = self._prompt_scoped_key(
+            "enhance_url",
+            "url_enhance_system",
+            "url_enhance_user",
+            extra=(SCREENSHOT_LABEL,),
+            suffix=f":{context}",
+        )
         cache_content = (
             f"{screenshot_path.name}|{_compute_document_fingerprint(content, [])}"
         )
@@ -797,7 +898,7 @@ class DocumentEnhancer:
         # Add screenshot
         _, base64_image = self._get_cached_image(screenshot_path)
         mime_type = get_mime_type(screenshot_path.suffix)
-        content_parts.append({"type": "text", "text": "\n__MARKITAI_SCREENSHOT__"})
+        content_parts.append({"type": "text", "text": SCREENSHOT_LABEL})
         content_parts.append(
             {
                 "type": "image_url",
@@ -927,7 +1028,13 @@ class DocumentEnhancer:
         # Check persistent cache using page count + text fingerprint as key
         # Create a fingerprint from text + page image names for cache lookup
         page_name_list = [p.name for p in page_images[:10]]  # First 10 page names
-        cache_key = f"enhance_vision:{context}:{len(page_images)}"
+        cache_key = self._prompt_scoped_key(
+            "enhance_vision",
+            "document_vision_system",
+            "document_vision_user",
+            extra=(PAGE_LABEL_TEMPLATE, VISION_TAIL_REMINDER),
+            suffix=f":{context}:{len(page_images)}",
+        )
         cache_content = _compute_document_fingerprint(extracted_text, page_name_list)
         cached = self._engine.persistent_cache.get(
             cache_key,
@@ -936,11 +1043,10 @@ class DocumentEnhancer:
             model=self._vision_cache_model_scope,
         )
         if cached is not None:
-            # Fix malformed image refs and echoed prompt tails even for cached
-            # content (handles old cache entries)
-            return content_utils.strip_prompt_echo(
-                content_utils.fix_malformed_image_refs(cached)
-            )
+            # No hit-path repair needed: the key is prompt-scoped, so every
+            # reachable entry was written below with the echo strip and the
+            # image-ref fix already applied.
+            return cached
 
         # Extract and protect content before LLM processing
         protected = content_utils.extract_protected_content(extracted_text)
@@ -968,10 +1074,7 @@ class DocumentEnhancer:
 
             # Unique page label that won't conflict with document content
             content_parts.append(
-                {
-                    "type": "text",
-                    "text": f"\n__MARKITAI_PAGE_LABEL_{i}__",
-                }
+                {"type": "text", "text": PAGE_LABEL_TEMPLATE.format(index=i)}
             )
             content_parts.append(
                 {
@@ -981,14 +1084,7 @@ class DocumentEnhancer:
             )
 
         # Append tail reminder to reinforce placeholder rules for last pages
-        content_parts.append(
-            {
-                "type": "text",
-                "text": "\nREMINDER: Preserve ALL __MARKITAI_*__ placeholders exactly as-is. "
-                "Do not remove or modify any placeholder. "
-                "Output every page/slide — do not skip the last pages.",
-            }
-        )
+        content_parts.append({"type": "text", "text": VISION_TAIL_REMINDER})
 
         # Direct engine call (Phase 2.3): this point is only reached with
         # page_images non-empty, so the messages always contain images and
@@ -996,17 +1092,26 @@ class DocumentEnhancer:
         # pass it explicitly.
         call_index = self._get_next_call_index(context) if context else 0
         call_id = f"{context}:{call_index}" if context else f"call:{call_index}"
-        response = await self._engine.complete_text(
-            model="default",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content_parts},
-            ],
-            call_id=call_id,
-            context=context,
-            max_retries=self._config.router_settings.num_retries,
-            router=self._get_vision_router(),
-        )
+        try:
+            response = await self._engine.complete_text(
+                model="default",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": content_parts},
+                ],
+                call_id=call_id,
+                context=context,
+                max_retries=self._config.router_settings.num_retries,
+                router=self._get_vision_router(),
+                require_content=True,
+            )
+        except EmptyLLMResponseError as exc:
+            # Keep the extracted text and cache nothing (see clean_markdown)
+            logger.error(
+                f"[{context or 'vision'}] document vision enhancement got an "
+                f"empty LLM response, keeping the extracted text: {exc}"
+            )
+            return extracted_text
 
         # Restore protected content from placeholders, with fallback for removed items
         result = content_utils.unprotect_content(
@@ -1225,9 +1330,15 @@ class DocumentEnhancer:
             content=extracted_text,
         )
 
-        # Cache key: page count + source + text fingerprint
+        # Cache key: prompt digest + page count + source + text fingerprint
         page_name_list = [p.name for p in page_images[:10]]  # First 10 page names
-        cache_key = f"enhance_frontmatter:{source}:{len(page_images)}"
+        cache_key = self._prompt_scoped_key(
+            "enhance_frontmatter",
+            "document_vision_system",
+            "document_vision_user",
+            extra=(VISION_METADATA_SECTION, PAGE_LABEL_TEMPLATE, VISION_TAIL_REMINDER),
+            suffix=f":{source}:{len(page_images)}",
+        )
         cache_content = _compute_document_fingerprint(extracted_text, page_name_list)
 
         # Extract protected content for fallback restoration
@@ -1236,28 +1347,11 @@ class DocumentEnhancer:
         # Protect slide comments and images with placeholders before LLM processing
         protected_text, mapping = content_utils.protect_content(extracted_text)
 
-        # Metadata section to inject into unified document_vision prompt
-        metadata_section = """
-## Task 2: Metadata Generation
-
-Generate the following fields:
-
-- description: Summarize the core point or conclusion of the entire document in one sentence (under 100 characters, single line)
-  - Focus on what the article actually discusses, not a generic description
-  - Do not use templated openings like "This article discusses..."
-  - If the source document already has a semantically accurate description, reuse it directly
-- tags: Array of related tags (3-5, for classification and retrieval)
-  - **Tags must not contain spaces** — use hyphens instead: `machine-learning`, not `machine learning`
-  - Each tag must be 30 characters or fewer
-  - Examples: `AI`, `software-engineering`, `web-development`
-
-**Output language MUST match the source document** — English content → English metadata, Chinese content → Chinese metadata, etc.
-"""
         # Use unified document_vision prompt with metadata section
         system_prompt = self._prompt_manager.get_prompt(
             "document_vision_system",
             source=source,
-            metadata_section=metadata_section,
+            metadata_section=VISION_METADATA_SECTION,
         )
         user_prompt = self._prompt_manager.get_prompt(
             "document_vision_user",
@@ -1275,7 +1369,7 @@ Generate the following fields:
             mime_type = get_mime_type(image_path.suffix)
             # Unique page label that won't conflict with document content
             content_parts.append(
-                {"type": "text", "text": f"\n__MARKITAI_PAGE_LABEL_{i}__"}
+                {"type": "text", "text": PAGE_LABEL_TEMPLATE.format(index=i)}
             )
             content_parts.append(
                 {
@@ -1285,14 +1379,7 @@ Generate the following fields:
             )
 
         # Append tail reminder to reinforce placeholder rules for last pages
-        content_parts.append(
-            {
-                "type": "text",
-                "text": "\nREMINDER: Preserve ALL __MARKITAI_*__ placeholders exactly as-is. "
-                "Do not remove or modify any placeholder. "
-                "Output every page/slide — do not skip the last pages.",
-            }
-        )
+        content_parts.append({"type": "text", "text": VISION_TAIL_REMINDER})
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -1338,15 +1425,12 @@ Generate the following fields:
             deserialize=_document_result_from_cache_value,
             router=self._get_vision_router(),
         )
-        response, raw_response = await self._engine.complete_structured(call)
+        response, _raw_response = await self._engine.complete_structured(call)
 
+        # No hit-path repair: the key is prompt-scoped, so every reachable
+        # cache entry was written by _postprocess with the echo strip and
+        # the image-ref fix already applied.
         cleaned_markdown = response.cleaned_markdown
-        if raw_response is None:
-            # Cache hit: fix malformed image refs and echoed prompt tails even
-            # for cached content (handles old cache entries)
-            cleaned_markdown = content_utils.strip_prompt_echo(
-                content_utils.fix_malformed_image_refs(cleaned_markdown)
-            )
 
         # Build frontmatter YAML using utility function for consistent structure
         from markitai.utils.frontmatter import (
@@ -1671,25 +1755,39 @@ Generate the following fields:
         No content protection, no stabilization, no truncation, no frontmatter.
         The LLM decides what to clean based on the cleaner prompt.
 
+        Nothing is cached here, but the answer is written straight to the
+        user's ``.llm.md``: an empty one would replace the document with a
+        blank file. So the same rule as :meth:`clean_markdown` applies — an
+        empty answer is a failed call, and the input is returned untouched.
+
         Args:
             markdown: Raw markdown content
             source: Source file name for logging context
 
         Returns:
-            LLM response content as-is
+            LLM response content as-is, or *markdown* if the model returned
+            nothing.
         """
         system_prompt = self._prompt_manager.get_prompt(
             "cleaner_system", mode_rules=PURE_MODE_RULES
         )
         user_prompt = self._prompt_manager.get_prompt("cleaner_user", content=markdown)
-        response = await self._call_llm(
-            model="default",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            context=source,
-        )
+        try:
+            response = await self._call_llm(
+                model="default",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                context=source,
+                require_content=True,
+            )
+        except EmptyLLMResponseError as exc:
+            logger.error(
+                f"[{source or 'cleaner'}] clean_document_pure got an empty LLM "
+                f"response, keeping the original content: {exc}"
+            )
+            return markdown
         return response.content
 
     async def _process_document_combined(
@@ -1714,8 +1812,13 @@ Generate the following fields:
         """
         # Content-addressed: cache_content is the full markdown, so the
         # source file name is deliberately NOT part of the key (a renamed
-        # file with identical content must still hit).
-        cache_key = "document_process"
+        # file with identical content must still hit). The prompt digest is,
+        # so a reworded prompt re-runs instead of replaying stale output.
+        cache_key = self._prompt_scoped_key(
+            "document_process",
+            "document_process_system",
+            "document_process_user",
+        )
 
         # Truncate content if needed (with warning)
         original_len = len(markdown)
@@ -1777,19 +1880,13 @@ Generate the following fields:
         return response
 
     def _validate_no_prompt_leakage(self, cleaned: str, source: str) -> str:
-        """Detect and handle prompt leakage."""
-        prompt_markers = [
-            "## Task 1:",
-            "## Task 2:",
-            "## 任务 1:",
-            "## 任务 2:",
-            "【核心原则】",
-            "【清理规范】",
-            "请处理以下",
-            "你是一个专业的",
-        ]
+        """Detect and handle prompt leakage.
 
-        for marker in prompt_markers:
+        Only markers that still exist in a live prompt can leak, so the list
+        is kept in sync with the prompt corpus by
+        ``PROMPT_LEAKAGE_MARKERS`` and its anti-rot test.
+        """
+        for marker in PROMPT_LEAKAGE_MARKERS:
             if marker in cleaned:
                 logger.warning(
                     f"[{source}] Prompt leakage detected, attempting recovery"

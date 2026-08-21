@@ -25,11 +25,6 @@ INSTALL_HINTS: dict[str, dict[str, str]] = {
         "linux": "sudo apt install libreoffice  # Ubuntu/Debian\nsudo dnf install libreoffice  # Fedora\nsudo pacman -S libreoffice-fresh  # Arch",
         "win32": "winget install LibreOffice.LibreOffice",
     },
-    "ffmpeg": {
-        "darwin": "brew install ffmpeg",
-        "linux": "sudo apt install ffmpeg  # Ubuntu/Debian\nsudo dnf install ffmpeg  # Fedora\nsudo pacman -S ffmpeg  # Arch",
-        "win32": "winget install FFmpeg.FFmpeg\n# Or: scoop install ffmpeg\n# Or: choco install ffmpeg",
-    },
     "playwright": {
         "darwin": "python -m playwright install chromium",
         "linux": "python -m playwright install chromium  # system libraries may also require: python -m playwright install-deps chromium",
@@ -52,7 +47,7 @@ def get_install_hint(component: str, platform: str | None = None) -> str:
     """Get platform-specific installation hint for a component.
 
     Args:
-        component: Component name (e.g., "libreoffice", "ffmpeg")
+        component: Component name (e.g., "libreoffice", "playwright")
         platform: Target platform. If None, uses current sys.platform.
 
     Returns:
@@ -462,76 +457,30 @@ def _check_libreoffice(macos_fallback: bool = True) -> dict[str, Any]:
         }
 
 
-def _check_ffmpeg() -> dict[str, Any]:
-    """Check FFmpeg installation status.
-
-    Returns:
-        Result dict with name, description, status, message, install_hint.
-    """
-    ffmpeg_path = shutil.which("ffmpeg")
-    if ffmpeg_path:
-        try:
-            proc = subprocess.run(
-                [ffmpeg_path, "-version"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            # Extract version: "ffmpeg version 8.0.1 ..." → "v8.0.1"
-            version = "unknown"
-            if proc.returncode == 0:
-                parts = proc.stdout.strip().split()
-                if len(parts) >= 3 and parts[0] == "ffmpeg":
-                    version = f"v{parts[2]}"
-                else:
-                    version = parts[0] if parts else "unknown"
-            return {
-                "name": "FFmpeg",
-                "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
-                "status": "ok",
-                "message": version,
-                "path": ffmpeg_path,
-                "install_hint": "",
-            }
-        except Exception as e:
-            return {
-                "name": "FFmpeg",
-                "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
-                "status": "error",
-                "message": f"Found but failed to run: {e}",
-                "install_hint": "Reinstall FFmpeg",
-            }
-    else:
-        return {
-            "name": "FFmpeg",
-            "description": "Audio/video file processing (mp3, mp4, wav, etc.)",
-            "status": "missing",
-            "message": "ffmpeg command not found",
-            "install_hint": get_install_hint("ffmpeg"),
-        }
-
-
 def _check_rapidocr(cfg: Any) -> dict[str, Any]:
-    """Check RapidOCR installation status.
+    """Check the optional OCR backend's installation status.
+
+    OCR moved out of the core install into the ``ocr`` extra, so "missing"
+    here means "capability not enabled", never "installation broken". The
+    ``optional`` flag keeps that distinction machine-readable for --json
+    consumers as well as for the exit-code logic.
 
     Args:
         cfg: Configuration object with OCR language settings.
 
     Returns:
-        Result dict with name, description, status, message, install_hint.
+        Result dict with name, description, status, optional, message,
+        install_hint.
     """
+    from markitai.ocr import OCR_INSTALL_HINT, is_ocr_available
+
     try:
-        import importlib.util
         from importlib.metadata import version as get_version
 
         # Probe via metadata only — importing rapidocr pulls in cv2, whose
         # 119MB dylib pays a one-time ~25s dyld signature validation on a
         # fresh install (the "first doctor run is slow" root cause).
-        # sys.modules check first: tests inject a mock module there
-        if (
-            "rapidocr" not in sys.modules
-            and importlib.util.find_spec("rapidocr") is None
-        ):
+        if not is_ocr_available():
             raise ImportError("rapidocr not installed")
 
         try:
@@ -572,26 +521,29 @@ def _check_rapidocr(cfg: Any) -> dict[str, Any]:
         if configured_lang.lower() in supported_langs:
             return {
                 "name": "RapidOCR",
-                "description": "OCR for scanned documents (built-in models)",
+                "description": "OCR for scanned documents (--ocr)",
                 "status": "ok",
+                "optional": True,
                 "message": f"v{rapidocr_version}, lang: {configured_lang} ({lang_display.get(configured_lang.lower(), configured_lang)})",
                 "install_hint": "",
             }
         else:
             return {
                 "name": "RapidOCR",
-                "description": "OCR for scanned documents (built-in models)",
+                "description": "OCR for scanned documents (--ocr)",
                 "status": "warning",
+                "optional": True,
                 "message": f"v{rapidocr_version}, unknown lang '{configured_lang}' (supported: {', '.join(sorted(supported_langs))})",
                 "install_hint": "Set ocr.lang to one of: zh, en, ja, ko, ar, th, latin",
             }
     except ImportError:
         return {
             "name": "RapidOCR",
-            "description": "OCR for scanned documents (built-in models)",
+            "description": "OCR for scanned documents (--ocr)",
             "status": "missing",
-            "message": "RapidOCR not installed",
-            "install_hint": "uv add rapidocr (included in markitai dependencies)",
+            "optional": True,
+            "message": "not installed — --ocr unavailable (everything else works)",
+            "install_hint": OCR_INSTALL_HINT,
         }
 
 
@@ -625,13 +577,11 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         future_libreoffice = executor.submit(
             _check_libreoffice, cfg.office.macos_fallback
         )
-        future_ffmpeg = executor.submit(_check_ffmpeg)
         future_rapidocr = executor.submit(_check_rapidocr, cfg)
 
     # Collect results in deterministic order
     results["playwright"] = future_playwright.result()
     results["libreoffice"] = future_libreoffice.result()
-    results["ffmpeg"] = future_ffmpeg.result()
     results["rapidocr"] = future_rapidocr.result()
     results["serve"] = _check_serve()
 
@@ -865,12 +815,15 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "install_hint": "Use vision-capable models like gemini-*, gpt-5.4, claude-*",
         }
 
-    # Define dependency groups
-    # RapidOCR ships as a core dependency. The other tools unlock specific
-    # input types, so their absence should not make the base installation
-    # unhealthy.
-    required_deps = ["rapidocr"]
-    required_checks = set(required_deps)
+    # Define dependency groups.
+    # Nothing is unconditionally required any more: OCR moved into the `ocr`
+    # extra, so a bare install with no OCR backend is a healthy install, not a
+    # broken one. What remains "required" is whatever the *user's own config*
+    # asks for — a configured Playwright workflow, an active API model, a
+    # local provider — because those are promises the installation is failing
+    # to keep.
+    required_deps: list[str] = []
+    required_checks: set[str] = set()
     fetch_strategy = getattr(getattr(cfg, "fetch", None), "strategy", "auto")
     screenshot_enabled = (
         getattr(getattr(cfg, "screenshot", None), "enabled", False) is True
@@ -894,9 +847,8 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         if status in {"missing", "error"}:
             return True
         # A configured capability/provider warning means the requested
-        # workflow is not ready. RapidOCR's unknown-language warning is a
-        # non-blocking configuration warning because the package is present.
-        return status == "warning" and key != "rapidocr"
+        # workflow is not ready.
+        return status == "warning"
 
     def _required_failed_count() -> int:
         return sum(
@@ -915,7 +867,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     # Unified UI output
     ui.title(t("doctor.title"))
-    optional_deps = ["playwright", "libreoffice", "ffmpeg", "serve"]
+    optional_deps = ["rapidocr", "playwright", "libreoffice", "serve"]
     llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
     auth_keys = ["claude-agent-auth", "copilot-auth", "chatgpt-auth"]
 
@@ -946,8 +898,10 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                     blocking=_is_blocking_failure(key, results[key]),
                 )
 
-    # Required dependencies
-    render_section(t("doctor.required"), required_deps)
+    # Required dependencies (empty unless a future check is unconditionally
+    # required again — an empty section header would just be noise)
+    if any(k in results for k in required_deps):
+        render_section(t("doctor.required"), required_deps)
 
     # Optional capabilities
     if any(k in results for k in optional_deps):
@@ -1034,10 +988,17 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         and info.get("install_hint")
     ]
     if hints:
+        from rich.markup import escape
+
         console.print()
         console.print(f"[yellow]{t('doctor.fix_hint')}[/yellow]")
         for name, hint in hints:
-            console.print(f"  [dim]\u2022[/dim] {name}: {hint}")
+            # Escape at the render site, not in the strings themselves: hints
+            # contain extras like `markitai[ocr]`, which Rich would otherwise
+            # read as a style tag and drop \u2014 printing an install command that
+            # installs the wrong thing. The unescaped text still has to reach
+            # --json consumers verbatim.
+            console.print(f"  [dim]\u2022[/dim] {escape(name)}: {escape(hint)}")
 
     passed = sum(
         1 for key in required_checks if results.get(key, {}).get("status") == "ok"
@@ -1098,6 +1059,11 @@ def suggest_extras() -> list[str]:
     extras.add("kreuzberg")  # kreuzberg
     extras.add("svg")  # cairosvg (pip install succeeds; runtime detects missing lib)
     extras.add("heif")  # pillow-heif (HEIC/HEIF/AVIF input decoding)
+    # rapidocr: optional since 0.24, but the guided installer's whole promise
+    # is a batteries-included setup — suggesting it keeps those users at the
+    # capability level they had when OCR was a core dependency. Users who ran
+    # a bare `pip install markitai` deliberately stay minimal.
+    extras.add("ocr")
 
     # --- Conditional extras (SDK may not be on PyPI) ---
     # claude-agent — requires claude-agent-sdk
@@ -1134,20 +1100,20 @@ def doctor(as_json: bool, fix: bool, suggest: bool) -> None:
 
     This command helps diagnose setup issues by verifying:
 
-        Core requirement:
-        - RapidOCR (for scanned document processing)
-
         Optional capabilities:
+        - RapidOCR (for scanned document processing, `markitai[ocr]`)
         - Playwright (for dynamic URL fetching)
         - LibreOffice (for Office document conversion)
-        - FFmpeg (for audio/video processing)
         - LLM API configuration (for content enhancement)
         - Auth status for local providers (Claude, Copilot, ChatGPT)
 
-    Exits non-zero when RapidOCR is missing; a configured Playwright workflow
-    cannot launch; an active API model references a missing environment
-    variable; an actively configured local provider cannot load/authenticate;
-    or a requested automatic repair fails, so it can be used in scripts and CI.
+    A missing optional capability is reported, not failed: the base install is
+    healthy without any of them. Exits non-zero only when the *configuration*
+    asks for something the machine cannot deliver — a configured Playwright
+    workflow that cannot launch; an active API model referencing a missing
+    environment variable; an actively configured local provider that cannot
+    load/authenticate; or a requested automatic repair that fails — so it can
+    be used in scripts and CI.
 
     Examples:
         markitai doctor                 # Full health report

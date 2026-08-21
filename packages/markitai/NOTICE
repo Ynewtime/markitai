@@ -1,0 +1,154 @@
+markitai
+Copyright (c) 2026 Ynewtime
+
+This product is licensed under the MIT License (see LICENSE).
+
+This NOTICE records third-party licence obligations that the MIT licence of
+markitai's own source code does not, by itself, satisfy: dependencies whose
+licence terms flow through to you as a user, and third-party code that was
+ported into this repository under an attribution-requiring licence.
+
+
+================================================================================
+1. AGPL-3.0 dependencies: the PyMuPDF PDF engine
+================================================================================
+
+markitai's default installation includes three packages published by Artifex
+Software, Inc., each dual-licensed under the GNU Affero General Public
+License v3.0 **or** a commercial licence from Artifex:
+
+    pymupdf         https://github.com/pymupdf/PyMuPDF
+    pymupdf-layout  https://github.com/pymupdf/pymupdf-layout
+    pymupdf4llm     https://github.com/pymupdf/RAG
+
+    Copyright (c) Artifex Software, Inc.
+    Licensed under AGPL-3.0-or-later, or a commercial licence from Artifex.
+
+These provide markitai's PDF text and layout extraction. They are core, not
+optional: PDF conversion does not work without them.
+
+What this means for you
+-----------------------
+markitai's own code stays MIT — installing an AGPL library does not relicense
+this repository, and reading or modifying markitai's source imposes no AGPL
+obligation on you.
+
+The obligation attaches to *distribution and network use of the combined
+work*. If you redistribute markitai together with PyMuPDF, or expose it as a
+network service that users interact with remotely (AGPL section 13 — this
+includes running `markitai serve` for other people, or embedding markitai in
+a hosted product), then AGPL-3.0 requires you to offer those users the
+corresponding source of the combined work under AGPL-3.0 terms.
+
+Purely internal use — running the CLI on your own machine, or a service only
+you interact with — triggers no such obligation.
+
+If AGPL terms do not suit your deployment, Artifex sells a commercial licence
+for the same packages that removes them:
+
+    https://artifex.com/licensing/
+
+Choosing that route is a matter between you and Artifex; markitai neither
+grants nor brokers it.
+
+Why the floor is `pymupdf4llm>=1.28.2`
+-------------------------------------
+`pymupdf-layout` 1.28.0 was published as "Polyform Noncommercial or Artifex
+Commercial", which prohibits commercial use outright rather than conditioning
+it. `pymupdf4llm` pins an exact `pymupdf-layout` version, so the only way to
+avoid that release is to move forward: 1.28.2 restored AGPL-3.0 dual
+licensing. Pinning backwards does not help — 1.27.2.x pins
+`pymupdf_layout==1.27.2.3`, which carries the same non-commercial terms.
+
+`scripts/check_licenses.py` runs in CI and fails the build on any
+non-commercial or proprietary dependency, and on any AGPL/GPL dependency not
+named in its allowlist (currently exactly the three packages above).
+
+
+================================================================================
+2. Ported code: defuddle (MIT)
+================================================================================
+
+`packages/markitai/src/markitai/webextract/` is a Python port of defuddle, a
+TypeScript HTML-to-clean-content extractor.
+
+    defuddle
+    https://github.com/kepano/defuddle
+    Copyright (c) kepano
+    Licensed under the MIT License.
+
+The port covers defuddle's main-content candidate scoring, element
+standardization, removal heuristics, and metadata extraction; several modules
+name their defuddle counterpart in their docstrings (for example
+`webextract/scoring.py`, which mirrors `findMainContent` and
+`ContentScorer.scoreElement`).
+
+`packages/markitai/tests/defuddle_fixtures/` additionally contains test
+fixtures and expected outputs copied verbatim from the defuddle repository
+(see that directory's `VERSION` file for the pinned commit, synced by
+`scripts/sync_defuddle_fixtures.sh`).
+
+The MIT License requires that the above copyright notice and the permission
+notice appear in all copies or substantial portions of the software; this
+section serves that purpose. defuddle's full licence text is available at
+https://github.com/kepano/defuddle/blob/main/LICENSE.
+
+
+================================================================================
+3. Ported code: marker (Apache-2.0)
+================================================================================
+
+`packages/markitai/benchmarks/scorer.py` is a simplified port of the
+heuristic scorer from marker (`benchmarks/overall/scorers/heuristic.py`),
+including its block-alignment threshold and its 0.8 / 0.2 match-versus-order
+weighting.
+
+    marker
+    https://github.com/VikParuchuri/marker
+    Copyright (c) Vik Paruchuri and marker contributors
+    Licensed under the Apache License, Version 2.0.
+
+You may obtain a copy of the Apache License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Section 4(b) of the Apache License requires derivative works to carry a
+notice of attribution; this section provides it. The ported file has been
+modified from the original: it is reduced to the heuristic scorer alone and
+reimplemented against `rapidfuzz` with markitai's own data structures.
+
+`scorer.py` is a benchmark-only module. It is excluded from the runtime
+package and is never imported by markitai at conversion time.
+
+
+================================================================================
+4. Optional extras with non-permissive terms
+================================================================================
+
+Nothing in this section is installed by `pip install markitai`. It applies
+only if you opt into the extra that pulls the package in — including by way
+of `markitai[all]`, which installs every extra at once.
+
+    kreuzberg              markitai[kreuzberg], markitai[all]
+    https://github.com/Goldziher/kreuzberg
+    Licensed under the Elastic License 2.0.
+
+Elastic-2.0 is source-available rather than open source. It permits use,
+copying and modification, but forbids providing the software to others as a
+hosted or managed service, and forbids removing or obscuring its licensing
+functionality. Running `markitai serve` for yourself is unaffected; offering
+a kreuzberg-backed markitai to other people as a service is the case to check
+against the licence text.
+
+    cairosvg               markitai[svg], markitai[all]
+    https://github.com/Kozea/CairoSVG
+    Licensed under LGPL-3.0-or-later.
+
+LGPL-3.0 is weak copyleft. Using cairosvg as an unmodified library — which is
+all markitai does — carries no obligation to release your own code. Modifying
+cairosvg itself, or shipping it in a form your users cannot replace, does.
+
+Every other extra ships under a permissive licence: claude-agent-sdk,
+github-copilot-sdk, curl-cffi, fastapi and python-multipart under MIT or
+Apache-2.0, playwright and rapidocr under Apache-2.0, and pillow-heif and
+uvicorn under BSD-3-Clause.

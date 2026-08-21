@@ -6,6 +6,7 @@ Starts the local web UI server (REST + SSE) on top of the conversion core.
 from __future__ import annotations
 
 import http.client
+import ipaddress
 import json
 import threading
 import time
@@ -17,6 +18,11 @@ from markitai.cli.console import get_stderr_console
 
 _BROWSER_READY_TIMEOUT_S = 30.0
 _BROWSER_POLL_INTERVAL_S = 0.05
+_EXPOSED_BIND_HELP = (
+    "The default 127.0.0.1 is reachable only from this machine; any other "
+    "value publishes the API — which has no authentication — to every host "
+    "that can reach it."
+)
 
 
 def _browser_address(host: str) -> tuple[str, str]:
@@ -30,6 +36,45 @@ def _browser_address(host: str) -> tuple[str, str]:
     if ":" in host:
         return host, f"[{host}]"
     return host, host
+
+
+def _binds_beyond_loopback(host: str) -> bool:
+    """Whether binding to *host* makes the server reachable from other machines.
+
+    Wildcards (``0.0.0.0``, ``::``, an empty host) and every non-loopback
+    address or name count as exposed; unknown names are assumed routable
+    because they are resolved by the OS, not here.
+    """
+    candidate = host.strip()
+    if candidate.startswith("[") and candidate.endswith("]"):
+        candidate = candidate[1:-1]
+    if not candidate:
+        return True
+    if candidate.lower() == "localhost":
+        return False
+    try:
+        return not ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        return True
+
+
+def _warn_exposed_bind(host: str, port: int) -> None:
+    """Tell the user, on stderr, what a non-loopback bind actually opens up."""
+    from rich.markup import escape
+
+    console = get_stderr_console()
+    console.print(
+        f"[yellow]Warning:[/yellow] binding to {escape(host)}:{port} publishes "
+        "this server to your network with no authentication."
+    )
+    console.print(
+        "         Anyone who can reach that address can convert files and "
+        "read, download or delete your whole conversion history."
+    )
+    console.print(
+        "         Use the default --host 127.0.0.1, or keep it behind an "
+        "authenticating reverse proxy."
+    )
 
 
 def _server_is_ready(host: str, port: int) -> bool:
@@ -82,7 +127,7 @@ def _open_browser_when_ready(
     "--host",
     default="127.0.0.1",
     show_default=True,
-    help="Host interface to bind.",
+    help=f"Host interface to bind. {_EXPOSED_BIND_HELP}",
 )
 @click.option(
     "--port",
@@ -105,7 +150,9 @@ def _open_browser_when_ready(
     help=(
         "Additional hostname to accept in the Host and Origin headers "
         "(repeatable). localhost and IP addresses are always accepted; "
-        "other hostnames are rejected to block DNS rebinding."
+        "other hostnames are rejected to block DNS rebinding. This is not "
+        "authentication: with a non-loopback --host the API stays open to "
+        "everyone who can reach it."
     ),
 )
 def serve(host: str, port: int, no_open: bool, allowed_hosts: tuple[str, ...]) -> None:
@@ -133,6 +180,8 @@ def serve(host: str, port: int, no_open: bool, allowed_hosts: tuple[str, ...]) -
 
     connect_host, url_host = _browser_address(host)
     url = f"http://{url_host}:{port}"
+    if _binds_beyond_loopback(host):
+        _warn_exposed_bind(host, port)
     app = create_app(allowed_hosts=allowed_hosts)
 
     browser_stop = threading.Event()

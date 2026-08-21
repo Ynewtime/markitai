@@ -140,9 +140,12 @@ class CloudflareConverter(BaseConverter):
         logger.debug(f"Converting {input_path.name} via CF toMarkdown (MIME: {mime})")
 
         from markitai.fetch import _detect_proxy
+        from markitai.fetch_http import resolve_proxy_for_url
 
-        proxy_url = _detect_proxy()
-        proxy_config = proxy_url if proxy_url else None
+        # This client is built here rather than taken from the shared static
+        # pool, so the NO_PROXY bypass is applied by hand — against
+        # api.cloudflare.com, the host actually contacted.
+        proxy_config = resolve_proxy_for_url(endpoint, _detect_proxy())
 
         async with httpx.AsyncClient(
             timeout=60.0,

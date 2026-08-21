@@ -367,6 +367,37 @@ class TestInstructorIntegration:
         assert harness.memory.set_calls == []
         assert harness.persistent.set_calls == []
 
+    async def test_truncated_call_is_still_accounted_before_raising(self) -> None:
+        """A truncated answer was paid for: bill it, then fail the call.
+
+        Truncation hits the longest (most expensive) generations, so raising
+        before the usage bookkeeping silently under-reported real spend.
+        """
+        harness = Harness(
+            FakeRouter(
+                [
+                    make_model_response(
+                        '{"text": "hi"}',
+                        model="openai/gpt-actual",
+                        prompt_tokens=4000,
+                        completion_tokens=8192,
+                        cost=0.42,
+                        finish_reason="length",
+                    )
+                ]
+            )
+        )
+
+        with pytest.raises(ValueError, match="max_tokens limit"):
+            await harness.engine.complete_structured(make_call())
+
+        assert harness.track_calls == [
+            ("openai/gpt-actual", 4000, 8192, 0.42, "test.md")
+        ]
+        # ...but the truncated result still must not reach either cache
+        assert harness.memory.set_calls == []
+        assert harness.persistent.set_calls == []
+
 
 class TestUsageAndHooks:
     async def test_usage_tracked_once_from_raw_response(self) -> None:

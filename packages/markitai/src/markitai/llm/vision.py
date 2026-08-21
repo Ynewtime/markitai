@@ -55,6 +55,72 @@ if TYPE_CHECKING:
     from markitai.types import LLMUsageByModel, ModelUsageStats
 
 
+# In-code prompt fragments that are part of the effective image-analysis
+# prompt. They live here as constants so the same text feeds both the
+# messages and the cache-key digest and cannot drift apart.
+DOCUMENT_CONTEXT_PREFIX = "\n\nDocument context: "
+BATCH_HEADER_TEMPLATE = "Analyze the following {count} images in order."
+BATCH_LANGUAGE_HINT_TEMPLATE = (
+    "\n\nFallback language for images without visible text: {language}."
+)
+BATCH_FOOTER = (
+    "\n\nReturn a JSON object with an 'images' array containing results "
+    "for each image in order."
+)
+IMAGE_LABEL_TEMPLATE = "\n__MARKITAI_IMG_LABEL_{index}__"
+LANGUAGE_RETRY_INSTRUCTION_TEMPLATE = (
+    "\n\nCRITICAL: This image appears to contain no readable text. "
+    "Return the caption and description in {language}. "
+    "Do not answer in another language."
+)
+JSON_MODE_INSTRUCTION = (
+    "\n\nReturn a JSON object with 'caption' and 'description' fields."
+)
+LANGUAGE_REWRITE_SYSTEM_TEMPLATE = (
+    "Rewrite the following {field_name} into {language}."
+    " Preserve the original meaning."
+    "{preserve_structure}"
+    " Return only the rewritten text."
+)
+LANGUAGE_REWRITE_PRESERVE_STRUCTURE = (
+    " Preserve markdown formatting, headings, and lists."
+)
+LANGUAGE_REWRITE_USER_TEMPLATE = "Original {field_name}:\n{content}{document_context}"
+
+# Prompt templates + fragments behind every entry of the "image_analysis"
+# cache category. analyze_image() and analyze_images_batch() share the cache,
+# and analyze_image() can fall back to the caption/description two-call path,
+# so one digest covers the whole surface: any of these changing invalidates
+# every image-analysis entry.
+VISION_PROMPT_NAMES = (
+    "image_analysis_system",
+    "image_analysis_user",
+    "image_caption_system",
+    "image_caption_user",
+    "image_description_system",
+    "image_description_user",
+)
+VISION_PROMPT_FRAGMENTS = (
+    DOCUMENT_CONTEXT_PREFIX,
+    BATCH_HEADER_TEMPLATE,
+    BATCH_LANGUAGE_HINT_TEMPLATE,
+    BATCH_FOOTER,
+    IMAGE_LABEL_TEMPLATE,
+    LANGUAGE_RETRY_INSTRUCTION_TEMPLATE,
+    JSON_MODE_INSTRUCTION,
+    LANGUAGE_REWRITE_SYSTEM_TEMPLATE,
+    LANGUAGE_REWRITE_PRESERVE_STRUCTURE,
+    LANGUAGE_REWRITE_USER_TEMPLATE,
+)
+
+
+def _document_context_suffix(document_context: str) -> str:
+    """Render the document-context tail appended to image user prompts."""
+    if not document_context:
+        return ""
+    return f"{DOCUMENT_CONTEXT_PREFIX}{document_context}"
+
+
 def _vision_cache_content_key(
     image_fingerprint: str, document_context: str = ""
 ) -> str:
@@ -63,6 +129,9 @@ def _vision_cache_content_key(
     Incorporates document_context hash when present so that the same
     image analyzed in different documents produces separate cache entries.
 
+    Prompt versioning lives in the cache *key* (``image_analysis@<digest>``),
+    not here — this key only identifies the inputs.
+
     Args:
         image_fingerprint: SHA-256 hex digest of the image data.
         document_context: Optional document context text.
@@ -70,11 +139,10 @@ def _vision_cache_content_key(
     Returns:
         Content key string for use with PersistentCache.
     """
-    versioned_key = f"{image_fingerprint}|vision:v2"
     if not document_context:
-        return versioned_key
+        return image_fingerprint
     ctx_hash = hashlib.sha256(document_context.encode()).hexdigest()[:16]
-    return f"{versioned_key}|ctx:{ctx_hash}"
+    return f"{image_fingerprint}|ctx:{ctx_hash}"
 
 
 def _detect_document_language(document_context: str) -> str:
@@ -250,6 +318,18 @@ class VisionAnalyzer:
         self._get_cached_image = get_cached_image
         self._get_next_call_index = get_next_call_index
 
+    def _image_analysis_cache_key(self) -> str:
+        """Cache category for image analysis, scoped by the prompt text.
+
+        Single-image and batch analysis deliberately share one key so a
+        batch miss can still be served by an entry ``analyze_image`` wrote
+        (and vice versa).
+        """
+        digest = self._prompt_manager.template_digest(
+            *VISION_PROMPT_NAMES, extra=VISION_PROMPT_FRAGMENTS
+        )
+        return f"image_analysis@{digest}"
+
     async def _call_llm(
         self,
         model: str,
@@ -312,7 +392,7 @@ class VisionAnalyzer:
         # Check persistent cache using image hash as key
         # Use SHA256 hash of base64 as image fingerprint to avoid collisions
         # (JPEG files share the same header, so first N chars are identical)
-        cache_key = "image_analysis"
+        cache_key = self._image_analysis_cache_key()
         image_fingerprint = hashlib.sha256(base64_image.encode()).hexdigest()
         cache_content_key = _vision_cache_content_key(
             image_fingerprint, document_context
@@ -341,9 +421,7 @@ class VisionAnalyzer:
             "image_analysis_system",
             language=language,
         )
-        doc_ctx = (
-            f"\n\nDocument context: {document_context}" if document_context else ""
-        )
+        doc_ctx = _document_context_suffix(document_context)
         user_prompt = self._prompt_manager.get_prompt(
             "image_analysis_user",
             document_context=doc_ctx,
@@ -384,10 +462,8 @@ class VisionAnalyzer:
                 f"{language} language constraint"
             )
             retry_messages = copy.deepcopy(messages)
-            retry_instruction = (
-                "\n\nCRITICAL: This image appears to contain no readable text. "
-                f"Return the caption and description in {language}. "
-                "Do not answer in another language."
+            retry_instruction = LANGUAGE_RETRY_INSTRUCTION_TEMPLATE.format(
+                language=language
             )
             retry_messages[0]["content"] += retry_instruction
             retry_messages[1]["content"][0]["text"] += retry_instruction
@@ -578,7 +654,7 @@ class VisionAnalyzer:
 
         # Check persistent cache for all images first
         # Use same cache key format as analyze_image for consistency
-        cache_key = "image_analysis"
+        cache_key = self._image_analysis_cache_key()
         cached_results: dict[int, ImageAnalysis] = {}
         uncached_indices: list[int] = []
         image_fingerprints: dict[int, str] = {}
@@ -635,18 +711,10 @@ class VisionAnalyzer:
         )
 
         # Build batch user prompt
-        batch_header = f"Analyze the following {len(uncached_paths)} images in order."
-        doc_ctx = (
-            f"\n\nDocument context: {document_context}" if document_context else ""
-        )
-        language_hint = (
-            f"\n\nFallback language for images without visible text: {language}."
-        )
-        batch_footer = (
-            "\n\nReturn a JSON object with an 'images' array containing results "
-            "for each image in order."
-        )
-        user_prompt = f"{batch_header}{doc_ctx}{language_hint}{batch_footer}"
+        batch_header = BATCH_HEADER_TEMPLATE.format(count=len(uncached_paths))
+        doc_ctx = _document_context_suffix(document_context)
+        language_hint = BATCH_LANGUAGE_HINT_TEMPLATE.format(language=language)
+        user_prompt = f"{batch_header}{doc_ctx}{language_hint}{BATCH_FOOTER}"
 
         # Build content parts with uncached images only
         content_parts: list[dict[str, Any]] = [{"type": "text", "text": user_prompt}]
@@ -657,7 +725,7 @@ class VisionAnalyzer:
 
             # Unique image label that won't conflict with document content
             content_parts.append(
-                {"type": "text", "text": f"\n__MARKITAI_IMG_LABEL_{i}__"}
+                {"type": "text", "text": IMAGE_LABEL_TEMPLATE.format(index=i)}
             )
             content_parts.append(
                 {
@@ -708,15 +776,9 @@ class VisionAnalyzer:
                         raise
                     response, raw_response = repaired
 
-                # Check for truncation
-                if hasattr(raw_response, "choices") and raw_response.choices:
-                    finish_reason = getattr(
-                        raw_response.choices[0], "finish_reason", None
-                    )
-                    if finish_reason == "length":
-                        raise ValueError("Output truncated due to max_tokens limit")
-
-                # Track usage
+                # Track usage first: a truncated batch was billed like any
+                # other call, and truncation hits the largest (priciest)
+                # batches, so raising before accounting hid real spend.
                 actual_model = getattr(raw_response, "model", None) or "default"
                 input_tokens = 0
                 output_tokens = 0
@@ -730,6 +792,15 @@ class VisionAnalyzer:
                     self._engine.track_usage(
                         actual_model, input_tokens, output_tokens, cost, context
                     )
+
+                # Check for truncation (after accounting; the truncated
+                # results are never cached because this aborts the batch)
+                if hasattr(raw_response, "choices") and raw_response.choices:
+                    finish_reason = getattr(
+                        raw_response.choices[0], "finish_reason", None
+                    )
+                    if finish_reason == "length":
+                        raise ValueError("Output truncated due to max_tokens limit")
 
                 # Calculate per-image usage (divide batch usage by number of images)
                 num_images = max(len(response.images), 1)
@@ -981,8 +1052,7 @@ class VisionAnalyzer:
             "content": [
                 {
                     "type": "text",
-                    "text": messages[1]["content"][0]["text"]
-                    + "\n\nReturn a JSON object with 'caption' and 'description' fields.",
+                    "text": messages[1]["content"][0]["text"] + JSON_MODE_INSTRUCTION,
                 },
                 messages[1]["content"][1],  # image
             ],
@@ -1066,9 +1136,7 @@ class VisionAnalyzer:
             "image_caption_system",
             language=language,
         )
-        doc_ctx = (
-            f"\n\nDocument context: {document_context}" if document_context else ""
-        )
+        doc_ctx = _document_context_suffix(document_context)
         caption_user = self._prompt_manager.get_prompt(
             "image_caption_user",
             document_context=doc_ctx,
@@ -1235,21 +1303,20 @@ class VisionAnalyzer:
         document_context: str = "",
     ) -> list[dict[str, str]]:
         """Build a text-only rewrite prompt that preserves meaning and structure."""
-        doc_ctx = (
-            f"\n\nDocument context: {document_context}" if document_context else ""
-        )
+        doc_ctx = _document_context_suffix(document_context)
         preserve_structure = (
-            " Preserve markdown formatting, headings, and lists."
+            LANGUAGE_REWRITE_PRESERVE_STRUCTURE
             if field_name == "markdown description"
             else ""
         )
-        system_prompt = (
-            f"Rewrite the following {field_name} into {language}."
-            " Preserve the original meaning."
-            f"{preserve_structure}"
-            " Return only the rewritten text."
+        system_prompt = LANGUAGE_REWRITE_SYSTEM_TEMPLATE.format(
+            field_name=field_name,
+            language=language,
+            preserve_structure=preserve_structure,
         )
-        user_prompt = f"Original {field_name}:\n{content}{doc_ctx}"
+        user_prompt = LANGUAGE_REWRITE_USER_TEMPLATE.format(
+            field_name=field_name, content=content, document_context=doc_ctx
+        )
         return [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},

@@ -13,14 +13,27 @@ test fails if any of them regresses back to a bare call.
 The module also verifies failure-output containment: noisy third-party ANSI
 stderr is bounded, unexpected exits close the tree once, and PowerShell native
 commands do not leak verbose red ErrorRecords.
+
+Two later contracts live here too:
+
+* The installer must not offer capabilities the product does not have. FFmpeg
+  was offered on both platforms although no audio/video extension is
+  registered, so its whole surface is asserted gone.
+* The China-mirror question must be driven by evidence, not by the absence of
+  a proxy variable. `probe_default_index` / `Test-DefaultIndexReachable` issue
+  a real, time-boxed HTTP request; only a failing probe may raise the prompt.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import shutil
+import socket
 import subprocess
+import threading
 import tomllib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -35,7 +48,6 @@ _MARKITAI_PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 _NON_FATAL_CALLS = (
     "install_optional_playwright",
     "install_optional_libreoffice",
-    "install_optional_ffmpeg",
     "install_optional_claude_cli",
     "install_optional_copilot_cli",
     "finalize_markitai_extras",
@@ -45,7 +57,6 @@ _NON_FATAL_CALLS = (
 _OPTIONAL_INSTALLERS = (
     ("install_optional_playwright", "Install-OptionalPlaywright"),
     ("install_optional_libreoffice", "Install-OptionalLibreOffice"),
-    ("install_optional_ffmpeg", "Install-OptionalFFmpeg"),
     ("install_optional_claude_cli", "Install-OptionalClaudeCLI"),
     ("install_optional_copilot_cli", "Install-OptionalCopilotCLI"),
 )
@@ -306,11 +317,11 @@ def test_all_extra_and_its_fallback_include_serve() -> None:
     shell_text = _SETUP_SH.read_text(encoding="utf-8")
     ps_text = _SETUP_PS1.read_text(encoding="utf-8")
     assert (
-        'MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,kreuzberg,svg,heif,serve"'
+        'MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,kreuzberg,svg,heif,ocr,serve"'
         in shell_text
     )
     assert (
-        '$script:MARKITAI_ALL_FALLBACK_EXTRAS = "browser,extra-fetch,kreuzberg,svg,heif,serve"'
+        '$script:MARKITAI_ALL_FALLBACK_EXTRAS = "browser,extra-fetch,kreuzberg,svg,heif,ocr,serve"'
         in ps_text
     )
 
@@ -422,7 +433,6 @@ def test_setup_ps1_has_bounded_native_and_global_error_guards() -> None:
 
     for function in (
         "Install-OptionalLibreOffice",
-        "Install-OptionalFFmpeg",
         "Install-OptionalClaudeCLI",
         "Install-OptionalCopilotCLI",
     ):
@@ -434,3 +444,308 @@ def test_setup_ps1_has_bounded_native_and_global_error_guards() -> None:
         assert "Clack-OutroWarning" in body
 
     assert "extras update $(i18n 'failed'): $uvErr" not in text
+
+
+# ============================================================
+# Dead capability: FFmpeg
+# ============================================================
+
+
+@pytest.mark.parametrize("script", (_SETUP_SH, _SETUP_PS1))
+def test_setup_scripts_no_longer_mention_ffmpeg(script: Path) -> None:
+    """No audio/video extension is registered, so nothing may install FFmpeg.
+
+    converter/base.py's EXTENSION_MAP has no audio or video entry: an FFmpeg
+    install can never change what the tool converts. Offering it advertised a
+    capability that does not exist and slowed every guided install down.
+    """
+    lines = [
+        f"{number}: {line}"
+        for number, line in enumerate(
+            script.read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if "ffmpeg" in line.lower()
+    ]
+    assert not lines, f"{script.name} still references FFmpeg:\n" + "\n".join(lines)
+
+
+def test_setup_scripts_dropped_the_ffmpeg_i18n_strings() -> None:
+    """Both languages of every FFmpeg string must be gone, not just English."""
+    for script in (_SETUP_SH, _SETUP_PS1):
+        text = script.read_text(encoding="utf-8")
+        for stale in (
+            "confirm_ffmpeg",
+            "info_ffmpeg_purpose",
+            "audio/video processing",
+            "音视频处理",
+            "处理音频和视频文件",
+        ):
+            assert stale not in text, f"{script.name} still contains {stale!r}"
+
+
+# ============================================================
+# OCR became an opt-in extra
+# ============================================================
+
+
+def test_setup_scripts_offer_the_ocr_extra() -> None:
+    """OCR left the core install, so the installer has to let users pick it.
+
+    `pip install markitai` no longer ships rapidocr. Without a selection step
+    the guided installer would silently decide for the user in either
+    direction.
+    """
+    shell_body = _shell_function("select_markitai_ocr")
+    assert "clack_confirm_optional" in shell_body
+    assert 'install_markitai_extra "ocr"' in shell_body
+    assert 'markitai_extra_enabled "ocr"' in shell_body
+
+    ps_body = _powershell_function("Select-MarkitaiOcr")
+    assert "Confirm-OptionalInstall" in ps_body
+    assert 'Install-MarkitaiExtra -ExtraName "ocr"' in ps_body
+    assert 'Test-MarkitaiExtraEnabled -ExtraName "ocr"' in ps_body
+
+
+def test_ocr_selection_joins_the_first_combined_install() -> None:
+    """Selecting OCR must widen the initial spec, not trigger a reinstall."""
+    shell_flow = _shell_function("run_user_setup")
+    load = shell_flow.find("load_existing_markitai_extras")
+    select = shell_flow.find("select_markitai_ocr")
+    install = shell_flow.find("install_markitai ||")
+    track = shell_flow.find("track_markitai_ocr")
+    assert 0 <= load < select < install < track
+
+    ps_flow = _powershell_function("Run-UserSetup")
+    ps_load = ps_flow.find("Import-MarkitaiReceiptExtras")
+    ps_select = ps_flow.find("Select-MarkitaiOcr")
+    ps_install = ps_flow.find("Install-Markitai))")
+    ps_track = ps_flow.find("Track-MarkitaiOcr")
+    assert 0 <= ps_load < ps_select < ps_install < ps_track
+
+
+def test_declined_ocr_is_not_re_added_by_suggest_extras() -> None:
+    """A declined extra must survive the doctor --suggest-extras merge.
+
+    `markitai doctor --suggest-extras` always lists `ocr`. Merging it blindly
+    would reinstall what the user just declined, making the prompt a lie.
+    """
+    shell_finalize = _shell_function("finalize_markitai_extras")
+    assert "markitai_extra_declined" in shell_finalize
+    shell_select = _shell_function("select_markitai_ocr")
+    assert "decline_markitai_extra" in shell_select
+
+    ps_finalize = _powershell_function("Finalize-MarkitaiExtras")
+    assert "Test-MarkitaiExtraDeclined" in ps_finalize
+    ps_select = _powershell_function("Select-MarkitaiOcr")
+    assert "Deny-MarkitaiExtra" in ps_select
+
+
+def test_ocr_bilingual_strings_exist_in_both_scripts() -> None:
+    """Every new prompt needs an English and a Chinese spelling."""
+    for script in (_SETUP_SH, _SETUP_PS1):
+        text = script.read_text(encoding="utf-8")
+        assert text.count("confirm_ocr") >= 3, f"{script.name}: zh + en + call site"
+        assert "扫描件" in text, f"{script.name}: missing Chinese OCR copy"
+        assert "scanned" in text, f"{script.name}: missing English OCR copy"
+
+
+# ============================================================
+# China mirrors: evidence, not geography
+# ============================================================
+
+
+def test_mirror_prompt_no_longer_warns_every_proxyless_user() -> None:
+    """The old "no proxy detected" warning fired for the whole planet."""
+    for script in (_SETUP_SH, _SETUP_PS1):
+        text = script.read_text(encoding="utf-8")
+        for stale in (
+            "mirror_no_proxy",
+            "No proxy detected",
+            "未检测到代理",
+        ):
+            assert stale not in text, f"{script.name} still contains {stale!r}"
+
+
+def test_mirrors_are_offered_only_after_a_failed_index_probe() -> None:
+    """Order matters: measure first, ask second, and never ask without a TTY."""
+    shell = _shell_function("configure_mirrors")
+    assert "MARKITAI_USE_MIRROR" in shell
+    assert "has_interactive_tty" in shell
+    probe = shell.find("probe_default_index")
+    prompt = shell.find("clack_confirm ")
+    assert 0 <= probe < prompt, "the probe must gate the prompt"
+
+    ps = _powershell_function("Configure-Mirrors")
+    assert "MARKITAI_USE_MIRROR" in ps
+    assert "Test-InteractiveInput" in ps
+    ps_probe = ps.find("Test-DefaultIndexReachable")
+    ps_prompt = ps.find("Clack-Confirm ")
+    assert 0 <= ps_probe < ps_prompt, "the probe must gate the prompt"
+
+
+def test_index_probe_is_application_layer_not_a_port_check() -> None:
+    """A TUN-mode proxy answers every TCP port, so ports prove nothing.
+
+    The probe has to perform a real HTTP request and validate the response —
+    status *and* a non-empty body, because an intermittently empty body still
+    returns 200.
+    """
+    shell_probe = _shell_function("probe_default_index")
+    assert "http_code" in shell_probe
+    assert "size_download" in shell_probe
+    for banned in ("nc -z", "/dev/tcp", "telnet", "--head", "-I "):
+        assert banned not in shell_probe, f"port/HEAD probe leaked in: {banned!r}"
+
+    ps_probe = _powershell_function("Test-DefaultIndexReachable")
+    assert "Invoke-WebRequest" in ps_probe
+    assert "StatusCode" in ps_probe
+    for banned in ("Test-NetConnection", "TcpClient", "Test-Connection"):
+        assert banned not in ps_probe, f"port probe leaked in: {banned!r}"
+
+
+class _ProbeHandler(BaseHTTPRequestHandler):
+    """Serve the three responses the probe has to tell apart."""
+
+    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self.path.startswith("/ok"):
+            body = b"<a href='markitai-0.23.0.whl'>markitai</a>"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/empty"):
+            # 200 with nothing in it: the exact failure a status-only check
+            # would report as healthy.
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        elif self.path.startswith("/slow"):
+            self.server.slow_gate.wait(timeout=10)  # type: ignore[attr-defined]
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"ok")
+        else:
+            self.send_error(503)
+
+    def log_message(self, *args: object) -> None:
+        """Keep the test output clean."""
+
+
+@pytest.fixture
+def probe_server():
+    """A loopback HTTP server plus a gate that releases the /slow request."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ProbeHandler)
+    server.slow_gate = threading.Event()  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.slow_gate.set()  # type: ignore[attr-defined]
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _run_shell_probe(tmp_path: Path, url: str, timeout: str = "3") -> int:
+    """Run setup.sh's probe_default_index() standalone against ``url``."""
+    body = _shell_function("probe_default_index")
+    script = tmp_path / "probe.sh"
+    script.write_text(
+        "#!/bin/sh\nset -eu\n"
+        f"probe_default_index() {{\n{body}}}\n"
+        "if probe_default_index; then exit 0; else exit 1; fi\n",
+        encoding="utf-8",
+    )
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.lower() not in {"http_proxy", "https_proxy", "all_proxy"}
+    }
+    env["no_proxy"] = "127.0.0.1,localhost"
+    env["NO_PROXY"] = "127.0.0.1,localhost"
+    env["MARKITAI_INDEX_PROBE_URL"] = url
+    env["MARKITAI_INDEX_PROBE_TIMEOUT"] = timeout
+    return subprocess.run(
+        ["sh", str(script)], check=False, capture_output=True, text=True, env=env
+    ).returncode
+
+
+@pytest.mark.skipif(shutil.which("curl") is None, reason="probe needs curl")
+def test_shell_probe_accepts_a_healthy_index(tmp_path: Path, probe_server: str) -> None:
+    """A 200 with a body means the default index is usable: stay silent."""
+    assert _run_shell_probe(tmp_path, f"{probe_server}/ok") == 0
+
+
+@pytest.mark.skipif(shutil.which("curl") is None, reason="probe needs curl")
+def test_shell_probe_rejects_an_empty_200(tmp_path: Path, probe_server: str) -> None:
+    """HTTP 200 is not success: an empty body must count as unreachable."""
+    assert _run_shell_probe(tmp_path, f"{probe_server}/empty") == 1
+
+
+@pytest.mark.skipif(shutil.which("curl") is None, reason="probe needs curl")
+def test_shell_probe_rejects_an_error_status(tmp_path: Path, probe_server: str) -> None:
+    """A 5xx index is unreachable for installation purposes."""
+    assert _run_shell_probe(tmp_path, f"{probe_server}/boom") == 1
+
+
+@pytest.mark.skipif(shutil.which("curl") is None, reason="probe needs curl")
+def test_shell_probe_times_out_on_a_slow_index(
+    tmp_path: Path, probe_server: str
+) -> None:
+    """A hanging index must not hang setup: slowness is the whole point."""
+    assert _run_shell_probe(tmp_path, f"{probe_server}/slow", timeout="1") == 1
+
+
+@pytest.mark.skipif(shutil.which("curl") is None, reason="probe needs curl")
+def test_shell_probe_rejects_a_dead_port(tmp_path: Path) -> None:
+    """Nothing listening at all is the plainest unreachable case."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        dead_port = sock.getsockname()[1]
+    assert _run_shell_probe(tmp_path, f"http://127.0.0.1:{dead_port}/ok") == 1
+
+
+_POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
+
+
+def _run_powershell_probe(tmp_path: Path, url: str, timeout: str = "3") -> int:
+    """Run setup.ps1's Test-DefaultIndexReachable standalone against ``url``."""
+    assert _POWERSHELL is not None
+    body = _powershell_function("Test-DefaultIndexReachable")
+    script = tmp_path / "probe.ps1"
+    script.write_text(
+        f"function Test-DefaultIndexReachable {{\n{body}}}\n"
+        "if (Test-DefaultIndexReachable) { exit 0 } else { exit 1 }\n",
+        encoding="utf-8",
+    )
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.lower() not in {"http_proxy", "https_proxy", "all_proxy"}
+    }
+    env["no_proxy"] = "127.0.0.1,localhost"
+    env["NO_PROXY"] = "127.0.0.1,localhost"
+    env["MARKITAI_INDEX_PROBE_URL"] = url
+    env["MARKITAI_INDEX_PROBE_TIMEOUT"] = timeout
+    return subprocess.run(
+        [_POWERSHELL, "-NoLogo", "-NoProfile", "-File", str(script)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    ).returncode
+
+
+@pytest.mark.skipif(_POWERSHELL is None, reason="no PowerShell available")
+@pytest.mark.parametrize(
+    "path,expected", (("ok", 0), ("empty", 1), ("boom", 1), ("slow", 1))
+)
+def test_powershell_probe_matches_the_shell_probe(
+    tmp_path: Path, probe_server: str, path: str, expected: int
+) -> None:
+    """Both installers must agree on what "reachable" means."""
+    timeout = "1" if path == "slow" else "3"
+    actual = _run_powershell_probe(tmp_path, f"{probe_server}/{path}", timeout)
+    assert actual == expected

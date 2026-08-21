@@ -259,8 +259,8 @@ class TestLibreOfficeDependency:
             assert data["libreoffice"]["status"] == "missing"
 
 
-class TestFFmpegDependency:
-    """Tests for FFmpeg dependency checking."""
+class TestNoAudioVideoSurface:
+    """FFmpeg was checked and advertised for formats markitai cannot convert."""
 
     @pytest.fixture
     def runner(self) -> CliRunner:
@@ -276,8 +276,10 @@ class TestFFmpegDependency:
         config.ocr.lang = "en"
         return config
 
-    def test_ffmpeg_available(self, runner: CliRunner, mock_config: MagicMock) -> None:
-        """Test FFmpeg status when installed."""
+    def test_ffmpeg_is_not_reported(
+        self, runner: CliRunner, mock_config: MagicMock
+    ) -> None:
+        """Even with ffmpeg on PATH, doctor must not claim media support."""
         with (
             patch("markitai.cli.commands.doctor.ConfigManager") as MockConfigManager,
             patch("markitai.fetch_playwright.is_playwright_available") as mock_pw,
@@ -285,29 +287,19 @@ class TestFFmpegDependency:
                 "markitai.fetch_playwright.is_playwright_browser_installed"
             ) as mock_browser,
             patch("markitai.fetch_playwright.clear_browser_cache"),
-            patch("markitai.cli.commands.doctor.shutil.which") as mock_which,
-            patch("markitai.cli.commands.doctor.subprocess.run") as mock_run,
+            patch(
+                "markitai.cli.commands.doctor.shutil.which",
+                return_value="/usr/bin/ffmpeg",
+            ),
         ):
             MockConfigManager.return_value.load.return_value = mock_config
             mock_pw.return_value = False
             mock_browser.return_value = False
 
-            def which_side_effect(cmd: str) -> str | None:
-                if cmd == "ffmpeg":
-                    return "/usr/bin/ffmpeg"
-                return None
-
-            mock_which.side_effect = which_side_effect
-
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout="ffmpeg version 6.0\n"
-            )
-
             result = runner.invoke(doctor, ["--json"])
 
             assert result.exit_code in (0, 1)  # exit reflects host dep state
-            data = json.loads(result.output)
-            assert data["ffmpeg"]["status"] == "ok"
+            assert "ffmpeg" not in json.loads(result.output)
 
 
 class TestRapidOCRDependency:

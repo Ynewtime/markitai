@@ -224,6 +224,7 @@ def _make_vision_analyzer():
     engine.persistent_cache = persistent_cache
     prompt_manager = MagicMock()
     prompt_manager.get_prompt.return_value = "mock prompt"
+    prompt_manager.template_digest.return_value = "d1g35700"
     config = MagicMock()
     config.concurrency = 2
 

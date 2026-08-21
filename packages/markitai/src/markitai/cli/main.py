@@ -79,12 +79,6 @@ click.rich_click.OPTION_GROUPS = {
             "options": [
                 "--strategy",
                 "--backend",
-                "--playwright",
-                "--defuddle",
-                "--static",
-                "--jina",
-                "--cloudflare",
-                "--kreuzberg",
             ],
         },
         {
@@ -247,8 +241,10 @@ def run_interactive_mode(ctx: click.Context) -> None:
 @click.option(
     "--screenshot-only",
     is_flag=True,
-    help="Capture screenshots only. Without --llm: saves only screenshots. "
-    "With --llm: LLM extracts content purely from screenshots.",
+    help="Use page screenshots as the content source (implies --screenshot). "
+    "With --llm: the model reads the screenshots instead of the extracted text "
+    "layer. Without --llm: nothing is read from them — a URL just saves the "
+    "screenshot and writes no Markdown.",
 )
 @click.option(
     "--resume",
@@ -327,52 +323,20 @@ def run_interactive_mode(ctx: click.Context) -> None:
     "CF credentials.",
 )
 @click.option(
-    "--playwright",
-    "use_playwright",
-    is_flag=True,
-    help="Deprecated alias for '-s playwright'.",
-)
-@click.option(
-    "--defuddle",
-    "use_defuddle",
-    is_flag=True,
-    help="Deprecated alias for '-s defuddle'.",
-)
-@click.option(
-    "--static",
-    "use_static",
-    is_flag=True,
-    help="Deprecated alias for '-s static'.",
-)
-@click.option(
-    "--jina",
-    "use_jina",
-    is_flag=True,
-    help="Deprecated alias for '-s jina'.",
-)
-@click.option(
-    "--cloudflare",
-    "use_cloudflare",
-    is_flag=True,
-    help="Deprecated alias for '-s cloudflare'.",
-)
-@click.option(
-    "--kreuzberg",
-    "use_kreuzberg",
-    is_flag=True,
-    help="Deprecated alias for '-b kreuzberg'.",
-)
-@click.option(
     "-v",
     "--verbose",
     is_flag=True,
-    help="Enable verbose output.",
+    help="Show progress and diagnostic details, including for the single "
+    "file/URL conversions that are quiet by default. No effect when the result "
+    "goes to stdout (no -o): that stays quiet so the Markdown is clean.",
 )
 @click.option(
     "--quiet",
     "-q",
     is_flag=True,
-    help="Suppress progress and info messages, only show errors.",
+    help="Suppress progress and info messages, only show errors. Converting a "
+    "single file or URL is already quiet by default (add -v to see the "
+    "details); batch runs over a directory or .urls list are not.",
 )
 @click.option(
     "--dry-run",
@@ -437,13 +401,7 @@ def app(
     glob_patterns: tuple[str, ...],
     max_depth: int | None,
     fetch_strategy_name: str | None,
-    use_defuddle: bool,
-    use_playwright: bool,
-    use_static: bool,
-    use_jina: bool,
-    use_cloudflare: bool,
     file_backend: str | None,
-    use_kreuzberg: bool,
     verbose: bool,
     quiet: bool,
     dry_run: bool,
@@ -660,8 +618,11 @@ def app(
         cfg.screenshot.enabled = screenshot
     if screenshot_only:
         # screenshot_only enables screenshot capture but NOT implicitly LLM
-        # --screenshot-only alone: just capture screenshots (no .md output)
-        # --llm --screenshot-only: capture + LLM extraction
+        # --llm --screenshot-only: the LLM reads the screenshots instead of the
+        #   extracted text layer (workflow.core.extract_from_screenshots)
+        # --screenshot-only alone: nothing reads them — a URL stops after
+        #   saving the screenshot (processors/url.py), a file still gets its
+        #   plain .md from the normal converter
         cfg.screenshot.screenshot_only = True
         cfg.screenshot.enabled = True  # Implicitly enable screenshot
     if no_compress:
@@ -743,35 +704,6 @@ def app(
                 stderr_console.print(f"[yellow]{warning}[/yellow]")
             stderr_console.print()
 
-    # Resolve fetch strategy: -s/--strategy plus deprecated per-backend flags
-    deprecated_strategy_flags = {
-        "defuddle": use_defuddle,
-        "static": use_static,
-        "playwright": use_playwright,
-        "jina": use_jina,
-        "cloudflare": use_cloudflare,
-    }
-    deprecated_selected = [
-        name for name, used in deprecated_strategy_flags.items() if used
-    ]
-    if len(deprecated_selected) > 1:
-        stderr_console.print(
-            "[red]Error: --defuddle, --playwright, --static, --jina, and --cloudflare are mutually exclusive.[/red]"
-        )
-        ctx.exit(1)
-    if fetch_strategy_name is not None and deprecated_selected:
-        stderr_console.print(
-            f"[red]Error: -s/--strategy and --{deprecated_selected[0]} are "
-            "mutually exclusive.[/red]"
-        )
-        ctx.exit(1)
-    if deprecated_selected:
-        stderr_console.print(
-            f"[yellow]--{deprecated_selected[0]} is deprecated, "
-            f"use -s {deprecated_selected[0]}[/yellow]"
-        )
-        fetch_strategy_name = deprecated_selected[0]
-
     # Determine fetch strategy
     from markitai.cli.ui import ConsoleInteraction
     from markitai.fetch import (
@@ -801,19 +733,8 @@ def app(
         fetch_strategy = FetchStrategy(cfg.fetch.strategy)
         explicit_fetch_strategy = False
 
-    # Resolve file conversion backend: -b/--backend (orthogonal to -s, which
-    # picks the URL fetch strategy) plus the deprecated --kreuzberg alias
-    if use_kreuzberg:
-        if file_backend is not None:
-            stderr_console.print(
-                "[red]Error: -b/--backend and --kreuzberg are mutually exclusive.[/red]"
-            )
-            ctx.exit(1)
-        stderr_console.print(
-            "[yellow]--kreuzberg is deprecated, use -b kreuzberg[/yellow]"
-        )
-        file_backend = "kreuzberg"
-
+    # Resolve file conversion backend: -b/--backend is orthogonal to -s, which
+    # picks the URL fetch strategy
     if file_backend == "kreuzberg":
         if fetch_strategy_name == "cloudflare":
             stderr_console.print(

@@ -34,7 +34,7 @@ Static goes last here since it has already failed (or is expected to fail) to pr
 
 The default `fetch.remote_consent` value is `always`. For a public URL, Markitai can continue from a failed local strategy to Defuddle, Jina, or Cloudflare without an interactive confirmation. Before the first remote attempt in a process, it writes a disclosure to stderr. Because that decision is cached for the process, the notice names every service it may authorize later: defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed. Services are still tried one at a time, so a URL is sent only to the service currently being attempted.
 
-Playwright has one public-URL enrichment path: after local DOM extraction fails for an X/Twitter status or article, it may try FxTwitter and then Twitter oEmbed. It does not open its own prompt under `ask`, but shares the same first-use stderr disclosure and honors a process-wide decline already given to the complete-service prompt, plus both `never` and `MARKITAI_NO_REMOTE_FETCH`.
+Playwright has one public-URL enrichment path: after local DOM extraction fails for an X/Twitter status or article, it may try FxTwitter and then Twitter oEmbed. These are remote services like any other, so they go through the *same* process-wide consent decision instead of having an exemption. Under `ask` that means the enrichment can raise the one shared prompt itself when nothing has been decided yet and a TTY is available, reuses a Yes or No already given earlier in the run, and is skipped when the run cannot prompt. `never` and `MARKITAI_NO_REMOTE_FETCH` disable it outright. Consent is resolved lazily — only after the URL has been confirmed public — so no question is ever asked about a URL that would stay on the machine anyway.
 
 The following URLs remain local-only regardless of the selected strategy:
 
@@ -48,7 +48,7 @@ The `auto` policy chain also keeps the following matches local-only:
 
 For an otherwise public URL, explicitly passing a non-`auto` remote `-s` CLI flag is an intentional override of the two pattern-based rules above and `fetch.remote_consent=never`. A remote `fetch.strategy` set only in config is still consent-gated. Neither path can override the private/local/credential-bearing URL guard.
 
-Set `MARKITAI_NO_REMOTE_FETCH=1` for a hard local-only guarantee, including runs that explicitly select a remote strategy. Set `fetch.remote_consent` to `never` to keep automatic and config-selected strategies local-only while still allowing an explicit CLI `-s` opt-in. The `ask` setting remains available for one process-wide interactive confirmation naming the same complete service set; non-interactive runs skip remote services when it is selected.
+Set `MARKITAI_NO_REMOTE_FETCH=1` for a hard local-only guarantee, including runs that explicitly select a remote strategy. Set `fetch.remote_consent` to `never` to keep automatic and config-selected strategies local-only while still allowing an explicit CLI `-s` opt-in. The `ask` setting remains available for one process-wide interactive confirmation naming the same complete service set — including the X/Twitter enrichment — and non-interactive runs skip every remote service when it is selected.
 
 ## Configuration
 

@@ -202,9 +202,9 @@ class ImageConverter(BaseConverter):
         Returns:
             Markdown with OCR extracted text
         """
-        try:
-            from markitai.ocr import OCRProcessor
+        from markitai.ocr import OCRBackendMissing, OCRProcessor
 
+        try:
             processor = OCRProcessor(self.config.ocr if self.config else None)
             result = processor.recognize_to_markdown(ocr_source or input_path)
 
@@ -219,9 +219,11 @@ class ImageConverter(BaseConverter):
                 logger.warning(f"OCR found no text in {input_path.name}")
                 return self._create_image_placeholder(input_path, image_ref_path)
 
-        except ImportError:
-            logger.warning("RapidOCR not available, returning placeholder")
-            return self._create_image_placeholder(input_path, image_ref_path)
+        except OCRBackendMissing:
+            # The user asked for OCR and it is one command away. Degrading to
+            # a text-free placeholder here would report success for a file
+            # from which nothing was read.
+            raise
         except Exception as e:
             logger.warning(f"OCR failed for {input_path.name}: {e}")
             return self._create_image_placeholder(input_path, image_ref_path)

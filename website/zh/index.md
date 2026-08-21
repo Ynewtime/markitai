@@ -29,7 +29,7 @@ features:
   - icon: |
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 3v4a2 2 0 0 0 2 2h4"/><path d="M12 17v-6"/><path d="M9.5 14.5 12 17l2.5-2.5"/><path d="M20 17.5a9 9 0 1 1-18 0V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg>
     title: OCR 识别
-    details: 使用 RapidOCR 从扫描版 PDF 和图片中提取文字。
+    details: 通过可选的 markitai[ocr] extra，使用 RapidOCR 从扫描版 PDF 和图片中提取文字。
 ---
 
 <section class="home-quickstart" aria-labelledby="quickstart-title">

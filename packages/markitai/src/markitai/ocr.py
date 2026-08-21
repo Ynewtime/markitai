@@ -1,4 +1,11 @@
-"""OCR module using RapidOCR."""
+"""OCR module using RapidOCR.
+
+RapidOCR is an *optional* backend (the ``ocr`` extra), not a core dependency:
+it pulls opencv-python and its own ONNX models for a feature only scanned
+documents need. Every path that can hit the missing backend routes its
+message through :data:`OCR_INSTALL_HINT` so the user is told exactly one
+command, in exactly one wording, wherever they hit the wall.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +21,40 @@ from markitai.constants import DEFAULT_OCR_SAMPLE_PAGES, DEFAULT_RENDER_DPI
 
 if TYPE_CHECKING:
     from markitai.config import OCRConfig
+
+#: The single actionable command for enabling OCR. Deliberately not
+#: "uv add rapidocr": markitai is normally installed as an isolated tool, where
+#: `uv add` would put the wheel in a project venv the tool cannot import from.
+OCR_INSTALL_HINT = 'Install with: uv tool install "markitai[ocr]" --force'
+
+
+class OCRBackendMissing(ImportError):
+    """The optional OCR backend is not installed.
+
+    Distinct from a runtime OCR failure: callers may degrade gracefully when
+    the engine runs and fails, but must not swallow this one. The user asked
+    for OCR and can get it with a single command, so telling them the
+    conversion succeeded would be a lie.
+    """
+
+
+def is_ocr_available() -> bool:
+    """Return whether the optional OCR backend can be imported.
+
+    Metadata-only on purpose: importing rapidocr drags in opencv, whose large
+    dylib costs seconds of first-run signature validation. Callers that only
+    need to *phrase a message* must never pay that.
+    """
+    import importlib.util
+    import sys
+
+    if "rapidocr" in sys.modules:
+        return True
+    try:
+        return importlib.util.find_spec("rapidocr") is not None
+    except (ImportError, ValueError):
+        return False
+
 
 # Minimum Latin letters before the vowel-ratio test is meaningful; short
 # labels and non-Latin text below this floor are never flagged.
@@ -214,11 +255,18 @@ class OCRProcessor:
         Returns:
             New RapidOCR engine instance
         """
+        if not is_ocr_available():
+            raise OCRBackendMissing(
+                f"--ocr requires the optional OCR backend (RapidOCR), "
+                f"which is not installed. {OCR_INSTALL_HINT}"
+            )
+
         try:
             from rapidocr import RapidOCR
         except ImportError as e:
-            raise ImportError(
-                "RapidOCR is not installed. Install with: uv add rapidocr"
+            raise OCRBackendMissing(
+                f"--ocr requires the optional OCR backend (RapidOCR), "
+                f"which failed to import: {e}. {OCR_INSTALL_HINT}"
             ) from e
 
         # Build params
@@ -508,13 +556,13 @@ class OCRProcessor:
             OCRResult with recognized text
         """
         try:
-            import fitz  # pymupdf
+            import pymupdf
         except ImportError as e:
             raise ImportError(
                 "PyMuPDF is not installed. Install with: uv add pymupdf"
             ) from e
 
-        doc = fitz.open(pdf_path)
+        doc = pymupdf.open(pdf_path)
         try:
             if page_num >= len(doc):
                 raise ValueError(
@@ -524,7 +572,7 @@ class OCRProcessor:
             page = doc[page_num]
 
             # Render page to image
-            mat = fitz.Matrix(dpi / 72, dpi / 72)
+            mat = pymupdf.Matrix(dpi / 72, dpi / 72)
             pix = page.get_pixmap(matrix=mat)
 
             # Use recognize_pixmap for direct processing
@@ -582,11 +630,11 @@ class OCRProcessor:
             True if PDF appears to be scanned
         """
         try:
-            import fitz
+            import pymupdf
         except ImportError:
             return False
 
-        doc = fitz.open(pdf_path)
+        doc = pymupdf.open(pdf_path)
         try:
             total_text_length = 0
             pages_to_check = min(sample_pages, len(doc))

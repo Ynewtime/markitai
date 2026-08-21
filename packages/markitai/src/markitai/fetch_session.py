@@ -21,6 +21,7 @@ from loguru import logger
 
 from markitai.fetch_cache import FetchCache, SPADomainCache
 from markitai.fetch_consent import ConsentState, set_consent_state_provider
+from markitai.fetch_http import set_proxy_bypass_provider
 
 if TYPE_CHECKING:
     from markitai.config import FetchConfig
@@ -53,21 +54,6 @@ class _SlidingWindowRateLimiter:
             if wait_time > 0:
                 logger.debug(f"[{self._name}] Rate limit: waiting {wait_time:.1f}s")
                 await asyncio.sleep(wait_time)
-
-
-# Common proxy ports used by popular proxy software.
-# Only HTTP proxy ports are listed: the detected proxy is labeled http://,
-# and SOCKS-only ports (1080 SOCKS5, 10808 V2Ray SOCKS, 9050 Tor) would
-# produce a broken proxy URL (httpx lacks the socks extra).
-_COMMON_PROXY_PORTS = [
-    7897,  # Clash Verge default
-    7890,  # Clash default
-    7891,  # Clash mixed
-    1082,  # Shadowrocket
-    10809,  # V2Ray HTTP
-    8080,  # HTTP proxy common
-    8118,  # Privoxy
-]
 
 
 def _get_system_proxy() -> tuple[str, str]:
@@ -469,12 +455,19 @@ class FetchSession:
         return self.playwright_renderer
 
     def detect_proxy(self, force_recheck: bool = False) -> str:
-        """Detect proxy settings from environment, system config, or common local ports.
+        """Detect proxy settings from the environment or system configuration.
 
         Detection order:
         1. Environment variables: HTTPS_PROXY, HTTP_PROXY, ALL_PROXY
         2. System proxy settings (Windows registry / macOS scutil)
-        3. Probe common proxy ports on localhost
+
+        Only declared configuration is trusted. Scanning localhost for open
+        proxy ports was removed deliberately: a bare TCP connect proves
+        nothing about what listens on the port (a TUN-mode proxy answers on
+        every port, and 8080 is far more often a dev server than a proxy),
+        so the probe steered traffic into proxies that did not exist.
+        Users behind a local proxy set HTTP_PROXY/HTTPS_PROXY or the OS
+        proxy settings, both of which are covered above.
 
         Args:
             force_recheck: Force re-detection even if cached
@@ -487,7 +480,6 @@ class FetchSession:
             return self.detected_proxy
 
         import os
-        import socket
 
         # Check environment variables first (highest priority - user explicit config)
         for var in [
@@ -515,26 +507,52 @@ class FetchSession:
             self.detected_proxy_bypass = system_bypass
             return system_proxy
 
-        # Probe common proxy ports on localhost (fallback)
-        for port in _COMMON_PROXY_PORTS:
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(0.1)  # 100ms timeout
-                result = sock.connect_ex(("127.0.0.1", port))
-                sock.close()
-                if result == 0:
-                    proxy_url = f"http://127.0.0.1:{port}"
-                    logger.warning(f"[Proxy] Auto-detected local proxy at port {port}")
-                    self.detected_proxy = proxy_url
-                    self.detected_proxy_bypass = ""
-                    return proxy_url
-            except Exception as e:
-                logger.debug("[Proxy] Auto-detection failed: {}", e)
-
         # Silent - no proxy is common, no need to log
         self.detected_proxy = ""
         self.detected_proxy_bypass = ""
         return ""
+
+    def proxy_bypass_patterns(self) -> list[str]:
+        """Return the NO_PROXY-style patterns that exempt a host from proxying.
+
+        Merges the ``NO_PROXY``/``no_proxy`` environment variable with the
+        bypass list recorded by :meth:`detect_proxy` (the OS exception list
+        on Windows/macOS). The environment variable is read every call so it
+        applies no matter which source supplied the proxy itself.
+
+        Returns:
+            List of NO_PROXY patterns (possibly empty).
+        """
+        import os
+
+        from markitai.fetch_policy import parse_no_proxy
+
+        patterns = parse_no_proxy(
+            os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+        )
+        patterns.extend(parse_no_proxy(self.detected_proxy_bypass))
+        return patterns
+
+    def is_proxy_bypassed(self, url: str) -> bool:
+        """Return whether *url*'s host must be reached without a proxy.
+
+        Args:
+            url: URL being fetched.
+
+        Returns:
+            True when the host matches a NO_PROXY bypass pattern.
+        """
+        from urllib.parse import urlparse
+
+        from markitai.fetch_policy import match_local_only
+
+        patterns = self.proxy_bypass_patterns()
+        if not patterns:
+            return False
+        if match_local_only(urlparse(url).netloc.lower(), patterns):
+            logger.debug("[Proxy] NO_PROXY bypass for {}", url)
+            return True
+        return False
 
     async def close(self) -> None:
         """Close every shared resource owned by this session.
@@ -609,3 +627,7 @@ def reset_default_session() -> None:
 # session's ConsentState (single source of truth). The lambda resolves the
 # session at call time, so reset_default_session() is honored.
 set_consent_state_provider(lambda: get_default_session().consent)
+
+# The static HTTP clients apply the NO_PROXY bypass per request; the patterns
+# are session-owned (env var + OS exception list recorded by detect_proxy).
+set_proxy_bypass_provider(lambda: get_default_session().proxy_bypass_patterns())

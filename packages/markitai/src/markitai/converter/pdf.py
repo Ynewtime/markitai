@@ -799,11 +799,24 @@ class PdfConverter(BaseConverter):
         flagged = sorted(set(scanned_pages) | set(garbled_pages))
         if not flagged:
             return
+
+        # OCR is an optional extra. Recommending --ocr to someone who does not
+        # have the backend costs them a second round trip (run --ocr, hit the
+        # ImportError, install, run again), so the install command goes in the
+        # very first message instead.
+        from markitai.ocr import OCR_INSTALL_HINT, is_ocr_available
+
+        remedy = (
+            "consider re-running with --ocr"
+            if is_ocr_available()
+            else f"consider re-running with --ocr, which needs the optional "
+            f"OCR backend: {OCR_INSTALL_HINT}"
+        )
         logger.warning(
-            "[PDF] {} page(s) look scanned/garbled (pages {}); "
-            "consider re-running with --ocr",
+            "[PDF] {} page(s) look scanned/garbled (pages {}); {}",
             len(flagged),
             ", ".join(str(p) for p in flagged),
+            remedy,
         )
 
     def _render_pages_parallel(

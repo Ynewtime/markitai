@@ -1,6 +1,6 @@
 [project]
 name = "markitai-workspace"
-version = "0.23.0"  # workspace identity only (unpublished); keep in sync with packages/markitai/src/markitai/__init__.py
+version = "0.24.0"  # workspace identity only (unpublished); keep in sync with packages/markitai/src/markitai/__init__.py
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "markitai",
@@ -15,6 +15,7 @@ extra-fetch = ["markitai[extra-fetch]"]
 kreuzberg = ["markitai[kreuzberg]"]
 svg = ["markitai[svg]"]
 heif = ["markitai[heif]"]
+ocr = ["markitai[ocr]"]
 serve = ["markitai[serve]"]
 all = ["markitai[all]"]
 

@@ -89,6 +89,14 @@ jobs:
       - name: Run bandit security scan
         run: uv run bandit -r packages/markitai/src -c pyproject.toml
 
+      # markitai is MIT; the default install must stay commercially usable.
+      # Deliberately runs on the extra-free `uv sync --frozen --all-groups`
+      # environment above, so it audits exactly what `pip install markitai`
+      # gives a user. Fails on any non-commercial/proprietary licence, and on
+      # any AGPL/GPL package outside the allowlist in the script (see NOTICE).
+      - name: Run dependency license audit
+        run: uv run python scripts/check_licenses.py --list
+
       - name: Verify package build
         run: uv build --package markitai --out-dir dist --clear
 
@@ -192,6 +200,19 @@ jobs:
               name.startswith("markitai/serve/static/assets/") for name in names
           ):
               raise SystemExit(f"wheel is missing packaged webapp files: {sorted(missing)}")
+
+          # MIT requires the licence to travel with every copy, and Apache-2.0
+          # section 4(d) requires the NOTICE; both land in dist-info/licenses/
+          # only while `license-files` resolves inside packages/markitai.
+          for suffix in ("LICENSE", "NOTICE"):
+              if not any(
+                  name.endswith(f".dist-info/licenses/{suffix}") for name in names
+              ):
+                  raise SystemExit(f"wheel is missing dist-info/licenses/{suffix}")
+          # "../" in a member path escapes the install directory on extraction.
+          traversal = sorted(name for name in names if ".." in name.split("/"))
+          if traversal:
+              raise SystemExit(f"wheel contains path-traversal entries: {traversal}")
           PY
           uv tool run --isolated --python '${{ matrix.python-version }}' --from "$wheel" markitai --version
           uv tool run --isolated --python '${{ matrix.python-version }}' --from "$wheel" markitai --help >/dev/null

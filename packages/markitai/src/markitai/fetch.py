@@ -228,37 +228,32 @@ def get_fetch_cache(
     return get_default_session().get_fetch_cache(cache_dir, max_size_bytes)
 
 
-def get_proxy_for_url(url: str, auto_proxy: bool = True) -> str:
-    """Get proxy URL for a given URL, respecting auto_proxy setting and NO_PROXY.
+def get_proxy_for_url(url: str) -> str:
+    """Get the proxy to use for *url*, honoring NO_PROXY.
 
-    This is the unified entry point for proxy resolution. All fetch backends
-    should use this instead of calling _detect_proxy() directly.
+    This is the unified entry point for proxy resolution in this layer.
+    Backends below ``markitai.fetch`` cannot import it (import-linter keeps
+    strategies below the orchestrator); they resolve the candidate proxy with
+    ``_detect_proxy()`` and the connection-level NO_PROXY bypass is applied
+    for them by :func:`markitai.fetch_http.resolve_proxy_for_url`. Both paths
+    share :meth:`FetchSession.is_proxy_bypassed`.
+
+    To disable proxying entirely, set ``NO_PROXY=*`` — the standard mechanism,
+    which every path here now respects. There is deliberately no bespoke
+    config switch duplicating it.
 
     Args:
         url: URL being fetched (checked against NO_PROXY patterns)
-        auto_proxy: If False, always return empty string (proxy disabled)
 
     Returns:
         Proxy URL string or empty string if no proxy should be used
     """
-    if not auto_proxy:
-        return ""
-
     proxy = _detect_proxy()
     if not proxy:
         return ""
 
-    # Check NO_PROXY bypass patterns
-    bypass = get_default_session().detected_proxy_bypass
-    if bypass:
-        from urllib.parse import urlparse
-
-        from markitai.fetch_policy import match_local_only, parse_no_proxy
-
-        domain = urlparse(url).netloc.lower()
-        patterns = parse_no_proxy(bypass)
-        if match_local_only(domain, patterns):
-            return ""
+    if get_default_session().is_proxy_bypassed(url):
+        return ""
 
     return proxy
 
@@ -778,7 +773,7 @@ async def fetch_url(
 
     Raises:
         FetchError: If fetch fails and no fallback available
-        JinaRateLimitError: If --jina used and rate limit exceeded
+        JinaRateLimitError: If -s jina used and rate limit exceeded
     """
     # Use provided renderer or get global one if needed
     _renderer = renderer
@@ -788,7 +783,7 @@ async def fetch_url(
         or screenshot
     ):
         # Only initialize global renderer if browser strategy is likely to be used
-        proxy = _detect_proxy() if getattr(config, "auto_proxy", True) else None
+        proxy = get_proxy_for_url(url) or None
         _renderer = await _get_playwright_renderer(proxy=proxy, config=config)
 
     # Screenshot kwargs for browser fetching (used by _fetch_with_fallback)
@@ -799,7 +794,7 @@ async def fetch_url(
     }
 
     # Include strategy in cache key when an explicit strategy is requested,
-    # so that --playwright and --static don't return each other's cached results.
+    # so that -s playwright and -s static don't return each other's cached results.
     cache_strategy: str | None = (
         strategy.value if explicit_strategy and strategy != FetchStrategy.AUTO else None
     )

@@ -29,6 +29,18 @@ from markitai.constants import (
 )
 
 
+def is_blank_result(result: Any) -> bool:
+    """Return True for a text result with nothing in it.
+
+    Only plain strings are judged: structured payloads (dicts from the
+    Pydantic-validated paths) legitimately carry empty fields.
+
+    Args:
+        result: Value a caller is about to cache.
+    """
+    return isinstance(result, str) and not result.strip()
+
+
 class SQLiteCache:
     """SQLite-based persistent LRU cache with size limit.
 
@@ -512,6 +524,9 @@ class PersistentCache:
     def set(self, prompt: str, content: str, result: Any, model: str = "") -> None:
         """Write to global cache.
 
+        Blank text results are dropped: entries here have no TTL, so a
+        single failed run would otherwise blank a document forever.
+
         Args:
             prompt: Prompt template or category name
             content: Content being processed
@@ -519,6 +534,10 @@ class PersistentCache:
             model: Model identifier (included in cache key for isolation)
         """
         if not self._enabled:
+            return
+
+        if is_blank_result(result):
+            logger.debug("[Cache] Skipping empty result for key prefix: {}", prompt)
             return
 
         value = json.dumps(result, ensure_ascii=False)
@@ -601,7 +620,10 @@ class ContentCache:
             return result
 
     def set(self, prompt: str, content: str, result: Any) -> None:
-        """Cache a result."""
+        """Cache a result (blank text results are dropped)."""
+        if is_blank_result(result):
+            return
+
         key = self._compute_hash(prompt, content)
         with self._lock:
             if key in self._cache:

@@ -6,7 +6,6 @@ One-stop setup: checks dependencies, detects LLM providers, generates config.
 from __future__ import annotations
 
 import json
-import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -241,37 +240,24 @@ def _check_libreoffice_dep() -> tuple[str, str, bool]:
         return ("LibreOffice", f"not found ({hint})", False)
 
 
-def _check_ffmpeg_dep() -> tuple[str, str, bool]:
-    """Check FFmpeg dependency status.
-
-    Returns:
-        Tuple of (name, detail, available).
-    """
-    ff = shutil.which("ffmpeg")
-    if ff:
-        return ("FFmpeg", "installed", True)
-    else:
-        return ("FFmpeg", "not found (optional)", False)
-
-
 def _check_rapidocr_dep() -> tuple[str, str, bool]:
-    """Check RapidOCR dependency status.
+    """Check the optional OCR backend's status.
 
     Returns:
         Tuple of (name, detail, available).
     """
+    from markitai.ocr import OCR_INSTALL_HINT, is_ocr_available
+
+    if not is_ocr_available():
+        return ("RapidOCR (--ocr)", f"not installed — {OCR_INSTALL_HINT}", False)
+
     try:
         from importlib.metadata import version as get_version
 
-        import rapidocr  # noqa: F401
-
-        try:
-            ver = get_version("rapidocr")
-        except Exception:
-            ver = getattr(rapidocr, "__version__", "unknown")
-        return ("RapidOCR", f"v{ver}", True)
-    except ImportError:
-        return ("RapidOCR", "not installed (uv add rapidocr)", False)
+        ver = get_version("rapidocr")
+    except Exception:
+        ver = "unknown"
+    return ("RapidOCR (--ocr)", f"v{ver}", True)
 
 
 def _check_deps() -> list[tuple[str, str, bool]]:
@@ -284,7 +270,6 @@ def _check_deps() -> list[tuple[str, str, bool]]:
         futures = [
             executor.submit(_check_playwright_dep),
             executor.submit(_check_libreoffice_dep),
-            executor.submit(_check_ffmpeg_dep),
             executor.submit(_check_rapidocr_dep),
         ]
         # Collect in submission order for deterministic output

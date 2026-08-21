@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 import click
@@ -11,37 +12,62 @@ from click.testing import CliRunner
 from markitai.cli.framework import MarkitaiGroup
 from markitai.cli.main import app
 
+_SYNC_HINT = (
+    "MarkitaiGroup._OPTIONS_WITH_VALUES (cli/framework.py) mirrors the value-taking "
+    "options of the main command by hand; INPUT detection reads it to know which "
+    "token is an option value and which is a path. Out of sync, an option value is "
+    "silently swallowed as INPUT."
+)
+
+
+def declared_value_option_names(params: Iterable[click.Parameter]) -> set[str]:
+    """Derive every option name that consumes a following token as its value.
+
+    Flags (``--x/--no-x``, ``is_flag``) and counters (``count=True``) carry no
+    value, so they are excluded — everything else does.
+
+    Args:
+        params: Click parameters to inspect (e.g. ``app.params``).
+
+    Returns:
+        The set of option strings (long and short) that take a value.
+    """
+    names: set[str] = set()
+    for param in params:
+        if not isinstance(param, click.Option):
+            continue
+        if param.is_flag or param.count:
+            continue
+        names.update(param.opts)
+        names.update(param.secondary_opts)
+    return names
+
 
 class TestOptionsWithValues:
     """Verify _OPTIONS_WITH_VALUES stays in sync with actual CLI options."""
 
-    def test_all_value_options_are_registered(self) -> None:
-        """Every option that takes a value must appear in _OPTIONS_WITH_VALUES."""
-        value_options: set[str] = set()
-        for param in app.params:
-            if isinstance(param, click.Option) and not param.is_flag:
-                for opt in param.opts + param.secondary_opts:
-                    value_options.add(opt)
+    def test_options_with_values_mirrors_the_command(self) -> None:
+        """The hand-kept mirror must equal the reflected truth — no more, no less."""
+        expected = declared_value_option_names(app.params)
 
-        missing = value_options - MarkitaiGroup._OPTIONS_WITH_VALUES
-        assert not missing, (
-            f"Options taking values but missing from _OPTIONS_WITH_VALUES: {missing}. "
-            f"Add them to MarkitaiGroup._OPTIONS_WITH_VALUES in framework.py."
-        )
+        assert expected == MarkitaiGroup._OPTIONS_WITH_VALUES, _SYNC_HINT
 
-    def test_no_stale_entries_in_options_with_values(self) -> None:
-        """_OPTIONS_WITH_VALUES should not contain entries that don't exist or are flags."""
-        value_options: set[str] = set()
-        for param in app.params:
-            if isinstance(param, click.Option) and not param.is_flag:
-                for opt in param.opts + param.secondary_opts:
-                    value_options.add(opt)
+    def test_guard_detects_an_unsynced_value_option(self) -> None:
+        """Adding a value option without syncing the mirror must be detectable."""
+        probe = click.Option(["--probe-value"], type=str, default=None)
 
-        extra = MarkitaiGroup._OPTIONS_WITH_VALUES - value_options
-        assert not extra, (
-            f"Stale entries in _OPTIONS_WITH_VALUES (not value-taking options): {extra}. "
-            f"Remove them from MarkitaiGroup._OPTIONS_WITH_VALUES in framework.py."
-        )
+        derived = declared_value_option_names([*app.params, probe])
+
+        assert "--probe-value" in derived
+        assert derived - MarkitaiGroup._OPTIONS_WITH_VALUES == {"--probe-value"}
+
+    def test_flags_and_counters_are_not_value_options(self) -> None:
+        """Flags/counters must not be demanded in the mirror (they take no value)."""
+        toggle = click.Option(["--probe-flag/--no-probe-flag"], default=None)
+        switch = click.Option(["--probe-switch"], is_flag=True)
+        counter = click.Option(["--probe-count", "-C"], count=True)
+
+        assert declared_value_option_names([toggle, switch, counter]) == set()
 
 
 class TestInputSubcommandAmbiguity:

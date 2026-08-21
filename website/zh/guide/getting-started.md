@@ -37,7 +37,7 @@ mkai https://markitai.dev/zh/guide/getting-started --pure
 | 依赖 | 用途 | 安装方式 |
 |------|------|----------|
 | **Playwright** | `-s playwright`（SPA 渲染） | 推荐的 uv tool 方案：`uv tool install 'markitai[browser]' --force`，然后运行 `markitai doctor --fix`。pipx 和虚拟环境请见[手动安装](#手动安装)。 |
-| **FFmpeg** | `doctor`/`init` 会检测（属于 `markitdown[all]` 的间接依赖）；markitai 目前尚未注册任何音视频转换格式 | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
+| **RapidOCR** | `--ocr`（识别扫描件和图片中的文字） | `uv tool install 'markitai[ocr]' --force` |
 | **Jina API 密钥** | `-s jina`（URL 转换） | 设置 `JINA_API_KEY` 环境变量 |
 | **LLM 认证** | `--llm`（AI 增强） | 使用提供商 API 密钥，或通过 OAuth/CLI 登录订阅制提供商（`chatgpt/`、`claude-agent/`、`copilot/`） |
 | **Cloudflare** | `-s cloudflare`（云端渲染与转换） | 设置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 环境变量 |
@@ -72,34 +72,35 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 
 ::: warning 安全提示
 - 以 root/管理员 身份运行时，脚本会先检测并询问是否继续
-- 在交互式终端中，可选组件会在安装前询问确认。Playwright 浏览器默认 Yes；LibreOffice、FFmpeg 和 Claude/Copilot CLI 默认 No
+- 在交互式终端中，可选组件会在安装前询问确认。Playwright 浏览器、Web UI extra 和 OCR 默认 Yes；LibreOffice 和 Claude/Copilot CLI 默认 No
 - 没有可用终端时只安装 uv、Python 和 Markitai；自动化场景只有显式设置 `MARKITAI_INSTALL_OPTIONAL=1` 才会执行可选安装步骤
 :::
 
 脚本会：
 - 检测 / 自动安装 Python 3.11-3.13（无需确认）
 - 安装 [uv](https://docs.astral.sh/uv/) 包管理器（需确认，默认 Yes）
-- 安装 markitai 本体及其纯 pip 依赖的可选组件（浏览器自动化、`extra-fetch`、`kreuzberg`、`svg`、`heif`），无需额外确认；LibreOffice、FFmpeg 和 Claude/Copilot CLI 会在随后单独询问确认（默认 No）
+- 询问是否包含 Web UI（`serve`）和 OCR（`ocr`）两个 extra，然后连同其余纯 pip 依赖的可选组件（浏览器自动化、`extra-fetch`、`kreuzberg`、`svg`、`heif`）一次装好，无需额外确认；LibreOffice 和 Claude/Copilot CLI 会在随后单独询问确认（默认 No）
+- 默认使用官方源。只有在实测到默认源缓慢或不可达时，才会询问是否改用镜像；设置 `MARKITAI_USE_MIRROR=1` 可直接启用镜像，设置 `MARKITAI_USE_MIRROR=0` 可彻底关闭询问
 
 #### 版本固定
 
-使用环境变量固定特定版本：
+使用环境变量固定特定版本。把占位符换成你要固定的确切版本号——示例中刻意不写死任何版本，因此不会随发布而过期：
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.20.0"
-export UV_VERSION="0.9.27"
+export MARKITAI_VERSION="X.Y.Z"   # https://pypi.org/project/markitai/#history
+export UV_VERSION="X.Y.Z"         # https://github.com/astral-sh/uv/releases
 curl -fsSL https://markitai.dev/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.20.0"
-$env:UV_VERSION = "0.9.27"
+$env:MARKITAI_VERSION = "X.Y.Z"   # https://pypi.org/project/markitai/#history
+$env:UV_VERSION = "X.Y.Z"         # https://github.com/astral-sh/uv/releases
 powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 :::
 
-此示例固定的是当前文档对应的版本。省略 `MARKITAI_VERSION` 即可安装最新稳定版；如果你正在阅读旧版文档，请先查看当前版本，再复制其中的固定版本号。
+两个变量都省略即安装各自的最新稳定版，这也是推荐做法。只有在需要复现某个确切环境时才固定版本；`markitai --version` 会告诉你当前装的是哪一版。
 
 ### 手动安装
 
@@ -114,6 +115,12 @@ uv pip install markitai
 ```
 
 后续只需添加工作流所需的额外依赖，例如 Playwright 使用 `markitai[browser]`，HEIC/HEIF/AVIF 图片输入使用 `markitai[heif]`。完整列表见[可选依赖](#可选依赖)。
+
+默认安装不含 OCR 运行时。RapidOCR 的模型和配套图像栈约占原先安装体积的四分之一，而转换电子版文档的流程从不加载它们。确实需要对扫描件或照片使用 `--ocr` 时再装：
+
+```bash
+uv tool install 'markitai[ocr]' --force
+```
 
 与一键安装不同，手动安装**不会**帮你配置可选组件和配置文件，剩余步骤需自行完成：
 

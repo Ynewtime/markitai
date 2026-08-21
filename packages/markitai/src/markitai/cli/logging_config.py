@@ -101,13 +101,18 @@ def _suppress_mupdf_logs() -> None:
 
     MuPDF (via PyMuPDF) logs directly to stderr, which can clutter CLI output
     with format warnings (e.g., "No common ancestor in structure tree").
+
+    Imports ``pymupdf``, never the legacy ``fitz`` alias: since PyMuPDF
+    1.28.2 the alias prints its deprecation notice on **stdout**, which lands
+    inside piped markdown (`markitai doc.pdf | ...`) — i.e. a noise-
+    suppression helper that emitted noise of its own.
     """
     try:
         # PyMuPDF might not be installed in all environments
-        import fitz
+        import pymupdf
 
-        if hasattr(fitz, "TOOLS") and hasattr(fitz.TOOLS, "mupdf_display_errors"):
-            fitz.TOOLS.mupdf_display_errors(False)
+        if hasattr(pymupdf, "TOOLS") and hasattr(pymupdf.TOOLS, "mupdf_display_errors"):
+            pymupdf.TOOLS.mupdf_display_errors(False)
     except ImportError:
         pass
 

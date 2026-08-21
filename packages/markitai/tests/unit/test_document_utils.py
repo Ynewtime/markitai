@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from markitai.llm.document import (
+    STANDARD_MODE_RULES,
     DocumentEnhancer,
 )
 from markitai.llm.models import get_response_cost
@@ -429,53 +430,17 @@ class TestValidateNoPromptLeakage:
         with pytest.raises(ValueError, match="LLM returned prompt text"):
             mixin._validate_no_prompt_leakage(content, "test.md")
 
-    def test_detects_task_1_chinese(self) -> None:
-        """Test detection of '## 任务 1:' marker."""
+    def test_chinese_era_markers_are_not_detected(self) -> None:
+        """Chinese prompt markers are gone: the prompt corpus is English.
+
+        The detector list is kept in sync with the live prompts by
+        test_prompt_leakage_sync.py; text that no prompt can produce must
+        not abort a document.
+        """
         mixin = _make_enhancer()
-        content = "## 任务 1: 清理文档\n\n泄漏的提示词"
+        content = "【核心原则】保持原始内容不变\n\n## 任务 1: 清理文档"
 
-        with pytest.raises(ValueError, match="LLM returned prompt text"):
-            mixin._validate_no_prompt_leakage(content, "test.md")
-
-    def test_detects_task_2_chinese(self) -> None:
-        """Test detection of '## 任务 2:' marker."""
-        mixin = _make_enhancer()
-        content = "内容\n## 任务 2: 生成元数据"
-
-        with pytest.raises(ValueError, match="LLM returned prompt text"):
-            mixin._validate_no_prompt_leakage(content, "test.md")
-
-    def test_detects_core_principles_marker(self) -> None:
-        """Test detection of '【核心原则】' marker."""
-        mixin = _make_enhancer()
-        content = "【核心原则】保持原始内容不变"
-
-        with pytest.raises(ValueError, match="LLM returned prompt text"):
-            mixin._validate_no_prompt_leakage(content, "test.md")
-
-    def test_detects_cleaning_spec_marker(self) -> None:
-        """Test detection of '【清理规范】' marker."""
-        mixin = _make_enhancer()
-        content = "【清理规范】删除多余空白"
-
-        with pytest.raises(ValueError, match="LLM returned prompt text"):
-            mixin._validate_no_prompt_leakage(content, "test.md")
-
-    def test_detects_please_process_marker(self) -> None:
-        """Test detection of '请处理以下' marker."""
-        mixin = _make_enhancer()
-        content = "请处理以下 markdown 内容"
-
-        with pytest.raises(ValueError, match="LLM returned prompt text"):
-            mixin._validate_no_prompt_leakage(content, "test.md")
-
-    def test_detects_you_are_professional_marker(self) -> None:
-        """Test detection of '你是一个专业的' marker."""
-        mixin = _make_enhancer()
-        content = "你是一个专业的 markdown 清理工具"
-
-        with pytest.raises(ValueError, match="LLM returned prompt text"):
-            mixin._validate_no_prompt_leakage(content, "test.md")
+        assert mixin._validate_no_prompt_leakage(content, "test.md") == content
 
     def test_recovery_with_frontmatter(self) -> None:
         """Test recovery when content has frontmatter structure."""
@@ -909,10 +874,16 @@ class TestCleanMarkdownAsync:
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
-        # Pre-populate the in-memory cache
+        # Pre-populate the in-memory cache (key is scoped by the prompt digest)
         content = "# Test Content\n\nSome text."
         cached_result = "# Cleaned Content\n\nCleaned text."
-        processor._cache.set("cleaner", content, cached_result)
+        cache_key = processor.documents._prompt_scoped_key(
+            "cleaner",
+            "cleaner_system",
+            "cleaner_user",
+            extra=(STANDARD_MODE_RULES,),
+        )
+        processor._cache.set(cache_key, content, cached_result)
 
         result = await processor.clean_markdown(content, "test.md")
 
@@ -1409,8 +1380,13 @@ Slide body
             "tags": ["cached"],
         }
 
-        # Pre-populate in-memory cache (content-addressed key: no source)
-        cache_key = "document_process"
+        # Pre-populate in-memory cache (content-addressed key: no source,
+        # but scoped by the prompt digest)
+        cache_key = processor.documents._prompt_scoped_key(
+            "document_process",
+            "document_process_system",
+            "document_process_user",
+        )
         processor._cache.set(cache_key, content, cached_value)
 
         # Also need to mock the instructor to fail so it uses cache

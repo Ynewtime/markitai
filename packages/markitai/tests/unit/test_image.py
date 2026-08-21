@@ -12,7 +12,6 @@ from PIL import Image
 from markitai.config import ImageConfig, ImageFilterConfig
 from markitai.image import (
     ImageProcessor,
-    _compress_image_cv2,
     _compress_image_pillow,
     _compress_image_worker,
 )
@@ -683,11 +682,8 @@ class TestExifOrientation:
         _, width, height = result
         assert (width, height) == (50, 100)
 
-    def test_cv2_path_applies_exif_orientation(self) -> None:
-        pytest.importorskip("cv2")
-        from markitai.image import _compress_image_cv2
-
-        result = _compress_image_cv2(
+    def test_worker_applies_exif_orientation(self) -> None:
+        result = _compress_image_worker(
             image_data=create_exif_rotated_jpeg(100, 50),
             quality=85,
             max_size=(1000, 1000),
@@ -710,7 +706,7 @@ class TestExifOrientation:
 
 
 class TestCompressImageWorkerFunctions:
-    """Tests for _compress_image_cv2, _compress_image_pillow, and _compress_image_worker."""
+    """Tests for _compress_image_pillow and _compress_image_worker."""
 
     def test_compress_image_pillow_basic(self) -> None:
         """Test basic Pillow compression."""
@@ -748,11 +744,11 @@ class TestCompressImageWorkerFunctions:
 
         assert result is None  # Filtered out
 
-    def test_compress_image_cv2_basic(self) -> None:
-        """Test basic OpenCV compression."""
+    def test_compress_image_worker_basic(self) -> None:
+        """Test basic worker compression."""
         img_data = create_test_image(200, 200, "blue")
 
-        result = _compress_image_cv2(
+        result = _compress_image_worker(
             image_data=img_data,
             quality=85,
             max_size=(100, 100),
@@ -768,11 +764,11 @@ class TestCompressImageWorkerFunctions:
         assert height <= 100
         assert len(compressed_data) > 0
 
-    def test_compress_image_cv2_filters_small(self) -> None:
-        """Test OpenCV compression filters small images."""
+    def test_compress_image_worker_filters_small(self) -> None:
+        """Test worker compression filters small images."""
         img_data = create_test_image(50, 50, "blue")
 
-        result = _compress_image_cv2(
+        result = _compress_image_worker(
             image_data=img_data,
             quality=85,
             max_size=(1000, 1000),
@@ -784,11 +780,11 @@ class TestCompressImageWorkerFunctions:
 
         assert result is None  # Filtered out
 
-    def test_compress_image_cv2_png_format(self) -> None:
-        """Test OpenCV compression with PNG format."""
+    def test_compress_image_pillow_png_format(self) -> None:
+        """Test Pillow compression with PNG format."""
         img_data = create_test_image(100, 100, "green")
 
-        result = _compress_image_cv2(
+        result = _compress_image_pillow(
             image_data=img_data,
             quality=85,
             max_size=(100, 100),
@@ -804,11 +800,11 @@ class TestCompressImageWorkerFunctions:
         # PNG signature
         assert compressed_data[:4] == b"\x89PNG"
 
-    def test_compress_image_cv2_webp_format(self) -> None:
-        """Test OpenCV compression with WebP format."""
+    def test_compress_image_pillow_webp_format(self) -> None:
+        """Test Pillow compression with WebP format."""
         img_data = create_test_image(100, 100, "yellow")
 
-        result = _compress_image_cv2(
+        result = _compress_image_pillow(
             image_data=img_data,
             quality=85,
             max_size=(100, 100),
@@ -824,11 +820,10 @@ class TestCompressImageWorkerFunctions:
         # WebP signature
         assert compressed_data[:4] == b"RIFF"
 
-    def test_compress_image_worker_uses_opencv_first(self) -> None:
-        """Test that worker uses OpenCV first, falls back to Pillow."""
+    def test_compress_image_worker_produces_valid_output(self) -> None:
+        """Test that the worker compresses through the Pillow backend."""
         img_data = create_test_image(100, 100, "purple")
 
-        # Worker should succeed using OpenCV
         result = _compress_image_worker(
             image_data=img_data,
             quality=85,
@@ -857,18 +852,18 @@ class TestCompressImageWorkerFunctions:
             min_area=100,
         )
 
-        # Both OpenCV and Pillow should fail, return None
+        # Pillow should fail to decode, return None
         assert result is None
 
-    def test_compress_image_cv2_handles_rgba(self) -> None:
-        """Test OpenCV handles RGBA images for JPEG output."""
+    def test_compress_image_pillow_handles_rgba(self) -> None:
+        """Test Pillow flattens RGBA images for JPEG output."""
         # Create RGBA image
         img = Image.new("RGBA", (100, 100), (255, 0, 0, 128))
         buffer = io.BytesIO()
         img.save(buffer, format="PNG")
         img_data = buffer.getvalue()
 
-        result = _compress_image_cv2(
+        result = _compress_image_pillow(
             image_data=img_data,
             quality=85,
             max_size=(100, 100),
@@ -883,36 +878,86 @@ class TestCompressImageWorkerFunctions:
         # Should produce valid JPEG
         assert compressed_data[:2] == b"\xff\xd8"  # JPEG signature
 
-    def test_compress_consistency_between_cv2_and_pillow(self) -> None:
-        """Test that CV2 and Pillow produce similar sized outputs."""
+    def test_worker_and_pillow_agree(self) -> None:
+        """The worker is a thin pass-through: identical bytes, not just dims."""
         img_data = create_test_image(200, 200, "orange")
+        kwargs: dict[str, object] = {
+            "image_data": img_data,
+            "quality": 85,
+            "max_size": (100, 100),
+            "output_format": "JPEG",
+            "min_width": 10,
+            "min_height": 10,
+            "min_area": 100,
+        }
 
-        result_cv2 = _compress_image_cv2(
-            image_data=img_data,
-            quality=85,
-            max_size=(100, 100),
-            output_format="JPEG",
-            min_width=10,
-            min_height=10,
-            min_area=100,
-        )
+        assert _compress_image_worker(**kwargs) == _compress_image_pillow(**kwargs)  # type: ignore[arg-type]
 
-        result_pillow = _compress_image_pillow(
-            image_data=img_data,
-            quality=85,
-            max_size=(100, 100),
-            output_format="JPEG",
-            min_width=10,
-            min_height=10,
-            min_area=100,
-        )
 
-        assert result_cv2 is not None
-        assert result_pillow is not None
+class TestOpenCVRemoved:
+    """opencv-python is gone: Pillow is the only compression backend.
 
-        # Both should produce similar dimensions
-        assert result_cv2[1] == result_pillow[1]  # width
-        assert result_cv2[2] == result_pillow[2]  # height
+    cv2 was kept for a threading argument ("releases the GIL"). Measured on
+    the real paths that argument does not survive: `process_images` runs a
+    fresh spawn-based ProcessPoolExecutor per document, where cv2's 64ms
+    import per worker cancels its per-image edge (-3.8% to +14% wall time vs
+    Pillow for 10-60 pages), and `download_url_images` compresses one image
+    per HTTP GET. Pillow also produces *better* output: OpenCV's
+    INTER_LANCZOS4 has no antialias prefilter, so downscaling aliases —
+    measurably lower PSNR/SSIM and larger JPEGs on every sample tried.
+    """
+
+    def test_image_module_exposes_no_cv2_backend(self) -> None:
+        import markitai.image as image_module
+
+        assert not hasattr(image_module, "_compress_image_cv2")
+
+    def test_source_never_imports_cv2(self) -> None:
+        import markitai.image as image_module
+
+        source = Path(image_module.__file__).read_text(encoding="utf-8")
+        assert "import cv2" not in source
+
+    def test_worker_delegates_straight_to_pillow(self) -> None:
+        """No try-cv2-then-fallback layer: the worker *is* the Pillow path."""
+        sentinel = (b"compressed", 7, 9)
+        with patch(
+            "markitai.image._compress_image_pillow", return_value=sentinel
+        ) as mock_pillow:
+            result = _compress_image_worker(
+                image_data=create_test_image(100, 100),
+                quality=85,
+                max_size=(100, 100),
+                output_format="JPEG",
+                min_width=10,
+                min_height=10,
+                min_area=100,
+            )
+
+        assert result == sentinel
+        mock_pillow.assert_called_once()
+
+    def test_opencv_is_not_a_declared_dependency(self) -> None:
+        import tomllib
+
+        repo_root = Path(__file__).resolve().parents[4]
+        for pyproject in (
+            repo_root / "pyproject.toml",
+            repo_root / "packages" / "markitai" / "pyproject.toml",
+        ):
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            declared = list(data["project"].get("dependencies", []))
+            for extra in data["project"].get("optional-dependencies", {}).values():
+                declared.extend(extra)
+            assert not [d for d in declared if "opencv" in d.lower()], pyproject
+
+    def test_spawn_context_comment_no_longer_cites_opencv(self) -> None:
+        """The spawn requirement outlived its stated cv2 justification."""
+        import markitai.image as image_module
+
+        source = Path(image_module.__file__).read_text(encoding="utf-8")
+        assert "opencv.org" not in source
+        assert "opencv/opencv/issues/5150" not in source
 
 
 class TestRemoveHallucinatedImages:
@@ -2504,18 +2549,18 @@ class TestCompressPillowEdgeCases:
         assert result[0][:4] == b"RIFF"
 
 
-class TestCompressCV2EdgeCases:
-    """Additional edge case tests for CV2 compression."""
+class TestFormerCV2EdgeCases:
+    """Edge cases the OpenCV backend used to cover; Pillow must match them."""
 
-    def test_compress_cv2_grayscale(self) -> None:
-        """Test CV2 compression handles grayscale images."""
+    def test_compress_grayscale(self) -> None:
+        """Test compression handles grayscale images."""
         # Create grayscale image
         img = Image.new("L", (100, 100), 128)
         buffer = io.BytesIO()
         img.save(buffer, format="PNG")
         img_data = buffer.getvalue()
 
-        result = _compress_image_cv2(
+        result = _compress_image_worker(
             image_data=img_data,
             quality=85,
             max_size=(100, 100),
@@ -2528,11 +2573,11 @@ class TestCompressCV2EdgeCases:
         assert result is not None
         assert len(result[0]) > 0
 
-    def test_compress_cv2_unknown_format_fallback(self) -> None:
-        """Test CV2 compression falls back to JPEG for unknown formats."""
+    def test_compress_unknown_format_fallback(self) -> None:
+        """Test compression falls back to JPEG for unknown formats."""
         img_data = create_test_image(100, 100)
 
-        result = _compress_image_cv2(
+        result = _compress_image_worker(
             image_data=img_data,
             quality=85,
             max_size=(100, 100),
@@ -2546,12 +2591,12 @@ class TestCompressCV2EdgeCases:
         # Should fall back to JPEG
         assert result[0][:2] == b"\xff\xd8"
 
-    def test_compress_cv2_filter_by_area(self) -> None:
-        """Test CV2 filtering by area."""
+    def test_compress_filter_by_area(self) -> None:
+        """Test filtering by area."""
         # 80x80 = 6400 area
         img_data = create_test_image(80, 80)
 
-        result = _compress_image_cv2(
+        result = _compress_image_worker(
             image_data=img_data,
             quality=85,
             max_size=(1000, 1000),
@@ -2562,6 +2607,25 @@ class TestCompressCV2EdgeCases:
         )
 
         assert result is None  # Filtered due to area
+
+    def test_compress_cmyk_jpeg_source(self) -> None:
+        """CMYK JPEGs (print-origin PDFs) must not fail the JPEG encoder."""
+        img = Image.new("CMYK", (120, 120), (0, 60, 120, 10))
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG")
+
+        result = _compress_image_worker(
+            image_data=buffer.getvalue(),
+            quality=85,
+            max_size=(100, 100),
+            output_format="JPEG",
+            min_width=10,
+            min_height=10,
+            min_area=100,
+        )
+
+        assert result is not None
+        assert result[0][:2] == b"\xff\xd8"
 
 
 class TestSaveScreenshotEdgeCases:

@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - optional during staged implementation
     is_native_extraction_acceptable = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
-    from markitai.config import ScreenshotConfig
+    from markitai.config import FetchConfig, ScreenshotConfig
 
 
 def is_playwright_available() -> bool:
@@ -320,6 +320,18 @@ def _build_dom_cleanup_script(url: str | None = None) -> str:
         }});
     }}
     """
+
+
+def _consent_config(remote_consent: str) -> FetchConfig:
+    """Wrap a consent mode in the FetchConfig the shared resolver expects.
+
+    The renderer is handed the mode as a plain string (it never sees the
+    user's FetchConfig); anything unrecognized falls back to ``ask``, the
+    conservative mode.
+    """
+    from markitai.config import FetchConfig
+
+    return FetchConfig(remote_consent="always" if remote_consent == "always" else "ask")
 
 
 def _is_x_article_url(url: str) -> bool:
@@ -797,18 +809,23 @@ class PlaywrightRenderer:
         Returns ("", None, "") on failure.  ``source`` is one of
         ``"fxtwitter"``, ``"oembed"``, or ``""`` (no enrichment).
 
-        Unlike defuddle/jina/cloudflare, this never prompts for consent:
-        ``should_run()`` first restricts candidates to x.com/twitter.com
-        status/article URLs, then the shared full-URL and DNS privacy policy
-        verifies that the URL is public. "ask" behaves like "always" here.
-        Explicit opt-outs
-        (``remote_consent="never"``, ``MARKITAI_NO_REMOTE_FETCH``) are
-        still honored.
+        FxTwitter/oEmbed are remote services like defuddle/jina/cloudflare, so
+        they go through the *same* process-wide consent decision rather than a
+        second prompt of their own: one Yes authorizes every remote service for
+        the run, one No blocks them all, and a decision already cached by the
+        main chain is reused as is. Under ``ask`` with nothing decided yet this
+        prompts once on an interactive TTY and otherwise denies — the exact
+        branches of ``resolve_remote_consent``.
+
+        Consent is resolved lazily (after ``should_run()`` and the shared
+        full-URL/DNS privacy policy have confirmed there is a public
+        X/Twitter URL to send), so no question is asked about a URL that
+        would never leave the machine.
         """
         from markitai.fetch_consent import (
             _env_no_remote_fetch,
             disclose_remote_use,
-            peek_cached_remote_consent,
+            resolve_remote_consent,
         )
         from markitai.fetch_policy import assess_url_for_remote
         from markitai.webextract.enrichers.base import EnrichmentPolicy
@@ -816,17 +833,17 @@ class PlaywrightRenderer:
 
         if remote_consent == "never" or _env_no_remote_fetch():
             return "", None, ""
-        # ``ask`` intentionally does not open a second prompt on this narrowly
-        # scoped public X/Twitter path. It must still honor a process-wide No
-        # decision already made by the complete-service consent prompt.
-        if peek_cached_remote_consent() is False:
-            return "", None, ""
 
         enricher = XOEmbedEnricher()
         policy = EnrichmentPolicy(allow_network=True, allow_async=True)
         if not enricher.should_run(url, policy):
             return "", None, ""
         if not (await assess_url_for_remote(url)).allowed:
+            return "", None, ""
+        if not resolve_remote_consent(
+            _consent_config(remote_consent),
+            services=["fxtwitter", "twitter-oembed"],
+        ):
             return "", None, ""
 
         disclose_remote_use(["fxtwitter", "twitter-oembed"])
@@ -1090,8 +1107,11 @@ async def _capture_screenshot(
         output_dir.mkdir(parents=True, exist_ok=True)
         screenshot_path = output_dir / filename
 
-        # Get settings from config
-        full_page = getattr(config, "full_page", True)
+        # Get settings from config. Full-page capture is not configurable:
+        # ScreenshotConfig has never declared `full_page`, so the old
+        # getattr() default won every time — the knob only looked adjustable.
+        # `max_height` is the real bound on a runaway page.
+        full_page = True
         quality = getattr(config, "quality", 85)
         max_height = getattr(config, "max_height", 10000)
 

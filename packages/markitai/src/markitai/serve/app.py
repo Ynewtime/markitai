@@ -360,6 +360,83 @@ def _state(request: Request) -> ServeState:
     return request.app.state.markitai
 
 
+def _is_loopback_peer(request: Request) -> bool:
+    """Whether the TCP peer of *request* is the machine running the server.
+
+    Unlike Host/Origin, the peer address is chosen by the kernel, not by the
+    caller, so it is the one trustworthy answer to "is this the operator's own
+    machine?". A missing client (in-process ASGI calls) counts as loopback.
+    """
+    host = request.client.host if request.client is not None else "127.0.0.1"
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host == "localhost"
+
+
+def _url_rejection_detail(url: str, reason: str | None) -> str:
+    """Explain why a remote caller's URL was refused, and what to do instead."""
+    shown = url if len(url) <= 120 else f"{url[:117]}..."
+    if reason == "invalid_url":
+        cause = "only absolute public http(s) URLs can be fetched"
+    elif reason == "credential_material":
+        cause = (
+            "it carries credential material (userinfo, token, key or "
+            "signature) that would be stored in this server's conversion "
+            "history, which every caller can read"
+        )
+    elif reason == "hostname_resolution_failed":
+        cause = "its hostname does not resolve to a public address"
+    else:
+        cause = (
+            "it points at a private, local or link-local address, and this "
+            "server is listening beyond loopback — fetching it for a remote "
+            "caller would turn the server into an SSRF proxy into its own "
+            "network"
+        )
+    return (
+        f"refusing to fetch '{shown}': {cause}. Requests from other machines "
+        "may only target public URLs; to convert intranet URLs run "
+        "`markitai serve` on loopback (the default) and use it from that "
+        "machine."
+    )
+
+
+async def _guard_fetch_targets(request: Request, urls: Sequence[str]) -> None:
+    """Reject inward-facing fetch targets requested by a non-loopback peer.
+
+    The Host/Origin guard only defends against a malicious *page* driving the
+    victim's browser; a caller that talks to the API directly (curl, another
+    LAN host) bypasses it entirely. ``markitai serve --host 0.0.0.0`` therefore
+    needs a second rule: only the local machine may aim the fetcher at
+    private/local addresses.
+
+    ``assess_url_for_remote`` is reused whole rather than re-implemented from
+    its parts: it already combines the private/local netloc test with a
+    full-DNS-record global-address check (closing the "public name, private
+    A record" hole), and its extra credential rule is desirable here for the
+    same reason — a remote caller's URL is persisted into a job history that
+    every other caller can read.
+    """
+    if _is_loopback_peer(request):
+        return
+
+    from markitai.fetch_policy import assess_url_for_remote
+
+    assessments = await asyncio.gather(*(assess_url_for_remote(url) for url in urls))
+    for url, assessment in zip(urls, assessments):
+        if assessment.allowed:
+            continue
+        logger.warning(
+            "[Serve] Refused URL fetch for non-loopback peer {}: {}",
+            request.client.host if request.client is not None else "?",
+            assessment.reason,
+        )
+        raise HTTPException(
+            status_code=403, detail=_url_rejection_detail(url, assessment.reason)
+        )
+
+
 def _get_job(request: Request, job_id: str) -> Job:
     """Return the job with *job_id* or raise 404."""
     job = _state(request).registry.get(job_id)
@@ -1309,12 +1386,7 @@ def create_app(
     @app.middleware("http")
     async def protect_local_settings(request: Request, call_next: Any) -> Response:
         if request.url.path.startswith("/api/settings/llm"):
-            host = request.client.host if request.client is not None else "127.0.0.1"
-            try:
-                loopback = ipaddress.ip_address(host).is_loopback
-            except ValueError:
-                loopback = host == "localhost"
-            if not loopback:
+            if not _is_loopback_peer(request):
                 return JSONResponse(
                     {"detail": "LLM settings are available on loopback only"},
                     status_code=403,
@@ -2139,6 +2211,8 @@ def create_app(
                 status_code=422, detail="urls must be a JSON array of non-empty strings"
             )
 
+        await _guard_fetch_targets(request, [u.strip() for u in url_list])
+
         try:
             opts = JobOptions.model_validate_json(options or "{}")
         except ValidationError as e:
@@ -2287,6 +2361,9 @@ def create_app(
         else:
             from markitai.utils.cli_helpers import url_to_filename
 
+            # Same gate as job creation: a rerun re-fetches item.name, and
+            # rehydrated meta is untrusted on-disk state.
+            await _guard_fetch_targets(request, [item.name])
             item.source = item.name
             item.output_name = item.output_name or url_to_filename(item.name)
 

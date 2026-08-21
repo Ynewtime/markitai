@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from markitai.fetch_http import resolve_proxy_for_url
 from markitai.fetch_session import get_default_session
 
 if TYPE_CHECKING:
@@ -107,7 +108,9 @@ def _get_playwright_fetch_kwargs(
         "extra_wait_ms": profile_overrides.get(
             "extra_wait_ms", config.playwright.extra_wait_ms
         ),
-        "proxy": _detect_proxy() if getattr(config, "auto_proxy", True) else None,
+        # The browser is launched with this proxy, so the NO_PROXY bypass has
+        # to be applied here — a launched context has no per-request escape.
+        "proxy": resolve_proxy_for_url(url, _detect_proxy()),
         "screenshot_config": screenshot_config,
         "output_dir": output_dir,
         "renderer": renderer,

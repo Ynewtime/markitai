@@ -107,12 +107,16 @@ class TestDoctorUnifiedUI:
             mock_config_manager.return_value.load.return_value = mock_config
             result = cli_runner.invoke(doctor)
 
-            # Should contain section headers (in English or Chinese)
-            # Check for "Required" or Chinese equivalent
+            # Should contain section headers (in English or Chinese).
+            # "Required Dependencies" is no longer rendered: nothing is
+            # unconditionally required since OCR became the `ocr` extra, and
+            # an empty section header is noise. Optional capabilities always
+            # render.
             assert (
-                "Required Dependencies" in result.output
-                or "\u5fc5\u9700\u4f9d\u8d56" in result.output
+                "Optional Capabilities" in result.output
+                or "\u53ef\u9009\u80fd\u529b" in result.output
             )
+            assert "Required Dependencies" not in result.output
 
 
 class TestInstallHints:
@@ -134,11 +138,23 @@ class TestInstallHints:
         hint = get_install_hint("libreoffice", platform="win32")
         assert "winget install" in hint
 
-    def test_ffmpeg_hint_all_platforms(self) -> None:
-        """Should have hints for all major platforms."""
+    def test_no_platform_recipe_for_a_tool_we_do_not_use(self) -> None:
+        """Dropped tools must not keep a platform-specific install recipe.
+
+        This replaces a test that asserted ffmpeg had a hint on every
+        platform. After the ffmpeg entry was deleted it kept passing anyway:
+        for an unknown key ``get_install_hint`` falls back to the generic
+        "Install {name} using your package manager", which is never empty, so
+        the assertion could no longer fail. Assert the property that actually
+        holds now — markitai does not process audio or video, so it must not
+        ship a curated recipe for ffmpeg.
+        """
+        recipes = ("brew install", "winget install", "apt-get", "apt ", "choco")
         for platform in ["darwin", "linux", "win32"]:
             hint = get_install_hint("ffmpeg", platform=platform)
-            assert hint, f"Missing hint for ffmpeg on {platform}"
+            assert not any(recipe in hint for recipe in recipes), (
+                f"doctor still ships an ffmpeg recipe for {platform}: {hint!r}"
+            )
 
     def test_playwright_hint(self) -> None:
         """Should return playwright install command."""
@@ -596,10 +612,6 @@ class TestDoctorCapabilityContract:
                 new=libreoffice_probe,
             ),
             patch(
-                "markitai.cli.commands.doctor._check_ffmpeg",
-                return_value=self._result("FFmpeg", "missing", "FFmpeg not installed"),
-            ),
-            patch(
                 "markitai.cli.commands.doctor._check_rapidocr",
                 return_value=self._result(
                     "RapidOCR",
@@ -608,7 +620,8 @@ class TestDoctorCapabilityContract:
                     if rapidocr_status == "ok"
                     else "RapidOCR not installed",
                     "install RapidOCR",
-                ),
+                )
+                | {"optional": True},
             ),
             patch("markitai.cli.commands.doctor.subprocess.run") as mock_run,
         ):
@@ -740,10 +753,10 @@ class TestDoctorCapabilityContract:
         assert summary_lines, result.output
         assert all("!" in line and "✓" not in line for line in summary_lines)
 
-    def test_missing_rapidocr_exits_nonzero_even_with_fix(
+    def test_missing_rapidocr_exits_zero(
         self, cli_runner: CliRunner, mock_config: object
     ) -> None:
-        """The core OCR dependency stays red when --fix cannot install it."""
+        """OCR is an opt-in extra: not having it is not an unhealthy install."""
         result, mock_run = self._invoke(
             cli_runner,
             mock_config,
@@ -752,8 +765,24 @@ class TestDoctorCapabilityContract:
             rapidocr_status="missing",
         )
 
-        assert result.exit_code == 1
+        assert result.exit_code == 0, result.output
+        # rapidocr is not in FIXABLE_COMPONENTS, so --fix must not shell out
         mock_run.assert_not_called()
+
+    def test_missing_rapidocr_renders_under_optional_capabilities(
+        self, cli_runner: CliRunner, mock_config: object
+    ) -> None:
+        """Reported, not failed — and never under a 'Required' heading."""
+        result, _ = self._invoke(
+            cli_runner,
+            mock_config,
+            playwright_status="ok",
+            rapidocr_status="missing",
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "RapidOCR" in result.output
+        assert "Required Dependencies" not in result.output
 
     def test_fix_installs_browser_with_markitai_python_from_isolated_cwd(
         self, cli_runner: CliRunner, mock_config: object
@@ -876,38 +905,44 @@ class TestDoctorOutputFormat:
     def _invoke_doctor_failing(
         self, cli_runner: CliRunner, mock_config: object, *, config_path: object = None
     ):
-        """Invoke doctor with RapidOCR missing (required dep failure)."""
+        """Invoke doctor on a genuinely unhealthy install.
+
+        The failure is a *configured* Playwright fetch strategy with no
+        Playwright installed. It used to be "RapidOCR missing", but OCR is an
+        opt-in extra now and its absence is no longer a failure — only a
+        promise the user's own config makes and the machine cannot keep is.
+        """
+        mock_config.fetch.strategy = "playwright"  # type: ignore[attr-defined]
+        mock_config.screenshot.enabled = False  # type: ignore[attr-defined]
         with (
             patch("markitai.cli.commands.doctor.ConfigManager") as mock_cm,
             patch(
                 "markitai.cli.commands.doctor.shutil.which",
-                return_value="/usr/bin/ffmpeg",
+                return_value=None,
             ),
             patch("markitai.utils.office.find_libreoffice", return_value=None),
             patch("markitai.utils.office_mac.find_ms_office_app", return_value=False),
             patch("markitai.fetch_playwright.clear_browser_cache"),
             patch(
                 "markitai.fetch_playwright.is_playwright_available",
-                return_value=True,
+                return_value=False,
             ),
             patch(
                 "markitai.fetch_playwright.is_playwright_browser_installed",
-                return_value=True,
+                return_value=False,
             ),
             patch(
                 "markitai.cli.commands.doctor._check_rapidocr",
                 return_value={
                     "name": "RapidOCR",
-                    "description": "OCR for scanned documents",
+                    "description": "OCR for scanned documents (--ocr)",
                     "status": "missing",
-                    "message": "RapidOCR not installed",
-                    "install_hint": "install RapidOCR",
+                    "optional": True,
+                    "message": "not installed — --ocr unavailable",
+                    "install_hint": 'uv tool install "markitai[ocr]" --force',
                 },
             ),
-            patch(
-                "markitai.cli.commands.doctor.subprocess.run",
-                return_value=MagicMock(returncode=0, stdout="ffmpeg version 7.0.0"),
-            ),
+            patch("markitai.cli.commands.doctor.subprocess.run"),
         ):
             mock_cm.return_value.load.return_value = mock_config
             mock_cm.return_value.config_path = config_path

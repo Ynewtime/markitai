@@ -353,26 +353,24 @@ markitai https://example.com -s playwright -b kreuzberg   # -s 与 -b 可自由�
 Cloudflare Browser Rendering 在 Free 计划上可用。Workers AI `toMarkdown` 对 PDF/Office/CSV/XML 免费；图片转换使用 Neurons 配额。对于有本地转换器的格式，native/kreuzberg 通常输出质量更高。存在更优本地转换器时，`-b cloudflare` 会给出提示。
 :::
 
-### 已弃用的旧后端参数
+### 已移除的旧后端参数
 
-`--playwright`、`--defuddle`、`--static`、`--jina`、`--cloudflare` 和 `--kreuzberg` 仍可作为已弃用的别名使用，每次使用都会在 stderr 打印一行弃用提示，并映射到上面的新参数：
+下面 6 个后端别名已在 0.24 **移除**。继续传入会得到一条指明替代写法的用法错误，因此旧脚本会直接报错，而不是悄悄用错引擎完成转换：
 
-| 已弃用参数 | 等价于 |
+| 已移除参数 | 改用 |
 |-----------|--------|
 | `--playwright` | `-s playwright` |
 | `--defuddle` | `-s defuddle` |
 | `--static` | `-s static` |
 | `--jina` | `-s jina` |
-| `--cloudflare` | `-s cloudflare`（同时启用 CF 文件转换，与 `-b cloudflare` 效果相同） |
+| `--cloudflare` | `-s cloudflare`（需要 CF 文件转换时再加 `-b cloudflare`） |
 | `--kreuzberg` | `-b kreuzberg` |
 
 ```bash
-markitai https://example.com --defuddle   # 已弃用，等价于：markitai https://example.com -s defuddle
+markitai https://example.com -s defuddle   # 替代旧的 --defuddle
 ```
 
-::: warning
-`--playwright`、`--defuddle`、`--static`、`--jina` 和 `--cloudflare` 之间互斥，且与 `-s/--strategy` 互斥。`--kreuzberg` 与 `-b/--backend` 互斥。
-:::
+这些别名带来的互斥规则也随之取消：`-s/--strategy` 与 `-b/--backend` 相互正交，可自由组合；唯一保留的冲突是 `-b kreuzberg` 与 `-s cloudflare`，因为两者都会接管文件转换。
 
 ## 初始化命令
 
@@ -504,21 +502,20 @@ SPA 域名会在静态抓取检测到 JavaScript 依赖时自动学习。这可�
 
 ### `markitai doctor`
 
-检查核心状态、可选能力和认证状态。缺少未启用的可选工具只会显示警告，不代表基础安装失败。当核心 RapidOCR 检查失败、已配置的 Playwright 工作流无法启动、活跃 API 模型引用了缺失的环境变量、已启用的本地 LLM Provider 无法加载或认证，或明确请求的自动修复未成功时，命令会以非零状态码退出，因此脚本和 CI 可以依赖该结果。
+检查核心状态、可选能力和认证状态。缺少未启用的可选工具只会显示警告，不代表基础安装失败。当已配置的 Playwright 工作流无法启动、活跃 API 模型引用了缺失的环境变量、已启用的本地 LLM Provider 无法加载或认证，或明确请求的自动修复未成功时，命令会以非零状态码退出，因此脚本和 CI 可以依赖该结果。
 
 ```bash
 markitai doctor
 markitai doctor --fix     # Playwright 包已存在时，安全安装并重新检查 Chromium
 markitai doctor --json    # JSON 输出
-markitai doctor --suggest-extras   # 输出适合 `uv tool install "markitai[...]"` 的逗号分隔 extras 列表，包含 browser/extra-fetch/kreuzberg/svg/heif 及检测到的提供商 extra
+markitai doctor --suggest-extras   # 输出适合 `uv tool install "markitai[...]"` 的逗号分隔 extras 列表，包含 browser/extra-fetch/kreuzberg/svg/heif/ocr 及检测到的提供商 extra
 ```
 
-此命令会区分核心要求与可选能力：
+每一项都是能力报告，没有启用的能力不会让整次检查失败：
 
-- **核心要求：RapidOCR**，用于扫描文档 OCR
+- **可选：RapidOCR**，用于对扫描件和图片执行 `--ocr`。它随 `ocr` extra 提供，不在核心安装内，因此这里显示「未安装」只表示 OCR 未开启，而不是安装损坏
 - **未配置时可选：Playwright**，用于动态 URL 抓取（SPA 渲染）；当 `fetch.strategy` 为 `playwright` 或 `screenshot.enabled` 为 true 时，它会成为阻断检查
 - **可选：LibreOffice**，用于旧版 Office 转换和幻灯片渲染（macOS 上未安装时会回退到已装的 MS Office）
-- **可选：FFmpeg**，用于音视频工具链
 - **LLM API**：配置和模型状态
 - **Vision Model**：用于图像分析（从 litellm 自动检测）
 - **本地 Provider 认证**：Claude Agent、GitHub Copilot 和 ChatGPT 的认证状态（如果已配置）
@@ -533,13 +530,10 @@ markitai doctor --suggest-extras   # 输出适合 `uv tool install "markitai[...
 
   • 配置文件：~/.markitai/config.json
 
-必需依赖
-  ✓ RapidOCR: v1.4.0, lang: en (English)
-
 可选能力
+  ⚠ RapidOCR: not installed — --ocr unavailable (everything else works)
   ⚠ Playwright: Playwright not installed
   ⚠ LibreOffice: Not installed
-  ✓ FFmpeg: v6.0
 
 LLM
   ✓ LLM API: 1 active model(s) configured
@@ -549,7 +543,7 @@ LLM
 认证状态
   ✓ Copilot Auth: Authenticated
 
-⚠ 核心检查通过（3 项必需或已配置检查通过，2 项非阻断警告）
+⚠ 核心检查通过（3 项必需或已配置检查通过，3 项非阻断警告）
 ```
 
 ::: tip

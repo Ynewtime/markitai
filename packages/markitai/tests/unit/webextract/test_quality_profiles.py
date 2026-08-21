@@ -3,7 +3,9 @@ from __future__ import annotations
 """Tests for typed native extraction quality profiles."""
 
 
+from markitai.webextract import quality
 from markitai.webextract.quality import assess_native_markdown
+from markitai.webextract.types import ContentProfile
 
 # --- social_post profile ---
 
@@ -257,6 +259,104 @@ def test_empty_string_fails_all_profiles() -> None:
     ):
         assessment = assess_native_markdown("", profile=profile)
         assert assessment.accepted is False, f"Expected failure for profile={profile}"
+
+
+# --- profile registry coverage (anti-corrosion) ---
+
+
+def _registered_profile_values() -> set[str]:
+    """Profile values registered in the quality profile map.
+
+    Reads through the map keys so the assertion holds whether entries are
+    keyed by ``ContentProfile`` members or by their raw ``.value`` strings.
+    """
+    return {str(getattr(key, "value", key)) for key in quality._PROFILE_MAP}
+
+
+def test_every_content_profile_has_a_registered_assessor() -> None:
+    """Every ContentProfile member must route to a real assessment function.
+
+    Guards against the class of bug where a profile is added to the enum (or
+    renamed) without registering it, silently demoting that content type to
+    the generic gate.
+    """
+    missing = sorted(
+        profile.value
+        for profile in ContentProfile
+        if profile.value not in _registered_profile_values()
+    )
+    assert not missing, f"ContentProfile members with no quality profile: {missing}"
+
+
+def test_discussion_thread_profile_uses_thread_heuristics() -> None:
+    """Reddit/HN threads must hit the thread gate, not the generic fallback."""
+    assessment = assess_native_markdown(
+        _BAD_THREAD_WITH_DISCOVER,
+        profile=ContentProfile.DISCUSSION_THREAD.value,
+    )
+    assert assessment.accepted is False
+    assert "recommendation_noise" in assessment.reasons
+
+
+def test_discussion_thread_profile_rejects_too_short_content() -> None:
+    """The thread gate's word floor must apply to discussion_thread."""
+    assessment = assess_native_markdown(
+        "hi there",
+        profile=ContentProfile.DISCUSSION_THREAD.value,
+    )
+    assert assessment.accepted is False
+    assert "too_short" in assessment.reasons
+
+
+def test_legacy_conversation_thread_alias_maps_to_thread_profile() -> None:
+    """The historical ``conversation_thread`` name stays a working alias."""
+    alias = assess_native_markdown(
+        _BAD_THREAD_WITH_DISCOVER, profile="conversation_thread"
+    )
+    canonical = assess_native_markdown(
+        _BAD_THREAD_WITH_DISCOVER,
+        profile=ContentProfile.DISCUSSION_THREAD.value,
+    )
+    assert alias == canonical
+    assert alias.accepted is False
+
+
+# --- rich_media_page profile ---
+
+_YOUTUBE_PAGE_MARKDOWN = """\
+# Some Video Title
+
+**Channel:** Some Channel
+
+[Watch on YouTube](https://www.youtube.com/watch?v=abc123)
+
+Discover more of my videos at example.com
+"""
+
+_METADATA_ONLY_RICH_MEDIA = "#"
+
+
+def test_rich_media_page_accepts_short_video_page() -> None:
+    """Video pages are legitimately short and must not hit thread/social gates.
+
+    ``Discover more`` is ordinary prose in a video description; only the
+    X/Twitter gates treat it as recommendation noise.
+    """
+    assessment = assess_native_markdown(
+        _YOUTUBE_PAGE_MARKDOWN,
+        profile=ContentProfile.RICH_MEDIA_PAGE.value,
+    )
+    assert assessment.accepted is True
+
+
+def test_rich_media_page_rejects_contentless_page() -> None:
+    """A page with no readable text still fails the rich media gate."""
+    assessment = assess_native_markdown(
+        _METADATA_ONLY_RICH_MEDIA,
+        profile=ContentProfile.RICH_MEDIA_PAGE.value,
+    )
+    assert assessment.accepted is False
+    assert "too_short" in assessment.reasons
 
 
 def test_unknown_profile_uses_generic_article_behaviour() -> None:

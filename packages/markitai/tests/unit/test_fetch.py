@@ -2283,7 +2283,6 @@ class TestFetchWithFallback:
                         "session_ttl_seconds": 600,
                     },
                 )(),
-                "auto_proxy": False,
                 "remote_consent": "always",
             },
         )()
@@ -2443,7 +2442,6 @@ class TestFetchWithFallback:
                         "session_ttl_seconds": 600,
                     },
                 )(),
-                "auto_proxy": False,
             },
         )()
 
@@ -2921,7 +2919,6 @@ class TestScreenshotDecoupled:
                         "http_credentials": None,
                     },
                 )(),
-                "auto_proxy": False,
             },
         )()
 
@@ -3308,18 +3305,17 @@ class TestDetectProxyAdditional:
         with (
             patch.dict("os.environ", {}, clear=True),
             patch("markitai.fetch_session._get_system_proxy", return_value=("", "")),
-            patch("socket.socket") as mock_socket,
         ):
-            # Make all port probes fail
-            mock_sock_instance = MagicMock()
-            mock_sock_instance.connect_ex.return_value = 1  # Connection refused
-            mock_socket.return_value = mock_sock_instance
-
             result = _detect_proxy(force_recheck=True)
             assert result == ""
 
-    def test_detect_proxy_probes_common_ports(self) -> None:
-        """Test that proxy detection probes common ports."""
+    def test_detect_proxy_does_not_probe_local_ports(self) -> None:
+        """Detection trusts declared config only — no localhost port scan.
+
+        A TUN-mode proxy accepts TCP connections on every local port, so the
+        old ``connect_ex()`` probe reported proxies that did not exist. See
+        tests/unit/test_fetch_proxy_resolution.py for the full contract.
+        """
         from markitai import fetch
         from markitai.fetch import _detect_proxy
 
@@ -3330,13 +3326,13 @@ class TestDetectProxyAdditional:
             patch("markitai.fetch_session._get_system_proxy", return_value=("", "")),
             patch("socket.socket") as mock_socket,
         ):
-            # First port probe succeeds
             mock_sock_instance = MagicMock()
-            mock_sock_instance.connect_ex.return_value = 0
+            mock_sock_instance.connect_ex.return_value = 0  # TUN: everything "open"
             mock_socket.return_value = mock_sock_instance
 
             result = _detect_proxy(force_recheck=True)
-            assert result.startswith("http://127.0.0.1:")
+            assert result == ""
+            mock_socket.assert_not_called()
 
 
 class TestGetSystemProxy:
@@ -3572,7 +3568,6 @@ class TestFetchWithFallbackJsDetection:
                         "session_ttl_seconds": 600,
                     },
                 )(),
-                "auto_proxy": False,
             },
         )()
 
@@ -5352,22 +5347,28 @@ class TestHttpClientConnectionReuse:
 
 
 class TestProxyAutoProxyRespected:
-    """Medium-7: auto_proxy=False should disable proxy for all backends."""
+    """Proxying is switched off with NO_PROXY, not with a bespoke config key.
 
-    def test_get_proxy_for_url_returns_empty_when_auto_proxy_disabled(self) -> None:
-        """get_proxy_for_url should return empty string when auto_proxy=False."""
+    ``auto_proxy`` used to be read with ``getattr(config, "auto_proxy", True)``
+    even though no config model declared it, so the switch was permanently on.
+    ``NO_PROXY`` is the standard mechanism and every fetch path honours it.
+    """
+
+    def test_no_proxy_wildcard_disables_the_proxy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from markitai.fetch import get_proxy_for_url
 
-        result = get_proxy_for_url("https://example.com", auto_proxy=False)
-        assert result == ""
+        monkeypatch.setenv("NO_PROXY", "*")
+        with patch("markitai.fetch._detect_proxy", return_value="http://proxy:8080"):
+            assert get_proxy_for_url("https://example.com") == ""
 
-    def test_get_proxy_for_url_returns_proxy_when_auto_proxy_enabled(self) -> None:
-        """get_proxy_for_url should return detected proxy when auto_proxy=True."""
+    def test_get_proxy_for_url_returns_the_detected_proxy(self) -> None:
+        """Without a NO_PROXY match the detected proxy is used."""
         from markitai.fetch import get_proxy_for_url
 
         with patch("markitai.fetch._detect_proxy", return_value="http://proxy:8080"):
-            result = get_proxy_for_url("https://example.com", auto_proxy=True)
-            assert result == "http://proxy:8080"
+            assert get_proxy_for_url("https://example.com") == "http://proxy:8080"
 
     def test_get_proxy_for_url_respects_no_proxy_patterns(self) -> None:
         """get_proxy_for_url should skip proxy for NO_PROXY domains."""
@@ -5378,10 +5379,10 @@ class TestProxyAutoProxyRespected:
         fetch.get_default_session().detected_proxy_bypass = "example.com,internal.corp"
 
         try:
-            result = get_proxy_for_url("https://example.com/page", auto_proxy=True)
+            result = get_proxy_for_url("https://example.com/page")
             assert result == ""
 
-            result = get_proxy_for_url("https://other.com/page", auto_proxy=True)
+            result = get_proxy_for_url("https://other.com/page")
             assert result == "http://proxy:8080"
         finally:
             fetch.get_default_session().detected_proxy = None

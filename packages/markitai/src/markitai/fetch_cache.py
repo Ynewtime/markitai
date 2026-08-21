@@ -179,7 +179,7 @@ class FetchCache:
 
         When strategy is provided, the cache key is scoped to that strategy,
         preventing cache collisions when the same URL is fetched with different
-        strategies (e.g., --playwright vs --static).
+        strategies (e.g., -s playwright vs -s static).
 
         Args:
             url: URL to hash

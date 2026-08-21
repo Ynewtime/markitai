@@ -294,7 +294,7 @@ async def process_url(
                 console=diag_console,
             )
             ui.step(
-                "Try again later or use --playwright for local rendering",
+                "Try again later or use '-s playwright' for local rendering",
                 console=diag_console,
             )
             raise SystemExit(1)

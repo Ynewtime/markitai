@@ -434,3 +434,62 @@ class TestImageConverterSVG:
         from markitai.converter.kreuzberg import KREUZBERG_FORMATS
 
         assert FileFormat.SVG not in KREUZBERG_FORMATS
+
+
+class TestOcrBackendMissingIsNotSilent:
+    """Asking for --ocr without the backend must fail, not quietly degrade.
+
+    ``_convert_with_ocr`` caught every ``ImportError`` and returned an image
+    placeholder with only a log warning, so ``markitai scan.png --ocr``
+    exited 0 with output that contains no recognised text at all. That was
+    rare while RapidOCR was a core dependency; once OCR moved behind the
+    ``ocr`` extra it became what everyone without the extra sees. A genuine
+    runtime OCR failure still degrades — only "the backend is not installed"
+    is fatal, because it is the one the user can fix with one command.
+    """
+
+    def _png(self, tmp_path: Path) -> Path:
+        from PIL import Image
+
+        path = tmp_path / "scan.png"
+        Image.new("RGB", (40, 20), "white").save(path)
+        return path
+
+    def _config(self):
+        from markitai.config import MarkitaiConfig
+
+        config = MarkitaiConfig()
+        config.ocr.enabled = True
+        return config
+
+    def test_missing_backend_raises_with_the_install_command(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai import ocr as ocr_module
+        from markitai.converter.image import ImageConverter
+
+        monkeypatch.setattr(ocr_module, "is_ocr_available", lambda: False)
+        converter = ImageConverter(config=self._config())
+
+        with pytest.raises(ocr_module.OCRBackendMissing) as excinfo:
+            converter.convert(self._png(tmp_path), output_dir=tmp_path / "out")
+
+        assert "markitai[ocr]" in str(excinfo.value)
+
+    def test_a_runtime_ocr_failure_still_degrades_to_a_placeholder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai import ocr as ocr_module
+        from markitai.converter.image import ImageConverter
+
+        def boom(self, *args, **kwargs):
+            raise RuntimeError("engine exploded on this image")
+
+        monkeypatch.setattr(ocr_module, "is_ocr_available", lambda: True)
+        monkeypatch.setattr(
+            ocr_module.OCRProcessor, "recognize_to_markdown", boom, raising=True
+        )
+        converter = ImageConverter(config=self._config())
+
+        result = converter.convert(self._png(tmp_path), output_dir=tmp_path / "out")
+        assert "scan" in result.markdown

@@ -50,6 +50,20 @@ _LAZY_COMMANDS: dict[str, tuple[str, str, str]] = {
 }
 
 
+# Removed option name -> the spelling that replaced it. These were deprecated
+# aliases for -s/--strategy and -b/--backend; click alone would only say "No
+# such option", so parse_args turns them into a usage error naming the
+# replacement.
+_REMOVED_OPTIONS: dict[str, str] = {
+    "--playwright": "-s playwright",
+    "--defuddle": "-s defuddle",
+    "--static": "-s static",
+    "--jina": "-s jina",
+    "--cloudflare": "-s cloudflare",
+    "--kreuzberg": "-b kreuzberg",
+}
+
+
 class MarkitaiGroup(click.RichGroup):
     """Custom Group that supports main command with arguments and subcommands.
 
@@ -148,6 +162,21 @@ class MarkitaiGroup(click.RichGroup):
         self.add_command(cmd, cmd_name)
         return cmd
 
+    @staticmethod
+    def _reject_removed_options(args: list[str]) -> None:
+        """Fail with a migration hint when a removed option name is used.
+
+        Raises:
+            click.UsageError: If ``args`` contains a removed option name.
+        """
+        for arg in args:
+            name = arg.split("=", 1)[0]
+            replacement = _REMOVED_OPTIONS.get(name)
+            if replacement is not None:
+                raise click.UsageError(
+                    f"{name} has been removed, use '{replacement}' instead."
+                )
+
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         """Parse arguments, detecting if first arg is a subcommand or file path."""
         # Find INPUT: first positional arg that's not:
@@ -159,6 +188,8 @@ class MarkitaiGroup(click.RichGroup):
         # the invocation is ambiguous (e.g. `markitai note.txt config list`)
         # and must fail loudly instead of silently dropping INPUT.
         ctx.ensure_object(dict)
+        if not ctx.resilient_parsing:
+            self._reject_removed_options(args)
         skip_next = False
         input_idx: int | None = None
         input_token: str | None = None

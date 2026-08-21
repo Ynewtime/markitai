@@ -789,13 +789,13 @@ Configure how URLs are fetched:
 
 For public URLs, `auto` may fall back to a remote extraction service without asking. Local strategies still run first on standard domains. When a process reaches its first remote attempt, Markitai writes a disclosure to stderr before sending the requested URL to the next service in the chain. The notice names the complete service set covered by the process-wide decision: defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed. Services are tried one at a time; the URL is not broadcast to all of them.
 
-For public X/Twitter status or article URLs, Playwright may try FxTwitter and then Twitter oEmbed after local DOM extraction fails. This public-URL enrichment does not open its own `ask` prompt, but it uses the same one-time stderr disclosure and honors a process-wide decline already given to the complete-service prompt. Both `fetch.remote_consent=never` and `MARKITAI_NO_REMOTE_FETCH=1` disable it.
+For public X/Twitter status or article URLs, Playwright may try FxTwitter and then Twitter oEmbed after local DOM extraction fails. This enrichment shares the *same* process-wide consent decision as every other remote service: under `ask` it can raise the one shared prompt itself, reuses a decision already made in the run, and is skipped when the run cannot prompt. Both `fetch.remote_consent=never` and `MARKITAI_NO_REMOTE_FETCH=1` disable it.
 
 Private, local, intranet, and credential-bearing URLs never use remote extraction, even when a remote strategy is selected explicitly. Credential-bearing includes URL userinfo and sensitive query/fragment parameters such as tokens, signatures, credentials, passwords, API keys, and authorization codes. In the `auto` policy chain, domains matched by `fetch.policy.local_only_patterns` or `NO_PROXY` (when `inherit_no_proxy` is enabled) also stay local. For an otherwise public URL, explicitly passing a non-`auto` remote `-s` flag is an intentional override of those pattern-based rules. A remote `fetch.strategy` set only in config remains governed by `fetch.remote_consent` and emits the same first-use disclosure.
 
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
-| `fetch.remote_consent` | `ask`, `always`, `never` | `always` | `always`: allow remote fallback for public URLs without asking and disclose the first remote attempt on stderr; `ask`: prompt once per process on an interactive TTY, otherwise skip remote extraction services (the public X/Twitter enrichment exception above only discloses); `never`: local strategies only |
+| `fetch.remote_consent` | `ask`, `always`, `never` | `always` | `always`: allow remote fallback for public URLs without asking and disclose the first remote attempt on stderr; `ask`: prompt once per process on an interactive TTY, otherwise skip every remote extraction service, X/Twitter enrichment included; `never`: local strategies only |
 
 `MARKITAI_NO_REMOTE_FETCH=1` (or `true`/`yes`) is the hard opt-out: it blocks remote extraction even when `-s defuddle`, `-s jina`, or `-s cloudflare` is passed. Without that environment override, explicitly passing one of those CLI flags opts into that service for the run and can override `fetch.remote_consent=never` plus `local_only_patterns`/`NO_PROXY` for an otherwise public URL. The private/local/credential-bearing URL safeguard still applies.
 
@@ -852,10 +852,10 @@ Defuddle is free and requires no API key or authentication. It's a good default 
 
 ### Cloudflare Settings
 
-Cloudflare provides two capabilities through a unified `--cloudflare` flag:
+Cloudflare provides two capabilities, selected independently:
 
-1. **Browser Rendering** (`/content` API, which fetches rendered HTML and then extracts locally through the same native webextract pipeline as every other strategy) for URL-to-markdown conversion
-2. **Workers AI toMarkdown** for file-to-markdown conversion (PDF, Office, CSV, XML, images)
+1. **Browser Rendering** (`-s cloudflare`) — the `/content` API fetches rendered HTML, which is then extracted locally through the same native webextract pipeline as every other strategy — for URL-to-markdown conversion
+2. **Workers AI toMarkdown** (`-b cloudflare`) for file-to-markdown conversion (PDF, Office, CSV, XML, images)
 
 ```json
 {
@@ -917,8 +917,8 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 
 ::: warning Limitations & Caveats
 - **Concurrency**: Free plan allows **2 concurrent browser instances**. Markitai automatically serializes CF BR requests and retries on 429 rate-limit errors with exponential backoff, so high `url_concurrency` values are safe but won't speed up CF BR fetching.
-- **Site compatibility**: Sites with aggressive anti-bot protection (e.g. x.com, twitter.com) may return 400 errors via CF BR. For these sites, use `--playwright` or `--jina` instead.
-- **File conversion quality**: For formats that have a local converter (PDF, DOCX, XLSX, etc.), CF Workers AI `toMarkdown` generally produces **lower quality** output than local converters (e.g. less accurate formatting, no image extraction). `--cloudflare` will warn when a better local converter is available. CF `toMarkdown` is most useful for formats without a local converter (`.numbers`, `.ods`, `.svg`, etc.).
+- **Site compatibility**: Sites with aggressive anti-bot protection (e.g. x.com, twitter.com) may return 400 errors via CF BR. For these sites, use `-s playwright` or `-s jina` instead.
+- **File conversion quality**: For formats that have a local converter (PDF, DOCX, XLSX, etc.), CF Workers AI `toMarkdown` generally produces **lower quality** output than local converters (e.g. less accurate formatting, no image extraction). `-b cloudflare` will warn when a better local converter is available. CF `toMarkdown` is most useful for formats without a local converter (`.numbers`, `.ods`, `.svg`, etc.).
 :::
 
 ### Fetch Policy Engine

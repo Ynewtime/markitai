@@ -72,6 +72,21 @@ if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
 
 
+def _plain(text: str) -> str:
+    """Escape caller-supplied text so rich renders it verbatim.
+
+    Everything these helpers print is composed of literal style tags plus a
+    message from the caller. That message routinely carries square brackets —
+    ``markitai[ocr]``, ``[y/N]``, ``[Fetch]`` — which rich would otherwise
+    read as markup and drop, turning an install hint into a command that
+    reinstalls the same thing. Escaping here rather than at each call site is
+    what keeps the next message from regressing.
+    """
+    from rich.markup import escape
+
+    return escape(text)
+
+
 def title(text: str, *, console: Console | None = None) -> None:
     """Display a title with diamond symbol.
 
@@ -80,7 +95,7 @@ def title(text: str, *, console: Console | None = None) -> None:
         console: Optional console for output (defaults to shared console).
     """
     c = console or get_console()
-    c.print(f"[cyan]{MARK_TITLE}[/] [bold]{text}[/]")
+    c.print(f"[cyan]{MARK_TITLE}[/] [bold]{_plain(text)}[/]")
     c.print()
 
 
@@ -92,7 +107,7 @@ def success(text: str, *, console: Console | None = None) -> None:
         console: Optional console for output (defaults to shared console).
     """
     c = console or get_console()
-    c.print(f"  [green]{MARK_SUCCESS}[/] {text}")
+    c.print(f"  [green]{MARK_SUCCESS}[/] {_plain(text)}")
 
 
 def error(
@@ -106,9 +121,9 @@ def error(
         console: Optional console for output (defaults to shared console).
     """
     c = console or get_console()
-    c.print(f"  [red]{MARK_ERROR}[/] {text}")
+    c.print(f"  [red]{MARK_ERROR}[/] {_plain(text)}")
     if detail:
-        c.print(f"    [dim]{MARK_LINE} {detail}[/]")
+        c.print(f"    [dim]{MARK_LINE} {_plain(detail)}[/]")
 
 
 def warning(
@@ -122,9 +137,9 @@ def warning(
         console: Optional console for output (defaults to shared console).
     """
     c = console or get_console()
-    c.print(f"  [yellow]{MARK_WARNING}[/] {text}")
+    c.print(f"  [yellow]{MARK_WARNING}[/] {_plain(text)}")
     if detail:
-        c.print(f"    [dim]{MARK_LINE} {detail}[/]")
+        c.print(f"    [dim]{MARK_LINE} {_plain(detail)}[/]")
 
 
 def info(text: str, *, console: Console | None = None) -> None:
@@ -135,7 +150,7 @@ def info(text: str, *, console: Console | None = None) -> None:
         console: Optional console for output (defaults to shared console).
     """
     c = console or get_console()
-    c.print(f"  [dim]{MARK_INFO}[/] {text}")
+    c.print(f"  [dim]{MARK_INFO}[/] {_plain(text)}")
 
 
 def step(text: str, *, console: Console | None = None) -> None:

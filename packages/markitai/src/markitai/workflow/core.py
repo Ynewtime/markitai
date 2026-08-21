@@ -143,7 +143,7 @@ def validate_and_detect_format(
             success=False, error=f"Unsupported file format: {ctx.input_path.suffix}"
         )
 
-    # Check if Kreuzberg converter is explicitly enabled (--kreuzberg flag)
+    # Check if Kreuzberg converter is explicitly enabled (-b kreuzberg)
     kreuzberg_forced = getattr(ctx.config.fetch, "kreuzberg_convert_enabled", False)
     if kreuzberg_forced:
         import importlib.util
@@ -151,8 +151,8 @@ def validate_and_detect_format(
         if importlib.util.find_spec("kreuzberg") is None:
             return ConversionStepResult(
                 success=False,
-                error="--kreuzberg requires kreuzberg to be installed. "
-                'Install with: uv tool install "markitai[kreuzberg]"',
+                error="-b kreuzberg requires kreuzberg to be installed. "
+                'Install with: uv tool install "markitai[kreuzberg]" --force',
             )
         from markitai.converter.kreuzberg import KreuzbergConverter
 
@@ -164,16 +164,16 @@ def validate_and_detect_format(
                 f"(native converter available — output quality may differ)"
             )
         ctx.converter = KreuzbergConverter(config=ctx.config)
-        logger.debug(f"Using kreuzberg for {fmt.value} (explicit --kreuzberg)")
+        logger.debug(f"Using kreuzberg for {fmt.value} (explicit -b kreuzberg)")
 
-    # Check if Cloudflare toMarkdown is explicitly enabled (--cloudflare flag)
+    # Check if Cloudflare toMarkdown is explicitly enabled (-b cloudflare)
     cf_config = (
         ctx.config.fetch.cloudflare if hasattr(ctx.config.fetch, "cloudflare") else None
     )
     cf_forced = cf_config and cf_config.convert_enabled
 
     if cf_forced and cf_config is not None:
-        # --cloudflare: prefer CF converter over local converters
+        # -b cloudflare: prefer CF converter over local converters
         from markitai.converter.cloudflare import (
             CF_SUPPORTED_FORMATS,
             CloudflareConverter,

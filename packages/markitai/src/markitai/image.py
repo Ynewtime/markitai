@@ -10,6 +10,7 @@ import multiprocessing
 import os
 import re
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -41,105 +42,13 @@ if TYPE_CHECKING:
     from markitai.converter.base import ExtractedImage
 
 
+# Formats Pillow can encode here; anything else degrades to JPEG rather than
+# failing the image (config validation already restricts this to jpeg/png/webp,
+# so this only guards direct callers).
+_ENCODABLE_FORMATS = frozenset({"JPEG", "PNG", "WEBP"})
+
+
 # Module-level function for multiprocessing (must be picklable)
-def _compress_image_cv2(
-    image_data: bytes,
-    quality: int,
-    max_size: tuple[int, int],
-    output_format: str,
-    min_width: int,
-    min_height: int,
-    min_area: int,
-) -> tuple[bytes, int, int] | None:
-    """Compress a single image using OpenCV (releases GIL in C++ layer).
-
-    OpenCV performs image operations in C++ which releases Python's GIL,
-    making it more efficient for multi-threaded processing compared to Pillow.
-
-    Args:
-        image_data: Raw image bytes
-        quality: Compression quality (1-100). For JPEG/WEBP: image quality.
-             For PNG: mapped to compression level (100=none, 1=max)
-        max_size: Maximum dimensions (width, height)
-        output_format: Output format (JPEG, PNG, WEBP)
-        min_width: Minimum width filter
-        min_height: Minimum height filter
-        min_area: Minimum area filter
-
-    Returns:
-        Tuple of (compressed_data, final_width, final_height) or None if filtered
-    """
-    import cv2
-    import numpy as np
-
-    try:
-        # Decode image from bytes. JPEG has no alpha channel, so decode it
-        # with IMREAD_COLOR, which (unlike IMREAD_UNCHANGED) applies the EXIF
-        # orientation — phone photos would otherwise come out rotated
-        nparr = np.frombuffer(image_data, np.uint8)
-        is_jpeg = image_data[:2] == b"\xff\xd8"
-        flags = cv2.IMREAD_COLOR if is_jpeg else cv2.IMREAD_UNCHANGED
-        img = cv2.imdecode(nparr, flags)
-        if img is None:
-            return None
-
-        # Get dimensions (OpenCV uses height, width order)
-        if len(img.shape) == 2:
-            height, width = img.shape
-            channels = 1
-        else:
-            height, width = img.shape[:2]
-            channels = img.shape[2] if len(img.shape) > 2 else 1
-
-        # Apply size filter
-        if width < min_width or height < min_height or width * height < min_area:
-            return None
-
-        # Resize if needed (maintain aspect ratio like Pillow's thumbnail)
-        max_w, max_h = max_size
-        if width > max_w or height > max_h:
-            scale = min(max_w / width, max_h / height)
-            new_w, new_h = int(width * scale), int(height * scale)
-            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-            width, height = new_w, new_h
-
-        # Handle alpha channel for JPEG (convert BGRA/RGBA to BGR)
-        fmt_upper = output_format.upper()
-        if fmt_upper == "JPEG" and channels == 4:
-            # Create white background and blend
-            if img.shape[2] == 4:  # BGRA
-                alpha = img[:, :, 3:4] / 255.0
-                bgr = img[:, :, :3]
-                white_bg = np.ones_like(bgr, dtype=np.uint8) * 255
-                img = (bgr * alpha + white_bg * (1 - alpha)).astype(np.uint8)
-
-        # Encode to bytes
-        if fmt_upper == "JPEG":
-            encode_param = [cv2.IMWRITE_JPEG_QUALITY, quality]
-            success, buffer = cv2.imencode(".jpg", img, encode_param)
-        elif fmt_upper == "PNG":
-            # PNG compression level 0-9, map quality 100->0, 0->9
-            compression = max(0, min(9, 9 - quality // 11))
-            encode_param = [cv2.IMWRITE_PNG_COMPRESSION, compression]
-            success, buffer = cv2.imencode(".png", img, encode_param)
-        elif fmt_upper == "WEBP":
-            encode_param = [cv2.IMWRITE_WEBP_QUALITY, quality]
-            success, buffer = cv2.imencode(".webp", img, encode_param)
-        else:
-            # Fallback to JPEG
-            encode_param = [cv2.IMWRITE_JPEG_QUALITY, quality]
-            success, buffer = cv2.imencode(".jpg", img, encode_param)
-
-        if not success:
-            return None
-
-        return buffer.tobytes(), width, height
-
-    except Exception as e:
-        logger.debug("cv2 compression failed for image: {}", e)
-        return None
-
-
 def _compress_image_pillow(
     image_data: bytes,
     quality: int,
@@ -149,13 +58,14 @@ def _compress_image_pillow(
     min_height: int,
     min_area: int,
 ) -> tuple[bytes, int, int] | None:
-    """Compress a single image using Pillow (fallback implementation).
+    """Compress a single image using Pillow.
 
     Args:
         image_data: Raw image bytes
         quality: JPEG quality (1-100)
         max_size: Maximum dimensions (width, height)
-        output_format: Output format (JPEG, PNG, WEBP)
+        output_format: Output format (JPEG, PNG, WEBP); anything else is
+            encoded as JPEG
         min_width: Minimum width filter
         min_height: Minimum height filter
         min_area: Minimum area filter
@@ -166,6 +76,10 @@ def _compress_image_pillow(
     from PIL import Image, ImageOps
 
     try:
+        fmt = output_format.upper()
+        if fmt not in _ENCODABLE_FORMATS:
+            fmt = "JPEG"
+
         with io.BytesIO(image_data) as buffer:
             img = Image.open(buffer)
             img.load()
@@ -181,23 +95,27 @@ def _compress_image_pillow(
             # Resize if needed
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
 
-            # Convert to RGB for JPEG
-            if output_format.upper() == "JPEG" and img.mode in ("RGBA", "P", "LA"):
-                background = Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                if img.mode in ("RGBA", "LA"):
-                    background.paste(img, mask=img.split()[-1])
+            # Convert to RGB for JPEG (which has no alpha channel and no
+            # single-channel/palette mode)
+            if fmt == "JPEG" and img.mode not in ("RGB", "L", "CMYK"):
+                if img.mode in ("RGBA", "P", "LA"):
+                    background = Image.new("RGB", img.size, (255, 255, 255))
+                    if img.mode == "P":
+                        img = img.convert("RGBA")
+                    if img.mode in ("RGBA", "LA"):
+                        background.paste(img, mask=img.split()[-1])
+                    else:
+                        background.paste(img)
+                    img = background
                 else:
-                    background.paste(img)
-                img = background
+                    img = img.convert("RGB")
 
             # Compress to bytes
             out_buffer = io.BytesIO()
-            save_kwargs: dict[str, Any] = {"format": output_format}
-            if output_format.upper() in ("JPEG", "WEBP"):
+            save_kwargs: dict[str, Any] = {"format": fmt}
+            if fmt in ("JPEG", "WEBP"):
                 save_kwargs["quality"] = quality
-            if output_format.upper() == "PNG":
+            if fmt == "PNG":
                 save_kwargs["optimize"] = True
 
             img.save(out_buffer, **save_kwargs)
@@ -218,8 +136,14 @@ def _compress_image_worker(
 ) -> tuple[bytes, int, int] | None:
     """Compress a single image in a worker thread or process.
 
-    Prefers OpenCV for better multi-threaded performance (releases GIL),
-    falls back to Pillow if OpenCV fails.
+    Pillow is the only backend. An OpenCV path used to run first on the
+    grounds that it releases the GIL, but measurement on the two real call
+    sites did not support keeping a 121MB dependency for it: this function
+    runs either in a fresh spawn-based process pool (where cv2's import cost
+    per worker cancels its per-image edge) or one image per HTTP GET. OpenCV
+    also produced *worse* output — ``INTER_LANCZOS4`` applies no antialias
+    prefilter, so downscaling aliased, costing PSNR/SSIM and inflating JPEG
+    size on every sample measured.
 
     Args:
         image_data: Raw image bytes
@@ -233,26 +157,6 @@ def _compress_image_worker(
     Returns:
         Tuple of (compressed_data, final_width, final_height) or None if filtered
     """
-    # Try OpenCV first (releases GIL, better for multi-threading)
-    try:
-        result = _compress_image_cv2(
-            image_data,
-            quality,
-            max_size,
-            output_format,
-            min_width,
-            min_height,
-            min_area,
-        )
-        if result is not None:
-            return result
-    except ImportError:
-        pass  # OpenCV not installed, fall through to Pillow
-    except Exception as e:
-        logger.debug("Image compression fallback failed: {}", e)
-        pass  # OpenCV failed, fall through to Pillow
-
-    # Fallback to Pillow
     return _compress_image_pillow(
         image_data, quality, max_size, output_format, min_width, min_height, min_area
     )
@@ -1208,10 +1112,11 @@ class ImageProcessor:
         processed_results: list[tuple[int, bytes, int, int, str]] = []
         filtered_count = 0
 
-        # Use ProcessPoolExecutor with 'spawn' context for CPU-bound compression
-        # The 'spawn' context is required because OpenCV (cv2) crashes when imported
-        # in forked processes due to threading issues in its C++ layer.
-        # See: https://github.com/opencv/opencv/issues/5150
+        # Use ProcessPoolExecutor with 'spawn' context for CPU-bound compression.
+        # 'spawn' outlives its original OpenCV justification: markitai runs
+        # thread pools throughout, and forking a multi-threaded process is
+        # unsafe (CPython 3.12+ warns about it, and macOS is spawn-only by
+        # default anyway).
         mp_context = multiprocessing.get_context("spawn")
         with ProcessPoolExecutor(
             max_workers=max_workers, mp_context=mp_context
@@ -1352,6 +1257,10 @@ _URL_IMAGE_PATTERN = re.compile(
 # Common image extensions
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".ico"}
 
+_IMAGE_DOWNLOAD_USER_AGENT = (
+    "Mozilla/5.0 (compatible; markitai; +https://github.com/Ynewtime/markitai)"
+)
+
 
 @dataclass
 class UrlImageDownloadResult:
@@ -1391,29 +1300,48 @@ def _sanitize_image_filename(name: str, max_length: int = 100) -> str:
     return name.strip() or "image"
 
 
-def _detect_proxy_for_images() -> str | None:
-    """Detect proxy from environment variables for image downloads.
+def _image_proxy_candidate() -> str | None:
+    """Return the proxy image downloads should consider using, or None.
 
-    Checks common environment variables in order of preference:
-    HTTPS_PROXY, HTTP_PROXY, ALL_PROXY (and lowercase variants).
-
-    Returns:
-        Proxy URL string if found, None otherwise
+    Delegates to the process-wide :class:`~markitai.fetch_session.FetchSession`
+    rather than re-reading the environment: this used to be a private third
+    copy of proxy detection that saw only HTTPS_PROXY/HTTP_PROXY/ALL_PROXY,
+    missing both the OS proxy settings and — the actual bug — NO_PROXY. The
+    per-URL bypass decision belongs to
+    :func:`markitai.fetch_http.resolve_proxy_for_url`, which is applied per
+    image below; this only answers "is there a proxy at all".
     """
-    for var in [
-        "HTTPS_PROXY",
-        "HTTP_PROXY",
-        "ALL_PROXY",
-        "https_proxy",
-        "http_proxy",
-        "all_proxy",
-    ]:
-        proxy = os.environ.get(var, "").strip()
-        if proxy:
-            # Silent detection - only log at trace level (below debug)
-            # Proxy usage is routine, no need to clutter logs
-            return proxy
-    return None
+    from markitai.fetch_session import get_default_session
+
+    return get_default_session().detect_proxy() or None
+
+
+# Redirect chains are followed by hand so every hop is re-checked against the
+# target policy; httpx's own follow_redirects would make the request first.
+_MAX_IMAGE_REDIRECTS = 5
+_REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+
+
+async def _reject_reason_for_image_target(
+    url: str, *, allow_private: bool
+) -> str | None:
+    """Return why *url* must not be fetched, or None when it is allowed.
+
+    Args:
+        url: Absolute image URL about to be requested.
+        allow_private: Whether private/local addresses are acceptable targets.
+    """
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in ("http", "https"):
+        return "unsupported_scheme"
+
+    if allow_private:
+        return None
+
+    from markitai.fetch_policy import assess_url_for_remote
+
+    assessment = await assess_url_for_remote(url)
+    return None if assessment.allowed else (assessment.reason or "refused")
 
 
 async def download_url_images(
@@ -1424,15 +1352,18 @@ async def download_url_images(
     source_name: str = "url",
     concurrency: int = 5,
     timeout: int = 30,
+    *,
+    allow_private_targets: bool | None = None,
 ) -> UrlImageDownloadResult:
     """Download images from URLs in markdown and save to assets directory.
 
     This function:
     1. Finds all image URLs in markdown (excluding data: URIs)
-    2. Downloads images concurrently with rate limiting
-    3. Saves to assets directory with proper naming
-    4. Replaces URLs with local paths in markdown
-    5. Skips failed downloads (keeps original URL, logs warning)
+    2. Refuses targets the caller's context should not be able to reach
+    3. Downloads images concurrently with rate limiting
+    4. Saves to assets directory with proper naming
+    5. Replaces URLs with local paths in markdown
+    6. Skips failed downloads (keeps original URL, logs warning)
 
     Args:
         markdown: Markdown content with image URLs
@@ -1442,12 +1373,31 @@ async def download_url_images(
         source_name: Source identifier for naming images
         concurrency: Max concurrent downloads (default 5)
         timeout: HTTP request timeout in seconds (default 30)
+        allow_private_targets: Whether private/local/link-local image hosts may
+            be fetched. ``None`` (the default) derives it from *base_url*: see
+            the note below.
 
     Returns:
         UrlImageDownloadResult with:
         - updated_markdown: Markdown with local paths for downloaded images
         - downloaded_paths: List of successfully downloaded image paths
         - failed_urls: List of URLs that failed to download
+
+    Note:
+        These image URLs are attacker-influenced content — they come out of
+        the page that was just converted. A public page embedding
+        ``<img src="http://169.254.169.254/...">`` would otherwise make this
+        process fetch an intranet or cloud-metadata address on the page
+        author's behalf, walking around the private-network gate that
+        ``markitai serve`` applies to submitted URLs.
+
+        The default is derived rather than fixed because a flat "always deny"
+        would break a legitimate CLI use — converting an intranet wiki whose
+        images are also on the intranet. The page's own address settles it: a
+        private *page* was a target the user chose deliberately, so its
+        private images carry the same intent; a public page has no business
+        pointing at the LAN. Callers that know better may pass the flag
+        explicitly.
     """
     # Find all image URLs
     matches = list(_URL_IMAGE_PATTERN.finditer(markdown))
@@ -1471,8 +1421,66 @@ async def download_url_images(
     # Sanitize source name for filenames
     safe_source = _sanitize_image_filename(source_name, max_length=50)
 
+    if allow_private_targets is None:
+        from markitai.fetch_policy import is_private_or_local_domain
+
+        allow_private_targets = is_private_or_local_domain(urlparse(base_url).netloc)
+
+    from markitai.fetch_http import resolve_proxy_for_url
+
+    # First detection can shell out to scutil/the Windows registry; keep that
+    # off the event loop so a serve job does not stall on it.
+    proxy_candidate = await asyncio.to_thread(_image_proxy_candidate)
+    clients: dict[str | None, httpx.AsyncClient] = {}
+    clients_lock = asyncio.Lock()
+
+    async def client_for(url: str) -> httpx.AsyncClient:
+        """Return a client whose proxy setting is correct for *url*.
+
+        NO_PROXY is a per-host rule, so one client for the whole batch cannot
+        express it: a document may mix an exempt intranet host with proxied
+        CDN hosts. Clients are therefore keyed by the resolved proxy (at most
+        two) and created on demand.
+        """
+        proxy = resolve_proxy_for_url(url, proxy_candidate)
+        async with clients_lock:
+            client = clients.get(proxy)
+            if client is None:
+                client = await stack.enter_async_context(
+                    httpx.AsyncClient(
+                        headers={"User-Agent": _IMAGE_DOWNLOAD_USER_AGENT},
+                        follow_redirects=False,
+                        proxy=proxy,
+                    )
+                )
+                clients[proxy] = client
+            return client
+
+    async def fetch_with_checked_redirects(image_url: str) -> tuple[Any, str]:
+        """GET *image_url*, validating the target of every redirect hop."""
+        current = image_url
+        for _ in range(_MAX_IMAGE_REDIRECTS + 1):
+            reason = await _reject_reason_for_image_target(
+                current, allow_private=bool(allow_private_targets)
+            )
+            if reason is not None:
+                raise PermissionError(reason)
+
+            client = await client_for(current)
+            response = await client.get(
+                current, follow_redirects=False, timeout=timeout
+            )
+            if response.status_code not in _REDIRECT_STATUS_CODES:
+                response.raise_for_status()
+                return response, current
+
+            location = response.headers.get("location")
+            if not location:
+                raise PermissionError("redirect_without_location")
+            current = urljoin(current, location)
+        raise PermissionError("too_many_redirects")
+
     async def download_single(
-        client: httpx.AsyncClient,
         match: re.Match,
         index: int,
     ) -> None:
@@ -1491,12 +1499,7 @@ async def download_url_images(
 
         async with semaphore:
             try:
-                response = await client.get(
-                    image_url,
-                    follow_redirects=True,
-                    timeout=timeout,
-                )
-                response.raise_for_status()
+                response, image_url = await fetch_with_checked_redirects(image_url)
 
                 # Determine file extension
                 content_type = response.headers.get("content-type", "")
@@ -1556,6 +1559,9 @@ async def download_url_images(
 
                 logger.debug(f"Downloaded: {image_url[:60]}... -> {output_path}")
 
+            except PermissionError as e:
+                logger.warning("Refused image target ({}): {}...", e, image_url[:80])
+                failed_urls.append(image_url)
             except httpx.TimeoutException:
                 logger.warning(f"Timeout downloading image: {image_url[:80]}...")
                 failed_urls.append(image_url)
@@ -1572,20 +1578,10 @@ async def download_url_images(
                 )
                 failed_urls.append(image_url)
 
-    # Detect proxy from environment (same as fetch.py)
-    proxy = _detect_proxy_for_images()
-
-    # Download all images concurrently
-    async with httpx.AsyncClient(
-        headers={
-            "User-Agent": "Mozilla/5.0 (compatible; markitai/0.4.1; +https://github.com/Ynewtime/markitai)"
-        },
-        follow_redirects=True,
-        proxy=proxy,
-    ) as client:
-        tasks = [
-            download_single(client, match, idx) for idx, match in enumerate(matches)
-        ]
+    # Download all images concurrently. Clients are opened lazily by
+    # client_for() and closed together when the stack unwinds.
+    async with AsyncExitStack() as stack:
+        tasks = [download_single(match, idx) for idx, match in enumerate(matches)]
         await asyncio.gather(*tasks)
 
     # Apply replacements to markdown

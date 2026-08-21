@@ -5,6 +5,7 @@ from __future__ import annotations
 import codecs
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -32,6 +33,67 @@ def schedule_client_close(coro: Any, name: str) -> None:
         return
     _pending_close_tasks.add(task)
     task.add_done_callback(_pending_close_tasks.discard)
+
+
+# Provider indirection (same shape as fetch_consent's state provider):
+# fetch_session registers the session-owned bypass patterns, which merge the
+# NO_PROXY env var with the OS proxy exception list. Importing fetch_session
+# from here would drag this foundation module into the fetch_playwright /
+# webextract layers (import-linter contract), so the dependency is inverted.
+# The fallback keeps NO_PROXY working even if fetch_session was never imported.
+_proxy_bypass_provider: Callable[[], list[str]] | None = None
+
+
+def set_proxy_bypass_provider(provider: Callable[[], list[str]]) -> None:
+    """Register the source of NO_PROXY-style proxy bypass patterns.
+
+    Called by ``markitai.fetch_session`` at import time so the patterns come
+    from the process-wide FetchSession (env var + OS exception list).
+    """
+    global _proxy_bypass_provider
+    _proxy_bypass_provider = provider
+
+
+def _proxy_bypass_patterns() -> list[str]:
+    """Return the active NO_PROXY patterns (session-owned once registered)."""
+    if _proxy_bypass_provider is not None:
+        return _proxy_bypass_provider()
+
+    from markitai.fetch_policy import parse_no_proxy
+
+    return parse_no_proxy(os.environ.get("NO_PROXY") or os.environ.get("no_proxy"))
+
+
+def resolve_proxy_for_url(url: str, proxy: str | None) -> str | None:
+    """Apply NO_PROXY bypass rules to a caller-supplied proxy candidate.
+
+    Callers resolve *which* proxy exists (env/system detection); this is the
+    connection-level bypass deciding whether the host being fetched may use
+    it at all. It lives here so every user of the shared static clients
+    honors NO_PROXY, not only the ones that remember to ask.
+
+    Args:
+        url: URL about to be fetched.
+        proxy: Proxy URL the caller wants to use (may be empty/None).
+
+    Returns:
+        The proxy to use, or None when the host is exempt or no proxy was given.
+    """
+    if not proxy:
+        return None
+
+    patterns = _proxy_bypass_patterns()
+    if not patterns:
+        return proxy
+
+    from urllib.parse import urlparse
+
+    from markitai.fetch_policy import match_local_only
+
+    if match_local_only(urlparse(url).netloc.lower(), patterns):
+        logger.debug("[HTTP] NO_PROXY bypass: fetching {} without proxy", url)
+        return None
+    return proxy
 
 
 @dataclass
@@ -156,10 +218,16 @@ class HttpxClient:
         timeout_s: float,
         proxy: str | None = None,
     ) -> StaticHttpResponse:
-        """Perform a GET request using the shared client."""
+        """Perform a GET request using the shared client.
+
+        The client is keyed by the *effective* proxy, so a NO_PROXY host and
+        a proxied host use separate pooled clients.
+        """
         import httpx
 
-        client = self._get_or_create_client(timeout_s, proxy)
+        client = self._get_or_create_client(
+            timeout_s, resolve_proxy_for_url(url, proxy)
+        )
         resp = await client.get(url, headers=headers, timeout=httpx.Timeout(timeout_s))
         return StaticHttpResponse(
             content=resp.content,
@@ -251,8 +319,12 @@ class CurlCffiClient:
         timeout_s: float,
         proxy: str | None = None,
     ) -> StaticHttpResponse:
-        """Perform a GET request using the shared session."""
-        session = self._get_or_create_session(proxy)
+        """Perform a GET request using the shared session.
+
+        The session is keyed by the *effective* proxy, so a NO_PROXY host and
+        a proxied host use separate pooled sessions.
+        """
+        session = self._get_or_create_session(resolve_proxy_for_url(url, proxy))
         resp = await session.get(url, headers=headers, timeout=timeout_s)  # type: ignore[reportArgumentType]  # curl_cffi stub mismatch
         return StaticHttpResponse(
             content=resp.content,

@@ -7,8 +7,9 @@ native markdown produced by the extraction pipeline is acceptably clean.
 """
 
 import re
+from collections.abc import Callable
 
-from markitai.webextract.types import QualityAssessment
+from markitai.webextract.types import ContentProfile, QualityAssessment
 
 # ---------------------------------------------------------------------------
 # Pattern definitions
@@ -250,18 +251,39 @@ def _assess_generic_article(markdown: str) -> QualityAssessment:
 # Public API
 # ---------------------------------------------------------------------------
 
-_PROFILE_MAP: dict[str, object] = {
-    "generic_article": _assess_generic_article,
-    "social_post": _assess_social_post,
-    "conversation_thread": _assess_conversation_thread,
-    "discussion_issue": _assess_discussion_issue,
+ProfileAssessor = Callable[[str], QualityAssessment]
+
+# Keyed by ContentProfile members (not raw strings) so a profile can never
+# be registered under a name the enum does not actually emit. Callers pass
+# ``ContentProfile.<X>.value``; every member must have an entry here — see
+# ``test_every_content_profile_has_a_registered_assessor``.
+#
+# RICH_MEDIA_PAGE (YouTube watch pages) deliberately uses the generic
+# article gate: such pages are legitimately short (title + channel +
+# description), so the thread gate's 10-word floor would reject valid
+# extractions, and the social/thread gates treat X-specific chrome strings
+# ("Discover more", "Trends for you") as noise even though they are ordinary
+# prose in a video description. The generic gate's length floor plus its CJK
+# handling is the right shape for a media page.
+_PROFILE_MAP: dict[ContentProfile, ProfileAssessor] = {
+    ContentProfile.GENERIC_ARTICLE: _assess_generic_article,
+    ContentProfile.SOCIAL_POST: _assess_social_post,
+    ContentProfile.DISCUSSION_ISSUE: _assess_discussion_issue,
+    ContentProfile.DISCUSSION_THREAD: _assess_conversation_thread,
+    ContentProfile.RICH_MEDIA_PAGE: _assess_generic_article,
+}
+
+# Historical profile names kept working for external callers of
+# assess_native_markdown(); no extractor emits these.
+_PROFILE_ALIASES: dict[str, ContentProfile] = {
+    "conversation_thread": ContentProfile.DISCUSSION_THREAD,
 }
 
 
 def assess_native_markdown(
     markdown: str,
     *,
-    profile: str = "generic_article",
+    profile: str = ContentProfile.GENERIC_ARTICLE.value,
 ) -> QualityAssessment:
     """Assess whether native extraction markdown meets quality criteria.
 
@@ -270,14 +292,23 @@ def assess_native_markdown(
 
     Args:
         markdown: Markdown text produced by native extraction.
-        profile: Quality profile name. One of ``"generic_article"``,
-            ``"social_post"``, ``"conversation_thread"``,
-            ``"discussion_issue"``. Unknown values fall back to
-            ``"generic_article"``.
+        profile: Quality profile name — a
+            :class:`~markitai.webextract.types.ContentProfile` value such as
+            ``"generic_article"``, ``"social_post"``, ``"discussion_issue"``,
+            ``"discussion_thread"`` or ``"rich_media_page"``. The legacy alias
+            ``"conversation_thread"`` maps to ``"discussion_thread"``; any
+            other unknown value falls back to ``"generic_article"``.
 
     Returns:
         A :class:`~markitai.webextract.types.QualityAssessment` describing
         whether the extraction was accepted and why.
     """
-    assessor = _PROFILE_MAP.get(profile, _assess_generic_article)
-    return assessor(markdown)  # type: ignore[operator]
+    content_profile = _PROFILE_ALIASES.get(profile)
+    if content_profile is None:
+        try:
+            content_profile = ContentProfile(profile)
+        except ValueError:
+            content_profile = ContentProfile.GENERIC_ARTICLE
+
+    assessor = _PROFILE_MAP.get(content_profile, _assess_generic_article)
+    return assessor(markdown)

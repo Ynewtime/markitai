@@ -140,9 +140,10 @@ class MockVisionProcessor(VisionAnalyzer):
         self._cache = MagicMock()
         self._cache.get.return_value = None
 
-        # Mock prompt manager
+        # Mock prompt manager (digest scopes the cache key by prompt text)
         self._prompt_manager = MagicMock()
         self._prompt_manager.get_prompt.side_effect = self._get_mock_prompt
+        self._prompt_manager.template_digest.return_value = "d1g35700"
 
         # Mock vision router
         self.vision_router = MagicMock()
@@ -397,7 +398,8 @@ class TestAnalyzeImage:
             # Verify cache.set was called
             mock_processor._persistent_cache.set.assert_called_once()
             call_args = mock_processor._persistent_cache.set.call_args
-            assert call_args[0][0] == "image_analysis"  # cache_key
+            # cache_key: category scoped by the image-analysis prompt digest
+            assert call_args[0][0].startswith("image_analysis@")
             # Vision results are scoped by the injected vision pool fingerprint
             assert call_args[1]["model"] == "pool:test-vision"
 
@@ -819,6 +821,53 @@ class TestAnalyzeBatch:
 
                 # Should fall back due to truncation
                 mock_single.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_truncated_batch_is_still_accounted(
+        self, mock_processor: MockVisionProcessor, sample_png_file: Path
+    ):
+        """A truncated batch call was paid for: bill it before raising."""
+        with patch("markitai.llm.vision.instructor") as mock_instructor:
+            mock_client = MagicMock()
+            mock_instructor.from_litellm.return_value = mock_client
+            mock_instructor.Mode.MD_JSON = "MD_JSON"
+
+            mock_response = BatchImageAnalysisResult(
+                images=[
+                    SingleImageResult(
+                        image_index=1,
+                        caption="Truncated",
+                        description="...",
+                        extracted_text=None,
+                    )
+                ]
+            )
+            mock_raw = MagicMock()
+            mock_raw.model = "test/vision-model"
+            mock_raw.usage = MagicMock(prompt_tokens=3000, completion_tokens=8192)
+            mock_raw.choices = [MagicMock(finish_reason="length")]
+            mock_raw._hidden_params = {"total_cost_usd": 0.25}
+
+            async def mock_create(*args, **kwargs):
+                return mock_response, mock_raw
+
+            mock_client.chat.completions.create_with_completion = mock_create
+
+            with patch.object(
+                mock_processor, "analyze_image", new_callable=AsyncMock
+            ) as mock_single:
+                mock_single.return_value = ImageAnalysis(
+                    caption="Fallback",
+                    description="Fallback desc",
+                )
+
+                await mock_processor.analyze_batch([sample_png_file])
+
+        usage = mock_processor._usage["test/vision-model"]
+        assert usage["requests"] == 1
+        assert usage["input_tokens"] == 3000
+        assert usage["output_tokens"] == 8192
+        assert usage["cost_usd"] == pytest.approx(0.25)
 
     @staticmethod
     def _patch_instructor_batch(

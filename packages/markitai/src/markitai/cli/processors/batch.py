@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -210,6 +210,49 @@ def create_process_file(
             return ProcessResult(success=False, error=err_msg)
 
     return process_file
+
+
+def _shared_renderer_proxy(urls: Sequence[str]) -> str | None:
+    """Resolve the proxy for the batch-wide Playwright renderer.
+
+    One browser serves every URL in the batch, so the NO_PROXY decision
+    cannot be made per URL the way it is on the single-URL path
+    (``markitai.fetch.get_proxy_for_url``): a launched browser context
+    carries its proxy for its whole life. The batch therefore goes without a
+    proxy only when *every* URL is exempt; a mixed batch keeps the proxy and
+    says so, since dropping it would break the URLs that need it.
+
+    Args:
+        urls: URLs the batch will fetch.
+
+    Returns:
+        Proxy URL for the shared renderer, or None to launch without one.
+    """
+    from markitai.fetch_session import get_default_session
+
+    session = get_default_session()
+    proxy = session.detect_proxy()
+    if not proxy:
+        return None
+
+    bypassed = [url for url in urls if session.is_proxy_bypassed(url)]
+    if not bypassed:
+        return proxy
+    if len(bypassed) == len(urls):
+        logger.debug(
+            "[Batch] Every URL is NO_PROXY-exempt; shared browser launched "
+            "without a proxy"
+        )
+        return None
+
+    logger.warning(
+        "[Batch] {}/{} URLs are NO_PROXY-exempt, but the batch shares one "
+        "browser: they are fetched through the proxy anyway. Run them in a "
+        "separate batch to keep them off it.",
+        len(bypassed),
+        len(urls),
+    )
+    return proxy
 
 
 def create_url_processor(
@@ -882,11 +925,13 @@ async def process_batch(
     # Create shared Playwright renderer for batch URL processing
     shared_renderer = None
     if url_entries_to_process:
-        from markitai.fetch import _detect_proxy, _get_playwright_renderer
+        from markitai.fetch import _get_playwright_renderer
 
         # Only initialize if browser strategy might be needed
         # We initialize it here to reuse across all URLs in the batch
-        proxy = _detect_proxy() if getattr(cfg.fetch, "auto_proxy", True) else None
+        proxy = _shared_renderer_proxy(
+            [entry.url for _src, entry in url_entries_to_process]
+        )
         shared_renderer = await _get_playwright_renderer(proxy=proxy)
         logger.debug("Created shared PlaywrightRenderer for batch URL processing")
 

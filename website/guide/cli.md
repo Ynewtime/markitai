@@ -353,26 +353,24 @@ markitai https://example.com -s playwright -b kreuzberg   # -s and -b combine fr
 Cloudflare Browser Rendering is available on the Free plan. Workers AI `toMarkdown` is free for PDF/Office/CSV/XML; image conversion uses Neurons quota. For formats with a local converter, native/kreuzberg generally produce higher-quality output. `-b cloudflare` warns when a better local converter is available.
 :::
 
-### Deprecated per-backend flags
+### Removed per-backend flags
 
-`--playwright`, `--defuddle`, `--static`, `--jina`, `--cloudflare`, and `--kreuzberg` still work as deprecated aliases. Each prints a one-line deprecation notice to stderr and resolves to the flag above:
+The six per-backend aliases below were **removed** in 0.24. Passing one is now a usage error that names its replacement, so a stale script fails loudly instead of quietly converting with the wrong engine:
 
-| Deprecated flag | Equivalent |
+| Removed flag | Use instead |
 |------------------|------------|
 | `--playwright` | `-s playwright` |
 | `--defuddle` | `-s defuddle` |
 | `--static` | `-s static` |
 | `--jina` | `-s jina` |
-| `--cloudflare` | `-s cloudflare` (also enables CF file conversion, same as `-b cloudflare`) |
+| `--cloudflare` | `-s cloudflare` (add `-b cloudflare` for CF file conversion) |
 | `--kreuzberg` | `-b kreuzberg` |
 
 ```bash
-markitai https://example.com --defuddle   # deprecated, same as: markitai https://example.com -s defuddle
+markitai https://example.com -s defuddle   # replaces the old --defuddle alias
 ```
 
-::: warning
-`--playwright`, `--defuddle`, `--static`, `--jina`, and `--cloudflare` are mutually exclusive with each other and with `-s/--strategy`. `--kreuzberg` is mutually exclusive with `-b/--backend`.
-:::
+The mutual-exclusion rules those aliases needed are gone with them. `-s/--strategy` and `-b/--backend` are orthogonal and combine freely; the only remaining conflict is `-b kreuzberg` with `-s cloudflare`, since both claim file conversion.
 
 ## Setup Commands
 
@@ -504,21 +502,20 @@ SPA domains are learned automatically when static fetch detects JavaScript requi
 
 ### `markitai doctor`
 
-Check core health, optional capabilities, and authentication status. Missing unused optional tools are warnings, not a failed installation. The command exits non-zero when the core RapidOCR dependency fails; a configured Playwright workflow cannot launch; an active API model references a missing environment variable; an actively configured local LLM provider cannot load or authenticate; or a requested automatic repair does not succeed. Scripts and CI can therefore rely on the result.
+Check core health, optional capabilities, and authentication status. Missing unused optional tools are warnings, not a failed installation. The command exits non-zero when a configured Playwright workflow cannot launch; an active API model references a missing environment variable; an actively configured local LLM provider cannot load or authenticate; or a requested automatic repair does not succeed. Scripts and CI can therefore rely on the result.
 
 ```bash
 markitai doctor
 markitai doctor --fix     # Safely install and re-check Chromium when the Playwright package is already present
 markitai doctor --json    # JSON output
-markitai doctor --suggest-extras   # Comma-separated pip extras for `uv tool install "markitai[...]"`; includes browser/extra-fetch/kreuzberg/svg/heif, plus detected provider extras
+markitai doctor --suggest-extras   # Comma-separated pip extras for `uv tool install "markitai[...]"`; includes browser/extra-fetch/kreuzberg/svg/heif/ocr, plus detected provider extras
 ```
 
-This command separates the core requirement from optional capabilities:
+Every check is a capability report, and a capability you have not enabled never fails the run:
 
-- **Core requirement: RapidOCR** for scanned document OCR
+- **Optional: RapidOCR** for `--ocr` on scanned PDFs and images. It ships in the `ocr` extra rather than the core install, so "not installed" here means "OCR is off", not "something is broken"
 - **Optional until configured: Playwright** for dynamic URL fetching (SPA rendering). It becomes a blocking check when `fetch.strategy` is `playwright` or `screenshot.enabled` is true
 - **Optional: LibreOffice** for legacy Office conversion and slide rendering (on macOS, installed MS Office apps are used as a fallback)
-- **Optional: FFmpeg** for audio/video tooling
 - **LLM API**: Configuration and model status
 - **Vision Model**: For image analysis (auto-detected from litellm)
 - **Local Provider Auth**: Authentication status for Claude Agent, GitHub Copilot, and ChatGPT (if configured)
@@ -533,13 +530,10 @@ Example output:
 
   • Config: ~/.markitai/config.json
 
-Required Dependencies
-  ✓ RapidOCR: v1.4.0, lang: en (English)
-
 Optional Capabilities
+  ⚠ RapidOCR: not installed — --ocr unavailable (everything else works)
   ⚠ Playwright: Playwright not installed
   ⚠ LibreOffice: Not installed
-  ✓ FFmpeg: v6.0
 
 LLM
   ✓ LLM API: 1 active model(s) configured
@@ -549,7 +543,7 @@ LLM
 Authentication
   ✓ Copilot Auth: Authenticated
 
-⚠ Core check passed (3 required/configured checks passed, 2 non-blocking warnings)
+⚠ Core check passed (3 required/configured checks passed, 3 non-blocking warnings)
 ```
 
 ::: tip

@@ -37,16 +37,16 @@ FRONTMATTER_FIELD_ORDER = [
     "fetch_strategy",
 ]
 
-# Patterns to detect prompt leakage in frontmatter keys
-# These are LLM hallucinations where prompt text appears as YAML keys
+# Patterns to detect prompt leakage in frontmatter keys: LLM hallucinations
+# where a fragment of the prompt comes back as a YAML key. Each one must be
+# echoable, i.e. match live prompt text — the five Chinese patterns that used
+# to live here ("根据.*生成", "以下是", "元数据", "任务\s*\d", "请.*生成") were
+# written for the pre-English prompts and matched no line of any current
+# template, so they only ever ran for nothing. test_prompt_leakage_sync.py
+# fails on a pattern that cannot fire.
 PROMPT_LEAKAGE_KEY_PATTERNS = [
-    r"根据.*生成",  # "根据文档内容生成 YAML frontmatter"
-    r"请.*生成",  # "请生成元数据"
-    r"以下是",  # "以下是生成的 frontmatter"
-    r"YAML.*frontmatter",  # "YAML frontmatter"
-    r"元数据",  # "元数据"
-    r"任务\s*\d",  # "任务 1" or "任务1"
-    r"Task\s*\d",  # "Task 1" or "Task1"
+    r"YAML.*frontmatter",  # "## YAML Frontmatter Preservation — CRITICAL"
+    r"Task\s*\d",  # "## Task 1: Content Extraction"
 ]
 
 

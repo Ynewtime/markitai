@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from markitai.config import PromptsConfig
 
 
 # Built-in prompts directory
 BUILTIN_PROMPTS_DIR = Path(__file__).parent
+
+# Hex characters kept from the template digest. Short enough to stay readable
+# inside a cache key, wide enough (32 bits) that an accidental collision
+# between two prompt revisions is not a practical concern.
+PROMPT_DIGEST_LENGTH = 8
 
 
 class PromptManager:
@@ -54,6 +62,52 @@ class PromptManager:
         """
         self.config = config
         self._cache: dict[str, str] = {}
+        self._digest_cache: dict[tuple[str, ...], str] = {}
+
+    def template_digest(self, *names: str, extra: Iterable[str] = ()) -> str:
+        """Digest the *resolved* text of the given prompt templates.
+
+        Callers mix this digest into their cache keys so that changing a
+        prompt invalidates the results it produced. Because the digest is
+        taken after the three-level lookup (config path -> custom dir ->
+        built-in), a user-supplied prompt override invalidates the cache
+        exactly like an upstream template edit does.
+
+        Args:
+            names: Prompt template names participating in the call.
+            extra: In-code prompt fragments that are part of the same
+                effective prompt (mode rules, tail reminders, inline
+                instruction blocks). Pass the constants themselves so they
+                cannot drift away from what is actually sent.
+
+        Returns:
+            The first ``PROMPT_DIGEST_LENGTH`` hex characters of the SHA-256
+            over the resolved template texts and extra fragments.
+
+        Raises:
+            ValueError: If a prompt name is not valid.
+        """
+        extra_texts = tuple(extra)
+        cache_id = (*names, "\x00", *extra_texts)
+        cached = self._digest_cache.get(cache_id)
+        if cached is not None:
+            return cached
+
+        hasher = hashlib.sha256()
+        for name in names:
+            if name not in self.PROMPT_NAMES:
+                raise ValueError(
+                    f"Unknown prompt: {name}. Valid names: {', '.join(self.PROMPT_NAMES)}"
+                )
+            hasher.update(self._load_prompt(name).encode("utf-8"))
+            hasher.update(b"\x00")
+        for text in extra_texts:
+            hasher.update(text.encode("utf-8"))
+            hasher.update(b"\x00")
+
+        digest = hasher.hexdigest()[:PROMPT_DIGEST_LENGTH]
+        self._digest_cache[cache_id] = digest
+        return digest
 
     def get_prompt(self, name: str, **variables: str) -> str:
         """
@@ -137,8 +191,9 @@ class PromptManager:
         return result
 
     def clear_cache(self) -> None:
-        """Clear the prompt cache."""
+        """Clear the prompt and template-digest caches."""
         self._cache.clear()
+        self._digest_cache.clear()
 
     def list_prompts(self) -> dict[str, str]:
         """

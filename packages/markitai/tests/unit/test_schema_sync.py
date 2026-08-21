@@ -1,4 +1,14 @@
-"""Tests to verify config.schema.json is in sync with config.py models."""
+"""Tests to verify config.schema.json is in sync with config.py models.
+
+The schema file is generated from ``MarkitaiConfig.model_json_schema()`` and
+must never be hand-edited. Regenerate it after any change to config.py:
+
+    uv run python -c "import json, pathlib; \
+from markitai.config import MarkitaiConfig; \
+pathlib.Path('packages/markitai/src/markitai/config.schema.json').write_text( \
+json.dumps(MarkitaiConfig.model_json_schema(), indent=2, ensure_ascii=False) \
++ '\\n', encoding='utf-8')"
+"""
 
 import json
 from pathlib import Path
@@ -17,6 +27,7 @@ from markitai.config import (
     JinaConfig,
     LLMConfig,
     LogConfig,
+    MarkitaiConfig,
     OCRConfig,
     OutputConfig,
     PlaywrightConfig,
@@ -51,6 +62,38 @@ class TestSchemaSync:
         assert isinstance(schema, dict)
         assert "$defs" in schema
         assert "properties" in schema
+
+    def test_schema_file_is_byte_identical_to_generated(self) -> None:
+        """The committed file must be exactly what pydantic generates.
+
+        The per-field checks below only catch missing keys and drifted
+        defaults; a stale *description* (the part users read in editors)
+        would sail past them. Comparing the whole file also makes a
+        hand-edit fail here instead of surviving until the next regen.
+        """
+        generated = (
+            json.dumps(MarkitaiConfig.model_json_schema(), indent=2, ensure_ascii=False)
+            + "\n"
+        )
+
+        assert SCHEMA_PATH.read_text(encoding="utf-8") == generated, (
+            "config.schema.json is out of date or hand-edited. Regenerate it "
+            "with the command in this module's docstring."
+        )
+
+    def test_remote_consent_description_matches_current_behavior(self) -> None:
+        """X/Twitter enrichment shares the one process-wide consent decision.
+
+        It used to be special-cased: no prompt of its own under ``ask``,
+        only a cached decline honored. It now takes the exact branches of
+        ``resolve_remote_consent`` like every other remote service, so the
+        description must not promise the old carve-out.
+        """
+        field = FetchConfig.model_fields["remote_consent"]
+        description = field.description or ""
+
+        assert "does not open its own prompt" not in description
+        assert "same" in description and "decision" in description
 
     def test_image_config_alt_enabled_in_schema(self, schema: dict) -> None:
         """Verify ImageConfig.alt_enabled is in schema."""

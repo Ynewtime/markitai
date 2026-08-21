@@ -789,13 +789,13 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 
 对于公网 URL，`auto` 可以在无需确认的情况下回退到远程提取服务。标准域名仍会先尝试本地策略。每个进程第一次准备使用远程服务时，Markitai 会先在 stderr 输出说明，再把当前 URL 交给链路中的下一个服务。说明会完整列出该进程级决定覆盖的服务：defuddle.md、Jina、Cloudflare、FxTwitter 与 Twitter oEmbed。各服务按顺序逐个尝试，不会同时收到该 URL。
 
-对于公网 X/Twitter 状态或文章 URL，本地 DOM 提取失败后，Playwright 可能依次尝试 FxTwitter 与 Twitter oEmbed。这项公网 URL 增强不会单独弹出 `ask` 确认，但会复用相同的一次性 stderr 揭露，并遵守用户先前对完整服务清单给出的进程级拒绝。`fetch.remote_consent=never` 与 `MARKITAI_NO_REMOTE_FETCH=1` 都会禁用它。
+对于公网 X/Twitter 状态或文章 URL，本地 DOM 提取失败后，Playwright 可能依次尝试 FxTwitter 与 Twitter oEmbed。这项增强与其他远程服务共用**同一个**进程级同意决定：在 `ask` 模式下，它自己也可以弹出那一次共享确认；本次运行中已经做出的决定会被直接沿用；无法询问时则跳过。`fetch.remote_consent=never` 与 `MARKITAI_NO_REMOTE_FETCH=1` 都会禁用它。
 
 私网、本机、内网及自带认证信息的 URL 绝不会使用远程提取，即使显式指定远程策略也不例外。认证信息包括 URL userinfo，以及 query 或 fragment 中的 Token、签名、Credential、密码、API Key 与授权码等敏感参数。在 `auto` 策略链中，匹配 `fetch.policy.local_only_patterns` 或 `NO_PROXY` 的域名也只会留在本机处理（启用 `inherit_no_proxy` 时）。对于仍属公网的 URL，显式传入非 `auto` 远程 `-s` 参数表示有意覆盖这些基于模式的规则。仅在配置文件中设置远程 `fetch.strategy` 时，仍受 `fetch.remote_consent` 控制，并使用相同的首次远程揭露。
 
 | 设置 | 选项 | 默认值 | 说明 |
 |------|------|--------|------|
-| `fetch.remote_consent` | `ask`, `always`, `never` | `always` | `always`：公网 URL 可直接使用远程后备，并在第一次远程尝试前输出说明；`ask`：每个进程在交互式终端中询问一次，非交互环境跳过远程提取服务（上述公网 X/Twitter 增强例外只揭露、不询问）；`never`：仅使用本地策略 |
+| `fetch.remote_consent` | `ask`, `always`, `never` | `always` | `always`：公网 URL 可直接使用远程后备，并在第一次远程尝试前输出说明；`ask`：每个进程在交互式终端中询问一次，非交互环境跳过全部远程提取服务（含上述 X/Twitter 增强）；`never`：仅使用本地策略 |
 
 `MARKITAI_NO_REMOTE_FETCH=1`（或 `true`/`yes`）是硬性禁用开关：即使传入 `-s defuddle`、`-s jina` 或 `-s cloudflare`，也不会使用远程提取。未设置该环境变量时，显式传入这些 CLI 参数表示本次运行选择该服务，并可为其他公网 URL 覆盖 `fetch.remote_consent=never` 及 `local_only_patterns`/`NO_PROXY`；但私网、本机及自带认证信息 URL 的保护仍然生效。
 
@@ -852,10 +852,10 @@ Defuddle 免费且无需 API 密钥或认证。适合文章类网站的默认选
 
 ### Cloudflare 设置
 
-Cloudflare 通过统一的 `--cloudflare` 标志提供两项能力：
+Cloudflare 提供两项能力，各自独立选择：
 
-1. **Browser Rendering**（`/content` API，取回渲染后的 HTML，再通过与其他策略相同的原生 webextract 流水线本地提取）用于 URL 转 Markdown
-2. **Workers AI toMarkdown** 用于文件转 Markdown（PDF、Office、CSV、XML、图片）
+1. **Browser Rendering**（`-s cloudflare`）：`/content` API 取回渲染后的 HTML，再通过与其他策略相同的原生 webextract 流水线本地提取，用于 URL 转 Markdown
+2. **Workers AI toMarkdown**（`-b cloudflare`）：用于文件转 Markdown（PDF、Office、CSV、XML、图片）
 
 ```json
 {
@@ -917,8 +917,8 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 
 ::: warning 限制与注意事项
 - **并发限制**：Free 计划允许 **2 个并发浏览器实例**。Markitai 会自动串行化 CF BR 请求，并在收到 429 限流时指数退避重试，因此高 `url_concurrency` 值是安全的，但不会加速 CF BR 抓取。
-- **站点兼容性**：有严格反爬措施的站点（如 x.com、twitter.com）可能通过 CF BR 返回 400 错误。对这些站点请使用 `--playwright` 或 `--jina`。
-- **文件转换质量**：对于有本地 converter 的格式（PDF、DOCX、XLSX 等），CF Workers AI `toMarkdown` 的输出质量通常**低于本地 converter**（如格式还原不够精确、无法提取图片等）。使用 `--cloudflare` 时如果有更好的本地 converter 可用会输出警告。CF `toMarkdown` 最适合本地没有 converter 的格式（`.numbers`、`.ods`、`.svg` 等）。
+- **站点兼容性**：有严格反爬措施的站点（如 x.com、twitter.com）可能通过 CF BR 返回 400 错误。对这些站点请使用 `-s playwright` 或 `-s jina`。
+- **文件转换质量**：对于有本地 converter 的格式（PDF、DOCX、XLSX 等），CF Workers AI `toMarkdown` 的输出质量通常**低于本地 converter**（如格式还原不够精确、无法提取图片等）。使用 `-b cloudflare` 时如果有更好的本地 converter 可用会输出警告。CF `toMarkdown` 最适合本地没有 converter 的格式（`.numbers`、`.ods`、`.svg` 等）。
 :::
 
 ### 抓取策略引擎

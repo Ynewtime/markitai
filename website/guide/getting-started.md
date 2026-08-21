@@ -37,7 +37,7 @@ These are required for specific features:
 | Dependency | Required For | Installation |
 |------------|--------------|--------------|
 | **Playwright** | `-s playwright` (SPA rendering) | Recommended uv-tool path: `uv tool install 'markitai[browser]' --force`, then `markitai doctor --fix`. See [Manual Installation](#manual-installation) for pipx and virtual environments. |
-| **FFmpeg** | Checked by `doctor`/`init` (transitive `markitdown[all]` dependency); markitai does not currently register any audio/video conversion format | `apt install ffmpeg` (Linux) / `brew install ffmpeg` (macOS) |
+| **RapidOCR** | `--ocr` (text recognition in scanned PDFs and images) | `uv tool install 'markitai[ocr]' --force` |
 | **Jina API Key** | `-s jina` (URL conversion) | Set `JINA_API_KEY` env var |
 | **LLM authentication** | `--llm` (AI enhancement) | Use a provider API key, or sign in through a subscription provider (`chatgpt/`, `claude-agent/`, `copilot/`) with OAuth or its CLI |
 | **Cloudflare** | `-s cloudflare` (cloud rendering & conversion) | Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` env vars |
@@ -72,34 +72,35 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 
 ::: warning Security Notice
 - The script checks for root/Administrator and asks before continuing
-- In an interactive terminal, optional components prompt before installing. The Playwright browser defaults to Yes; LibreOffice, FFmpeg, and the Claude/Copilot CLIs default to No
+- In an interactive terminal, optional components prompt before installing. The Playwright browser, the Web UI extra, and OCR default to Yes; LibreOffice and the Claude/Copilot CLIs default to No
 - Without a usable terminal, only uv, Python, and Markitai are installed. Set `MARKITAI_INSTALL_OPTIONAL=1` to explicitly enable the optional steps in automation
 :::
 
 The script will:
 - Check for / auto-install Python 3.11-3.13 (no prompt)
 - Install [uv](https://docs.astral.sh/uv/) package manager (confirmation, defaults to Yes)
-- Install markitai itself, plus its pip-only extras (browser automation, `extra-fetch`, `kreuzberg`, `svg`, `heif`), with no further prompts; LibreOffice, FFmpeg, and the Claude/Copilot CLIs are offered afterward with their own confirmation (defaults to No)
+- Ask whether to include the Web UI (`serve`) and OCR (`ocr`) extras, then install markitai together with its remaining pip-only extras (browser automation, `extra-fetch`, `kreuzberg`, `svg`, `heif`) with no further prompts; LibreOffice and the Claude/Copilot CLIs are offered afterward with their own confirmation (defaults to No)
+- Use the default package index. It only offers a mirror after measuring that index as slow or unreachable from your machine — set `MARKITAI_USE_MIRROR=1` to pick one regardless, or `MARKITAI_USE_MIRROR=0` to never be asked
 
 #### Version Pinning
 
-Pin specific versions using environment variables:
+Pin specific versions using environment variables. Replace the placeholders with the exact versions you want — these examples deliberately carry no literal, so there is nothing here to go stale:
 
 ::: code-group
 ```bash [Linux/macOS]
-export MARKITAI_VERSION="0.20.0"
-export UV_VERSION="0.9.27"
+export MARKITAI_VERSION="X.Y.Z"   # https://pypi.org/project/markitai/#history
+export UV_VERSION="X.Y.Z"         # https://github.com/astral-sh/uv/releases
 curl -fsSL https://markitai.dev/setup.sh | sh
 ```
 
 ```powershell [Windows]
-$env:MARKITAI_VERSION = "0.20.0"
-$env:UV_VERSION = "0.9.27"
+$env:MARKITAI_VERSION = "X.Y.Z"   # https://pypi.org/project/markitai/#history
+$env:UV_VERSION = "X.Y.Z"         # https://github.com/astral-sh/uv/releases
 powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 :::
 
-This example pins the release documented here. Omit `MARKITAI_VERSION` to install the latest stable release; if you are reading an older copy of the docs, check the current release before reusing the pin.
+Omit both variables to get the latest stable release of each, which is the recommended default. Pin only when you need to reproduce an exact environment; `markitai --version` reports what you currently have.
 
 ### Manual Installation
 
@@ -114,6 +115,12 @@ uv pip install markitai
 ```
 
 Add only the extras required by your workflow later, for example `markitai[browser]` for Playwright or `markitai[heif]` for HEIC/HEIF/AVIF input. See [Optional Dependencies](#optional-dependencies) for the full list.
+
+The default install carries no OCR runtime. RapidOCR's models and their image stack are about a quarter of what the install used to weigh, and nothing that converts born-digital documents ever loads them. Add them when you actually need `--ocr` on scans or photos:
+
+```bash
+uv tool install 'markitai[ocr]' --force
+```
 
 Unlike the one-click setup, a manual install does **not** set up optional
 components or config for you. Do the remaining steps yourself:

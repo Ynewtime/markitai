@@ -12,9 +12,20 @@ import re
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from markitai.cli import app
+
+# rich force-enables color when GITHUB_ACTIONS is set, so CI output carries
+# ANSI codes; strip them before matching option names in rendered output.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Return ``text`` without ANSI style escapes."""
+    return _ANSI_RE.sub("", text)
+
 
 # =============================================================================
 # CLI Option Parsing Tests
@@ -566,25 +577,6 @@ class TestErrorHandling:
         # Click validates exists=True for config path
         assert result.exit_code != 0
 
-    def test_mutually_exclusive_fetch_options(
-        self, tmp_path: Path, cli_runner: CliRunner
-    ) -> None:
-        """Test error for mutually exclusive --playwright and --jina."""
-        output_dir = tmp_path / "out"
-
-        result = cli_runner.invoke(
-            app,
-            [
-                "https://example.com",
-                "-o",
-                str(output_dir),
-                "--playwright",
-                "--jina",
-            ],
-        )
-        assert result.exit_code == 1
-        assert "exclusive" in result.output
-
     def test_invalid_preset(self, tmp_path: Path, cli_runner: CliRunner) -> None:
         """Test error handling for invalid preset."""
         test_file = tmp_path / "test.txt"
@@ -787,65 +779,6 @@ class TestCacheOptions:
 class TestFetchStrategy:
     """Tests for fetch strategy options."""
 
-    def test_playwright_flag(self, tmp_path: Path, cli_runner: CliRunner) -> None:
-        """Test --playwright flag."""
-        output_dir = tmp_path / "out"
-
-        result = cli_runner.invoke(
-            app,
-            ["https://example.com", "-o", str(output_dir), "--playwright", "--dry-run"],
-        )
-        assert result.exit_code == 0
-
-    def test_jina_flag(self, tmp_path: Path, cli_runner: CliRunner) -> None:
-        """Test --jina flag."""
-        output_dir = tmp_path / "out"
-
-        result = cli_runner.invoke(
-            app, ["https://example.com", "-o", str(output_dir), "--jina", "--dry-run"]
-        )
-        assert result.exit_code == 0
-
-    def test_cloudflare_flag(self, tmp_path: Path, cli_runner: CliRunner) -> None:
-        """Test --cloudflare flag."""
-        output_dir = tmp_path / "out"
-
-        result = cli_runner.invoke(
-            app,
-            ["https://example.com", "-o", str(output_dir), "--cloudflare", "--dry-run"],
-        )
-        assert result.exit_code == 0
-
-    def test_mutually_exclusive_cloudflare_playwright(
-        self, tmp_path: Path, cli_runner: CliRunner
-    ) -> None:
-        """Test error for mutually exclusive --cloudflare and --playwright."""
-        output_dir = tmp_path / "out"
-        result = cli_runner.invoke(
-            app,
-            [
-                "https://example.com",
-                "-o",
-                str(output_dir),
-                "--cloudflare",
-                "--playwright",
-            ],
-        )
-        assert result.exit_code == 1
-        assert "exclusive" in result.output
-
-    def test_mutually_exclusive_cloudflare_jina(
-        self, tmp_path: Path, cli_runner: CliRunner
-    ) -> None:
-        """Test error for mutually exclusive --cloudflare and --jina."""
-        output_dir = tmp_path / "out"
-        result = cli_runner.invoke(
-            app,
-            ["https://example.com", "-o", str(output_dir), "--cloudflare", "--jina"],
-        )
-        assert result.exit_code == 1
-        assert "exclusive" in result.output
-
     def test_strategy_option_static(
         self, tmp_path: Path, cli_runner: CliRunner
     ) -> None:
@@ -886,39 +819,6 @@ class TestFetchStrategy:
         )
         assert result.exit_code != 0
 
-    def test_strategy_conflicts_with_deprecated_flag(
-        self, tmp_path: Path, cli_runner: CliRunner
-    ) -> None:
-        """Test -s and a deprecated backend flag are mutually exclusive."""
-        output_dir = tmp_path / "out"
-        result = cli_runner.invoke(
-            app,
-            [
-                "https://example.com",
-                "-o",
-                str(output_dir),
-                "-s",
-                "static",
-                "--playwright",
-                "--dry-run",
-            ],
-        )
-        assert result.exit_code == 1
-        assert "exclusive" in result.output
-
-    def test_deprecated_flag_prints_notice(
-        self, tmp_path: Path, cli_runner: CliRunner
-    ) -> None:
-        """Test deprecated --playwright still works and warns on stderr."""
-        output_dir = tmp_path / "out"
-        result = cli_runner.invoke(
-            app,
-            ["https://example.com", "-o", str(output_dir), "--playwright", "--dry-run"],
-        )
-        assert result.exit_code == 0
-        assert "deprecated" in result.output
-        assert "-s playwright" in result.output
-
     def test_strategy_option_shown_in_help(self, cli_runner: CliRunner) -> None:
         """Test -s/--strategy appears in --help."""
         result = cli_runner.invoke(app, ["--help"])
@@ -931,33 +831,6 @@ class TestFetchStrategy:
         assert result.exit_code == 0
         assert "--backend" in result.output
 
-    def test_kreuzberg_flag_deprecated_maps_to_backend(
-        self, tmp_path: Path, cli_runner: CliRunner
-    ) -> None:
-        """--kreuzberg still works but warns and maps to -b kreuzberg."""
-        sample = tmp_path / "sample.txt"
-        sample.write_text("hello")
-        output_dir = tmp_path / "out"
-        result = cli_runner.invoke(
-            app,
-            [str(sample), "-o", str(output_dir), "--kreuzberg", "--dry-run"],
-        )
-        assert result.exit_code == 0
-        assert "deprecated" in result.output
-        assert "-b kreuzberg" in result.output
-
-    def test_backend_and_kreuzberg_flag_mutually_exclusive(
-        self, tmp_path: Path, cli_runner: CliRunner
-    ) -> None:
-        sample = tmp_path / "sample.txt"
-        sample.write_text("hello")
-        result = cli_runner.invoke(
-            app,
-            [str(sample), "-b", "native", "--kreuzberg", "--dry-run"],
-        )
-        assert result.exit_code == 1
-        assert "exclusive" in result.output
-
     def test_backend_kreuzberg_conflicts_with_cloudflare_strategy(
         self, tmp_path: Path, cli_runner: CliRunner
     ) -> None:
@@ -969,6 +842,241 @@ class TestFetchStrategy:
         )
         assert result.exit_code == 1
         assert "exclusive" in result.output
+
+
+# =============================================================================
+# Removed Deprecated Alias Tests
+# =============================================================================
+
+# Removed flag name -> the supported spelling that replaced it.
+REMOVED_ALIASES = {
+    "--playwright": "-s playwright",
+    "--defuddle": "-s defuddle",
+    "--static": "-s static",
+    "--jina": "-s jina",
+    "--cloudflare": "-s cloudflare",
+    "--kreuzberg": "-b kreuzberg",
+}
+
+
+class TestRemovedDeprecatedAliases:
+    """The six removed strategy/backend aliases must fail with a migration hint."""
+
+    @pytest.mark.parametrize(("flag", "replacement"), sorted(REMOVED_ALIASES.items()))
+    def test_removed_alias_names_the_replacement(
+        self, flag: str, replacement: str, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """A removed alias errors out pointing at the supported spelling."""
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+        output_dir = tmp_path / "out"
+
+        result = cli_runner.invoke(
+            app, [str(sample), "-o", str(output_dir), flag, "--dry-run"]
+        )
+
+        # Same exit code as any other usage error
+        assert result.exit_code == 2
+        stderr = _strip_ansi(result.stderr)
+        assert flag in stderr
+        assert replacement in stderr
+        # Not the bare click message
+        assert "No such option" not in stderr
+
+    @pytest.mark.parametrize(("flag", "replacement"), sorted(REMOVED_ALIASES.items()))
+    def test_removed_alias_before_input_also_reports(
+        self, flag: str, replacement: str, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Options may precede INPUT; detection must not depend on position."""
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+
+        result = cli_runner.invoke(app, [flag, str(sample), "--dry-run"])
+
+        assert result.exit_code == 2
+        assert replacement in _strip_ansi(result.stderr)
+
+    @pytest.mark.parametrize("flag", sorted(REMOVED_ALIASES))
+    def test_removed_alias_absent_from_help(
+        self, flag: str, cli_runner: CliRunner
+    ) -> None:
+        """--help must not advertise the removed aliases any more."""
+        result = cli_runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert flag not in _strip_ansi(result.output)
+
+    def test_removed_alias_message_goes_to_stderr_only(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """The migration error must not pollute stdout."""
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+
+        result = cli_runner.invoke(app, [str(sample), "--playwright"])
+
+        assert result.exit_code == 2
+        assert "--playwright" not in result.stdout
+
+    def test_replacement_strategy_still_works(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """`-s playwright` (the replacement) is unaffected."""
+        output_dir = tmp_path / "out"
+        result = cli_runner.invoke(
+            app,
+            [
+                "https://example.com",
+                "-o",
+                str(output_dir),
+                "-s",
+                "playwright",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 0
+
+    def test_replacement_backend_still_works(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """`-b kreuzberg` (the replacement) is unaffected."""
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+        output_dir = tmp_path / "out"
+        result = cli_runner.invoke(
+            app, [str(sample), "-o", str(output_dir), "-b", "kreuzberg", "--dry-run"]
+        )
+        assert result.exit_code == 0
+
+    def test_unknown_option_keeps_default_click_error(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Options we never had still get click's own error, not a hint."""
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+
+        result = cli_runner.invoke(app, [str(sample), "--nope"])
+
+        assert result.exit_code == 2
+        assert "No such option" in _strip_ansi(result.stderr)
+
+
+# =============================================================================
+# Console Verbosity Tests
+# =============================================================================
+
+
+def _flattened_help(cli_runner: CliRunner) -> str:
+    """Return --help as one whitespace-normalized line, free of ANSI and box art."""
+    result = cli_runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    text = _strip_ansi(result.output)
+    text = re.sub(r"[│┃╭╮╰╯─━┌┐└┘]", " ", text)
+    return re.sub(r"\s+", " ", text)
+
+
+class TestConsoleVerbosity:
+    """Pin the implicit quiet rules and require --help to spell them out."""
+
+    @staticmethod
+    def _console_quiet(cli_runner: CliRunner, args: list[str]) -> bool:
+        """Return the ``quiet`` value the CLI computed for the console logger."""
+        with patch("markitai.cli.main.setup_logging", return_value=(1, None)) as setup:
+            result = cli_runner.invoke(app, args)
+        assert result.exit_code == 0, result.output
+        assert setup.call_count == 1
+        return bool(setup.call_args.kwargs["quiet"])
+
+    def test_single_file_is_quiet_by_default(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """A single file conversion suppresses console logs without asking."""
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+
+        quiet = self._console_quiet(
+            cli_runner, [str(sample), "-o", str(tmp_path / "out"), "--dry-run"]
+        )
+
+        assert quiet is True
+
+    def test_verbose_unquiets_single_file(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """-v is what turns the hidden single-file output back on."""
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+
+        quiet = self._console_quiet(
+            cli_runner, [str(sample), "-o", str(tmp_path / "out"), "-v", "--dry-run"]
+        )
+
+        assert quiet is False
+
+    def test_stdout_mode_stays_quiet_even_with_verbose(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Without -o the Markdown is the output, so -v must not pollute it."""
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+
+        quiet = self._console_quiet(cli_runner, [str(sample), "-v", "--dry-run"])
+
+        assert quiet is True
+
+    def test_directory_batch_is_not_quiet_by_default(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """Batch runs keep their progress output unless asked otherwise."""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "sample.txt").write_text("hello")
+
+        quiet = self._console_quiet(
+            cli_runner, [str(src), "-o", str(tmp_path / "out"), "--dry-run"]
+        )
+
+        assert quiet is False
+
+    def test_quiet_flag_silences_directory_batch(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """-q is what a batch run needs to go silent."""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "sample.txt").write_text("hello")
+
+        quiet = self._console_quiet(
+            cli_runner, [str(src), "-o", str(tmp_path / "out"), "-q", "--dry-run"]
+        )
+
+        assert quiet is True
+
+    def test_quiet_help_documents_the_default(self, cli_runner: CliRunner) -> None:
+        """--help must say single conversions are quiet already, batches are not."""
+        text = _flattened_help(cli_runner)
+
+        assert "already quiet by default" in text
+        assert "batch" in text.lower()
+
+    def test_verbose_help_documents_stdout_exception(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """--help must say -v does nothing when the result goes to stdout."""
+        text = _flattened_help(cli_runner)
+
+        assert "quiet by default" in text
+        assert "stdout" in text
+
+
+class TestScreenshotOnlyHelp:
+    """--screenshot-only means two different things; --help must say both."""
+
+    def test_help_describes_both_llm_modes(self, cli_runner: CliRunner) -> None:
+        text = _flattened_help(cli_runner)
+
+        assert "With --llm" in text
+        assert "Without --llm" in text
+        assert "implies --screenshot" in text
 
 
 # =============================================================================

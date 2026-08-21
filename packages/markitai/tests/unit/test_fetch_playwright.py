@@ -1184,20 +1184,10 @@ class TestTryEnricherFallbackAsync:
         mock_enrich.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_ask_consent_proceeds_without_prompting(
+    async def test_always_discloses_without_prompting(
         self, capsys: pytest.CaptureFixture[str]
     ):
-        """remote_consent='ask' must NOT prompt or block here, unlike
-        defuddle/jina/cloudflare. should_run() already restricts this
-        enricher to URLs that matched a public x.com/twitter.com
-        status/article pattern — there is no arbitrary/private URL being
-        handed to a third party to gate on, so "ask" behaves like "always".
-        Regression: an earlier fix routed this through the shared
-        resolve_remote_consent(), which (a) auto-denied non-interactively
-        and (b) prompted interactively with a defuddle/Jina-specific
-        message even when invoked via `-s playwright`, which never primes
-        that shared consent cache.
-        """
+        """remote_consent='always' keeps the first-use stderr disclosure."""
         from markitai.fetch_playwright import PlaywrightRenderer
         from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
         from markitai.webextract.resolver import ResolvedPage
@@ -1214,9 +1204,9 @@ class TestTryEnricherFallbackAsync:
                 return_value=resolved,
             ) as mock_enrich,
         ):
-            mock_stdin.isatty.return_value = False
+            mock_stdin.isatty.return_value = True
             result = await renderer._try_enricher_fallback_async(
-                "https://x.com/user/status/123", "ask"
+                "https://x.com/user/status/123", "always"
             )
 
         assert result[0] == "hi"
@@ -1225,6 +1215,167 @@ class TestTryEnricherFallbackAsync:
         disclosure = capsys.readouterr().err
         assert "remote extraction services may receive URLs" in disclosure
         assert "FxTwitter, Twitter oEmbed" in disclosure
+
+    @pytest.mark.asyncio
+    async def test_ask_prompts_once_and_a_yes_covers_later_calls(
+        self, capsys: pytest.CaptureFixture[str]
+    ):
+        """ "ask" means "ask": the enricher joins the ONE process-wide
+        consent decision instead of silently calling FxTwitter/oEmbed
+        because nobody had been asked yet. One Yes then covers every
+        remote service, so the second URL must not re-prompt.
+        """
+        from markitai.fetch import peek_cached_remote_consent
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+        from markitai.webextract.resolver import ResolvedPage
+
+        resolved = ResolvedPage(content_html="<p>hi</p>")
+        renderer = PlaywrightRenderer()
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("click.confirm", return_value=True) as mock_confirm,
+            patch.object(
+                XOEmbedEnricher,
+                "enrich",
+                new_callable=AsyncMock,
+                return_value=resolved,
+            ) as mock_enrich,
+        ):
+            mock_stdin.isatty.return_value = True
+            first = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", "ask"
+            )
+            second = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/456", "ask"
+            )
+
+        assert first[0] == "hi"
+        assert second[0] == "hi"
+        mock_confirm.assert_called_once()
+        # Same question and service list as the main chain's prompt.
+        question = mock_confirm.call_args.args[0]
+        assert "Allow sending public URLs to these remote services" in question
+        assert "FxTwitter" in capsys.readouterr().err  # prompt preamble
+        assert mock_enrich.await_count == 2
+        assert peek_cached_remote_consent() is True
+
+    @pytest.mark.asyncio
+    async def test_ask_declined_blocks_the_enricher(self):
+        """A No answered at the enricher's prompt stops the remote call."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+
+        renderer = PlaywrightRenderer()
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("click.confirm", return_value=False) as mock_confirm,
+            patch.object(
+                XOEmbedEnricher, "enrich", new_callable=AsyncMock
+            ) as mock_enrich,
+        ):
+            mock_stdin.isatty.return_value = True
+            first = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", "ask"
+            )
+            second = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/456", "ask"
+            )
+
+        assert first == ("", None, "")
+        assert second == ("", None, "")
+        mock_confirm.assert_called_once()
+        mock_enrich.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_ask_without_a_tty_denies_like_the_main_chain(self):
+        """Non-interactive "ask" auto-denies — exactly what
+        resolve_remote_consent() does for defuddle/jina/cloudflare, and
+        the branch a server (`markitai serve`, --quiet) always takes.
+        """
+        from markitai.fetch import peek_cached_remote_consent
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+
+        renderer = PlaywrightRenderer()
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("click.confirm") as mock_confirm,
+            patch.object(
+                XOEmbedEnricher, "enrich", new_callable=AsyncMock
+            ) as mock_enrich,
+        ):
+            mock_stdin.isatty.return_value = False
+            result = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", "ask"
+            )
+
+        assert result == ("", None, "")
+        mock_confirm.assert_not_called()
+        mock_enrich.assert_not_awaited()
+        assert peek_cached_remote_consent() is False
+
+    @pytest.mark.asyncio
+    async def test_prompt_is_skipped_for_urls_the_enricher_cannot_serve(self):
+        """Lazy consent: never ask about a URL that would not be sent."""
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+
+        renderer = PlaywrightRenderer()
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("click.confirm", return_value=True) as mock_confirm,
+            patch.object(
+                XOEmbedEnricher, "enrich", new_callable=AsyncMock
+            ) as mock_enrich,
+        ):
+            mock_stdin.isatty.return_value = True
+            result = await renderer._try_enricher_fallback_async(
+                "https://example.com/status/123", "ask"
+            )
+
+        assert result == ("", None, "")
+        mock_confirm.assert_not_called()
+        mock_enrich.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cached_ask_consent_covers_the_enricher(self):
+        """A Yes given for defuddle/jina also authorizes the X services."""
+        from markitai.config import FetchConfig
+        from markitai.fetch import resolve_remote_consent
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+        from markitai.webextract.resolver import ResolvedPage
+
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("click.confirm", return_value=True),
+        ):
+            mock_stdin.isatty.return_value = True
+            assert (
+                resolve_remote_consent(
+                    FetchConfig(remote_consent="ask"), services=["defuddle", "jina"]
+                )
+                is True
+            )
+
+        renderer = PlaywrightRenderer()
+        with (
+            patch("click.confirm") as mock_confirm,
+            patch.object(
+                XOEmbedEnricher,
+                "enrich",
+                new_callable=AsyncMock,
+                return_value=ResolvedPage(content_html="<p>hi</p>"),
+            ) as mock_enrich,
+        ):
+            result = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", "ask"
+            )
+
+        assert result[0] == "hi"
+        mock_confirm.assert_not_called()
+        mock_enrich.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_cached_ask_decline_blocks_x_enricher(self):

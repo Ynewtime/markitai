@@ -477,6 +477,7 @@ class TestDoctorExitCode:
                     "name": "RapidOCR",
                     "description": "OCR for scanned documents",
                     "status": "ok" if rapidocr_ok else "missing",
+                    "optional": True,
                     "message": "RapidOCR installed"
                     if rapidocr_ok
                     else "RapidOCR not installed",
@@ -511,9 +512,10 @@ class TestDoctorExitCode:
         assert result.exit_code == 0
         assert "playwright" in json.loads(result.output)
 
-    def test_missing_rapidocr_exits_nonzero(
+    def test_missing_rapidocr_exits_zero(
         self, runner: CliRunner, mock_config: MagicMock
     ) -> None:
+        """OCR left the core install: its absence is a report, not a failure."""
         result = self._invoke(
             runner,
             mock_config,
@@ -521,5 +523,6 @@ class TestDoctorExitCode:
             libreoffice_ok=True,
             rapidocr_ok=False,
         )
-        assert result.exit_code == 1
-        assert "Health check failed" in result.output or "健康检查失败" in result.output
+        assert result.exit_code == 0, result.output
+        assert "Health check failed" not in result.output
+        assert "健康检查失败" not in result.output

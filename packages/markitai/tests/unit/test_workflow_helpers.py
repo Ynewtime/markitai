@@ -444,31 +444,17 @@ class TestFormatStandaloneImageYamlSafety:
 class TestNormalizeFrontmatterPromptLeakage:
     """Tests for prompt leakage filtering in normalize_frontmatter."""
 
-    def test_filters_chinese_prompt_leakage(self):
-        """Test that Chinese prompt leakage keys are filtered."""
-        data = {
-            "title": "Valid Title",
-            "根据文档内容生成元数据": "Invalid key",
-            "source": "file.pdf",
-        }
-        result = normalize_frontmatter(data)
-
-        assert "title: Valid Title" in result
-        assert "source: file.pdf" in result
-        assert "根据文档内容生成" not in result
-
     def test_filters_task_number_leakage(self):
-        """Test that task number patterns are filtered."""
+        """A key echoing a "## Task N:" prompt heading is dropped."""
         data = {
             "title": "Valid Title",
-            "任务 1": "Do something",
             "Task 2": "Do something else",
             "source": "file.pdf",
         }
         result = normalize_frontmatter(data)
 
         assert "title: Valid Title" in result
-        assert "任务" not in result
+        assert "source: file.pdf" in result
         assert "Task 2" not in result
 
     def test_filters_yaml_frontmatter_leakage(self):

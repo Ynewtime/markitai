@@ -40,13 +40,13 @@ _CODE_BLOCK_RE = re.compile(
 # (still present in old cached results); the __MARKITAI_ mention
 # distinguishes them from legitimate document content.
 _ECHOED_REMINDER_RE = re.compile(r"^\s*REMINDER:.*__MARKITAI_")
-_PROMPT_LEAKAGE_PATTERNS = [
-    re.compile(r"^根据.*生成.*frontmatter.*:.*$", re.IGNORECASE),
-    re.compile(r"^请.*生成.*:.*$", re.IGNORECASE),
-    re.compile(r"^以下是.*:.*$", re.IGNORECASE),
-    re.compile(r"^YAML.*frontmatter.*:.*$", re.IGNORECASE),
-    re.compile(r"^元数据.*:.*$", re.IGNORECASE),
-]
+# Frontmatter lines that echo prompt instructions. Empty on purpose: the
+# five patterns that used to live here were written for the pre-English
+# prompts ("^根据.*生成.*frontmatter", "^以下是.*:", ...) and matched no line
+# of any current template, so they only ever ran for nothing. Every pattern
+# added here must match live prompt text — test_prompt_leakage_sync.py
+# fails on a pattern that cannot fire.
+_PROMPT_LEAKAGE_PATTERNS: list[re.Pattern[str]] = []
 
 
 def smart_truncate(text: str, max_chars: int, preserve_end: bool = False) -> str:
@@ -571,8 +571,9 @@ def clean_frontmatter(frontmatter: str) -> str:
     if frontmatter.endswith("---"):
         frontmatter = frontmatter[:-3].strip()
 
-    # Detect and remove prompt leakage lines (Chinese prompt instructions)
-    # These are LLM hallucinations where the prompt text appears in output
+    # Detect and remove prompt leakage lines: LLM hallucinations where the
+    # prompt text is echoed into the frontmatter. Only patterns tied to live
+    # prompt wording belong in _PROMPT_LEAKAGE_PATTERNS (see its comment).
     lines = frontmatter.split("\n")
     cleaned_lines = []
     removed_count = 0

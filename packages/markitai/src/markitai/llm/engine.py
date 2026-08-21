@@ -47,6 +47,17 @@ from markitai.llm.types import LLMResponse
 from markitai.providers.errors import ProviderError
 from markitai.utils.text import format_error_message, repair_json_string
 
+
+class EmptyLLMResponseError(RuntimeError):
+    """The model returned no usable content after every retry.
+
+    Raised by ``complete_text(..., require_content=True)`` so call sites can
+    tell "the model gave up" apart from a legitimate result. Callers must
+    treat it as a failed call: never cache the outcome, and fall back to the
+    unprocessed input instead of persisting an empty document.
+    """
+
+
 # Retryable transport exceptions (canonical definition; markitai.llm.processor
 # re-exports this tuple, since processor imports engine and not vice versa).
 RETRYABLE_ERRORS = (
@@ -428,14 +439,11 @@ class LLMEngine:
 
             elapsed_ms = (time.perf_counter() - start_time) * 1000
 
-            # Check for truncation
-            if hasattr(raw_response, "choices") and raw_response.choices:
-                finish_reason = getattr(raw_response.choices[0], "finish_reason", None)
-                if finish_reason == "length":
-                    raise ValueError("Output truncated due to max_tokens limit")
-
             # Track usage from the raw API response (once per structured
-            # call; instructor accumulates usage across its own retries)
+            # call; instructor accumulates usage across its own retries).
+            # This runs BEFORE the truncation check on purpose: a truncated
+            # generation was billed like any other, and truncation hits the
+            # longest (priciest) calls, so raising first hid real spend.
             actual_model = getattr(raw_response, "model", None) or "default"
             input_tokens = 0
             output_tokens = 0
@@ -453,6 +461,13 @@ class LLMEngine:
                 f"tokens={input_tokens}+{output_tokens} "
                 f"time={elapsed_ms:.0f}ms cost=${cost:.6f}"
             )
+
+            # Check for truncation (after accounting, before the cache write:
+            # a truncated result must never be persisted)
+            if hasattr(raw_response, "choices") and raw_response.choices:
+                finish_reason = getattr(raw_response.choices[0], "finish_reason", None)
+                if finish_reason == "length":
+                    raise ValueError("Output truncated due to max_tokens limit")
 
             # Validation hook: may correct the result; if it raises, nothing
             # is cached and the error propagates to the caller
@@ -487,6 +502,7 @@ class LLMEngine:
         context: str = "",
         max_retries: int = DEFAULT_MAX_RETRIES,
         router: Any | None = None,
+        require_content: bool = False,
     ) -> LLMResponse:
         """Make a plain text LLM call with the transport retry loop.
 
@@ -503,9 +519,19 @@ class LLMEngine:
             context: Context identifier for usage tracking (e.g., filename)
             max_retries: Maximum number of retry attempts
             router: Router override (None -> engine default router)
+            require_content: Raise ``EmptyLLMResponseError`` instead of
+                returning blank content once the retries are exhausted.
+                Call sites that cache their result must set this: the text
+                path has no schema validation, so an empty answer would
+                otherwise be written to the TTL-less persistent cache and
+                replayed forever.
 
         Returns:
             LLMResponse with content and usage info
+
+        Raises:
+            EmptyLLMResponseError: If ``require_content`` is set and the
+                model returned empty/whitespace-only content.
         """
         # Use provided router or default to main router
         active_router = router or self.router
@@ -534,7 +560,7 @@ class LLMEngine:
                 cost_usd=cost,
             )
 
-        return cast(
+        response = cast(
             LLMResponse,
             await self._acompletion_with_retries(
                 active_router=active_router,
@@ -550,6 +576,16 @@ class LLMEngine:
                 finalize=build_llm_response,
             ),
         )
+
+        # Usage is already tracked above (the attempts were paid for); only
+        # the *result* is rejected, so nothing downstream caches a blank.
+        if require_content and not response.content.strip():
+            raise EmptyLLMResponseError(
+                f"[LLM:{call_id}] Model returned empty content after "
+                f"{max_retries + 1} attempts"
+            )
+
+        return response
 
     def _make_retrying_acompletion(
         self,

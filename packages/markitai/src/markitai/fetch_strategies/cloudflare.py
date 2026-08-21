@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.fetch_http import resolve_proxy_for_url
 from markitai.fetch_session import get_default_session
 from markitai.fetch_strategies._shared import (
     _build_native_fetch_result,
@@ -133,11 +134,15 @@ async def fetch_with_cloudflare(
     browser_ms_used: str | None = None
 
     try:
-        # Use _detect_proxy() not get_proxy_for_url(endpoint), because
-        # api.cloudflare.com is not in proxy_domains but may still need
-        # proxy in restricted network environments.
-        proxy_url = _detect_proxy()
-        proxy_config = proxy_url if proxy_url else None
+        # The host contacted here is api.cloudflare.com, not the page URL, so
+        # the bypass is checked against the endpoint. This client is built
+        # locally instead of coming from get_static_http_client(), so the
+        # NO_PROXY filter every shared client gets for free is applied here
+        # by hand. (The former comment justified skipping the filter with a
+        # "proxy_domains" allowlist that no longer exists: proxy resolution
+        # is now detection + NO_PROXY, and a detected proxy still applies to
+        # api.cloudflare.com unless the user exempted it.)
+        proxy_config = resolve_proxy_for_url(endpoint, _detect_proxy())
 
         async with (
             get_cf_semaphore(),

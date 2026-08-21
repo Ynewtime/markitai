@@ -10,7 +10,7 @@ Opinionated Markdown converter with native LLM enhancement support.
 - **Multi-format**: DOCX, PPTX, XLSX, PDF, TXT, MD, images (JPG/PNG/WebP), and URLs → clean Markdown
 - **LLM enhancement**: AI-powered format cleaning, frontmatter metadata, and vision analysis of embedded images via [litellm](https://github.com/BerriAI/litellm), so any provider works (OpenAI, Anthropic, Gemini, local CLIs, and more)
 - **Batch processing**: concurrent conversion with progress display and `--resume` for interrupted jobs
-- **OCR**: scanned PDFs and images via RapidOCR
+- **OCR**: scanned PDFs and images via RapidOCR (optional extra, see below)
 - **Web fetching**: static HTTP with cache revalidation, or Playwright rendering for JS-heavy pages
 - **Local web workspace**: upload files or folders, submit URLs, configure LLM providers, compare results, retry failures, and revisit conversion history — CLI runs can opt in too, via `--record-history`
 
@@ -19,8 +19,9 @@ Docs: <https://markitai.dev>
 ## Install
 
 **Recommended: guided installer.** Checks/installs Python and uv, lets you
-pick extras, installs optional components (Playwright browser, LibreOffice,
-FFmpeg), offers China-mainland mirror acceleration, and is bilingual (EN/中文):
+pick extras, installs optional components (Playwright browser, LibreOffice),
+falls back to a mirror when it measures the default index as unreachable, and
+is bilingual (EN/中文):
 
 ```bash
 # Linux/macOS
@@ -63,10 +64,23 @@ have a different `mkai` on your PATH, use the full `markitai` to avoid ambiguity
 | `claude-agent` | Claude Agent SDK as an LLM provider |
 | `copilot` | GitHub Copilot SDK as an LLM provider |
 | `extra-fetch` | curl-cffi HTTP client (better anti-bot compatibility) |
+| `heif` | HEIC/HEIF/AVIF image input |
 | `kreuzberg` | Kreuzberg extraction backend |
+| `ocr` | Local OCR for scanned PDFs and images (`--ocr`) |
 | `serve` | Local web workspace and REST API |
 | `svg` | SVG rasterization via cairosvg |
 | `all` | Everything above |
+
+The base install is deliberately lean (~475MB). `ocr` is the one extra that
+adds real weight (~160MB of models and OpenCV), so it is opt-in:
+
+```bash
+uv tool install "markitai[ocr]" --force
+```
+
+The guided installer offers it as a yes/no question (defaulting to yes, and
+remembering a "no" for the rest of the run); `markitai doctor` reports OCR as
+an optional capability and prints this command when it is not installed.
 
 Launch the local web workspace with:
 
@@ -90,4 +104,27 @@ See the [Getting Started guide](https://markitai.dev/guide/getting-started) for 
 
 ## License
 
-[MIT](https://github.com/Ynewtime/markitai/blob/main/LICENSE)
+markitai's own source code is [MIT](https://github.com/Ynewtime/markitai/blob/main/LICENSE).
+
+The default installation is not uniformly MIT, because the PDF engine is not.
+The PyMuPDF packages `pymupdf`, `pymupdf-layout`, and `pymupdf4llm` come from
+Artifex Software and are
+dual-licensed under **AGPL-3.0 or a commercial licence from Artifex**. They are
+core dependencies — PDF conversion does not work without them.
+
+For local use — running the CLI on your own machine, or a `markitai serve`
+instance only you talk to — this changes nothing. AGPL obligations attach when
+you *redistribute* the combined work or offer it to other people over a network:
+in that case AGPL-3.0 asks you to make the corresponding source available on the
+same terms, or to buy a [commercial licence from Artifex](https://artifex.com/licensing/)
+instead.
+
+Everything else in the default install is MIT, Apache-2.0, BSD, or MIT-CMU. CI
+enforces this: `scripts/check_licenses.py` fails the build on any
+non-commercial or proprietary dependency, and on any AGPL/GPL package outside an
+explicit allowlist.
+
+Full details, plus attribution for the code markitai ports from
+[defuddle](https://github.com/kepano/defuddle) (MIT) and
+[marker](https://github.com/VikParuchuri/marker) (Apache-2.0), are in
+[NOTICE](https://github.com/Ynewtime/markitai/blob/main/NOTICE).
