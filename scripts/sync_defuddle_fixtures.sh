@@ -6,7 +6,9 @@
 set -euo pipefail
 
 DEFUDDLE_DIR="${1:?Usage: $0 /path/to/defuddle}"
-DEST_DIR="$(cd "$(dirname "$0")/.." && pwd)/packages/markitai/tests/defuddle_fixtures"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DEST_DIR="$REPO_ROOT/packages/markitai/tests/defuddle_fixtures"
+MANIFEST="$REPO_ROOT/packages/markitai/src/markitai/webextract/PORT_MANIFEST.md"
 
 if [[ ! -d "$DEFUDDLE_DIR/tests/fixtures" ]]; then
     echo "Error: $DEFUDDLE_DIR/tests/fixtures not found" >&2
@@ -20,6 +22,11 @@ mkdir -p "$DEST_DIR/fixtures" "$DEST_DIR/expected"
 COMMIT=$(git -C "$DEFUDDLE_DIR" rev-parse HEAD)
 echo "defuddle commit: $COMMIT" > "$DEST_DIR/VERSION"
 echo "synced at: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$DEST_DIR/VERSION"
+
+# Keep the port manifest pin in lockstep with VERSION
+# (tests/unit/webextract/test_port_manifest.py enforces they match).
+sed "s/^Pinned upstream commit: .*/Pinned upstream commit: \`$COMMIT\`/" \
+    "$MANIFEST" > "$MANIFEST.tmp" && mv "$MANIFEST.tmp" "$MANIFEST"
 
 # Sync fixtures (clean then copy)
 rm -rf "$DEST_DIR/fixtures/"* "$DEST_DIR/expected/"*

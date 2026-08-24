@@ -65,7 +65,11 @@ parity corpus in `tests/defuddle_fixtures/` from a local clone of the upstream
 in `VERSION`. Run it only when deliberately refreshing the corpus against a
 newer defuddle; both the parity tests and the quality benchmark read these
 fixtures, so a resync can shift scores. The corpus was last synced 2026-03-23
-(see `tests/defuddle_fixtures/VERSION`).
+(see `tests/defuddle_fixtures/VERSION`). The script also rewrites the pin in
+`src/markitai/webextract/PORT_MANIFEST.md` (the upstream→port module map);
+a unit test keeps the two pins equal, and the weekly
+`.github/workflows/defuddle-watch.yml` opens an issue when upstream cuts a
+release ahead of the pin.
 
 ## Conventions
 
