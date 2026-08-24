@@ -38,6 +38,7 @@ from markitai.runs.output import (
 )
 from markitai.security import atomic_write_json, validate_file_size
 from markitai.utils.cli_helpers import compute_task_hash, get_report_file_path
+from markitai.utils.errors import ConversionError
 from markitai.utils.paths import derive_output_name
 from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import write_images_json
@@ -181,7 +182,10 @@ async def process_single_file(
 
         if not result.success:
             if result.error:
-                raise RuntimeError(result.error)
+                # The step error is already rendered for the user; a plain
+                # RuntimeError here would re-prefix it with "RuntimeError:"
+                # when formatted by the handler below.
+                raise ConversionError(result.error)
             raise RuntimeError("Unknown conversion error")
 
         # Handle skipped files (already exists)

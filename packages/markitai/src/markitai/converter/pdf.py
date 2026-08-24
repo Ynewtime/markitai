@@ -25,6 +25,7 @@ from markitai.converter.base import (
 from markitai.image import ImageProcessor
 from markitai.ocr import is_likely_garbled
 from markitai.security import escape_glob_pattern
+from markitai.utils.errors import MissingDependencyError
 from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.paths import (
     create_tracked_temp_dir,
@@ -1026,7 +1027,7 @@ class PdfConverter(BaseConverter):
         try:
             import pymupdf
         except ImportError as e:
-            raise ImportError(
+            raise MissingDependencyError(
                 "PyMuPDF is not installed. Install with: uv add pymupdf"
             ) from e
 

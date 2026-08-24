@@ -300,6 +300,12 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
             )
         return ConversionStepResult(success=True)
     except Exception as e:
+        # The step error below flattens the exception into a user-facing
+        # string (self-explanatory errors even drop their class name), so
+        # keep the full type + traceback retrievable in the DEBUG log.
+        logger.opt(exception=True).debug(
+            "[Convert] {} failed with {}", ctx.input_path.name, type(e).__name__
+        )
         return ConversionStepResult(
             success=False, error=f"Conversion failed: {format_error_message(e)}"
         )

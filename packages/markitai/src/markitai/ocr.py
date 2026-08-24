@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from markitai.constants import DEFAULT_OCR_SAMPLE_PAGES, DEFAULT_RENDER_DPI
+from markitai.utils.errors import MissingDependencyError
 
 if TYPE_CHECKING:
     from markitai.config import OCRConfig
@@ -28,13 +29,17 @@ if TYPE_CHECKING:
 OCR_INSTALL_HINT = 'Install with: uv tool install "markitai[ocr]" --force'
 
 
-class OCRBackendMissing(ImportError):
+class OCRBackendMissing(MissingDependencyError):
     """The optional OCR backend is not installed.
 
     Distinct from a runtime OCR failure: callers may degrade gracefully when
     the engine runs and fails, but must not swallow this one. The user asked
     for OCR and can get it with a single command, so telling them the
     conversion succeeded would be a lie.
+
+    Inherits :class:`MissingDependencyError` (still an ``ImportError``): the
+    message is self-explanatory, so user-facing rendering drops the class
+    name.
     """
 
 
@@ -558,7 +563,7 @@ class OCRProcessor:
         try:
             import pymupdf
         except ImportError as e:
-            raise ImportError(
+            raise MissingDependencyError(
                 "PyMuPDF is not installed. Install with: uv add pymupdf"
             ) from e
 

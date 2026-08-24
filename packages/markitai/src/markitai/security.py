@@ -14,6 +14,7 @@ from typing import Any
 from loguru import logger
 
 from markitai.constants import DEFAULT_JSON_INDENT
+from markitai.utils.errors import FileTooLargeError
 
 # Windows-specific retry settings for file operations
 _WINDOWS_RETRY_COUNT = 5
@@ -380,13 +381,15 @@ def validate_file_size(path: Path, max_size_bytes: int) -> None:
         max_size_bytes: Maximum allowed size in bytes
 
     Raises:
-        ValueError: If file exceeds size limit
+        FileTooLargeError: If file exceeds size limit (a ``ValueError``
+            subclass, so existing ``except ValueError`` callers still catch
+            it).
     """
     if not path.exists():
         return
 
     size = path.stat().st_size
     if size > max_size_bytes:
-        raise ValueError(
+        raise FileTooLargeError(
             f"File too large: {path.name} is {size} bytes (max: {max_size_bytes} bytes)"
         )

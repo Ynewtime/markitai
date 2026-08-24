@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from markitai.utils.errors import MissingDependencyError
+
 # Extensions handled by this module (dispatch is extension-based; the ftyp
 # sniff below confirms the container before requiring pillow-heif).
 HEIF_SUFFIXES = frozenset({".heic", ".heif", ".avif"})
@@ -58,8 +60,8 @@ def require_pillow_heif() -> None:
     """Register the pillow-heif Pillow plugin (lazily, once).
 
     Raises:
-        ImportError: If pillow-heif is not installed, with an actionable
-            message naming the ``markitai[heif]`` extra.
+        MissingDependencyError: If pillow-heif is not installed, with an
+            actionable message naming the ``markitai[heif]`` extra.
     """
     global _opener_registered
     if _opener_registered:
@@ -67,7 +69,7 @@ def require_pillow_heif() -> None:
     try:
         from pillow_heif import register_heif_opener
     except ImportError as e:
-        raise ImportError(_HEIF_INSTALL_HINT) from e
+        raise MissingDependencyError(_HEIF_INSTALL_HINT) from e
     register_heif_opener()
     _opener_registered = True
 

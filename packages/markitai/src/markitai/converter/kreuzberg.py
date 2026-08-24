@@ -29,6 +29,7 @@ from markitai.converter.base import (
     FileFormat,
     _converter_registry,
 )
+from markitai.utils.errors import MissingDependencyError
 
 # Formats that kreuzberg should handle — only those without native converters.
 # NUMBERS: handled by markitdown_ext.
@@ -72,13 +73,13 @@ class KreuzbergConverter(BaseConverter):
             ConvertResult with markdown content and metadata.
 
         Raises:
-            ImportError: If kreuzberg is not installed.
+            MissingDependencyError: If kreuzberg is not installed.
             RuntimeError: If kreuzberg fails to extract content.
         """
         try:
             from kreuzberg import ExtractionConfig, extract_file_sync
         except ImportError:
-            raise ImportError(
+            raise MissingDependencyError(
                 "kreuzberg is required for this file format but is not "
                 'installed. Install it with: uv tool install "markitai[kreuzberg]"'
             )

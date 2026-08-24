@@ -9,6 +9,8 @@ from urllib.parse import quote
 
 from pydantic import ValidationError
 
+from markitai.utils.errors import SelfExplanatoryError
+
 
 def markdown_image_reference(alt: str, path: str) -> str:
     """Build a CommonMark image reference safe for spaces and Unicode paths."""
@@ -126,6 +128,12 @@ def format_error_message(error: Any, max_length: int = 200) -> str:
     Extracts the core error message without full traceback.
     For LiteLLM and other chained exceptions, extracts the most relevant message.
 
+    The exception class name is prefixed (``ValueError: ...``) because for an
+    unexpected failure the type is the most useful diagnostic we have.
+    :class:`~markitai.utils.errors.SelfExplanatoryError` subclasses opt out:
+    their messages already name the problem and the fix, so the prefix is
+    noise (see that module for the rationale).
+
     Args:
         error: Exception object or any value
         max_length: Maximum message length before truncation
@@ -164,25 +172,33 @@ def format_error_message(error: Any, max_length: int = 200) -> str:
         else:
             msg = str(error)
 
-        # For chained exceptions, find the root cause message.
-        # Only follow __cause__ (explicit 'raise X from Y') — never __context__
-        # (implicit chaining), which often leads to wrapper exceptions like
-        # RetryError whose messages are opaque (e.g., "<Future at 0x...>").
-        root_error = error
-        while hasattr(root_error, "__cause__") and root_error.__cause__ is not None:
-            root_error = root_error.__cause__
+        # Self-explanatory errors own their wording: keep it verbatim and skip
+        # the root-cause walk below, which would happily swap an actionable
+        # install hint for the terser "No module named 'x'" it was raised from.
+        self_explanatory = isinstance(error, SelfExplanatoryError)
 
-        # If we found a root cause, use its message
-        if root_error is not error:
-            root_type = type(root_error).__name__
-            if root_error.args:
-                root_msg = str(root_error.args[0])
-            else:
-                root_msg = str(root_error)
-            # Use root message if it's more informative
-            if root_msg and len(root_msg) < len(msg):
-                msg = root_msg
-                exc_type = root_type
+        if not self_explanatory:
+            # For chained exceptions, find the root cause message.
+            # Only follow __cause__ (explicit 'raise X from Y') — never __context__
+            # (implicit chaining), which often leads to wrapper exceptions like
+            # RetryError whose messages are opaque (e.g., "<Future at 0x...>").
+            root_error = error
+            while hasattr(root_error, "__cause__") and root_error.__cause__ is not None:
+                root_error = root_error.__cause__
+
+            # If we found a root cause, use its message
+            if root_error is not error:
+                root_type = type(root_error).__name__
+                if root_error.args:
+                    root_msg = str(root_error.args[0])
+                else:
+                    root_msg = str(root_error)
+                # Use root message if it's more informative
+                if root_msg and len(root_msg) < len(msg):
+                    msg = root_msg
+                    exc_type = root_type
+                    # Adopting a self-explanatory cause adopts its rendering too
+                    self_explanatory = isinstance(root_error, SelfExplanatoryError)
 
         # Clean up the message - remove traceback if embedded
         if "Traceback (most recent call last):" in msg:
@@ -203,9 +219,11 @@ def format_error_message(error: Any, max_length: int = 200) -> str:
         if len(msg) > max_length:
             msg = msg[:max_length] + "..."
 
-        # Return formatted message with exception type
+        # Return formatted message with exception type. A self-explanatory
+        # error with no message left falls back to its type — an empty string
+        # would be worse than a noisy one.
         if msg:
-            return f"{exc_type}: {msg}"
+            return msg if self_explanatory else f"{exc_type}: {msg}"
         return exc_type
 
     # For non-exceptions, just convert to string
