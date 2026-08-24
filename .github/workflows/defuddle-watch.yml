@@ -1,0 +1,83 @@
+name: Defuddle upstream watch
+
+# Weekly check that the upstream defuddle release has not moved past the
+# commit our parity corpus / port manifest are pinned to
+# (packages/markitai/tests/defuddle_fixtures/VERSION, kept in lockstep with
+# src/markitai/webextract/PORT_MANIFEST.md). When it has, open a tracking
+# issue (idempotent: skipped while a previous watch issue is still open).
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    name: Compare upstream release with pinned commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+
+      - name: Check latest defuddle release against the pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          PIN_FILE=packages/markitai/tests/defuddle_fixtures/VERSION
+          PINNED=$(grep -oE '\b[0-9a-f]{40}\b' "$PIN_FILE" | head -1)
+          if [ -z "$PINNED" ]; then
+            echo "::error::No 40-hex commit pin found in $PIN_FILE"
+            exit 1
+          fi
+          echo "Pinned corpus commit: $PINNED"
+
+          LATEST_TAG=$(gh api repos/kepano/defuddle/releases/latest --jq .tag_name)
+          echo "Latest upstream release: $LATEST_TAG"
+
+          # Temporary clone at the release tag to resolve its commit; no
+          # dependence on anything outside this job.
+          git clone --quiet --depth 1 --branch "$LATEST_TAG" \
+            https://github.com/kepano/defuddle "$RUNNER_TEMP/defuddle"
+          LATEST_COMMIT=$(git -C "$RUNNER_TEMP/defuddle" rev-parse HEAD)
+          echo "Release commit: $LATEST_COMMIT"
+
+          if [ "$LATEST_COMMIT" = "$PINNED" ]; then
+            echo "Pin matches the latest release; nothing to do."
+            exit 0
+          fi
+
+          TITLE_PREFIX="defuddle upstream release"
+          OPEN_COUNT=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --limit 100 --json title \
+            --jq "[.[] | select(.title | startswith(\"$TITLE_PREFIX\"))] | length")
+          if [ "$OPEN_COUNT" -gt 0 ]; then
+            echo "An open '$TITLE_PREFIX' issue already exists; not opening another."
+            exit 0
+          fi
+
+          BODY_FILE="$RUNNER_TEMP/issue_body.md"
+          cat > "$BODY_FILE" <<EOF
+          Upstream [defuddle](https://github.com/kepano/defuddle) has release
+          \`$LATEST_TAG\` (\`$LATEST_COMMIT\`), ahead of our pinned commit
+          \`$PINNED\`.
+
+          To catch up:
+
+          1. Port any new extraction behavior for the modules listed in
+             \`packages/markitai/src/markitai/webextract/PORT_MANIFEST.md\`
+             (see its known-gaps section first).
+          2. Resync the corpus: \`scripts/sync_defuddle_fixtures.sh /path/to/defuddle\`
+             checked out at \`$LATEST_TAG\` (updates VERSION and the manifest pin).
+          3. Re-run the parity suite and the quality benchmark; regenerate
+             \`baseline.json\`/\`guardrails.json\` deliberately (see CONTRIBUTING.md).
+
+          Opened automatically by \`.github/workflows/defuddle-watch.yml\`.
+          EOF
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "$TITLE_PREFIX $LATEST_TAG is ahead of the pinned corpus" \
+            --body-file "$BODY_FILE"
