@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchCapabilities, historyArchiveUrl } from "./api/client";
-import { MAX_JOB_ITEMS, type Capabilities, type JobOptions, type Preset } from "./api/types";
+import type { Capabilities, JobOptions, Preset } from "./api/types";
 import type { SessionItem } from "./hooks/useJobs";
 import { AppFooter, AppHeader } from "./components/AppHeader";
 import { CapabilityHint } from "./components/CapabilityHint";
@@ -117,6 +117,10 @@ export default function App() {
     refreshCaps();
   }, [refreshCaps]);
   const llmConfigured = caps?.llm.routable === true;
+  // Server-owned job cap (capabilities.limits). Until caps load there is no
+  // client-side truncation; the server stays the authority and 422s oversized
+  // jobs either way.
+  const maxJobItems = caps?.limits.max_job_items;
 
   // Options remembered across visits (restored before caps arrive; the
   // downgrade effect below still applies when llm turns out unconfigured).
@@ -300,9 +304,9 @@ export default function App() {
       let send = files;
       if (fromFolder) {
         if (files.length === 0) notice = t.dropEmptyFolder;
-        else if (files.length > MAX_JOB_ITEMS) {
-          send = files.slice(0, MAX_JOB_ITEMS);
-          notice = t.dropTruncated(MAX_JOB_ITEMS, files.length);
+        else if (maxJobItems !== undefined && files.length > maxJobItems) {
+          send = files.slice(0, maxJobItems);
+          notice = t.dropTruncated(maxJobItems, files.length);
         }
       }
       setDropNotice(notice);
@@ -311,7 +315,7 @@ export default function App() {
         if (ok) navigateView("workspace");
       });
     },
-    [navigateView, submit, t],
+    [maxJobItems, navigateView, submit, t],
   );
   const submitUrls = useCallback(
     async (urls: string[]) => {
@@ -319,16 +323,16 @@ export default function App() {
       // same neutral truncation notice.
       let notice: string | null = null;
       let send = urls;
-      if (urls.length > MAX_JOB_ITEMS) {
-        send = urls.slice(0, MAX_JOB_ITEMS);
-        notice = t.dropTruncated(MAX_JOB_ITEMS, urls.length);
+      if (maxJobItems !== undefined && urls.length > maxJobItems) {
+        send = urls.slice(0, maxJobItems);
+        notice = t.dropTruncated(maxJobItems, urls.length);
       }
       setDropNotice(notice);
       const ok = await submit([], send, optionsRef.current);
       if (ok) navigateView("workspace");
       return ok;
     },
-    [navigateView, submit, t],
+    [maxJobItems, navigateView, submit, t],
   );
   // The OCR override applies to the retried request only; the persisted
   // toggle changes solely through the notification action that says so.

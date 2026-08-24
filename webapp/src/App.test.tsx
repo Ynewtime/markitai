@@ -1,12 +1,14 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_JOB_ITEMS } from "./api/types";
 import App from "./App";
 
 const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   openJob: vi.fn(),
+  // Job cap served by the mocked /api/capabilities below.
+  maxJobItems: 50,
 }));
+const MAX_JOB_ITEMS = mocks.maxJobItems;
 
 function archivedSnapshot() {
   return {
@@ -26,6 +28,7 @@ function archivedSnapshot() {
         status: "done",
         error: null,
         output: "archived.md",
+        output_name: null,
         duration_ms: 100,
         finished_at: "2026-07-12T10:01:00Z",
         cost_usd: null,
@@ -47,6 +50,7 @@ vi.mock("./api/client", async (importOriginal) => {
       llm: { configured: true, routable: true, effective: true, models: [] },
       presets: ["minimal", "standard", "rich"],
       extras: { browser: false, svg: false, kreuzberg: false },
+      limits: { max_job_items: mocks.maxJobItems },
     }),
   };
 });
@@ -292,6 +296,9 @@ describe("App workspace", () => {
   it("truncates an oversized folder drop at the job limit and says so", async () => {
     render(<App />);
     await screen.findByRole("textbox");
+    // Let the mocked capabilities land: the drop listener truncates against
+    // the server-provided limits.max_job_items.
+    await act(async () => {});
 
     const fileEntries = Array.from({ length: MAX_JOB_ITEMS + 1 }, (_, index) => ({
       name: `doc-${index}.txt`,

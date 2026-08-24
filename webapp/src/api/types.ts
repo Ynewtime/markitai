@@ -1,7 +1,4 @@
-/** Mirror of the `markitai serve` API contract (scratchpad/API_CONTRACT.md). */
-
-/** Server-side per-job item cap (folder drops truncate against it). */
-export const MAX_JOB_ITEMS = 50;
+/** Mirror of the `markitai serve` API contract — validated against the OpenAPI schema of scripts/export_openapi.py by tests/unit/serve/test_contract_sync.py. */
 
 export type ItemKind = "file" | "url";
 export type ItemStatus = "queued" | "running" | "done" | "error";
@@ -33,6 +30,8 @@ export interface ItemPayload {
   status: ItemStatus;
   error: string | null;
   output: string | null;
+  /** Pre-assigned unique output name (url items; null for uploads). */
+  output_name: string | null;
   duration_ms: number | null;
   finished_at: string | null;
   cost_usd: number | null;
@@ -80,6 +79,8 @@ export interface Capabilities {
   };
   presets: string[];
   extras: { browser: boolean; svg: boolean; kreuzberg: boolean };
+  /** Server-enforced limits (e.g. folder drops truncate to max_job_items). */
+  limits: { max_job_items: number };
 }
 
 /** `GET /api/settings/llm` — secret-free deployment and session detection view. */
@@ -117,7 +118,7 @@ export interface LLMProviderCredentials {
   // the RAW saved base (null when the connection uses the provider default)
   api_base: string | null;
   // the provider default, offered for the editor's placeholder only
-  api_base_placeholder?: string | null;
+  api_base_placeholder: string | null;
 }
 
 export interface ProviderConnection {
