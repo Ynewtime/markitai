@@ -107,6 +107,7 @@ class TestCapabilitiesAndRoot:
 
     async def test_capabilities_shape(self, tmp_path: Path) -> None:
         from markitai import __version__
+        from markitai.serve.app import MAX_JOB_ITEMS
 
         async with _serve_client(_make_app(tmp_path)) as client:
             resp = await client.get("/api/capabilities")
@@ -122,6 +123,8 @@ class TestCapabilitiesAndRoot:
         assert data["presets"] == ["minimal", "standard", "rich"]
         assert set(data["extras"]) == {"browser", "svg", "kreuzberg"}
         assert all(isinstance(v, bool) for v in data["extras"].values())
+        # The webapp reads server-owned limits from here (no constant copies).
+        assert data["limits"] == {"max_job_items": MAX_JOB_ITEMS}
 
     async def test_capabilities_reports_configured_models(self, tmp_path: Path) -> None:
         from markitai.config import LiteLLMParams, ModelConfig

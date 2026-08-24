@@ -46,14 +46,26 @@ from markitai.serve.jobs import (
     write_job_meta,
 )
 from markitai.serve.schemas import (
+    Capabilities,
+    CreateJobResponse,
+    DetectedModel,
+    HistoryEntry,
+    ItemResult,
     JobOptions,
     JobRetryBody,
+    JobSnapshot,
     LLMDeploymentBatch,
     LLMModelCreate,
     LLMModelDiscoveryRequest,
     LLMModelUpdate,
+    LLMProviderCredentials,
     LLMProviderUpdate,
+    LLMSettingsPayload,
     LLMSettingsUpdate,
+    LLMTestResult,
+    ModelDiscoveryResult,
+    ProviderConnectionList,
+    RootInfo,
 )
 
 if TYPE_CHECKING:
@@ -1399,7 +1411,7 @@ def create_app(
 
     # ------------------------------------------------------------------ API
 
-    @app.get("/api/capabilities")
+    @app.get("/api/capabilities", response_model=Capabilities)
     async def get_capabilities(request: Request) -> dict[str, Any]:
         state = _state(request)
         effective = _effective_models(state.configured_models, state.detected_models)
@@ -1418,18 +1430,27 @@ def create_app(
                 "svg": find_spec("cairosvg") is not None,
                 "kreuzberg": find_spec("kreuzberg") is not None,
             },
+            # The webapp reads server-owned limits from here instead of
+            # duplicating the constants (contract: schemas.CapabilitiesLimits).
+            "limits": {"max_job_items": MAX_JOB_ITEMS},
         }
 
-    @app.get("/api/settings/llm")
+    @app.get("/api/settings/llm", response_model=LLMSettingsPayload)
     async def get_llm_settings(request: Request) -> dict[str, Any]:
         return _llm_settings_payload(_state(request))
 
-    @app.get("/api/settings/llm/detected")
+    @app.get("/api/settings/llm/detected", response_model=list[DetectedModel])
     async def get_detected_providers() -> list[dict[str, Any]]:
         """Legacy quick-add candidates; provider cards use the v2 endpoint."""
         return await _detect_provider_candidates()
 
-    @app.get("/api/settings/llm/providers")
+    @app.get(
+        "/api/settings/llm/providers",
+        response_model=ProviderConnectionList,
+        # Card keys legitimately vary per kind: absent optional keys must stay
+        # absent rather than materialize as nulls.
+        response_model_exclude_unset=True,
+    )
     async def get_llm_providers(
         request: Request, refresh: bool = False
     ) -> dict[str, Any]:
@@ -1549,7 +1570,10 @@ def create_app(
             )
         return {"providers": providers}
 
-    @app.get("/api/settings/llm/providers/{provider_id}/credentials")
+    @app.get(
+        "/api/settings/llm/providers/{provider_id}/credentials",
+        response_model=LLMProviderCredentials,
+    )
     async def get_llm_provider_credentials(
         request: Request, provider_id: str
     ) -> dict[str, str | None]:
@@ -1606,7 +1630,12 @@ def create_app(
             ),
         )
 
-    @app.post("/api/settings/llm/model-discovery")
+    @app.post(
+        "/api/settings/llm/model-discovery",
+        response_model=ModelDiscoveryResult,
+        # `detail` is only present when discovery has something to explain.
+        response_model_exclude_unset=True,
+    )
     async def discover_llm_models(
         request: Request, body: LLMModelDiscoveryRequest
     ) -> dict[str, Any]:
@@ -1829,7 +1858,7 @@ def create_app(
         _strip_ignored_local_params(params)
         entry["litellm_params"] = params
 
-    @app.post("/api/settings/llm/models")
+    @app.post("/api/settings/llm/models", response_model=LLMSettingsPayload)
     async def add_llm_model(request: Request, body: LLMModelCreate) -> dict[str, Any]:
         state = _state(request)
 
@@ -1845,7 +1874,7 @@ def create_app(
         logger.info("[Serve] LLM model added: {} ({})", body.model_name, body.model)
         return payload
 
-    @app.put("/api/settings/llm/models/{model_name}")
+    @app.put("/api/settings/llm/models/{model_name}", response_model=LLMSettingsPayload)
     async def update_llm_model(
         request: Request, model_name: str, body: LLMModelUpdate
     ) -> dict[str, Any]:
@@ -1874,7 +1903,9 @@ def create_app(
         logger.info("[Serve] LLM model updated through legacy route: {}", model_name)
         return payload
 
-    @app.delete("/api/settings/llm/models/{model_name}")
+    @app.delete(
+        "/api/settings/llm/models/{model_name}", response_model=LLMSettingsPayload
+    )
     async def delete_llm_model(request: Request, model_name: str) -> dict[str, Any]:
         def mutate(
             entries: list[Any], providers: list[Any], _legacy_mapping: dict[str, str]
@@ -1900,7 +1931,7 @@ def create_app(
         logger.info("[Serve] LLM model deleted through legacy route: {}", model_name)
         return payload
 
-    @app.post("/api/settings/llm/deployments/batch")
+    @app.post("/api/settings/llm/deployments/batch", response_model=LLMSettingsPayload)
     async def add_llm_deployments_batch(
         request: Request, body: LLMDeploymentBatch
     ) -> dict[str, Any]:
@@ -1920,7 +1951,10 @@ def create_app(
             backfill_ids=True,
         )
 
-    @app.patch("/api/settings/llm/deployments/{deployment_id}")
+    @app.patch(
+        "/api/settings/llm/deployments/{deployment_id}",
+        response_model=LLMSettingsPayload,
+    )
     async def update_llm_deployment(
         request: Request, deployment_id: str, body: LLMModelUpdate
     ) -> dict[str, Any]:
@@ -1949,7 +1983,10 @@ def create_app(
             backfill_ids=True,
         )
 
-    @app.delete("/api/settings/llm/deployments/{deployment_id}")
+    @app.delete(
+        "/api/settings/llm/deployments/{deployment_id}",
+        response_model=LLMSettingsPayload,
+    )
     async def delete_llm_deployment(
         request: Request, deployment_id: str, expected_revision: str
     ) -> dict[str, Any]:
@@ -1991,7 +2028,9 @@ def create_app(
             )
         return target, legacy_entry
 
-    @app.patch("/api/settings/llm/providers/{provider_id}")
+    @app.patch(
+        "/api/settings/llm/providers/{provider_id}", response_model=LLMSettingsPayload
+    )
     async def update_llm_provider(
         request: Request, provider_id: str, body: LLMProviderUpdate
     ) -> dict[str, Any]:
@@ -2094,7 +2133,9 @@ def create_app(
             backfill_ids=True,
         )
 
-    @app.delete("/api/settings/llm/providers/{provider_id}")
+    @app.delete(
+        "/api/settings/llm/providers/{provider_id}", response_model=LLMSettingsPayload
+    )
     async def delete_llm_provider(
         request: Request, provider_id: str, expected_revision: str
     ) -> dict[str, Any]:
@@ -2171,7 +2212,7 @@ def create_app(
             backfill_ids=True,
         )
 
-    @app.post("/api/settings/llm/test")
+    @app.post("/api/settings/llm/test", response_model=LLMTestResult)
     async def test_llm_settings(
         request: Request, body: LLMSettingsUpdate
     ) -> dict[str, Any]:
@@ -2191,7 +2232,7 @@ def create_app(
             return {"ok": False, "detail": _sanitize_probe_error(e, body)}
         return {"ok": True, "detail": detail}
 
-    @app.post("/api/jobs", status_code=201)
+    @app.post("/api/jobs", status_code=201, response_model=CreateJobResponse)
     async def create_job(
         request: Request,
         files: list[UploadFile] = File(default=[]),
@@ -2310,7 +2351,11 @@ def create_app(
             ],
         }
 
-    @app.post("/api/jobs/{job_id}/items/{item_id}/retry", status_code=202)
+    @app.post(
+        "/api/jobs/{job_id}/items/{item_id}/retry",
+        status_code=202,
+        response_model=CreateJobResponse,
+    )
     async def retry_job_item(
         request: Request,
         job_id: str,
@@ -2466,7 +2511,7 @@ def create_app(
         state.registry.publish_job(job)
         logger.info("[Serve] Job {} item {} deleted", job_id, item_id)
 
-    @app.get("/api/jobs/{job_id}")
+    @app.get("/api/jobs/{job_id}", response_model=JobSnapshot)
     async def get_job(request: Request, job_id: str) -> dict[str, Any]:
         return _get_job(request, job_id).snapshot()
 
@@ -2509,7 +2554,7 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    @app.get("/api/jobs/{job_id}/items/{item_id}/result")
+    @app.get("/api/jobs/{job_id}/items/{item_id}/result", response_model=ItemResult)
     async def get_item_result(
         request: Request, job_id: str, item_id: str
     ) -> dict[str, Any]:
@@ -2625,7 +2670,7 @@ def create_app(
 
     # -------------------------------------------------------------- history
 
-    @app.get("/api/history")
+    @app.get("/api/history", response_model=list[HistoryEntry])
     async def get_history(request: Request) -> list[dict[str, Any]]:
         state = _state(request)
         registry = state.registry
@@ -2736,7 +2781,7 @@ def create_app(
         )
     else:
 
-        @app.get("/")
+        @app.get("/", response_model=RootInfo)
         async def root_hint() -> dict[str, str]:
             return {"markitai": __version__, "hint": ROOT_HINT}
 

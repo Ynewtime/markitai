@@ -1,4 +1,18 @@
-"""Request schemas for the serve API."""
+"""Request and response schemas for the serve API.
+
+The response models double as the machine-readable contract consumed by the
+webapp: ``scripts/export_openapi.py`` dumps them into an OpenAPI document
+(including the SSE event payloads via :data:`SSE_EVENTS`) and
+``tests/unit/serve/test_contract_sync.py`` compares that document against the
+hand-written mirror in ``webapp/src/api/types.ts``.
+
+Response-model discipline: FastAPI silently drops any response key the model
+does not declare. Models for payloads this package builds itself therefore use
+``extra="forbid"`` (an undeclared key fails loudly instead of vanishing);
+models wrapping detector-produced cards with naturally varying keys use
+``extra="allow"`` and their routes serialize with
+``response_model_exclude_unset=True`` so absent optional keys stay absent.
+"""
 
 from __future__ import annotations
 
@@ -220,3 +234,316 @@ class LLMDeploymentBatch(BaseModel):
     @classmethod
     def _revision_not_blank(cls, value: str) -> str:
         return _require_non_blank(value) or ""
+
+
+# ---------------------------------------------------------------------------
+# Response schemas
+# ---------------------------------------------------------------------------
+
+
+class CapabilitiesLLM(BaseModel):
+    """LLM availability summary inside ``GET /api/capabilities``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    configured: bool
+    routable: bool
+    effective: bool
+    models: list[str]
+
+
+class CapabilitiesExtras(BaseModel):
+    """Optional-dependency availability inside ``GET /api/capabilities``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    browser: bool
+    svg: bool
+    kreuzberg: bool
+
+
+class CapabilitiesLimits(BaseModel):
+    """Server-enforced limits the UI mirrors (single source of truth here)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_job_items: int
+
+
+class Capabilities(BaseModel):
+    """Response of ``GET /api/capabilities``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: str
+    llm: CapabilitiesLLM
+    presets: list[str]
+    extras: CapabilitiesExtras
+    limits: CapabilitiesLimits
+
+
+class LLMDeployment(BaseModel):
+    """One secret-free deployment view inside the LLM settings payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deployment_id: str
+    routing_group: str
+    model: str
+    weight: int
+    api_key_configured: bool
+    api_base_configured: bool
+    api_base: str | None  # sanitized scheme + host + port only
+    persisted: bool
+
+
+class LLMSettingsPayload(BaseModel):
+    """Response of ``GET /api/settings/llm`` and every settings mutation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    configured: bool
+    routable: bool
+    source: Literal["config", "detected", "none"]
+    config_path: str
+    config_origin: Literal["explicit", "environment", "project", "user", "default"]
+    revision: str
+    deployments: list[LLMDeployment]
+    detected: list[LLMDeployment]
+
+
+class LLMProviderCredentials(BaseModel):
+    """Response of ``GET /api/settings/llm/providers/{provider_id}/credentials``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: str | None
+    api_base: str | None  # RAW saved base; null when on the provider default
+    api_base_placeholder: str | None  # provider default, for the editor only
+
+
+class ProviderConnection(BaseModel):
+    """One provider connection card of ``GET /api/settings/llm/providers``.
+
+    Cards come from the shared provider detector plus config-derived entries;
+    their optional keys legitimately vary per card kind, so the route
+    serializes with ``response_model_exclude_unset=True`` and unknown future
+    detector keys pass through via ``extra="allow"``.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    provider: str
+    label: str
+    kind: str  # "local_cli" | "oauth" | "environment" | "configured" | "common"
+    status: str
+    source: str
+    supports_discovery: bool
+    provider_id: str | None = None
+    deployment_id: str | None = None
+    default_model: str | None = None
+    credential: str | None = None
+    api_key_configured: bool | None = None
+    api_base_configured: bool | None = None
+    api_base: str | None = None
+    model_count: int | None = None
+
+
+class ProviderConnectionList(BaseModel):
+    """Response of ``GET /api/settings/llm/providers``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    providers: list[ProviderConnection]
+
+
+class DetectedModel(BaseModel):
+    """One legacy quick-add candidate of ``GET /api/settings/llm/detected``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    model: str
+    label: str
+    requires_api_key: bool
+
+
+class ModelCandidate(BaseModel):
+    """One discovered model inside a model-discovery result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str
+    label: str
+    supports_vision: bool
+
+
+class ModelDiscoveryResult(BaseModel):
+    """Response of ``POST /api/settings/llm/model-discovery``.
+
+    ``detail`` is only present when discovery has something to explain, so the
+    route serializes with ``response_model_exclude_unset=True``.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    provider: str
+    status: str  # "ok" | "partial" | "unavailable"
+    source: str
+    authoritative: bool
+    cached: bool
+    stale: bool
+    models: list[ModelCandidate]
+    detail: str | None = None
+
+
+class LLMTestResult(BaseModel):
+    """Response of ``POST /api/settings/llm/test`` (always 200)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    detail: str
+
+
+class CreatedItem(BaseModel):
+    """One accepted item echoed by job creation and item retry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    name: str
+    kind: str  # "file" | "url"
+
+
+class CreateJobResponse(BaseModel):
+    """Response of ``POST /api/jobs`` and the item retry endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    items: list[CreatedItem]
+
+
+class ItemPayload(BaseModel):
+    """Payload of SSE ``event: item`` (and of items inside the snapshot).
+
+    Mirror of :meth:`markitai.serve.jobs.JobItem.to_payload`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    name: str
+    kind: str  # "file" | "url"
+    status: str  # "queued" | "running" | "done" | "error"
+    error: str | None
+    output: str | None
+    output_name: str | None  # pre-assigned unique output name (url items)
+    duration_ms: int | None
+    finished_at: str | None
+    cost_usd: float | None
+    llm_enhanced: bool
+    operation: str  # "convert" | "retry" | "enhance"
+    skipped: bool
+    skip_reason: str | None
+
+
+class JobPayload(BaseModel):
+    """Payload of SSE ``event: job``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str  # "running" | "done"
+    done: int
+    failed: int
+    total: int
+
+
+class JobSnapshotOptions(BaseModel):
+    """Options echoed inside a job snapshot.
+
+    Jobs rehydrated from meta.json carry an extra ``origin`` key ("web" |
+    "cli"); ``extra="allow"`` passes it through untouched.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    preset: str | None
+    llm: bool | None
+    ocr: bool | None
+
+
+class JobSnapshot(JobPayload):
+    """Payload of SSE ``event: snapshot`` and ``GET /api/jobs/{job_id}``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    created_at: str
+    finished_at: str | None
+    options: JobSnapshotOptions
+    items: list[ItemPayload]
+
+
+class ItemArtifact(BaseModel):
+    """One downloadable artifact of an item result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    relpath: str
+    size: int
+
+
+class ItemResult(BaseModel):
+    """Response of ``GET /api/jobs/{job_id}/items/{item_id}/result``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    variant: Literal["llm", "base"]
+    markdown: str
+    artifacts: list[ItemArtifact]
+
+
+class HistoryEntry(BaseModel):
+    """One entry of ``GET /api/history`` (time-descending)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    created_at: str
+    finished_at: str | None
+    status: str  # "running" | "done"
+    total: int
+    done: int
+    failed: int
+    skipped: int
+    llm_enhanced: int
+    cost_usd: float | None
+    names_preview: list[str]
+    kinds_preview: list[str]
+    duration_ms: int | None
+    size_bytes: int
+    origin: str  # "web" | "cli"
+
+
+class RootInfo(BaseModel):
+    """JSON hint served at ``/`` when no web UI is bundled."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    markitai: str
+    hint: str
+
+
+#: SSE event name -> payload model for ``GET /api/jobs/{job_id}/events``.
+#: These models never appear in a route signature, so the OpenAPI export
+#: injects them explicitly — without this the contract test would miss the
+#: most drift-prone surface (the event stream the webapp actually consumes).
+SSE_EVENTS: dict[str, type[BaseModel]] = {
+    "snapshot": JobSnapshot,
+    "item": ItemPayload,
+    "job": JobPayload,
+}
