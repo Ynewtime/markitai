@@ -1,0 +1,28 @@
+# Markitai
+
+> Opinionated Markdown converter with native LLM enhancement support. Converts documents, images, and URLs to clean Markdown, with optional LLM cleaning, frontmatter metadata, vision analysis, OCR for scans, and a local web workspace.
+
+Command-line tool (`markitai`, alias `mkai`) and Python package, MIT licensed. Source and issue tracker: https://github.com/Ynewtime/markitai. Docs are bilingual: English at the site root, 简体中文 under `/zh/`.
+
+## Docs
+
+- [Getting Started](https://markitai.dev/guide/getting-started): Install (guided script, uv, pipx), prerequisites, first conversion, output structure, supported formats
+- [CLI Reference](https://markitai.dev/guide/cli): Every command and flag
+- [Configuration](https://markitai.dev/guide/configuration): Config file and env vars, LLM providers, image/screenshot/OCR/office settings, cache, security
+- [Fetch Policy](https://markitai.dev/guide/fetch-policy): URL fetch strategy cascade (static/Playwright/Defuddle/Jina/Cloudflare), domain profiles, remote-fetch consent
+- [Web Workspace](https://markitai.dev/guide/serve): `markitai serve` local UI, job history, REST + SSE API
+- [Changelog](https://markitai.dev/changelog): Release history
+
+## 中文文档
+
+- [快速开始](https://markitai.dev/zh/guide/getting-started): 安装、前置依赖、首次转换、输出结构、支持格式
+- [CLI 命令](https://markitai.dev/zh/guide/cli): 完整命令与参数参考
+- [配置说明](https://markitai.dev/zh/guide/configuration): 配置文件与环境变量、LLM 提供商、缓存、安全设置
+- [抓取策略](https://markitai.dev/zh/guide/fetch-policy): URL 抓取策略级联、域名配置、远程抓取同意
+- [网页工作台](https://markitai.dev/zh/guide/serve): `markitai serve` 本地界面、历史记录、REST + SSE API
+- [更新日志](https://markitai.dev/zh/changelog): 发布历史
+
+## Optional
+
+- [GitHub repository](https://github.com/Ynewtime/markitai): Source, issues, NOTICE and license details
+- [PyPI package](https://pypi.org/project/markitai/): Installable releases
