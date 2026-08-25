@@ -8,6 +8,7 @@ Authoritative long-form docs: <https://markitai.dev/guide/cli>. This file keeps 
 |---|---|
 | `--llm` | LLM cleanup + frontmatter; writes only `.llm.md` unless `--keep-base` |
 | `--preset rich\|standard\|minimal` | Feature bundles: rich = LLM+alt+desc+screenshot; standard = LLM+alt+desc; minimal = plain |
+| `--profile rag\|obsidian\|okf` | Output shape for a downstream consumer: rag/obsidian move images to a visible `assets/` dir and rewrite refs; rag adds `<!-- page: N -->` PDF markers + pipe-table column warnings; okf maps frontmatter to the Open Knowledge Format. Orthogonal to `--preset`; default output unchanged |
 | `--alt` / `--desc` | Image alt text / detailed descriptions; both require `--llm`, otherwise skipped with a warning |
 | `--ocr` | OCR for scanned documents (RapidOCR) |
 | `--screenshot` | PDF/PPTX: render pages/slides as JPEG; URLs: full-page screenshot (auto-upgrades fetch to Playwright) |

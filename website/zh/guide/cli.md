@@ -42,6 +42,23 @@ markitai document.pdf --preset rich
 markitai document.pdf --preset rich --no-desc   # rich 但不生成 desc，任何预设特性都可用 --no-* 单独关闭
 ```
 
+### `--profile <name>`
+
+为下游消费者塑形输出。与 `--preset` 正交：预设决定运行哪些功能，profile 决定输出长什么样。不带 `--profile` 时输出不变。
+
+| Profile | 效果 |
+|---------|------|
+| `rag` | 可见的 `assets/` 目录（而非隐藏的 `.markitai/assets/`）、PDF 注入 `<!-- page: N -->` 页标记、管道表列数校验 |
+| `obsidian` | 可见的 `assets/` 目录；可通过 `output.wikilinks` 启用 wikilink 图片引用 |
+| `okf` | frontmatter 对齐 [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog) 规范 |
+
+```bash
+markitai document.pdf --profile rag -o out/
+markitai document.pdf --preset rich --profile rag -o out/   # 功能 + 形态
+```
+
+详见[输出 Profile](./output-profiles.md)。
+
 ### `--alt`
 
 使用 AI 生成图片的 alt 文本。需要 `--llm`，未启用时会跳过图片分析并给出提示。

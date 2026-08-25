@@ -58,7 +58,7 @@ cfg.llm.pure = True  # raw LLM cleanup, no frontmatter
 out = markitai.convert("notes.docx", config=cfg, llm=True)
 ```
 
-Keyword toggles (`llm`, `ocr`, `screenshot`, `alt`, `desc`) override the config, mirroring the CLI flags; `None` keeps the configured value.
+Keyword toggles (`llm`, `ocr`, `screenshot`, `alt`, `desc`) override the config, mirroring the CLI flags; `None` keeps the configured value. `profile="rag" | "obsidian" | "okf"` mirrors `--profile` and shapes the written output for a downstream consumer — see [Output Profiles](./output-profiles.md) for the LlamaIndex ingestion recipe.
 
 ## Async Usage
 

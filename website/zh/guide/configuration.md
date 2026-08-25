@@ -1056,6 +1056,8 @@ markitai ./docs --no-cache-for "file1.pdf,reports/**"
 | `on_conflict` | `rename`, `overwrite`, `skip` | `rename` | 处理已存在文件的方式 |
 | `allow_symlinks` | - | `false` | 允许输出路径中的符号链接 |
 | `report` | `true`, `false`, `null` | `null` | 是否写入 JSON 转换报告。`null`（默认）仅在批量/URL 批量任务时写入；`true`/`false` 强制对每次运行开启/关闭 |
+| `profile` | `rag`, `obsidian`, `okf`, `null` | `null` | 面向下游消费者的[输出 Profile](./output-profiles.md)。`null` 保持输出不变 |
+| `wikilinks` | `true`, `false` | `false` | 在 `obsidian` profile 下将本地图片引用改写为 wikilink（`![[assets/x.png]]`） |
 
 ## 日志配置
 

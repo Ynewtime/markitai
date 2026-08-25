@@ -1056,6 +1056,8 @@ Control output file handling:
 | `on_conflict` | `rename`, `overwrite`, `skip` | `rename` | How to handle existing files |
 | `allow_symlinks` | - | `false` | Allow symlinks in output paths |
 | `report` | `true`, `false`, `null` | `null` | Write a JSON conversion report. `null` (default) writes one for batch/URL-batch runs only; `true`/`false` force it on/off for every run |
+| `profile` | `rag`, `obsidian`, `okf`, `null` | `null` | [Output profile](./output-profiles.md) shaping results for a downstream consumer. `null` keeps output unchanged |
+| `wikilinks` | `true`, `false` | `false` | With the `obsidian` profile, rewrite local image refs to wikilinks (`![[assets/x.png]]`) |
 
 ## Log Configuration
 

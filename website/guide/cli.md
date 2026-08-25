@@ -42,6 +42,23 @@ markitai document.pdf --preset rich
 markitai document.pdf --preset rich --no-desc   # Rich without desc; any preset feature can be toggled off with --no-*
 ```
 
+### `--profile <name>`
+
+Shape the output for a downstream consumer. Orthogonal to `--preset`: presets pick which features run, a profile picks what the written output looks like. Without `--profile` the output is unchanged.
+
+| Profile | Effect |
+|---------|--------|
+| `rag` | Visible `assets/` directory (instead of hidden `.markitai/assets/`), `<!-- page: N -->` markers for PDFs, pipe-table column checks |
+| `obsidian` | Visible `assets/` directory; optional wikilink image refs via `output.wikilinks` |
+| `okf` | Frontmatter aligned with the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog) spec |
+
+```bash
+markitai document.pdf --profile rag -o out/
+markitai document.pdf --preset rich --profile rag -o out/   # features + shape
+```
+
+See [Output Profiles](./output-profiles.md) for details.
+
 ### `--alt`
 
 Generate alt text for images using AI. Requires `--llm`. Without it, image analysis is skipped with a warning.

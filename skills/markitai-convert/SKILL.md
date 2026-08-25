@@ -33,6 +33,7 @@ description: "Convert documents (PDF, DOCX, PPTX, XLSX, EPUB, images) and web pa
 | Page/slide/webpage screenshots | `--screenshot`; URL-only screenshots without extraction: `--screenshot-only` |
 | JS-heavy page extracts poorly | `-s playwright`, or `--llm --screenshot-only` to let the LLM read the page from screenshots |
 | Batch a folder | `markitai ./docs -o out/`, filter with `-g "*.pdf"` (repeatable, `!` excludes), recurse depth `--max-depth N`, parallelism `-j N` |
+| Output for RAG/Obsidian/OKF | `--profile rag\|obsidian\|okf` — visible `assets/` dir instead of hidden `.markitai/assets/` (rag/obsidian), `<!-- page: N -->` PDF markers (rag), OKF frontmatter (okf). Orthogonal to `--preset`; without it output is unchanged |
 
 Behavior worth knowing before you run:
 
@@ -56,6 +57,8 @@ out/
     ├── reports/             # JSON conversion reports (batch/URL runs)
     └── states/              # batch state for --resume
 ```
+
+With `--profile rag` or `--profile obsidian`, referenced images land in a visible `out/assets/` directory instead (ingestors like LlamaIndex `SimpleDirectoryReader` skip hidden paths); markdown refs are rewritten to match.
 
 ## Supported inputs
 
