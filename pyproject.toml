@@ -2,10 +2,7 @@
 name = "markitai-workspace"
 version = "0.24.0"  # workspace identity only (unpublished); keep in sync with packages/markitai/src/markitai/__init__.py
 requires-python = ">=3.11,<3.14"
-dependencies = [
-    "markitai",
-    "markitai-mcp",
-]
+dependencies = ["markitai"]
 
 [project.optional-dependencies]
 # Forward extras to sub-package — single source of truth in packages/markitai/pyproject.toml
@@ -16,6 +13,7 @@ extra-fetch = ["markitai[extra-fetch]"]
 kreuzberg = ["markitai[kreuzberg]"]
 svg = ["markitai[svg]"]
 heif = ["markitai[heif]"]
+mcp = ["markitai[mcp]"]
 ocr = ["markitai[ocr]"]
 serve = ["markitai[serve]"]
 all = ["markitai[all]"]
@@ -32,7 +30,6 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 markitai = { workspace = true }
-markitai-mcp = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -50,7 +47,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/markitai/tests", "packages/markitai-mcp/tests"]
+testpaths = ["packages/markitai/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-v --tb=short -n auto -m 'not slow and not network'"
@@ -111,6 +108,7 @@ name = "cli is the top layer: nothing below may import it"
 type = "forbidden"
 source_modules = [
     "markitai.api",
+    "markitai.mcp",
     "markitai.batch",
     "markitai.config",
     "markitai.constants",
@@ -146,6 +144,50 @@ source_modules = [
     "markitai.workflow",
 ]
 forbidden_modules = ["markitai.cli"]
+
+[[tool.importlinter.contracts]]
+name = "mcp layer only talks to the public api surface"
+type = "forbidden"
+# Indirect chains through the lazy root package (markitai/__init__ -> config
+# etc.) are unavoidable; the contract pins down what mcp itself may import.
+allow_indirect_imports = "True"
+source_modules = ["markitai.mcp"]
+forbidden_modules = [
+    "markitai.batch",
+    "markitai.cli",
+    "markitai.config",
+    "markitai.constants",
+    "markitai.converter",
+    "markitai.domain_profiles",
+    "markitai.fetch",
+    "markitai.fetch_cache",
+    "markitai.fetch_consent",
+    "markitai.fetch_http",
+    "markitai.fetch_playwright",
+    "markitai.fetch_policy",
+    "markitai.fetch_screenshot",
+    "markitai.fetch_session",
+    "markitai.fetch_strategies",
+    "markitai.fetch_support",
+    "markitai.fetch_types",
+    "markitai.image",
+    "markitai.json_order",
+    "markitai.llm",
+    "markitai.ocr",
+    "markitai.output_profiles",
+    "markitai.ports",
+    "markitai.prompts",
+    "markitai.providers",
+    "markitai.runs",
+    "markitai.security",
+    "markitai.serve",
+    "markitai.types",
+    "markitai.urls",
+    "markitai.utils",
+    "markitai.vision_consent",
+    "markitai.webextract",
+    "markitai.workflow",
+]
 
 [[tool.importlinter.contracts]]
 name = "foundation layer knows no domain or orchestration"
@@ -255,7 +297,7 @@ forbidden_modules = ["markitai.fetch"]
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
-include = ["packages/markitai/src", "packages/markitai-mcp/src"]
+include = ["packages/markitai/src"]
 exclude = ["**/__pycache__"]
 venvPath = "."
 venv = ".venv"

@@ -1,6 +1,6 @@
 # MCP 服务器
 
-`markitai-mcp` 是一个独立的轻量包，通过 [Model Context Protocol](https://modelcontextprotocol.io)（stdio 传输）把 markitai 的转换能力提供给 AI Agent。Agent 可用四个工具完成本地文档与 URL 的单个及批量转换，运行的是与 CLI、Python API 完全相同的管线。
+`markitai-mcp` 服务器随 markitai 主包发布（安装 `mcp` extra 即得），通过 [Model Context Protocol](https://modelcontextprotocol.io)（stdio 传输）把 markitai 的转换能力提供给 AI Agent。Agent 可用四个工具完成本地文档与 URL 的单个及批量转换，运行的是与 CLI、Python API 完全相同的管线。
 
 无需安装步骤：`uvx` 按需拉取并运行。
 
@@ -9,7 +9,7 @@
 **Claude Code** —— 一条命令：
 
 ```bash
-claude mcp add markitai -- uvx markitai-mcp
+claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 ```
 
 **Claude Desktop** —— 在 `claude_desktop_config.json` 中加一个条目：
@@ -17,12 +17,12 @@ claude mcp add markitai -- uvx markitai-mcp
 ```json
 {
   "mcpServers": {
-    "markitai": { "command": "uvx", "args": ["markitai-mcp"] }
+    "markitai": { "command": "uvx", "args": ["--from", "markitai[mcp]", "markitai-mcp"] }
   }
 }
 ```
 
-其他 MCP 客户端同理：command 填 `uvx`，参数填 `["markitai-mcp"]`。没有 uv 时，`pip install markitai-mcp` 提供同名的 `markitai-mcp` 命令。
+其他 MCP 客户端同理：command 填 `uvx`，参数填 `["--from", "markitai[mcp]", "markitai-mcp"]`。没有 uv 时，`pip install "markitai[mcp]"` 提供同名的 `markitai-mcp` 命令。
 
 ## 工具
 
@@ -46,7 +46,7 @@ claude mcp add markitai -- uvx markitai-mcp
   "mcpServers": {
     "markitai": {
       "command": "uvx",
-      "args": ["markitai-mcp"],
+      "args": ["--from", "markitai[mcp]", "markitai-mcp"],
       "env": {
         "MODEL": "openai/gpt-4o-mini",
         "OPENAI_API_KEY": "sk-..."
@@ -58,4 +58,4 @@ claude mcp add markitai -- uvx markitai-mcp
 
 在未配置模型的情况下以 `llm: true` 调用会得到一条可读的错误，其中原样给出上述配置指引，Agent 可以直接转述修复方法。
 
-可选能力沿用 markitai 的 extras：扫描件 OCR 需要 `markitai[ocr]`，URL 截图需要 `markitai[browser]`——uvx 场景写作 `"args": ["--with", "markitai[ocr]", "markitai-mcp"]`。
+可选能力沿用 markitai 的 extras：扫描件 OCR 需要 `markitai[ocr]`，URL 截图需要 `markitai[browser]`——uvx 场景写作 `"args": ["--from", "markitai[mcp]", "--with", "markitai[ocr]", "markitai-mcp"]`。

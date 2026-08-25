@@ -26,12 +26,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypedDict
 
-from markitai import aconvert
-from markitai.api import ConversionOutput
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from markitai_mcp import __version__
+from markitai import __version__, aconvert
+from markitai.api import ConversionOutput
 
 # Inline markdown budget per tool result. Past this, the result carries a
 # preview and the path to the full file — a 500 KB document belongs on disk,

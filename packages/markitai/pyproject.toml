@@ -54,6 +54,7 @@ Changelog = "https://github.com/Ynewtime/markitai/blob/main/CHANGELOG.md"
 
 [project.scripts]
 markitai = "markitai.cli:app"
+markitai-mcp = "markitai.mcp.server:main"
 mkai = "markitai.cli:app"  # short alias (checked: no PyPI/homebrew/system conflict)
 
 [project.optional-dependencies]
@@ -64,6 +65,10 @@ extra-fetch = ["curl-cffi>=0.14.0"]
 kreuzberg = ["kreuzberg>=4.9.6"]
 svg = ["cairosvg>=2.9.0"]
 heif = ["pillow-heif>=1.0"]
+# Official MCP Python SDK for the bundled markitai-mcp server. The extra
+# name `mcp` is a public contract — docs and install hints print
+# `markitai[mcp]` verbatim; renaming it breaks both.
+mcp = ["mcp>=2.0.0"]
 # Local OCR for scanned PDFs/images (--ocr). Optional since 0.24: rapidocr
 # pulls opencv-python plus its own model files, ~150MB nobody who converts
 # born-digital documents ever executes. The extra name `ocr` is a public
@@ -83,6 +88,7 @@ all = [
     "kreuzberg>=4.9.6",
     "cairosvg>=2.9.0",
     "pillow-heif>=1.0",
+    "mcp>=2.0.0",
     "rapidocr>=3.7.0",
     "fastapi>=0.115",
     "uvicorn>=0.32",

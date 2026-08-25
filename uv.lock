@@ -13,7 +13,6 @@ resolution-markers = [
 [manifest]
 members = [
     "markitai",
-    "markitai-mcp",
     "markitai-workspace",
 ]
 constraints = [{ name = "onnxruntime", marker = "sys_platform != 'win32'", specifier = ">=1.21" }]
@@ -1427,6 +1426,7 @@ all = [
     { name = "fastapi" },
     { name = "github-copilot-sdk" },
     { name = "kreuzberg" },
+    { name = "mcp" },
     { name = "pillow-heif" },
     { name = "playwright" },
     { name = "python-multipart" },
@@ -1450,6 +1450,9 @@ heif = [
 ]
 kreuzberg = [
     { name = "kreuzberg" },
+]
+mcp = [
+    { name = "mcp" },
 ]
 ocr = [
     { name = "rapidocr" },
@@ -1495,6 +1498,8 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "markitdown", extras = ["docx", "outlook", "pptx", "xls", "xlsx"], specifier = ">=0.1.5" },
+    { name = "mcp", marker = "extra == 'all'", specifier = ">=2.0.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.0.0" },
     { name = "pillow", specifier = ">=12.1.0" },
     { name = "pillow-heif", marker = "extra == 'all'", specifier = ">=1.0" },
     { name = "pillow-heif", marker = "extra == 'heif'", specifier = ">=1.0" },
@@ -1515,7 +1520,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'all'", specifier = ">=0.32" },
     { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.32" },
 ]
-provides-extras = ["all", "browser", "claude-agent", "copilot", "extra-fetch", "heif", "kreuzberg", "ocr", "serve", "svg"]
+provides-extras = ["all", "browser", "claude-agent", "copilot", "extra-fetch", "heif", "kreuzberg", "mcp", "ocr", "serve", "svg"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1528,26 +1533,11 @@ dev = [
 ]
 
 [[package]]
-name = "markitai-mcp"
-source = { editable = "packages/markitai-mcp" }
-dependencies = [
-    { name = "markitai" },
-    { name = "mcp" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "markitai", editable = "packages/markitai" },
-    { name = "mcp", specifier = ">=2.0.0" },
-]
-
-[[package]]
 name = "markitai-workspace"
 version = "0.24.0"
 source = { virtual = "." }
 dependencies = [
     { name = "markitai" },
-    { name = "markitai-mcp" },
 ]
 
 [package.optional-dependencies]
@@ -1571,6 +1561,9 @@ heif = [
 ]
 kreuzberg = [
     { name = "markitai", extra = ["kreuzberg"] },
+]
+mcp = [
+    { name = "markitai", extra = ["mcp"] },
 ]
 ocr = [
     { name = "markitai", extra = ["ocr"] },
@@ -1607,12 +1600,12 @@ requires-dist = [
     { name = "markitai", extras = ["extra-fetch"], marker = "extra == 'extra-fetch'", editable = "packages/markitai" },
     { name = "markitai", extras = ["heif"], marker = "extra == 'heif'", editable = "packages/markitai" },
     { name = "markitai", extras = ["kreuzberg"], marker = "extra == 'kreuzberg'", editable = "packages/markitai" },
+    { name = "markitai", extras = ["mcp"], marker = "extra == 'mcp'", editable = "packages/markitai" },
     { name = "markitai", extras = ["ocr"], marker = "extra == 'ocr'", editable = "packages/markitai" },
     { name = "markitai", extras = ["serve"], marker = "extra == 'serve'", editable = "packages/markitai" },
     { name = "markitai", extras = ["svg"], marker = "extra == 'svg'", editable = "packages/markitai" },
-    { name = "markitai-mcp", editable = "packages/markitai-mcp" },
 ]
-provides-extras = ["claude-agent", "copilot", "browser", "extra-fetch", "kreuzberg", "svg", "heif", "ocr", "serve", "all"]
+provides-extras = ["claude-agent", "copilot", "browser", "extra-fetch", "kreuzberg", "svg", "heif", "mcp", "ocr", "serve", "all"]
 
 [package.metadata.requires-dev]
 dev = [

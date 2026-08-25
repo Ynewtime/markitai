@@ -21,8 +21,7 @@ the docs site in `website/` (VitePress + pnpm), install scripts in `scripts/`.
 uv run pytest -q                          # full suite (parallel, excludes slow/network)
 uv run pytest -m "slow or network"        # opt-in slow/network tests
 uv run ruff check && uv run ruff format   # lint + format
-uv run pyright packages/markitai/src packages/markitai/tests \
-  packages/markitai-mcp/src packages/markitai-mcp/tests   # type check (0 errors required, same scope as CI)
+uv run pyright packages/markitai/src packages/markitai/tests   # type check (0 errors required, same scope as CI)
 uv run lint-imports                       # architecture layering contracts (0 broken required)
 uv run bandit -c pyproject.toml -r packages/markitai/src -q   # security lint
 uv run markitai <file>                    # run the CLI from source

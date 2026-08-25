@@ -66,6 +66,7 @@ have a different `mkai` on your PATH, use the full `markitai` to avoid ambiguity
 | `extra-fetch` | curl-cffi HTTP client (better anti-bot compatibility) |
 | `heif` | HEIC/HEIF/AVIF image input |
 | `kreuzberg` | Kreuzberg extraction backend |
+| `mcp` | Bundled `markitai-mcp` server for AI agents (Model Context Protocol) |
 | `ocr` | Local OCR for scanned PDFs and images (`--ocr`) |
 | `serve` | Local web workspace and REST API |
 | `svg` | SVG rasterization via cairosvg |
@@ -104,12 +105,12 @@ See the [Getting Started guide](https://markitai.dev/guide/getting-started) for 
 
 ## MCP server
 
-The separate [`markitai-mcp`](https://pypi.org/project/markitai-mcp/) package exposes conversion to AI agents over the Model Context Protocol: `convert_document`, `convert_url`, `batch_convert`, `job_status`. Zero install via `uvx`; large outputs land on disk instead of in the model context. For Claude Code, `claude mcp add markitai -- uvx markitai-mcp`; for other clients:
+The MCP server `markitai-mcp` (bundled with markitai, enabled by the `mcp` extra) exposes conversion to AI agents over the Model Context Protocol: `convert_document`, `convert_url`, `batch_convert`, `job_status`. Zero install via `uvx`; large outputs land on disk instead of in the model context. For Claude Code, `claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp`; for other clients:
 
 ```json
 {
   "mcpServers": {
-    "markitai": { "command": "uvx", "args": ["markitai-mcp"] }
+    "markitai": { "command": "uvx", "args": ["--from", "markitai[mcp]", "markitai-mcp"] }
   }
 }
 ```

@@ -1,4 +1,4 @@
-"""Shared fixtures: isolate every test from the developer's markitai setup."""
+"""MCP-server-specific isolation on top of the suite-wide hermetic fixtures."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ import pytest
 def _isolated_markitai_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Pin config resolution to a minimal file and clear the job table.
 
-    Without this, ``aconvert(config=None)`` loads the developer's real
-    ``~/.markitai/config.json`` — which may enable LLM or define models — and
-    the ``MODEL`` env var would defeat the "no model configured" tests. The
-    cache directory is redirected so nothing touches the real user cache.
+    The suite-wide fixture redirects ``~/.markitai`` to an empty temp home;
+    this additionally pins ``MARKITAI_CONFIG`` to a minimal file (so
+    ``aconvert(config=None)`` never picks up defaults we don't control) and
+    scrubs ``MODEL``, which would defeat the "no model configured" tests.
     """
     config_path = tmp_path / "markitai-config.json"
     config_path.write_text(
@@ -25,7 +25,7 @@ def _isolated_markitai_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("MARKITAI_CONFIG", str(config_path))
     monkeypatch.delenv("MODEL", raising=False)
 
-    from markitai_mcp import server
+    from markitai.mcp import server
 
     server._JOBS.clear()
 

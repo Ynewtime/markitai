@@ -1,6 +1,6 @@
 # MCP Server
 
-`markitai-mcp` is a separate, dependency-light package that exposes markitai conversions to AI agents over the [Model Context Protocol](https://modelcontextprotocol.io) (stdio transport). Agents get four tools — single and batch conversion of local documents and URLs — running the same pipeline as the CLI and the Python API.
+The `markitai-mcp` server (bundled with markitai — install the `mcp` extra) exposes markitai conversions to AI agents over the [Model Context Protocol](https://modelcontextprotocol.io) (stdio transport). Agents get four tools — single and batch conversion of local documents and URLs — running the same pipeline as the CLI and the Python API.
 
 No installation step is required: `uvx` fetches and runs it on demand.
 
@@ -9,7 +9,7 @@ No installation step is required: `uvx` fetches and runs it on demand.
 **Claude Code** — one command:
 
 ```bash
-claude mcp add markitai -- uvx markitai-mcp
+claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 ```
 
 **Claude Desktop** — one entry in `claude_desktop_config.json`:
@@ -17,12 +17,12 @@ claude mcp add markitai -- uvx markitai-mcp
 ```json
 {
   "mcpServers": {
-    "markitai": { "command": "uvx", "args": ["markitai-mcp"] }
+    "markitai": { "command": "uvx", "args": ["--from", "markitai[mcp]", "markitai-mcp"] }
   }
 }
 ```
 
-Any other MCP client works the same way: command `uvx`, arguments `["markitai-mcp"]`. Without uv, `pip install markitai-mcp` provides the same `markitai-mcp` command.
+Any other MCP client works the same way: command `uvx`, arguments `["--from", "markitai[mcp]", "markitai-mcp"]`. Without uv, `pip install "markitai[mcp]"` provides the same `markitai-mcp` command.
 
 ## Tools
 
@@ -46,7 +46,7 @@ LLM enhancement is **off by default** on every tool and enabled per call with `l
   "mcpServers": {
     "markitai": {
       "command": "uvx",
-      "args": ["markitai-mcp"],
+      "args": ["--from", "markitai[mcp]", "markitai-mcp"],
       "env": {
         "MODEL": "openai/gpt-4o-mini",
         "OPENAI_API_KEY": "sk-..."
@@ -58,4 +58,4 @@ LLM enhancement is **off by default** on every tool and enabled per call with `l
 
 Calling a tool with `llm: true` and no resolvable model fails with a readable error that repeats exactly this setup guidance, so agents can relay the fix.
 
-Optional capabilities follow the markitai extras: OCR for scanned documents needs `markitai[ocr]`, URL screenshots need `markitai[browser]` — with uvx, add e.g. `"args": ["--with", "markitai[ocr]", "markitai-mcp"]`.
+Optional capabilities follow the markitai extras: OCR for scanned documents needs `markitai[ocr]`, URL screenshots need `markitai[browser]` — with uvx, add e.g. `"args": ["--from", "markitai[mcp]", "--with", "markitai[ocr]", "markitai-mcp"]`.

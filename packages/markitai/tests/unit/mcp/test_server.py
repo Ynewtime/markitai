@@ -12,11 +12,11 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from markitai.api import ConversionOutput
 from mcp.server.mcpserver.exceptions import ToolError
 
-from markitai_mcp import server as server_module
-from markitai_mcp.server import (
+from markitai.api import ConversionOutput
+from markitai.mcp import server as server_module
+from markitai.mcp.server import (
     MAX_INLINE_CHARS,
     PREVIEW_CHARS,
     batch_convert,
@@ -66,7 +66,7 @@ class TestServerSmoke:
         """The `markitai-mcp` script must point at a callable that exists."""
         import tomllib
 
-        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        pyproject = Path(__file__).resolve().parents[3] / "pyproject.toml"
         scripts = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
             "scripts"
         ]

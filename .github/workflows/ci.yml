@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - 'packages/markitai/**'
-      - 'packages/markitai-mcp/**'
       - 'webapp/**'
       - 'scripts/sync_webapp_static.sh'
       - 'README.md'
@@ -16,7 +15,6 @@ on:
     branches: [main]
     paths:
       - 'packages/markitai/**'
-      - 'packages/markitai-mcp/**'
       - 'webapp/**'
       - 'scripts/sync_webapp_static.sh'
       - 'README.md'
@@ -104,13 +102,13 @@ jobs:
         run: uv sync --frozen --all-groups
 
       - name: Run ruff check
-        run: uv run ruff check packages/markitai/src packages/markitai/tests packages/markitai-mcp/src packages/markitai-mcp/tests
+        run: uv run ruff check packages/markitai/src packages/markitai/tests
 
       - name: Run ruff format check
-        run: uv run ruff format --check packages/markitai/src packages/markitai/tests packages/markitai-mcp/src packages/markitai-mcp/tests
+        run: uv run ruff format --check packages/markitai/src packages/markitai/tests
 
       - name: Run pyright
-        run: uv run pyright packages/markitai/src packages/markitai/tests packages/markitai-mcp/src packages/markitai-mcp/tests
+        run: uv run pyright packages/markitai/src packages/markitai/tests
 
       - name: Run import-layer contracts
         run: uv run lint-imports
@@ -127,9 +125,7 @@ jobs:
         run: uv run python scripts/check_licenses.py --list
 
       - name: Verify package build
-        run: |
-          uv build --package markitai --out-dir dist --clear
-          uv build --package markitai-mcp --out-dir dist-mcp --clear
+        run: uv build --package markitai --out-dir dist --clear
 
   # Quality gate for the webextract HTML->Markdown pipeline: scores the
   # local defuddle corpus (pure extraction, no network/LLM, ~10s) and fails
@@ -207,9 +203,6 @@ jobs:
       - name: Run integration tests with coverage
         run: uv run pytest packages/markitai/tests/integration --cov=markitai --cov-append
 
-      - name: Run markitai-mcp tests
-        run: uv run pytest packages/markitai-mcp/tests
-
       # Tool environments are isolated from the workspace, so this resolves the
       # wheel's published dependencies without consulting uv.lock.
       - name: Smoke-test fresh wheel install
@@ -224,6 +217,10 @@ jobs:
 
           with zipfile.ZipFile(sys.argv[1]) as wheel_file:
               names = set(wheel_file.namelist())
+              entry_points_path = next(
+                  name for name in names if name.endswith(".dist-info/entry_points.txt")
+              )
+              entry_points = wheel_file.read(entry_points_path).decode()
           required = {
               "markitai/serve/static/index.html",
               "markitai/serve/static/favicon.ico",
@@ -247,6 +244,12 @@ jobs:
           traversal = sorted(name for name in names if ".." in name.split("/"))
           if traversal:
               raise SystemExit(f"wheel contains path-traversal entries: {traversal}")
+
+          # The bundled MCP server must ship its console script and module.
+          if "markitai-mcp = markitai.mcp.server:main" not in entry_points:
+              raise SystemExit(f"wheel is missing the markitai-mcp script:\n{entry_points}")
+          if not any(name.startswith("markitai/mcp/") for name in names):
+              raise SystemExit("wheel is missing the markitai/mcp/ package")
           PY
           uv tool run --isolated --python '${{ matrix.python-version }}' --from "$wheel" markitai --version
           uv tool run --isolated --python '${{ matrix.python-version }}' --from "$wheel" markitai --help >/dev/null
