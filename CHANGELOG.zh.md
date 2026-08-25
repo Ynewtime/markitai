@@ -5,6 +5,22 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
+## [未发布]
+
+### 新增
+
+- **serve API 契约进入机器校验**：所有 JSON 路由声明 pydantic 响应模型，`scripts/export_openapi.py` 导出注入了 SSE 事件体的 OpenAPI schema（它们不出现在路由签名里，恰是前端镜像漂移最重的地方），契约测试逐字段比对该 schema 与 webapp 手写类型镜像。先写测试就抓出四处真实漂移——镜像缺 `ItemPayload.output_name`、自持一份任务条目上限、把服务端恒发的 `api_base_placeholder` 标成可选、引用一份不存在的契约文档——全部修复；上限现经 `capabilities.limits` 下发并在运行时读取。CI 新增 webapp lint 与类型检查 job，镜像不能再无声腐烂
+- **defuddle 移植有了清单与上游哨兵**：`PORT_MANIFEST.md` 记录 `webextract` 各模块追踪的上游源文件与 parity 语料 pin 的 commit——单元测试保证两处 pin 相等，同步脚本联动改写——每周 workflow 在上游发布领先于 pin 时自动开 issue。此前该移植既无归属映射也无任何上游信号
+
+### 变更
+
+- **自解释错误不再泄漏异常类名**：因缺 OCR 后端、文件超限或格式不支持而失败的转换，只打印可操作的消息本身，不再前缀内部类名。意外错误保留类名——在那里它是诊断信息而非噪声——且完整 traceback 现在进入 debug 日志，此前是被整个丢弃的
+- **parity 语料与算法 pin 同源**：语料自 2026 年 3 月快照 resync 至 defuddle 0.19.3（83 → 208 个），此前先补齐了新语料暴露的六项未移植行为。共享的 83 个 fixture 上质量基准 92.73 → 94.07 且无一回归；全 208 个的新基线 95.59，逐 fixture 护栏楼层重新立定
+
+### 修复
+
+- **对齐 defuddle 0.19.3 的六个抽取缺口**：可关闭的 `aria-hidden` 浮层内的正文被保留（上游 issue 232）；CodeMirror 渲染的代码块保住内容与语言；文中图片行不再被当作相关文章卡片删除；Substack Notes 获得专用 extractor、不再携带页面装饰；SVG 图形保留内容并解析外部 CSS 的回退样式；行内相关文章块不再连带删掉周围正文。resync 顺带修复了它新暴露的问题：Hugo admonition、lightbox 图片去重、LaTeX 图片服务、`<noscript>` 图片回退与带行号的代码布局
+
 ## [0.24.0] - 2026-08-21
 
 ### 新增

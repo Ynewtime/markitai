@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The serve API contract is now machine-checked**: every JSON route declares a pydantic response model, `scripts/export_openapi.py` exports the OpenAPI schema with the SSE event payloads injected (they never appear in route signatures, which is exactly where the frontend mirror had drifted), and a contract test compares that schema field by field against the webapp's hand-written type mirror. Writing the test first surfaced four real drifts — the mirror lacked `ItemPayload.output_name`, kept its own copy of the job-item cap, marked `api_base_placeholder` optional though the server always sends it, and cited a contract document that does not exist — all fixed, with the cap now served through `capabilities.limits` and read at runtime. A new CI job lints and type-checks the webapp so the mirror cannot rot silently again
+- **The defuddle port has a manifest and an upstream watch**: `PORT_MANIFEST.md` records which upstream sources each `webextract` module tracks and the commit the parity corpus is pinned to — a unit test keeps the two pins equal and the sync script rewrites them together — and a weekly workflow opens an issue when upstream cuts a release ahead of the pin. The port had no attribution map and no upstream signal at all until now
+
+### Changed
+
+- **Self-explanatory errors no longer leak exception class names**: a conversion failing because the OCR backend is missing, a file exceeds the size limit, or a format is unsupported prints just the actionable message instead of prefixing internal class names to it. Unexpected errors keep the class name — there it is a diagnostic, not noise — and the full traceback now reaches the debug log, where it was previously discarded entirely
+- **The parity corpus is pinned to the same upstream as the algorithm**: fixtures resynced from the March 2026 snapshot to defuddle 0.19.3 (83 → 208), after porting the six upstream behaviours the new corpus exposed as missing. On the 83 shared fixtures the quality benchmark rose 92.73 → 94.07 with no fixture regressing; the full 208-fixture baseline stands at 95.59 with per-fixture guardrail floors re-established
+
+### Fixed
+
+- **Six extraction gaps against defuddle 0.19.3**: article text inside dismissible `aria-hidden` overlays is kept (upstream issue 232); CodeMirror-rendered code blocks keep their content and language; mid-article image rows are no longer deleted as related-post cards; Substack Notes get a dedicated extractor instead of carrying page chrome; SVG figures keep their content with external-CSS fallback styling resolved; inline related-story blocks no longer take the surrounding prose with them. The resync also fixed what it newly exposed: Hugo admonitions, lightbox image duplication, LaTeX image services, `<noscript>` image fallbacks and line-numbered code layouts
+
 ## [0.24.0] - 2026-08-21
 
 ### Added
