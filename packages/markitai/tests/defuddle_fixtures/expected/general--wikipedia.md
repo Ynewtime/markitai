@@ -1,13 +1,11 @@
 ```json
 {
-  "title": "Obsidian (software) - Wikipedia",
-  "author": "Developer(s)",
-  "site": "Developer(s)",
+  "title": "Obsidian (software)",
+  "author": "",
+  "site": "Wikipedia",
   "published": "2024-01-15T00:00:00+00:00"
 }
 ```
-
-## Obsidian (software)
 
 **Obsidian** is a [personal knowledge management](https://wikipedia/wiki/Personal_knowledge_management "Personal knowledge management") and [note-taking](https://wikipedia/wiki/Note-taking "Note-taking") [software application](https://wikipedia/wiki/Application_software "Application software") that operates on [Markdown](https://wikipedia/wiki/Markdown "Markdown") files.[^2] It allows users to make internal links for notes and then to visualize the connections as a graph. It is designed to help users organize and structure their thoughts and knowledge in a flexible, non-linear way.[^3] The software is free for personal use, with commercial licenses and hosted services such as [Obsidian Publish](https://wikipedia/wiki/Obsidian_Publish "Obsidian Publish") and [Obsidian Sync](https://wikipedia/wiki/Obsidian_Sync "Obsidian Sync") available as paid add-ons.[^4]
 
@@ -35,7 +33,7 @@ Obsidian supports an extensive [plugin](https://wikipedia/wiki/Plug-in_\(computi
 
 ## Reception
 
-Obsidian has received generally favorable reviews from technology publications. *[The Verge](https://wikipedia/wiki/The_Verge "The Verge")* praised the application for its flexibility and local-first approach, noting that "Obsidian is a powerful note-taking app that gives you full control of your data." [^2] *[PC Magazine](https://wikipedia/wiki/PC_Magazine "PC Magazine")* awarded it an Editors' Choice designation, highlighting its linking capabilities and customizability, though noting a steep learning curve for new users.[^3]
+Obsidian has received generally favorable reviews from technology publications. *[The Verge](https://wikipedia/wiki/The_Verge "The Verge")* praised the application for its flexibility and local-first approach, noting that "Obsidian is a powerful note-taking app that gives you full control of your data."[^2] *[PC Magazine](https://wikipedia/wiki/PC_Magazine "PC Magazine")* awarded it an Editors' Choice designation, highlighting its linking capabilities and customizability, though noting a steep learning curve for new users.[^3]
 
 The application has been compared to other note-taking tools such as [Notion](https://wikipedia/wiki/Notion_\(productivity_software\) "Notion (productivity software)"), [Roam Research](https://wikipedia/wiki/Roam_Research "Roam Research"), and [Logseq](https://wikipedia/wiki/Logseq "Logseq"). Commentators have noted that Obsidian differentiates itself through its local-first storage model and emphasis on user data ownership.[^18] However, critics have pointed out that the [proprietary](https://wikipedia/wiki/Proprietary_software "Proprietary software") nature of the application itself limits user freedom compared to fully [open-source](https://wikipedia/wiki/Open-source_software "Open-source software") alternatives.[^19]
 

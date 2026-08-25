@@ -6,7 +6,7 @@ This manifest records which upstream sources the port tracks and the upstream
 commit the parity corpus is pinned to, so corpus and algorithm resync from one
 place.
 
-Pinned upstream commit: `a4dd0041376ff7c2a5a0614ddb28996979dd7e28`
+Pinned upstream commit: `a332b4d5d539066ddfe19fc4ef6f1b6ffaf914b8`
 
 The pin must match `tests/defuddle_fixtures/VERSION` (enforced by
 `tests/unit/webextract/test_port_manifest.py`; both files are rewritten by
@@ -39,6 +39,7 @@ Upstream paths are relative to defuddle `src/`, port paths to
 | `removals/scoring.ts` | `removals/scoring.py` |
 | `removals/selectors.ts` | `removals/selectors.py` |
 | `removals/small-images.ts` | `removals/small_images.py` |
+| `extractors/substack.ts` | `extractors/substack_note.py` (Notes branch only; the `window._preloads` post path is not ported) |
 | `extractors/twitter.ts` | `extractors/x_tweet.py`, `extractors/x_common.py` (reference, reimplemented) |
 | `extractors/x-article.ts` | `extractors/x_article.py` (reference) |
 | `extractors/x-oembed.ts` | `enrichers/x_oembed.py` (reference) |
@@ -52,15 +53,21 @@ Not tracked (markitai-original, no upstream counterpart): `dom.py`,
 
 ## Known gaps vs upstream 0.19.3 (audited 2026-08-25)
 
-A resync attempt against release 0.19.3 (`a332b4d5d539066ddfe19fc4ef6f1b6ffaf914b8`)
-was reverted: 6 of the 125 new upstream fixtures fail because these upstream
-behaviors are not ported yet. Port them before the next corpus resync:
+The corpus is synced to release 0.19.3
+(`a332b4d5d539066ddfe19fc4ef6f1b6ffaf914b8`) and all 208 fixtures pass the
+parity quality tests. The 6 porting gaps found by the first resync attempt
+(aria-hidden overlay articles, CodeMirror code blocks, mid-article image
+rows, Substack note permalinks, SVG external-CSS fallbacks, inline
+related-stories blocks) are ported, as are the SVG CSS-variable /
+`light-dark()` / Tailwind color resolution passes, noscript lazy-image
+resolution, lightbox image dedup, line-number gutter handling, and
+LaTeX-image-service conversion the full-corpus benchmark surfaced.
+Remaining known gaps:
 
-- article content inside `aria-hidden` overlays with dismiss links is dropped
-  (upstream issue 232, fixture `issues--232-dismiss-in-hidden-content`)
-- CodeMirror-rendered code blocks lose content (`codeblocks--chatgpt-codemirror`)
-- mid-article image rows are misclassified as related-post cards
-  (`content-patterns--multi-image-row-midarticle`)
-- Substack note permalinks keep extra chrome (`general--substack-note-permalink`)
-- SVG-with-external-CSS fallback text is dropped (`general--svg-external-css-fallback`)
-- inline related-stories blocks are over-removed (`related--inline-related-stories-block`)
+- `extractors/substack.ts`: only the Notes branch is ported; Substack post
+  pages (`window._preloads` body extraction) fall back to the generic
+  pipeline.
+- Fixtures for sites where markitai has its own richer extractors
+  (Reddit, Hacker News) intentionally diverge from defuddle's expected
+  output; they score low in the benchmark but are held by its per-fixture
+  guardrail floors, not by parity.

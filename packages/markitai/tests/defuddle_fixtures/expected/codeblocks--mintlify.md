@@ -1,8 +1,8 @@
 ```json
 {
-  "title": "Cover vs Contain Modes - Sanity Image",
+  "title": "Cover vs Contain Modes",
   "author": "",
-  "site": "",
+  "site": "Sanity Image",
   "published": ""
 }
 ```
@@ -48,10 +48,13 @@ With cover mode, if your original image is 1200×800 (3:2 ratio) and you request
 ## Choosing the Right Mode
 
 Use **contain** when:
+
 - You want to preserve the full image without any cropping
 - The image might have a different aspect ratio than the display area
 - You are displaying photos where every part of the image matters
+
 Use **cover** when:
+
 - You need the image to fill a specific area completely
 - Some cropping is acceptable
 - You are creating thumbnails or hero images with fixed dimensions

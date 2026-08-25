@@ -1,19 +1,67 @@
 {
-  "generated_at": "2026-07-08T16:28:00+00:00",
+  "generated_at": "2026-08-25T00:14:22+00:00",
   "threshold_factor": 0.9,
-  "mean_floor": 83.46,
+  "mean_floor": 86.04,
   "fixtures": {
+    "author-contact-block": {
+      "min_score": 90.0
+    },
+    "author-share-widget": {
+      "min_score": 89.73
+    },
+    "callouts--obsidian-publish-callouts": {
+      "min_score": 79.2
+    },
+    "code-blocks--chroma-linenums": {
+      "min_score": 87.92
+    },
+    "code-blocks--hexo-br": {
+      "min_score": 89.41
+    },
+    "codeblocks--chatgpt-codemirror": {
+      "min_score": 90.0
+    },
+    "codeblocks--chroma-inline-linenums": {
+      "min_score": 87.47
+    },
+    "codeblocks--chroma-line-spans": {
+      "min_score": 90.0
+    },
+    "codeblocks--code-pre-nesting": {
+      "min_score": 90.0
+    },
+    "codeblocks--flex-row-gutter": {
+      "min_score": 87.76
+    },
+    "codeblocks--hljs-header": {
+      "min_score": 90.0
+    },
     "codeblocks--mintlify": {
-      "min_score": 89.53
+      "min_score": 89.59
+    },
+    "codeblocks--pygments-lineno": {
+      "min_score": 90.0
+    },
+    "codeblocks--react-syntax-highlighter-linenums": {
+      "min_score": 90.0
     },
     "codeblocks--rehype-pretty-code": {
       "min_score": 90.0
     },
+    "codeblocks--rehype-pretty-copy": {
+      "min_score": 90.0
+    },
     "codeblocks--rockthejvm.com-articles-kotlin-101-type-classes": {
-      "min_score": 89.51
+      "min_score": 89.59
+    },
+    "codeblocks--rouge-linenums": {
+      "min_score": 90.0
     },
     "codeblocks--stripe": {
       "min_score": 89.7
+    },
+    "comments--mastodon.social-@user-12345678": {
+      "min_score": 60.41
     },
     "comments--news.ycombinator.com-item-id=12345678": {
       "min_score": 30.51
@@ -21,8 +69,65 @@
     "comments--old.reddit.com-r-test-comments-abc123-test_post": {
       "min_score": 15.17
     },
+    "content-patterns--card-grid-stripped-headings": {
+      "min_score": 90.0
+    },
+    "content-patterns--code-block-boilerplate-and-trailing-section": {
+      "min_score": 89.98
+    },
+    "content-patterns--content-list-with-internal-links": {
+      "min_score": 79.52
+    },
+    "content-patterns--heading-introduced-list": {
+      "min_score": 87.28
+    },
+    "content-patterns--iso-date-and-read-time": {
+      "min_score": 90.0
+    },
+    "content-patterns--leading-breadcrumb": {
+      "min_score": 90.0
+    },
+    "content-patterns--live-blog-metadata": {
+      "min_score": 90.0
+    },
+    "content-patterns--multi-image-row-midarticle": {
+      "min_score": 87.6
+    },
+    "content-patterns--non-semantic-hero-header": {
+      "min_score": 90.0
+    },
+    "content-patterns--social-counter-link": {
+      "min_score": 90.0
+    },
+    "content-patterns--social-engagement-counter": {
+      "min_score": 90.0
+    },
+    "content-patterns--socket-dev-blog": {
+      "min_score": 87.43
+    },
+    "content-patterns--table-of-contents": {
+      "min_score": 89.07
+    },
+    "content-patterns--trailing-related-posts": {
+      "min_score": 90.0
+    },
+    "content-patterns--trailing-subscribe-after-footnotes": {
+      "min_score": 90.0
+    },
+    "custom-elements--swiper-carousel": {
+      "min_score": 90.0
+    },
+    "elementor--archive-page": {
+      "min_score": 87.91
+    },
+    "elements--base64-placeholder-removal": {
+      "min_score": 76.39
+    },
     "elements--bootstrap-alerts": {
       "min_score": 88.13
+    },
+    "elements--br-between-blocks": {
+      "min_score": 90.0
     },
     "elements--complex-tables": {
       "min_score": 90.0
@@ -36,10 +141,19 @@
     "elements--empty-p-br": {
       "min_score": 90.0
     },
+    "elements--empty-table": {
+      "min_score": 90.0
+    },
     "elements--farsi-zwnj": {
       "min_score": 89.87
     },
     "elements--figure-content-wrapper": {
+      "min_score": 90.0
+    },
+    "elements--hugo-admonitions": {
+      "min_score": 90.0
+    },
+    "elements--image-dedup": {
       "min_score": 90.0
     },
     "elements--javascript-links": {
@@ -48,20 +162,74 @@
     "elements--lazy-image": {
       "min_score": 81.51
     },
+    "elements--lightbox-image-dedup": {
+      "min_score": 90.0
+    },
     "elements--nbsp-handling": {
       "min_score": 90.0
     },
+    "elements--srcset-normalization": {
+      "min_score": 79.06
+    },
+    "elements--svg-placeholder-lazy-image": {
+      "min_score": 84.43
+    },
     "elements--whitespace-newlines": {
+      "min_score": 90.0
+    },
+    "entry-point--js-article-content": {
       "min_score": 90.0
     },
     "extractor--bbcode-data": {
       "min_score": 85.49
     },
+    "extractor--chatgpt-citations": {
+      "min_score": 85.93
+    },
+    "extractor--chatgpt-post-thought-content": {
+      "min_score": 88.31
+    },
+    "eyebrow--linked-category": {
+      "min_score": 90.0
+    },
+    "eyebrow--paragraph-label": {
+      "min_score": 90.0
+    },
+    "eyebrow--spans-category": {
+      "min_score": 90.0
+    },
+    "eyebrow--wrapper-with-icon": {
+      "min_score": 90.0
+    },
+    "footnotes--aside-ol-start": {
+      "min_score": 89.42
+    },
+    "footnotes--bold-sup-trailing": {
+      "min_score": 90.0
+    },
+    "footnotes--br-separated-named-anchors": {
+      "min_score": 88.11
+    },
     "footnotes--child-anchor-id": {
+      "min_score": 90.0
+    },
+    "footnotes--easy-footnotes-wrapper": {
+      "min_score": 90.0
+    },
+    "footnotes--external-labeled-section": {
+      "min_score": 89.35
+    },
+    "footnotes--google-docs-ftnt": {
       "min_score": 90.0
     },
     "footnotes--heading-notes": {
       "min_score": 90.0
+    },
+    "footnotes--hidden-aside-data-definition": {
+      "min_score": 90.0
+    },
+    "footnotes--hidden-section": {
+      "min_score": 84.31
     },
     "footnotes--hr-continuation": {
       "min_score": 89.5
@@ -73,13 +241,52 @@
       "min_score": 90.0
     },
     "footnotes--inline-footnote-span": {
-      "min_score": 90.0
+      "min_score": 89.86
+    },
+    "footnotes--labeled-section-ol": {
+      "min_score": 87.31
     },
     "footnotes--maggieappleton.com-xanadu-patterns": {
       "min_score": 88.16
     },
+    "footnotes--named-anchor": {
+      "min_score": 90.0
+    },
     "footnotes--nested-prose": {
       "min_score": 90.0
+    },
+    "footnotes--no-false-positive-equation-refs": {
+      "min_score": 89.93
+    },
+    "footnotes--numeric-anchor-id": {
+      "min_score": 90.0
+    },
+    "footnotes--orgmode-css-sidenotes": {
+      "min_score": 90.0
+    },
+    "footnotes--p-class-footnote": {
+      "min_score": 90.0
+    },
+    "footnotes--pulldown-cmark-footnote-definition": {
+      "min_score": 89.95
+    },
+    "footnotes--sidenote-inline-with-list": {
+      "min_score": 90.0
+    },
+    "footnotes--span-fnref-colon": {
+      "min_score": 90.0
+    },
+    "footnotes--wikipedia-references": {
+      "min_score": 87.43
+    },
+    "footnotes--word-ftn-ftnref": {
+      "min_score": 64.97
+    },
+    "footnotes--wp-block-footnotes": {
+      "min_score": 90.0
+    },
+    "gated-content--cookie-consent": {
+      "min_score": 89.6
     },
     "general--12gramsofcarbon.com-p-ilyas-30-papers-to-carmack-vlaes": {
       "min_score": 89.05
@@ -94,7 +301,7 @@
       "min_score": 90.0
     },
     "general--cp4space-jordan-algebra": {
-      "min_score": 55.77
+      "min_score": 87.69
     },
     "general--daringfireball.net-2025-02-the_iphone_16e": {
       "min_score": 89.74
@@ -103,7 +310,7 @@
       "min_score": 86.35
     },
     "general--github.com-issue-56": {
-      "min_score": 84.28
+      "min_score": 88.42
     },
     "general--github.com-test-owner-test-repo-pull-42": {
       "min_score": 68.49
@@ -112,7 +319,7 @@
       "min_score": 89.41
     },
     "general--lesswrong.com-s-N7nDePaNabJdnbXeE-p-vJFdjigzmcXMhNTsx": {
-      "min_score": 89.58
+      "min_score": 89.56
     },
     "general--multi-article-portfolio": {
       "min_score": 90.0
@@ -130,22 +337,40 @@
       "min_score": 90.0
     },
     "general--scp-wiki.wikidot.com-scp-9935": {
-      "min_score": 88.61
+      "min_score": 88.74
     },
     "general--stephango.com-buy-wisely": {
       "min_score": 86.44
     },
     "general--substack-app": {
-      "min_score": 88.64
+      "min_score": 90.0
+    },
+    "general--substack-custom-domain": {
+      "min_score": 90.0
+    },
+    "general--substack-note": {
+      "min_score": 90.0
+    },
+    "general--substack-note-permalink": {
+      "min_score": 90.0
+    },
+    "general--svg-content-preservation": {
+      "min_score": 58.73
+    },
+    "general--svg-external-css-fallback": {
+      "min_score": 80.02
     },
     "general--tailwind-hidden-blog-index": {
-      "min_score": 68.1
+      "min_score": 81.92
     },
     "general--trailing-cta-newsletter": {
       "min_score": 90.0
     },
     "general--wikipedia": {
-      "min_score": 86.39
+      "min_score": 86.35
+    },
+    "general--wikipedia-ipa-pronunciation": {
+      "min_score": 89.42
     },
     "general--www.figma.com-blog-introducing-codex-to-figma": {
       "min_score": 68.84
@@ -154,7 +379,19 @@
       "min_score": 89.19
     },
     "general--x.com-article-2026-02-13": {
-      "min_score": 89.28
+      "min_score": 89.25
+    },
+    "gmail--mail.google.com-mail-u-0-thread": {
+      "min_score": 84.84
+    },
+    "headings--fragment-url-not-permalink": {
+      "min_score": 89.38
+    },
+    "headings--permalink-title-match": {
+      "min_score": 90.0
+    },
+    "headings--testid-article-header": {
+      "min_score": 90.0
     },
     "hidden--nodes": {
       "min_score": 90.0
@@ -207,6 +444,9 @@
     "issues--159-lean-verso-missing-section-gap": {
       "min_score": 90.0
     },
+    "issues--161-x-status-url-author": {
+      "min_score": 90.0
+    },
     "issues--162-aria-hidden-main-content": {
       "min_score": 90.0
     },
@@ -217,27 +457,141 @@
       "min_score": 90.0
     },
     "issues--169-svg-classname-crash": {
-      "min_score": 66.79
+      "min_score": 87.12
+    },
+    "issues--196-og-title-brand-name": {
+      "min_score": 90.0
+    },
+    "issues--217-writerside-docs": {
+      "min_score": 90.0
+    },
+    "issues--218-footnote-wrapper-text-lost": {
+      "min_score": 89.82
+    },
+    "issues--221-nextjs-noscript-images": {
+      "min_score": 87.94
+    },
+    "issues--227-noscript-lazy-images": {
+      "min_score": 87.87
+    },
+    "issues--232-dismiss-in-hidden-content": {
+      "min_score": 86.05
+    },
+    "issues--254-empty-video": {
+      "min_score": 90.0
+    },
+    "issues--263-buttons-in-paragraphs": {
+      "min_score": 85.61
+    },
+    "issues--272-x-localized-conversation-timeline": {
+      "min_score": 74.56
+    },
+    "issues--280-texinfo-footnotes": {
+      "min_score": 85.4
+    },
+    "issues--284-table-cell-header-scoring": {
+      "min_score": 88.95
+    },
+    "issues--285-tag-like-title-escaping": {
+      "min_score": 87.85
+    },
+    "issues--286-generic-alt-image-dedup": {
+      "min_score": 90.0
+    },
+    "issues--296-oreilly-noteref-footnotes": {
+      "min_score": 89.97
+    },
+    "issues--300-nested-layout-tables": {
+      "min_score": 86.32
+    },
+    "issues--header-with-subtitle-p": {
+      "min_score": 90.0
+    },
+    "issues--header-wraps-content": {
+      "min_score": 90.0
+    },
+    "issues--pascalcase-section-id-partial-match": {
+      "min_score": 90.0
+    },
+    "issues--sidebar-toggle-checkbox": {
+      "min_score": 87.81
     },
     "issues--span-with-block-children-and-schema": {
       "min_score": 89.13
     },
+    "listing--news.ycombinator.com-news": {
+      "min_score": 21.03
+    },
     "math--katex": {
-      "min_score": 89.1
+      "min_score": 90.0
     },
     "math--katex-centraliser": {
       "min_score": 88.94
     },
+    "math--katex-data-math": {
+      "min_score": 58.08
+    },
+    "math--latex-image-services": {
+      "min_score": 90.0
+    },
     "math--mathjax": {
-      "min_score": 45.02
+      "min_score": 52.75
+    },
+    "math--mathjax-chtml-no-assistive": {
+      "min_score": 74.35
+    },
+    "math--mathjax-svg": {
+      "min_score": 84.43
+    },
+    "math--mathjax-tagged-equation": {
+      "min_score": 81.86
     },
     "math--mathjax-tex-scripts": {
       "min_score": 89.38
     },
+    "math--raw-latex": {
+      "min_score": 83.23
+    },
+    "math--small-equation-image": {
+      "min_score": 89.24
+    },
     "math--temml": {
-      "min_score": 63.52
+      "min_score": 83.02
     },
     "math--wikipedia-mathml": {
+      "min_score": 90.0
+    },
+    "metadata--295-header-date-above-title": {
+      "min_score": 90.0
+    },
+    "metadata--295-suggested-post-date": {
+      "min_score": 90.0
+    },
+    "metadata--author-by-prefix-and-url": {
+      "min_score": 90.0
+    },
+    "metadata--date-adjacent-category-link": {
+      "min_score": 90.0
+    },
+    "metadata--email-style-header-block": {
+      "min_score": 87.01
+    },
+    "metadata--h1-sibling-byline": {
+      "min_score": 90.0
+    },
+    "metadata--multi-script-values": {
+      "min_score": 90.0
+    },
+    "metadata--placeholder-author-and-duplicate-published": {
+      "min_score": 89.81
+    },
+    "metadata--placeholder-values": {
+      "min_score": 89.82
+    },
+    "metadata--rel-author-in-bio-container": {
+      "min_score": 90.0
+    },
+    "related--inline-related-stories-block": {
       "min_score": 90.0
     },
     "scoring--related-posts-byline": {
@@ -246,11 +600,32 @@
     "scoring--table-with-links": {
       "min_score": 90.0
     },
+    "selectors--arm-newsroom": {
+      "min_score": 90.0
+    },
+    "selectors--logo-substring-wrapper": {
+      "min_score": 90.0
+    },
+    "small-images--svg-icon-viewbox": {
+      "min_score": 90.0
+    },
+    "standardize--span-data-as-paragraph": {
+      "min_score": 90.0
+    },
+    "table-layout--blogger-two-column": {
+      "min_score": 89.88
+    },
     "table-layout--paulgraham.com-makersschedule": {
       "min_score": 89.6
     },
+    "table-layout--peripheral-tables": {
+      "min_score": 88.33
+    },
     "table-layout--single-column": {
       "min_score": 83.43
+    },
+    "thin-section-before-see-also": {
+      "min_score": 86.2
     }
   },
   "local_mean_floor": 89.52,

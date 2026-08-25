@@ -1,15 +1,80 @@
 {
-  "generated_at": "2026-07-08T16:28:00+00:00",
+  "generated_at": "2026-08-25T00:14:22+00:00",
   "scorer": "heuristic (rapidfuzz partial-ratio, marker-style)",
-  "fixture_count": 83,
+  "fixture_count": 208,
   "aggregate": {
-    "mean_score": 92.73,
+    "mean_score": 95.6,
     "local_mean_score": 99.47
   },
   "fixtures": {
+    "author-contact-block": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "author-share-widget": {
+      "score": 99.7,
+      "match_score": 100.0,
+      "order_score": 98.48
+    },
+    "callouts--obsidian-publish-callouts": {
+      "score": 88.0,
+      "match_score": 87.92,
+      "order_score": 88.33
+    },
+    "code-blocks--chroma-linenums": {
+      "score": 97.69,
+      "match_score": 97.11,
+      "order_score": 100.0
+    },
+    "code-blocks--hexo-br": {
+      "score": 99.34,
+      "match_score": 99.17,
+      "order_score": 100.0
+    },
+    "codeblocks--chatgpt-codemirror": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "codeblocks--chroma-inline-linenums": {
+      "score": 97.19,
+      "match_score": 96.49,
+      "order_score": 100.0
+    },
+    "codeblocks--chroma-line-spans": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "codeblocks--code-pre-nesting": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "codeblocks--flex-row-gutter": {
+      "score": 97.51,
+      "match_score": 96.89,
+      "order_score": 100.0
+    },
+    "codeblocks--hljs-header": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
     "codeblocks--mintlify": {
-      "score": 99.48,
-      "match_score": 99.35,
+      "score": 99.55,
+      "match_score": 99.43,
+      "order_score": 100.0
+    },
+    "codeblocks--pygments-lineno": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "codeblocks--react-syntax-highlighter-linenums": {
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "codeblocks--rehype-pretty-code": {
@@ -17,15 +82,30 @@
       "match_score": 100.0,
       "order_score": 100.0
     },
+    "codeblocks--rehype-pretty-copy": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
     "codeblocks--rockthejvm.com-articles-kotlin-101-type-classes": {
-      "score": 99.46,
-      "match_score": 99.33,
+      "score": 99.55,
+      "match_score": 99.44,
+      "order_score": 100.0
+    },
+    "codeblocks--rouge-linenums": {
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "codeblocks--stripe": {
       "score": 99.67,
       "match_score": 99.59,
       "order_score": 100.0
+    },
+    "comments--mastodon.social-@user-12345678": {
+      "score": 67.12,
+      "match_score": 67.23,
+      "order_score": 66.67
     },
     "comments--news.ycombinator.com-item-id=12345678": {
       "score": 33.9,
@@ -37,9 +117,104 @@
       "match_score": 1.06,
       "order_score": 80.0
     },
+    "content-patterns--card-grid-stripped-headings": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "content-patterns--code-block-boilerplate-and-trailing-section": {
+      "score": 99.98,
+      "match_score": 99.97,
+      "order_score": 100.0
+    },
+    "content-patterns--content-list-with-internal-links": {
+      "score": 88.35,
+      "match_score": 85.44,
+      "order_score": 100.0
+    },
+    "content-patterns--heading-introduced-list": {
+      "score": 96.98,
+      "match_score": 98.12,
+      "order_score": 92.42
+    },
+    "content-patterns--iso-date-and-read-time": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "content-patterns--leading-breadcrumb": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "content-patterns--live-blog-metadata": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "content-patterns--multi-image-row-midarticle": {
+      "score": 97.33,
+      "match_score": 96.81,
+      "order_score": 99.42
+    },
+    "content-patterns--non-semantic-hero-header": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "content-patterns--social-counter-link": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "content-patterns--social-engagement-counter": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "content-patterns--socket-dev-blog": {
+      "score": 97.14,
+      "match_score": 100.0,
+      "order_score": 85.71
+    },
+    "content-patterns--table-of-contents": {
+      "score": 98.97,
+      "match_score": 99.49,
+      "order_score": 96.88
+    },
+    "content-patterns--trailing-related-posts": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "content-patterns--trailing-subscribe-after-footnotes": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "custom-elements--swiper-carousel": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "elementor--archive-page": {
+      "score": 97.68,
+      "match_score": 99.04,
+      "order_score": 92.23
+    },
+    "elements--base64-placeholder-removal": {
+      "score": 84.88,
+      "match_score": 82.89,
+      "order_score": 92.86
+    },
     "elements--bootstrap-alerts": {
       "score": 97.92,
       "match_score": 97.4,
+      "order_score": 100.0
+    },
+    "elements--br-between-blocks": {
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "elements--complex-tables": {
@@ -62,12 +237,27 @@
       "match_score": 100.0,
       "order_score": 100.0
     },
+    "elements--empty-table": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
     "elements--farsi-zwnj": {
       "score": 99.86,
       "match_score": 99.83,
       "order_score": 100.0
     },
     "elements--figure-content-wrapper": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "elements--hugo-admonitions": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "elements--image-dedup": {
       "score": 100.0,
       "match_score": 100.0,
       "order_score": 100.0
@@ -82,12 +272,32 @@
       "match_score": 88.21,
       "order_score": 100.0
     },
+    "elements--lightbox-image-dedup": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
     "elements--nbsp-handling": {
       "score": 100.0,
       "match_score": 100.0,
       "order_score": 100.0
     },
+    "elements--srcset-normalization": {
+      "score": 87.84,
+      "match_score": 86.47,
+      "order_score": 93.33
+    },
+    "elements--svg-placeholder-lazy-image": {
+      "score": 93.81,
+      "match_score": 95.7,
+      "order_score": 86.27
+    },
     "elements--whitespace-newlines": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "entry-point--js-article-content": {
       "score": 100.0,
       "match_score": 100.0,
       "order_score": 100.0
@@ -97,7 +307,67 @@
       "match_score": 93.74,
       "order_score": 100.0
     },
+    "extractor--chatgpt-citations": {
+      "score": 95.48,
+      "match_score": 97.43,
+      "order_score": 87.68
+    },
+    "extractor--chatgpt-post-thought-content": {
+      "score": 98.12,
+      "match_score": 98.85,
+      "order_score": 95.24
+    },
+    "eyebrow--linked-category": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "eyebrow--paragraph-label": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "eyebrow--spans-category": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "eyebrow--wrapper-with-icon": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "footnotes--aside-ol-start": {
+      "score": 99.36,
+      "match_score": 99.2,
+      "order_score": 100.0
+    },
+    "footnotes--bold-sup-trailing": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "footnotes--br-separated-named-anchors": {
+      "score": 97.9,
+      "match_score": 97.38,
+      "order_score": 100.0
+    },
     "footnotes--child-anchor-id": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "footnotes--easy-footnotes-wrapper": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "footnotes--external-labeled-section": {
+      "score": 99.28,
+      "match_score": 99.11,
+      "order_score": 100.0
+    },
+    "footnotes--google-docs-ftnt": {
       "score": 100.0,
       "match_score": 100.0,
       "order_score": 100.0
@@ -106,6 +376,16 @@
       "score": 100.0,
       "match_score": 100.0,
       "order_score": 100.0
+    },
+    "footnotes--hidden-aside-data-definition": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "footnotes--hidden-section": {
+      "score": 93.68,
+      "match_score": 97.1,
+      "order_score": 80.0
     },
     "footnotes--hr-continuation": {
       "score": 99.44,
@@ -123,8 +403,13 @@
       "order_score": 100.0
     },
     "footnotes--inline-footnote-span": {
-      "score": 100.0,
-      "match_score": 100.0,
+      "score": 99.84,
+      "match_score": 99.8,
+      "order_score": 100.0
+    },
+    "footnotes--labeled-section-ol": {
+      "score": 97.01,
+      "match_score": 96.27,
       "order_score": 100.0
     },
     "footnotes--maggieappleton.com-xanadu-patterns": {
@@ -132,9 +417,69 @@
       "match_score": 97.96,
       "order_score": 97.91
     },
+    "footnotes--named-anchor": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
     "footnotes--nested-prose": {
       "score": 100.0,
       "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "footnotes--no-false-positive-equation-refs": {
+      "score": 99.92,
+      "match_score": 99.9,
+      "order_score": 100.0
+    },
+    "footnotes--numeric-anchor-id": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "footnotes--orgmode-css-sidenotes": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "footnotes--p-class-footnote": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "footnotes--pulldown-cmark-footnote-definition": {
+      "score": 99.94,
+      "match_score": 99.93,
+      "order_score": 100.0
+    },
+    "footnotes--sidenote-inline-with-list": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "footnotes--span-fnref-colon": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "footnotes--wikipedia-references": {
+      "score": 97.14,
+      "match_score": 100.0,
+      "order_score": 85.71
+    },
+    "footnotes--word-ftn-ftnref": {
+      "score": 72.19,
+      "match_score": 73.57,
+      "order_score": 66.67
+    },
+    "footnotes--wp-block-footnotes": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "gated-content--cookie-consent": {
+      "score": 99.56,
+      "match_score": 99.45,
       "order_score": 100.0
     },
     "general--12gramsofcarbon.com-p-ilyas-30-papers-to-carmack-vlaes": {
@@ -158,9 +503,9 @@
       "order_score": 100.0
     },
     "general--cp4space-jordan-algebra": {
-      "score": 61.97,
-      "match_score": 56.87,
-      "order_score": 82.38
+      "score": 97.43,
+      "match_score": 96.79,
+      "order_score": 100.0
     },
     "general--daringfireball.net-2025-02-the_iphone_16e": {
       "score": 99.71,
@@ -173,8 +518,8 @@
       "order_score": 94.3
     },
     "general--github.com-issue-56": {
-      "score": 93.64,
-      "match_score": 92.29,
+      "score": 98.24,
+      "match_score": 98.04,
       "order_score": 99.05
     },
     "general--github.com-test-owner-test-repo-pull-42": {
@@ -188,8 +533,8 @@
       "order_score": 100.0
     },
     "general--lesswrong.com-s-N7nDePaNabJdnbXeE-p-vJFdjigzmcXMhNTsx": {
-      "score": 99.53,
-      "match_score": 99.79,
+      "score": 99.51,
+      "match_score": 99.76,
       "order_score": 98.48
     },
     "general--multi-article-portfolio": {
@@ -218,8 +563,8 @@
       "order_score": 100.0
     },
     "general--scp-wiki.wikidot.com-scp-9935": {
-      "score": 98.46,
-      "match_score": 98.07,
+      "score": 98.6,
+      "match_score": 98.25,
       "order_score": 100.0
     },
     "general--stephango.com-buy-wisely": {
@@ -228,14 +573,39 @@
       "order_score": 83.67
     },
     "general--substack-app": {
-      "score": 98.49,
-      "match_score": 98.12,
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "general--substack-custom-domain": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "general--substack-note": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "general--substack-note-permalink": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "general--svg-content-preservation": {
+      "score": 65.25,
+      "match_score": 60.13,
+      "order_score": 85.71
+    },
+    "general--svg-external-css-fallback": {
+      "score": 88.91,
+      "match_score": 86.14,
       "order_score": 100.0
     },
     "general--tailwind-hidden-blog-index": {
-      "score": 75.67,
-      "match_score": 74.45,
-      "order_score": 80.53
+      "score": 91.02,
+      "match_score": 88.77,
+      "order_score": 100.0
     },
     "general--trailing-cta-newsletter": {
       "score": 100.0,
@@ -243,9 +613,14 @@
       "order_score": 100.0
     },
     "general--wikipedia": {
-      "score": 95.99,
-      "match_score": 95.82,
-      "order_score": 96.67
+      "score": 95.94,
+      "match_score": 95.81,
+      "order_score": 96.49
+    },
+    "general--wikipedia-ipa-pronunciation": {
+      "score": 99.36,
+      "match_score": 99.2,
+      "order_score": 100.0
     },
     "general--www.figma.com-blog-introducing-codex-to-figma": {
       "score": 76.49,
@@ -258,9 +633,29 @@
       "order_score": 100.0
     },
     "general--x.com-article-2026-02-13": {
-      "score": 99.2,
-      "match_score": 99.59,
-      "order_score": 97.67
+      "score": 99.17,
+      "match_score": 99.54,
+      "order_score": 97.7
+    },
+    "gmail--mail.google.com-mail-u-0-thread": {
+      "score": 94.27,
+      "match_score": 92.83,
+      "order_score": 100.0
+    },
+    "headings--fragment-url-not-permalink": {
+      "score": 99.31,
+      "match_score": 99.14,
+      "order_score": 100.0
+    },
+    "headings--permalink-title-match": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "headings--testid-article-header": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
     },
     "hidden--nodes": {
       "score": 100.0,
@@ -347,6 +742,11 @@
       "match_score": 100.0,
       "order_score": 100.0
     },
+    "issues--161-x-status-url-author": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
     "issues--162-aria-hidden-main-content": {
       "score": 100.0,
       "match_score": 100.0,
@@ -363,18 +763,118 @@
       "order_score": 100.0
     },
     "issues--169-svg-classname-crash": {
-      "score": 74.21,
-      "match_score": 71.93,
-      "order_score": 83.33
+      "score": 96.8,
+      "match_score": 96.0,
+      "order_score": 100.0
+    },
+    "issues--196-og-title-brand-name": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--217-writerside-docs": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--218-footnote-wrapper-text-lost": {
+      "score": 99.8,
+      "match_score": 99.75,
+      "order_score": 100.0
+    },
+    "issues--221-nextjs-noscript-images": {
+      "score": 97.71,
+      "match_score": 97.13,
+      "order_score": 100.0
+    },
+    "issues--227-noscript-lazy-images": {
+      "score": 97.63,
+      "match_score": 98.08,
+      "order_score": 95.83
+    },
+    "issues--232-dismiss-in-hidden-content": {
+      "score": 95.61,
+      "match_score": 99.27,
+      "order_score": 80.95
+    },
+    "issues--254-empty-video": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--263-buttons-in-paragraphs": {
+      "score": 95.12,
+      "match_score": 93.9,
+      "order_score": 100.0
+    },
+    "issues--272-x-localized-conversation-timeline": {
+      "score": 82.85,
+      "match_score": 86.9,
+      "order_score": 66.67
+    },
+    "issues--280-texinfo-footnotes": {
+      "score": 94.89,
+      "match_score": 96.64,
+      "order_score": 87.88
+    },
+    "issues--284-table-cell-header-scoring": {
+      "score": 98.83,
+      "match_score": 98.54,
+      "order_score": 100.0
+    },
+    "issues--285-tag-like-title-escaping": {
+      "score": 97.61,
+      "match_score": 99.9,
+      "order_score": 88.46
+    },
+    "issues--286-generic-alt-image-dedup": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--296-oreilly-noteref-footnotes": {
+      "score": 99.97,
+      "match_score": 99.96,
+      "order_score": 100.0
+    },
+    "issues--300-nested-layout-tables": {
+      "score": 95.91,
+      "match_score": 94.89,
+      "order_score": 100.0
+    },
+    "issues--header-with-subtitle-p": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--header-wraps-content": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--pascalcase-section-id-partial-match": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "issues--sidebar-toggle-checkbox": {
+      "score": 97.57,
+      "match_score": 96.96,
+      "order_score": 100.0
     },
     "issues--span-with-block-children-and-schema": {
       "score": 99.03,
       "match_score": 99.68,
       "order_score": 96.43
     },
+    "listing--news.ycombinator.com-news": {
+      "score": 23.37,
+      "match_score": 4.21,
+      "order_score": 100.0
+    },
     "math--katex": {
-      "score": 99.0,
-      "match_score": 98.75,
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "math--katex-centraliser": {
@@ -382,22 +882,112 @@
       "match_score": 98.52,
       "order_score": 100.0
     },
+    "math--katex-data-math": {
+      "score": 64.53,
+      "match_score": 59.83,
+      "order_score": 83.33
+    },
+    "math--latex-image-services": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
     "math--mathjax": {
-      "score": 50.02,
-      "match_score": 42.92,
-      "order_score": 78.42
+      "score": 58.61,
+      "match_score": 54.06,
+      "order_score": 76.84
+    },
+    "math--mathjax-chtml-no-assistive": {
+      "score": 82.61,
+      "match_score": 82.11,
+      "order_score": 84.62
+    },
+    "math--mathjax-svg": {
+      "score": 93.81,
+      "match_score": 92.26,
+      "order_score": 100.0
+    },
+    "math--mathjax-tagged-equation": {
+      "score": 90.96,
+      "match_score": 92.87,
+      "order_score": 83.33
     },
     "math--mathjax-tex-scripts": {
       "score": 99.31,
       "match_score": 99.14,
       "order_score": 100.0
     },
+    "math--raw-latex": {
+      "score": 92.48,
+      "match_score": 95.46,
+      "order_score": 80.56
+    },
+    "math--small-equation-image": {
+      "score": 99.15,
+      "match_score": 98.94,
+      "order_score": 100.0
+    },
     "math--temml": {
-      "score": 70.58,
-      "match_score": 69.41,
-      "order_score": 75.24
+      "score": 92.24,
+      "match_score": 90.3,
+      "order_score": 100.0
     },
     "math--wikipedia-mathml": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "metadata--295-header-date-above-title": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "metadata--295-suggested-post-date": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "metadata--author-by-prefix-and-url": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "metadata--date-adjacent-category-link": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "metadata--email-style-header-block": {
+      "score": 96.68,
+      "match_score": 95.85,
+      "order_score": 100.0
+    },
+    "metadata--h1-sibling-byline": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "metadata--multi-script-values": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "metadata--placeholder-author-and-duplicate-published": {
+      "score": 99.79,
+      "match_score": 99.73,
+      "order_score": 100.0
+    },
+    "metadata--placeholder-values": {
+      "score": 99.8,
+      "match_score": 99.75,
+      "order_score": 100.0
+    },
+    "metadata--rel-author-in-bio-container": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "related--inline-related-stories-block": {
       "score": 100.0,
       "match_score": 100.0,
       "order_score": 100.0
@@ -412,15 +1002,50 @@
       "match_score": 100.0,
       "order_score": 100.0
     },
+    "selectors--arm-newsroom": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "selectors--logo-substring-wrapper": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "small-images--svg-icon-viewbox": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "standardize--span-data-as-paragraph": {
+      "score": 100.0,
+      "match_score": 100.0,
+      "order_score": 100.0
+    },
+    "table-layout--blogger-two-column": {
+      "score": 99.87,
+      "match_score": 99.83,
+      "order_score": 100.0
+    },
     "table-layout--paulgraham.com-makersschedule": {
       "score": 99.56,
       "match_score": 99.45,
       "order_score": 100.0
     },
+    "table-layout--peripheral-tables": {
+      "score": 98.14,
+      "match_score": 99.64,
+      "order_score": 92.18
+    },
     "table-layout--single-column": {
       "score": 92.7,
       "match_score": 92.54,
       "order_score": 93.33
+    },
+    "thin-section-before-see-also": {
+      "score": 95.78,
+      "match_score": 95.91,
+      "order_score": 95.24
     }
   },
   "local_fixture_count": 2,

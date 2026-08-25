@@ -2,7 +2,7 @@
 {
   "title": "The Pattern Language of Project Xanadu",
   "author": "",
-  "site": "",
+  "site": "maggieappleton.com",
   "published": "2024-05-24T02:20:06+00:00"
 }
 ```
@@ -241,7 +241,6 @@ In the grand scheme of things, 60 years isn’t an extraordinary amount of time 
 
 Who knows, maybe Xanadu can still happen (if you clap for it) ✨
 
-  
 ![](https://3.bp.blogspot.com/-s2BU-a7w2bc/VuNwBkwNSSI/AAAAAAAARDg/P_UuFud4PmIfKQoJLq4EHYxVL6YL8TQsw/s1600/XANADU.jpg)
 
 [^1]: The word hypothetical is a bit strong. Many versions were built. There is a working demo showcasing a few of its features [here](http://xanadu.com/xanademos/MoeJusteOrigins.html). But there is no active version on the App Store or Product Hunt I can link you to.
