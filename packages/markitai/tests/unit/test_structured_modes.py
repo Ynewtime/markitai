@@ -39,7 +39,6 @@ from markitai.llm.structured import (
     MODE_JSON_SCHEMA,
     MODE_MD_JSON,
     MODE_TOOLS,
-    clear_structured_mode_cache,
     model_structured_mode,
     router_structured_ladder,
     structured_mode_ladder,
@@ -85,12 +84,13 @@ def tiered_models():
     """Pin the three tier fixtures, and isolate the per-model cache."""
     import markitai.llm.structured as structured_mod
 
-    clear_structured_mode_cache()
+    saved = dict(structured_mod._model_mode_cache)
     structured_mod._model_mode_cache.update(
         {model: mode for mode, model in TIER_MODELS.items()}
     )
     yield
-    clear_structured_mode_cache()
+    structured_mod._model_mode_cache.clear()
+    structured_mod._model_mode_cache.update(saved)
 
 
 # =============================================================================
@@ -150,7 +150,6 @@ class _ScriptedRouter:
 
     def __init__(self, model_id: str, script: list[Any]) -> None:
         self.model_list = [{"litellm_params": {"model": model_id, "weight": 1}}]
-        self.model_id = model_id
         self.calls: list[dict[str, Any]] = []
         self._script = script
 
@@ -209,9 +208,12 @@ class TestCapabilityResolution:
 
     @pytest.fixture(autouse=True)
     def _fresh_cache(self):
-        clear_structured_mode_cache()
+        """Resolution must run for real here, not hit a warm cache entry."""
+        import markitai.llm.structured as structured_mod
+
+        structured_mod._model_mode_cache.clear()
         yield
-        clear_structured_mode_cache()
+        structured_mod._model_mode_cache.clear()
 
     def test_function_calling_model_starts_at_tools(self, monkeypatch):
         monkeypatch.setattr(litellm, "supports_function_calling", lambda _model: True)

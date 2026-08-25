@@ -287,7 +287,6 @@ async def run_structured_ladder(
     ladder: Sequence[instructor.Mode],
     call_id: str,
     max_tokens: int | None = None,
-    model: str = "default",
 ) -> tuple[Any, Any]:
     """Run one structured call down the capability staircase.
 
@@ -316,7 +315,6 @@ async def run_structured_ladder(
         ladder: Instructor modes, most native first.
         call_id: Log tag.
         max_tokens: Explicit output cap, or None.
-        model: Logical model name passed to the router.
 
     Returns:
         Tuple of (parsed_result, raw_response).
@@ -330,7 +328,9 @@ async def run_structured_ladder(
             return await cast(
                 Awaitable[tuple[Any, Any]],
                 client.chat.completions.create_with_completion(
-                    model=model,
+                    # "default" is the logical router group every call
+                    # addresses; the router resolves the deployment.
+                    model="default",
                     messages=cast(list[Any], copy.deepcopy(messages)),
                     response_model=response_model,
                     max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES if is_last else 0,

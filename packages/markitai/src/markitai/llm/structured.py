@@ -51,11 +51,6 @@ _INSTRUCTOR_MODES: dict[str, instructor.Mode] = {
 _model_mode_cache: dict[str, str] = {}
 
 
-def clear_structured_mode_cache() -> None:
-    """Drop the per-model capability cache (tests reconfigure providers)."""
-    _model_mode_cache.clear()
-
-
 def model_structured_mode(model_id: str) -> str:
     """Resolve the best structured-output mode one model supports.
 
