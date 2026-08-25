@@ -42,6 +42,7 @@ def create_app(
     configure_logging: bool = True,
     config_path: Path | None = None,
     allowed_hosts: Sequence[str] | None = None,
+    token: str | None = None,
 ) -> FastAPI:
     """Create the FastAPI app (guarded re-export of :func:`serve.app.create_app`).
 
@@ -55,6 +56,8 @@ def create_app(
             write to. Defaults to ``~/.markitai/config.json``.
         allowed_hosts: Extra hostnames accepted in the Host and Origin
             headers besides localhost and IP literals.
+        token: Access token required from non-loopback peers on ``/api/``
+            routes; None disables token auth.
 
     Raises:
         ImportError: When the serve extra is not installed.
@@ -70,4 +73,5 @@ def create_app(
         configure_logging=configure_logging,
         config_path=config_path,
         allowed_hosts=allowed_hosts,
+        token=token,
     )

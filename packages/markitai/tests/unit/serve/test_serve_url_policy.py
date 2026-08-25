@@ -7,6 +7,10 @@ on the network make the server fetch intranet addresses. The rule under test:
 a loopback peer may target private/local URLs (it is the operator's own
 machine), a non-loopback peer may not.
 
+These apps are built without a token (``--no-auth`` / embedder semantics), the
+only mode in which an unauthenticated non-loopback peer reaches the routes at
+all; token-bearing peers are covered by test_serve_auth.py.
+
 Harness mirrors test_serve_security.py: ``create_app`` over
 httpx.ASGITransport, whose ``client=`` tuple is the TCP peer the app sees.
 """

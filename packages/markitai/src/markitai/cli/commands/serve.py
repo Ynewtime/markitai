@@ -8,9 +8,13 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import json
+import os
+import secrets
+import socket
 import threading
 import time
 import webbrowser
+from urllib.parse import quote
 
 import rich_click as click
 
@@ -20,9 +24,10 @@ _BROWSER_READY_TIMEOUT_S = 30.0
 _BROWSER_POLL_INTERVAL_S = 0.05
 _EXPOSED_BIND_HELP = (
     "The default 127.0.0.1 is reachable only from this machine; any other "
-    "value publishes the API — which has no authentication — to every host "
-    "that can reach it."
+    "value publishes the API to every host that can reach it, which then "
+    "needs the access token printed at startup (unless --no-auth)."
 )
+_WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", "[::]", ""})  # nosec B104 - literal comparison for banner URLs, not a bind
 
 
 def _browser_address(host: str) -> tuple[str, str]:
@@ -58,8 +63,63 @@ def _binds_beyond_loopback(host: str) -> bool:
         return True
 
 
+def _resolve_token(no_auth: bool) -> str | None:
+    """Return the serve access token: disabled, pinned via env, or generated."""
+    if no_auth:
+        return None
+    pinned = os.environ.get("MARKITAI_SERVE_TOKEN", "").strip()
+    return pinned or f"mk_{secrets.token_urlsafe(32)}"
+
+
+def _token_url(url_host: str, port: int, token: str) -> str:
+    return f"http://{url_host}:{port}/?token={quote(token, safe='')}"
+
+
+def _lan_address() -> str | None:
+    """Best-effort LAN IPv4 for the banner (UDP connect sends no packets)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("192.0.2.1", 80))
+            address = probe.getsockname()[0]
+    except OSError:
+        return None
+    return None if address.startswith("127.") else address
+
+
+def _print_access_urls(host: str, port: int, url_host: str, token: str) -> None:
+    """Print the tokened URLs on stderr; the token is the remote credential."""
+    from rich.markup import escape
+
+    console = get_stderr_console()
+    urls = [_token_url(url_host, port, token)]
+    if host.strip() in _WILDCARD_HOSTS:
+        lan = _lan_address()
+        if lan is not None:
+            urls.append(_token_url(lan, port, token))
+    console.print(
+        "To use this server, open one of these URLs (the token signs you in):"
+    )
+    for url in urls:
+        console.print(f"    {escape(url)}")
+
+
 def _warn_exposed_bind(host: str, port: int) -> None:
-    """Tell the user, on stderr, what a non-loopback bind actually opens up."""
+    """Explain, on stderr, what a non-loopback bind with token auth opens up."""
+    from rich.markup import escape
+
+    console = get_stderr_console()
+    console.print(
+        f"[yellow]Warning:[/yellow] binding to {escape(host)}:{port} publishes "
+        "this server to your network."
+    )
+    console.print(
+        "         Requests from other machines must present the access token; "
+        "treat the URLs below as credentials."
+    )
+
+
+def _warn_exposed_bind_no_auth(host: str, port: int) -> None:
+    """Tell the user, on stderr, what --no-auth beyond loopback actually opens."""
     from rich.markup import escape
 
     console = get_stderr_console()
@@ -72,16 +132,19 @@ def _warn_exposed_bind(host: str, port: int) -> None:
         "read, download or delete your whole conversion history."
     )
     console.print(
-        "         Use the default --host 127.0.0.1, or keep it behind an "
-        "authenticating reverse proxy."
+        "         Drop --no-auth to require the access token, use the default "
+        "--host 127.0.0.1, or keep it behind an authenticating reverse proxy."
     )
 
 
-def _server_is_ready(host: str, port: int) -> bool:
+def _server_is_ready(host: str, port: int, token: str | None = None) -> bool:
     """Probe a markitai-only endpoint without honoring HTTP proxy settings."""
     connection = http.client.HTTPConnection(host, port, timeout=0.5)
+    # A non-loopback connect host (e.g. --host 192.168.1.50) makes even this
+    # local probe a non-loopback peer, so it must authenticate like one.
+    headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
     try:
-        connection.request("GET", "/api/capabilities")
+        connection.request("GET", "/api/capabilities", headers=headers)
         response = connection.getresponse()
         if response.status != 200:
             return False
@@ -106,13 +169,14 @@ def _open_browser_when_ready(
     port: int,
     stop: threading.Event,
     *,
+    token: str | None = None,
     timeout: float = _BROWSER_READY_TIMEOUT_S,
     interval: float = _BROWSER_POLL_INTERVAL_S,
 ) -> None:
     """Open only after Uvicorn has completed application startup."""
     deadline = time.monotonic() + timeout
     while not stop.is_set() and time.monotonic() < deadline:
-        if _server_is_ready(host, port):
+        if _server_is_ready(host, port, token):
             if not stop.is_set():
                 try:
                     webbrowser.open(url)
@@ -143,6 +207,16 @@ def _open_browser_when_ready(
     help="Do not open the browser after startup.",
 )
 @click.option(
+    "--no-auth",
+    is_flag=True,
+    default=False,
+    help=(
+        "Disable the access token. Requests from other machines then need no "
+        "credential, but may only submit public URLs and cannot touch history "
+        "deletion or LLM settings; loopback keeps full access either way."
+    ),
+)
+@click.option(
     "--allowed-host",
     "allowed_hosts",
     multiple=True,
@@ -150,20 +224,31 @@ def _open_browser_when_ready(
     help=(
         "Additional hostname to accept in the Host and Origin headers "
         "(repeatable). localhost and IP addresses are always accepted; "
-        "other hostnames are rejected to block DNS rebinding. This is not "
-        "authentication: with a non-loopback --host the API stays open to "
-        "everyone who can reach it."
+        "other hostnames are rejected to block DNS rebinding. This is name "
+        "filtering, not authentication — access from other machines is "
+        "controlled by the startup token."
     ),
 )
-def serve(host: str, port: int, no_open: bool, allowed_hosts: tuple[str, ...]) -> None:
+def serve(
+    host: str,
+    port: int,
+    no_open: bool,
+    no_auth: bool,
+    allowed_hosts: tuple[str, ...],
+) -> None:
     """Run the Markitai web UI server.
 
     Requires the serve extra (fastapi + uvicorn + python-multipart).
+
+    An access token is generated at startup (pin it with the
+    MARKITAI_SERVE_TOKEN environment variable). Requests from other machines
+    must present it; requests from this machine never need it.
 
     Examples:
         markitai serve                    # http://127.0.0.1:3600, opens browser
         markitai serve --port 8080        # Custom port
         markitai serve --no-open          # Don't open the browser
+        markitai serve --host 0.0.0.0     # LAN access via the printed token URL
         markitai serve --allowed-host my-box.lan   # Accept a DNS name
     """
     from rich.markup import escape
@@ -178,11 +263,21 @@ def serve(host: str, port: int, no_open: bool, allowed_hosts: tuple[str, ...]) -
 
     from markitai.serve import create_app
 
+    token = _resolve_token(no_auth)
     connect_host, url_host = _browser_address(host)
-    url = f"http://{url_host}:{port}"
     if _binds_beyond_loopback(host):
-        _warn_exposed_bind(host, port)
-    app = create_app(allowed_hosts=allowed_hosts)
+        if token is not None:
+            _warn_exposed_bind(host, port)
+        else:
+            _warn_exposed_bind_no_auth(host, port)
+    if token is not None:
+        _print_access_urls(host, port, url_host, token)
+    url = (
+        _token_url(url_host, port, token)
+        if token is not None
+        else f"http://{url_host}:{port}"
+    )
+    app = create_app(allowed_hosts=allowed_hosts, token=token)
 
     browser_stop = threading.Event()
     browser_thread: threading.Thread | None = None
@@ -190,6 +285,7 @@ def serve(host: str, port: int, no_open: bool, allowed_hosts: tuple[str, ...]) -
         browser_thread = threading.Thread(
             target=_open_browser_when_ready,
             args=(url, connect_host, port, browser_stop),
+            kwargs={"token": token},
             name="markitai-browser",
             daemon=True,
         )

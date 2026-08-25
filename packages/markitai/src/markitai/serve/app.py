@@ -12,6 +12,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import sys
 import uuid
 import zipfile
@@ -20,7 +21,7 @@ from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -363,6 +364,97 @@ class _HostGuardMiddleware:
 
 
 # ---------------------------------------------------------------------------
+# Token authentication
+# ---------------------------------------------------------------------------
+
+_AUTH_REQUIRED_DETAIL = (
+    "authentication required: open the tokened URL printed at server "
+    "startup, or send the token in an 'Authorization: Bearer' header "
+    "('?token=' for links and event streams)"
+)
+
+
+def _is_loopback_host(host: str) -> bool:
+    """Whether a peer address string names the machine running the server."""
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host == "localhost"
+
+
+def _is_loopback_scope(scope: Any) -> bool:
+    """ASGI-scope variant of :func:`_is_loopback_peer`."""
+    client = scope.get("client")
+    return _is_loopback_host(client[0] if client else "127.0.0.1")
+
+
+def _scope_bearer_token(scope: Any) -> str | None:
+    """Extract the credential of an ``Authorization: Bearer`` header, if any."""
+    for key, value in scope.get("headers") or ():
+        if key == b"authorization":
+            prefix, _, credential = value.decode("latin-1").partition(" ")
+            if prefix.lower() == "bearer" and credential.strip():
+                return credential.strip()
+            return None
+    return None
+
+
+def _scope_query_token(scope: Any) -> str | None:
+    """Extract the ``?token=`` query value (last occurrence wins)."""
+    values = parse_qs(scope.get("query_string", b"").decode("latin-1")).get("token")
+    return values[-1] if values else None
+
+
+def _scope_presents_token(scope: Any, token: str) -> bool:
+    """Whether the request carries *token* in its header or query string.
+
+    The header is the canonical transport; the query parameter exists for
+    surfaces that cannot send headers (EventSource, download links, inline
+    images). Comparison is constant-time.
+    """
+    for presented in (_scope_bearer_token(scope), _scope_query_token(scope)):
+        if presented is not None and secrets.compare_digest(
+            presented.encode(), token.encode()
+        ):
+            return True
+    return False
+
+
+class _TokenAuthMiddleware:
+    """Reject non-loopback API requests that do not present the serve token.
+
+    Loopback peers stay fully trusted without a token (the CLI, tests and
+    ``--record-history`` tooling on the operator's machine keep working
+    unchanged), and the static app shell stays reachable so a browser can
+    load the UI from the tokened URL — only ``/api/`` carries anything worth
+    protecting. A ``token`` of None disables the gate entirely (``--no-auth``):
+    remote peers then fall back to the legacy public-URL-only policy enforced
+    by ``_guard_fetch_targets`` and the loopback-only settings middleware.
+    """
+
+    def __init__(self, app: Any, token: str | None) -> None:
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if (
+            scope["type"] == "http"
+            and self.token is not None
+            and scope.get("path", "").startswith("/api/")
+            and not _is_loopback_scope(scope)
+            and not _scope_presents_token(scope, self.token)
+        ):
+            response = JSONResponse(
+                {"detail": _AUTH_REQUIRED_DETAIL},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+# ---------------------------------------------------------------------------
 # Request helpers
 # ---------------------------------------------------------------------------
 
@@ -380,10 +472,21 @@ def _is_loopback_peer(request: Request) -> bool:
     machine?". A missing client (in-process ASGI calls) counts as loopback.
     """
     host = request.client.host if request.client is not None else "127.0.0.1"
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return host == "localhost"
+    return _is_loopback_host(host)
+
+
+def _is_trusted_request(request: Request) -> bool:
+    """Loopback peer, or a remote peer that presented the serve token.
+
+    Token-bearing remote peers get the loopback trust model: they may aim the
+    fetcher at private/credentialed URLs and use the settings routes. With
+    token auth disabled (``--no-auth``) only loopback is trusted, which is the
+    pre-token behavior.
+    """
+    if _is_loopback_peer(request):
+        return True
+    token = request.app.state.serve_token
+    return token is not None and _scope_presents_token(request.scope, token)
 
 
 def _url_rejection_detail(url: str, reason: str | None) -> str:
@@ -408,20 +511,23 @@ def _url_rejection_detail(url: str, reason: str | None) -> str:
         )
     return (
         f"refusing to fetch '{shown}': {cause}. Requests from other machines "
-        "may only target public URLs; to convert intranet URLs run "
-        "`markitai serve` on loopback (the default) and use it from that "
-        "machine."
+        "may only target public URLs; to convert intranet URLs restart "
+        "`markitai serve` with token auth enabled (drop --no-auth) and open "
+        "the printed token URL, or use the server from its own machine over "
+        "loopback (the default bind)."
     )
 
 
 async def _guard_fetch_targets(request: Request, urls: Sequence[str]) -> None:
-    """Reject inward-facing fetch targets requested by a non-loopback peer.
+    """Reject inward-facing fetch targets requested by an untrusted peer.
 
     The Host/Origin guard only defends against a malicious *page* driving the
     victim's browser; a caller that talks to the API directly (curl, another
-    LAN host) bypasses it entirely. ``markitai serve --host 0.0.0.0`` therefore
-    needs a second rule: only the local machine may aim the fetcher at
-    private/local addresses.
+    LAN host) bypasses it entirely. With token auth active this gate is moot
+    (an unauthenticated remote peer never reaches the route), but under
+    ``--no-auth`` it is the one rule keeping ``--host 0.0.0.0`` from turning
+    the server into an SSRF proxy: only trusted callers may aim the fetcher
+    at private/local addresses.
 
     ``assess_url_for_remote`` is reused whole rather than re-implemented from
     its parts: it already combines the private/local netloc test with a
@@ -430,7 +536,7 @@ async def _guard_fetch_targets(request: Request, urls: Sequence[str]) -> None:
     same reason — a remote caller's URL is persisted into a job history that
     every other caller can read.
     """
-    if _is_loopback_peer(request):
+    if _is_trusted_request(request):
         return
 
     from markitai.fetch_policy import assess_url_for_remote
@@ -1270,6 +1376,7 @@ def create_app(
     configure_logging: bool = True,
     config_path: Path | None = None,
     allowed_hosts: Sequence[str] | None = None,
+    token: str | None = None,
 ) -> FastAPI:
     """Create the markitai serve FastAPI application.
 
@@ -1288,6 +1395,10 @@ def create_app(
         allowed_hosts: Extra hostnames accepted in the Host and Origin
             headers besides localhost and IP literals (DNS-rebinding and
             CSRF protection).
+        token: Access token required from non-loopback peers on ``/api/``
+            routes; a token-bearing remote peer is trusted like a loopback
+            one. None disables token auth: remote peers may then only submit
+            public URLs and never reach the settings routes.
     """
 
     @asynccontextmanager
@@ -1385,6 +1496,7 @@ def create_app(
                 logger.debug("[Serve] LiteLLM client cleanup failed: {}", e)
 
     app = FastAPI(title="markitai serve", version=__version__, lifespan=lifespan)
+    app.state.serve_token = token
     app.add_middleware(_BodyLimitMiddleware)
     app.add_middleware(
         _HostGuardMiddleware,
@@ -1398,7 +1510,7 @@ def create_app(
     @app.middleware("http")
     async def protect_local_settings(request: Request, call_next: Any) -> Response:
         if request.url.path.startswith("/api/settings/llm"):
-            if not _is_loopback_peer(request):
+            if not _is_trusted_request(request):
                 return JSONResponse(
                     {"detail": "LLM settings are available on loopback only"},
                     status_code=403,
@@ -1408,6 +1520,10 @@ def create_app(
             response.headers["Cache-Control"] = "no-store"
             return response
         return await call_next(request)
+
+    # Added after the middlewares above so it runs outermost: a remote peer
+    # without the token gets one uniform 401 before any other guard answers.
+    app.add_middleware(_TokenAuthMiddleware, token=token)
 
     # ------------------------------------------------------------------ API
 
