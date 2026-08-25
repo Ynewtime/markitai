@@ -46,9 +46,11 @@ if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
 
 # Package version for the OKF generated.by actor. Read from installed
-# metadata (hatch single-sources it from markitai.__init__) instead of the
-# markitai package root: importing the root would pull the lazy api exports
-# into this domain module and break the import-linter layering contract.
+# metadata (hatch single-sources it from markitai.__init__): importing the
+# markitai package root instead would break the "domain knows no
+# orchestration" contract — grimp counts the root's lazy PEP 562 api import.
+# Editable installs can carry stale metadata until reinstalled; tests
+# therefore compare against this value, not markitai.__version__.
 try:
     __version__ = metadata.version("markitai")
 except metadata.PackageNotFoundError:  # pragma: no cover — not installed

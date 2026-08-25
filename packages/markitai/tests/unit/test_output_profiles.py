@@ -14,10 +14,10 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from markitai import __version__
 from markitai.config import MarkitaiConfig
 from markitai.output_profiles import (
     RAG_TABLE_PROMPT_RULES,
+    __version__,
     apply_profile_to_file,
     assets_visible,
     extra_cleaning_rules,
