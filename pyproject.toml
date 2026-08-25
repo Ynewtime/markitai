@@ -108,6 +108,7 @@ root_packages = ["markitai"]
 name = "cli is the top layer: nothing below may import it"
 type = "forbidden"
 source_modules = [
+    "markitai.api",
     "markitai.batch",
     "markitai.config",
     "markitai.constants",
@@ -164,6 +165,7 @@ source_modules = [
     "markitai.utils",
 ]
 forbidden_modules = [
+    "markitai.api",
     "markitai.batch",
     "markitai.converter",
     "markitai.fetch",
@@ -195,7 +197,12 @@ source_modules = [
     "markitai.providers",
     "markitai.webextract",
 ]
-forbidden_modules = ["markitai.workflow", "markitai.batch", "markitai.serve"]
+forbidden_modules = [
+    "markitai.api",
+    "markitai.batch",
+    "markitai.serve",
+    "markitai.workflow",
+]
 
 [[tool.importlinter.contracts]]
 name = "fetch_playwright must not import fetch layers (cycle killed in Phase 3)"
