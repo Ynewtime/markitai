@@ -16,6 +16,7 @@ def normalize_images(root: Tag, base_url: str) -> None:
         root: Content root.
         base_url: Base URL for relative asset resolution.
     """
+    _remove_lightbox_duplicates(root)
 
     for img in list(root.find_all("img")):
         # Resolve lazy-loading attributes
@@ -47,6 +48,37 @@ def normalize_images(root: Tag, base_url: str) -> None:
             figcaption = soup.new_tag("figcaption")
             figcaption.string = caption_text
             figure.append(figcaption)
+
+
+def _remove_lightbox_duplicates(root: Tag) -> None:
+    """Remove standalone full-size duplicates of linked lightbox thumbnails.
+
+    Pattern: ``<a href="full.jpg"><img src="thumb.jpg"></a><img
+    src="full.jpg">`` — the bare image duplicates the link target and only
+    exists for the lightbox overlay. Ported from defuddle ``defuddle.ts``
+    ``_deduplicateImages`` (lightbox branch).
+    """
+    for img in list(root.find_all("img")):
+        if img.parent is None or img.find_parent(("a", "figure", "noscript")):
+            continue
+        src = str(img.get("src") or "")
+        if not src or src.startswith("data:"):
+            continue
+        parent = img.parent
+        if not isinstance(parent, Tag):
+            continue
+        normalized = _normalize_src(src)
+        for link in parent.find_all("a", href=True, recursive=False):
+            if link.find("img") is None:
+                continue
+            if normalized == _normalize_src(str(link.get("href") or "")):
+                img.decompose()
+                break
+
+
+def _normalize_src(url: str) -> str:
+    """Strip protocol and query string for loose URL comparison."""
+    return re.sub(r"^https?://", "", url).split("?")[0]
 
 
 def _pick_best_srcset(srcset: str) -> str | None:
