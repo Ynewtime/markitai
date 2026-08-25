@@ -251,6 +251,41 @@ def _remove_trailing_with_cascade(target: Tag, main_content: Tag) -> int:
     return removed
 
 
+def _has_following_prose(el: Tag, min_words: int = 25) -> bool:
+    """Check if a following sibling holds a paragraph of article prose.
+
+    True means ``el`` is embedded mid-article rather than trailing it.
+    """
+    sib = _next_tag_sibling(el)
+    while sib is not None:
+        if sib.name == "p" and count_words(sib.get_text()) >= min_words:
+            return True
+        if any(count_words(p.get_text()) >= min_words for p in sib.find_all("p")):
+            return True
+        sib = _next_tag_sibling(sib)
+    return False
+
+
+def _preceding_prose_words(el: Tag, main_content: Tag) -> int:
+    """Words of paragraph prose before ``el`` in document order.
+
+    Used when an element has no text of its own to locate within the
+    content string.
+    """
+    words = 0
+    node: Tag | None = el
+    while node is not None and node is not main_content:
+        sib = _prev_tag_sibling(node)
+        while sib is not None:
+            if sib.name == "p":
+                words += count_words(sib.get_text())
+            else:
+                words += sum(count_words(p.get_text()) for p in sib.find_all("p"))
+            sib = _prev_tag_sibling(sib)
+        node = node.parent if isinstance(node.parent, Tag) else None
+    return words
+
+
 def _walk_up_isolated(el: Tag, main_content: Tag) -> Tag:
     """Highest ancestor whose preceding siblings hold ≤ 10 words total."""
     target = el
@@ -1088,6 +1123,7 @@ def _remove_boilerplate(root: Tag) -> int:
 
 def _remove_related_sections(root: Tag, content_text: str) -> int:
     """Remove "Related posts" / "Read next" / CTA sections by heading text."""
+    removed = 0
     for heading in root.find_all(["h2", "h3", "h4", "h5", "h6"]):
         if _gone(heading):
             continue
@@ -1100,14 +1136,25 @@ def _remove_related_sections(root: Tag, content_text: str) -> int:
             continue
 
         target = _walk_up_isolated(heading, root)
+
+        # Mid-article injection (e.g. a "Related Stories" card block
+        # dropped between paragraphs). Remove just that block —
+        # truncating from here would discard the rest of the article.
+        if _has_following_prose(target):
+            if target is heading:
+                continue
+            target.decompose()
+            removed += 1
+            continue
+
         if target is heading:
             # Direct child — only remove CTA headings (never real content)
             if not is_cta:
                 continue
-            return _remove_trailing_siblings(heading, True)
-        removed = _remove_thin_preceding_section(target)
+            return removed + _remove_trailing_siblings(heading, True)
+        removed += _remove_thin_preceding_section(target)
         return removed + _remove_trailing_with_cascade(target, root)
-    return 0
+    return removed
 
 
 def _remove_related_intros(root: Tag) -> int:
@@ -1131,7 +1178,7 @@ def _remove_related_intros(root: Tag) -> int:
 def _remove_related_card_grids(root: Tag, content_text: str) -> int:
     """Remove related-post card grids lacking a detectable heading."""
     content_word_count = count_words(content_text)
-    for el in root.find_all("div"):
+    for el in root.find_all(["div", "ul", "ol"]):
         if _gone(el):
             continue
         children = _tag_children(el)
@@ -1148,9 +1195,19 @@ def _remove_related_card_grids(root: Tag, content_text: str) -> int:
         if card_count < 2 or card_count < len(children) * 0.7:
             continue
 
-        # Must appear after substantial content
+        # Must appear after substantial content (not a top-of-page listing).
+        # Cards whose titles were stripped earlier have no text to locate,
+        # so those fall back to document order, and must every one link
+        # elsewhere — separating related grids from caption-less galleries.
         first_text = _text(children[0])[:30]
-        if len(first_text) < 5 or content_text.find(first_text) < 500:
+        if len(first_text) >= 5:
+            follows_content = content_text.find(first_text) >= 500
+        else:
+            follows_content = (
+                all(c.select_one("a[href]") is not None for c in children)
+                and _preceding_prose_words(el, root) >= 100
+            )
+        if not follows_content:
             continue
 
         # Skip grids whose text is a large share of total content.
@@ -1160,6 +1217,20 @@ def _remove_related_card_grids(root: Tag, content_text: str) -> int:
 
         target = _walk_up_isolated(el, root)
         if target is el:
+            continue
+
+        # The removal target must be essentially the grid itself. If it
+        # wraps substantial prose, the grid is an illustrative image row
+        # inside a real article section (e.g. Wikipedia multi-image
+        # thumbnails) — removing it would take the section and everything
+        # after it.
+        target_words = count_words(target.get_text())
+        if target_words > grid_words * 2 + 15:
+            continue
+
+        # Related cards trail the article. If prose follows the grid, it
+        # is a mid-article image row and trailing siblings are content.
+        if _has_following_prose(target):
             continue
 
         removed = _remove_thin_preceding_section(target)
