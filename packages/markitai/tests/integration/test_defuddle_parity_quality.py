@@ -185,6 +185,16 @@ _NOISE_PATTERNS = [
 ]
 
 
+def _chrome_noise(markdown: str, expected_body: str) -> list[str]:
+    """Return noise patterns present in ``markdown`` but not sanctioned.
+
+    A pattern that also appears in the defuddle expected body is page
+    content (e.g. a legitimate "Retry" heading in an article about error
+    handling), not leaked site chrome.
+    """
+    return [p for p in _NOISE_PATTERNS if p in markdown and p not in expected_body]
+
+
 _extraction_cache: dict[str, tuple[object, dict[str, str], str]] = {}
 
 
@@ -235,19 +245,10 @@ class TestDefuddleParityQuality:
             f"Expected title '{expected_title}' but got no title for {fixture}"
         )
 
-    _NOISE_CHECK_SKIP_FIXTURES = frozenset(
-        {
-            "elements--bootstrap-alerts",  # Contains "Sign up"/"Log in" as demo content
-        }
-    )
-
     @pytest.mark.parametrize("fixture", ALL_FIXTURES)
     def test_no_site_chrome_noise(self, fixture: str) -> None:
-        if fixture in self._NOISE_CHECK_SKIP_FIXTURES:
-            pytest.skip(f"Noise check skipped for {fixture} (known false positive)")
-        result, _, _ = _load_and_extract(fixture)
-        md = result.markdown or ""
-        found = [p for p in _NOISE_PATTERNS if p in md]
+        result, _, expected_body = _load_and_extract(fixture)
+        found = _chrome_noise(result.markdown or "", expected_body)
         assert not found, f"Site chrome noise found in {fixture}: {found}"
 
     @pytest.mark.parametrize("fixture", ALL_FIXTURES)
@@ -263,3 +264,17 @@ class TestDefuddleParityQuality:
             f"Word count ratio {ratio:.2f} out of tolerance for {fixture}: "
             f"actual={actual_wc}, expected={expected_wc}"
         )
+
+
+class TestChromeNoiseHeuristic:
+    """The noise check must not flag patterns that are page content."""
+
+    def test_pattern_in_expected_body_is_content(self) -> None:
+        md = "## Ignore the Error and Retry\n\nBody text."
+        expected = "## Ignore the Error and Retry\n\nBody text."
+        assert _chrome_noise(md, expected) == []
+
+    def test_pattern_absent_from_expected_body_is_noise(self) -> None:
+        md = "Something went wrong. Retry\n\nArticle text."
+        expected = "Article text."
+        assert _chrome_noise(md, expected) == ["Something went wrong", "Retry"]
