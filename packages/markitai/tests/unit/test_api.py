@@ -210,7 +210,7 @@ class TestConvertFile:
         out_dir = tmp_path / "out"
         out = convert(sample_txt, output_dir=out_dir, config=MarkitaiConfig())
         assert out.output_path == out_dir / "sample.txt.md"
-        assert out.output_path.exists()
+        assert (out_dir / "sample.txt.md").exists()
         assert "Hello from the API test." in out.markdown
         # The written file carries frontmatter; the field strips it
         assert not out.markdown.startswith("---")
@@ -228,7 +228,7 @@ class TestConvertFile:
         out = await aconvert(sample_txt, output_dir=out_dir, config=_llm_config())
 
         assert out.llm_output_path == out_dir / "sample.txt.llm.md"
-        assert out.llm_output_path.exists()
+        assert (out_dir / "sample.txt.llm.md").exists()
         assert out.llm_markdown is not None
         assert out.llm_markdown.startswith("# Enhanced")
         assert out.frontmatter.get("title") == "Enhanced"
@@ -303,7 +303,7 @@ class TestConvertUrl:
         )
         assert out.source == "https://example.com/page.html"
         assert out.output_path == tmp_path / "page.html.md"
-        assert out.output_path.exists()
+        assert (tmp_path / "page.html.md").exists()
         assert "Body text." in out.markdown
         assert out.frontmatter.get("source") == "https://example.com/page.html"
         assert out.llm_markdown is None
@@ -323,7 +323,7 @@ class TestConvertUrl:
             "https://example.com/page.html", output_dir=tmp_path, config=cfg
         )
         assert out.llm_output_path == tmp_path / "page.html.llm.md"
-        assert out.llm_output_path.exists()
+        assert (tmp_path / "page.html.llm.md").exists()
         assert out.llm_markdown is not None
         assert out.llm_markdown.startswith("# Enhanced")
         assert out.frontmatter.get("title") == "Enhanced"
