@@ -15,6 +15,16 @@ import type {
   LLMSettingsUpdate,
   LLMTestResult,
 } from "./types";
+import { authHeaders, withToken } from "./token";
+
+/** Same-origin API fetch carrying the access token header when one is stored
+ * (non-loopback sessions authenticate with it; loopback needs none). */
+function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    headers: { ...authHeaders(), ...(init.headers ?? {}) },
+  });
+}
 
 /** Structured API failure. `code` mirrors the server's machine-readable
  * `detail.code` (e.g. "stale_revision") so callers can branch without parsing
@@ -84,7 +94,7 @@ async function errorFromResponse(res: Response): Promise<ApiError> {
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw await errorFromResponse(res);
   return (await res.json()) as T;
 }
@@ -97,14 +107,14 @@ export function fetchCapabilities(): Promise<Capabilities> {
  * restarted and forgot the job) so callers can silently drop it; any other
  * failure throws. */
 export async function fetchJobSnapshot(jobId: string): Promise<JobSnapshot | null> {
-  const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+  const res = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`);
   if (res.status === 404) return null;
   if (!res.ok) throw await errorFromResponse(res);
   return (await res.json()) as JobSnapshot;
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -147,7 +157,7 @@ export async function updateLLMDeployment(
   deploymentId: string,
   body: LLMModelUpdate,
 ): Promise<LLMSettingsPayload> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/settings/llm/deployments/${encodeURIComponent(deploymentId)}`,
     {
       method: "PATCH",
@@ -171,7 +181,7 @@ export async function updateLLMProvider(
   providerId: string,
   body: LLMProviderUpdate,
 ): Promise<LLMSettingsPayload> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/settings/llm/providers/${encodeURIComponent(providerId)}`,
     {
       method: "PATCH",
@@ -188,7 +198,7 @@ export async function deleteLLMProvider(
   expectedRevision: string,
 ): Promise<LLMSettingsPayload> {
   const query = new URLSearchParams({ expected_revision: expectedRevision });
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/settings/llm/providers/${encodeURIComponent(providerId)}?${query}`,
     { method: "DELETE" },
   );
@@ -201,7 +211,7 @@ export async function deleteLLMDeployment(
   expectedRevision: string,
 ): Promise<LLMSettingsPayload> {
   const query = new URLSearchParams({ expected_revision: expectedRevision });
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/settings/llm/deployments/${encodeURIComponent(deploymentId)}?${query}`,
     { method: "DELETE" },
   );
@@ -219,7 +229,7 @@ export function fetchHistory(): Promise<HistoryEntry[]> {
 }
 
 export async function deleteJobItem(jobId: string, itemId: string): Promise<void> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}`,
     { method: "DELETE" },
   );
@@ -227,7 +237,7 @@ export async function deleteJobItem(jobId: string, itemId: string): Promise<void
 }
 
 export async function deleteHistoryJob(jobId: string): Promise<boolean> {
-  const res = await fetch(`/api/history/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+  const res = await apiFetch(`/api/history/${encodeURIComponent(jobId)}`, { method: "DELETE" });
   if (res.status === 404) return false;
   if (!res.ok) throw await errorFromResponse(res);
   return true;
@@ -242,7 +252,7 @@ export async function createJob(
   for (const file of files) form.append("files", file, file.name);
   form.append("urls", JSON.stringify(urls));
   form.append("options", JSON.stringify(options));
-  const res = await fetch("/api/jobs", { method: "POST", body: form });
+  const res = await apiFetch("/api/jobs", { method: "POST", body: form });
   if (!res.ok) throw await errorFromResponse(res);
   return (await res.json()) as CreateJobResponse;
 }
@@ -263,7 +273,7 @@ export async function retryJobItem(
   itemId: string,
   options?: JobOptions,
 ): Promise<CreateJobResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/retry`,
     {
       method: "POST",
@@ -285,7 +295,7 @@ export async function enhanceJobItem(
   itemId: string,
   options: JobOptions,
 ): Promise<CreateJobResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/retry`,
     {
       method: "POST",
@@ -302,13 +312,16 @@ export async function fetchJobFileText(
   jobId: string,
   relpath: string,
 ): Promise<string> {
-  const res = await fetch(jobFileUrl(jobId, relpath));
+  const res = await apiFetch(jobFileUrl(jobId, relpath));
   if (!res.ok) throw await errorFromResponse(res);
   return await res.text();
 }
 
+/* The URL builders below feed EventSource, <a download> and <img> — surfaces
+ * that cannot send headers — so they carry the token as `?token=`. */
+
 export function jobEventsUrl(jobId: string): string {
-  return `/api/jobs/${encodeURIComponent(jobId)}/events`;
+  return withToken(`/api/jobs/${encodeURIComponent(jobId)}/events`);
 }
 
 /** Encode each path segment (keeps "/" separators, escapes "#", "?", spaces). */
@@ -317,13 +330,15 @@ export function encodeRelPath(relpath: string): string {
 }
 
 export function jobFileUrl(jobId: string, relpath: string): string {
-  return `/api/jobs/${encodeURIComponent(jobId)}/files/${encodeRelPath(relpath)}`;
+  return withToken(
+    `/api/jobs/${encodeURIComponent(jobId)}/files/${encodeRelPath(relpath)}`,
+  );
 }
 
 export function jobArchiveUrl(jobId: string): string {
-  return `/api/jobs/${encodeURIComponent(jobId)}/archive`;
+  return withToken(`/api/jobs/${encodeURIComponent(jobId)}/archive`);
 }
 
 export function historyArchiveUrl(): string {
-  return "/api/history/archive";
+  return withToken("/api/history/archive");
 }

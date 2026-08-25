@@ -15,6 +15,7 @@ import {
   fetchJobFileText,
   jobFileUrl,
 } from "../api/client";
+import { withToken } from "../api/token";
 import type { ItemResult } from "../api/types";
 import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
@@ -434,7 +435,9 @@ export function MarkdownPreview({
           }
         })
         .join("/");
-      return `/api/jobs/${encodeURIComponent(item.jobId)}/files/${encodeRelPath(decoded)}`;
+      return withToken(
+        `/api/jobs/${encodeURIComponent(item.jobId)}/files/${encodeRelPath(decoded)}`,
+      );
     },
     [item.jobId],
   );

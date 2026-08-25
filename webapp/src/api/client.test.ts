@@ -7,6 +7,8 @@ import {
   enhanceJobItem,
   fetchCapabilities,
   fetchJobSnapshot,
+  historyArchiveUrl,
+  jobEventsUrl,
   retryJobItem,
 } from "./client";
 import type { JobOptions } from "./types";
@@ -163,7 +165,9 @@ describe("job-creation request bodies", () => {
 
     const { url, init } = sentRequest(mock);
     expect(url).toBe("/api/jobs/job%201/items/item%232/retry");
-    expect(init).toEqual({ method: "POST" });
+    // headers stay empty without a stored access token; crucially there is
+    // no body and no Content-Type (the server treats it as a plain retry).
+    expect(init).toEqual({ method: "POST", headers: {} });
   });
 
   it("retryJobItem with options posts only the options", async () => {
@@ -188,5 +192,38 @@ describe("job-creation request bodies", () => {
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({ "Content-Type": "application/json" });
     expect(JSON.parse(String(init.body))).toEqual({ operation: "enhance", options });
+  });
+});
+
+describe("access token transport", () => {
+  afterEach(() => sessionStorage.clear());
+
+  it("sends the stored token as an Authorization header on API fetches", async () => {
+    sessionStorage.setItem("markitai.serve.token", "mk_secret");
+    const mock = stubFetch(jsonResponse({ ok: true }, 200));
+
+    await fetchCapabilities();
+
+    const { init } = sentRequest(mock);
+    expect(init.headers).toEqual({ Authorization: "Bearer mk_secret" });
+  });
+
+  it("appends ?token= to header-less URL surfaces (SSE, downloads)", () => {
+    sessionStorage.setItem("markitai.serve.token", "mk_secret");
+    expect(jobEventsUrl("j1")).toBe("/api/jobs/j1/events?token=mk_secret");
+    expect(historyArchiveUrl()).toBe("/api/history/archive?token=mk_secret");
+  });
+
+  it("keeps caller headers alongside the token header", async () => {
+    sessionStorage.setItem("markitai.serve.token", "mk_secret");
+    const mock = stubFetch(jsonResponse({ job_id: "j1", items: [] }, 200));
+
+    await enhanceJobItem("j1", "i1", { preset: null, llm: true, ocr: null });
+
+    const { init } = sentRequest(mock);
+    expect(init.headers).toEqual({
+      Authorization: "Bearer mk_secret",
+      "Content-Type": "application/json",
+    });
   });
 });
