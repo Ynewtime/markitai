@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 # Import version for print_version
 from markitai import __version__
+from markitai.utils.suppress import suppress_parser_noise
 from markitai.utils.url_redaction import redact_urls_in_text
 
 
@@ -83,38 +84,6 @@ INTERCEPTED_LOGGERS = [
     "asyncio",
     "concurrent.futures",
 ]
-
-
-def _suppress_onnx_runtime_logs() -> None:
-    """Suppress ONNX Runtime C++ logs via environment variables.
-
-    ONNX Runtime logs directly to stderr in C++, bypassing Python logging.
-    Must be called before any ONNX Runtime imports.
-    """
-    # Suppress ONNX Runtime session logging
-    os.environ.setdefault("ORT_LOGGING_LEVEL", "3")  # WARNING level
-    os.environ.setdefault("ORT_CPP_LOG_SEVERITY_LEVEL", "3")
-
-
-def _suppress_mupdf_logs() -> None:
-    """Suppress MuPDF C-level logs that bypass Python logging.
-
-    MuPDF (via PyMuPDF) logs directly to stderr, which can clutter CLI output
-    with format warnings (e.g., "No common ancestor in structure tree").
-
-    Imports ``pymupdf``, never the legacy ``fitz`` alias: since PyMuPDF
-    1.28.2 the alias prints its deprecation notice on **stdout**, which lands
-    inside piped markdown (`markitai doc.pdf | ...`) — i.e. a noise-
-    suppression helper that emitted noise of its own.
-    """
-    try:
-        # PyMuPDF might not be installed in all environments
-        import pymupdf
-
-        if hasattr(pymupdf, "TOOLS") and hasattr(pymupdf.TOOLS, "mupdf_display_errors"):
-            pymupdf.TOOLS.mupdf_display_errors(False)
-    except ImportError:
-        pass
 
 
 # Warning messages to suppress (regex patterns)
@@ -306,11 +275,9 @@ def setup_logging(
     """
     from datetime import datetime
 
-    # Suppress ONNX Runtime C++ logs (must be before any imports)
-    _suppress_onnx_runtime_logs()
-
-    # Suppress MuPDF C-level logs (directly to stderr)
-    _suppress_mupdf_logs()
+    # Suppress native parser noise (ONNX Runtime env vars must be set before
+    # any onnxruntime import; MuPDF errors bypass Python logging entirely)
+    suppress_parser_noise()
 
     # Suppress noisy warnings from dependencies
     _setup_warning_filters()
