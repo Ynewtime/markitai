@@ -79,6 +79,9 @@ class FetchResult:
     metadata: dict = field(default_factory=dict)  # Additional metadata
     cache_hit: bool = False  # Whether result was served from cache
     screenshot_path: Path | None = None  # Path to captured screenshot (if any)
+    #: All screenshot files: single path when within tile_height, or the
+    #: vertical tiles (primary first) of a long page split for VLM reads.
+    screenshot_tiles: list[Path] = field(default_factory=list)
     # Multi-source content for enhanced LLM processing
     static_content: str | None = None  # Content from static fetch
     browser_content: str | None = None  # Content from browser fetch

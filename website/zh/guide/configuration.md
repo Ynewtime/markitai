@@ -604,7 +604,8 @@ Claude Agent provider 对长度达到 4096 字符（约 4KB）及以上的系统
     "viewport_width": 1920,
     "viewport_height": 1080,
     "quality": 75,
-    "max_height": 10000
+    "max_height": 10000,
+    "tile_height": 2000
   }
 }
 ```
@@ -621,7 +622,8 @@ Claude Agent provider 对长度达到 4096 字符（约 4KB）及以上的系统
 | `viewport_width` | `1920` | URL 截图的浏览器视口宽度 |
 | `viewport_height` | `1080` | URL 截图的浏览器视口高度 |
 | `quality` | `75` | JPEG 压缩质量 (1-100) |
-| `max_height` | `10000` | 截图最大高度（像素） |
+| `max_height` | `10000` | 旧版单文件高度上限；当 `tile_height` 为 0 时使用 |
+| `tile_height` | `2000` | 更高的 URL 截图会按此高度切成纵向 tile（保持全宽），每块均为 VLM 可读，而不是被整体缩小成一张读不清的图 |
 
 截图保存在输出目录的 `.markitai/screenshots/` 子目录中。
 

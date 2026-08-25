@@ -34,6 +34,7 @@ from markitai.constants import (
     DEFAULT_PLAYWRIGHT_EXTRA_WAIT_MS,
     DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS,
     DEFAULT_PLAYWRIGHT_WAIT_FOR,
+    DEFAULT_SCREENSHOT_TILE_HEIGHT,
 )
 
 try:
@@ -357,6 +358,9 @@ class PlaywrightFetchResult:
     title: str | None = None
     final_url: str | None = None
     screenshot_path: Path | None = None
+    #: All screenshot files: the single path when within tile_height, or the
+    #: vertical tiles (primary path first) of a long page split for VLM reads.
+    screenshot_tiles: list[Path] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -760,10 +764,11 @@ class PlaywrightRenderer:
                     )
 
             screenshot_path = None
+            screenshot_tiles: list[Path] = []
             if screenshot_config and output_dir:
                 enabled = getattr(screenshot_config, "enabled", True)
                 if enabled:
-                    screenshot_path = await _capture_screenshot(
+                    screenshot_path, screenshot_tiles = await _capture_screenshot(
                         page, screenshot_config, output_dir, url
                     )
 
@@ -772,6 +777,7 @@ class PlaywrightRenderer:
                 title=title,
                 final_url=final_url,
                 screenshot_path=screenshot_path,
+                screenshot_tiles=screenshot_tiles,
                 metadata=metadata,
             )
         finally:
@@ -1083,8 +1089,8 @@ async def _capture_screenshot(
     config: ScreenshotConfig,
     output_dir: Path,
     url: str,
-) -> Path | None:
-    """Capture page screenshot.
+) -> tuple[Path | None, list[Path]]:
+    """Capture page screenshot, tiling long pages.
 
     Args:
         page: Playwright page object
@@ -1093,7 +1099,9 @@ async def _capture_screenshot(
         url: Original URL (for filename)
 
     Returns:
-        Path to screenshot file, or None on failure
+        (primary screenshot path, all screenshot tiles). The primary path is
+        the single file when the page fits within ``tile_height``, or the
+        first tile of a long page. Both are None/empty on failure.
     """
     from markitai.fetch_screenshot import (
         _compress_screenshot,
@@ -1110,10 +1118,12 @@ async def _capture_screenshot(
         # Get settings from config. Full-page capture is not configurable:
         # ScreenshotConfig has never declared `full_page`, so the old
         # getattr() default won every time — the knob only looked adjustable.
-        # `max_height` is the real bound on a runaway page.
+        # `tile_height` (per-tile cap) and `max_height` (legacy single-file
+        # cap) bound a runaway page.
         full_page = True
         quality = getattr(config, "quality", 85)
         max_height = getattr(config, "max_height", 10000)
+        tile_height = getattr(config, "tile_height", DEFAULT_SCREENSHOT_TILE_HEIGHT)
 
         await page.screenshot(
             path=str(screenshot_path),
@@ -1122,11 +1132,22 @@ async def _capture_screenshot(
             quality=quality,
         )
 
-        # Compress and resize if needed (handles max_height limit)
-        _compress_screenshot(screenshot_path, quality=quality, max_height=max_height)
-
-        logger.debug(f"Screenshot saved: {screenshot_path}")
-        return screenshot_path
+        # Compress and tile if needed (tall pages become N VLM-readable tiles)
+        tiles = (
+            _compress_screenshot(
+                screenshot_path,
+                quality=quality,
+                max_height=max_height,
+                tile_height=tile_height,
+            )
+            or []
+        )
+        primary = tiles[0] if tiles else screenshot_path
+        if len(tiles) > 1:
+            logger.debug(f"Screenshot saved: {primary} (+{len(tiles) - 1} tile(s))")
+        else:
+            logger.debug(f"Screenshot saved: {primary}")
+        return primary, tiles
     except Exception as e:
         logger.warning(f"Screenshot capture failed: {e}")
-        return None
+        return None, []

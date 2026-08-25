@@ -523,6 +523,46 @@ class TestAddBasicFrontmatterAdvanced:
         assert "<!-- Screenshot for reference -->" in result
         assert "screenshot.png" in result
 
+    def test_screenshot_tiles_all_referenced(self, tmp_path: Path):
+        """A tiled long page gets one comment per tile (C3)."""
+        content = "# Test\n\nContent"
+        shot = tmp_path / "shot.jpg"
+        t1 = tmp_path / "shot--1.jpg"
+        t2 = tmp_path / "shot--2.jpg"
+        for p in (shot, t1, t2):
+            p.write_text("fake image")
+
+        result = add_basic_frontmatter(
+            content,
+            "url",
+            screenshot_path=shot,
+            screenshot_tiles=[shot, t1, t2],
+            output_dir=tmp_path,
+        )
+
+        assert "<!-- Screenshots for reference (tiles) -->" in result
+        assert "shot.jpg" in result
+        assert "shot--1.jpg" in result
+        assert "shot--2.jpg" in result
+        assert "Screenshot 1" in result and "Screenshot 3" in result
+
+    def test_screenshot_tiles_missing_file_skipped(self, tmp_path: Path):
+        """Tiles that no longer exist are dropped, not referenced (C3)."""
+        content = "# Test\n\nContent"
+        shot = tmp_path / "shot.jpg"
+        shot.write_text("fake image")
+
+        result = add_basic_frontmatter(
+            content,
+            "url",
+            screenshot_path=shot,
+            screenshot_tiles=[shot, tmp_path / "gone--1.jpg"],
+            output_dir=tmp_path,
+        )
+
+        assert "gone--1.jpg" not in result
+        assert "shot.jpg" in result
+
     def test_screenshot_path_skipped_if_not_exists(self, tmp_path: Path):
         """Test that non-existent screenshot path is ignored."""
         content = "# Test\n\nContent"

@@ -52,6 +52,7 @@ from markitai.constants import (
     DEFAULT_SCAN_MAX_FILES,
     DEFAULT_SCREENSHOT_MAX_HEIGHT,
     DEFAULT_SCREENSHOT_QUALITY,
+    DEFAULT_SCREENSHOT_TILE_HEIGHT,
     DEFAULT_SCREENSHOT_VIEWPORT_HEIGHT,
     DEFAULT_SCREENSHOT_VIEWPORT_WIDTH,
     DEFAULT_STATE_FLUSH_INTERVAL_SECONDS,
@@ -435,6 +436,15 @@ class ScreenshotConfig(BaseModel):
     max_height: int = Field(
         default=DEFAULT_SCREENSHOT_MAX_HEIGHT,
         description="Max full-page screenshot height (px)",
+    )
+    tile_height: int = Field(
+        default=DEFAULT_SCREENSHOT_TILE_HEIGHT,
+        description=(
+            "Per-tile max height (px). Screenshots taller than this are split "
+            "into vertical tiles at full width (each VLM-readable) instead of "
+            "being downscaled into one unreadable image. Set 0 to keep the "
+            "legacy whole-page downscale to max_height."
+        ),
     )
     screenshot_only: bool = Field(
         default=False, description="LLM reads only screenshots, no text extraction"

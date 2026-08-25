@@ -1514,6 +1514,12 @@
           "title": "Max Height",
           "type": "integer"
         },
+        "tile_height": {
+          "default": 2000,
+          "description": "Per-tile max height (px). Screenshots taller than this are split into vertical tiles at full width (each VLM-readable) instead of being downscaled into one unreadable image. Set 0 to keep the legacy whole-page downscale to max_height.",
+          "title": "Tile Height",
+          "type": "integer"
+        },
         "screenshot_only": {
           "default": false,
           "description": "LLM reads only screenshots, no text extraction",

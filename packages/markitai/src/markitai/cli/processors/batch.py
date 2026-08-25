@@ -384,6 +384,7 @@ def create_url_processor(
                 extra_info["fetch_strategy"] = fetch_result.strategy_used
                 original_markdown = fetch_result.content
                 screenshot_path = fetch_result.screenshot_path
+                screenshot_tiles = list(fetch_result.screenshot_tiles or [])
                 source_extra_meta = fetch_result.metadata.get("source_frontmatter")
                 cache_status = " [cache]" if fetch_result.cache_hit else ""
                 logger.debug(
@@ -495,6 +496,7 @@ def create_url_processor(
                         if fetch_result
                         else None,
                         screenshot_path=screenshot_path,
+                        screenshot_tiles=screenshot_tiles or None,
                         output_dir=output_dir,
                         title=fetch_result.title if fetch_result else None,
                         extra_meta=source_extra_meta,
@@ -536,6 +538,7 @@ def create_url_processor(
                         cfg,
                         output_file,
                         fetch_result,
+                        screenshot_tiles=screenshot_tiles or None,
                         downloaded_images=downloaded_images,
                         image_context=markdown_for_llm,
                         processor=shared_processor,

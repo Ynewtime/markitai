@@ -706,6 +706,52 @@ class TestProcessUrlScreenshotOnly:
                 processor=mock_processor,
             )
 
+    def _processor(self) -> MagicMock:
+        processor = MagicMock()
+        processor.extract_from_screenshot = AsyncMock(return_value=("cleaned", "fm"))
+        processor.format_llm_output = MagicMock(side_effect=lambda md, _fm: f"# {md}")
+        processor.get_context_cost = MagicMock(return_value=0.0)
+        processor.get_context_usage = MagicMock(return_value={})
+        return processor
+
+    @pytest.mark.asyncio
+    async def test_tiles_read_each_with_tile_markers(self, tmp_path: Path) -> None:
+        """A tiled long page is read tile-by-tile and marked (C3)."""
+        cfg = MarkitaiConfig()
+        out = tmp_path / "out.md"
+        shot = tmp_path / "shot.jpg"
+        t1 = tmp_path / "shot--1.jpg"
+        t2 = tmp_path / "shot--2.jpg"
+        for p in (shot, t1, t2):
+            p.write_bytes(b"x")
+        processor = self._processor()
+        processor.extract_from_screenshot = AsyncMock(
+            side_effect=[
+                ("tile0 text", "fm"),
+                ("tile1 text", ""),
+                ("tile2 text", ""),
+            ]
+        )
+
+        await process_url_screenshot_only(
+            shot,
+            "https://example.com",
+            cfg,
+            out,
+            processor=processor,
+            screenshot_tiles=[shot, t1, t2],
+        )
+
+        assert processor.extract_from_screenshot.await_count == 3
+        calls = list(processor.extract_from_screenshot.await_args_list)
+        assert calls[0].kwargs["original_title"] is None
+        assert calls[1].kwargs["original_title"] is None  # only first tile carries it
+        content = (out.with_suffix(".llm.md")).read_text(encoding="utf-8")
+        assert "<!-- Tile 1 -->" in content
+        assert "<!-- Tile 2 -->" in content
+        assert "<!-- Tile 3 -->" in content
+        assert "Screenshot 3" in content  # all tiles referenced
+
 
 class TestProcessUrlSuccessPath:
     """Tests for successful URL processing paths."""

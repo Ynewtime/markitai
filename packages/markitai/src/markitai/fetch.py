@@ -394,6 +394,7 @@ def _merge_screenshot_result(result: FetchResult, pw_result: Any) -> FetchResult
         metadata=result.metadata,
         cache_hit=result.cache_hit,
         screenshot_path=getattr(pw_result, "screenshot_path", None),
+        screenshot_tiles=list(getattr(pw_result, "screenshot_tiles", []) or []),
         static_content=result.static_content,
         browser_content=result.browser_content,
     )

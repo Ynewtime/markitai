@@ -604,7 +604,8 @@ Enable screenshot capture for documents and URLs:
     "viewport_width": 1920,
     "viewport_height": 1080,
     "quality": 75,
-    "max_height": 10000
+    "max_height": 10000,
+    "tile_height": 2000
   }
 }
 ```
@@ -621,7 +622,8 @@ When enabled (`--screenshot` or `--preset rich`):
 | `viewport_width` | `1920` | Browser viewport width for URL screenshots |
 | `viewport_height` | `1080` | Browser viewport height for URL screenshots |
 | `quality` | `75` | JPEG compression quality (1-100) |
-| `max_height` | `10000` | Maximum screenshot height in pixels |
+| `max_height` | `10000` | Legacy single-file height cap; used when `tile_height` is 0 |
+| `tile_height` | `2000` | Taller URL screenshots are split into vertical tiles of at most this height (full width), each VLM-readable, instead of being downscaled into one unreadable image |
 
 Screenshots are saved to the `.markitai/screenshots/` subdirectory within the output directory.
 

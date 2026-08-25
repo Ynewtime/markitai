@@ -275,6 +275,7 @@ async def process_url(
             used_strategy = fetch_result.strategy_used
             original_markdown = fetch_result.content
             screenshot_path = fetch_result.screenshot_path
+            screenshot_tiles = list(fetch_result.screenshot_tiles or [])
             # Extract source frontmatter from external strategies (defuddle, etc.)
             source_extra_meta = fetch_result.metadata.get("source_frontmatter")
             cache_note = " (cached)" if fetch_cache_hit else ""
@@ -347,13 +348,27 @@ async def process_url(
         # Only update markdown_for_llm, keep original_markdown unchanged.
         downloaded_images: list[Path] = []
         images_count = 0
-        screenshots_count = 1 if screenshot_path and screenshot_path.exists() else 0
+        screenshots_count = (
+            len(screenshot_tiles)
+            if screenshot_tiles
+            else (1 if screenshot_path and screenshot_path.exists() else 0)
+        )
         img_analysis: ImageAnalysisResult | None = None
 
         # Log screenshot capture if successful
         if screenshot_path and screenshot_path.exists():
-            stages.note(f"Screenshot captured: {screenshot_path.name}")
-            logger.info(f"Screenshot saved: {screenshot_path}")
+            if len(screenshot_tiles) > 1:
+                stages.note(
+                    f"Screenshot captured: {screenshot_path.name} "
+                    f"(+{len(screenshot_tiles) - 1} tile(s))"
+                )
+                logger.info(
+                    f"Screenshot saved: {screenshot_path} "
+                    f"(+{len(screenshot_tiles) - 1} tile(s))"
+                )
+            else:
+                stages.note(f"Screenshot captured: {screenshot_path.name}")
+                logger.info(f"Screenshot saved: {screenshot_path}")
 
         if cfg.llm.enabled and (cfg.image.alt_enabled or cfg.image.desc_enabled):
             stages.advance("images", "Downloading images...")
@@ -417,9 +432,15 @@ async def process_url(
                 and has_screenshot
                 and screenshot_path is not None
             ):
-                # .md file just references the screenshot (not as HTML comment)
-                screenshot_ref = markdown_image_reference(
-                    "Screenshot", f"{SCREENSHOTS_REL_PATH}/{screenshot_path.name}"
+                # .md file just references the screenshot(s), not as HTML
+                # comments. A long page becomes one image reference per tile.
+                ref_files = screenshot_tiles or [screenshot_path]
+                screenshot_ref = "\n\n".join(
+                    markdown_image_reference(
+                        f"Screenshot {i + 1}" if len(ref_files) > 1 else "Screenshot",
+                        f"{SCREENSHOTS_REL_PATH}/{t.name}",
+                    )
+                    for i, t in enumerate(ref_files)
                 )
                 base_content = _add_basic_frontmatter(
                     screenshot_ref,
@@ -439,6 +460,7 @@ async def process_url(
                     url,
                     fetch_strategy=used_strategy,
                     screenshot_path=screenshot_path,
+                    screenshot_tiles=screenshot_tiles or None,
                     output_dir=effective_output_dir,
                     title=fetch_result.title,
                     extra_meta=source_extra_meta,
@@ -481,6 +503,7 @@ async def process_url(
                     cfg,
                     output_file,
                     fetch_result,
+                    screenshot_tiles=screenshot_tiles or None,
                     downloaded_images=downloaded_images,
                     image_context="",  # No source content in screenshot-only mode
                 )
@@ -1297,19 +1320,24 @@ async def process_url_screenshot_only(
     cfg: MarkitaiConfig,
     output_file: Path,
     processor: LLMProcessor | None = None,
+    screenshot_tiles: list[Path] | None = None,
     original_title: str | None = None,
 ) -> tuple[str, float, dict[str, dict[str, Any]]]:
     """Process URL using screenshot-only mode (no pre-extracted text).
 
     This mode relies entirely on Vision LLM to extract content from the
-    screenshot, ignoring any pre-extracted text from Playwright/markitdown.
+    screenshot(s), ignoring any pre-extracted text from Playwright/markitdown.
+    A long page captured as N tiles is read tile-by-tile (each within the
+    model's readable image height) and the per-tile content is concatenated.
 
     Args:
-        screenshot_path: Path to the URL screenshot
-        url: Original URL (used as source identifier)
+        screenshot_path: Path to the URL screenshot (primary tile)
+        url: Original URL (used as source identifier and usage key)
         cfg: Configuration
         output_file: Output file path
         processor: Optional shared LLMProcessor
+        screenshot_tiles: All screenshot tiles (primary first); when given
+            and longer than one, each tile is read by the vision model
         original_title: Optional title from fetch result to preserve
 
     Returns:
@@ -1319,20 +1347,46 @@ async def process_url_screenshot_only(
         if processor is None:
             processor = create_llm_processor(cfg)
 
-        # Extract content purely from screenshot
-        cleaned_content, frontmatter = await processor.extract_from_screenshot(
-            screenshot_path, context=url, original_title=original_title
-        )
+        # Extract content purely from screenshot(s). All tiles share the URL
+        # context: usage/cost and the per-document request budget stay on one
+        # key (a page is one document), and the content cache is keyed by the
+        # image fingerprint, so tiles cannot collide.
+        tiles = list(screenshot_tiles or [screenshot_path])
+        cleaned_parts: list[str] = []
+        frontmatter = ""
+        for i, tile in enumerate(tiles):
+            cleaned, fm = await processor.extract_from_screenshot(
+                tile,
+                context=url,
+                original_title=original_title if i == 0 else None,
+            )
+            if i == 0:
+                frontmatter = fm
+            if cleaned.strip():
+                if len(tiles) > 1:
+                    cleaned_parts.append(f"<!-- Tile {i + 1} -->\n\n{cleaned}")
+                else:
+                    cleaned_parts.append(cleaned)
+        cleaned_content = "\n\n".join(cleaned_parts)
 
         # Format and write LLM output
         llm_output = output_file.with_suffix(".llm.md")
         llm_content = processor.format_llm_output(cleaned_content, frontmatter)
 
-        # Add screenshot reference as comment
-        screenshot_comment = (
-            f"\n\n<!-- Screenshot for reference -->\n"
-            f"<!-- ![Screenshot]({SCREENSHOTS_REL_PATH}/{screenshot_path.name}) -->"
-        )
+        # Add screenshot reference(s) as comment
+        if len(tiles) == 1:
+            screenshot_comment = (
+                f"\n\n<!-- Screenshot for reference -->\n"
+                f"<!-- ![Screenshot]({SCREENSHOTS_REL_PATH}/{tiles[0].name}) -->"
+            )
+        else:
+            screenshot_comment = (
+                "\n\n<!-- Screenshots for reference (tiles) -->\n"
+                + "\n".join(
+                    f"<!-- ![Screenshot {i + 1}]({SCREENSHOTS_REL_PATH}/{t.name}) -->"
+                    for i, t in enumerate(tiles)
+                )
+            )
         llm_content += screenshot_comment
 
         atomic_write_text(llm_output, llm_content)
@@ -1468,6 +1522,7 @@ async def run_url_screenshot_only_llm(
     output_file: Path,
     fetch_result: FetchResult,
     *,
+    screenshot_tiles: list[Path] | None = None,
     downloaded_images: list[Path],
     image_context: str,
     processor: LLMProcessor | None = None,
@@ -1490,6 +1545,7 @@ async def run_url_screenshot_only_llm(
         cfg,
         output_file,
         processor=processor,
+        screenshot_tiles=screenshot_tiles,
         original_title=fetch_result.title,
     )
 

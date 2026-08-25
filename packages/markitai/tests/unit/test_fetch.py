@@ -360,6 +360,24 @@ class TestFetchResultWithScreenshot:
         assert result.cache_hit is True
         assert result.screenshot_path == screenshot
 
+    def test_fetch_result_carries_screenshot_tiles(self) -> None:
+        """A tiled long page is exposed as screenshot_tiles (C3)."""
+        from markitai.fetch import FetchResult
+
+        tiles = [
+            Path("/tmp/screenshots/p.full.jpg"),
+            Path("/tmp/screenshots/p--1.jpg"),
+        ]
+        result = FetchResult(
+            content="# Tiled",
+            strategy_used="browser",
+            url="https://example.com",
+            screenshot_path=tiles[0],
+            screenshot_tiles=tiles,
+        )
+        assert result.screenshot_tiles == tiles
+        assert result.screenshot_tiles[0] == result.screenshot_path
+
 
 class TestProxyDetection:
     """Tests for proxy auto-detection functions."""
@@ -1079,7 +1097,7 @@ class TestCompressScreenshot:
         assert new_size == original_size
 
     def test_compress_screenshot_compresses_tall_image(self, tmp_path: Path) -> None:
-        """Test that compression works for images exceeding max_height."""
+        """Legacy cap (no tile_height): a tall image is tiled, not downscaled."""
         from markitai.fetch import _compress_screenshot
 
         try:
@@ -1089,18 +1107,65 @@ class TestCompressScreenshot:
 
             pytest.skip("Pillow not installed")
 
-        # Create a tall image that exceeds max_height
+        # Create a tall image that exceeds max_height (used as legacy tile cap)
         img = Image.new("RGB", (800, 1200), color="red")
         screenshot_path = tmp_path / "test.jpg"
         img.save(screenshot_path, "JPEG", quality=100)
-        original_size = screenshot_path.stat().st_size
 
-        # Compress with low max_height to trigger resize
-        _compress_screenshot(screenshot_path, quality=50, max_height=600)
+        tiles = _compress_screenshot(screenshot_path, quality=50, max_height=600)
+        assert tiles == [screenshot_path, tmp_path / "test--1.jpg"]
+        assert all(t.exists() for t in tiles)
+        with Image.open(tiles[0]) as t0, Image.open(tiles[1]) as t1:
+            assert (t0.height, t1.height) == (600, 600)
+            assert t0.width == t1.width == 800  # full width kept
 
-        # Check that file was compressed/resized
-        new_size = screenshot_path.stat().st_size
-        assert new_size < original_size
+    def test_compress_screenshot_tiles_long_page(self, tmp_path: Path) -> None:
+        """tile_height splits a long page into full-width VLM-readable tiles."""
+        from markitai.fetch import _compress_screenshot
+
+        try:
+            from PIL import Image
+        except ImportError:
+            import pytest
+
+            pytest.skip("Pillow not installed")
+
+        img = Image.new("RGB", (400, 4500), color="blue")
+        screenshot_path = tmp_path / "tall.jpg"
+        img.save(screenshot_path, "JPEG")
+
+        tiles = _compress_screenshot(screenshot_path, quality=75, tile_height=2000)
+        assert tiles == [
+            screenshot_path,
+            tmp_path / "tall--1.jpg",
+            tmp_path / "tall--2.jpg",
+        ]
+        with Image.open(tiles[0]) as t0, Image.open(tiles[2]) as t2:
+            assert t0.height == 2000
+            assert t2.height == 500  # last tile = remainder
+            assert t0.width == 400  # full width preserved
+
+    def test_compress_screenshot_within_tile_height_stays_single(
+        self, tmp_path: Path
+    ) -> None:
+        """A page within tile_height keeps a single unchanged file."""
+        from markitai.fetch import _compress_screenshot
+
+        try:
+            from PIL import Image
+        except ImportError:
+            import pytest
+
+            pytest.skip("Pillow not installed")
+
+        img = Image.new("RGB", (800, 1500), color="red")
+        screenshot_path = tmp_path / "ok.jpg"
+        img.save(screenshot_path, "JPEG", quality=85)
+        before = screenshot_path.stat().st_size
+
+        tiles = _compress_screenshot(screenshot_path, quality=85, tile_height=2000)
+        assert tiles == [screenshot_path]
+        assert screenshot_path.stat().st_size == before  # skipped re-compression
 
     def test_compress_screenshot_rgba_conversion(self, tmp_path: Path) -> None:
         """Test RGBA to RGB conversion during compression."""
@@ -1124,8 +1189,10 @@ class TestCompressScreenshot:
         # Verify it's now a valid file
         assert screenshot_path.exists()
 
-    def test_compress_screenshot_resize_tall_image(self, tmp_path: Path) -> None:
-        """Test resizing of very tall images."""
+    def test_compress_screenshot_legacy_resize_disabled_by_default(
+        self, tmp_path: Path
+    ) -> None:
+        """Very tall pages are tiled by default, never whole-page downscaled."""
         from markitai.fetch import _compress_screenshot
 
         try:
@@ -1135,17 +1202,16 @@ class TestCompressScreenshot:
 
             pytest.skip("Pillow not installed")
 
-        # Create a very tall image (5000 pixels — enough to test max_height limit)
         img = Image.new("RGB", (400, 5000), color="blue")
         screenshot_path = tmp_path / "tall.jpg"
         img.save(screenshot_path, "JPEG")
 
-        # Compress with max_height limit
-        _compress_screenshot(screenshot_path, quality=75, max_height=2000)
-
-        # Check that image was resized
-        with Image.open(screenshot_path) as compressed:
-            assert compressed.height <= 2000
+        tiles = _compress_screenshot(screenshot_path, quality=75, tile_height=2000)
+        assert len(tiles) == 3
+        for t in tiles:
+            with Image.open(t) as tile:
+                assert tile.height <= 2000
+                assert tile.width == 400
 
     def test_compress_screenshot_missing_pillow(self, tmp_path: Path) -> None:
         """Test handling when Pillow is not installed."""

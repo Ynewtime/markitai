@@ -996,7 +996,10 @@ class TestPlaywrightRenderer:
             "markitai.fetch_playwright._capture_screenshot",
             new_callable=AsyncMock,
         ) as mock_capture:
-            mock_capture.return_value = Path("/tmp/screenshot.jpg")
+            mock_capture.return_value = (
+                Path("/tmp/screenshot.jpg"),
+                [Path("/tmp/screenshot.jpg")],
+            )
 
             result = await renderer.fetch(
                 "https://example.com",
@@ -1628,6 +1631,7 @@ class TestCaptureScreenshot:
             ),
             patch("markitai.fetch_screenshot._compress_screenshot") as mock_compress,
         ):
+            mock_compress.return_value = [tmp_path / "screenshot.jpg"]
             result = await _capture_screenshot(
                 mock_page,
                 mock_config,
@@ -1635,9 +1639,42 @@ class TestCaptureScreenshot:
                 "https://example.com",
             )
 
-            assert result == tmp_path / "screenshot.jpg"
+            assert result == (
+                tmp_path / "screenshot.jpg",
+                [tmp_path / "screenshot.jpg"],
+            )
             mock_page.screenshot.assert_called_once()
             mock_compress.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_passes_tile_height_to_compress(self, tmp_path):
+        """tile_height from config reaches _compress_screenshot (C3)."""
+        from markitai.fetch_playwright import _capture_screenshot
+
+        mock_page = AsyncMock()
+        mock_page.screenshot = AsyncMock()
+
+        mock_config = MagicMock()
+        mock_config.enabled = True
+        mock_config.quality = 85
+        mock_config.max_height = 10000
+        mock_config.tile_height = 1500
+
+        with (
+            patch(
+                "markitai.fetch_screenshot._url_to_screenshot_filename",
+                return_value="shot.jpg",
+            ),
+            patch("markitai.fetch_screenshot._compress_screenshot") as mock_compress,
+        ):
+            mock_compress.return_value = [tmp_path / "shot.jpg"]
+            await _capture_screenshot(
+                mock_page, mock_config, tmp_path, "https://example.com"
+            )
+
+        kwargs = mock_compress.call_args.kwargs
+        assert kwargs["tile_height"] == 1500
+        assert kwargs["max_height"] == 10000
 
     @pytest.mark.asyncio
     async def test_returns_none_on_screenshot_error(self, tmp_path):
@@ -1664,7 +1701,7 @@ class TestCaptureScreenshot:
                 "https://example.com",
             )
 
-            assert result is None
+            assert result == (None, [])
 
     @pytest.mark.asyncio
     async def test_creates_output_directory(self, tmp_path):

@@ -669,7 +669,11 @@ async def process_url_item(
 
     title = fetch_result.title
     extra_meta = fetch_result.metadata.get("source_frontmatter")
-    screenshots = 1 if fetch_result.screenshot_path else 0
+    screenshots = (
+        len(fetch_result.screenshot_tiles)
+        if fetch_result.screenshot_tiles
+        else (1 if fetch_result.screenshot_path else 0)
+    )
 
     cost_usd = 0.0
     llm_usage: dict[str, dict[str, Any]] = {}
@@ -707,6 +711,7 @@ async def process_url_item(
             url,
             fetch_strategy=fetch_result.strategy_used,
             screenshot_path=fetch_result.screenshot_path,
+            screenshot_tiles=fetch_result.screenshot_tiles,
             output_dir=out_dir,
             title=title,
             extra_meta=extra_meta,

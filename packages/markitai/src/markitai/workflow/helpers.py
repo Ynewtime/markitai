@@ -232,6 +232,7 @@ def add_basic_frontmatter(
     source: str,
     fetch_strategy: str | None = None,
     screenshot_path: Path | None = None,
+    screenshot_tiles: list[Path] | None = None,
     output_dir: Path | None = None,
     dedupe: bool = False,
     title: str | None = None,
@@ -246,6 +247,8 @@ def add_basic_frontmatter(
         source: Source file name or URL
         fetch_strategy: Optional fetch strategy used (e.g., "static", "browser")
         screenshot_path: Optional path to page screenshot
+        screenshot_tiles: Optional list of screenshot files (tiles of a long
+            page, primary first); when given, all are referenced
         output_dir: Optional output directory (for relative screenshot path)
         dedupe: Whether to deduplicate paragraphs (default False)
         title: Optional title from fetch result (takes precedence over extraction)
@@ -326,22 +329,36 @@ def add_basic_frontmatter(
 
     result = f"---\n{frontmatter_yaml}\n---\n\n{content}"
 
-    # Add screenshot reference as HTML comment at the end
-    if screenshot_path and screenshot_path.exists():
+    # Add screenshot reference(s) as HTML comments at the end. A long page
+    # that was tiled is referenced as one comment per tile.
+    tiles = screenshot_tiles or ([screenshot_path] if screenshot_path else [])
+    tiles = [t for t in tiles if t and t.exists()]
+    if tiles:
         if output_dir:
-            # Calculate relative path from output file to screenshot
-            try:
-                rel_path = screenshot_path.relative_to(output_dir)
-            except ValueError:
-                rel_path = screenshot_path
-        else:
-            rel_path = screenshot_path.name
 
+            def _rel(p: Path) -> Path:
+                try:
+                    return p.relative_to(output_dir)
+                except ValueError:
+                    return p
+
+        else:
+
+            def _rel(p: Path) -> Path:  # type: ignore[misc]
+                return Path(p.name)
+
+        if len(tiles) == 1:
+            refs = (
+                "<!-- Screenshot for reference -->\n"
+                f"<!-- ![Screenshot]({_rel(tiles[0])}) -->"
+            )
+        else:
+            refs = "<!-- Screenshots for reference (tiles) -->\n" + "\n".join(
+                f"<!-- ![Screenshot {i + 1}]({_rel(t)}) -->"
+                for i, t in enumerate(tiles)
+            )
         # Add screenshot reference at the end
-        result = (
-            result.rstrip()
-            + f"\n\n<!-- Screenshot for reference -->\n<!-- ![Screenshot]({rel_path}) -->\n"
-        )
+        result = result.rstrip() + f"\n\n{refs}\n"
 
     return result
 
