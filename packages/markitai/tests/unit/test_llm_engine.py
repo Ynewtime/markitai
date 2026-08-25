@@ -125,7 +125,7 @@ class Harness:
         self.router = router
         self.memory = FakeMemoryCache()
         self.persistent = FakePersistentCache()
-        self.track_calls: list[tuple[str, int, int, float, str]] = []
+        self.track_calls: list[tuple[str, int, int, float, str, int]] = []
         self.max_tokens_calls: list[dict[str, Any]] = []
         self.calculated_max_tokens = calculated_max_tokens
 
@@ -135,8 +135,11 @@ class Harness:
             output_tokens: int,
             cost: float,
             context: str,
+            cached_tokens: int = 0,
         ) -> None:
-            self.track_calls.append((model, input_tokens, output_tokens, cost, context))
+            self.track_calls.append(
+                (model, input_tokens, output_tokens, cost, context, cached_tokens)
+            )
 
         def calculate_max_tokens(
             messages: list[dict[str, Any]],
@@ -392,7 +395,7 @@ class TestInstructorIntegration:
             await harness.engine.complete_structured(make_call())
 
         assert harness.track_calls == [
-            ("openai/gpt-actual", 4000, 8192, 0.42, "test.md")
+            ("openai/gpt-actual", 4000, 8192, 0.42, "test.md", 0)
         ]
         # ...but the truncated result still must not reach either cache
         assert harness.memory.set_calls == []
@@ -400,6 +403,24 @@ class TestInstructorIntegration:
 
 
 class TestUsageAndHooks:
+    async def test_cached_tokens_extracted_from_usage_details(self) -> None:
+        """Cache-read tokens flow from prompt_tokens_details to track_usage."""
+        response = make_model_response(
+            '{"text": "ok"}', model="openai/gpt-actual", prompt_tokens=2000
+        )
+        from litellm.types.utils import PromptTokensDetails
+
+        usage = getattr(response, "usage", None)
+        assert usage is not None
+        usage.prompt_tokens_details = PromptTokensDetails(cached_tokens=1536)
+        harness = Harness(FakeRouter([response]))
+
+        await harness.engine.complete_structured(make_call())
+
+        assert harness.track_calls == [
+            ("openai/gpt-actual", 2000, 20, 0.000123, "test.md", 1536)
+        ]
+
     async def test_usage_tracked_once_from_raw_response(self) -> None:
         harness = Harness(
             FakeRouter(
@@ -418,7 +439,7 @@ class TestUsageAndHooks:
         await harness.engine.complete_structured(make_call())
 
         assert harness.track_calls == [
-            ("openai/gpt-actual", 200, 20, 0.000123, "test.md")
+            ("openai/gpt-actual", 200, 20, 0.000123, "test.md", 0)
         ]
 
     async def test_validate_hook_result_is_returned_and_cached(self) -> None:

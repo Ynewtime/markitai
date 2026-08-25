@@ -156,6 +156,7 @@ class LLMProcessor:
                 "requests": 0,
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cached_input_tokens": 0,
                 "cost_usd": 0.0,
             }
 
@@ -1038,6 +1039,7 @@ class LLMProcessor:
         output_tokens: int,
         cost: float,
         context: str = "",
+        cached_tokens: int = 0,
     ) -> None:
         """Track usage statistics per model (and optionally per context).
 
@@ -1049,20 +1051,30 @@ class LLMProcessor:
             output_tokens: Number of output tokens
             cost: Cost in USD
             context: Optional context identifier (e.g., filename)
+            cached_tokens: Cache-read input tokens (prompt caching hits);
+                a subset of input_tokens billed at the provider's cache rate
         """
         with self._usage_lock:
-            # Track global usage (defaultdict auto-creates entries)
+            # Track global usage (defaultdict auto-creates entries; the
+            # cached key uses .get so hand-built dicts without it survive)
             self._usage[model]["requests"] += 1
             self._usage[model]["input_tokens"] += input_tokens
             self._usage[model]["output_tokens"] += output_tokens
+            self._usage[model]["cached_input_tokens"] = (
+                self._usage[model].get("cached_input_tokens", 0) + cached_tokens
+            )
             self._usage[model]["cost_usd"] += cost
 
             # Track per-context usage if context provided
             if context:
-                self._context_usage[context][model]["requests"] += 1
-                self._context_usage[context][model]["input_tokens"] += input_tokens
-                self._context_usage[context][model]["output_tokens"] += output_tokens
-                self._context_usage[context][model]["cost_usd"] += cost
+                ctx = self._context_usage[context][model]
+                ctx["requests"] += 1
+                ctx["input_tokens"] += input_tokens
+                ctx["output_tokens"] += output_tokens
+                ctx["cached_input_tokens"] = (
+                    ctx.get("cached_input_tokens", 0) + cached_tokens
+                )
+                ctx["cost_usd"] += cost
 
     def get_usage(self) -> dict[str, dict[str, Any]]:
         """Get global usage statistics.

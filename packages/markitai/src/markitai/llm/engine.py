@@ -279,6 +279,19 @@ def find_budget_exceeded_error(
     return None
 
 
+def extract_cached_tokens(raw_response: Any) -> int:
+    """Cache-read input tokens from a litellm-normalized response usage.
+
+    litellm maps both OpenAI's ``prompt_tokens_details.cached_tokens`` and
+    Anthropic's ``cache_read_input_tokens`` onto the same
+    ``usage.prompt_tokens_details.cached_tokens`` field. Returns 0 whenever
+    the provider returned no cache breakdown.
+    """
+    usage = getattr(raw_response, "usage", None)
+    details = getattr(usage, "prompt_tokens_details", None)
+    return getattr(details, "cached_tokens", None) or 0
+
+
 async def run_structured_ladder(
     *,
     acompletion: Callable[..., Awaitable[Any]],
@@ -413,7 +426,9 @@ class LLMEngine:
     - ``persistent_cache``: PersistentCache interface
       (``get(key, content, context=..., model=...)`` /
       ``set(key, content, value, model=...)``)
-    - ``track_usage``: ``(model, input_tokens, output_tokens, cost, context)``
+    - ``track_usage``: ``(model, input_tokens, output_tokens, cost, context,
+      cached_tokens)`` — cached defaults to 0 (provider returned no cache
+      breakdown).
     - ``calculate_max_tokens``: ``(messages, model_id, router=...) -> int | None``
       (bound from ``LLMProcessor._calculate_dynamic_max_tokens``)
     - ``get_primary_model``: ``(router) -> model_id | None``
@@ -433,7 +448,7 @@ class LLMEngine:
         semaphore: asyncio.Semaphore,
         memory_cache: Any,
         persistent_cache: Any,
-        track_usage: Callable[[str, int, int, float, str], None],
+        track_usage: Callable[[str, int, int, float, str, int], None],
         calculate_max_tokens: Callable[..., int | None],
         get_primary_model: Callable[[Any], str | None],
         max_retries: int = DEFAULT_MAX_RETRIES,
@@ -630,7 +645,12 @@ class LLMEngine:
                 output_tokens = getattr(raw_response.usage, "completion_tokens", 0) or 0
                 cost = get_response_cost(raw_response)
                 self.track_usage(
-                    actual_model, input_tokens, output_tokens, cost, call.context
+                    actual_model,
+                    input_tokens,
+                    output_tokens,
+                    cost,
+                    call.context,
+                    extract_cached_tokens(raw_response),
                 )
 
             logger.info(
@@ -909,6 +929,7 @@ class LLMEngine:
                             output_tokens,
                             cost,
                             usage_context,
+                            extract_cached_tokens(response),
                         )
 
                     # Log result

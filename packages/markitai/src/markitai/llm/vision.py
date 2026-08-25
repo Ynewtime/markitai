@@ -23,7 +23,7 @@ from markitai.constants import (
     DEFAULT_MAX_IMAGES_PER_BATCH,
 )
 from markitai.llm.degeneration import truncate_degenerate_tail
-from markitai.llm.engine import LLMCall, run_structured_ladder
+from markitai.llm.engine import LLMCall, extract_cached_tokens, run_structured_ladder
 from markitai.llm.models import context_display_name, get_response_cost
 from markitai.llm.structured import router_structured_ladder
 from markitai.llm.types import (
@@ -241,6 +241,9 @@ def _merge_llm_usage(
         merged[model]["output_tokens"] = merged[model].get(
             "output_tokens", 0
         ) + usage.get("output_tokens", 0)
+        merged[model]["cached_input_tokens"] = merged[model].get(
+            "cached_input_tokens", 0
+        ) + usage.get("cached_input_tokens", 0)
         merged[model]["cost_usd"] = merged[model].get("cost_usd", 0.0) + usage.get(
             "cost_usd", 0.0
         )
@@ -771,7 +774,12 @@ class VisionAnalyzer:
                     )
                     cost = get_response_cost(raw_response)
                     self._engine.track_usage(
-                        actual_model, input_tokens, output_tokens, cost, context
+                        actual_model,
+                        input_tokens,
+                        output_tokens,
+                        cost,
+                        context,
+                        extract_cached_tokens(raw_response),
                     )
 
                 # Check for truncation (after accounting; the truncated
@@ -1068,7 +1076,12 @@ class VisionAnalyzer:
             output_tokens = usage.completion_tokens if usage else 0
             cost = get_response_cost(response)
             self._engine.track_usage(
-                actual_model, input_tokens, output_tokens, cost, context
+                actual_model,
+                input_tokens,
+                output_tokens,
+                cost,
+                context,
+                extract_cached_tokens(response),
             )
 
             # This strategy also has the model hand-writing JSON into its

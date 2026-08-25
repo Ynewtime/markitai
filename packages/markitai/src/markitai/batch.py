@@ -1197,6 +1197,9 @@ class BatchProcessor:
                 models_usage[model]["requests"] += usage.get("requests", 0)
                 models_usage[model]["input_tokens"] += usage.get("input_tokens", 0)
                 models_usage[model]["output_tokens"] += usage.get("output_tokens", 0)
+                models_usage[model]["cached_input_tokens"] = models_usage[model].get(
+                    "cached_input_tokens", 0
+                ) + usage.get("cached_input_tokens", 0)
                 models_usage[model]["cost_usd"] += usage.get("cost_usd", 0.0)
 
         # Run cost is summed per item (files + URLs), not per model

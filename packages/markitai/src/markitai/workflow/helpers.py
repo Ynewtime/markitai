@@ -391,6 +391,9 @@ def merge_llm_usage(
         target[model]["output_tokens"] = target[model].get(
             "output_tokens", 0
         ) + usage.get("output_tokens", 0)
+        target[model]["cached_input_tokens"] = target[model].get(
+            "cached_input_tokens", 0
+        ) + usage.get("cached_input_tokens", 0)
         target[model]["cost_usd"] = target[model].get("cost_usd", 0.0) + usage.get(
             "cost_usd", 0.0
         )

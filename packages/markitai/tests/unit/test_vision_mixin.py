@@ -204,6 +204,7 @@ class MockVisionProcessor(VisionAnalyzer):
         output_tokens: int,
         cost: float,
         context: str = "",
+        cached_tokens: int = 0,
     ):
         """Mock method to track usage."""
         if model not in self._usage:
