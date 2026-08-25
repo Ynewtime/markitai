@@ -24,7 +24,7 @@ import json
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import instructor
 from loguru import logger
@@ -159,13 +159,15 @@ async def submit_openai_batch(
     import litellm
 
     file_obj = await litellm.acreate_file(
-        file=jsonl_path, purpose="batch", custom_llm_provider=custom_llm_provider
+        file=jsonl_path,
+        purpose="batch",
+        custom_llm_provider=cast("Any", custom_llm_provider),
     )
     batch = await litellm.acreate_batch(
         completion_window="24h",
         endpoint="/v1/chat/completions",
         input_file_id=file_obj.id,
-        custom_llm_provider=custom_llm_provider,
+        custom_llm_provider=cast("Any", custom_llm_provider),
     )
     logger.info(f"[Batch] Submitted {jsonl_path.name} as {batch.id}")
     return batch.id
@@ -201,7 +203,7 @@ async def poll_openai_batch(
     elapsed = 0.0
     while True:
         batch = await litellm.aretrieve_batch(
-            batch_id, custom_llm_provider=custom_llm_provider
+            batch_id, custom_llm_provider=cast("Any", custom_llm_provider)
         )
         status = batch.status
         counts = getattr(batch, "request_counts", None)
@@ -227,15 +229,15 @@ async def download_openai_batch_output(
     import litellm
 
     batch = await litellm.aretrieve_batch(
-        batch_id, custom_llm_provider=custom_llm_provider
+        batch_id, custom_llm_provider=cast("Any", custom_llm_provider)
     )
     if batch.status != "completed":
         raise RuntimeError(f"batch {batch_id} is {batch.status!r}, not completed")
     if not batch.output_file_id:
         raise RuntimeError(f"batch {batch_id} completed with no output_file_id")
     content = await litellm.afile_content(
-        batch.output_file_id, custom_llm_provider=custom_llm_provider
+        batch.output_file_id, custom_llm_provider=cast("Any", custom_llm_provider)
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(content.content)
+    output_path.write_bytes(cast("Any", content).content)
     return output_path

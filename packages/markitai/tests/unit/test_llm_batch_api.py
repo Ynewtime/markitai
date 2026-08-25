@@ -135,6 +135,7 @@ class TestParseOutput:
         (line,) = list(read_openai_batch_output(path))
         assert line.custom_id == "doc1::main"
         assert line.error is None
+        assert line.body is not None
         result = parse_batch_result(
             line.body, response_model=_Doc, mode=instructor.Mode.TOOLS
         )
