@@ -25,7 +25,7 @@ def normalize_images(root: Tag, base_url: str) -> None:
         # Optimize srcset: pick best resolution image
         srcset = img.get("srcset")
         if srcset and isinstance(srcset, str):
-            best = _pick_best_srcset(str(srcset))
+            best = pick_best_srcset(str(srcset))
             if best:
                 src = best
 
@@ -81,11 +81,12 @@ def _normalize_src(url: str) -> str:
     return re.sub(r"^https?://", "", url).split("?")[0]
 
 
-def _pick_best_srcset(srcset: str) -> str | None:
+def pick_best_srcset(srcset: str) -> str | None:
     """Pick the best image URL from a srcset attribute.
 
-    Prefers highest width descriptor (e.g., 1200w), falls back to
-    highest density descriptor (e.g., 3x).
+    Single source of truth for srcset resolution (defuddle
+    elements/images.ts): prefers highest width descriptor (e.g., 1200w),
+    falls back to highest density descriptor (e.g., 3x).
 
     Args:
         srcset: srcset attribute value.

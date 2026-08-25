@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse, urlunparse
 from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.dom import parse_fragment
+from markitai.webextract.elements.images import pick_best_srcset
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -78,10 +79,8 @@ def _preprocess_for_markdown(html: str) -> str:
 def resolve_srcset(soup: Tag | BeautifulSoup) -> None:
     """Replace each ``img[srcset]`` src with the highest-resolution candidate.
 
-    The srcset value is a comma-separated list of ``url width`` or ``url dpr``
-    descriptors.  We pick the candidate with the largest numeric width/dpr
-    descriptor.  Falls back to the first candidate when no descriptors are
-    present.
+    Delegates candidate selection to :func:`pick_best_srcset` (the shared
+    defuddle-ported implementation) and drops the ``srcset`` attribute.
 
     Args:
         soup: BeautifulSoup tree or Tag subtree (mutated in place).
@@ -92,44 +91,10 @@ def resolve_srcset(soup: Tag | BeautifulSoup) -> None:
         srcset = img.get("srcset", "")
         if not srcset:
             continue
-        best_url = _pick_best_srcset_url(str(srcset))
+        best_url = pick_best_srcset(str(srcset))
         if best_url:
             img["src"] = best_url
         del img["srcset"]
-
-
-def _pick_best_srcset_url(srcset: str) -> str | None:
-    """Return the URL with the highest numeric descriptor from a srcset string.
-
-    Args:
-        srcset: Raw srcset attribute value.
-
-    Returns:
-        Best URL string, or ``None`` when srcset is empty.
-    """
-    best_url: str | None = None
-    best_value: float = -1.0
-
-    for candidate in srcset.split(","):
-        candidate = candidate.strip()
-        if not candidate:
-            continue
-        parts = candidate.split()
-        url = parts[0]
-        if len(parts) >= 2:
-            descriptor = parts[1].lower().rstrip("wx")
-            try:
-                value = float(descriptor)
-            except ValueError:
-                value = 0.0
-        else:
-            value = 0.0
-
-        if best_url is None or value > best_value:
-            best_url = url
-            best_value = value
-
-    return best_url
 
 
 # ---------------------------------------------------------------------------
