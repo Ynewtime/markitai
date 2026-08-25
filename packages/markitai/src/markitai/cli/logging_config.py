@@ -448,7 +448,6 @@ def _is_internal_info_noise(record: Any) -> bool:
 
     noisy_prefixes = (
         "[Router]",
-        "[HybridRouter]",
         "[LLM] ",
         "[Fetch] This run's remote extraction services may receive URLs ",
         "Fetching URL:",

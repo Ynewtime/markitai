@@ -43,6 +43,16 @@ from markitai.constants import (
     DEFAULT_RETRY_MAX_DELAY,
 )
 from markitai.llm.models import get_response_cost
+
+# Canonical error-pattern definitions live in markitai.llm.router (the
+# routing layer owns error classification); re-exported here because
+# historical call sites import them from the engine.
+from markitai.llm.router import (
+    MODEL_LEVEL_ERROR_PATTERNS as MODEL_LEVEL_ERROR_PATTERNS,
+)
+from markitai.llm.router import (
+    POOL_EXHAUSTED_PATTERN,
+)
 from markitai.llm.types import LLMResponse
 from markitai.providers.errors import ProviderError
 from markitai.utils.text import format_error_message, repair_json_string
@@ -65,19 +75,6 @@ RETRYABLE_ERRORS = (
     APIConnectionError,
     Timeout,
     ServiceUnavailableError,
-)
-
-# Model-level error patterns that indicate the model itself is unavailable
-# (not a content/request issue). These warrant long cooldown. Canonical
-# definition; HybridRouter.MODEL_LEVEL_ERROR_PATTERNS aliases this tuple.
-MODEL_LEVEL_ERROR_PATTERNS = (
-    "user location is not supported",
-    "failed_precondition",
-    "model is not available",
-    "model not found",
-    "model_not_available",
-    "region is not supported",
-    "not available in your region",
 )
 
 
@@ -805,9 +802,15 @@ class LLMEngine:
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                     error_msg_lower = str(e).lower()
 
-                    # Model-level errors are retryable (HybridRouter cooldown
-                    # ensures the next attempt picks a different model)
-                    if any(p in error_msg_lower for p in MODEL_LEVEL_ERROR_PATTERNS):
+                    # Model-level errors are retryable (the router cooldown
+                    # ensures the next attempt picks a different model).
+                    # Pool exhaustion ("no deployments available": every
+                    # LiteLLM deployment is cooling down) is retryable too:
+                    # the backoff outlives short cooldowns.
+                    if (
+                        any(p in error_msg_lower for p in MODEL_LEVEL_ERROR_PATTERNS)
+                        or POOL_EXHAUSTED_PATTERN in error_msg_lower
+                    ):
                         last_exception = e
                         status_code = getattr(e, "status_code", "N/A")
                         if attempt < max_retries:

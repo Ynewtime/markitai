@@ -1,13 +1,11 @@
-"""LLM integration module using LiteLLM Router."""
+"""LLM integration module using MarkitaiRouter (LiteLLM Router + local providers)."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
 import copy
-import random
 import threading
-import time
 import warnings
 from collections import defaultdict
 from pathlib import Path
@@ -24,11 +22,10 @@ import litellm
 
 # Suppress LiteLLM's "Provider List" debug messages for custom providers
 litellm.suppress_debug_info = True
-from litellm.router import Router
 from loguru import logger
 
 if TYPE_CHECKING:
-    from markitai.config import LLMConfig, PromptsConfig
+    from markitai.config import LLMConfig, ModelConfig, PromptsConfig
 
 # Optional: cairosvg for SVG → PNG rasterization (LLM vision)
 try:
@@ -47,9 +44,6 @@ from markitai.constants import (
 from markitai.llm import content
 from markitai.llm.cache import ContentCache, PersistentCache
 from markitai.llm.document import DocumentEnhancer
-from markitai.llm.engine import (
-    MODEL_LEVEL_ERROR_PATTERNS as _ENGINE_MODEL_LEVEL_ERROR_PATTERNS,
-)
 
 # Canonical definition lives in markitai.llm.engine (processor imports engine,
 # not vice versa); re-exported here for backwards compatibility.
@@ -62,6 +56,7 @@ from markitai.llm.models import (
     get_model_info_cached,
     model_list_fingerprint,
 )
+from markitai.llm.router import MarkitaiRouter
 from markitai.llm.types import (
     ImageAnalysis,
     LLMResponse,
@@ -70,515 +65,7 @@ from markitai.llm.types import (
 from markitai.llm.vision import VisionAnalyzer
 from markitai.prompts import PromptManager
 from markitai.providers.common import has_images
-from markitai.utils.text import format_error_message, preview_items_for_log
-
-# =============================================================================
-# Local Provider Support
-# =============================================================================
-# LiteLLM Router does not support custom providers (claude-agent/, copilot/).
-# We need a wrapper class that uses litellm.acompletion() directly for these.
-
-
-class LocalProviderWrapper:
-    """Wrapper for local provider models that mimics Router interface.
-
-    LiteLLM Router's get_llm_provider() does not recognize custom providers,
-    so we need to call litellm.acompletion() directly for local provider models.
-
-    Implements simple-shuffle load balancing strategy using weighted random selection.
-    For image requests, prioritizes models with confirmed image support.
-    """
-
-    # Models with confirmed image/vision support via their provider.
-    # Note: Copilot has a ~2000px dimension limit, but CopilotProvider
-    # handles resizing automatically via _resize_image_if_needed()
-    _IMAGE_CAPABLE_PATTERNS = (
-        "claude-agent/",  # All claude-agent models support vision
-        "chatgpt/",  # All ChatGPT models support vision (GPT-5.x)
-        "copilot/claude-",  # All Copilot Claude models
-        "copilot/gemini-",  # All Copilot Gemini models
-        "copilot/gpt-4.1",  # GPT-4.1 series
-        "copilot/gpt-4o",  # All GPT-4o variants (including mini)
-        "copilot/gpt-5",  # GPT-5 series (gpt-5, gpt-5-mini, gpt-5.1*, gpt-5.4*)
-        "copilot/raptor-",  # GitHub's fine-tuned GPT-5 mini (inherits vision)
-    )
-    # Note: copilot/gpt-3.5*, copilot/gpt-4 (non-4o/4.1), copilot/grok-* do NOT support vision
-
-    def __init__(self, model_list: list[dict[str, Any]]) -> None:
-        """Initialize with model list.
-
-        Args:
-            model_list: List of model configurations (same format as Router)
-        """
-        self.model_list = model_list
-        # Map model_name to list of (model_id, weight) tuples for load balancing
-        self._model_groups: dict[str, list[tuple[str, float]]] = {}
-        for model_config in model_list:
-            model_name = model_config.get("model_name", "default")
-            litellm_params = model_config.get("litellm_params", {})
-            model_id = litellm_params.get("model", "")
-            weight = litellm_params.get("weight", 1.0)
-
-            if model_name not in self._model_groups:
-                self._model_groups[model_name] = []
-            self._model_groups[model_name].append((model_id, weight))
-
-        # Per-model cooldown tracking (model_id → monotonic expiry time)
-        self._model_cooldowns: dict[str, float] = {}
-        self._cooldown_lock = threading.Lock()
-
-        # Log model groups for debugging
-        for name, models in self._model_groups.items():
-            if len(models) > 1:
-                model_strs = [f"{m}(w={w})" for m, w in models]
-                logger.debug(
-                    f"[LocalProviderWrapper] Model group '{name}': {', '.join(model_strs)}"
-                )
-
-    def _has_images(self, messages: list[Any]) -> bool:
-        """Check if messages contain image content."""
-        return has_images(messages)
-
-    def _is_image_capable(self, model_id: str) -> bool:
-        """Check if a model supports image/vision requests.
-
-        Args:
-            model_id: Full model identifier (e.g., "claude-agent/haiku", "copilot/gemini-3-pro")
-
-        Returns:
-            True if model has confirmed image support
-        """
-        return any(model_id.startswith(p) for p in self._IMAGE_CAPABLE_PATTERNS)
-
-    def record_cooldown(self, model_id: str, seconds: float) -> None:
-        """Record that a model should be avoided for the given duration.
-
-        Args:
-            model_id: The model identifier to put in cooldown
-            seconds: Duration in seconds to avoid routing to this model
-        """
-        with self._cooldown_lock:
-            self._model_cooldowns[model_id] = time.monotonic() + seconds
-        logger.info(
-            f"[LocalProviderWrapper] Model {model_id} in cooldown for {seconds:.0f}s"
-        )
-
-    def _select_model(self, model_name: str, has_images: bool = False) -> str:
-        """Select a model using weighted random selection (simple-shuffle).
-
-        For image requests, prioritizes models with confirmed image support.
-
-        Args:
-            model_name: Logical model name (e.g., "default")
-            has_images: Whether the request contains images
-
-        Returns:
-            Selected model ID
-        """
-        models = self._model_groups.get(model_name)
-        if not models:
-            # If model_name not in groups, assume it's already the model ID
-            return model_name
-
-        # For image requests, prefer image-capable models
-        if has_images and len(models) > 1:
-            image_capable = [(m, w) for m, w in models if self._is_image_capable(m)]
-            if image_capable:
-                # Use only image-capable models
-                if len(image_capable) < len(models):
-                    excluded = [m for m, _ in models if not self._is_image_capable(m)]
-                    logger.debug(
-                        f"[LocalProviderWrapper] Image request: preferring image-capable "
-                        f"models, excluding {excluded}"
-                    )
-                models = image_capable
-            # Note: If no image-capable models found, we proceed with available models
-            # and let the underlying provider handle any limitations
-
-        if len(models) == 1:
-            return models[0][0]
-
-        # Filter out weight<=0 models (disabled by user)
-        active = [(m, w) for m, w in models if w > 0]
-        if not active:
-            # All weights are 0 — uniform random selection
-            return random.choice(models)[0]
-
-        # Filter out models in cooldown (snapshot for thread safety)
-        with self._cooldown_lock:
-            cooldowns = dict(self._model_cooldowns)
-        if cooldowns:
-            now = time.monotonic()
-            available = [(m, w) for m, w in active if cooldowns.get(m, 0) <= now]
-            if not available:
-                # All active models in cooldown — pick soonest to expire
-                soonest = min(active, key=lambda x: cooldowns.get(x[0], 0))
-                logger.debug(
-                    f"[LocalProviderWrapper] All models in cooldown, "
-                    f"using soonest-expiring: {soonest[0]}"
-                )
-                return soonest[0]
-            active = available
-
-        if len(active) == 1:
-            return active[0][0]
-
-        # Weighted random selection
-        total_weight = sum(w for _, w in active)
-        r = random.uniform(0, total_weight)
-        cumulative = 0.0
-        for model_id, weight in active:
-            cumulative += weight
-            if r <= cumulative:
-                return model_id
-
-        # Fallback to last model (shouldn't happen)
-        return active[-1][0]
-
-    async def acompletion(
-        self,
-        model: str,
-        messages: list[Any],
-        **kwargs: Any,
-    ) -> Any:
-        """Make async completion call using litellm directly.
-
-        Args:
-            model: Logical model name (e.g., "default")
-            messages: Chat messages
-            **kwargs: Additional parameters (max_tokens, metadata, etc.)
-
-        Returns:
-            LiteLLM ModelResponse
-        """
-        # Check if request contains images
-        has_images = self._has_images(messages)
-
-        # Select model (with image-awareness)
-        model_id = self._select_model(model, has_images=has_images)
-
-        # Remove metadata since litellm.acompletion doesn't support it
-        kwargs.pop("metadata", None)
-
-        try:
-            # Check if this model's provider has a directly registered handler.
-            # This is needed for providers like chatgpt/ where LiteLLM has a
-            # native handler that takes priority over custom_provider_map.
-            # We call ALL local provider handlers directly for consistency.
-            if "/" in model_id:
-                from markitai.providers import get_provider
-
-                provider_prefix = model_id.split("/", 1)[0]
-                handler = get_provider(provider_prefix)
-                if handler is not None:
-                    response = await handler.acompletion(
-                        model=model_id,
-                        messages=messages,
-                        **kwargs,
-                    )
-                    return response
-
-            # Fallback to litellm.acompletion for models without a registered handler
-            response = await litellm.acompletion(
-                model=model_id,
-                messages=messages,
-                **kwargs,
-            )
-            return response
-        except Exception as e:
-            error_msg = str(e).lower()
-            is_rate_limit = any(
-                p in error_msg
-                for p in ("429", "rate limit", "quota", "too many requests")
-            )
-            if is_rate_limit:
-                cooldown_seconds = 60.0
-                import re as _re
-
-                match = _re.search(r"(\d+)\s*s", error_msg)
-                if match:
-                    cooldown_seconds = float(match.group(1))
-                self.record_cooldown(model_id, cooldown_seconds)
-            raise
-
-
-def _is_all_local_providers(model_list: list[dict[str, Any]]) -> bool:
-    """Check if all models in list use local providers.
-
-    Args:
-        model_list: List of model configurations
-
-    Returns:
-        True if ALL models use local providers (claude-agent/, copilot/)
-    """
-    from markitai.providers import is_local_provider_model
-
-    if not model_list:
-        return False
-
-    for model_config in model_list:
-        model_id = model_config.get("litellm_params", {}).get("model", "")
-        if not is_local_provider_model(model_id):
-            return False
-    return True
-
-
-class HybridRouter:
-    """Router that combines LiteLLM Router with LocalProviderWrapper.
-
-    Handles mixed configurations where both standard models (gemini/*, deepseek/*)
-    and local providers (claude-agent/*, copilot/*) are configured.
-
-    Routes requests to the appropriate backend based on the selected model:
-    - Local provider models -> LocalProviderWrapper
-    - Standard models -> LiteLLM Router
-    """
-
-    # Model-level error patterns that indicate the model itself is unavailable
-    # (not a content/request issue). These warrant long cooldown.
-    # Canonical definition lives in markitai.llm.engine; the class attribute
-    # keeps the HybridRouter.MODEL_LEVEL_ERROR_PATTERNS access path working.
-    MODEL_LEVEL_ERROR_PATTERNS = _ENGINE_MODEL_LEVEL_ERROR_PATTERNS
-
-    def __init__(
-        self,
-        standard_router: Router,
-        local_wrapper: LocalProviderWrapper,
-    ) -> None:
-        """Initialize HybridRouter.
-
-        Args:
-            standard_router: LiteLLM Router for standard models
-            local_wrapper: LocalProviderWrapper for local provider models
-        """
-        self.standard_router = standard_router
-        self.local_wrapper = local_wrapper
-
-        # Combine model lists for weighted selection
-        # Format: (model_id, weight, is_local)
-        self._all_models: list[tuple[str, float, bool]] = []
-
-        # Add standard models
-        for model_config in standard_router.model_list:
-            model_id = model_config.get("litellm_params", {}).get("model", "")
-            weight = model_config.get("litellm_params", {}).get("weight", 1.0)
-            self._all_models.append((model_id, weight, False))
-
-        # Add local provider models
-        for model_config in local_wrapper.model_list:
-            model_id = model_config.get("litellm_params", {}).get("model", "")
-            weight = model_config.get("litellm_params", {}).get("weight", 1.0)
-            self._all_models.append((model_id, weight, True))
-
-        # Build model groups for logical model name resolution
-        self._model_groups: dict[str, list[tuple[str, float, bool]]] = {}
-        for model_config in standard_router.model_list:
-            model_name = model_config.get("model_name", "default")
-            model_id = model_config.get("litellm_params", {}).get("model", "")
-            weight = model_config.get("litellm_params", {}).get("weight", 1.0)
-            if model_name not in self._model_groups:
-                self._model_groups[model_name] = []
-            self._model_groups[model_name].append((model_id, weight, False))
-
-        for model_config in local_wrapper.model_list:
-            model_name = model_config.get("model_name", "default")
-            model_id = model_config.get("litellm_params", {}).get("model", "")
-            weight = model_config.get("litellm_params", {}).get("weight", 1.0)
-            if model_name not in self._model_groups:
-                self._model_groups[model_name] = []
-            self._model_groups[model_name].append((model_id, weight, True))
-
-        # Pre-compute image-capable models per group to avoid per-call filtering
-        self._image_capable_cache: dict[str, list[tuple[str, float, bool]]] = {}
-        for group_name, models in self._model_groups.items():
-            self._image_capable_cache[group_name] = [
-                (m, w, is_local)
-                for m, w, is_local in models
-                if self._is_image_capable(m)
-            ]
-
-        # Per-model cooldown tracking (model_id → monotonic expiry time)
-        self._model_cooldowns: dict[str, float] = {}
-        self._cooldown_lock = threading.Lock()
-
-        # Log hybrid router configuration
-        local_models = [m for m, _, is_local in self._all_models if is_local]
-        standard_models = [m for m, _, is_local in self._all_models if not is_local]
-        logger.debug(
-            f"[HybridRouter] Initialized with {len(standard_models)} standard "
-            f"and {len(local_models)} local provider models"
-        )
-
-    def _has_images(self, messages: list[Any]) -> bool:
-        """Check if messages contain image content."""
-        return has_images(messages)
-
-    def _is_local_model(self, model_id: str) -> bool:
-        """Check if model_id is a local provider model."""
-        from markitai.providers import is_local_provider_model
-
-        return is_local_provider_model(model_id)
-
-    def _is_image_capable(self, model_id: str) -> bool:
-        """Check if model supports images."""
-        # Local provider models - use LocalProviderWrapper's logic
-        if self._is_local_model(model_id):
-            return self.local_wrapper._is_image_capable(model_id)
-
-        # Standard models - check litellm model info
-        info = get_model_info_cached(model_id)
-        return info.get("supports_vision", False)
-
-    def record_cooldown(self, model_id: str, seconds: float) -> None:
-        """Record that a model should be avoided for the given duration.
-
-        Args:
-            model_id: The model identifier to put in cooldown
-            seconds: Duration in seconds to avoid routing to this model
-        """
-        with self._cooldown_lock:
-            self._model_cooldowns[model_id] = time.monotonic() + seconds
-        logger.info(f"[HybridRouter] Model {model_id} in cooldown for {seconds:.0f}s")
-
-    def _select_model(self, model_name: str, has_images: bool = False) -> str:
-        """Select a model using weighted random selection.
-
-        For image requests, prioritizes image-capable models.
-
-        Args:
-            model_name: Logical model name (e.g., "default")
-            has_images: Whether the request contains images
-
-        Returns:
-            Selected model ID
-        """
-        models = self._model_groups.get(model_name)
-        if not models:
-            # If model_name not in groups, assume it's already the model ID
-            return model_name
-
-        # For image requests, prefer image-capable models
-        if has_images and len(models) > 1:
-            image_capable = self._image_capable_cache.get(model_name, [])
-            if image_capable:
-                if len(image_capable) < len(models):
-                    image_capable_ids = {m for m, _, _ in image_capable}
-                    excluded = [m for m, _, _ in models if m not in image_capable_ids]
-                    logger.debug(
-                        f"[HybridRouter] Image request: preferring image-capable "
-                        f"models, excluding {excluded}"
-                    )
-                models = image_capable
-
-        if len(models) == 1:
-            return models[0][0]
-
-        # Filter out weight<=0 models (disabled by user)
-        active = [(m, w, loc) for m, w, loc in models if w > 0]
-        if not active:
-            # All weights are 0 — uniform random selection
-            return random.choice(models)[0]
-
-        # Filter out models in cooldown (snapshot for thread safety)
-        with self._cooldown_lock:
-            cooldowns = dict(self._model_cooldowns)
-        if cooldowns:
-            now = time.monotonic()
-            available = [
-                (m, w, loc) for m, w, loc in active if cooldowns.get(m, 0) <= now
-            ]
-            if not available:
-                # All active models in cooldown — pick soonest to expire
-                soonest = min(active, key=lambda x: cooldowns.get(x[0], 0))
-                logger.debug(
-                    f"[HybridRouter] All models in cooldown, "
-                    f"using soonest-expiring: {soonest[0]}"
-                )
-                return soonest[0]
-            active = available
-
-        if len(active) == 1:
-            return active[0][0]
-
-        # Weighted random selection
-        total_weight = sum(w for _, w, _ in active)
-        r = random.uniform(0, total_weight)
-        cumulative = 0.0
-        for model_id, weight, _ in active:
-            cumulative += weight
-            if r <= cumulative:
-                return model_id
-
-        return active[-1][0]
-
-    async def acompletion(
-        self,
-        model: str,
-        messages: list[Any],
-        **kwargs: Any,
-    ) -> Any:
-        """Route completion request to appropriate backend.
-
-        Args:
-            model: Logical model name (e.g., "default")
-            messages: Chat messages
-            **kwargs: Additional parameters
-
-        Returns:
-            LiteLLM ModelResponse
-        """
-        has_images = self._has_images(messages)
-        selected_model = self._select_model(model, has_images)
-
-        try:
-            if self._is_local_model(selected_model):
-                logger.debug(
-                    f"[HybridRouter] Routing to local provider: {selected_model}"
-                )
-                return await self.local_wrapper.acompletion(
-                    selected_model, messages, **kwargs
-                )
-            else:
-                logger.debug(
-                    f"[HybridRouter] Routing to standard router: {selected_model}"
-                )
-                return await self.standard_router.acompletion(
-                    selected_model, messages, **kwargs
-                )
-        except Exception as e:
-            error_msg = str(e).lower()
-            is_rate_limit = any(
-                p in error_msg
-                for p in ("429", "rate limit", "quota", "too many requests")
-            )
-            if is_rate_limit:
-                cooldown_seconds = 60.0
-                import re as _re
-
-                match = _re.search(r"(\d+)\s*s", error_msg)
-                if match:
-                    cooldown_seconds = float(match.group(1))
-                self.record_cooldown(selected_model, cooldown_seconds)
-
-            # Model-level errors: region restriction, model not available, etc.
-            # Apply long cooldown so retries pick a different model.
-            is_model_level = any(
-                p in error_msg for p in self.MODEL_LEVEL_ERROR_PATTERNS
-            )
-            if is_model_level:
-                self.record_cooldown(selected_model, 3600.0)
-                logger.warning(
-                    f"[HybridRouter] Model {selected_model} unavailable "
-                    f"(model-level error), cooldown 3600s: "
-                    f"{format_error_message(e)}"
-                )
-            raise
-
-    @property
-    def model_list(self) -> list[dict[str, Any]]:
-        """Get combined model list from both routers."""
-        return self.standard_router.model_list + self.local_wrapper.model_list
-
+from markitai.utils.text import preview_items_for_log
 
 # Enable automatic max_tokens adjustment to model limits
 # When user-specified max_tokens exceeds model's max_output_tokens,
@@ -591,7 +78,7 @@ _markitai_llm_logger = MarkitaiLLMLogger()
 
 
 class LLMProcessor:
-    """LLM processor using LiteLLM Router for load balancing.
+    """LLM processor using MarkitaiRouter for load balancing.
 
     Facade over two composed services (Phase 2.3, ex-mixins):
 
@@ -647,8 +134,8 @@ class LLMProcessor:
         self.config = config
         self._runtime = runtime
         self._extra_cleaning_rules = extra_cleaning_rules
-        self._router: Router | LocalProviderWrapper | HybridRouter | None = None
-        self._vision_router: Router | LocalProviderWrapper | HybridRouter | None = None
+        self._router: MarkitaiRouter | None = None
+        self._vision_router: MarkitaiRouter | None = None
         self._semaphore: asyncio.Semaphore | None = None
         self._io_semaphore: asyncio.Semaphore | None = None
         self._engine: LLMEngine | None = None
@@ -754,8 +241,8 @@ class LLMProcessor:
                 self._call_counter.clear()
 
     @property
-    def router(self) -> Router | LocalProviderWrapper | HybridRouter:
-        """Get or create the LiteLLM Router (or LocalProviderWrapper/HybridRouter for local models)."""
+    def router(self) -> MarkitaiRouter:
+        """Get or create the router for the full configured model pool."""
         if self._router is None:
             self._router = self._create_router()
         return self._router
@@ -1035,28 +522,65 @@ class LLMProcessor:
         """Extract text content from a document page image (see VisionAnalyzer)."""
         return await self.vision.extract_page_content(image_path, context=context)
 
-    def _create_router(self) -> Router | LocalProviderWrapper | HybridRouter:
-        """Create LiteLLM Router from configuration.
+    def _create_router(self, models: list[ModelConfig] | None = None) -> MarkitaiRouter:
+        """Create a MarkitaiRouter from model configurations.
 
-        If all models use local providers (claude-agent/, copilot/), returns
-        a LocalProviderWrapper instead. If mixed, returns a HybridRouter.
+        Args:
+            models: Optional subset of ``self.config.model_list`` (used by
+                the vision router). Defaults to the full configured list.
 
         Returns:
-            Router, LocalProviderWrapper, or HybridRouter instance
+            MarkitaiRouter over the usable models (local providers
+            dispatched directly, standard models delegated to an inner
+            LiteLLM Router).
+
+        Raises:
+            ValueError: If no usable models remain after filtering.
         """
-        if not self.config.model_list:
+        source_models = self.config.model_list if models is None else models
+        if not source_models:
             raise ValueError("No models configured in llm.model_list")
 
-        # Build model list with resolved API keys and max_tokens
-        # Skip models whose SDKs are not available
+        model_list = self._build_router_entries(source_models)
+
+        model_names = [e["litellm_params"]["model"].split("/")[-1] for e in model_list]
+        logger.info(
+            f"[Router] Model pool ({len(model_list)}): "
+            f"{preview_items_for_log(model_names)}"
+        )
+
+        return MarkitaiRouter(
+            model_list=model_list,
+            router_settings=self.config.router_settings.model_dump(),
+        )
+
+    def _build_router_entries(self, models: list[ModelConfig]) -> list[dict[str, Any]]:
+        """Build LiteLLM-Router-format entries from model configurations.
+
+        Resolves ``env:`` API keys/bases and filters out unusable models
+        (SDK unavailable, ``weight <= 0``, missing environment variables).
+        All entries are normalized into the single ``"default"`` balancing
+        pool.
+
+        Args:
+            models: ModelConfig objects (full list or a subset).
+
+        Returns:
+            Non-empty list of model entry dicts.
+
+        Raises:
+            ValueError: If no usable models remain, with a message naming
+                the dominant cause (all disabled / missing env vars / no
+                SDKs).
+        """
         from markitai.config import EnvVarNotFoundError
         from markitai.providers import is_local_provider_available
 
-        model_list = []
-        skipped_models = []
-        disabled_models = []
+        model_list: list[dict[str, Any]] = []
+        skipped_models: list[str] = []
+        disabled_models: list[str] = []
         skipped_env_vars: list[str] = []
-        for model_config in self.config.model_list:
+        for model_config in models:
             model_id = model_config.litellm_params.model
 
             # Skip local provider models if their SDK is not available
@@ -1069,7 +593,7 @@ class LLMProcessor:
                 disabled_models.append(model_id)
                 continue
 
-            model_entry = {
+            model_entry: dict[str, Any] = {
                 "model_name": model_config.model_name,
                 "litellm_params": {
                     "model": model_id,
@@ -1129,10 +653,8 @@ class LLMProcessor:
             )
 
         if not model_list:
-            disabled_count = sum(
-                1 for m in self.config.model_list if m.litellm_params.weight <= 0
-            )
-            if disabled_count == len(self.config.model_list):
+            disabled_count = sum(1 for m in models if m.litellm_params.weight <= 0)
+            if disabled_count == len(models):
                 raise ValueError(
                     f"All {disabled_count} configured models have weight=0 (disabled). "
                     "Set weight > 0 on at least one model to enable it."
@@ -1152,221 +674,7 @@ class LLMProcessor:
         for entry in model_list:
             entry["model_name"] = "default"
 
-        # Log router configuration (compact format)
-        model_names = [e["litellm_params"]["model"].split("/")[-1] for e in model_list]
-
-        # Check if all models use local providers
-        # LiteLLM Router doesn't support custom providers, so we use a wrapper
-        if _is_all_local_providers(model_list):
-            logger.info(
-                f"[Router] Local provider pool ({len(model_list)}): "
-                f"{preview_items_for_log(model_names)}"
-            )
-            return LocalProviderWrapper(model_list=model_list)
-
-        # Separate local providers from standard models
-        from markitai.providers import is_local_provider_model
-
-        standard_models = []
-        local_models = []
-        for entry in model_list:
-            model_id = entry["litellm_params"]["model"]
-            if is_local_provider_model(model_id):
-                local_models.append(entry)
-            else:
-                standard_models.append(entry)
-
-        if not standard_models:
-            raise ValueError(
-                "No standard models available after filtering local providers. "
-                "Use only local providers (claude-agent/, copilot/) or add standard models."
-            )
-
-        # Build router settings
-        router_settings = self.config.router_settings.model_dump()
-
-        # Disable internal retries - we handle retries ourselves for better logging
-        router_settings["num_retries"] = 0
-
-        standard_names = [
-            e["litellm_params"]["model"].split("/")[-1] for e in standard_models
-        ]
-
-        # Create standard router
-        standard_router = Router(model_list=standard_models, **router_settings)
-
-        # If we have both local and standard models, use HybridRouter
-        if local_models:
-            local_wrapper = LocalProviderWrapper(model_list=local_models)
-            local_names = [e["litellm_params"]["model"] for e in local_models]
-            logger.info(
-                f"[Router] Creating HybridRouter: {len(standard_models)} standard + "
-                f"{len(local_models)} local models"
-            )
-            logger.debug(
-                f"[Router] Standard: {', '.join(standard_names)}, "
-                f"Local: {', '.join(local_names)}"
-            )
-            return HybridRouter(
-                standard_router=standard_router,
-                local_wrapper=local_wrapper,
-            )
-
-        logger.info(
-            f"[Router] Creating with strategy={router_settings.get('routing_strategy')}, "
-            f"models={len(standard_models)}: {preview_items_for_log(standard_names)}"
-        )
-
-        return standard_router
-
-    def _create_router_from_models(
-        self, models: list[Any], router_settings: dict[str, Any] | None = None
-    ) -> Router | LocalProviderWrapper | HybridRouter:
-        """Create a Router from a subset of model configurations.
-
-        If all models use local providers (claude-agent/, copilot/), returns
-        a LocalProviderWrapper. If mixed, returns a HybridRouter.
-
-        Args:
-            models: List of ModelConfig objects from self.config.model_list
-            router_settings: Optional router settings (uses default if not provided)
-
-        Returns:
-            Router, LocalProviderWrapper, or HybridRouter instance
-        """
-        # Build model list with resolved API keys and max_tokens
-        # Skip models whose SDKs are not available
-        from markitai.config import EnvVarNotFoundError
-        from markitai.providers import is_local_provider_available
-
-        model_list = []
-        disabled_models = []
-        skipped_env_vars: list[str] = []
-        for model_config in models:
-            model_id = model_config.litellm_params.model
-
-            # Skip local provider models if their SDK is not available
-            if not is_local_provider_available(model_id):
-                continue
-
-            # weight <= 0 means model is disabled (e.g. no API quota)
-            if model_config.litellm_params.weight <= 0:
-                disabled_models.append(model_id)
-                continue
-
-            model_entry = {
-                "model_name": model_config.model_name,
-                "litellm_params": {
-                    "model": model_id,
-                },
-            }
-
-            # Add optional params — skip model if env var is missing
-            try:
-                api_key = model_config.litellm_params.get_resolved_api_key()
-            except EnvVarNotFoundError as e:
-                skipped_env_vars.append(e.var_name)
-                logger.warning(
-                    f"[Router] Skipping model {model_id}: "
-                    f"environment variable {e.var_name} not set"
-                )
-                continue
-
-            if api_key:
-                model_entry["litellm_params"]["api_key"] = api_key
-
-            try:
-                api_base = model_config.litellm_params.get_resolved_api_base()
-            except EnvVarNotFoundError as e:
-                skipped_env_vars.append(e.var_name)
-                logger.warning(
-                    f"[Router] Skipping model {model_id}: "
-                    f"environment variable {e.var_name} not set"
-                )
-                continue
-
-            if api_base:
-                model_entry["litellm_params"]["api_base"] = api_base
-
-            if model_config.litellm_params.weight != 1:
-                model_entry["litellm_params"]["weight"] = (
-                    model_config.litellm_params.weight
-                )
-
-            # Note: max_tokens calculated dynamically per-request
-
-            if model_config.model_info:
-                model_entry["model_info"] = model_config.model_info.model_dump()
-
-            model_list.append(model_entry)
-
-        if not model_list:
-            disabled_count = sum(1 for m in models if m.litellm_params.weight <= 0)
-            if skipped_env_vars:
-                vars_str = ", ".join(skipped_env_vars)
-                raise ValueError(
-                    f"No available models: missing environment variable(s): {vars_str}. "
-                    "Set them via 'export VAR=value' or add to .env file."
-                )
-            if disabled_count == len(models):
-                raise ValueError(
-                    f"All {disabled_count} configured models have weight=0 (disabled). "
-                    "Set weight > 0 on at least one model to enable it."
-                )
-            raise ValueError(
-                "No available models after filtering. "
-                "Check that required SDKs are installed for configured models."
-            )
-
-        if disabled_models:
-            logger.debug(
-                f"[Router] Skipped {len(disabled_models)} disabled models (weight=0): "
-                f"{preview_items_for_log(disabled_models)}"
-            )
-
-        # Check if all models use local providers
-        if _is_all_local_providers(model_list):
-            return LocalProviderWrapper(model_list=model_list)
-
-        # Separate local providers from standard models
-        from markitai.providers import is_local_provider_model
-
-        local_models = []
-        standard_models = []
-        for entry in model_list:
-            model_id = entry["litellm_params"]["model"]
-            if is_local_provider_model(model_id):
-                local_models.append(entry)
-            else:
-                standard_models.append(entry)
-
-        if not standard_models:
-            raise ValueError(
-                "No standard models available after filtering local providers. "
-                "Use only local providers (claude-agent/, copilot/) or add standard models."
-            )
-
-        # Use provided settings or default
-        settings = router_settings or self.config.router_settings.model_dump()
-        settings["num_retries"] = 0  # We handle retries ourselves
-
-        # Create standard router
-        standard_router = Router(model_list=standard_models, **settings)
-
-        # If we have both local and standard models, use HybridRouter
-        if local_models:
-            local_wrapper = LocalProviderWrapper(model_list=local_models)
-            local_names = [e["litellm_params"]["model"] for e in local_models]
-            standard_names = [e["litellm_params"]["model"] for e in standard_models]
-            logger.debug(
-                f"[Router] Using HybridRouter: local={local_names}, standard={standard_names}"
-            )
-            return HybridRouter(
-                standard_router=standard_router,
-                local_wrapper=local_wrapper,
-            )
-
-        return standard_router
+        return model_list
 
     def _is_vision_model(self, model_config: Any) -> bool:
         """Check if a model supports vision.
@@ -1403,14 +711,14 @@ class LLMProcessor:
         return info.get("supports_vision", False)
 
     @property
-    def vision_router(self) -> Router | LocalProviderWrapper | HybridRouter:
-        """Get or create Router with only vision-capable models (lazy).
+    def vision_router(self) -> MarkitaiRouter:
+        """Get or create the router restricted to vision-capable models (lazy).
 
         Filters models using auto-detection from litellm or config override.
         Falls back to main router if no vision models found.
 
         Returns:
-            Router or LocalProviderWrapper with vision-capable models only
+            MarkitaiRouter with vision-capable models only
         """
         if self._vision_router is None:
             vision_models = [
@@ -1439,7 +747,7 @@ class LLMProcessor:
                     f"[Router] Vision router ({len(enabled_vision)}): "
                     f"{preview_items_for_log(model_names)}"
                 )
-                self._vision_router = self._create_router_from_models(enabled_vision)
+                self._vision_router = self._create_router(enabled_vision)
 
         return self._vision_router
 
@@ -1485,7 +793,7 @@ class LLMProcessor:
         self,
         messages: list[Any],
         target_model_id: str | None = None,
-        router: Router | LocalProviderWrapper | HybridRouter | None = None,
+        router: MarkitaiRouter | None = None,
     ) -> int | None:
         """Calculate dynamic max_tokens based on input size and target model.
 
@@ -1501,7 +809,7 @@ class LLMProcessor:
         Args:
             messages: Chat messages to estimate input tokens
             target_model_id: Specific model ID (from router pre-selection)
-            router: Optional Router or LocalProviderWrapper for model limit lookup
+            router: Optional MarkitaiRouter for model limit lookup
 
         Returns:
             Safe max_tokens value, or None to let LiteLLM use model defaults
@@ -1593,9 +901,7 @@ class LLMProcessor:
 
         return max_tokens
 
-    def _get_router_primary_model(
-        self, router: Router | LocalProviderWrapper | HybridRouter
-    ) -> str | None:
+    def _get_router_primary_model(self, router: MarkitaiRouter) -> str | None:
         """Get the highest-weight model ID from a Router's model_list.
 
         Returns the model with the greatest weight, which is most likely
@@ -1603,7 +909,7 @@ class LLMProcessor:
         and error reporting.
 
         Args:
-            router: LiteLLM Router, LocalProviderWrapper, or HybridRouter instance
+            router: MarkitaiRouter instance
 
         Returns:
             Model ID string (e.g., "chatgpt/gpt-5.3"), or None if unavailable
@@ -1635,7 +941,7 @@ class LLMProcessor:
         call_id: str,
         context: str = "",
         max_retries: int = DEFAULT_MAX_RETRIES,
-        router: Router | LocalProviderWrapper | HybridRouter | None = None,
+        router: MarkitaiRouter | None = None,
     ) -> LLMResponse:
         """
         Make an LLM call with custom retry logic and detailed logging.
@@ -1650,7 +956,7 @@ class LLMProcessor:
             call_id: Unique identifier for this call (for logging)
             context: Context identifier for usage tracking (e.g., filename)
             max_retries: Maximum number of retry attempts
-            router: Router or LocalProviderWrapper to use (defaults to self.router)
+            router: Router to use (defaults to self.router)
 
         Returns:
             LLMResponse with content and usage info

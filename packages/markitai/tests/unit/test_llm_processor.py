@@ -33,11 +33,13 @@ from markitai.llm.models import (
     get_model_max_output_tokens,
     get_response_cost,
 )
-from markitai.llm.processor import (
-    HybridRouter,
-    LLMProcessor,
-    LocalProviderWrapper,
-    _is_all_local_providers,
+from markitai.llm.processor import LLMProcessor
+from markitai.llm.router import (
+    STANDARD_POOL_ID,
+    MarkitaiRouter,
+    RouterCandidate,
+    cooldown_seconds_for_error,
+    select_weighted_model,
 )
 
 # =============================================================================
@@ -90,44 +92,6 @@ class TestContextDisplayName:
     def test_relative_path(self):
         """Test relative path extracts filename."""
         assert context_display_name("subdir/file.pdf") == "file.pdf"
-
-
-class TestIsAllLocalProviders:
-    """Tests for _is_all_local_providers function."""
-
-    def test_empty_list(self):
-        """Test empty list returns False."""
-        assert _is_all_local_providers([]) is False
-
-    def test_all_local_providers(self):
-        """Test all local providers returns True."""
-        model_list = [
-            {"litellm_params": {"model": "claude-agent/sonnet"}},
-            {"litellm_params": {"model": "copilot/claude-sonnet-4"}},
-        ]
-        with patch("markitai.providers.is_local_provider_model", return_value=True):
-            assert _is_all_local_providers(model_list) is True
-
-    def test_mixed_providers(self):
-        """Test mixed providers returns False."""
-        model_list = [
-            {"litellm_params": {"model": "claude-agent/sonnet"}},
-            {"litellm_params": {"model": "openai/gpt-4o"}},
-        ]
-        with patch(
-            "markitai.providers.is_local_provider_model",
-            side_effect=lambda x: x.startswith("claude-agent/"),
-        ):
-            assert _is_all_local_providers(model_list) is False
-
-    def test_no_local_providers(self):
-        """Test no local providers returns False."""
-        model_list = [
-            {"litellm_params": {"model": "openai/gpt-4o"}},
-            {"litellm_params": {"model": "deepseek/deepseek-chat"}},
-        ]
-        with patch("markitai.providers.is_local_provider_model", return_value=False):
-            assert _is_all_local_providers(model_list) is False
 
 
 class TestGetModelInfoCached:
@@ -259,142 +223,205 @@ class TestGetResponseCost:
 
 
 # =============================================================================
-# Test LocalProviderWrapper
+# Test select_weighted_model (pure selection function)
 # =============================================================================
 
 
-class TestLocalProviderWrapper:
-    """Tests for LocalProviderWrapper class."""
+def _cand(model_id: str, weight: float = 1.0, image_capable: bool = True):
+    return RouterCandidate(
+        model_id=model_id, weight=weight, image_capable=image_capable
+    )
 
-    def test_init_single_model(self):
-        """Test initialization with single model."""
-        model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "claude-agent/sonnet", "weight": 1.0},
-            }
-        ]
-        wrapper = LocalProviderWrapper(model_list)
-        assert len(wrapper._model_groups["default"]) == 1
 
-    def test_init_multiple_models(self):
-        """Test initialization with multiple models."""
-        model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "claude-agent/sonnet", "weight": 2.0},
-            },
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "claude-agent/haiku", "weight": 1.0},
-            },
-        ]
-        wrapper = LocalProviderWrapper(model_list)
-        assert len(wrapper._model_groups["default"]) == 2
+class TestSelectWeightedModel:
+    """Tests for the pure weighted selection function."""
 
-    def test_has_images_true(self):
-        """Test _has_images detects image content."""
-        wrapper = LocalProviderWrapper([])
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Describe this image"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/png;base64,xxx"},
-                    },
-                ],
-            }
-        ]
-        assert wrapper._has_images(messages) is True
+    def test_empty_returns_none(self):
+        """Empty candidate list yields None."""
+        assert select_weighted_model([], cooldowns={}, now=0.0) is None
 
-    def test_has_images_false(self):
-        """Test _has_images returns False for text-only."""
-        wrapper = LocalProviderWrapper([])
-        messages = [{"role": "user", "content": "Hello, world!"}]
-        assert wrapper._has_images(messages) is False
-
-    def test_is_image_capable_claude_agent(self):
-        """Test claude-agent models are image capable."""
-        wrapper = LocalProviderWrapper([])
-        assert wrapper._is_image_capable("claude-agent/sonnet") is True
-        assert wrapper._is_image_capable("claude-agent/opus") is True
-        assert wrapper._is_image_capable("claude-agent/haiku") is True
-
-    def test_is_image_capable_copilot_claude(self):
-        """Test copilot Claude models are image capable."""
-        wrapper = LocalProviderWrapper([])
-        assert wrapper._is_image_capable("copilot/claude-sonnet-4") is True
-        assert wrapper._is_image_capable("copilot/claude-3.5-sonnet") is True
-
-    def test_is_image_capable_copilot_gpt4o(self):
-        """Test copilot GPT-4o models are image capable."""
-        wrapper = LocalProviderWrapper([])
-        assert wrapper._is_image_capable("copilot/gpt-4o") is True
-        assert wrapper._is_image_capable("copilot/gpt-4o-mini") is True
-
-    def test_is_image_capable_non_vision_model(self):
-        """Test non-vision models are not image capable."""
-        wrapper = LocalProviderWrapper([])
-        assert wrapper._is_image_capable("copilot/gpt-3.5-turbo") is False
-        assert wrapper._is_image_capable("openai/gpt-4") is False
-
-    def test_select_model_single(self):
-        """Test model selection with single model."""
-        model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "claude-agent/sonnet", "weight": 1.0},
-            }
-        ]
-        wrapper = LocalProviderWrapper(model_list)
-        selected = wrapper._select_model("default")
+    def test_single_candidate(self):
+        """A single candidate is always selected."""
+        selected = select_weighted_model(
+            [_cand("claude-agent/sonnet")], cooldowns={}, now=0.0
+        )
         assert selected == "claude-agent/sonnet"
 
-    def test_select_model_skips_zero_weight(self):
+    def test_skips_zero_weight(self):
         """weight=0 models should never be selected when others have weight > 0."""
-        model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "claude-agent/haiku", "weight": 0},
-            },
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "copilot/gpt-5", "weight": 0},
-            },
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 20},
-            },
+        candidates = [
+            _cand("claude-agent/haiku", weight=0),
+            _cand("copilot/gpt-5", weight=0),
+            _cand("chatgpt/gpt-5.3", weight=20),
         ]
-        wrapper = LocalProviderWrapper(model_list)
-        # Run 50 times — should always pick the non-zero weight model
         for _ in range(50):
-            selected = wrapper._select_model("default")
-            assert selected == "chatgpt/gpt-5.3"
+            assert (
+                select_weighted_model(candidates, cooldowns={}, now=0.0)
+                == "chatgpt/gpt-5.3"
+            )
 
-    def test_select_model_all_zero_weight_still_works(self):
-        """If all weights are 0, should still select a model (uniform fallback)."""
-        model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "claude-agent/haiku", "weight": 0},
-            },
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "copilot/gpt-5", "weight": 0},
-            },
+    def test_all_zero_weight_still_selects(self):
+        """If all weights are 0, selection falls back to uniform random."""
+        candidates = [
+            _cand("claude-agent/haiku", weight=0),
+            _cand("copilot/gpt-5", weight=0),
         ]
-        wrapper = LocalProviderWrapper(model_list)
-        selected = wrapper._select_model("default")
+        selected = select_weighted_model(candidates, cooldowns={}, now=0.0)
         assert selected in ("claude-agent/haiku", "copilot/gpt-5")
 
-    def test_select_model_unknown_name(self):
-        """Test selecting unknown model name returns the name."""
-        wrapper = LocalProviderWrapper([])
-        selected = wrapper._select_model("unknown-model")
-        assert selected == "unknown-model"
+    def test_skips_cooldown_model(self):
+        """Models in cooldown should be skipped during selection."""
+        candidates = [
+            _cand("claude-agent/sonnet", weight=10),
+            _cand("copilot/gemini-3-flash", weight=10),
+        ]
+        cooldowns = {"copilot/gemini-3-flash": 100.0}
+        selections = {
+            select_weighted_model(candidates, cooldowns=cooldowns, now=50.0)
+            for _ in range(50)
+        }
+        assert selections == {"claude-agent/sonnet"}
+
+    def test_routes_after_cooldown_expires(self):
+        """Models should be routable again after cooldown expires."""
+        candidates = [
+            _cand("claude-agent/sonnet", weight=10),
+            _cand("copilot/gemini-3-flash", weight=10),
+        ]
+        cooldowns = {"copilot/gemini-3-flash": 100.0}
+        selections = {
+            select_weighted_model(candidates, cooldowns=cooldowns, now=101.0)
+            for _ in range(100)
+        }
+        assert len(selections) == 2
+
+    def test_picks_soonest_expiring_when_all_in_cooldown(self):
+        """When all models are in cooldown, pick the one expiring soonest."""
+        candidates = [
+            _cand("model-a", weight=10),
+            _cand("model-b", weight=10),
+        ]
+        cooldowns = {"model-a": 120.0, "model-b": 10.0}
+        assert (
+            select_weighted_model(candidates, cooldowns=cooldowns, now=0.0) == "model-b"
+        )
+
+    def test_image_request_prefers_image_capable(self):
+        """Vision requests exclude non-image-capable candidates."""
+        candidates = [
+            _cand("copilot/grok-1", weight=10, image_capable=False),
+            _cand("claude-agent/sonnet", weight=10, image_capable=True),
+        ]
+        selections = {
+            select_weighted_model(
+                candidates, cooldowns={}, now=0.0, prefer_image_capable=True
+            )
+            for _ in range(50)
+        }
+        assert selections == {"claude-agent/sonnet"}
+
+    def test_image_request_without_capable_candidates_proceeds(self):
+        """With no image-capable candidate, all candidates stay eligible."""
+        candidates = [
+            _cand("copilot/grok-1", weight=10, image_capable=False),
+            _cand("copilot/grok-2", weight=10, image_capable=False),
+        ]
+        selected = select_weighted_model(
+            candidates, cooldowns={}, now=0.0, prefer_image_capable=True
+        )
+        assert selected in ("copilot/grok-1", "copilot/grok-2")
+
+
+# =============================================================================
+# Test cooldown_seconds_for_error (unified error classification)
+# =============================================================================
+
+
+class TestCooldownSecondsForError:
+    """Tests for the single error-to-cooldown classification."""
+
+    def test_rate_limit_default(self):
+        """Rate-limit text without a retry hint uses the 60s default."""
+        assert cooldown_seconds_for_error("429 Too Many Requests") == 60.0
+
+    def test_rate_limit_with_retry_after(self):
+        """A "retry in Ns" hint overrides the default cooldown."""
+        assert (
+            cooldown_seconds_for_error("Rate limit: quota will reset after 30s") == 30.0
+        )
+
+    def test_model_level_error(self):
+        """Model-level errors get the long cooldown."""
+        assert (
+            cooldown_seconds_for_error("User location is not supported for the API")
+            == 3600.0
+        )
+
+    def test_model_level_wins_over_rate_limit(self):
+        """When both match, the model-level (long) cooldown wins."""
+        assert (
+            cooldown_seconds_for_error("429 quota: model is not available in 10s")
+            == 3600.0
+        )
+
+    def test_content_error_no_cooldown(self):
+        """Content-specific errors say nothing about routability."""
+        assert cooldown_seconds_for_error("Invalid request: content too long") is None
+
+
+# =============================================================================
+# Test MarkitaiRouter — local provider pool
+# =============================================================================
+
+
+def _local_entry(model: str, weight: float = 1.0) -> dict:
+    return {
+        "model_name": "default",
+        "litellm_params": {"model": model, "weight": weight},
+    }
+
+
+def _standard_entry(model: str, weight: float = 1.0) -> dict:
+    return {
+        "model_name": "default",
+        "litellm_params": {"model": model, "weight": weight, "api_key": "test-key"},
+    }
+
+
+class TestMarkitaiRouterLocal:
+    """Tests for MarkitaiRouter with only local provider models."""
+
+    def test_init_builds_local_group(self):
+        """Local entries land in the default selection group, no LiteLLM Router."""
+        router = MarkitaiRouter(
+            [
+                _local_entry("claude-agent/sonnet", 2.0),
+                _local_entry("claude-agent/haiku", 1.0),
+            ]
+        )
+        assert router._standard_router is None
+        assert len(router._groups["default"]) == 2
+
+    def test_model_list_property(self):
+        """model_list returns the original entries."""
+        entries = [_local_entry("claude-agent/sonnet")]
+        router = MarkitaiRouter(entries)
+        assert router.model_list == entries
+
+    def test_is_image_capable_patterns(self):
+        """Image capability follows the local provider pattern table."""
+        router = MarkitaiRouter([])
+        assert router._is_image_capable_local("claude-agent/sonnet") is True
+        assert router._is_image_capable_local("copilot/claude-sonnet-4") is True
+        assert router._is_image_capable_local("copilot/gpt-4o-mini") is True
+        assert router._is_image_capable_local("chatgpt/gpt-5.3") is True
+        assert router._is_image_capable_local("copilot/gpt-3.5-turbo") is False
+        assert router._is_image_capable_local("copilot/grok-3") is False
+
+    def test_select_unknown_name_passes_through(self):
+        """Unknown model names pass through unchanged (concrete-id calls)."""
+        router = MarkitaiRouter([])
+        assert router._select("unknown-model", False) == "unknown-model"
 
     @pytest.mark.asyncio
     async def test_acompletion_calls_registered_handler_directly(self):
@@ -407,17 +434,11 @@ class TestLocalProviderWrapper:
         mock_response = MagicMock()
         mock_handler.acompletion.return_value = mock_response
 
-        model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 1.0},
-            }
-        ]
-        wrapper = LocalProviderWrapper(model_list)
+        router = MarkitaiRouter([_local_entry("chatgpt/gpt-5.3")])
         messages = [{"role": "user", "content": "Hello"}]
 
         with patch("markitai.providers.get_provider", return_value=mock_handler):
-            result = await wrapper.acompletion("default", messages)
+            result = await router.acompletion("default", messages)
 
         assert result is mock_response
         mock_handler.acompletion.assert_called_once_with(
@@ -429,22 +450,16 @@ class TestLocalProviderWrapper:
     async def test_acompletion_falls_back_to_litellm_when_no_handler(self):
         """Should fall back to litellm.acompletion when no handler is registered."""
         mock_response = MagicMock()
-
-        model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "some-provider/model", "weight": 1.0},
-            }
-        ]
-        wrapper = LocalProviderWrapper(model_list)
         messages = [{"role": "user", "content": "Hello"}]
 
         with (
+            patch("markitai.providers.is_local_provider_model", return_value=True),
             patch("markitai.providers.get_provider", return_value=None),
-            patch("markitai.llm.processor.litellm") as mock_litellm,
+            patch("markitai.llm.router.litellm") as mock_litellm,
         ):
             mock_litellm.acompletion = AsyncMock(return_value=mock_response)
-            result = await wrapper.acompletion("default", messages)
+            router = MarkitaiRouter([_local_entry("some-provider/model")])
+            result = await router.acompletion("default", messages)
 
         assert result is mock_response
 
@@ -454,17 +469,11 @@ class TestLocalProviderWrapper:
         mock_handler = AsyncMock()
         mock_handler.acompletion.return_value = MagicMock()
 
-        model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 1.0},
-            }
-        ]
-        wrapper = LocalProviderWrapper(model_list)
+        router = MarkitaiRouter([_local_entry("chatgpt/gpt-5.3")])
         messages = [{"role": "user", "content": "Hello"}]
 
         with patch("markitai.providers.get_provider", return_value=mock_handler):
-            await wrapper.acompletion(
+            await router.acompletion(
                 "default", messages, metadata={"key": "val"}, max_tokens=1000
             )
 
@@ -473,428 +482,83 @@ class TestLocalProviderWrapper:
         assert "metadata" not in call_kwargs.kwargs
         assert call_kwargs.kwargs["max_tokens"] == 1000
 
-    def test_image_capable_includes_chatgpt(self):
-        """chatgpt/ models should be recognized as image-capable."""
-        wrapper = LocalProviderWrapper([])
-        assert wrapper._is_image_capable("chatgpt/gpt-5.3") is True
-        assert wrapper._is_image_capable("chatgpt/codex-mini") is True
-
-
-# =============================================================================
-# Test HybridRouter
-# =============================================================================
-
-
-class TestHybridRouter:
-    """Tests for HybridRouter class."""
-
-    def test_init(self):
-        """Test HybridRouter initialization."""
-        standard_router = MagicMock()
-        standard_router.model_list = [
-            {"litellm_params": {"model": "openai/gpt-4o", "weight": 1.0}}
-        ]
-
-        local_wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {"model": "claude-agent/sonnet", "weight": 1.0},
-                }
-            ]
-        )
-
-        hybrid = HybridRouter(standard_router, local_wrapper)
-        assert len(hybrid._all_models) == 2
-
-    def test_model_list_property(self):
-        """Test model_list property combines both routers."""
-        standard_router = MagicMock()
-        standard_router.model_list = [{"litellm_params": {"model": "openai/gpt-4o"}}]
-
-        local_wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {"model": "claude-agent/sonnet"},
-                }
-            ]
-        )
-
-        hybrid = HybridRouter(standard_router, local_wrapper)
-        combined = hybrid.model_list
-        assert len(combined) == 2
-
-    def test_has_images(self):
-        """Test _has_images detection."""
-        standard_router = MagicMock()
-        standard_router.model_list = []
-        local_wrapper = LocalProviderWrapper([])
-
-        hybrid = HybridRouter(standard_router, local_wrapper)
-
-        messages_with_image = [
-            {
-                "role": "user",
-                "content": [{"type": "image_url", "image_url": {"url": "x"}}],
-            }
-        ]
-        assert hybrid._has_images(messages_with_image) is True
-
-        messages_text = [{"role": "user", "content": "Hello"}]
-        assert hybrid._has_images(messages_text) is False
-
-    def test_select_model_skips_zero_weight(self):
-        """weight=0 models should never be selected in HybridRouter."""
-        standard_router = MagicMock()
-        standard_router.model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "deepseek/deepseek-chat", "weight": 0},
-            },
-            {
-                "model_name": "default",
-                "litellm_params": {
-                    "model": "gemini/gemini-3.1-flash-lite-preview",
-                    "weight": 0,
-                },
-            },
-        ]
-
-        local_wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 20},
-                }
-            ]
-        )
-
-        hybrid = HybridRouter(standard_router, local_wrapper)
-        # Run 50 times — should always pick the non-zero weight model
-        for _ in range(50):
-            selected = hybrid._select_model("default")
-            assert selected == "chatgpt/gpt-5.3"
-
-    def test_select_model_all_zero_weight_still_works(self):
-        """If all weights are 0, HybridRouter should still select a model."""
-        standard_router = MagicMock()
-        standard_router.model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "deepseek/deepseek-chat", "weight": 0},
-            },
-        ]
-
-        local_wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {"model": "chatgpt/gpt-5.3", "weight": 0},
-                }
-            ]
-        )
-
-        hybrid = HybridRouter(standard_router, local_wrapper)
-        selected = hybrid._select_model("default")
-        assert selected in ("deepseek/deepseek-chat", "chatgpt/gpt-5.3")
-
-    def test_select_model_skips_cooldown_model(self):
-        """Models in cooldown should be skipped during selection."""
-        standard_router = MagicMock(spec=MagicMock)
-        standard_router.model_list = []
-
-        local_wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {
-                        "model": "claude-agent/sonnet",
-                        "weight": 10,
-                    },
-                },
-                {
-                    "model_name": "default",
-                    "litellm_params": {
-                        "model": "copilot/gemini-3-flash",
-                        "weight": 10,
-                    },
-                },
-            ]
-        )
-
-        hybrid = HybridRouter(standard_router, local_wrapper)
-        hybrid.record_cooldown("copilot/gemini-3-flash", 60.0)
-
-        selections = {hybrid._select_model("default") for _ in range(50)}
-        assert selections == {"claude-agent/sonnet"}
-
-    def test_select_model_routes_after_cooldown_expires(self):
-        """Models should be routable again after cooldown expires."""
-        standard_router = MagicMock(spec=MagicMock)
-        standard_router.model_list = []
-
-        local_wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {
-                        "model": "claude-agent/sonnet",
-                        "weight": 10,
-                    },
-                },
-                {
-                    "model_name": "default",
-                    "litellm_params": {
-                        "model": "copilot/gemini-3-flash",
-                        "weight": 10,
-                    },
-                },
-            ]
-        )
-
-        hybrid = HybridRouter(standard_router, local_wrapper)
-        # Set cooldown in the past (already expired)
-        hybrid._model_cooldowns["copilot/gemini-3-flash"] = time.monotonic() - 1.0
-
-        selections = {hybrid._select_model("default") for _ in range(100)}
-        assert len(selections) == 2
-
-    def test_select_model_picks_soonest_expiring_when_all_in_cooldown(self):
-        """When all models are in cooldown, pick the one expiring soonest."""
-        standard_router = MagicMock(spec=MagicMock)
-        standard_router.model_list = []
-
-        local_wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {"model": "model-a", "weight": 10},
-                },
-                {
-                    "model_name": "default",
-                    "litellm_params": {"model": "model-b", "weight": 10},
-                },
-            ]
-        )
-
-        hybrid = HybridRouter(standard_router, local_wrapper)
-        now = time.monotonic()
-        hybrid._model_cooldowns["model-a"] = now + 120
-        hybrid._model_cooldowns["model-b"] = now + 10
-
-        assert hybrid._select_model("default") == "model-b"
-
     @pytest.mark.asyncio
-    async def test_acompletion_routes_selected_standard_model(self):
-        """Standard router should receive the concrete model picked by cooldown logic."""
-        standard_router = MagicMock()
-        standard_router.model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "openai/gpt-4o", "weight": 1},
-            },
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "openai/gpt-4.1-mini", "weight": 1},
-            },
-        ]
-        standard_router.acompletion = AsyncMock(return_value="ok")
-
-        local_wrapper = LocalProviderWrapper([])
-        hybrid = HybridRouter(standard_router, local_wrapper)
-        messages = [{"role": "user", "content": "Hello"}]
-
-        with patch.object(hybrid, "_select_model", return_value="openai/gpt-4.1-mini"):
-            result = await hybrid.acompletion("default", messages, temperature=0.2)
-
-        assert result == "ok"
-        standard_router.acompletion.assert_awaited_once_with(
-            "openai/gpt-4.1-mini", messages, temperature=0.2
+    async def test_rate_limit_error_records_cooldown(self):
+        """A rate-limit failure puts the local model in cooldown."""
+        mock_handler = AsyncMock()
+        mock_handler.acompletion.side_effect = RuntimeError(
+            "429 rate limit: retry after 30s"
         )
 
-    @pytest.mark.asyncio
-    async def test_acompletion_applies_cooldown_on_model_level_error(self):
-        """Model-level 400 errors (region restriction) should trigger cooldown."""
-        from litellm.exceptions import BadRequestError
-
-        standard_router = MagicMock()
-        standard_router.model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "gemini/gemini-flash", "weight": 1},
-            },
-        ]
-        standard_router.acompletion = AsyncMock(
-            side_effect=BadRequestError(
-                message="GeminiException BadRequestError - User location is not supported for the API use.",
-                model="gemini/gemini-flash",
-                llm_provider="gemini",
-            )
-        )
-
-        local_wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {"model": "claude-agent/sonnet", "weight": 1},
-                }
-            ]
-        )
-
-        hybrid = HybridRouter(standard_router, local_wrapper)
+        router = MarkitaiRouter([_local_entry("claude-agent/sonnet")])
 
         with (
-            patch.object(hybrid, "_select_model", return_value="gemini/gemini-flash"),
-            pytest.raises(BadRequestError),
+            patch("markitai.providers.get_provider", return_value=mock_handler),
+            pytest.raises(RuntimeError),
         ):
-            await hybrid.acompletion("default", [{"role": "user", "content": "Hello"}])
+            await router.acompletion("default", [{"role": "user", "content": "Hi"}])
 
-        # Model should be in cooldown
-        assert "gemini/gemini-flash" in hybrid._model_cooldowns
-        # Cooldown should be long (3600s)
-        remaining = hybrid._model_cooldowns["gemini/gemini-flash"] - time.monotonic()
+        remaining = router._cooldowns["claude-agent/sonnet"] - time.monotonic()
+        assert 25 < remaining <= 30
+
+    @pytest.mark.asyncio
+    async def test_model_level_error_records_long_cooldown(self):
+        """Model-level errors put the local model in a 3600s cooldown."""
+        mock_handler = AsyncMock()
+        mock_handler.acompletion.side_effect = RuntimeError(
+            "User location is not supported for the API use."
+        )
+
+        router = MarkitaiRouter([_local_entry("claude-agent/sonnet")])
+
+        with (
+            patch("markitai.providers.get_provider", return_value=mock_handler),
+            pytest.raises(RuntimeError),
+        ):
+            await router.acompletion("default", [{"role": "user", "content": "Hi"}])
+
+        remaining = router._cooldowns["claude-agent/sonnet"] - time.monotonic()
         assert remaining > 3500
 
     @pytest.mark.asyncio
-    async def test_acompletion_no_cooldown_on_regular_bad_request(self):
-        """Regular 400 errors (bad content) should NOT trigger model cooldown."""
-        from litellm.exceptions import BadRequestError
-
-        standard_router = MagicMock()
-        standard_router.model_list = [
-            {
-                "model_name": "default",
-                "litellm_params": {"model": "gemini/gemini-flash", "weight": 1},
-            },
-        ]
-        standard_router.acompletion = AsyncMock(
-            side_effect=BadRequestError(
-                message="Invalid request: content too long",
-                model="gemini/gemini-flash",
-                llm_provider="gemini",
-            )
+    async def test_regular_error_records_no_cooldown(self):
+        """Content-specific errors do not put the model in cooldown."""
+        mock_handler = AsyncMock()
+        mock_handler.acompletion.side_effect = RuntimeError(
+            "Invalid request: content too long"
         )
 
-        local_wrapper = LocalProviderWrapper([])
-        hybrid = HybridRouter(standard_router, local_wrapper)
+        router = MarkitaiRouter([_local_entry("claude-agent/sonnet")])
 
-        with pytest.raises(BadRequestError):
-            await hybrid.acompletion("default", [{"role": "user", "content": "Hello"}])
+        with (
+            patch("markitai.providers.get_provider", return_value=mock_handler),
+            pytest.raises(RuntimeError),
+        ):
+            await router.acompletion("default", [{"role": "user", "content": "Hi"}])
 
-        # No cooldown for regular errors
-        assert "gemini/gemini-flash" not in hybrid._model_cooldowns
-
-
-# =============================================================================
-# Test LocalProviderWrapper Cooldown
-# =============================================================================
-
-
-class TestLocalProviderWrapperCooldown:
-    """Tests for cooldown tracking in LocalProviderWrapper."""
-
-    def test_select_model_skips_cooldown_model(self):
-        """Models in cooldown should be skipped during selection."""
-        wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {
-                        "model": "claude-agent/sonnet",
-                        "weight": 10,
-                    },
-                },
-                {
-                    "model_name": "default",
-                    "litellm_params": {
-                        "model": "copilot/gemini-3-flash",
-                        "weight": 10,
-                    },
-                },
-            ]
-        )
-
-        wrapper.record_cooldown("copilot/gemini-3-flash", 60.0)
-
-        selections = {wrapper._select_model("default") for _ in range(50)}
-        assert selections == {"claude-agent/sonnet"}
-
-    def test_select_model_routes_after_cooldown_expires(self):
-        """Models should be routable again after cooldown expires."""
-        wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {
-                        "model": "claude-agent/sonnet",
-                        "weight": 10,
-                    },
-                },
-                {
-                    "model_name": "default",
-                    "litellm_params": {
-                        "model": "copilot/gemini-3-flash",
-                        "weight": 10,
-                    },
-                },
-            ]
-        )
-
-        # Set cooldown in the past (already expired)
-        wrapper._model_cooldowns["copilot/gemini-3-flash"] = time.monotonic() - 1.0
-
-        selections = {wrapper._select_model("default") for _ in range(100)}
-        assert len(selections) == 2
-
-    def test_select_model_picks_soonest_expiring_when_all_in_cooldown(self):
-        """When all models are in cooldown, pick the one expiring soonest."""
-        wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {"model": "model-a", "weight": 10},
-                },
-                {
-                    "model_name": "default",
-                    "litellm_params": {"model": "model-b", "weight": 10},
-                },
-            ]
-        )
-
-        now = time.monotonic()
-        wrapper._model_cooldowns["model-a"] = now + 120
-        wrapper._model_cooldowns["model-b"] = now + 10
-
-        assert wrapper._select_model("default") == "model-b"
+        assert "claude-agent/sonnet" not in router._cooldowns
 
     def test_concurrent_cooldown_read_write(self):
-        """Test _model_cooldowns dict handles concurrent access safely.
+        """Cooldown map handles concurrent access safely.
 
         Defensive against Python 3.13+ free-threaded mode (PEP 703).
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        wrapper = LocalProviderWrapper(
-            [
-                {
-                    "model_name": "default",
-                    "litellm_params": {"model": f"model-{i}", "weight": 10},
-                }
-                for i in range(5)
-            ]
+        router = MarkitaiRouter(
+            [_local_entry(f"claude-agent/model-{i}", 10) for i in range(5)]
         )
 
         errors: list[str] = []
 
         def write_cooldowns() -> None:
             for i in range(200):
-                wrapper.record_cooldown(f"model-{i % 5}", float(i % 10))
+                router.record_cooldown(f"claude-agent/model-{i % 5}", float(i % 10))
 
         def read_cooldowns() -> None:
             for _ in range(200):
                 try:
-                    wrapper._select_model("default")
+                    router._select("default", False)
                 except Exception as e:
                     errors.append(str(e))
 
@@ -906,6 +570,180 @@ class TestLocalProviderWrapperCooldown:
                 f.result()
 
         assert not errors, f"Concurrent cooldown errors: {errors}"
+
+
+# =============================================================================
+# Test MarkitaiRouter — mixed local + standard pool
+# =============================================================================
+
+
+class TestMarkitaiRouterMixed:
+    """Tests for MarkitaiRouter with local and standard models."""
+
+    def test_init_splits_entries(self):
+        """Standard and local entries are split; a LiteLLM Router is created."""
+        router = MarkitaiRouter(
+            [
+                _standard_entry("openai/gpt-4o"),
+                _local_entry("claude-agent/sonnet"),
+            ]
+        )
+        assert router._standard_router is not None
+        assert len(router._local_entries) == 1
+        assert len(router._standard_entries) == 1
+        assert len(router.model_list) == 2
+
+    def test_standard_pool_candidate_aggregates_weight(self):
+        """The pool candidate's weight is the sum of standard model weights."""
+        router = MarkitaiRouter(
+            [
+                _standard_entry("openai/gpt-4o", 3),
+                _standard_entry("openai/gpt-4.1-mini", 2),
+                _local_entry("claude-agent/sonnet", 5),
+            ]
+        )
+        by_id = {c.model_id: c for c in router._groups["default"]}
+        assert by_id[STANDARD_POOL_ID].weight == 5
+        assert by_id["claude-agent/sonnet"].weight == 5
+
+    def test_inner_router_disables_litellm_retries(self):
+        """Transport retries are owned by the engine, not the inner Router."""
+        router = MarkitaiRouter(
+            [_standard_entry("openai/gpt-4o")],
+            router_settings={"num_retries": 7, "timeout": 30},
+        )
+        assert router._standard_router is not None
+        assert router._standard_router.num_retries == 0
+
+    @pytest.mark.asyncio
+    async def test_standard_pool_receives_group_name(self):
+        """The LiteLLM Router is called with the group name, not a deployment id.
+
+        In-group weighted balancing, cooldown, and fallbacks belong to the
+        LiteLLM Router; passing a concrete deployment id would bypass them.
+        """
+        router = MarkitaiRouter(
+            [
+                _standard_entry("openai/gpt-4o"),
+                _local_entry("claude-agent/sonnet"),
+            ]
+        )
+        mock_standard = MagicMock()
+        mock_standard.acompletion = AsyncMock(return_value="ok")
+        router._standard_router = mock_standard
+
+        messages = [{"role": "user", "content": "Hello"}]
+        with patch.object(router, "_select", return_value=STANDARD_POOL_ID):
+            result = await router.acompletion("default", messages, temperature=0.2)
+
+        assert result == "ok"
+        mock_standard.acompletion.assert_awaited_once_with(
+            "default", messages, temperature=0.2
+        )
+
+    @pytest.mark.asyncio
+    async def test_local_selection_bypasses_standard_router(self):
+        """A selected local model goes straight to its handler."""
+        router = MarkitaiRouter(
+            [
+                _standard_entry("openai/gpt-4o"),
+                _local_entry("claude-agent/sonnet"),
+            ]
+        )
+        mock_standard = MagicMock()
+        mock_standard.acompletion = AsyncMock()
+        router._standard_router = mock_standard
+
+        mock_handler = AsyncMock()
+        mock_handler.acompletion.return_value = "local-ok"
+
+        with (
+            patch.object(router, "_select", return_value="claude-agent/sonnet"),
+            patch("markitai.providers.get_provider", return_value=mock_handler),
+        ):
+            result = await router.acompletion(
+                "default", [{"role": "user", "content": "Hello"}]
+            )
+
+        assert result == "local-ok"
+        mock_standard.acompletion.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_concrete_standard_id_passes_through(self):
+        """Addressing a concrete standard deployment id still works."""
+        router = MarkitaiRouter(
+            [
+                _standard_entry("openai/gpt-4o"),
+                _local_entry("claude-agent/sonnet"),
+            ]
+        )
+        mock_standard = MagicMock()
+        mock_standard.acompletion = AsyncMock(return_value="ok")
+        router._standard_router = mock_standard
+
+        messages = [{"role": "user", "content": "Hello"}]
+        result = await router.acompletion("openai/gpt-4.1-mini", messages)
+
+        assert result == "ok"
+        mock_standard.acompletion.assert_awaited_once_with(
+            "openai/gpt-4.1-mini", messages
+        )
+
+    @pytest.mark.asyncio
+    async def test_pool_exhaustion_cools_down_standard_pool(self):
+        """ "No deployments available" puts the whole standard pool in cooldown."""
+        router = MarkitaiRouter(
+            [
+                _standard_entry("openai/gpt-4o"),
+                _local_entry("claude-agent/sonnet"),
+            ]
+        )
+        mock_standard = MagicMock()
+        mock_standard.acompletion = AsyncMock(
+            side_effect=ValueError(
+                "No deployments available for selected model group, "
+                "Try again in 60 seconds."
+            )
+        )
+        router._standard_router = mock_standard
+
+        with (
+            patch.object(router, "_select", return_value=STANDARD_POOL_ID),
+            pytest.raises(ValueError),
+        ):
+            await router.acompletion("default", [{"role": "user", "content": "Hi"}])
+
+        remaining = router._cooldowns[STANDARD_POOL_ID] - time.monotonic()
+        assert 55 < remaining <= 60
+
+    @pytest.mark.asyncio
+    async def test_standard_error_does_not_cool_down_pool(self):
+        """Individual standard-model failures are LiteLLM's cooldown business."""
+        from litellm.exceptions import BadRequestError
+
+        router = MarkitaiRouter(
+            [
+                _standard_entry("gemini/gemini-flash"),
+                _local_entry("claude-agent/sonnet"),
+            ]
+        )
+        mock_standard = MagicMock()
+        mock_standard.acompletion = AsyncMock(
+            side_effect=BadRequestError(
+                message="Invalid request: content too long",
+                model="gemini/gemini-flash",
+                llm_provider="gemini",
+            )
+        )
+        router._standard_router = mock_standard
+
+        with (
+            patch.object(router, "_select", return_value=STANDARD_POOL_ID),
+            pytest.raises(BadRequestError),
+        ):
+            await router.acompletion("default", [{"role": "user", "content": "Hi"}])
+
+        assert STANDARD_POOL_ID not in router._cooldowns
 
 
 # =============================================================================
@@ -1813,8 +1651,8 @@ class TestLLMProcessorRouterCreation:
         with pytest.raises(ValueError, match="No models configured"):
             _ = processor.router
 
-    def test_creates_local_provider_wrapper(self, prompts_config: PromptsConfig):
-        """Test creates LocalProviderWrapper for all local models."""
+    def test_creates_router_for_local_models(self, prompts_config: PromptsConfig):
+        """All-local configs get a MarkitaiRouter without an inner LiteLLM Router."""
         config = LLMConfig(
             enabled=True,
             model_list=[
@@ -1830,7 +1668,8 @@ class TestLLMProcessorRouterCreation:
         ):
             processor = LLMProcessor(config, prompts_config)
             router = processor.router
-            assert isinstance(router, LocalProviderWrapper)
+            assert isinstance(router, MarkitaiRouter)
+            assert router._standard_router is None
 
     def test_router_resolves_api_base_plain_url(self, prompts_config: PromptsConfig):
         """Test router passes plain api_base URL to litellm model list."""
