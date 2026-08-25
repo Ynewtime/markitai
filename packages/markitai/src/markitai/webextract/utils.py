@@ -76,3 +76,24 @@ def count_words(text: str) -> int:
     latin_count = len(remaining.split()) if remaining else 0
 
     return cjk_count + latin_count
+
+
+# Responsive Tailwind "show" utilities (e.g. "sm:block", "lg:flex") — an
+# element carrying one is visible at some breakpoint even when it also has
+# a "hidden" class. Ported from defuddle ``utils/dom.ts``
+# ``hasResponsiveShowClass``.
+_RESPONSIVE_SHOW_RE = re.compile(
+    r"^(?:sm|md|lg|xl|2xl|min-\[|max-\[):(?:block|flex|grid|inline|table|contents)"
+)
+
+
+def has_responsive_show_class(class_name: str) -> bool:
+    """Check whether a class string re-shows the element at some breakpoint.
+
+    Args:
+        class_name: Space-separated class attribute value.
+
+    Returns:
+        True if any token is a responsive show utility.
+    """
+    return any(_RESPONSIVE_SHOW_RE.match(t) for t in class_name.split())

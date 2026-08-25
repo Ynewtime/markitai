@@ -10,10 +10,13 @@ from markitai.webextract.constants import (
     EXACT_SELECTORS,
     EXACT_SELECTORS_JOINED,
     FOOTNOTE_LIST_SELECTORS,
+    HIDDEN_EXACT_SELECTOR,
+    HIDDEN_EXACT_SKIP_SELECTOR,
     PARTIAL_SELECTOR_ANCHORED_REGEX,
     PARTIAL_SELECTOR_REGEX,
     TEST_ATTRIBUTES,
 )
+from markitai.webextract.utils import has_responsive_show_class
 
 _ID_DELIMITER_RE = re.compile(r"[\s_\-:.]")
 _HEADING_NAMES = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
@@ -24,6 +27,7 @@ def remove_by_selectors(
     main_content: Tag | None,
     *,
     use_partial: bool = True,
+    skip_hidden_exact: bool = False,
 ) -> int:
     """Remove elements matching known non-content selectors.
 
@@ -31,6 +35,11 @@ def remove_by_selectors(
         root: Content root element.
         main_content: Main content element (protected from removal).
         use_partial: Whether to also use partial attribute matching.
+        skip_hidden_exact: Keep elements matched only by the hidden-element
+            exact selectors, plus dialogs inside hidden subtrees. Set on
+            retries with hidden-element removal disabled so pages that
+            reveal an ``aria-hidden`` overlay at runtime keep their content
+            (defuddle issue 232).
 
     Returns:
         Number of elements removed.
@@ -44,6 +53,8 @@ def remove_by_selectors(
             eid = id(el)
             if eid in seen_ids:
                 continue
+            if _skip_hidden_match(el, skip_hidden_exact):
+                continue
             if _should_protect(el, main_content):
                 continue
             to_remove.append(el)
@@ -55,6 +66,8 @@ def remove_by_selectors(
                 for el in root.select(selector):
                     eid = id(el)
                     if eid in seen_ids:
+                        continue
+                    if _skip_hidden_match(el, skip_hidden_exact):
                         continue
                     if _should_protect(el, main_content):
                         continue
@@ -90,6 +103,45 @@ def remove_by_selectors(
         removed += 1
 
     return removed
+
+
+def _skip_hidden_match(el: Tag, skip_hidden_exact: bool) -> bool:
+    """Check if an exact-selector match must be kept for hidden-content retries.
+
+    Mirrors defuddle ``removeBySelector``: an element with a responsive
+    show class (e.g. "hidden sm:flex") is always kept; when
+    ``skip_hidden_exact`` is set (hidden-element removal disabled),
+    elements matching the hidden exact selectors are kept, as are
+    ``role="dialog"`` elements inside a hidden subtree — pages that
+    reveal an aria-hidden overlay at runtime keep their article.
+    """
+    try:
+        is_hidden_match = el.css.match(HIDDEN_EXACT_SELECTOR)
+    except Exception:  # noqa: BLE001
+        return False
+    classes = el.get("class")
+    class_str = " ".join(classes) if isinstance(classes, list) else str(classes or "")
+    if is_hidden_match and has_responsive_show_class(class_str):
+        return True
+    if not skip_hidden_exact:
+        return False
+    if is_hidden_match:
+        return True
+    role = str(el.get("role") or "").lower()
+    if role != "dialog":
+        return False
+    return any(
+        isinstance(p, Tag) and p.name != "[document]" and _matches_hidden_skip(p)
+        for p in el.parents
+    )
+
+
+def _matches_hidden_skip(el: Tag) -> bool:
+    """Check if element matches the unguarded hidden selectors."""
+    try:
+        return el.css.match(HIDDEN_EXACT_SKIP_SELECTOR)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _should_protect(el: Tag, main_content: Tag | None) -> bool:

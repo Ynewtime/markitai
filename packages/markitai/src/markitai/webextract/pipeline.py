@@ -6,6 +6,7 @@ from dataclasses import asdict
 
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.constants import HIDDEN_EXACT_SKIP_SELECTOR
 from markitai.webextract.dom import parse_html
 from markitai.webextract.elements.footnotes import (
     adopt_external_footnotes,
@@ -401,6 +402,30 @@ def _extract_with_retry(
         clean_html, markdown, word_count = clean3, md3, wc3
         diagnostics["adaptive_retry_used"] = True
         diagnostics["retry_level"] = 3
+
+    # Level 3b: Target the largest hidden subtree directly to avoid
+    # body-level leftovers when hidden content is the real article
+    # (defuddle issue 232). Runs whenever Level 3 ran, like upstream.
+    hidden_root = _find_largest_hidden_content_root(copy.deepcopy(ctx.original_soup))
+    if hidden_root is not None:
+        clean3b, md3b, _ = _extract_once(
+            hidden_root,
+            ctx.metadata,
+            ctx.md_instance,
+            url,
+            use_partial_selectors=False,
+            use_hidden_removal=False,
+            use_scoring=use_scoring,
+        )
+        wc3b = count_words(md3b)
+        # Accept when it finds more content, or nearly as much in a more
+        # focused (shorter) HTML subtree.
+        if wc3b > word_count or (
+            wc3b > max(20, word_count * 0.7) and len(clean3b) < len(clean_html)
+        ):
+            clean_html, markdown, word_count = clean3b, md3b, wc3b
+            diagnostics["adaptive_retry_used"] = True
+            diagnostics["retry_level"] = "3b_hidden_selector"
     if word_count >= _RETRY_SPARSE_THRESHOLD:
         return clean_html, markdown
 
@@ -446,6 +471,40 @@ def _extract_with_retry(
                 diagnostics["retry_level"] = "body_fallback"
 
     return clean_html, markdown
+
+
+def _find_largest_hidden_content_root(soup: BeautifulSoup) -> Tag | None:
+    """Find the largest hidden subtree that plausibly holds the article.
+
+    Mirrors defuddle ``findLargestHiddenContentSelector``: scan hidden
+    elements (``[hidden]``, ``aria-hidden``, ``.hidden``, ``.invisible``)
+    outside math markup and return the wordiest one when it carries at
+    least 30 words. The caller re-runs extraction with it as the root.
+
+    Args:
+        soup: A fresh parse/copy of the original document (the returned
+            tag is mutated by the retry pipeline).
+
+    Returns:
+        The hidden element with the most words, or ``None``.
+    """
+    body = soup.body
+    if body is None:
+        return None
+    best: Tag | None = None
+    best_words = 0
+    for el in body.select(HIDDEN_EXACT_SKIP_SELECTOR):
+        classes = el.get("class")
+        class_str = " ".join(classes) if isinstance(classes, list) else ""
+        if "math" in class_str:
+            continue
+        words = count_words(el.get_text(" ", strip=True))
+        if words > best_words:
+            best = el
+            best_words = words
+    if best is None or best_words < 30:
+        return None
+    return best
 
 
 def _pick_root(soup: BeautifulSoup, extractor: object | None) -> Tag | BeautifulSoup:

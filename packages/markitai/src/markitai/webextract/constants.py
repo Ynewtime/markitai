@@ -9,6 +9,32 @@ SCHEMA_FALLBACK_MIN_GAIN = 3
 
 MIN_IMAGE_SIZE = 33
 
+# Hidden-element selectors removed in the exact-selector phase.  The
+# skip variant (no :not() guards) is used to *detect* hidden subtrees —
+# closest-ancestor checks and the hidden-content retry — while the
+# removal variant preserves math/svg and paywalled text (sites like
+# Future PLC gate paragraphs with aria-hidden + class="paywall").
+# Ported from defuddle constants.ts HIDDEN_EXACT_(SKIP_)SELECTORS.
+HIDDEN_EXACT_SKIP_SELECTORS: list[str] = [
+    "[hidden]",
+    '[aria-hidden="true"]',
+    ".hidden",
+    ".invisible",
+]
+# Deviation from upstream: the aria-hidden guard also covers bare <math>
+# elements and KaTeX/MathJax wrappers case-insensitively — markitai keeps
+# LaTeX sources that sites mark aria-hidden for accessibility (see
+# tests/unit/webextract/test_review_fixes.py TestMathProtection).
+HIDDEN_EXACT_SELECTORS: list[str] = [
+    '[aria-hidden="true"]:not(math):not([class*="math" i])'
+    ':not([class*="katex" i]):not(svg):not([class*="paywall"])'
+    if s == '[aria-hidden="true"]'
+    else s
+    for s in HIDDEN_EXACT_SKIP_SELECTORS
+]
+HIDDEN_EXACT_SELECTOR: str = ", ".join(HIDDEN_EXACT_SELECTORS)
+HIDDEN_EXACT_SKIP_SELECTOR: str = ", ".join(HIDDEN_EXACT_SKIP_SELECTORS)
+
 # Exact CSS selectors for elements to remove.
 # These are high-confidence removals — nav, footer, ads, forms, etc.
 EXACT_SELECTORS: list[str] = [
@@ -99,11 +125,8 @@ EXACT_SELECTORS: list[str] = [
     "[role='listbox']",
     "[role='option']",
     "textarea",
-    # hidden
-    "[hidden]",
-    # NOTE: aria-hidden handled by hidden.py with math protection; not in selectors
-    ".hidden",
-    ".invisible",
+    # hidden (aria-hidden guarded to preserve math/svg/paywalled text)
+    *HIDDEN_EXACT_SELECTORS,
     # iframes (except video embeds)
     "instaread-player",
     # logos
@@ -129,6 +152,9 @@ EXACT_SELECTORS: list[str] = [
     # skip links
     "[data-link-name*='skip']",
     "[aria-label*='skip']",
+    # dismiss/close buttons
+    "[aria-label='Dismiss' i]",
+    "[aria-label='Close' i]",
     # other
     ".copyright",
     "#copyright",

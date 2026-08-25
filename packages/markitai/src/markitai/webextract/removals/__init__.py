@@ -49,7 +49,13 @@ def apply_removals(
     # h1 anchor is still present on pages that strip title classes.
     stats["eyebrow"] = remove_eyebrow_label(root)
     stats["selectors"] = remove_by_selectors(
-        root, main_content, use_partial=use_partial_selectors
+        root,
+        main_content,
+        use_partial=use_partial_selectors,
+        # When hidden-element removal is disabled (retry for pages that
+        # reveal aria-hidden overlays at runtime), keep hidden-selector
+        # matches in the exact phase too (defuddle issue 232).
+        skip_hidden_exact=not use_hidden_removal,
     )
     if use_scoring:
         stats["scoring"] = score_and_remove(root)

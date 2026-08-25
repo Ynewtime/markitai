@@ -6,6 +6,8 @@ import re
 
 from bs4 import Tag
 
+from markitai.webextract.utils import has_responsive_show_class
+
 _HIDDEN_STYLE_RE = re.compile(
     r"(?:^|;\s*)(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0)"
     r"(?:\s*;|\s*$)",
@@ -69,6 +71,10 @@ def _is_hidden(el: Tag) -> bool:
     # CSS framework class check
     classes = el.get("class")
     if isinstance(classes, list):
+        # Responsive show utilities (e.g. "hidden sm:flex") re-show the
+        # element at some breakpoint — keep it (mirrors defuddle).
+        if has_responsive_show_class(" ".join(classes)):
+            return False
         for cls in classes:
             bare = cls.split(":")[-1]  # handle "md:hidden" → "hidden"
             if bare in _HIDDEN_CLASSES:
