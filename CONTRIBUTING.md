@@ -102,6 +102,24 @@ a unit test keeps the two pins equal, and the weekly
 `.github/workflows/defuddle-watch.yml` opens an issue when upstream cuts a
 release ahead of the pin.
 
+## olmOCR-bench feasibility harness (not CI)
+
+`scripts/olmocr_bench_subset.py` is an opt-in, network-using script that
+scores markitai's `--ocr` output against a subset of AI2's
+[olmOCR-bench](https://huggingface.co/datasets/allenai/olmOCR-bench) dataset
+(present/absent/order rule types only — table/math rules need the official
+`olmocr[bench]` toolkit; see the script's module docstring for the full
+feasibility writeup, licensing, and manual steps for an authoritative run).
+It downloads a small PDF slice directly over HTTPS (no new dependency) and
+scores markitai's own conversion:
+
+```bash
+uv run python scripts/olmocr_bench_subset.py --split old_scans --limit 5
+```
+
+Never run in CI or the default test suite; `tests/unit/test_olmocr_bench_subset.py`
+covers the scoring math offline.
+
 ## Conventions
 
 - Match surrounding code style; ruff (`E,W,F,I,B,C4,UP,ARG,SIM`) and pyright
