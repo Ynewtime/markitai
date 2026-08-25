@@ -399,6 +399,16 @@ class WebExtractMarkdownConverter(_CustomMarkdownify):
                 return f"${latex}$"
         return text
 
+    def convert_svg(self, el: Any, text: str, parent_tags: set) -> str:
+        """Keep inline SVGs as raw HTML (mirrors defuddle's turndown keep).
+
+        Charts and diagrams carry meaning only as markup — flattening
+        them to text produces loose axis-label lines.
+        """
+        if "_inline" in parent_tags:
+            return str(el)
+        return f"\n\n{el}\n\n"
+
     def convert_mark(self, el: Any, text: str, parent_tags: set) -> str:
         return f"=={text}==" if text.strip() else ""
 

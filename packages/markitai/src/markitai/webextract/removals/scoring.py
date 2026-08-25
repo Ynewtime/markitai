@@ -143,8 +143,11 @@ def _score_non_content_block(el: Tag) -> float:
     words = text.split()
     word_count = len(words)
 
+    # Very small elements are neutral, not removable (mirrors defuddle:
+    # a wordless block may be an inline SVG diagram or spacer, and other
+    # stages handle genuinely empty elements).
     if word_count < 3:
-        return -1.0
+        return 0.0
 
     score = 0.0
 

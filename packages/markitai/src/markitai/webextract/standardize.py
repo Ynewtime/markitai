@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Comment, Tag
 from bs4.element import NavigableString
 
-from markitai.webextract.constants import ALLOWED_EMPTY_ELEMENTS
+from markitai.webextract.constants import (
+    ALLOWED_EMPTY_ELEMENTS,
+    TAILWIND_COLORS,
+    TAILWIND_SPECIAL,
+)
 from markitai.webextract.elements.callouts import normalize_callouts
 from markitai.webextract.elements.code import normalize_code_blocks
 from markitai.webextract.elements.headings import normalize_headings
@@ -99,6 +104,7 @@ def standardize_content(root: Tag, title: str | None, base_url: str) -> None:
     normalize_math(root)
     normalize_code_blocks(root)
     normalize_images(root, base_url)
+    _standardize_inline_svgs(root)
     normalize_headings(root)
     normalize_callouts(root)
     _unwrap_layout_tables(root)
@@ -106,6 +112,234 @@ def standardize_content(root: Tag, title: str | None, base_url: str) -> None:
     _unwrap_bare_spans(root)
     _remove_empty_elements(root)
     _remove_trailing_content(root)
+
+
+_SVG_FILLED_TAGS = frozenset({"path", "rect", "circle", "ellipse", "polygon"})
+_SVG_STROKE_TAGS = frozenset({"line", "polyline"})
+_SVG_TEXT_TAGS = frozenset({"text", "tspan"})
+_SVG_NON_RENDERED_ANCESTORS = frozenset(
+    {"defs", "clippath", "mask", "pattern", "marker"}
+)
+_GRIDLINE_STROKE_OPACITY = "0.2"
+_CLOSED_PATH_RE = re.compile(r"Z\s*$", re.IGNORECASE)
+
+
+_LIGHT_DARK_RE = re.compile(r"light-dark\(\s*([^,]+?)\s*,\s*[^)]+?\)")
+_CSS_VAR_RE = re.compile(r"var\(--([^,)]+)(?:,\s*([^)]+))?\)")
+_CSS_VAR_GLOBAL_RE = re.compile(r"var\(--[^,)]+(?:,\s*[^)]+)?\)")
+_SVG_COLOR_ATTRS = (
+    "fill",
+    "stroke",
+    "color",
+    "stop-color",
+    "flood-color",
+    "lighting-color",
+)
+_TW_COLOR_CLASS_RE = re.compile(r"^(fill|stroke)-([a-z]+)-(\d{2,3})(?:/(\d+))?$")
+_TW_SPECIAL_CLASS_RE = re.compile(r"^(fill|stroke)-(black|white|transparent|current)$")
+_TW_ARBITRARY_RE = re.compile(r"^text-\[(.+)\]$")
+_TW_FONT_STYLES = {
+    "font-semibold": "font-weight:600",
+    "font-bold": "font-weight:700",
+    "font-medium": "font-weight:500",
+    "font-mono": "font-family:monospace",
+}
+
+
+def _standardize_inline_svgs(root: Tag) -> None:
+    """Normalize inline SVGs whose class-based styling was lost.
+
+    Pages that style chart SVGs from stylesheets render as invisible
+    shapes once the CSS is gone. Resolve CSS variables / ``light-dark()``
+    / Tailwind color classes to concrete colors, apply fallback
+    fill/stroke, and strip class attributes (no CSS remains for them to
+    reference). Ported from defuddle ``standardize.ts`` SVG
+    normalization (``resolveVar``, ``resolveTailwindClasses``,
+    ``applySvgFallbackStyles``, and the SVG branch of
+    ``stripUnwantedAttributes``); the browser-only getComputedStyle
+    resolution path is not applicable.
+    """
+    for svg in root.find_all("svg"):
+        for el in [svg, *svg.find_all(True)]:
+            if not isinstance(el, Tag):
+                continue
+            for attr in _SVG_COLOR_ATTRS:
+                val = el.get(attr)
+                if isinstance(val, str) and ("var(" in val or "light-dark(" in val):
+                    el[attr] = _resolve_css_color(val)
+            style = el.get("style")
+            if isinstance(style, str) and ("var(" in style or "light-dark(" in style):
+                resolved = _LIGHT_DARK_RE.sub(lambda m: m.group(1).strip(), style)
+                resolved = _CSS_VAR_GLOBAL_RE.sub(
+                    lambda m: _resolve_css_color(m.group(0)), resolved
+                )
+                el["style"] = resolved
+            _resolve_tailwind_classes(el)
+
+        _apply_svg_fallback_styles(svg)
+        for el in [svg, *svg.find_all(True)]:
+            if isinstance(el, Tag) and el.has_attr("class"):
+                del el["class"]
+
+
+def _resolve_css_color(value: str) -> str:
+    """Resolve ``var()`` / ``light-dark()`` color values without a CSSOM.
+
+    Uses the CSS fallback value when present, the Tailwind palette for
+    ``--color-name-shade`` variables, then semantic guesses by variable
+    name; ``currentColor`` otherwise.
+    """
+    value = _LIGHT_DARK_RE.sub(lambda m: m.group(1).strip(), value)
+    if "var(" not in value:
+        return value
+
+    var_match = _CSS_VAR_RE.search(value)
+    if var_match:
+        fallback = (var_match.group(2) or "").strip()
+        if fallback and "var(" not in fallback:
+            return fallback
+
+        name = var_match.group(1).lower()
+        tw_match = re.search(r"(?:^|-)([a-z]+)-(\d{2,3})$", name)
+        if tw_match:
+            hex_color = TAILWIND_COLORS.get(tw_match.group(1), {}).get(
+                tw_match.group(2)
+            )
+            if hex_color:
+                return hex_color
+        if name.endswith("-black"):
+            return "#000"
+        if name.endswith("-white"):
+            return "#fff"
+
+        # Semantic fallbacks
+        if any(t in name for t in ("background", "card", "surface", "bg")):
+            return "Canvas"
+        if any(t in name for t in ("border", "divider", "separator")):
+            return "#ccc"
+        if any(t in name for t in ("muted", "subtle", "secondary", "placeholder")):
+            return "#888"
+    return "currentColor"
+
+
+def _resolve_tailwind_classes(el: Tag) -> None:
+    """Convert Tailwind fill/stroke/text utility classes to attributes."""
+    classes = el.get("class")
+    if not isinstance(classes, list) or not classes:
+        return
+
+    keep: list[str] = []
+    styles: list[str] = []
+    for token in classes:
+        match = _TW_COLOR_CLASS_RE.match(token)
+        if match:
+            prop, color, shade, opacity = match.groups()
+            hex_color = TAILWIND_COLORS.get(color, {}).get(shade)
+            if hex_color:
+                if opacity:
+                    alpha = int(opacity) / 100
+                    r = int(hex_color[1:3], 16)
+                    g = int(hex_color[3:5], 16)
+                    b = int(hex_color[5:7], 16)
+                    el[prop] = f"rgba({r},{g},{b},{alpha})"
+                else:
+                    el[prop] = hex_color
+                continue
+
+        match = _TW_SPECIAL_CLASS_RE.match(token)
+        if match:
+            el[match.group(1)] = TAILWIND_SPECIAL[match.group(2)]
+            continue
+
+        match = _TW_ARBITRARY_RE.match(token)
+        if match and not match.group(1).startswith(("#", "rgb", "hsl")):
+            styles.append(f"font-size:{match.group(1)}")
+            continue
+
+        font_style = _TW_FONT_STYLES.get(token)
+        if font_style is not None:
+            styles.append(font_style)
+            continue
+
+        keep.append(token)
+
+    if len(keep) == len(classes):
+        return  # nothing changed
+    if keep:
+        el["class"] = " ".join(keep)
+    else:
+        del el["class"]
+    if styles:
+        existing = str(el.get("style") or "")
+        sep = ";" if existing and not existing.endswith(";") else ""
+        el["style"] = existing + sep + ";".join(styles)
+
+
+def _apply_svg_fallback_styles(svg: Tag) -> None:
+    """Apply fallback fill/stroke to class-styled shapes missing paint."""
+    if svg.find("style") is not None:
+        return
+
+    all_els = [el for el in svg.find_all(True) if isinstance(el, Tag)]
+
+    # Only apply fallbacks when at least one filled shape has a class but
+    # no fill — indicating CSS-based styling was lost.
+    if not any(
+        el.name in _SVG_FILLED_TAGS
+        and el.get("class")
+        and not _in_non_rendered_svg_context(el)
+        and not el.has_attr("fill")
+        and not _has_style_prop(el, "fill")
+        for el in all_els
+    ):
+        return
+
+    for el in all_els:
+        tag = el.name or ""
+        is_filled = tag in _SVG_FILLED_TAGS
+        is_stroke = tag in _SVG_STROKE_TAGS
+        is_text = tag in _SVG_TEXT_TAGS
+        if not (is_filled or is_stroke or is_text):
+            continue
+        if not el.get("class") or _in_non_rendered_svg_context(el):
+            continue
+
+        if is_text:
+            if not el.has_attr("fill") and not _has_style_prop(el, "fill"):
+                el["fill"] = "currentColor"
+            continue
+
+        has_fill = el.has_attr("fill") and el.get("fill") != "none"
+        has_stroke = el.has_attr("stroke") or _has_style_prop(el, "stroke")
+
+        if is_filled and not el.has_attr("fill") and not _has_style_prop(el, "fill"):
+            el["fill"] = "none"
+
+        if not has_stroke:
+            if is_stroke:
+                el["stroke"] = "currentColor"
+                if not el.has_attr("stroke-opacity"):
+                    el["stroke-opacity"] = _GRIDLINE_STROKE_OPACITY
+            elif is_filled and not has_fill:
+                d = str(el.get("d") or "")
+                if not _CLOSED_PATH_RE.search(d.strip()):
+                    el["stroke"] = "currentColor"
+
+
+def _in_non_rendered_svg_context(el: Tag) -> bool:
+    """Check if the element sits inside defs/clipPath/mask/pattern/marker."""
+    return any(
+        isinstance(p, Tag) and (p.name or "").lower() in _SVG_NON_RENDERED_ANCESTORS
+        for p in el.parents
+    )
+
+
+def _has_style_prop(el: Tag, prop: str) -> bool:
+    """Check if an inline style attribute sets a specific CSS property."""
+    style = el.get("style")
+    if not isinstance(style, str):
+        return False
+    return re.search(rf"(?:^|;)\s*{prop}\s*:", style) is not None
 
 
 def _remove_comments(root: Tag) -> None:
@@ -226,7 +460,9 @@ def _remove_empty_elements(root: Tag) -> None:
             continue
         if el.name in ALLOWED_EMPTY_ELEMENTS:
             continue
-        if el.find_parent(("pre", "code")) is not None:
+        # <pre>/<code> whitespace tokens and SVG shapes (line, path, …)
+        # are meaningful despite having no text.
+        if el.find_parent(("pre", "code", "svg")) is not None:
             continue
         if not el.get_text(strip=True) and not el.find(list(ALLOWED_EMPTY_ELEMENTS)):
             el.decompose()
